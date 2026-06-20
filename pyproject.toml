@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meshtools"
+version = "0.1.0"
+description = "A modern command-line toolkit for tuning and exploring a MeshCore mesh."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Jean-Pierre Martineau" }]
+license = { text = "MIT" }
+keywords = ["meshcore", "lora", "mesh", "radio", "cli"]
+
+dependencies = [
+    "meshcore>=2.3",     # companion-device protocol (serial/BLE/TCP)
+    "pyserial>=3.5",      # serial-port enumeration for device discovery
+    "typer>=0.12",        # scripted CLI; subcommands mirror the menu
+    "rich>=13.7",         # modern console rendering (progress, tables, panels)
+    "questionary>=2.0",   # interactive arrow-key menu navigation
+    "plotly>=5.20",       # interactive self-contained HTML charts
+    "pyvis>=0.3.2",       # interactive HTML mesh graphs
+    "networkx>=3.2",      # graph model + path scoring
+    "tomli>=2.0; python_version < '3.11'",  # TOML config reader on 3.10
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+meshtools = "meshtools.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["meshtools"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = ["D203", "D213"]  # pick one blank-line-before-class / multi-line-summary style
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

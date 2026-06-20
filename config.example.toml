@@ -1,0 +1,31 @@
+# MeshTools configuration.
+# Copy to ~/.config/meshtools/config.toml (or pass --db / --port on the CLI).
+#
+# Profiles are optional. With no profile and no --port, MeshTools discovers attached
+# serial devices, lets you pick one (interactively) or uses the single one present, and
+# remembers the last device that connected as the default for next time. Define profiles
+# below only to give your hardware stable aliases (e.g. --profile yagi).
+
+default_profile = "s3"
+trace_cooldown_s = 1.0
+# db_path = "C:/Users/you/meshtools/meshtools.db"
+# output_dir = "C:/Users/you/meshtools/output"
+
+# One [profiles.<name>] block per physical companion device.
+[profiles.s3]
+port = "COM5"
+baudrate = 115200
+default_tx_power = 20
+description = "XIAO ESP32-S3 + Wio SX1262 serial companion"
+
+[profiles.yagi]
+port = "COM6"
+description = "Yagi repeater (reaching the wider mesh)"
+
+[profiles.local]
+port = "COM7"
+description = "Local-range repeater"
+
+[profiles.observer]
+port = "COM8"
+description = "XIAO observer running a bot"
