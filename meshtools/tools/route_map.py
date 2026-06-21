@@ -79,7 +79,11 @@ class RouteMapTool(Tool):
         samples = int(params.get("samples", 0))
         resolve = None
 
-        if samples > 0 and target:
+        if samples > 0:
+            if not target:
+                return ToolResult(
+                    message="[err]✗[/err] --samples requires a --target to trace.",
+                )
             device = await ctx.device()
             contacts = await device.get_contacts()
             resolve = trace_runner.make_node_resolver(contacts)
@@ -110,8 +114,7 @@ class RouteMapTool(Tool):
         ctx.console.print(_graph_panel(graph))
 
         artifacts: list[str] = []
-        if graph.total_routes and params.get("viz", True):
-            assert ctx.settings.output_dir is not None
+        if graph.total_routes and params.get("viz", True) and ctx.settings.output_dir:
             out = render_route_graph(graph, ctx.settings.output_dir)
             artifacts.append(str(out))
 

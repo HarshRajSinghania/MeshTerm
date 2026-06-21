@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Optional
 
 from ..core.models import LOCAL_DEVICE_LABEL, TraceResult
 
@@ -141,7 +142,7 @@ def build_route_graph(
     ]
     links.sort(key=lambda link_item: link_item.count, reverse=True)
 
-    self_label = _name(None, resolve) or device_label
+    self_label = _name(device_label, resolve)
     nodes = [
         RouteNode(label=label, is_self=(label == self_label), degree=len(keys))
         for label, keys in sorted(node_links.items(), key=lambda kv: len(kv[1]), reverse=True)

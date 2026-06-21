@@ -110,7 +110,8 @@ def _slug(value: str) -> str:
     Returns:
         A lowercase slug containing only alphanumerics, dashes, and underscores.
     """
-    return "".join(c if c.isalnum() or c in "-_" else "-" for c in value).strip("-").lower()
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in value).strip("-").lower()
+    return slug or "graph"
 
 
 #: vis.js physics/layout tuning for a readable, settled mesh graph.
