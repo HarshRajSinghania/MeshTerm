@@ -118,6 +118,47 @@ def test_route_text_annotates_nodes_with_command_width_hash() -> None:
     assert "Me (" not in plain.replace(" ", " ")  # device never annotated
 
 
+def test_route_text_annotates_our_device_with_hash() -> None:
+    """Given our key, both endpoints (us) carry our hash at the command width."""
+    from meshtools.core.models import Hop
+    from meshtools.ui.widgets import _route_text
+
+    result = TraceResult(
+        target="x",
+        success=True,
+        hops=[Hop(0, "3d63", 12.0), Hop(1, None, 12.0)],
+        path_hash_bytes=2,  # command used 2-byte hashes
+    )
+    plain = _route_text(
+        result, "Me", device_hash="a1b2c3" + "00" * 29
+    ).plain.replace("\xa0", " ")
+    assert plain.count("Me (a1b2)") == 2  # our device at both ends, carrying our hash
+    assert "a1b2c3" not in plain  # truncated to the command's 2-byte width
+
+
+def test_traces_table_annotates_links_with_hashes() -> None:
+    """The per-trace From→To column shows ``name (hash)``, including our device."""
+    from meshtools.core.models import Hop
+    from meshtools.ui.widgets import traces_table
+
+    resolve = trace_runner.make_node_resolver(
+        [Contact(name="Alice", public_key="3d63c6" + "00" * 26, key_prefix="3d63c6429436")]
+    )
+    traces = [
+        TraceResult(
+            target="Alice",
+            success=True,
+            hops=[Hop(0, "3d63c6", 12.0), Hop(1, None, 9.0)],
+            path_hash_bytes=2,  # command used 2-byte hashes
+        )
+    ]
+    table = traces_table(traces, "Me", resolve, device_hash="a1b2c3" + "00" * 29)
+    links = [cell.plain.replace("\xa0", " ") for cell in table.columns[1].cells]
+    assert any("Me (a1b2)" in link for link in links)  # our device carries its hash
+    assert any("Alice (3d63)" in link for link in links)  # truncated to the 2-byte width
+    assert not any("3d63c6" in link for link in links)
+
+
 def test_route_text_unknown_node_shows_hash_only() -> None:
     """An unresolved node shows just its hash, truncated to the command width."""
     from meshtools.core.models import Hop

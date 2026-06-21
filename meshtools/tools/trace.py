@@ -103,6 +103,9 @@ class TraceTool(Tool):
         # last hop's destination); fall back to a neutral label if it's unavailable.
         self_info = await device.get_self_info()
         device_label = str(self_info.get("name") or LOCAL_DEVICE_LABEL)
+        # Our own public key, so the route's endpoints (us) carry a hash like every
+        # other hop, addressed at the same path-hash width.
+        device_hash = str(self_info.get("public_key") or "") or None
 
         # Resolve repeater hashes in the results to contact names where we know them,
         # so the tables read as names instead of opaque hex prefixes.
@@ -142,8 +145,10 @@ class TraceTool(Tool):
         # (forced path, or the route the device resolved when auto-routing).
         current = next((t for t in traces if t.success), None)
         if traces:
-            ctx.console.print(traces_table(traces, device_label, resolve))
-        ctx.console.print(stats_panel(stats, device_label, resolve, route=current))
+            ctx.console.print(traces_table(traces, device_label, resolve, device_hash))
+        ctx.console.print(
+            stats_panel(stats, device_label, resolve, route=current, device_hash=device_hash)
+        )
 
         summary: dict[str, Any] = {
             "target": stats.target,

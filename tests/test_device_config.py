@@ -69,6 +69,35 @@ def test_path_hash_mode_is_strict_enum() -> None:
         parse_value(get_spec("path_hash_mode"), "4")
 
 
+def test_highlighted_hash_highlights_path_hash_prefix() -> None:
+    """The full key is shown with only its path-hash prefix bytes highlighted."""
+    from meshtools.ui.widgets import highlighted_hash
+
+    pub = "aabbccddee" + "00" * 27
+    # mode 2 => 3-byte hashes => first 6 hex chars are the addressable prefix.
+    text = highlighted_hash(pub, prefix_bytes=3)
+    assert text.plain == pub  # the full key is shown
+    highlighted = [s for s in text.spans if s.style == "brand"]
+    assert len(highlighted) == 1
+    assert text.plain[highlighted[0].start : highlighted[0].end] == "aabbcc"
+
+
+def test_nodes_table_lists_us_first_with_full_keys() -> None:
+    """The nodes table puts our node first (name highlighted) with full keys."""
+    from meshtools.core.models import Contact
+    from meshtools.ui.widgets import nodes_table
+
+    contacts = [Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6")]
+    table = nodes_table("Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes=3)
+    # Two body rows: our node, then Alice.
+    names = [cell.plain if hasattr(cell, "plain") else str(cell) for cell in table.columns[0].cells]
+    assert names[0].startswith("Homestead")
+    assert "Alice" in names[1]
+    keys = list(table.columns[1].cells)
+    assert keys[0].plain == "aabbcc" + "00" * 29  # full key, not a short prefix
+    assert any(s.style == "brand" for s in keys[0].spans)  # prefix highlighted
+
+
 def test_non_strict_enum_accepts_unlisted_value() -> None:
     """multi_acks/adv_loc_policy list common values but still accept other ints."""
     spec = get_spec("multi_acks")

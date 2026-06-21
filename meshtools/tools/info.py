@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import typer
-from rich.table import Table
 
 from ..context import AppContext
 from .base import Tool, ToolResult, register
@@ -32,6 +31,7 @@ class InfoTool(Tool):
         """
         from ..core.device_config import build_snapshot
         from ..ui.config_editor import render_config
+        from ..ui.widgets import nodes_table
 
         device = await ctx.device()
         snapshot = await build_snapshot(device)
@@ -41,13 +41,13 @@ class InfoTool(Tool):
         # Render every current setting with a short explanation of each.
         render_config(ctx.console, snapshot, custom)
 
-        if contacts:
-            ctable = Table(title=f"Contacts ({len(contacts)})", border_style="muted")
-            ctable.add_column("Name", style="brand")
-            ctable.add_column("Key prefix", style="muted")
-            for c in contacts:
-                ctable.add_row(c.name, c.key_prefix or "[muted]?[/muted]")
-            ctx.console.print(ctable)
+        # List our own node (first, highlighted) and contacts, each with its full key and
+        # the path-hash prefix — the slice a forced path addresses — highlighted.
+        mode = snapshot.get("path_hash_mode")
+        prefix_bytes = (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
+        self_name = str(snapshot.get("name") or "this node")
+        self_key = str(snapshot.get("public_key") or "")
+        ctx.console.print(nodes_table(self_name, self_key, contacts, prefix_bytes))
 
         return ToolResult(
             summary={"name": snapshot.get("name"), "contacts": len(contacts)},
