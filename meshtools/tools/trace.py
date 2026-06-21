@@ -20,7 +20,7 @@ from .base import Tool, ToolResult, register
 
 #: Upper bound on traces per run — the per-trace table renders one column each, so
 #: this keeps the output readable and the radio's duty cycle in check.
-MAX_TRACES = 8
+MAX_TRACES = 9
 
 
 @register
