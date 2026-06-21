@@ -1,27 +1,8 @@
 {
   "permissions": {
-    "allow": [
-      "WebSearch",
-      "WebFetch(domain:pypi.org)",
-      "Bash(.venv/Scripts/python.exe -c \"import meshcore; print\\('meshcore', getattr\\(meshcore,'__version__','?'\\)\\)\")",
-      "Bash(.venv/Scripts/python.exe -m pytest -q)",
-      "Bash(git -C d:/vibe/MeshTools status)",
-      "Bash(git -C d:/vibe/MeshTools log --oneline -5)",
-      "Bash(.venv/Scripts/python.exe -m meshtools --mock config set radio_sf 99)",
-      "Bash(echo \"exit=$?\")",
-      "Bash(python -c \"import meshcore, os; print\\(os.path.dirname\\(meshcore.__file__\\)\\)\")",
-      "Bash(python -m meshtools trace --mock --target Alice --samples 4)",
-      "Bash(pip show *)",
-      "Bash(.venv/Scripts/python.exe -c \"import meshtools.ui.widgets, meshtools.tools.trace; print\\('ok'\\)\")",
-      "PowerShell(python -m pytest tests/test_skeleton.py -k \"trace or neighbor or flood\" -q)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest -q)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m meshtools devices 2>&1)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m meshtools info 2>&1)",
-      "PowerShell(foreach \\($p in 'COM26','COM16','COM17'\\) { Write-Output \"=== $p ===\"; .venv\\\\Scripts\\\\python.exe -m meshtools --port $p --quiet info 2>&1 | Select-Object -First 4 })",
-      "PowerShell(Get-CimInstance Win32_SerialPort | Where-Object { $_.DeviceID -eq 'COM11' } | Select-Object DeviceID, Description, Name | Format-List; Write-Output \"---\"; Get-Process | Where-Object { $_.Name -match 'meshcore|arduino|putty|python|node|serial|cu' } | Select-Object Id, ProcessName, MainWindowTitle | Format-Table -AutoSize)",
-      "PowerShell(foreach \\($id in 25324,30408\\) { try { Stop-Process -Id $id -Force -ErrorAction Stop; Write-Output \"killed $id\" } catch { Write-Output \"could not kill ${id}: $\\($_.Exception.Message\\)\" } }; Start-Sleep -Milliseconds 800; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Select-Object ProcessId | Format-Table -AutoSize)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m meshtools --quiet info 2>&1)",
-      "Bash(git commit -q -m ' *)"
+    "defaultMode": "dontAsk",
+    "additionalDirectories": [
+      "C:\\Users\\user\\.config\\meshtools\\output"
     ]
   }
 }
