@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from datetime import datetime
 
-from ..core.models import Hop, TraceResult, TraceStats, utcnow
+from ..core.models import Hop, TraceResult, TxLevelResult, utcnow
 from . import db
 
 
@@ -207,12 +207,15 @@ class Repository:
             timestamp=datetime.fromisoformat(row["created_at"]),
         )
 
-    def record_tx_sample(self, run_id: int, stats: TraceStats) -> None:
-        """Persist one robust TX-power sample from an optimization sweep.
+    def record_tx_sample(self, run_id: int, level: TxLevelResult) -> None:
+        """Persist one robust TX-power level from an optimization sweep.
+
+        The ``median_min_snr`` column stores this optimizer's headline metric — the
+        median SNR measured *at the target* — rather than a path bottleneck.
 
         Args:
             run_id: The owning run.
-            stats: Aggregated trace statistics for a single TX power level.
+            level: Aggregated result for a single TX power level.
         """
         self._conn.execute(
             "INSERT INTO tx_samples "
@@ -220,11 +223,11 @@ class Repository:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
-                stats.target,
-                stats.tx_power,
-                stats.median_min_snr,
-                stats.success_rate,
-                stats.samples,
+                level.stats.target,
+                level.tx_power,
+                level.target_snr,
+                level.success_rate,
+                level.samples,
                 utcnow().isoformat(),
             ),
         )

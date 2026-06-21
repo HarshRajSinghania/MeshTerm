@@ -1,8 +1,10 @@
-"""The ``tx-optimize`` tool: sweep transmit power and converge on the best setting.
+"""The ``tx-optimize`` tool: tune a remote node's TX power for the best signal at a target.
 
-Wraps :func:`meshtools.services.tx_optimizer.optimize_tx_power` with interactive prompts,
-a live progress bar, persistence of every level, an interactive HTML chart, and an opt-in
-apply step (changing the radio's TX power is a hardware change, so it is never implicit).
+You force a path (just like ``trace``) ending at the **target** node where SNR is
+measured. The node one hop *before* the target — one you hold admin rights on — is the
+node whose transmit power gets swept and tuned. Admin passwords are remembered between
+runs, progress streams live like a trace, and the winning power is written back to the
+node when the sweep finishes.
 """
 
 from __future__ import annotations
@@ -13,24 +15,29 @@ import questionary
 import typer
 
 from ..context import AppContext
-from ..core.connection import TX_POWER_MAX, TX_POWER_MIN
-from ..services import tx_optimizer
+from ..core.connection import DeviceCommandError
+from ..core.models import Contact
+from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import make_progress, tx_opt_summary, tx_opt_table
 from ..viz.tx_plot import render_tx_optimization
 from .base import Tool, ToolResult, register
 
+#: Trace count per TX level — kept to single digits so the radio's duty cycle stays sane
+#: and the per-level sweep finishes in reasonable time.
+MAX_SAMPLES = 9
+
 
 @register
 class TxOptimizeTool(Tool):
-    """Find the transmit power with the strongest, most reliable signal to a target."""
+    """Tune a remote node's TX power for the strongest, most reliable signal at a target."""
 
     name = "tx-optimize"
-    help = "Sweep TX power and converge on the value with the best signal."
+    help = "Tune a remote node's TX power for the best signal at a target along a path."
     category = "Optimization"
     order = 10
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Interactively gather target, range, sampling, and apply choices.
+        """Interactively gather the path, sampling, range, and apply choices.
 
         Args:
             ctx: Shared application context.
@@ -41,89 +48,127 @@ class TxOptimizeTool(Tool):
         device = await ctx.device()
         contacts = await device.get_contacts()
         choices = [c.name for c in contacts]
-        prompt = "Target node to optimize against:"
-        # ``autocomplete`` requires a non-empty choice list; with no known contacts fall
-        # back to a free-text entry so the user can still type a name or key prefix.
+
+        path_prompt = (
+            "Path to the target (comma-separated contacts/hex, ending at the target;\n"
+            "the node just before the target is the one we'll tune):"
+        )
+        validate_path = lambda v: _validate_link_path(v, contacts)  # noqa: E731
         if choices:
-            target = await questionary.autocomplete(
-                prompt, choices=choices, ignore_case=True
+            path_spec = await questionary.autocomplete(
+                path_prompt, choices=choices, ignore_case=True, validate=validate_path
             ).ask_async()
         else:
-            target = await questionary.text(prompt).ask_async()
-        if not target:
+            path_spec = await questionary.text(path_prompt, validate=validate_path).ask_async()
+        if not path_spec:
             return None
 
         samples = await questionary.text(
-            "Traces per TX level:", default="5", validate=_positive_int
+            f"Traces per TX level? (1-{MAX_SAMPLES})", default="3", validate=_is_valid_sample_count
         ).ask_async()
         if samples is None:
             return None
+        tx_min = await questionary.text(
+            "Lowest TX power to try:", default=str(ctx.settings.tx_opt_min), validate=_is_int
+        ).ask_async()
+        if tx_min is None:
+            return None
+        tx_max = await questionary.text(
+            "Highest TX power to try:", default=str(ctx.settings.tx_opt_max), validate=_is_int
+        ).ask_async()
+        if tx_max is None:
+            return None
         step = await questionary.text(
-            "Coarse step:", default="3", validate=_positive_int
+            "Coarse step:", default="3", validate=_is_valid_sample_count
         ).ask_async()
         if step is None:
             return None
-        refine = await questionary.confirm(
-            "Refine around the best level?", default=True
-        ).ask_async()
         apply = await questionary.confirm(
-            "Apply the winning TX power to the device afterward?", default=False
+            "Set the winning TX power on the node afterward?", default=True
         ).ask_async()
+        if apply is None:
+            return None
 
         return {
-            "target": target.strip(),
+            "path": path_spec.strip(),
             "samples": int(samples),
+            "tx_min": int(tx_min),
+            "tx_max": int(tx_max),
             "step": int(step),
-            "refine": bool(refine),
             "apply": bool(apply),
-            "tx_min": TX_POWER_MIN,
-            "tx_max": TX_POWER_MAX,
             "viz": True,
         }
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Run the sweep, persist levels, render results, and optionally apply the winner.
+        """Resolve the link, log in, sweep TX power, render results, and apply the winner.
 
         Args:
             ctx: Shared application context.
-            params: ``target``, ``samples``, ``step``, ``refine``, ``apply``,
-                ``tx_min``, ``tx_max``, ``viz``, and the injected ``_run_id``.
+            params: ``path``, ``samples``, ``tx_min``, ``tx_max``, ``step``, ``apply``,
+                optional ``password``/``viz``, and the injected ``_run_id``.
 
         Returns:
-            A :class:`ToolResult` with the optimum and the chart path.
+            A :class:`ToolResult` with the optimum and any chart path.
         """
-        target = params["target"]
         run_id = params["_run_id"]
         device = await ctx.device()
+        contacts = await device.get_contacts()
+
+        # Resolve the forced path to hashes, then pull out the target (last hop) and the
+        # admin node we tune (the hop before it).
+        path = trace_runner.parse_trace_path(params["path"], contacts)
+        admin_node, target_label = _resolve_link(path, contacts)
+
+        samples = max(1, min(MAX_SAMPLES, int(params.get("samples", 3))))
+        if int(params.get("samples", 3)) > MAX_SAMPLES:
+            ctx.console.print(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
+
+        password = await self._resolve_password(ctx, admin_node, params)
+        ctx.console.print(
+            f"[dim]logging in to[/dim] [brand]{admin_node.name}[/brand][dim]…[/dim]"
+        )
+        if not await device.admin_login(admin_node, password):
+            ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
+            raise DeviceCommandError(
+                f"admin login to {admin_node.name!r} failed (wrong password?). "
+                "The saved password was cleared; re-run to enter a new one."
+            )
+        ctx.admin_store.remember(admin_node, password)
+
+        ctx.console.print(
+            f"[dim]tuning[/dim] [brand]{admin_node.name}[/brand] "
+            f"[dim]→ target[/dim] [brand]{target_label}[/brand]  "
+            f"[dim]via[/dim] [muted]{path}[/muted]"
+        )
 
         with make_progress(ctx.console) as progress:
-            task = progress.add_task(f"optimizing TX -> {target}", total=None)
+            task = progress.add_task(f"optimizing TX -> {target_label}", total=None)
 
             def on_level(done: int, total: int, level) -> None:  # noqa: ANN001
                 progress.update(
                     task, total=total, completed=done,
                     description=f"TX {level.tx_power:>2}  "
-                    f"SNR {_fmt_snr(level.stats.median_min_snr)}",
+                    f"SNR {_fmt_snr(level.target_snr)}  {level.success_rate:.0%}",
                 )
 
             result = await tx_optimizer.optimize_tx_power(
                 device,
-                target,
-                tx_min=int(params.get("tx_min", TX_POWER_MIN)),
-                tx_max=int(params.get("tx_max", TX_POWER_MAX)),
+                target_label,
+                admin_node,
+                path,
+                tx_min=int(params.get("tx_min", ctx.settings.tx_opt_min)),
+                tx_max=int(params.get("tx_max", ctx.settings.tx_opt_max)),
                 coarse_step=int(params.get("step", 3)),
-                samples_per_level=int(params.get("samples", 5)),
-                refine=bool(params.get("refine", True)),
+                samples_per_level=samples,
+                apply=bool(params.get("apply", True)),
                 cooldown_s=ctx.settings.trace_cooldown_s,
                 on_level=on_level,
-                persist_level=lambda stats: ctx.repo.record_tx_sample(run_id, stats),
+                persist_level=lambda lv: ctx.repo.record_tx_sample(run_id, lv),
                 persist_trace=lambda t: ctx.repo.record_trace(run_id, t),
             )
 
-        if params.get("apply"):
-            await device.set_tx_power(result.best_tx)
-            result.applied = True
-            ctx.log.info("applied TX power %s to device", result.best_tx)
+        if result.applied:
+            ctx.log.info("set TX power %s on %s", result.best_tx, admin_node.name)
 
         ctx.console.print(tx_opt_table(result))
         ctx.console.print(tx_opt_summary(result))
@@ -131,23 +176,60 @@ class TxOptimizeTool(Tool):
         artifacts: list[str] = []
         if params.get("viz", True):
             assert ctx.settings.output_dir is not None
-            path = render_tx_optimization(result, ctx.settings.output_dir)
-            artifacts.append(str(path))
+            path_out = render_tx_optimization(result, ctx.settings.output_dir)
+            artifacts.append(str(path_out))
 
+        applied_note = (
+            f"  [ok](set on {admin_node.name})[/ok]" if result.applied else ""
+        )
         return ToolResult(
             summary={
-                "target": target,
+                "target": result.target,
+                "admin_node": result.admin_node,
+                "path": result.path,
                 "best_tx": result.best_tx,
-                "best_score": round(result.best_score, 3),
+                "best_snr": result.best_snr,
+                "best_success_rate": round(result.best_success_rate, 3),
                 "original_tx": result.original_tx,
                 "applied": result.applied,
                 "levels_measured": len(result.levels),
             },
-            message=f"[ok]✓[/ok] optimum TX for [brand]{target}[/brand] is "
-            f"[brand]{result.best_tx}[/brand]"
-            + ("  [ok](applied)[/ok]" if result.applied else ""),
+            message=f"[ok]✓[/ok] optimal TX for [brand]{admin_node.name}[/brand] → "
+            f"[brand]{result.target}[/brand] is [brand]{result.best_tx}[/brand]"
+            + applied_note,
             artifacts=artifacts,
         )
+
+    async def _resolve_password(
+        self, ctx: AppContext, admin_node: Contact, params: dict[str, Any]
+    ) -> str:
+        """Find the admin password: explicit flag, remembered, or an interactive prompt.
+
+        Args:
+            ctx: Shared application context.
+            admin_node: The node we're about to log in to.
+            params: Tool params (may carry an explicit ``password``).
+
+        Returns:
+            The password to log in with.
+
+        Raises:
+            DeviceCommandError: If no password is available and we can't prompt (JSON mode).
+        """
+        password = params.get("password") or ctx.admin_store.get(admin_node)
+        if password:
+            return str(password)
+        if ctx.json_output:
+            raise DeviceCommandError(
+                f"no admin password for {admin_node.name!r}; pass --password or run once "
+                "interactively to store it."
+            )
+        entered = await questionary.password(
+            f"Admin password for {admin_node.name}:"
+        ).ask_async()
+        if not entered:
+            raise DeviceCommandError("an admin password is required to tune a remote node.")
+        return entered
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``tx-optimize`` subcommand.
@@ -159,36 +241,138 @@ class TxOptimizeTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _tx_optimize(
-            target: str = typer.Option(..., "--target", "-t", help="Target node."),
-            samples: int = typer.Option(5, "--samples", "-n", help="Traces per level."),
+            path: str = typer.Option(
+                ..., "--path", "-p",
+                help="Forced path ending at the target (e.g. 'Repeater,Target' or '3d,f2').",
+            ),
+            samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level."),
             step: int = typer.Option(3, "--step", help="Coarse sweep step."),
-            tx_min: int = typer.Option(TX_POWER_MIN, "--min", help="Lowest TX power."),
-            tx_max: int = typer.Option(TX_POWER_MAX, "--max", help="Highest TX power."),
-            refine: bool = typer.Option(True, "--refine/--no-refine", help="Local refine."),
-            apply: bool = typer.Option(False, "--apply", help="Write the winner to device."),
+            tx_min: Optional[int] = typer.Option(None, "--min", help="Lowest TX power."),
+            tx_max: Optional[int] = typer.Option(None, "--max", help="Highest TX power."),
+            password: Optional[str] = typer.Option(
+                None, "--password", help="Admin password (else remembered/prompted)."
+            ),
+            apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner."),
             viz: bool = typer.Option(True, "--viz/--no-viz", help="Generate HTML chart."),
         ) -> None:
-            run_tool_command(
-                self,
-                {
-                    "target": target, "samples": samples, "step": step,
-                    "tx_min": tx_min, "tx_max": tx_max, "refine": refine,
-                    "apply": apply, "viz": viz,
-                },
-            )
+            tool_params: dict[str, Any] = {
+                "path": path, "samples": samples, "step": step,
+                "apply": apply, "viz": viz,
+            }
+            if tx_min is not None:
+                tool_params["tx_min"] = tx_min
+            if tx_max is not None:
+                tool_params["tx_max"] = tx_max
+            if password is not None:
+                tool_params["password"] = password
+            run_tool_command(self, tool_params)
 
 
-def _positive_int(value: str) -> bool | str:
-    """Validate a positive-integer questionary answer.
+def _resolve_link(path: str, contacts: list[Contact]) -> tuple[Contact, str]:
+    """Split a forced path into the admin node we tune and the target's display label.
+
+    Args:
+        path: The comma-separated hash path (output of ``parse_trace_path``).
+        contacts: Known contacts, used to map hashes back to names/keys.
+
+    Returns:
+        ``(admin_node, target_label)`` — the second-to-last hop as a full
+        :class:`Contact` (needed for login), and a friendly name for the last hop.
+
+    Raises:
+        DeviceCommandError: If the path has fewer than two hops, or the admin hop can't
+            be matched to a known contact carrying a public key.
+    """
+    hops = [h for h in path.split(",") if h]
+    if len(hops) < 2:
+        raise DeviceCommandError(
+            "the path needs at least two hops: the node to tune and the target after it "
+            "(e.g. 'AdminNode,Target')."
+        )
+    admin = _contact_for_hash(hops[-2], contacts)
+    if admin is None or not (admin.public_key or "").strip():
+        raise DeviceCommandError(
+            f"the node before the target ({hops[-2]}) isn't a known contact with a public "
+            "key, so we can't log in to tune it. Receive an advert from it first."
+        )
+    target = _contact_for_hash(hops[-1], contacts)
+    return admin, (target.name if target else hops[-1])
+
+
+def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Optional[Contact]:
+    """Return the contact whose key matches a path-hop hash, if any.
+
+    Args:
+        hash_hex: A path hop hash (a leading slice of the node's public key).
+        contacts: Known contacts to match against.
+
+    Returns:
+        The matching :class:`Contact`, or ``None``.
+    """
+    needle = hash_hex.lower().removeprefix("0x")
+    for c in contacts:
+        pub = (c.public_key or "").lower().removeprefix("0x")
+        prefix = (c.key_prefix or "").lower().removeprefix("0x")
+        if pub.startswith(needle):
+            return c
+        if prefix and (prefix.startswith(needle) or needle.startswith(prefix)):
+            return c
+    return None
+
+
+def _validate_link_path(value: str, contacts: list[Contact]) -> bool | str:
+    """Validate the interactive path entry: parseable and at least two hops.
+
+    Args:
+        value: The raw comma-separated path entry.
+        contacts: Known contacts used to resolve names.
+
+    Returns:
+        ``True`` if valid, otherwise an error message string.
+    """
+    if not value.strip():
+        return "Enter a path ending at the target node."
+    try:
+        path = trace_runner.parse_trace_path(value, contacts)
+    except ValueError as exc:
+        return str(exc)
+    if len([h for h in path.split(",") if h]) < 2:
+        return "Need at least two hops: the node to tune, then the target."
+    return True
+
+
+def _is_valid_sample_count(value: str) -> bool | str:
+    """Validate a positive count in ``1..MAX_SAMPLES`` for a questionary text answer.
 
     Args:
         value: Raw input.
 
     Returns:
-        ``True`` if valid, else an error message.
+        ``True`` if valid, otherwise an error message string.
     """
     try:
-        return int(value) > 0 or "Enter a number greater than zero."
+        count = int(value)
+    except ValueError:
+        return "Enter a whole number."
+    if count < 1:
+        return "Enter a number greater than zero."
+    if count > MAX_SAMPLES:
+        return f"Maximum {MAX_SAMPLES}."
+    return True
+
+
+def _is_int(value: str) -> bool | str:
+    """Validate that a questionary answer is a whole number.
+
+    Args:
+        value: Raw input.
+
+    Returns:
+        ``True`` if valid, otherwise an error message string.
+    """
+    try:
+        int(value)
+        return True
     except ValueError:
         return "Enter a whole number."
 

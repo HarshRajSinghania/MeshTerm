@@ -64,6 +64,8 @@ class Settings:
         default_profile: Profile used when ``--profile`` is omitted.
         profiles: Mapping of profile name to :class:`DeviceProfile`.
         trace_cooldown_s: Minimum delay between transmit bursts (duty-cycle safety).
+        tx_opt_min: Lowest TX power explored by the remote-admin optimizer (dBm).
+        tx_opt_max: Highest TX power explored by the remote-admin optimizer (dBm).
     """
 
     config_dir: Path = field(default_factory=default_config_dir)
@@ -72,6 +74,8 @@ class Settings:
     default_profile: Optional[str] = None
     profiles: dict[str, DeviceProfile] = field(default_factory=dict)
     trace_cooldown_s: float = 1.0
+    tx_opt_min: int = 12
+    tx_opt_max: int = 28
 
     def __post_init__(self) -> None:
         """Derive dependent paths that were not explicitly provided."""
@@ -130,4 +134,6 @@ class Settings:
             default_profile=data.get("default_profile"),
             profiles=profiles,
             trace_cooldown_s=float(data.get("trace_cooldown_s", 1.0)),
+            tx_opt_min=int(data.get("tx_opt_min", 12)),
+            tx_opt_max=int(data.get("tx_opt_max", 28)),
         )

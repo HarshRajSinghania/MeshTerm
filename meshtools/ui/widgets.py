@@ -458,23 +458,30 @@ def tx_opt_table(result: TxOptResult) -> Table:
         result: The optimization result to display.
 
     Returns:
-        A Rich :class:`Table` of TX level, SNR, success rate, and score.
+        A Rich :class:`Table` of TX level, target SNR, success rate, and sample count.
     """
-    table = Table(title=f"TX sweep -> {result.target}", border_style="muted", expand=False)
+    table = Table(
+        title=f"TX sweep · {result.admin_node} -> {result.target}",
+        border_style="muted",
+        expand=False,
+    )
     table.add_column("TX", justify="right")
-    table.add_column("median min SNR", justify="right")
+    table.add_column("target SNR", justify="right")
     table.add_column("success", justify="right")
-    table.add_column("score", justify="right")
+    table.add_column("traces", justify="right")
     for lv in result.sorted_by_tx():
         is_best = lv.tx_power == result.best_tx
         marker = "[ok]★[/ok] " if is_best else "  "
-        snr = lv.stats.median_min_snr
+        snr = lv.target_snr
         snr_cell = Text(f"{snr:+.1f}", style=snr_style(snr)) if snr is not None else Text("—")
-        score_txt = f"{lv.score:.2f}" if lv.score != float("-inf") else "—"
+        # Highlight anything short of a perfect success rate — reliability comes first.
+        rate = lv.success_rate
+        rate_style = "ok" if rate >= 1.0 else ("warn" if rate > 0 else "err")
+        rate_cell = Text(f"{rate:.0%}", style=rate_style)
         tx_cell = f"{marker}{lv.tx_power}"
         row_style = "ok" if is_best else None
         table.add_row(
-            tx_cell, snr_cell, f"{lv.stats.success_rate:.0%}", score_txt, style=row_style
+            tx_cell, snr_cell, rate_cell, f"{lv.successes}/{lv.samples}", style=row_style
         )
     return table
 
@@ -488,13 +495,19 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
     Returns:
         A Rich :class:`Panel` stating the chosen optimum and whether it was applied.
     """
-    best = result.best_level
-    snr = best.stats.median_min_snr if best else None
+    snr = result.best_snr
     snr_text = Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("n/a")
-    applied = "[ok]applied to device[/ok]" if result.applied else "[muted]not applied[/muted]"
+    applied = (
+        f"[ok]applied to {result.admin_node}[/ok]"
+        if result.applied
+        else "[muted]not applied[/muted]"
+    )
     body = Text.assemble(
+        ("tuning node   ", "muted"), (f"{result.admin_node}\n", "brand"),
+        ("target        ", "muted"), (f"{result.target}\n", "brand"),
         ("optimal TX    ", "muted"), (f"{result.best_tx}", "brand"), ("\n", ""),
-        ("at SNR        ", "muted"), snr_text, ("\n", ""),
+        ("target SNR    ", "muted"), snr_text, ("\n", ""),
+        ("reliability   ", "muted"), (f"{result.best_success_rate:.0%}\n", ""),
         ("previous TX   ", "muted"),
         (f"{result.original_tx if result.original_tx is not None else '?'}\n", ""),
         ("status        ", "muted"), Text.from_markup(applied),

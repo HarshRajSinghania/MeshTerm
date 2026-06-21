@@ -12,6 +12,7 @@ from typing import Optional
 
 from rich.console import Console
 
+from .core.admin_store import AdminStore
 from .core.config import DeviceProfile, Settings
 from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
@@ -31,6 +32,7 @@ class AppContext:
         repo: Database repository.
         profile: Active device profile, if one was resolved.
         device_store: Store for the remembered "last known good" device.
+        admin_store: Store for remembered remote-node admin passwords.
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -45,6 +47,7 @@ class AppContext:
     settings: Settings
     repo: Repository
     device_store: DeviceStore
+    admin_store: AdminStore
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None

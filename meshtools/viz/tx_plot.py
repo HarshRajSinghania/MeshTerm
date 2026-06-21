@@ -1,12 +1,11 @@
-"""Plotly renderer for TX-power optimization sweeps.
+"""Plotly renderer for remote-admin TX-power optimization sweeps.
 
-Produces a self-contained, interactive HTML chart: reliability-weighted score and median
-bottleneck SNR versus TX power, with the chosen optimum marked.
+Produces a self-contained, interactive HTML chart: median SNR measured *at the target*
+and trace success rate versus the admin node's TX power, with the chosen optimum marked.
 """
 
 from __future__ import annotations
 
-import math
 from datetime import datetime
 from pathlib import Path
 
@@ -16,7 +15,6 @@ from ..core.models import TxOptResult
 
 _TEMPLATE = "plotly_dark"
 _BRAND = "#5eead4"
-_ACCENT = "#818cf8"
 _MUTED = "#94a3b8"
 
 
@@ -32,23 +30,16 @@ def render_tx_optimization(result: TxOptResult, output_dir: Path) -> Path:
     """
     levels = result.sorted_by_tx()
     tx = [lv.tx_power for lv in levels]
-    snr = [lv.stats.median_min_snr for lv in levels]
-    score = [lv.score if math.isfinite(lv.score) else None for lv in levels]
-    success = [lv.stats.success_rate * 100 for lv in levels]
+    snr = [lv.target_snr for lv in levels]
+    success = [lv.success_rate * 100 for lv in levels]
 
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=tx, y=snr, name="median min SNR (dB)", mode="lines+markers",
+            x=tx, y=snr, name="target SNR (dB)", mode="lines+markers",
             line=dict(color=_BRAND, width=3), marker=dict(size=8),
+            connectgaps=False,
             hovertemplate="TX %{x}<br>SNR %{y:+.1f} dB<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=tx, y=score, name="score", mode="lines+markers",
-            line=dict(color=_ACCENT, width=2, dash="dot"), marker=dict(size=6),
-            hovertemplate="TX %{x}<br>score %{y:.2f}<extra></extra>",
         )
     )
     fig.add_trace(
@@ -59,12 +50,11 @@ def render_tx_optimization(result: TxOptResult, output_dir: Path) -> Path:
         )
     )
 
-    best = result.best_level
-    if best is not None and best.stats.median_min_snr is not None:
+    if result.best_snr is not None:
         fig.add_vline(x=result.best_tx, line=dict(color="#4ade80", width=2, dash="dash"))
         fig.add_trace(
             go.Scatter(
-                x=[result.best_tx], y=[best.stats.median_min_snr],
+                x=[result.best_tx], y=[result.best_snr],
                 name=f"optimum (TX {result.best_tx})", mode="markers",
                 marker=dict(color="#4ade80", size=16, symbol="star"),
                 hovertemplate=f"optimum<br>TX {result.best_tx}"
@@ -75,12 +65,12 @@ def render_tx_optimization(result: TxOptResult, output_dir: Path) -> Path:
     fig.update_layout(
         template=_TEMPLATE,
         title=dict(
-            text=f"TX-power optimization — {result.target}"
+            text=f"TX-power optimization — {result.admin_node} → {result.target}"
             f"  ·  optimum TX {result.best_tx}",
             font=dict(color=_BRAND),
         ),
-        xaxis=dict(title="TX power", dtick=1),
-        yaxis=dict(title="SNR (dB) / score"),
+        xaxis=dict(title="admin-node TX power", dtick=1),
+        yaxis=dict(title="target SNR (dB)"),
         yaxis2=dict(
             title="success rate (%)", overlaying="y", side="right",
             range=[0, 105], showgrid=False,

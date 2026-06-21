@@ -23,6 +23,13 @@ from .models import Contact, Hop, TraceResult, utcnow
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
 
+#: Default range explored when tuning a *remote* repeater's transmit power. Remote nodes
+#: (e.g. high-gain repeaters) typically run hotter than the local companion, so this band
+#: differs from the local ``TX_POWER_MIN``/``TX_POWER_MAX`` clamp. Both bounds are
+#: user-configurable (see :class:`~meshtools.core.config.Settings`).
+REMOTE_TX_MIN = 12
+REMOTE_TX_MAX = 28
+
 
 class DeviceCommandError(RuntimeError):
     """A device command failed in a recoverable, user-facing way.
@@ -74,6 +81,44 @@ class Device(ABC):
 
         Args:
             value: TX power level, clamped by the caller to the device's valid range.
+        """
+
+    # -- remote administration (tuning a node we have admin rights on) -----------
+
+    @abstractmethod
+    async def admin_login(self, node: Contact, password: str) -> bool:
+        """Authenticate as administrator on a remote node.
+
+        Args:
+            node: The contact to log in to. Its ``public_key`` addresses the node.
+            password: The node's admin password.
+
+        Returns:
+            ``True`` if the node accepted the login, ``False`` otherwise (e.g. a wrong
+            password or no response).
+        """
+
+    @abstractmethod
+    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:
+        """Read a remote (admin) node's current transmit power.
+
+        Args:
+            node: The contact to query (must already be logged in).
+
+        Returns:
+            The node's TX power in dBm, or ``None`` if it could not be read.
+        """
+
+    @abstractmethod
+    async def set_remote_tx_power(self, node: Contact, value: int) -> None:
+        """Set a remote (admin) node's transmit power.
+
+        Args:
+            node: The contact to adjust (must already be logged in).
+            value: TX power in dBm.
+
+        Raises:
+            DeviceCommandError: If the node rejected the command.
         """
 
     @abstractmethod
@@ -339,6 +384,86 @@ class MeshCoreDevice(Device):
         mc = self._require()
         await mc.commands.set_tx_power(value)
 
+    @staticmethod
+    def _node_pubkey(node: Contact) -> str:
+        """Return a contact's full public key for remote addressing.
+
+        Args:
+            node: The contact to address.
+
+        Returns:
+            The lowercased hex public key (``0x`` stripped).
+
+        Raises:
+            DeviceCommandError: If the contact carries no public key, so it cannot be
+                addressed for login/admin commands.
+        """
+        pub = (node.public_key or "").lower().removeprefix("0x")
+        if not pub:
+            raise DeviceCommandError(
+                f"contact {node.name!r} has no public key on this device, so it can't be "
+                "logged in to for admin commands. Receive an advert from it first."
+            )
+        return pub
+
+    async def admin_login(self, node: Contact, password: str) -> bool:  # noqa: D102
+        from meshcore import EventType
+
+        mc = self._require()
+        pub = self._node_pubkey(node)
+        event = await mc.commands.send_login_sync(pub, password)
+        # ``send_login_sync`` returns the LOGIN_SUCCESS event, or ``None``/an ERROR or
+        # LOGIN_FAILED event when the node refused (typically a wrong password).
+        if event is None:
+            return False
+        etype = getattr(event, "type", None)
+        if etype in (EventType.ERROR, EventType.LOGIN_FAILED):
+            return False
+        return True
+
+    async def _send_admin_cmd(self, node: Contact, cmd: str, *, timeout: float = 8.0):
+        """Send a CLI command to a logged-in remote node and await its reply.
+
+        The companion acknowledges the send immediately (``MSG_SENT``); the node's
+        textual reply arrives later as a ``CONTACT_MSG_RECV`` event. We return that
+        reply text (or ``None`` if none arrived before ``timeout``).
+
+        Args:
+            node: The remote contact (must already be logged in).
+            cmd: The repeater CLI command, e.g. ``"set tx 20"``.
+            timeout: Seconds to wait for the node's reply.
+
+        Returns:
+            The reply text, or ``None`` if the node did not answer in time.
+
+        Raises:
+            DeviceCommandError: If the companion rejected the send outright.
+        """
+        from meshcore import EventType
+
+        mc = self._require()
+        pub = self._node_pubkey(node)
+        sent = await mc.commands.send_cmd(pub, cmd)
+        if sent is not None and getattr(sent, "is_error", lambda: False)():
+            raise DeviceCommandError(
+                f"failed to send admin command {cmd!r} to {node.name!r}: "
+                f"{getattr(sent, 'payload', {})}"
+            )
+        reply = await mc.wait_for_event(EventType.CONTACT_MSG_RECV, timeout=timeout)
+        if reply is None:
+            return None
+        payload = getattr(reply, "payload", {}) or {}
+        return str(payload.get("text", payload.get("msg", "")))
+
+    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
+        reply = await self._send_admin_cmd(node, "get tx")
+        return _parse_tx_reply(reply)
+
+    async def set_remote_tx_power(self, node: Contact, value: int) -> None:  # noqa: D102
+        # The reply ("ok"/echoed value) is best-effort confirmation; absence isn't fatal
+        # since some firmware answers tersely or drops the ack under duty-cycle limits.
+        await self._send_admin_cmd(node, f"set tx {value}")
+
     async def run_trace(  # noqa: D102 - inherited docstring
         self,
         target: str,
@@ -580,23 +705,40 @@ class MockDevice(Device):
         optimal_tx: The TX power at which the simulated link peaks.
     """
 
-    def __init__(self, seed: int = 1234, optimal_tx: int = 14) -> None:
+    def __init__(
+        self,
+        seed: int = 1234,
+        optimal_tx: int = 14,
+        optimal_remote_tx: int = 20,
+        admin_password: str = "admin",
+    ) -> None:
         """Initialize the simulator.
 
         Args:
             seed: RNG seed for reproducible measurement noise.
-            optimal_tx: TX power level at which simulated SNR is maximized.
+            optimal_tx: Local TX power at which the simulated *bottleneck* SNR peaks.
+            optimal_remote_tx: Remote-node TX power at which the simulated SNR *at the
+                target* peaks (what the remote-admin optimizer converges on).
+            admin_password: Password the simulated remote nodes accept for admin login.
         """
         self.optimal_tx = optimal_tx
+        self.optimal_remote_tx = optimal_remote_tx
+        self._admin_password = admin_password
         self._rng = random.Random(seed)
         self._tx_power = 20
         self._connected = False
         self._contacts = [
-            Contact(name="Yagi-Repeater", key_prefix="a1b2c3d4"),
-            Contact(name="Local-Repeater", key_prefix="b2c3d4e5"),
-            Contact(name="Observer-Bot", key_prefix="c3d4e5f6"),
-            Contact(name="Alice", key_prefix="d4e5f6a7"),
+            Contact(name="Yagi-Repeater", public_key=_mock_pub("a1b2c3d4"), key_prefix="a1b2c3d4"),
+            Contact(name="Local-Repeater", public_key=_mock_pub("b2c3d4e5"), key_prefix="b2c3d4e5"),
+            Contact(name="Observer-Bot", public_key=_mock_pub("c3d4e5f6"), key_prefix="c3d4e5f6"),
+            Contact(name="Alice", public_key=_mock_pub("d4e5f6a7"), key_prefix="d4e5f6a7"),
         ]
+        # Remote-admin simulation: which nodes we're "logged in" to, and each tuned
+        # node's transmit power keyed by full public key. ``_default_remote_tx`` is the
+        # assumed power before the optimizer first writes one.
+        self._admin_sessions: set[str] = set()
+        self._remote_tx: dict[str, int] = {}
+        self._default_remote_tx = 20
         # Mutable configuration state, keyed exactly like the real SELF_INFO payload so the
         # settings registry behaves identically on the simulator and on hardware.
         self._info: dict = {
@@ -643,6 +785,50 @@ class MockDevice(Device):
 
     async def set_tx_power(self, value: int) -> None:  # noqa: D102 - inherited docstring
         self._tx_power = value
+
+    async def admin_login(self, node: Contact, password: str) -> bool:  # noqa: D102
+        await asyncio.sleep(0)
+        if password != self._admin_password:
+            return False
+        self._admin_sessions.add(self._mock_key(node))
+        return True
+
+    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
+        key = self._mock_key(node)
+        if key not in self._admin_sessions:
+            return None
+        return self._remote_tx.get(key, self._default_remote_tx)
+
+    async def set_remote_tx_power(self, node: Contact, value: int) -> None:  # noqa: D102
+        key = self._mock_key(node)
+        if key not in self._admin_sessions:
+            raise DeviceCommandError(
+                f"not logged in to {node.name!r}; call admin_login first."
+            )
+        self._remote_tx[key] = value
+
+    @staticmethod
+    def _mock_key(node: Contact) -> str:
+        """Return the lookup key for a remote node (its public key, else key prefix)."""
+        return (node.public_key or node.key_prefix or node.name).lower().removeprefix("0x")
+
+    def _remote_tx_for(self, hop_hex: str) -> int:
+        """Resolve the simulated remote TX power for a forced-path hop hash.
+
+        The optimizer stores a node's power under its full public key; a trace addresses
+        it by a shorter hash prefix, so match in either direction.
+
+        Args:
+            hop_hex: The forced-path hop hash (hex).
+
+        Returns:
+            The node's simulated TX power, or the default if none was set.
+        """
+        h = hop_hex.lower()
+        for key, tx in self._remote_tx.items():
+            if key.startswith(h) or h.startswith(key):
+                return tx
+        return self._default_remote_tx
 
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
         return dict(self._tuning)
@@ -733,6 +919,27 @@ class MockDevice(Device):
         peak = 8.0 - 10.0 * (offset**2)
         return peak - 2.5 * hop_index
 
+    def _expected_remote_snr(self, remote_tx: int) -> float:
+        """Model the SNR the target receives from the admin node it sits behind.
+
+        An inverted-U in the admin node's TX power: too low and the target barely hears
+        it, too high and the target's front end saturates. The peak sits at
+        ``optimal_remote_tx`` so the remote-admin optimizer has a unimodal-with-noise
+        curve to converge on.
+
+        Args:
+            remote_tx: The admin node's transmit power.
+
+        Returns:
+            The noise-free expected SNR in dB at the target.
+        """
+        # Curvature is steep enough that the band edges fall below the ~-12 dB drop
+        # threshold, so traces start failing there — giving the optimizer a real
+        # reliability gradient (not just an SNR one) to honor reliability-first.
+        span = (REMOTE_TX_MAX - REMOTE_TX_MIN) / 2
+        offset = (remote_tx - self.optimal_remote_tx) / span
+        return 9.0 - 24.0 * (offset**2)
+
     async def run_trace(  # noqa: D102 - inherited docstring
         self,
         target: str,
@@ -747,7 +954,13 @@ class MockDevice(Device):
         depth = len(forced) if forced else self._rng.randint(1, 3)
         hops: list[Hop] = []
         for i in range(depth):
-            expected = self._expected_snr(i)
+            # The final forced hop is the target; the SNR it reports is the link from the
+            # *previous* (admin-tuned) node, so it tracks that node's remote TX power.
+            # All other hops follow the local TX-power model.
+            if forced is not None and i == depth - 1 and depth >= 2:
+                expected = self._expected_remote_snr(self._remote_tx_for(forced[i - 1]))
+            else:
+                expected = self._expected_snr(i)
             snr = expected + self._rng.gauss(0, 1.2)  # measurement noise
             node = forced[i] if forced else f"hop{i}"
             hops.append(Hop(index=i, node=node, snr=round(snr, 1)))
@@ -790,6 +1003,39 @@ def parse_trace_hops(payload: dict) -> list[Hop]:
             continue
         hops.append(Hop(index=len(hops), node=node.get("hash"), snr=float(node["snr"])))
     return hops
+
+
+def _mock_pub(prefix: str) -> str:
+    """Build a 32-byte mock public key from a short hex prefix (simulator only).
+
+    Args:
+        prefix: Leading hex digits identifying the node.
+
+    Returns:
+        A 64-hex-character (32-byte) key beginning with ``prefix``.
+    """
+    return prefix + "0" * (64 - len(prefix))
+
+
+def _parse_tx_reply(reply: Optional[str]) -> Optional[int]:
+    """Extract a TX-power integer from a repeater's ``get tx`` reply text.
+
+    Repeater firmware answers tersely and inconsistently across versions (e.g.
+    ``"tx: 20"``, ``"TX power = 20 dBm"``, or just ``"20"``), so pull the first signed
+    integer out of the reply rather than matching a fixed format.
+
+    Args:
+        reply: The node's reply text, or ``None`` if it did not answer.
+
+    Returns:
+        The parsed TX power, or ``None`` if the reply was empty or carried no number.
+    """
+    if not reply:
+        return None
+    import re
+
+    match = re.search(r"-?\d+", reply)
+    return int(match.group()) if match else None
 
 
 def clamp_tx_power(value: int) -> int:

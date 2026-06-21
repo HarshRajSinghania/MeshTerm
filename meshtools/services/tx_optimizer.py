@@ -1,113 +1,198 @@
-"""TX-power optimization.
+"""Remote-admin TX-power optimization.
 
-The transmit-power response is non-monotonic: too low and the signal sits in the noise
-floor, too high and the receiver saturates. The optimum is therefore an interior peak,
-and trace measurements are noisy, so this module uses a robust two-phase search:
+This tunes the transmit power of a *remote* node we have admin rights on — the node
+sitting one hop before a chosen target — to maximize the signal the **target** receives
+from it. We force a path (exactly like the trace tool), so every measurement exercises the
+same admin-node→target link, and read the SNR the target reports at the end of that path.
 
-1. A **coarse sweep** across the TX range at a fixed step, taking several traces per
-   level and scoring each level by a reliability-weighted median bottleneck SNR.
-2. A **local refine** that fills in every integer level around the coarse winner, so the
-   reported optimum is exact within the bracket without paying for a full fine sweep.
+Radio links are noisy and the real-world response is non-monotonic (too little power and
+the target can't hear it; too much and its front end saturates), so the search is robust
+by design:
 
-The device's original TX power is always restored when the sweep finishes; writing the
-winner back is the caller's decision.
+1. A **coarse sweep** across the TX range, running several traces per level and scoring
+   each level by its trace success rate first and a *median* target SNR second.
+2. A **local refine** filling in integer levels around the coarse winner.
+3. A **verify** pass that re-measures the leading candidate with extra samples so a single
+   lucky (or unlucky) reading can't decide the optimum.
+
+Selection is lexicographic — **reliability first, then SNR** — and on a near-tie in SNR it
+prefers the *lower* TX power, since cranking power for a fraction of a dB only adds
+interference and burns duty cycle. The chosen optimum is written back to the admin node
+when ``apply`` is set (the whole point of the run is to leave it tuned).
 """
 
 from __future__ import annotations
 
+import statistics
 from typing import Callable, Optional
 
-from ..core.connection import Device, clamp_tx_power
-from ..core.models import TraceStats, TxLevelResult, TxOptResult
+from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN, Device
+from ..core.models import Contact, TraceResult, TraceStats, TxLevelResult, TxOptResult
 from . import trace_runner
 
-#: How many dB of SNR a fully-unreliable link is penalized, blending reliability into
-#: the scalar objective so a strong-but-flaky level cannot beat a solid one.
-RELIABILITY_PENALTY_DB = 10.0
-
 LevelCallback = Callable[[int, int, TxLevelResult], None]
-PersistLevel = Callable[[TraceStats], None]
+PersistLevel = Callable[[TxLevelResult], None]
+
+#: On a near-tie in target SNR (within this many dB of the best), the lower TX power wins.
+DEFAULT_SNR_TOLERANCE_DB = 1.0
 
 
-def score_level(stats: TraceStats) -> float:
-    """Score a measured TX level; higher is better.
+def trace_target_snr(trace: TraceResult) -> Optional[float]:
+    """Return the SNR the *target* received on a single trace.
 
-    Combines the robust bottleneck SNR with the success rate so an intermittently
-    failing level cannot outrank a reliable one.
+    The target is the last addressed hop in the forced path; firmware then appends the
+    reply returning to us as a final hash-less hop (``node is None``). So the target's
+    received SNR is the SNR of the last hop that still carries a node hash.
 
     Args:
-        stats: Aggregated trace statistics for the level.
+        trace: A single trace result.
 
     Returns:
-        The scalar objective value, or negative infinity if nothing got through.
+        The target's received SNR in dB, or ``None`` if the trace failed or had no
+        addressed hops.
     """
-    if stats.successes == 0 or stats.median_min_snr is None:
-        return float("-inf")
-    return stats.median_min_snr - (1.0 - stats.success_rate) * RELIABILITY_PENALTY_DB
+    if not trace.success:
+        return None
+    named = [hop for hop in trace.hops if hop.node is not None]
+    return named[-1].snr if named else None
+
+
+def build_level(tx: int, target: str, traces: list[TraceResult]) -> TxLevelResult:
+    """Aggregate the traces measured at one TX level into a :class:`TxLevelResult`.
+
+    Args:
+        tx: The TX power these traces were taken at.
+        target: The target node (for the embedded :class:`TraceStats`).
+        traces: Every trace run at this level.
+
+    Returns:
+        The level's robust aggregate. ``target_snr`` is the median across successful
+        traces, so a single outlier reading barely moves it.
+    """
+    successes = [t for t in traces if t.success]
+    snrs = [snr for t in successes if (snr := trace_target_snr(t)) is not None]
+    target_snr = statistics.median(snrs) if snrs else None
+    return TxLevelResult(
+        tx_power=tx,
+        samples=len(traces),
+        successes=len(successes),
+        target_snr=target_snr,
+        score=target_snr if target_snr is not None else float("-inf"),
+        stats=TraceStats.from_traces(target, traces),
+    )
+
+
+def select_best(
+    levels: list[TxLevelResult], *, snr_tolerance: float = DEFAULT_SNR_TOLERANCE_DB
+) -> TxLevelResult:
+    """Pick the optimal level: reliability first, then SNR, then the lowest TX.
+
+    Among the levels with the highest trace success rate, take those whose median target
+    SNR is within ``snr_tolerance`` of the best, and return the one using the least
+    power. The tolerance band is what makes the choice robust to measurement noise: a
+    fractionally-higher SNR from a hotter level doesn't win if a cooler one is within
+    spitting distance.
+
+    Args:
+        levels: The measured levels (must be non-empty).
+        snr_tolerance: dB band within which SNRs are treated as tied.
+
+    Returns:
+        The chosen :class:`TxLevelResult`.
+    """
+    best_rate = max(lv.success_rate for lv in levels)
+    contenders = [lv for lv in levels if lv.success_rate >= best_rate - 1e-9]
+    best_snr = max(_snr_or_floor(lv) for lv in contenders)
+    near = [lv for lv in contenders if _snr_or_floor(lv) >= best_snr - snr_tolerance]
+    return min(near, key=lambda lv: lv.tx_power)
+
+
+def _snr_or_floor(level: TxLevelResult) -> float:
+    """Return a level's target SNR, or negative infinity if it never got through."""
+    return level.target_snr if level.target_snr is not None else float("-inf")
 
 
 async def optimize_tx_power(
     device: Device,
     target: str,
+    admin_node: Contact,
+    path: str,
     *,
-    tx_min: int = 1,
-    tx_max: int = 22,
+    tx_min: int = REMOTE_TX_MIN,
+    tx_max: int = REMOTE_TX_MAX,
     coarse_step: int = 3,
-    samples_per_level: int = 5,
+    samples_per_level: int = 3,
     refine: bool = True,
+    verify: bool = True,
+    apply: bool = True,
     cooldown_s: float = 1.0,
+    snr_tolerance: float = DEFAULT_SNR_TOLERANCE_DB,
     on_level: Optional[LevelCallback] = None,
     persist_level: Optional[PersistLevel] = None,
     persist_trace: Optional[Callable] = None,
 ) -> TxOptResult:
-    """Search for the TX power that maximizes the reliability-weighted SNR to ``target``.
+    """Tune ``admin_node``'s TX power for the best signal at ``target``.
+
+    The caller must already be logged in to ``admin_node`` (see
+    :meth:`~meshtools.core.connection.Device.admin_login`).
 
     Args:
-        device: Connected device to tune.
-        target: Destination node name or key prefix.
-        tx_min: Lowest TX power to consider (clamped to the device range).
-        tx_max: Highest TX power to consider (clamped to the device range).
+        device: The connected local device, used to trace and to drive the remote node.
+        target: Node whose received SNR is being maximized (the last hop of ``path``).
+        admin_node: The remote node whose TX power is tuned (the hop before ``target``).
+        path: The forced path to trace, as the comma-separated hash string
+            ``send_trace`` expects, ending at ``target``.
+        tx_min: Lowest TX power to consider.
+        tx_max: Highest TX power to consider.
         coarse_step: Step between coarse-sweep levels.
-        samples_per_level: Traces averaged at each level.
+        samples_per_level: Traces averaged at each level (and added again on verify).
         refine: Whether to fill in integer levels around the coarse winner.
+        verify: Whether to re-measure the leading candidate to reject an outlier.
+        apply: Leave the winning TX power on the node when done (otherwise restore the
+            power it had before the sweep, if that could be read).
         cooldown_s: Delay between individual traces (duty-cycle safety).
+        snr_tolerance: dB band for the lower-power tie-break (see :func:`select_best`).
         on_level: Optional progress callback ``(completed, total, level_result)``.
-        persist_level: Optional callback to store each level's aggregated stats.
+        persist_level: Optional callback to store each level's aggregated result.
         persist_trace: Optional callback to store each individual trace.
 
     Returns:
-        A :class:`TxOptResult`. The device is left at its original TX power.
+        A :class:`TxOptResult`.
 
     Raises:
         ValueError: If the resolved TX range is empty.
     """
-    tx_min = clamp_tx_power(tx_min)
-    tx_max = clamp_tx_power(tx_max)
     if tx_min > tx_max:
         raise ValueError(f"Empty TX range: {tx_min}..{tx_max}")
 
-    original_tx = await device.get_tx_power()
-    measured: dict[int, TxLevelResult] = {}
+    original_tx = await device.get_remote_tx_power(admin_node)
 
-    # Phase 1 + 2 share this planner so progress totals stay accurate.
+    # Accumulate raw traces per level so a verify pass can *add* samples to a level and
+    # re-aggregate, rather than throwing away what we already measured.
+    traces_by_tx: dict[int, list[TraceResult]] = {}
+    levels: dict[int, TxLevelResult] = {}
+
     coarse = _coarse_levels(tx_min, tx_max, coarse_step)
-    total_estimate = len(coarse) + (2 * coarse_step if refine else 0)
+    total_estimate = len(coarse) + (2 * coarse_step if refine else 0) + (1 if verify else 0)
     completed = 0
 
     async def measure_level(tx: int) -> TxLevelResult:
+        """Run a batch of traces at ``tx`` (accumulating) and refresh its aggregate."""
         nonlocal completed
-        await device.set_tx_power(tx)
-        stats = await trace_runner.measure(
+        await device.set_remote_tx_power(admin_node, tx)
+        batch = await trace_runner.run_traces(
             device,
             target,
             samples=samples_per_level,
+            path=path,
             cooldown_s=cooldown_s,
             persist=persist_trace,
         )
-        level = TxLevelResult(tx_power=tx, stats=stats, score=score_level(stats))
-        measured[tx] = level
+        traces_by_tx.setdefault(tx, []).extend(batch)
+        level = build_level(tx, target, traces_by_tx[tx])
+        levels[tx] = level
         if persist_level is not None:
-            persist_level(stats)
+            persist_level(level)
         completed += 1
         if on_level is not None:
             on_level(completed, max(total_estimate, completed), level)
@@ -117,26 +202,46 @@ async def optimize_tx_power(
         for tx in coarse:
             await measure_level(tx)
 
-        best_tx = max(measured, key=lambda t: measured[t].score)
+        best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
 
         if refine:
-            lo = clamp_tx_power(best_tx - coarse_step + 1)
-            hi = clamp_tx_power(best_tx + coarse_step - 1)
+            lo = max(tx_min, best.tx_power - coarse_step + 1)
+            hi = min(tx_max, best.tx_power + coarse_step - 1)
             for tx in range(lo, hi + 1):
-                if tx not in measured:
+                if tx not in levels:
                     await measure_level(tx)
-            best_tx = max(measured, key=lambda t: measured[t].score)
-    finally:
+            best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
+
+        if verify:
+            # Re-measure the leader with extra samples; if it was an outlier the larger
+            # sample will pull it back and a steadier neighbor can take over.
+            await measure_level(best.tx_power)
+            best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
+
+        if apply or original_tx is None:
+            final_tx = best.tx_power
+        else:
+            final_tx = original_tx  # apply off: leave the node as we found it
+        await device.set_remote_tx_power(admin_node, final_tx)
+    except BaseException:
+        # On any failure, try to leave the node at the power it started with.
         if original_tx is not None:
-            await device.set_tx_power(original_tx)
+            try:
+                await device.set_remote_tx_power(admin_node, original_tx)
+            except Exception:  # noqa: BLE001 - best-effort restore; don't mask the cause
+                pass
+        raise
 
     return TxOptResult(
         target=target,
+        admin_node=admin_node.name,
+        path=path,
         original_tx=original_tx,
-        best_tx=best_tx,
-        best_score=measured[best_tx].score,
-        applied=False,
-        levels=list(measured.values()),
+        best_tx=best.tx_power,
+        best_snr=best.target_snr,
+        best_success_rate=best.success_rate,
+        applied=apply,
+        levels=list(levels.values()),
     )
 
 

@@ -251,21 +251,91 @@ async def test_mock_device_trace_is_unimodal_in_tx() -> None:
     assert peak > high
 
 
+async def _setup_link(optimal_remote_tx: int = 20):
+    """Return a connected mock plus the (admin, target) contacts and forced path.
+
+    The path runs admin → target, so the optimizer tunes the admin node and reads the
+    SNR the target receives from it.
+    """
+    device = MockDevice(optimal_remote_tx=optimal_remote_tx)
+    await device.connect()
+    contacts = await device.get_contacts()
+    admin = next(c for c in contacts if c.name == "Yagi-Repeater")
+    target = next(c for c in contacts if c.name == "Alice")
+    path = trace_runner.parse_trace_path(f"{admin.name},{target.name}", contacts)
+    assert await device.admin_login(admin, "admin")
+    return device, admin, target, path
+
+
+async def test_admin_login_rejects_wrong_password() -> None:
+    """A wrong admin password is refused, and the node stays un-tunable."""
+    device = MockDevice(admin_password="secret")
+    await device.connect()
+    admin = (await device.get_contacts())[0]
+
+    assert await device.admin_login(admin, "nope") is False
+    with pytest.raises(Exception):
+        await device.set_remote_tx_power(admin, 18)  # not logged in
+    assert await device.admin_login(admin, "secret") is True
+    await device.set_remote_tx_power(admin, 18)  # now allowed
+    assert await device.get_remote_tx_power(admin) == 18
+
+
 async def test_tx_optimizer_finds_simulator_peak(tmp_path: Path) -> None:
-    """The optimizer converges near the simulator's known optimal TX power."""
+    """The optimizer converges near the simulated remote optimum and applies it."""
     from meshtools.services import tx_optimizer
 
-    device = MockDevice(optimal_tx=14)
-    await device.connect()
-    await device.set_tx_power(20)
+    device, admin, target, path = await _setup_link(optimal_remote_tx=20)
 
     result = await tx_optimizer.optimize_tx_power(
-        device, "Alice", samples_per_level=12, coarse_step=3, cooldown_s=0
+        device, target.name, admin, path,
+        samples_per_level=8, coarse_step=3, cooldown_s=0,
     )
-    assert abs(result.best_tx - 14) <= 2  # within a step of the true peak
-    assert result.original_tx == 20
-    assert await device.get_tx_power() == 20  # original restored, not the winner
+    assert abs(result.best_tx - 20) <= 3  # near the true remote peak
+    assert result.best_success_rate == 1.0  # reliability-first: the winner never drops
+    assert result.applied
+    assert await device.get_remote_tx_power(admin) == result.best_tx  # left tuned
+    assert result.admin_node == "Yagi-Repeater"
+
+
+async def test_tx_optimizer_no_apply_restores_original(tmp_path: Path) -> None:
+    """With apply off, the node is left at the power it started with."""
+    from meshtools.services import tx_optimizer
+
+    device, admin, target, path = await _setup_link()
+    await device.set_remote_tx_power(admin, 15)  # a known starting power
+
+    result = await tx_optimizer.optimize_tx_power(
+        device, target.name, admin, path,
+        samples_per_level=4, coarse_step=4, refine=False, verify=False,
+        apply=False, cooldown_s=0,
+    )
+    assert result.original_tx == 15
     assert not result.applied
+    assert await device.get_remote_tx_power(admin) == 15  # restored, not the winner
+
+
+def test_select_best_prefers_reliability_then_lowest_power() -> None:
+    """A 100%-reliable level beats a flakier higher-SNR one; ties go to lower TX."""
+    from meshtools.core.models import TraceStats, TxLevelResult
+    from meshtools.services.tx_optimizer import select_best
+
+    def level(tx: int, snr: float, successes: int, samples: int = 5) -> TxLevelResult:
+        return TxLevelResult(
+            tx_power=tx, samples=samples, successes=successes, target_snr=snr,
+            score=snr, stats=TraceStats(target="t", samples=samples, successes=successes,
+                                        median_min_snr=snr, median_rtt_ms=None),
+        )
+
+    # A flaky level with a great SNR must not beat a perfectly reliable one.
+    flaky = level(26, snr=12.0, successes=3)
+    solid = level(20, snr=7.0, successes=5)
+    assert select_best([flaky, solid]).tx_power == 20
+
+    # Among reliable levels with SNR within tolerance, the lowest TX wins.
+    a = level(18, snr=7.4, successes=5)
+    b = level(22, snr=8.0, successes=5)
+    assert select_best([a, b], snr_tolerance=1.0).tx_power == 18
 
 
 def test_tx_plot_writes_html(tmp_path: Path) -> None:
@@ -276,10 +346,10 @@ def test_tx_plot_writes_html(tmp_path: Path) -> None:
     from meshtools.viz.tx_plot import render_tx_optimization
 
     async def _build():
-        device = MockDevice(optimal_tx=14)
-        await device.connect()
+        device, admin, target, path = await _setup_link()
         return await tx_optimizer.optimize_tx_power(
-            device, "Alice", samples_per_level=4, coarse_step=4, refine=False, cooldown_s=0
+            device, target.name, admin, path,
+            samples_per_level=4, coarse_step=4, refine=False, verify=False, cooldown_s=0,
         )
 
     result = asyncio.run(_build())

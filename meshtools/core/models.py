@@ -266,34 +266,58 @@ class TraceStats:
 class TxLevelResult:
     """Robust measurement of one TX power level during an optimization sweep.
 
+    The headline metric is ``target_snr`` — the SNR the *target* node reports receiving
+    from the admin-tuned node just ahead of it — since that single link is what the
+    remote-admin optimizer is tuning. ``success_rate`` is the primary objective
+    (reliability first), with ``target_snr`` the tie-breaker.
+
     Attributes:
-        tx_power: The transmit power level tested.
-        stats: Aggregated trace statistics at this level.
-        score: Scalar objective value (higher is better) combining SNR and reliability.
+        tx_power: The transmit power level tested on the admin node.
+        samples: Number of traces run at this level.
+        successes: Number of traces that returned a reply.
+        target_snr: Median SNR (dB) received at the target across successful traces,
+            or ``None`` if every trace at this level failed.
+        score: Scalar objective for display/plotting (the median target SNR, or
+            negative infinity when nothing got through).
+        stats: Aggregated trace statistics at this level (full path, for display).
     """
 
     tx_power: int
-    stats: TraceStats
+    samples: int
+    successes: int
+    target_snr: Optional[float]
     score: float
+    stats: TraceStats
+
+    @property
+    def success_rate(self) -> float:
+        """Fraction of traces that returned a reply, in the range ``[0, 1]``."""
+        return self.successes / self.samples if self.samples else 0.0
 
 
 @dataclass(slots=True)
 class TxOptResult:
-    """The outcome of a TX-power optimization run.
+    """The outcome of a remote-admin TX-power optimization run.
 
     Attributes:
-        target: Node the optimization was tuned against.
-        original_tx: TX power in effect before the sweep (restored afterward).
-        best_tx: TX power with the highest score.
-        best_score: The winning score.
-        applied: Whether ``best_tx`` was written back to the device.
+        target: Node the SNR was measured at.
+        admin_node: Label of the node whose TX power was tuned (the hop before target).
+        path: The forced path the traces walked (comma-separated hashes).
+        original_tx: The admin node's TX power before the sweep, if it could be read.
+        best_tx: The chosen optimal TX power.
+        best_snr: Median target SNR (dB) at ``best_tx``.
+        best_success_rate: Trace success rate at ``best_tx``.
+        applied: Whether ``best_tx`` was written to the admin node.
         levels: Every level measured, in the order tested.
     """
 
     target: str
+    admin_node: str
+    path: str
     original_tx: Optional[int]
     best_tx: int
-    best_score: float
+    best_snr: Optional[float]
+    best_success_rate: float
     applied: bool
     levels: list[TxLevelResult] = field(default_factory=list)
 

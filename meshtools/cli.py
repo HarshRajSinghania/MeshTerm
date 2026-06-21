@@ -16,6 +16,7 @@ from typing import Optional
 import typer
 
 from .context import AppContext
+from .core.admin_store import AdminStore
 from .core.config import Settings
 from .core.connection import DeviceCommandError
 from .core.device_config import DeviceConfigError
@@ -75,6 +76,7 @@ def main_callback(
         settings=settings,
         repo=Repository(settings.db_path),
         device_store=DeviceStore(settings.config_dir / "devices.json"),
+        admin_store=AdminStore(settings.config_dir / "admin.json"),
         profile=settings.resolve_profile(profile),
         mock=mock,
         port_override=port,
