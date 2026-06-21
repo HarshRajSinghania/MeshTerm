@@ -14,7 +14,14 @@ from typing import Any, Optional
 
 from datetime import datetime
 
-from ..core.models import Hop, TraceResult, TxLevelResult, utcnow
+from ..core.models import (
+    HeardNode,
+    Hop,
+    Observation,
+    TraceResult,
+    TxLevelResult,
+    utcnow,
+)
 from . import db
 
 
@@ -232,3 +239,66 @@ class Repository:
             ),
         )
         self._conn.commit()
+
+    # -- observations (passive monitoring) --------------------------------------
+
+    def record_observation(self, run_id: int, obs: Observation) -> None:
+        """Persist one overheard packet from a monitoring run.
+
+        Args:
+            run_id: The owning run.
+            obs: The observation to store.
+        """
+        self._conn.execute(
+            "INSERT INTO observations "
+            "(run_id, node, name, kind, snr, rssi, lat, lon, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                obs.node,
+                obs.name,
+                obs.kind,
+                obs.snr,
+                obs.rssi,
+                obs.lat,
+                obs.lon,
+                obs.observed_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
+        """Aggregate stored observations into per-node reception statistics.
+
+        Spans every monitoring run (optionally limited to recent history), so the result
+        is a longitudinal view of which nodes have been heard, how strongly, and where —
+        the substrate for the monitor summary and the coverage map.
+
+        Args:
+            since: Only include observations at or after this time, if given.
+
+        Returns:
+            One :class:`HeardNode` per distinct node, ordered by most-recently heard.
+        """
+        sql = "SELECT node, name, snr, rssi, lat, lon, observed_at FROM observations"
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE observed_at >= ?"
+            params.append(since.isoformat())
+        rows = self._conn.execute(sql, params).fetchall()
+
+        grouped: dict[Optional[str], list[Observation]] = {}
+        for row in rows:
+            obs = Observation(
+                node=row["node"],
+                name=row["name"],
+                snr=row["snr"],
+                rssi=row["rssi"],
+                lat=row["lat"],
+                lon=row["lon"],
+                observed_at=datetime.fromisoformat(row["observed_at"]),
+            )
+            grouped.setdefault(row["node"], []).append(obs)
+
+        nodes = [HeardNode.from_observations(node, obs) for node, obs in grouped.items()]
+        return sorted(nodes, key=lambda n: n.last_seen, reverse=True)

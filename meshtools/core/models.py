@@ -43,6 +43,102 @@ class Contact:
 
 
 @dataclass(slots=True)
+class Observation:
+    """A single over-the-air reception heard while passively monitoring the mesh.
+
+    Adverts, telemetry frames, and other packets the companion overhears are captured as
+    observations and logged longitudinally, so the mesh's behavior can be reviewed over
+    time rather than only at the instant a command runs.
+
+    Attributes:
+        node: Key prefix / hash identifying the transmitting node, if known.
+        name: Friendly name advertised by the node, if carried.
+        kind: Packet class, e.g. ``advert`` or ``telemetry``.
+        snr: Signal-to-noise ratio (dB) the companion measured, if reported.
+        rssi: Received signal strength (dBm), if reported.
+        lat: Advertised latitude (decimal degrees), when the node shares location.
+        lon: Advertised longitude (decimal degrees), when the node shares location.
+        observed_at: When the packet was heard.
+        raw: Optional raw event payload for debugging/replay.
+    """
+
+    node: Optional[str]
+    name: Optional[str] = None
+    kind: str = "advert"
+    snr: Optional[float] = None
+    rssi: Optional[float] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    observed_at: datetime = field(default_factory=utcnow)
+    raw: Optional[dict] = None
+
+
+@dataclass(slots=True)
+class HeardNode:
+    """Aggregated reception statistics for one node across many observations.
+
+    Attributes:
+        node: Key prefix / hash of the node (``None`` only if never identified).
+        name: Most recent friendly name seen for the node, if any.
+        count: Number of observations aggregated.
+        median_snr: Median SNR (dB) across observations that reported one.
+        best_snr: Strongest SNR (dB) seen, if any.
+        last_rssi: Most recent RSSI (dBm), if any.
+        last_seen: Timestamp of the most recent observation.
+        lat: Most recent advertised latitude, if the node shared one.
+        lon: Most recent advertised longitude, if the node shared one.
+    """
+
+    node: Optional[str]
+    name: Optional[str]
+    count: int
+    median_snr: Optional[float]
+    best_snr: Optional[float]
+    last_rssi: Optional[float]
+    last_seen: datetime
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+    @property
+    def has_location(self) -> bool:
+        """Whether this node reported a usable latitude/longitude."""
+        return self.lat is not None and self.lon is not None
+
+    @classmethod
+    def from_observations(
+        cls, node: Optional[str], observations: list["Observation"]
+    ) -> "HeardNode":
+        """Aggregate one node's observations into reception statistics.
+
+        Args:
+            node: The node identifier these observations belong to.
+            observations: The observations for ``node`` (must be non-empty).
+
+        Returns:
+            A :class:`HeardNode` summarizing them. The most recent observation supplies
+            the name, RSSI, and location; SNR is summarized robustly (median + best).
+        """
+        ordered = sorted(observations, key=lambda o: o.observed_at)
+        latest = ordered[-1]
+        snrs = [o.snr for o in ordered if o.snr is not None]
+        located = next(
+            (o for o in reversed(ordered) if o.lat is not None and o.lon is not None), None
+        )
+        name = next((o.name for o in reversed(ordered) if o.name), None)
+        return cls(
+            node=node,
+            name=name,
+            count=len(ordered),
+            median_snr=statistics.median(snrs) if snrs else None,
+            best_snr=max(snrs) if snrs else None,
+            last_rssi=latest.rssi,
+            last_seen=latest.observed_at,
+            lat=located.lat if located else None,
+            lon=located.lon if located else None,
+        )
+
+
+@dataclass(slots=True)
 class Hop:
     """A single hop in a path trace.
 

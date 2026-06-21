@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -76,9 +76,25 @@ CREATE TABLE IF NOT EXISTS path_candidates (
     created_at    TEXT    NOT NULL
 );
 
+-- One packet overheard while passively monitoring the mesh (advert/telemetry/...).
+CREATE TABLE IF NOT EXISTS observations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    node        TEXT,
+    name        TEXT,
+    kind        TEXT    NOT NULL DEFAULT 'advert',
+    snr         REAL,
+    rssi        REAL,
+    lat         REAL,
+    lon         REAL,
+    observed_at TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_traces_run ON traces(run_id);
 CREATE INDEX IF NOT EXISTS idx_trace_hops_trace ON trace_hops(trace_id);
 CREATE INDEX IF NOT EXISTS idx_tx_samples_run ON tx_samples(run_id);
+CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
+CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
 """
 
 

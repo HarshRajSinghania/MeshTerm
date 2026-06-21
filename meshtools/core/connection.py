@@ -16,9 +16,12 @@ from __future__ import annotations
 import asyncio
 import random
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Callable, Optional
 
-from .models import Contact, Hop, TraceResult
+from .models import Contact, Hop, Observation, TraceResult
+
+#: Callback invoked with each :class:`Observation` as passive monitoring captures it.
+ObservationCallback = Callable[[Observation], None]
 
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
@@ -140,6 +143,31 @@ class Device(ABC):
 
         Returns:
             A :class:`TraceResult`; ``success`` is ``False`` on timeout.
+        """
+
+    # -- passive monitoring ------------------------------------------------------
+
+    @abstractmethod
+    async def listen(
+        self,
+        duration_s: float,
+        *,
+        on_observation: Optional["ObservationCallback"] = None,
+    ) -> list[Observation]:
+        """Passively capture packets the companion overhears for ``duration_s`` seconds.
+
+        Adverts (and, where the firmware surfaces them, telemetry frames) heard on the
+        air are returned as :class:`~meshtools.core.models.Observation` records with
+        whatever SNR/RSSI/location the radio reported. The radio is not asked to transmit;
+        it simply listens.
+
+        Args:
+            duration_s: How long to listen, in seconds.
+            on_observation: Optional callback invoked with each observation as it arrives
+                (e.g. to advance a live progress display).
+
+        Returns:
+            Every observation captured during the window, in arrival order.
         """
 
     # -- configuration: extra reads ---------------------------------------------
@@ -587,6 +615,60 @@ class MeshCoreDevice(Device):
             return b"".join(hops), path_hash_flags(trace_size) or 0
         return None
 
+    async def listen(  # noqa: D102 - inherited docstring
+        self,
+        duration_s: float,
+        *,
+        on_observation: Optional[ObservationCallback] = None,
+    ) -> list[Observation]:
+        from meshcore import EventType
+
+        mc = self._require()
+        subscribe = getattr(mc, "subscribe", None)
+        if subscribe is None:  # pragma: no cover - depends on installed meshcore build
+            raise DeviceCommandError(
+                "this meshcore build doesn't expose event subscription, so passive "
+                "monitoring isn't available. Upgrade the 'meshcore' library."
+            )
+
+        observations: list[Observation] = []
+
+        def make_handler(kind: str):  # type: ignore[no-untyped-def]
+            def handler(event) -> None:  # noqa: ANN001
+                obs = observation_from_event(event, kind)
+                if obs is None:
+                    return
+                observations.append(obs)
+                if on_observation is not None:
+                    on_observation(obs)
+
+            return handler
+
+        # Subscribe to whichever advert/telemetry event types this firmware/library build
+        # exposes. The event payload field names below are best-effort and, like the trace
+        # mapping, should be validated against your firmware's event schema.
+        subs = []
+        for attr, kind in (
+            ("ADVERTISEMENT", "advert"),
+            ("ADVERT", "advert"),
+            ("NEW_CONTACT", "advert"),
+            ("TELEMETRY_RESPONSE", "telemetry"),
+        ):
+            etype = getattr(EventType, attr, None)
+            if etype is not None:
+                subs.append(subscribe(etype, make_handler(kind)))
+        try:
+            await asyncio.sleep(duration_s)
+        finally:
+            for sub in subs:
+                unsub = getattr(sub, "unsubscribe", None)
+                if unsub is not None:
+                    try:
+                        unsub()
+                    except Exception:  # noqa: BLE001 - best-effort cleanup
+                        pass
+        return observations
+
     @staticmethod
     def _ok(event):  # type: ignore[no-untyped-def]
         """Return ``event`` if it succeeded, else raise its error payload.
@@ -905,6 +987,42 @@ class MockDevice(Device):
         self._custom_vars.clear()
         self._channels.clear()
 
+    async def listen(  # noqa: D102 - inherited docstring
+        self,
+        duration_s: float,
+        *,
+        on_observation: Optional[ObservationCallback] = None,
+    ) -> list[Observation]:
+        # Synthesize plausible adverts from the known contacts, cycling through them.
+        # Two of them ("…Repeater") advertise a fixed location so location-aware features
+        # (e.g. the coverage map) have data. The wall-clock duration is honored only
+        # loosely — the simulator emits a count proportional to it and paces minimally so
+        # tests stay fast.
+        repeats = max(1, round(duration_s / 5.0))
+        locations = {
+            "Yagi-Repeater": (45.5019, -73.5674),
+            "Local-Repeater": (45.4768, -73.5990),
+        }
+        observations: list[Observation] = []
+        for r in range(repeats):
+            for c in self._contacts:
+                kind = "telemetry" if (r + len(observations)) % 4 == 3 else "advert"
+                lat_lon = locations.get(c.name)
+                obs = Observation(
+                    node=c.key_prefix or c.public_key[:12],
+                    name=c.name,
+                    kind=kind,
+                    snr=round(self._rng.gauss(6.0, 3.0), 1),
+                    rssi=round(self._rng.gauss(-95.0, 8.0), 1),
+                    lat=lat_lon[0] if lat_lon else None,
+                    lon=lat_lon[1] if lat_lon else None,
+                )
+                observations.append(obs)
+                if on_observation is not None:
+                    on_observation(obs)
+                await asyncio.sleep(0)
+        return observations
+
     def _expected_snr(self, hop_index: int) -> float:
         """Model SNR for a hop as an inverted-U in TX power plus distance falloff.
 
@@ -1008,6 +1126,55 @@ def parse_trace_hops(payload: dict) -> list[Hop]:
             continue
         hops.append(Hop(index=len(hops), node=node.get("hash"), snr=float(node["snr"])))
     return hops
+
+
+def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: ANN001
+    """Map a meshcore advert/telemetry event into an :class:`Observation`.
+
+    The companion reports a node identifier, optionally a name and shared location, and
+    the SNR/RSSI of the reception. Field names vary across firmware and library versions,
+    so several common spellings are tried for each value. Like the trace mapping this is
+    best-effort and should be validated against your firmware's event schema.
+
+    Args:
+        event: A meshcore event (anything exposing a ``payload`` mapping).
+        kind: The observation class to tag the record with (e.g. ``advert``).
+
+    Returns:
+        The parsed :class:`Observation`, or ``None`` if the payload carried no node id.
+    """
+    payload = dict(getattr(event, "payload", {}) or {})
+    node = (
+        payload.get("public_key")
+        or payload.get("pubkey")
+        or payload.get("hash")
+        or payload.get("key_prefix")
+    )
+    if not node:
+        return None
+    node = str(node).lower().removeprefix("0x")[:12]
+    lat = payload.get("adv_lat", payload.get("lat"))
+    lon = payload.get("adv_lon", payload.get("lon"))
+    return Observation(
+        node=node,
+        name=payload.get("adv_name") or payload.get("name"),
+        kind=kind,
+        snr=_as_float(payload.get("snr")),
+        rssi=_as_float(payload.get("rssi")),
+        lat=_as_float(lat) if lat else None,
+        lon=_as_float(lon) if lon else None,
+        raw=payload,
+    )
+
+
+def _as_float(value: object) -> Optional[float]:
+    """Best-effort float conversion, returning ``None`` on missing/garbage values."""
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _mock_pub(prefix: str) -> str:
