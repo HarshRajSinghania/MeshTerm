@@ -19,6 +19,7 @@ turned into interactive HTML visualizations.
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
 | **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
 | **Passive monitor** | ✅ working | Listen on the air and log every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history. |
+| **Link health** | ✅ working | Compare a target's recent traces to its rolling baseline and flag SNR/reliability regressions, end-to-end and per hop. |
 | **Path optimization** | 🚧 planned | Discover and score mesh paths from neighbors outward. |
 | **Visualizations** | 🟡 partial | Plotly TX-sweep chart (HTML) done; pyvis mesh graph + time-series planned. |
 

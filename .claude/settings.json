@@ -20,7 +20,8 @@
       "PowerShell(foreach \\($p in 'COM26','COM16','COM17'\\) { Write-Output \"=== $p ===\"; .venv\\\\Scripts\\\\python.exe -m meshtools --port $p --quiet info 2>&1 | Select-Object -First 4 })",
       "PowerShell(Get-CimInstance Win32_SerialPort | Where-Object { $_.DeviceID -eq 'COM11' } | Select-Object DeviceID, Description, Name | Format-List; Write-Output \"---\"; Get-Process | Where-Object { $_.Name -match 'meshcore|arduino|putty|python|node|serial|cu' } | Select-Object Id, ProcessName, MainWindowTitle | Format-Table -AutoSize)",
       "PowerShell(foreach \\($id in 25324,30408\\) { try { Stop-Process -Id $id -Force -ErrorAction Stop; Write-Output \"killed $id\" } catch { Write-Output \"could not kill ${id}: $\\($_.Exception.Message\\)\" } }; Start-Sleep -Milliseconds 800; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Select-Object ProcessId | Format-Table -AutoSize)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m meshtools --quiet info 2>&1)"
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m meshtools --quiet info 2>&1)",
+      "Bash(git commit -q -m ' *)"
     ]
   }
 }

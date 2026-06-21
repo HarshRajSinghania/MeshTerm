@@ -9,10 +9,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
-from datetime import datetime
 
 from ..core.models import (
     HeardNode,
@@ -213,6 +212,56 @@ class Repository:
             tx_power=row["tx_power"],
             timestamp=datetime.fromisoformat(row["created_at"]),
         )
+
+    def recent_traces(self, target: str, *, limit: int = 200) -> list[TraceResult]:
+        """Return recent traces to ``target``, newest first, rehydrated with hops.
+
+        This is the history the link-quality baseline is computed over, so both timed-out
+        and successful traces are included (a rise in failures is itself a regression).
+
+        Args:
+            target: The trace destination to load.
+            limit: Maximum number of traces to return.
+
+        Returns:
+            The matching :class:`TraceResult` objects, newest first.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM traces WHERE target = ? ORDER BY id DESC LIMIT ?",
+            (target, limit),
+        ).fetchall()
+        traces: list[TraceResult] = []
+        for row in rows:
+            hop_rows = self._conn.execute(
+                "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? "
+                "ORDER BY hop_index",
+                (row["id"],),
+            ).fetchall()
+            hops = [
+                Hop(index=h["hop_index"], node=h["node"], snr=h["snr"]) for h in hop_rows
+            ]
+            traces.append(
+                TraceResult(
+                    target=row["target"],
+                    success=bool(row["success"]),
+                    hops=hops,
+                    round_trip_ms=row["round_trip_ms"],
+                    tx_power=row["tx_power"],
+                    timestamp=datetime.fromisoformat(row["created_at"]),
+                )
+            )
+        return traces
+
+    def traced_targets(self) -> list[str]:
+        """Return the distinct trace destinations recorded, most-traced first.
+
+        Returns:
+            Target names ordered by descending trace count.
+        """
+        rows = self._conn.execute(
+            "SELECT target, COUNT(*) AS n FROM traces GROUP BY target ORDER BY n DESC"
+        ).fetchall()
+        return [row["target"] for row in rows]
 
     def record_tx_sample(self, run_id: int, level: TxLevelResult) -> None:
         """Persist one robust TX-power level from an optimization sweep.
