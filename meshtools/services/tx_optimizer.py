@@ -37,32 +37,46 @@ PersistLevel = Callable[[TxLevelResult], None]
 DEFAULT_SNR_TOLERANCE_DB = 1.0
 
 
-def trace_target_snr(trace: TraceResult) -> Optional[float]:
-    """Return the SNR the *target* received on a single trace.
+def trace_target_snr(trace: TraceResult, target_hash: str) -> Optional[float]:
+    """Return the SNR the *target* received on a single (round-trip) trace.
 
-    The target is the last addressed hop in the forced path; firmware then appends the
-    reply returning to us as a final hash-less hop (``node is None``). So the target's
-    received SNR is the SNR of the last hop that still carries a node hash.
+    Because we trace out to the target and back (so a reachable node, not the far
+    target, answers), the target is no longer the last hop — it's the turn-around point.
+    We therefore locate it by matching its hash rather than by position. The matched
+    hop's SNR is the signal the target heard from the admin node just before it, which is
+    exactly the link being tuned.
 
     Args:
         trace: A single trace result.
+        target_hash: The target node's path hash (a leading slice of its public key).
 
     Returns:
-        The target's received SNR in dB, or ``None`` if the trace failed or had no
-        addressed hops.
+        The target's received SNR in dB, or ``None`` if the trace failed or the target
+        hop wasn't present in the reply.
     """
     if not trace.success:
         return None
-    named = [hop for hop in trace.hops if hop.node is not None]
-    return named[-1].snr if named else None
+    needle = target_hash.lower().removeprefix("0x")
+    for hop in trace.hops:
+        if hop.node is None:
+            continue
+        node = hop.node.lower().removeprefix("0x")
+        # Match either way: the firmware may report hashes at a different width than the
+        # one we addressed the path with.
+        if node.startswith(needle) or needle.startswith(node):
+            return hop.snr
+    return None
 
 
-def build_level(tx: int, target: str, traces: list[TraceResult]) -> TxLevelResult:
+def build_level(
+    tx: int, target: str, target_hash: str, traces: list[TraceResult]
+) -> TxLevelResult:
     """Aggregate the traces measured at one TX level into a :class:`TxLevelResult`.
 
     Args:
         tx: The TX power these traces were taken at.
         target: The target node (for the embedded :class:`TraceStats`).
+        target_hash: The target's path hash, used to find its hop in each trace.
         traces: Every trace run at this level.
 
     Returns:
@@ -70,7 +84,7 @@ def build_level(tx: int, target: str, traces: list[TraceResult]) -> TxLevelResul
         traces, so a single outlier reading barely moves it.
     """
     successes = [t for t in traces if t.success]
-    snrs = [snr for t in successes if (snr := trace_target_snr(t)) is not None]
+    snrs = [snr for t in successes if (snr := trace_target_snr(t, target_hash)) is not None]
     target_snr = statistics.median(snrs) if snrs else None
     return TxLevelResult(
         tx_power=tx,
@@ -140,8 +154,9 @@ async def optimize_tx_power(
         device: The connected local device, used to trace and to drive the remote node.
         target: Node whose received SNR is being maximized (the last hop of ``path``).
         admin_node: The remote node whose TX power is tuned (the hop before ``target``).
-        path: The forced path to trace, as the comma-separated hash string
-            ``send_trace`` expects, ending at ``target``.
+        path: The one-way forced path out to ``target`` (comma-separated hashes, ending
+            at the target). It is traced as a there-and-back round trip internally so a
+            reachable node answers — the far target only has to forward the packet.
         tx_min: Lowest TX power to consider.
         tx_max: Highest TX power to consider.
         coarse_step: Step between coarse-sweep levels.
@@ -167,6 +182,13 @@ async def optimize_tx_power(
 
     original_tx = await device.get_remote_tx_power(admin_node)
 
+    # Trace out to the target and back: the reply then originates at a node near us
+    # (the first hop), not the far target, which only has to forward the packet. The
+    # target's received SNR is read from its hop at the round trip's turn-around point.
+    outbound = [h for h in path.split(",") if h]
+    target_hash = outbound[-1] if outbound else path
+    trace_path = _round_trip_path(outbound)
+
     # Accumulate raw traces per level so a verify pass can *add* samples to a level and
     # re-aggregate, rather than throwing away what we already measured.
     traces_by_tx: dict[int, list[TraceResult]] = {}
@@ -184,12 +206,12 @@ async def optimize_tx_power(
             device,
             target,
             samples=samples_per_level,
-            path=path,
+            path=trace_path,
             cooldown_s=cooldown_s,
             persist=persist_trace,
         )
         traces_by_tx.setdefault(tx, []).extend(batch)
-        level = build_level(tx, target, traces_by_tx[tx])
+        level = build_level(tx, target, target_hash, traces_by_tx[tx])
         levels[tx] = level
         if persist_level is not None:
             persist_level(level)
@@ -218,10 +240,16 @@ async def optimize_tx_power(
             await measure_level(best.tx_power)
             best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
 
-        if apply or original_tx is None:
+        # "No result" = not one trace got through at any level (a meaningless winner).
+        # In that case, and when apply is off, leave the node at the power it started at.
+        got_result = best.successes > 0
+        applied = apply and got_result
+        if applied:
             final_tx = best.tx_power
+        elif original_tx is not None:
+            final_tx = original_tx
         else:
-            final_tx = original_tx  # apply off: leave the node as we found it
+            final_tx = best.tx_power  # nothing to restore to; can't do better
         await device.set_remote_tx_power(admin_node, final_tx)
     except BaseException:
         # On any failure, try to leave the node at the power it started with.
@@ -240,9 +268,30 @@ async def optimize_tx_power(
         best_tx=best.tx_power,
         best_snr=best.target_snr,
         best_success_rate=best.success_rate,
-        applied=apply,
+        applied=applied,
         levels=list(levels.values()),
     )
+
+
+def _round_trip_path(outbound: list[str]) -> str:
+    """Build a there-and-back trace path from a one-way path to the target.
+
+    Tracing out to the target then back means the *final* hop is a node near us (the
+    first outbound hop), which can reliably answer; the far target only has to forward
+    the packet, never originate the reply. This mirrors the MeshCore ``A,B,A`` trace
+    convention. The target's own hop (the turn-around point) still records the SNR it
+    heard from the admin node, which is what we read.
+
+    Args:
+        outbound: The one-way path hops, ending at the target.
+
+    Returns:
+        The round-trip path as a comma-separated hash string (e.g. ``"3f,f2"`` becomes
+        ``"3f,f2,3f"``). A single-hop path is returned unchanged.
+    """
+    if len(outbound) < 2:
+        return ",".join(outbound)
+    return ",".join(outbound + outbound[-2::-1])
 
 
 def _coarse_levels(tx_min: int, tx_max: int, step: int) -> list[int]:

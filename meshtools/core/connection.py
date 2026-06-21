@@ -812,8 +812,8 @@ class MockDevice(Device):
         """Return the lookup key for a remote node (its public key, else key prefix)."""
         return (node.public_key or node.key_prefix or node.name).lower().removeprefix("0x")
 
-    def _remote_tx_for(self, hop_hex: str) -> int:
-        """Resolve the simulated remote TX power for a forced-path hop hash.
+    def _remote_tx_for(self, hop_hex: str) -> Optional[int]:
+        """Resolve the simulated remote TX power set on a forced-path hop, if any.
 
         The optimizer stores a node's power under its full public key; a trace addresses
         it by a shorter hash prefix, so match in either direction.
@@ -822,13 +822,14 @@ class MockDevice(Device):
             hop_hex: The forced-path hop hash (hex).
 
         Returns:
-            The node's simulated TX power, or the default if none was set.
+            The node's simulated TX power, or ``None`` if we never set one (i.e. this
+            hop isn't a node the optimizer is tuning).
         """
         h = hop_hex.lower()
         for key, tx in self._remote_tx.items():
             if key.startswith(h) or h.startswith(key):
                 return tx
-        return self._default_remote_tx
+        return None
 
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
         return dict(self._tuning)
@@ -954,19 +955,23 @@ class MockDevice(Device):
         depth = len(forced) if forced else self._rng.randint(1, 3)
         hops: list[Hop] = []
         for i in range(depth):
-            # The final forced hop is the target; the SNR it reports is the link from the
-            # *previous* (admin-tuned) node, so it tracks that node's remote TX power.
-            # All other hops follow the local TX-power model.
-            if forced is not None and i == depth - 1 and depth >= 2:
-                expected = self._expected_remote_snr(self._remote_tx_for(forced[i - 1]))
+            # Each hop's SNR reflects the node that transmitted *into* it (hop i-1). If
+            # that node is one the optimizer has tuned a remote TX on, model the link from
+            # its power — so the hop arriving at the target tracks the admin node we're
+            # tuning, wherever the target sits in a there-and-back path. Otherwise fall
+            # back to the local TX-power model.
+            prev_tx = self._remote_tx_for(forced[i - 1]) if forced is not None and i >= 1 else None
+            if prev_tx is not None:
+                expected = self._expected_remote_snr(prev_tx)
             else:
                 expected = self._expected_snr(i)
             snr = expected + self._rng.gauss(0, 1.2)  # measurement noise
             node = forced[i] if forced else f"hop{i}"
             hops.append(Hop(index=i, node=node, snr=round(snr, 1)))
 
-        # Very weak links occasionally drop entirely (judged on the repeater hops).
-        success = (hops[-1].snr if hops else -99) > -12 or self._rng.random() > 0.1
+        # Very weak links occasionally drop the whole trace, judged on the bottleneck hop.
+        bottleneck = min((h.snr for h in hops), default=-99)
+        success = bottleneck > -12 or self._rng.random() > 0.1
 
         # The trace reply returns to us: firmware appends the local device as a final
         # hash-less hop (``node=None``). Mirror that so the origin/destination framing

@@ -167,6 +167,9 @@ class TxOptimizeTool(Tool):
                 persist_trace=lambda t: ctx.repo.record_trace(run_id, t),
             )
 
+        # No trace got through at any TX level: nothing was tuned, the node was left at
+        # its original power. Usually a wrong/unreachable path rather than a weak link.
+        no_result = result.best_snr is None
         if result.applied:
             ctx.log.info("set TX power %s on %s", result.best_tx, admin_node.name)
 
@@ -179,9 +182,22 @@ class TxOptimizeTool(Tool):
             path_out = render_tx_optimization(result, ctx.settings.output_dir)
             artifacts.append(str(path_out))
 
-        applied_note = (
-            f"  [ok](set on {admin_node.name})[/ok]" if result.applied else ""
-        )
+        if no_result:
+            restored = (
+                f" Restored TX to {result.original_tx}." if result.original_tx is not None else ""
+            )
+            message = (
+                f"[warn]![/warn] no traces reached [brand]{result.target}[/brand] at any TX "
+                f"level — check the path ends at the target and is reachable.{restored}"
+            )
+        else:
+            applied_note = f"  [ok](set on {admin_node.name})[/ok]" if result.applied else ""
+            message = (
+                f"[ok]✓[/ok] optimal TX for [brand]{admin_node.name}[/brand] → "
+                f"[brand]{result.target}[/brand] is [brand]{result.best_tx}[/brand]"
+                + applied_note
+            )
+
         return ToolResult(
             summary={
                 "target": result.target,
@@ -194,9 +210,7 @@ class TxOptimizeTool(Tool):
                 "applied": result.applied,
                 "levels_measured": len(result.levels),
             },
-            message=f"[ok]✓[/ok] optimal TX for [brand]{admin_node.name}[/brand] → "
-            f"[brand]{result.target}[/brand] is [brand]{result.best_tx}[/brand]"
-            + applied_note,
+            message=message,
             artifacts=artifacts,
         )
 

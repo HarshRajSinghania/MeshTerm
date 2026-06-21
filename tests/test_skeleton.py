@@ -338,6 +338,30 @@ def test_select_best_prefers_reliability_then_lowest_power() -> None:
     assert select_best([a, b], snr_tolerance=1.0).tx_power == 18
 
 
+def test_round_trip_path_mirrors_back_to_a_reachable_node() -> None:
+    """The trace path goes out to the target and back, so a near node answers."""
+    from meshtools.services.tx_optimizer import _round_trip_path
+
+    assert _round_trip_path(["3f", "f2"]) == "3f,f2,3f"
+    assert _round_trip_path(["3d", "3f", "f2"]) == "3d,3f,f2,3f,3d"
+    assert _round_trip_path(["f2"]) == "f2"  # single hop: nothing to mirror
+
+
+def test_trace_target_snr_matches_target_hop_not_position() -> None:
+    """The target's SNR is read from its hash, even when it's the turn-around hop."""
+    from meshtools.core.models import Hop
+    from meshtools.services.tx_optimizer import trace_target_snr
+
+    # Round trip 3f -> f2 -> 3f -> us: the f2 hop (index 1) is what we want, not the
+    # later 3f hop or the hash-less return hop.
+    trace = TraceResult(
+        target="f2", success=True,
+        hops=[Hop(0, "3f", 4.0), Hop(1, "f2", 7.5), Hop(2, "3f", 3.0), Hop(3, None, 4.0)],
+    )
+    assert trace_target_snr(trace, "f2") == 7.5
+    assert trace_target_snr(TraceResult(target="f2", success=False), "f2") is None
+
+
 def test_tx_plot_writes_html(tmp_path: Path) -> None:
     """The Plotly renderer produces a self-contained HTML file."""
     import asyncio
