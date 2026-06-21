@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from meshtools.core.connection import MockDevice, clamp_tx_power
+from meshtools.core.connection import DeviceCommandError, MockDevice, clamp_tx_power
 from meshtools.core.models import Contact, TraceResult, TraceStats
 from meshtools.persistence.repository import Repository
 from meshtools.services import trace_runner
@@ -274,7 +274,7 @@ async def test_admin_login_rejects_wrong_password() -> None:
     admin = (await device.get_contacts())[0]
 
     assert await device.admin_login(admin, "nope") is False
-    with pytest.raises(Exception):
+    with pytest.raises(DeviceCommandError):
         await device.set_remote_tx_power(admin, 18)  # not logged in
     assert await device.admin_login(admin, "secret") is True
     await device.set_remote_tx_power(admin, 18)  # now allowed

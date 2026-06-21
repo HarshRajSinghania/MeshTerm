@@ -18,7 +18,7 @@ import random
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from .models import Contact, Hop, TraceResult, utcnow
+from .models import Contact, Hop, TraceResult
 
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22

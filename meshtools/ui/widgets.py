@@ -22,7 +22,6 @@ from ..core.models import (
     LOCAL_DEVICE_LABEL,
     Contact,
     HopAggregate,
-    HopEdge,
     TraceResult,
     TraceStats,
     TxOptResult,
