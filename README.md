@@ -17,6 +17,7 @@ turned into interactive HTML visualizations.
 | **Device discovery** | ✅ working | Enumerate serial devices, pick one interactively, and remember the last good default. |
 | **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
+| **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
 | **Path optimization** | 🚧 planned | Discover and score mesh paths from neighbors outward. |
 | **Visualizations** | 🟡 partial | Plotly TX-sweep chart (HTML) done; pyvis mesh graph + time-series planned. |
 
