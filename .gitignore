@@ -5,20 +5,14 @@ __pycache__/
 build/
 dist/
 
-# Virtual environments
-.venv/
-venv/
-
-# Tooling caches
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-
-# Editor
-.vscode/
-
-# Local Claude settings (project settings.json is tracked)
+# Ignore all dot-directories (.venv, .pytest_cache, .ruff_cache, .vscode, ...)
+.*/
+# ...except the project's tracked Claude config (settings.local.json stays ignored).
+!.claude/
 .claude/settings.local.json
+
+# Other virtual environments
+venv/
 
 # MeshTools runtime data
 *.db

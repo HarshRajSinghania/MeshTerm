@@ -22,6 +22,7 @@ dependencies = [
     "pyvis>=0.3.2",       # interactive HTML mesh graphs
     "networkx>=3.2",      # graph model + path scoring
     "tomli>=2.0; python_version < '3.11'",  # TOML config reader on 3.10
+    "tomli-w>=1.0",       # TOML writer for device-config backups
 ]
 
 [project.optional-dependencies]

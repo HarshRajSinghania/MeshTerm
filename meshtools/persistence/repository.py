@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core.models import TraceResult, TraceStats, utcnow
+from datetime import datetime
+
+from ..core.models import Hop, TraceResult, TraceStats, utcnow
 from . import db
 
 
@@ -157,6 +159,53 @@ class Repository:
         )
         self._conn.commit()
         return trace_id
+
+    def latest_trace(
+        self,
+        target: str,
+        *,
+        exclude_run_id: Optional[int] = None,
+        success_only: bool = True,
+    ) -> Optional[TraceResult]:
+        """Return the most recently recorded trace to ``target``, rehydrated with hops.
+
+        Used to show the previous run's result before a new trace starts.
+
+        Args:
+            target: The trace destination to look up.
+            exclude_run_id: A run to skip (typically the in-progress one) so we surface
+                a genuinely prior result.
+            success_only: When ``True``, ignore traces that timed out.
+
+        Returns:
+            The latest matching :class:`TraceResult`, or ``None`` if none is stored.
+        """
+        sql = "SELECT * FROM traces WHERE target = ?"
+        params: list[Any] = [target]
+        if success_only:
+            sql += " AND success = 1"
+        if exclude_run_id is not None:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        sql += " ORDER BY id DESC LIMIT 1"
+        row = self._conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+
+        hop_rows = self._conn.execute(
+            "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? "
+            "ORDER BY hop_index",
+            (row["id"],),
+        ).fetchall()
+        hops = [Hop(index=h["hop_index"], node=h["node"], snr=h["snr"]) for h in hop_rows]
+        return TraceResult(
+            target=row["target"],
+            success=bool(row["success"]),
+            hops=hops,
+            round_trip_ms=row["round_trip_ms"],
+            tx_power=row["tx_power"],
+            timestamp=datetime.fromisoformat(row["created_at"]),
+        )
 
     def record_tx_sample(self, run_id: int, stats: TraceStats) -> None:
         """Persist one robust TX-power sample from an optimization sweep.

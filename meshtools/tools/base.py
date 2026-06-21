@@ -105,15 +105,18 @@ class Tool(ABC):
         Raises:
             Exception: Re-raises any error from :meth:`run` after recording it.
         """
+        from ..core.connection import DeviceCommandError
+        from ..core.device_config import DeviceConfigError
         from ..core.selection import DeviceSelectionError
 
         run_id = ctx.repo.start_run(self.name, params, ctx.profile_name)
         ctx.log.debug("run %s start: tool=%s params=%s", run_id, self.name, params)
         try:
             result = await self.run(ctx, {**params, "_run_id": run_id})
-        except DeviceSelectionError as exc:
-            # Expected user-facing condition (no/ambiguous device): record it but don't
-            # dump a traceback; callers print the guidance message cleanly.
+        except (DeviceSelectionError, DeviceConfigError, DeviceCommandError) as exc:
+            # Expected user-facing condition (no/ambiguous device, bad config value, or
+            # a transient command failure): record it but don't dump a traceback;
+            # callers print the message cleanly.
             ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
             ctx.log.debug("run %s aborted: %s", run_id, exc)
             raise

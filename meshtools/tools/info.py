@@ -21,7 +21,7 @@ class InfoTool(Tool):
     order = 10
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Query the device and render its self-info and contacts.
+        """Query the device and render its full configuration and contacts.
 
         Args:
             ctx: Shared application context.
@@ -30,17 +30,16 @@ class InfoTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing device name and contact count.
         """
+        from ..core.device_config import build_snapshot
+        from ..ui.config_editor import render_config
+
         device = await ctx.device()
-        info = await device.get_self_info()
+        snapshot = await build_snapshot(device)
+        custom = await device.get_custom_vars()
         contacts = await device.get_contacts()
 
-        table = Table(title="Device", border_style="muted", expand=False)
-        table.add_column("Field", style="muted")
-        table.add_column("Value")
-        for key in ("name", "tx_power", "freq", "bw", "sf", "cr"):
-            if key in info:
-                table.add_row(key, str(info[key]))
-        ctx.console.print(table)
+        # Render every current setting with a short explanation of each.
+        render_config(ctx.console, snapshot, custom)
 
         if contacts:
             ctable = Table(title=f"Contacts ({len(contacts)})", border_style="muted")
@@ -51,7 +50,7 @@ class InfoTool(Tool):
             ctx.console.print(ctable)
 
         return ToolResult(
-            summary={"name": info.get("name"), "contacts": len(contacts)},
+            summary={"name": snapshot.get("name"), "contacts": len(contacts)},
         )
 
     def register_cli(self, app: typer.Typer) -> None:

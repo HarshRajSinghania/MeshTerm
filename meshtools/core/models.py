@@ -7,9 +7,13 @@ real device, the simulator, or rehydrated from the database identically.
 from __future__ import annotations
 
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
+
+#: Label used for our own (local) device when framing a trace path's endpoints.
+LOCAL_DEVICE_LABEL = "us"
 
 
 def utcnow() -> datetime:
@@ -63,6 +67,8 @@ class TraceResult:
         hops: Per-hop SNR readings, ordered from source to destination.
         round_trip_ms: Round-trip time of the trace in milliseconds, if measured.
         tx_power: TX power level in effect when the trace ran, if known.
+        path_hash_bytes: Per-hop path-hash width (bytes) used by the trace command, so
+            node hashes can be displayed at the same width the command addressed them.
         timestamp: When the trace completed.
         raw: Optional raw event payload for debugging/replay.
     """
@@ -72,6 +78,7 @@ class TraceResult:
     hops: list[Hop] = field(default_factory=list)
     round_trip_ms: Optional[float] = None
     tx_power: Optional[int] = None
+    path_hash_bytes: Optional[int] = None
     timestamp: datetime = field(default_factory=utcnow)
     raw: Optional[dict] = None
 
@@ -95,6 +102,67 @@ class TraceResult:
         nodes = [h.node or f"hop{h.index}" for h in self.hops]
         return " -> ".join(nodes)
 
+    def edges(self, device_label: str = LOCAL_DEVICE_LABEL) -> list["HopEdge"]:
+        """Frame the per-hop SNR as directed ``origin -> destination`` edges.
+
+        Each hop's SNR is the signal measured arriving at that node, so an edge runs
+        from the previous node to this one. The first edge therefore originates at our
+        own device, and (because firmware records the reply returning to us as a final
+        hash-less hop) the last edge's destination is our device too.
+
+        Args:
+            device_label: Name to show for our own device at the path's endpoints.
+
+        Returns:
+            One :class:`HopEdge` per hop, in path order.
+        """
+        edges: list[HopEdge] = []
+        origin = device_label
+        for hop in self.hops:
+            destination = hop.node or device_label
+            edges.append(HopEdge(index=hop.index, origin=origin, destination=destination, snr=hop.snr))
+            origin = destination
+        return edges
+
+
+@dataclass(slots=True)
+class HopEdge:
+    """A directed link in a trace path: a hop framed as ``origin -> destination``.
+
+    Attributes:
+        index: Zero-based position of the hop along the path.
+        origin: Identifier of the transmitting node (our device for the first edge).
+        destination: Identifier of the receiving node (our device for the last edge).
+        snr: Signal-to-noise ratio in dB measured at ``destination``.
+    """
+
+    index: int
+    origin: str
+    destination: str
+    snr: float
+
+
+@dataclass(slots=True)
+class HopAggregate:
+    """Median SNR for one hop position aggregated across several traces.
+
+    ``origin`` and ``destination`` hold raw node identifiers; ``None`` means our own
+    device, so the display label can be applied at render time.
+
+    Attributes:
+        index: Zero-based hop position along the path.
+        origin: Representative transmitting node at this position (``None`` = us).
+        destination: Representative receiving node at this position (``None`` = us).
+        median_snr: Median SNR in dB measured at ``destination`` across the samples.
+        samples: Number of traces that reported this hop.
+    """
+
+    index: int
+    origin: Optional[str]
+    destination: Optional[str]
+    median_snr: float
+    samples: int
+
 
 @dataclass(slots=True)
 class TraceStats:
@@ -110,6 +178,7 @@ class TraceStats:
         median_min_snr: Median of each trace's bottleneck SNR, the headline metric.
         median_rtt_ms: Median round-trip time, if measured.
         tx_power: TX power level in effect for these samples, if fixed.
+        hop_snrs: Per-hop median SNR across the successful traces, in path order.
     """
 
     target: str
@@ -118,6 +187,7 @@ class TraceStats:
     median_min_snr: Optional[float]
     median_rtt_ms: Optional[float]
     tx_power: Optional[int] = None
+    hop_snrs: list[HopAggregate] = field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -146,7 +216,50 @@ class TraceStats:
             median_min_snr=statistics.median(min_snrs) if min_snrs else None,
             median_rtt_ms=statistics.median(rtts) if rtts else None,
             tx_power=next(iter(tx_powers)) if len(tx_powers) == 1 else None,
+            hop_snrs=cls._aggregate_hops(successes),
         )
+
+    @staticmethod
+    def _aggregate_hops(successes: list["TraceResult"]) -> list[HopAggregate]:
+        """Compute the median SNR per hop position across successful traces.
+
+        Hops are grouped by their path position; for each position the SNR median is
+        taken and the most common origin/destination nodes are used so the aggregate
+        path reads like a single representative trace. Node identities are kept raw
+        (``None`` = our device) so a display label can be applied later.
+
+        Args:
+            successes: The successful traces to aggregate.
+
+        Returns:
+            One :class:`HopAggregate` per hop position, ordered along the path.
+        """
+        snrs_by_index: dict[int, list[float]] = {}
+        origins_by_index: dict[int, list[Optional[str]]] = {}
+        dests_by_index: dict[int, list[Optional[str]]] = {}
+        for trace in successes:
+            origin: Optional[str] = None  # the first hop originates at our device
+            for hop in trace.hops:
+                snrs_by_index.setdefault(hop.index, []).append(hop.snr)
+                origins_by_index.setdefault(hop.index, []).append(origin)
+                dests_by_index.setdefault(hop.index, []).append(hop.node)
+                origin = hop.node
+
+        aggregates: list[HopAggregate] = []
+        for index in sorted(snrs_by_index):
+            snrs = snrs_by_index[index]
+            origin = Counter(origins_by_index[index]).most_common(1)[0][0]
+            destination = Counter(dests_by_index[index]).most_common(1)[0][0]
+            aggregates.append(
+                HopAggregate(
+                    index=index,
+                    origin=origin,
+                    destination=destination,
+                    median_snr=statistics.median(snrs),
+                    samples=len(snrs),
+                )
+            )
+        return aggregates
 
 
 @dataclass(slots=True)
