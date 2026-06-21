@@ -230,27 +230,46 @@ class Repository:
             "SELECT * FROM traces WHERE target = ? ORDER BY id DESC LIMIT ?",
             (target, limit),
         ).fetchall()
-        traces: list[TraceResult] = []
-        for row in rows:
-            hop_rows = self._conn.execute(
-                "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? "
-                "ORDER BY hop_index",
-                (row["id"],),
-            ).fetchall()
-            hops = [
-                Hop(index=h["hop_index"], node=h["node"], snr=h["snr"]) for h in hop_rows
-            ]
-            traces.append(
-                TraceResult(
-                    target=row["target"],
-                    success=bool(row["success"]),
-                    hops=hops,
-                    round_trip_ms=row["round_trip_ms"],
-                    tx_power=row["tx_power"],
-                    timestamp=datetime.fromisoformat(row["created_at"]),
-                )
-            )
-        return traces
+        return [self._hydrate_trace(row) for row in rows]
+
+    def all_traces(self, *, limit: int = 500) -> list[TraceResult]:
+        """Return recent traces across every target, newest first, rehydrated with hops.
+
+        Used to build a whole-mesh route graph rather than a single target's history.
+
+        Args:
+            limit: Maximum number of traces to return.
+
+        Returns:
+            The matching :class:`TraceResult` objects, newest first.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM traces ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self._hydrate_trace(row) for row in rows]
+
+    def _hydrate_trace(self, row: sqlite3.Row) -> TraceResult:
+        """Rebuild a :class:`TraceResult` (with hops) from a ``traces`` row.
+
+        Args:
+            row: A ``traces`` table row.
+
+        Returns:
+            The rehydrated trace.
+        """
+        hop_rows = self._conn.execute(
+            "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
+            (row["id"],),
+        ).fetchall()
+        hops = [Hop(index=h["hop_index"], node=h["node"], snr=h["snr"]) for h in hop_rows]
+        return TraceResult(
+            target=row["target"],
+            success=bool(row["success"]),
+            hops=hops,
+            round_trip_ms=row["round_trip_ms"],
+            tx_power=row["tx_power"],
+            timestamp=datetime.fromisoformat(row["created_at"]),
+        )
 
     def traced_targets(self) -> list[str]:
         """Return the distinct trace destinations recorded, most-traced first.
