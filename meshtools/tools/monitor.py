@@ -1,9 +1,19 @@
-"""The ``monitor`` tool: passively log adverts/telemetry the mesh emits over time.
+"""The ``monitor`` tool: control the passive background logger and review its history.
 
-Standard MeshCore tooling is point-in-time. This tool sits on the companion radio and
-records every advert and telemetry frame it overhears — with SNR, RSSI, and any shared
-location — to the database, building the longitudinal history that the coverage map and
-link-quality alerting read back. It transmits nothing; it only listens.
+Passive monitoring records every advert and telemetry frame the companion overhears —
+with SNR, RSSI, and any shared location — to the database, building the longitudinal
+history that the coverage map and link-quality alerting read back. It transmits nothing;
+it only listens.
+
+Capture itself runs as a non-blocking background subscription owned by
+:class:`~meshtools.services.monitor_service.MonitorService` (``ctx.monitor``), so it never
+blocks the menu. This tool is the control panel for it: toggling capture on/off (a
+preference remembered between sessions) and reviewing the heard-node history. The live
+packet counters are shown in the main-menu header, not here.
+
+The CLI subcommand additionally offers a one-shot foreground capture (``--seconds``) for
+scripting, since a short-lived CLI process has no long-running menu to host a background
+subscription.
 """
 
 from __future__ import annotations
@@ -21,57 +31,215 @@ from ..services import trace_runner
 from ..ui.widgets import make_progress
 from .base import Tool, ToolResult, register
 
-#: Cap a single listening window so an interactive run can't block indefinitely; longer
-#: passive logging is still possible by re-running or scripting the subcommand.
+#: Cap a single foreground capture window so a scripted run can't block indefinitely;
+#: longer passive logging is done by enabling the background monitor instead.
 MAX_DURATION_S = 3600
 
 
 @register
 class MonitorTool(Tool):
-    """Listen for a window and log every overheard advert/telemetry to the database."""
+    """Toggle the passive background monitor and review the nodes it has heard."""
 
     name = "monitor"
-    help = "Passively log adverts/telemetry heard on the mesh (longitudinal history)."
+    help = "Toggle passive background monitoring on/off and review heard nodes."
     category = "Diagnostics"
     order = 20
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Ask how long to listen.
+        """Show the monitor status and offer to toggle it or review heard nodes.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            A parameter dict, or ``None`` if the user cancelled.
+            A parameter dict naming the chosen ``action``, or ``None`` if cancelled.
         """
-        duration = await questionary.text(
-            f"Listen for how many seconds? (1-{MAX_DURATION_S})",
-            default="60",
-            validate=_is_valid_duration,
+        monitor = ctx.monitor
+        toggle_label = "Turn monitoring OFF" if monitor.enabled else "Turn monitoring ON"
+        choice = await questionary.select(
+            f"Passive monitor — {monitor.status_text()}",
+            choices=[
+                questionary.Choice(toggle_label, value="toggle"),
+                questionary.Choice("View heard nodes (all time)", value="view"),
+                questionary.Choice("Back", value="__back__"),
+            ],
         ).ask_async()
-        if duration is None:
+        if choice in (None, "__back__"):
             return None
-        return {"duration": int(duration)}
+        return {"action": choice}
+
+    async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Run the control-panel action directly, without a logged ``runs`` row.
+
+        The monitor entry is a control panel, not a measurement, so it is deliberately
+        not wrapped in run-logging (unlike the base :meth:`Tool.execute`). The background
+        capture session records its own ``monitor`` run instead.
+
+        Args:
+            ctx: Shared application context.
+            params: The chosen ``action``.
+
+        Returns:
+            The :class:`ToolResult` from :meth:`run`.
+        """
+        return await self.run(ctx, params)
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Capture observations for the window, persist them, and summarize heard nodes.
+        """Dispatch the selected control-panel action.
 
         Args:
             ctx: Shared application context.
-            params: ``duration`` (seconds) and the injected ``_run_id``.
+            params: ``action`` — ``"toggle"`` or ``"view"``.
 
         Returns:
-            A :class:`ToolResult` noting how many nodes/packets were heard.
+            A :class:`ToolResult` describing the outcome.
         """
-        duration = max(1, min(MAX_DURATION_S, int(params.get("duration", 60))))
-        run_id = params["_run_id"]
+        if params.get("action") == "view":
+            return self._view(ctx)
+        return await self._toggle(ctx)
+
+    @staticmethod
+    async def _toggle(ctx: AppContext) -> ToolResult:
+        """Flip background monitoring on or off, surfacing any start failure.
+
+        Args:
+            ctx: Shared application context.
+
+        Returns:
+            A :class:`ToolResult` reporting the new state.
+        """
+        try:
+            now_on = await ctx.monitor.toggle()
+        except Exception as exc:  # noqa: BLE001 - report cleanly, keep the menu alive
+            return ToolResult(
+                summary={"enabled": ctx.monitor.enabled, "active": ctx.monitor.active,
+                         "error": str(exc)},
+                message=f"[warn]monitoring enabled but capture couldn't start:[/warn] {exc}",
+            )
+        state = "[ok]● ON[/ok]" if now_on else "[muted]○ OFF[/muted]"
+        return ToolResult(
+            summary={"enabled": now_on, "active": ctx.monitor.active},
+            message=f"passive monitor is now {state}",
+        )
+
+    @staticmethod
+    def _view(ctx: AppContext) -> ToolResult:
+        """Render the all-time heard-node summary from stored observations.
+
+        Reads only the database, so it needs no device connection and works whether or
+        not monitoring is currently active.
+
+        Args:
+            ctx: Shared application context.
+
+        Returns:
+            A :class:`ToolResult` summarizing the heard nodes.
+        """
+        heard = ctx.repo.heard_nodes()
+        if heard:
+            # Names come from the stored observations, so no device lookup is needed.
+            ctx.console.print(_heard_table(heard, lambda _node: None))
+        else:
+            ctx.console.print("[muted]no packets heard yet — turn monitoring on[/muted]")
+
+        packets = sum(n.count for n in heard)
+        located = sum(1 for n in heard if n.has_location)
+        return ToolResult(
+            summary={
+                "nodes_heard": len(heard),
+                "observations": packets,
+                "nodes_with_location": located,
+            },
+            message=(
+                f"[ok]✓[/ok] heard [brand]{packets}[/brand] packets from "
+                f"[brand]{len(heard)}[/brand] nodes (all time)"
+            ),
+        )
+
+    def register_cli(self, app: typer.Typer) -> None:
+        """Register the ``monitor`` subcommand.
+
+        Args:
+            app: The Typer application.
+        """
+        from ..core.monitor_store import MonitorStore
+
+        @app.command(name=self.name, help=self.help)
+        def _monitor(
+            on: bool = typer.Option(
+                False, "--on", help="Enable background monitoring for future sessions."
+            ),
+            off: bool = typer.Option(
+                False, "--off", help="Disable background monitoring."
+            ),
+            seconds: Optional[int] = typer.Option(
+                None,
+                "--seconds",
+                "-d",
+                help=f"Capture in the foreground for N seconds now, then exit "
+                f"(1-{MAX_DURATION_S}).",
+            ),
+        ) -> None:
+            from ..cli import _state
+
+            if on and off:
+                raise typer.BadParameter("Pass only one of --on / --off.")
+            assert _state is not None  # set by the callback before any subcommand runs
+            ctx = _state
+            store = MonitorStore(ctx.settings.config_dir / "monitor.json")
+
+            if on or off:
+                store.save_enabled(on)
+                state = "[ok]on[/ok]" if on else "[muted]off[/muted]"
+                ctx.console.print(
+                    f"[ok]✓[/ok] background monitoring set {state} for future "
+                    "interactive sessions"
+                )
+                return
+            if seconds is not None:
+                _run_foreground_capture(ctx, seconds)
+                return
+            # No flags: report the current preference and history size.
+            enabled = "[ok]on[/ok]" if store.load_enabled() else "[muted]off[/muted]"
+            ctx.console.print(
+                f"background monitoring is {enabled} · "
+                f"[brand]{ctx.repo.observation_count()}[/brand] observations logged all-time"
+            )
+
+
+def _run_foreground_capture(ctx: AppContext, seconds: int) -> None:
+    """Drive a one-shot foreground capture on its own event loop.
+
+    Args:
+        ctx: Shared application context.
+        seconds: Requested capture duration (clamped to ``1..MAX_DURATION_S``).
+    """
+    import asyncio
+
+    from ..cli import _drive
+
+    asyncio.run(_drive(_foreground_capture(ctx, seconds), ctx))
+
+
+async def _foreground_capture(ctx: AppContext, seconds: int) -> None:
+    """Capture overheard packets for a bounded window and print a heard-node table.
+
+    This is the scripted, blocking counterpart to the background monitor: it records to
+    its own ``monitor`` run and returns when the window elapses. Used by ``monitor
+    --seconds``.
+
+    Args:
+        ctx: Shared application context.
+        seconds: Requested capture duration (clamped to ``1..MAX_DURATION_S``).
+    """
+    duration = max(1, min(MAX_DURATION_S, int(seconds)))
+    run_id = ctx.repo.start_run(
+        "monitor", {"mode": "foreground", "duration": duration}, ctx.profile_name
+    )
+    observations: list[Observation] = []
+    try:
         device = await ctx.device()
-
-        # Resolve node hashes to friendly names where we know the contact.
-        contacts = await device.get_contacts()
-        resolve = trace_runner.make_node_resolver(contacts)
-
-        observations: list[Observation] = []
+        resolve = trace_runner.make_node_resolver(await device.get_contacts())
         with make_progress(ctx.console) as progress:
             task = progress.add_task(f"listening {duration}s", total=duration)
 
@@ -86,42 +254,31 @@ class MonitorTool(Tool):
 
             await device.listen(duration, on_observation=on_observation)
             progress.update(task, completed=duration)
+    except Exception as exc:  # noqa: BLE001 - record then re-raise for the CLI handler
+        ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
+        raise
 
-        heard = _aggregate(observations)
-        if heard:
-            ctx.console.print(_heard_table(heard, resolve))
-        else:
-            ctx.console.print("[muted]no packets heard during the window[/muted]")
+    heard = _aggregate(observations)
+    if heard:
+        ctx.console.print(_heard_table(heard, resolve))
+    else:
+        ctx.console.print("[muted]no packets heard during the window[/muted]")
 
-        located = sum(1 for n in heard if n.has_location)
-        return ToolResult(
-            summary={
-                "duration_s": duration,
-                "observations": len(observations),
-                "nodes_heard": len(heard),
-                "nodes_with_location": located,
-            },
-            message=(
-                f"[ok]✓[/ok] heard [brand]{len(observations)}[/brand] packets from "
-                f"[brand]{len(heard)}[/brand] nodes in {duration}s"
-            ),
-        )
-
-    def register_cli(self, app: typer.Typer) -> None:
-        """Register the ``monitor`` subcommand.
-
-        Args:
-            app: The Typer application.
-        """
-        from ..cli import run_tool_command
-
-        @app.command(name=self.name, help=self.help)
-        def _monitor(
-            duration: int = typer.Option(
-                60, "--duration", "-d", help=f"Seconds to listen (max {MAX_DURATION_S})."
-            ),
-        ) -> None:
-            run_tool_command(self, {"duration": duration})
+    located = sum(1 for n in heard if n.has_location)
+    ctx.repo.finish_run(
+        run_id,
+        "ok",
+        {
+            "duration_s": duration,
+            "observations": len(observations),
+            "nodes_heard": len(heard),
+            "nodes_with_location": located,
+        },
+    )
+    ctx.console.print(
+        f"[ok]✓[/ok] heard [brand]{len(observations)}[/brand] packets from "
+        f"[brand]{len(heard)}[/brand] nodes in {duration}s"
+    )
 
 
 def _distinct(observations: list[Observation]) -> int:
@@ -180,23 +337,3 @@ def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001
             str(label), str(node.count), median_cell, best_cell, rssi_cell, loc_cell
         )
     return table
-
-
-def _is_valid_duration(value: str) -> bool | str:
-    """Validate a listening duration in ``1..MAX_DURATION_S`` for a text answer.
-
-    Args:
-        value: Raw input.
-
-    Returns:
-        ``True`` if valid, otherwise an error message string.
-    """
-    try:
-        seconds = int(value)
-    except ValueError:
-        return "Enter a whole number of seconds."
-    if seconds < 1:
-        return "Enter a number greater than zero."
-    if seconds > MAX_DURATION_S:
-        return f"Maximum {MAX_DURATION_S} seconds."
-    return True

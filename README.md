@@ -18,7 +18,7 @@ turned into interactive HTML visualizations.
 | **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
 | **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
-| **Passive monitor** | ✅ working | Listen on the air and log every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history. |
+| **Passive monitor** | ✅ working | Toggle a non-blocking background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you keep using the app; on/off is remembered between sessions and live packet counts show in the menu. |
 | **Link health** | ✅ working | Compare a target's recent traces to its rolling baseline and flag SNR/reliability regressions, end-to-end and per hop. |
 | **Route map** | ✅ working | Aggregate trace history into an interactive route-stability graph — which links are stable, which the mesh flaps between, with churn metrics. |
 | **Path optimization** | 🚧 planned | Discover and score mesh paths from neighbors outward. |

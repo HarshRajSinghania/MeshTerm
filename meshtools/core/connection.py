@@ -23,6 +23,14 @@ from .models import Contact, Hop, Observation, TraceResult
 #: Callback invoked with each :class:`Observation` as passive monitoring captures it.
 ObservationCallback = Callable[[Observation], None]
 
+#: Zero-argument callable returned by :meth:`Device.subscribe_observations` that stops the
+#: subscription and releases its resources when invoked.
+Unsubscribe = Callable[[], None]
+
+#: How often the :class:`MockDevice` simulator emits a fresh burst of synthetic packets
+#: while a passive-monitor subscription is open (seconds).
+_MOCK_MONITOR_INTERVAL_S = 0.05
+
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
 
@@ -148,18 +156,38 @@ class Device(ABC):
     # -- passive monitoring ------------------------------------------------------
 
     @abstractmethod
+    async def subscribe_observations(
+        self, on_observation: "ObservationCallback"
+    ) -> "Unsubscribe":
+        """Begin passively capturing overheard packets, without blocking the caller.
+
+        Subscribes to the adverts (and, where the firmware surfaces them, telemetry
+        frames) the companion overhears and invokes ``on_observation`` with each
+        :class:`~meshtools.core.models.Observation` as it arrives. Capture continues in
+        the background until the returned callable is invoked to stop it; the radio is
+        never asked to transmit, it only listens. This is the primitive behind both the
+        always-on background monitor and the bounded :meth:`listen` helper.
+
+        Args:
+            on_observation: Callback invoked with each observation as it is heard.
+
+        Returns:
+            A zero-argument callable that stops capture and releases the subscription.
+        """
+
     async def listen(
         self,
         duration_s: float,
         *,
         on_observation: Optional["ObservationCallback"] = None,
     ) -> list[Observation]:
-        """Passively capture packets the companion overhears for ``duration_s`` seconds.
+        """Capture observations for a bounded window, then stop and return them.
 
-        Adverts (and, where the firmware surfaces them, telemetry frames) heard on the
-        air are returned as :class:`~meshtools.core.models.Observation` records with
-        whatever SNR/RSSI/location the radio reported. The radio is not asked to transmit;
-        it simply listens.
+        A thin, foreground convenience wrapper over :meth:`subscribe_observations` for
+        one-shot captures (e.g. the scripted ``monitor --seconds`` command): it
+        subscribes, waits ``duration_s`` seconds, unsubscribes, and returns everything
+        heard. For continuous, non-blocking capture, use :meth:`subscribe_observations`
+        directly.
 
         Args:
             duration_s: How long to listen, in seconds.
@@ -169,6 +197,19 @@ class Device(ABC):
         Returns:
             Every observation captured during the window, in arrival order.
         """
+        captured: list[Observation] = []
+
+        def collect(obs: Observation) -> None:
+            captured.append(obs)
+            if on_observation is not None:
+                on_observation(obs)
+
+        unsubscribe = await self.subscribe_observations(collect)
+        try:
+            await asyncio.sleep(duration_s)
+        finally:
+            unsubscribe()
+        return captured
 
     # -- configuration: extra reads ---------------------------------------------
 
@@ -615,12 +656,9 @@ class MeshCoreDevice(Device):
             return b"".join(hops), path_hash_flags(trace_size) or 0
         return None
 
-    async def listen(  # noqa: D102 - inherited docstring
-        self,
-        duration_s: float,
-        *,
-        on_observation: Optional[ObservationCallback] = None,
-    ) -> list[Observation]:
+    async def subscribe_observations(  # noqa: D102 - inherited docstring
+        self, on_observation: ObservationCallback
+    ) -> Unsubscribe:
         from meshcore import EventType
 
         mc = self._require()
@@ -631,15 +669,10 @@ class MeshCoreDevice(Device):
                 "monitoring isn't available. Upgrade the 'meshcore' library."
             )
 
-        observations: list[Observation] = []
-
         def make_handler(kind: str):  # type: ignore[no-untyped-def]
             def handler(event) -> None:  # noqa: ANN001
                 obs = observation_from_event(event, kind)
-                if obs is None:
-                    return
-                observations.append(obs)
-                if on_observation is not None:
+                if obs is not None:
                     on_observation(obs)
 
             return handler
@@ -657,9 +690,8 @@ class MeshCoreDevice(Device):
             etype = getattr(EventType, attr, None)
             if etype is not None:
                 subs.append(subscribe(etype, make_handler(kind)))
-        try:
-            await asyncio.sleep(duration_s)
-        finally:
+
+        def unsubscribe() -> None:
             for sub in subs:
                 unsub = getattr(sub, "unsubscribe", None)
                 if unsub is not None:
@@ -667,7 +699,8 @@ class MeshCoreDevice(Device):
                         unsub()
                     except Exception:  # noqa: BLE001 - best-effort cleanup
                         pass
-        return observations
+
+        return unsubscribe
 
     @staticmethod
     def _ok(event):  # type: ignore[no-untyped-def]
@@ -848,6 +881,9 @@ class MockDevice(Device):
         self._channels: dict[int, dict] = {}
         self._device_pin = 0
         self._private_key = "11" * 32
+        # Background emitter tasks spawned by ``subscribe_observations``; tracked so they
+        # can be cancelled on disconnect and are never garbage-collected while pending.
+        self._bg_tasks: set[asyncio.Task] = set()
 
     async def connect(self) -> None:  # noqa: D102 - inherited docstring
         await asyncio.sleep(0)
@@ -855,6 +891,9 @@ class MockDevice(Device):
 
     async def disconnect(self) -> None:  # noqa: D102 - inherited docstring
         self._connected = False
+        for task in list(self._bg_tasks):
+            task.cancel()
+        self._bg_tasks.clear()
 
     async def get_self_info(self) -> dict:  # noqa: D102 - inherited docstring
         return {**self._info, "tx_power": self._tx_power}
@@ -987,41 +1026,71 @@ class MockDevice(Device):
         self._custom_vars.clear()
         self._channels.clear()
 
-    async def listen(  # noqa: D102 - inherited docstring
-        self,
-        duration_s: float,
-        *,
-        on_observation: Optional[ObservationCallback] = None,
-    ) -> list[Observation]:
-        # Synthesize plausible adverts from the known contacts, cycling through them.
-        # Two of them ("…Repeater") advertise a fixed location so location-aware features
-        # (e.g. the coverage map) have data. The wall-clock duration is honored only
-        # loosely — the simulator emits a count proportional to it and paces minimally so
-        # tests stay fast.
-        repeats = max(1, round(duration_s / 5.0))
-        locations = {
-            "Yagi-Repeater": (45.5019, -73.5674),
-            "Local-Repeater": (45.4768, -73.5990),
-        }
-        observations: list[Observation] = []
-        for r in range(repeats):
-            for c in self._contacts:
-                kind = "telemetry" if (r + len(observations)) % 4 == 3 else "advert"
-                lat_lon = locations.get(c.name)
-                obs = Observation(
-                    node=c.key_prefix or c.public_key[:12],
-                    name=c.name,
-                    kind=kind,
-                    snr=round(self._rng.gauss(6.0, 3.0), 1),
-                    rssi=round(self._rng.gauss(-95.0, 8.0), 1),
-                    lat=lat_lon[0] if lat_lon else None,
-                    lon=lat_lon[1] if lat_lon else None,
-                )
-                observations.append(obs)
-                if on_observation is not None:
-                    on_observation(obs)
-                await asyncio.sleep(0)
-        return observations
+    async def subscribe_observations(  # noqa: D102 - inherited docstring
+        self, on_observation: ObservationCallback
+    ) -> Unsubscribe:
+        # Simulate a live packet stream. Emit a burst of synthetic adverts/telemetry from
+        # the known contacts *synchronously* here, then keep emitting at a steady cadence
+        # from a background task until unsubscribed. The immediate first burst means even
+        # a zero-length capture window always sees every contact (two of which carry a
+        # location), keeping bounded ``listen`` runs and their tests deterministic.
+        stop = asyncio.Event()
+        seq = 0
+
+        def emit_burst() -> None:
+            nonlocal seq
+            for contact in self._contacts:
+                on_observation(self._synth_observation(contact, seq))
+                seq += 1
+
+        emit_burst()
+
+        async def emit_loop() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), _MOCK_MONITOR_INTERVAL_S)
+                except asyncio.TimeoutError:
+                    pass  # cadence tick elapsed; emit the next burst
+                if not stop.is_set():
+                    emit_burst()
+
+        task = asyncio.create_task(emit_loop())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+        def unsubscribe() -> None:
+            stop.set()  # wakes the loop's wait immediately; it exits on the next check
+
+        return unsubscribe
+
+    #: Fixed locations advertised by the two simulated repeaters, so location-aware
+    #: features (e.g. the coverage map) always have coordinates to work with.
+    _MOCK_LOCATIONS = {
+        "Yagi-Repeater": (45.5019, -73.5674),
+        "Local-Repeater": (45.4768, -73.5990),
+    }
+
+    def _synth_observation(self, contact: Contact, seq: int) -> Observation:
+        """Build one plausible synthetic observation for ``contact`` (simulator only).
+
+        Args:
+            contact: The contact to synthesize a reception from.
+            seq: Monotonic emission counter, used to vary the packet kind.
+
+        Returns:
+            A noisy :class:`Observation` tagged ``telemetry`` on every fourth packet and
+            ``advert`` otherwise, carrying a location for the simulated repeaters.
+        """
+        lat_lon = self._MOCK_LOCATIONS.get(contact.name)
+        return Observation(
+            node=contact.key_prefix or contact.public_key[:12],
+            name=contact.name,
+            kind="telemetry" if seq % 4 == 3 else "advert",
+            snr=round(self._rng.gauss(6.0, 3.0), 1),
+            rssi=round(self._rng.gauss(-95.0, 8.0), 1),
+            lat=lat_lon[0] if lat_lon else None,
+            lon=lat_lon[1] if lat_lon else None,
+        )
 
     def _expected_snr(self, hop_index: int) -> float:
         """Model SNR for a hop as an inverted-U in TX power plus distance falloff.

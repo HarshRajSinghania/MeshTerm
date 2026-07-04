@@ -8,7 +8,7 @@ never open a serial port.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich.console import Console
 
@@ -20,6 +20,9 @@ from .core.discovery import DiscoveredDevice, discover_devices
 from .core.selection import resolve_device
 from .persistence.logging import get_logger
 from .persistence.repository import Repository
+
+if TYPE_CHECKING:
+    from .services.monitor_service import MonitorService
 
 
 @dataclass(slots=True)
@@ -55,11 +58,29 @@ class AppContext:
     selected_device: Optional[DiscoveredDevice] = None
     explicit_selection: bool = False
     _device: Optional[Device] = field(default=None, init=False, repr=False)
+    _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
 
     @property
     def profile_name(self) -> Optional[str]:
         """Name of the active profile, if any."""
         return self.profile.name if self.profile else None
+
+    @property
+    def monitor(self) -> "MonitorService":
+        """Return the session's passive-monitor service, creating it on first use.
+
+        The service is built lazily so the (cheap) database read for the "total"
+        observation count and the on/off preference load happen only once, when
+        monitoring is first referenced.
+        """
+        if self._monitor is None:
+            from .core.monitor_store import MonitorStore
+            from .services.monitor_service import MonitorService
+
+            self._monitor = MonitorService(
+                self, MonitorStore(self.settings.config_dir / "monitor.json")
+            )
+        return self._monitor
 
     @property
     def log(self):  # type: ignore[no-untyped-def]
@@ -105,7 +126,9 @@ class AppContext:
         return self._device
 
     async def aclose(self) -> None:
-        """Disconnect the device (if connected) and close the repository."""
+        """Stop monitoring, disconnect the device (if connected), and close the repo."""
+        if self._monitor is not None:
+            await self._monitor.aclose()
         if self._device is not None:
             await self._device.disconnect()
             self._device = None

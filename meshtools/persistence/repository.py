@@ -335,6 +335,18 @@ class Repository:
         )
         self._conn.commit()
 
+    def observation_count(self) -> int:
+        """Return the total number of overheard packets stored across every run.
+
+        Backs the monitor's "total" counter, so it counts all observations ever logged,
+        not just the current session's.
+
+        Returns:
+            The row count of the ``observations`` table.
+        """
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM observations").fetchone()
+        return int(row["n"]) if row else 0
+
     def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 
