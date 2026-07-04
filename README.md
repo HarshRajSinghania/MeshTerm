@@ -13,6 +13,7 @@ turned into interactive HTML visualizations.
 | --- | --- | --- |
 | **Trace** | ✅ skeleton | Run repeated path traces to a target and aggregate per-hop SNR. |
 | **Device info** | ✅ skeleton | Show the connected companion device's identity and radio config. |
+| **Node list** | ✅ working | List this node and its known contacts — full public keys with the path-hash prefix highlighted. |
 | **Device config** | ✅ working | View and change every setting (name, radio, behavior, experimental), with TOML backup/restore, channels, and gated destructive ops. |
 | **Device discovery** | ✅ working | Enumerate serial devices, pick one interactively, and remember the last good default. |
 | **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
