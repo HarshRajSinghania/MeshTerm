@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -20,6 +19,7 @@ from rich.text import Text
 from ..context import AppContext
 from ..services import link_budget
 from ..services.link_budget import PATH_LOSS_EXPONENTS, RadioConfig
+from ..ui.tui import Choice
 from .base import Tool, ToolResult, register
 
 
@@ -43,38 +43,32 @@ class LinkBudgetTool(Tool):
         """
         defaults = await self._device_radio(ctx)
 
-        payload = await questionary.text(
+        payload = await ctx.ui.text(
             "Payload size (bytes):", default="32", validate=_is_pos_int
-        ).ask_async()
+        )
         if payload is None:
             return None
-        tx = await questionary.text(
+        tx = await ctx.ui.text(
             "TX power (dBm):",
             default=str(int(defaults.get("tx_power") or 22)),
             validate=_is_number,
-        ).ask_async()
+        )
         if tx is None:
             return None
-        tx_gain = await questionary.text(
-            "TX antenna gain (dBi):", default="2", validate=_is_number
-        ).ask_async()
+        tx_gain = await ctx.ui.text("TX antenna gain (dBi):", default="2", validate=_is_number)
         if tx_gain is None:
             return None
-        rx_gain = await questionary.text(
-            "RX antenna gain (dBi):", default="2", validate=_is_number
-        ).ask_async()
+        rx_gain = await ctx.ui.text("RX antenna gain (dBi):", default="2", validate=_is_number)
         if rx_gain is None:
             return None
-        env = await questionary.select(
+        env = await ctx.ui.select(
             "Environment (path-loss model):",
-            choices=list(PATH_LOSS_EXPONENTS),
+            [Choice(name, name) for name in PATH_LOSS_EXPONENTS],
             default="suburban",
-        ).ask_async()
+        )
         if env is None:
             return None
-        duty = await questionary.text(
-            "Duty-cycle limit (%):", default="1.0", validate=_is_number
-        ).ask_async()
+        duty = await ctx.ui.text("Duty-cycle limit (%):", default="1.0", validate=_is_number)
         if duty is None:
             return None
 
@@ -120,8 +114,8 @@ class LinkBudgetTool(Tool):
             max_dwell_ms=params.get("dwell"),
         )
 
-        ctx.console.print(_radio_panel(config))
-        ctx.console.print(_budget_panel(budget))
+        ctx.ui.show(_radio_panel(config))
+        ctx.ui.show(_budget_panel(budget))
 
         return ToolResult(
             summary={

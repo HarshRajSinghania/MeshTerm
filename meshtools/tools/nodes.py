@@ -46,7 +46,7 @@ class NodesTool(Tool):
 
         self_name = str(info.get("name") or "this node")
         self_key = str(info.get("public_key") or "")
-        ctx.console.print(nodes_table(self_name, self_key, contacts, prefix_bytes))
+        ctx.ui.show(nodes_table(self_name, self_key, contacts, prefix_bytes))
 
         return ToolResult(summary={"contacts": len(contacts)})
 

@@ -50,7 +50,7 @@ class HistoryTool(Tool):
                 f"[{style}]{r.status}[/{style}]",
                 r.started_at.replace("T", " ")[:19],
             )
-        ctx.console.print(table)
+        ctx.ui.show(table)
         return ToolResult(summary={"shown": len(runs)})
 
     def register_cli(self, app: typer.Typer) -> None:

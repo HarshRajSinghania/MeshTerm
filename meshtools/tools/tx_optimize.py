@@ -11,14 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
 from ..core.models import Contact
 from ..services import trace_runner, tx_optimizer
-from ..ui.widgets import make_progress, tx_opt_summary, tx_opt_table
+from ..ui.widgets import tx_opt_summary, tx_opt_table
 from ..viz.tx_plot import render_tx_optimization
 from .base import Tool, ToolResult, register
 
@@ -55,37 +54,33 @@ class TxOptimizeTool(Tool):
         )
         validate_path = lambda v: _validate_link_path(v, contacts)  # noqa: E731
         if choices:
-            path_spec = await questionary.autocomplete(
-                path_prompt, choices=choices, ignore_case=True, validate=validate_path
-            ).ask_async()
+            path_spec = await ctx.ui.autocomplete(path_prompt, choices, validate=validate_path)
         else:
-            path_spec = await questionary.text(path_prompt, validate=validate_path).ask_async()
+            path_spec = await ctx.ui.text(path_prompt, validate=validate_path)
         if not path_spec:
             return None
 
-        samples = await questionary.text(
+        samples = await ctx.ui.text(
             f"Traces per TX level? (1-{MAX_SAMPLES})", default="3", validate=_is_valid_sample_count
-        ).ask_async()
+        )
         if samples is None:
             return None
-        tx_min = await questionary.text(
+        tx_min = await ctx.ui.text(
             "Lowest TX power to try:", default=str(ctx.settings.tx_opt_min), validate=_is_int
-        ).ask_async()
+        )
         if tx_min is None:
             return None
-        tx_max = await questionary.text(
+        tx_max = await ctx.ui.text(
             "Highest TX power to try:", default=str(ctx.settings.tx_opt_max), validate=_is_int
-        ).ask_async()
+        )
         if tx_max is None:
             return None
-        step = await questionary.text(
-            "Coarse step:", default="3", validate=_is_valid_sample_count
-        ).ask_async()
+        step = await ctx.ui.text("Coarse step:", default="3", validate=_is_valid_sample_count)
         if step is None:
             return None
-        apply = await questionary.confirm(
+        apply = await ctx.ui.confirm(
             "Set the winning TX power on the node afterward?", default=True
-        ).ask_async()
+        )
         if apply is None:
             return None
 
@@ -121,12 +116,10 @@ class TxOptimizeTool(Tool):
 
         samples = max(1, min(MAX_SAMPLES, int(params.get("samples", 3))))
         if int(params.get("samples", 3)) > MAX_SAMPLES:
-            ctx.console.print(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
+            ctx.ui.note(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
 
         password = await self._resolve_password(ctx, admin_node, params)
-        ctx.console.print(
-            f"[dim]logging in to[/dim] [brand]{admin_node.name}[/brand][dim]…[/dim]"
-        )
+        ctx.ui.note(f"[muted]logging in to[/muted] [brand]{admin_node.name}[/brand] [muted]…[/muted]")
         if not await device.admin_login(admin_node, password):
             ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
             raise DeviceCommandError(
@@ -135,13 +128,13 @@ class TxOptimizeTool(Tool):
             )
         ctx.admin_store.remember(admin_node, password)
 
-        ctx.console.print(
-            f"[dim]tuning[/dim] [brand]{admin_node.name}[/brand] "
-            f"[dim]→ target[/dim] [brand]{target_label}[/brand]  "
-            f"[dim]via[/dim] [muted]{path}[/muted]"
+        ctx.ui.note(
+            f"[muted]tuning[/muted] [brand]{admin_node.name}[/brand] "
+            f"[muted]→ target[/muted] [brand]{target_label}[/brand]  "
+            f"[muted]via {path}[/muted]"
         )
 
-        with make_progress(ctx.console) as progress:
+        with ctx.ui.progress("tx-optimize") as progress:
             task = progress.add_task(f"optimizing TX -> {target_label}", total=None)
 
             def on_level(done: int, total: int, level) -> None:  # noqa: ANN001
@@ -173,8 +166,8 @@ class TxOptimizeTool(Tool):
         if result.applied:
             ctx.log.info("set TX power %s on %s", result.best_tx, admin_node.name)
 
-        ctx.console.print(tx_opt_table(result))
-        ctx.console.print(tx_opt_summary(result))
+        ctx.ui.show(tx_opt_table(result))
+        ctx.ui.show(tx_opt_summary(result))
 
         artifacts: list[str] = []
         if params.get("viz", True):
@@ -238,9 +231,9 @@ class TxOptimizeTool(Tool):
                 f"no admin password for {admin_node.name!r}; pass --password or run once "
                 "interactively to store it."
             )
-        entered = await questionary.password(
-            f"Admin password for {admin_node.name}:"
-        ).ask_async()
+        entered = await ctx.ui.text(
+            f"Admin password for {admin_node.name}:", password=True
+        )
         if not entered:
             raise DeviceCommandError("an admin password is required to tune a remote node.")
         return entered

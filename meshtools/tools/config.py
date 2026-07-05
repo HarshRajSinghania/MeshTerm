@@ -203,18 +203,18 @@ async def apply_ops(
             await _show(ctx, device, snapshot)
         elif kind == "get":
             spec = get_spec(op[1])
-            ctx.console.print(
+            ctx.ui.note(
                 f"[muted]{spec.key}[/muted] = {format_value(spec, spec.getter(snapshot))}"
             )
         elif kind == "set":
             changes += await _apply_setting(ctx, device, op[1], op[2], snapshot)
         elif kind == "set_custom":
             await device.set_custom_var(op[1], op[2])
-            ctx.console.print(f"[ok]✓[/ok] custom [brand]{op[1]}[/brand] = {op[2]}")
+            ctx.ui.note(f"[ok]✓[/ok] custom [brand]{op[1]}[/brand] = {op[2]}")
             changes += 1
         elif kind == "set_channel":
             await device.set_channel(op[1], op[2], op[3])
-            ctx.console.print(f"[ok]✓[/ok] channel {op[1]} = [brand]{op[2]}[/brand]")
+            ctx.ui.note(f"[ok]✓[/ok] channel {op[1]} = [brand]{op[2]}[/brand]")
             changes += 1
         elif kind == "backup":
             artifacts.append(str(await _backup(device, snapshot, op[1])))
@@ -222,21 +222,21 @@ async def apply_ops(
             changes += await _restore(ctx, device, snapshot, op[1], op[2])
         elif kind == "advert":
             await device.send_advert(len(op) > 1 and bool(op[1]))
-            ctx.console.print("[ok]✓[/ok] advertisement sent")
+            ctx.ui.note("[ok]✓[/ok] advertisement sent")
         elif kind == "reboot":
             await device.reboot()
-            ctx.console.print("[warn]device rebooting[/warn]")
+            ctx.ui.note("[warn]device rebooting[/warn]")
         elif kind == "export_key":
             await _export_key(ctx, device, op[1] if len(op) > 1 else None, artifacts)
         elif kind == "import_key":
             await device.import_private_key(op[1])
-            ctx.console.print("[ok]✓[/ok] private key imported")
+            ctx.ui.note("[ok]✓[/ok] private key imported")
             changes += 1
         elif kind == "factory_reset":
             await device.factory_reset()
-            ctx.console.print("[err]device factory-reset[/err]")
+            ctx.ui.note("[err]device factory-reset[/err]")
         else:  # pragma: no cover - guarded by the call sites that build ops
-            ctx.console.print(f"[err]unknown config op: {kind}[/err]")
+            ctx.ui.note(f"[err]unknown config op: {kind}[/err]")
     return changes, artifacts
 
 
@@ -255,16 +255,16 @@ async def _apply_setting(
     value = parse_value(spec, raw)
     await spec.apply(device, value, snapshot)
     snapshot[key] = value
-    ctx.console.print(f"[ok]✓[/ok] [brand]{key}[/brand] = {format_value(spec, value)}")
+    ctx.ui.note(f"[ok]✓[/ok] [brand]{key}[/brand] = {format_value(spec, value)}")
     return 1
 
 
 async def _show(ctx: AppContext, device: Device, snapshot: dict) -> None:
     """Render the full configuration table plus custom variables."""
-    from ..ui.config_editor import render_config
+    from ..ui.config_editor import config_table
 
     custom = await device.get_custom_vars()
-    render_config(ctx.console, snapshot, custom)
+    ctx.ui.show(config_table(snapshot, custom))
 
 
 async def _backup(device: Device, snapshot: dict, path: Path) -> Path:
@@ -286,7 +286,7 @@ async def _restore(
     custom = await device.get_custom_vars()
     ops = plan_restore(backup, snapshot, custom)
     if not ops:
-        ctx.console.print("[muted]restore: device already matches the backup.[/muted]")
+        ctx.ui.note("[muted]restore: device already matches the backup.[/muted]")
         return 0
 
     if dry_run:
@@ -296,8 +296,8 @@ async def _restore(
         table.add_column("Value")
         for op in ops:
             table.add_row(op[0], str(op[1]), str(op[2] if len(op) > 2 else ""))
-        ctx.console.print(table)
-        ctx.console.print("[muted]dry run — nothing was changed.[/muted]")
+        ctx.ui.show(table)
+        ctx.ui.note("[muted]dry run — nothing was changed.[/muted]")
         return 0
 
     changes = 0
@@ -323,11 +323,9 @@ async def _export_key(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(key_hex, encoding="utf-8")
         artifacts.append(str(path))
-        ctx.console.print("[warn]private key written — keep this file secret.[/warn]")
+        ctx.ui.note("[warn]private key written — keep this file secret.[/warn]")
     else:
-        ctx.console.print(
-            "[warn]private key (keep secret):[/warn] [muted]" + key_hex + "[/muted]"
-        )
+        ctx.ui.note("[warn]private key (keep secret):[/warn] [muted]" + key_hex + "[/muted]")
 
 
 async def _read_channels(device: Device) -> list[dict]:

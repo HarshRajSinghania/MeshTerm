@@ -33,14 +33,14 @@ class InfoTool(Tool):
             A :class:`ToolResult` summarizing the device name.
         """
         from ..core.device_config import build_snapshot
-        from ..ui.config_editor import render_config
+        from ..ui.config_editor import config_table
 
         device = await ctx.device()
         snapshot = await build_snapshot(device)
         custom = await device.get_custom_vars()
 
         # Render every current setting with a short explanation of each.
-        render_config(ctx.console, snapshot, custom)
+        ctx.ui.show(config_table(snapshot, custom))
 
         return ToolResult(summary={"name": snapshot.get("name")})
 

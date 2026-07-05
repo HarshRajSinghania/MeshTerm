@@ -36,24 +36,20 @@ class DevicesTool(Tool):
         Returns:
             ``{"select": True}`` when the user opted to re-pick a device, else ``{}``.
         """
-        import questionary
-
         if ctx.mock:
             return {}
-        change = await questionary.confirm(
-            "Change the active companion device?", default=False
-        ).ask_async()
+        change = await ctx.ui.confirm("Change the active companion device?", default=False)
         if not change:
             return {}
 
         from ..ui.device_picker import prompt_device
 
         devices = discover_devices()
-        chosen = await prompt_device(ctx.console, devices, ctx.device_store.load())
+        chosen = await prompt_device(ctx.ui, devices, ctx.device_store.load())
         if chosen is not None:
             ctx.selected_device = chosen
             ctx.port_override = chosen.port
-            ctx.console.print(
+            ctx.ui.note(
                 f"[ok]●[/ok] active device set to [accent]{chosen.label}[/accent] "
                 "[muted](remembered once it connects)[/muted]"
             )
@@ -94,7 +90,7 @@ class DevicesTool(Tool):
             return ToolResult(summary={"count": len(devices)})
 
         if not devices:
-            ctx.console.print(
+            ctx.ui.note(
                 "[warn]No serial devices detected.[/warn] "
                 "Connect a companion device, or use [accent]--mock[/accent] for the simulator."
             )
@@ -119,8 +115,8 @@ class DevicesTool(Tool):
                 "[ok]yes[/ok]" if d.is_likely_lora else "[muted]—[/muted]",
                 d.serial_number or "[muted]—[/muted]",
             )
-        ctx.console.print(table)
-        ctx.console.print(
+        ctx.ui.show(table)
+        ctx.ui.note(
             "[muted]● active   ★ remembered default. "
             "Pass --port <PORT> to select on the CLI.[/muted]"
         )

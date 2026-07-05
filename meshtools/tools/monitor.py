@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 from rich.table import Table
 from rich.text import Text
@@ -28,6 +27,7 @@ from rich.text import Text
 from ..context import AppContext
 from ..core.models import HeardNode, Observation
 from ..services import trace_runner
+from ..ui.tui import Choice
 from ..ui.widgets import make_progress
 from .base import Tool, ToolResult, register
 
@@ -56,14 +56,14 @@ class MonitorTool(Tool):
         """
         monitor = ctx.monitor
         toggle_label = "Turn monitoring OFF" if monitor.enabled else "Turn monitoring ON"
-        choice = await questionary.select(
+        choice = await ctx.ui.select(
             f"Passive monitor — {monitor.status_text()}",
-            choices=[
-                questionary.Choice(toggle_label, value="toggle"),
-                questionary.Choice("View heard nodes (all time)", value="view"),
-                questionary.Choice("Back", value="__back__"),
+            [
+                Choice(toggle_label, value="toggle"),
+                Choice("View heard nodes (all time)", value="view"),
+                Choice("Back", value="__back__"),
             ],
-        ).ask_async()
+        )
         if choice in (None, "__back__"):
             return None
         return {"action": choice}
@@ -138,9 +138,9 @@ class MonitorTool(Tool):
         heard = ctx.repo.heard_nodes()
         if heard:
             # Names come from the stored observations, so no device lookup is needed.
-            ctx.console.print(_heard_table(heard, lambda _node: None))
+            ctx.ui.show(_heard_table(heard, lambda _node: None))
         else:
-            ctx.console.print("[muted]no packets heard yet — turn monitoring on[/muted]")
+            ctx.ui.note("[muted]no packets heard yet — turn monitoring on[/muted]")
 
         packets = sum(n.count for n in heard)
         located = sum(1 for n in heard if n.has_location)

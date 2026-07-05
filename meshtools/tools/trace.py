@@ -9,13 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 
 from ..context import AppContext
 from ..core.models import LOCAL_DEVICE_LABEL
 from ..services import trace_runner
-from ..ui.widgets import make_progress, stats_panel, traces_table
+from ..ui.widgets import stats_panel, traces_table
 from .base import Tool, ToolResult, register
 
 #: Upper bound on traces per run — the per-trace table renders one column each, so
@@ -45,20 +44,18 @@ class TraceTool(Tool):
         contacts = await device.get_contacts()
         choices = [c.name for c in contacts]
         prompt = "Target node (name or key prefix):"
-        # ``autocomplete`` requires a non-empty choice list; with no known contacts fall
-        # back to a free-text entry so the user can still type a name or key prefix.
+        # With no known contacts, fall back to a free-text entry so the user can still
+        # type a name or key prefix; otherwise suggest the known contacts.
         if choices:
-            target = await questionary.autocomplete(
-                prompt, choices=choices, ignore_case=True
-            ).ask_async()
+            target = await ctx.ui.autocomplete(prompt, choices)
         else:
-            target = await questionary.text(prompt).ask_async()
+            target = await ctx.ui.text(prompt)
         if not target:
             return None
 
-        samples_raw = await questionary.text(
+        samples_raw = await ctx.ui.text(
             f"How many traces? (1-{MAX_TRACES})", default="3", validate=_is_valid_sample_count
-        ).ask_async()
+        )
         if samples_raw is None:
             return None
 
@@ -67,13 +64,9 @@ class TraceTool(Tool):
         path_prompt = "Force a path? (comma-separated contacts/hex prefixes, blank = auto):"
         validate_path = lambda v: _validate_path(v, contacts)  # noqa: E731
         if choices:
-            path_spec = await questionary.autocomplete(
-                path_prompt, choices=choices, ignore_case=True, validate=validate_path
-            ).ask_async()
+            path_spec = await ctx.ui.autocomplete(path_prompt, choices, validate=validate_path)
         else:
-            path_spec = await questionary.text(
-                path_prompt, validate=validate_path
-            ).ask_async()
+            path_spec = await ctx.ui.text(path_prompt, validate=validate_path)
         if path_spec is None:
             return None
 
@@ -95,7 +88,7 @@ class TraceTool(Tool):
         target = params["target"]
         samples = max(1, min(MAX_TRACES, int(params.get("samples", 3))))
         if int(params.get("samples", 3)) > MAX_TRACES:
-            ctx.console.print(f"[warn]capping at {MAX_TRACES} traces[/warn]")
+            ctx.ui.note(f"[warn]capping at {MAX_TRACES} traces[/warn]")
         run_id = params["_run_id"]
         device = await ctx.device()
 
@@ -119,12 +112,12 @@ class TraceTool(Tool):
         path_spec = params.get("path")
         if path_spec:
             path = trace_runner.parse_trace_path(path_spec, contacts)
-            ctx.console.print(f"[dim]forcing path:[/dim] [brand]{path}[/brand]")
+            ctx.ui.note(f"[muted]forcing path:[/muted] [brand]{path}[/brand]")
         else:
-            ctx.console.print("[dim]path:[/dim] [muted]auto (device-routed)[/muted]")
+            ctx.ui.note("[muted]path: auto (device-routed)[/muted]")
 
         traces: list = []
-        with make_progress(ctx.console) as progress:
+        with ctx.ui.progress("trace") as progress:
             task = progress.add_task(f"tracing {target}", total=samples)
 
             def on_result(done: int, total: int, result) -> None:  # noqa: ANN001
@@ -145,8 +138,8 @@ class TraceTool(Tool):
         # (forced path, or the route the device resolved when auto-routing).
         current = next((t for t in traces if t.success), None)
         if traces:
-            ctx.console.print(traces_table(traces, device_label, resolve, device_hash))
-        ctx.console.print(
+            ctx.ui.show(traces_table(traces, device_label, resolve, device_hash))
+        ctx.ui.show(
             stats_panel(stats, device_label, resolve, route=current, device_hash=device_hash)
         )
 

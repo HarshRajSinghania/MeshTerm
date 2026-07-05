@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -20,7 +19,7 @@ from ..context import AppContext
 from ..services import route_stability, trace_runner
 from ..services.route_stability import RouteGraph
 from ..ui.theme import snr_style
-from ..ui.widgets import make_progress
+from ..ui.tui import Choice
 from ..viz.route_graph import render_route_graph
 from .base import Tool, ToolResult, register
 
@@ -46,17 +45,17 @@ class RouteMapTool(Tool):
             A parameter dict, or ``None`` if the user cancelled.
         """
         targets = ctx.repo.traced_targets()
-        choice = await questionary.select(
+        choice = await ctx.ui.select(
             "Map routing for:",
-            choices=[_WHOLE_MESH, *targets] if targets else [_WHOLE_MESH],
-        ).ask_async()
+            [Choice(_WHOLE_MESH, _WHOLE_MESH), *(Choice(t, t) for t in targets)],
+        )
         if choice is None:
             return None
-        samples = await questionary.text(
+        samples = await ctx.ui.text(
             "Take how many fresh traces first? (0 = use stored history only)",
             default="0",
             validate=_is_nonneg_int,
-        ).ask_async()
+        )
         if samples is None:
             return None
         params: dict[str, Any] = {"samples": int(samples)}
@@ -92,7 +91,7 @@ class RouteMapTool(Tool):
                 if params.get("path")
                 else None
             )
-            with make_progress(ctx.console) as progress:
+            with ctx.ui.progress("route-map") as progress:
                 task = progress.add_task(f"tracing {target}", total=samples)
                 await trace_runner.run_traces(
                     device, target, samples=samples, path=path,
@@ -111,7 +110,7 @@ class RouteMapTool(Tool):
 
         graph = route_stability.build_route_graph(traces, target=target, resolve=resolve)
 
-        ctx.console.print(_graph_panel(graph))
+        ctx.ui.show(_graph_panel(graph))
 
         artifacts: list[str] = []
         if graph.total_routes and params.get("viz", True) and ctx.settings.output_dir:

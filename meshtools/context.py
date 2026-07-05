@@ -23,6 +23,7 @@ from .persistence.repository import Repository
 
 if TYPE_CHECKING:
     from .services.monitor_service import MonitorService
+    from .ui.surface import Ui
 
 
 @dataclass(slots=True)
@@ -59,11 +60,31 @@ class AppContext:
     explicit_selection: bool = False
     _device: Optional[Device] = field(default=None, init=False, repr=False)
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
+    _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     @property
     def profile_name(self) -> Optional[str]:
         """Name of the active profile, if any."""
         return self.profile.name if self.profile else None
+
+    @property
+    def ui(self) -> "Ui":
+        """The active UI surface, defaulting to the plain console surface for the CLI.
+
+        The interactive menu replaces this with a full-screen TUI surface for the session;
+        scripted CLI runs use the lazily-created plain surface, which prints directly. The
+        surface module (and prompt_toolkit) is imported lazily here to keep startup fast.
+        """
+        if self._ui is None:
+            from .ui.surface import PlainUi
+
+            self._ui = PlainUi(self.console)
+        return self._ui
+
+    @ui.setter
+    def ui(self, value: "Ui") -> None:
+        """Install a UI surface (used by the menu to switch to the full-screen TUI)."""
+        self._ui = value
 
     @property
     def monitor(self) -> "MonitorService":

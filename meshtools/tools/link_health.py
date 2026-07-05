@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import questionary
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -20,7 +19,6 @@ from rich.text import Text
 from ..context import AppContext
 from ..services import link_quality, trace_runner
 from ..services.link_quality import HealthReport, MetricChange
-from ..ui.widgets import make_progress
 from .base import Tool, ToolResult, register
 
 _STATUS_STYLE = {
@@ -59,19 +57,17 @@ class LinkHealthTool(Tool):
         choices = list(dict.fromkeys(history + contacts))
         prompt = "Target to check:"
         if choices:
-            target = await questionary.autocomplete(
-                prompt, choices=choices, ignore_case=True
-            ).ask_async()
+            target = await ctx.ui.autocomplete(prompt, choices)
         else:
-            target = await questionary.text(prompt).ask_async()
+            target = await ctx.ui.text(prompt)
         if not target:
             return None
 
-        samples = await questionary.text(
+        samples = await ctx.ui.text(
             "Take how many fresh traces first? (0 = use stored history only)",
             default="0",
             validate=_is_nonneg_int,
-        ).ask_async()
+        )
         if samples is None:
             return None
         return {"target": target.strip(), "samples": int(samples)}
@@ -99,7 +95,7 @@ class LinkHealthTool(Tool):
             path = None
             if params.get("path"):
                 path = trace_runner.parse_trace_path(params["path"], contacts)
-            with make_progress(ctx.console) as progress:
+            with ctx.ui.progress("link-health") as progress:
                 task = progress.add_task(f"tracing {target}", total=samples)
                 await trace_runner.run_traces(
                     device,
@@ -130,7 +126,7 @@ class LinkHealthTool(Tool):
             resolve=resolve,
         )
 
-        ctx.console.print(_report_panel(report))
+        ctx.ui.show(_report_panel(report))
         if report.status == "insufficient-data":
             message = (
                 f"[muted]not enough history for[/muted] [brand]{target}[/brand] "

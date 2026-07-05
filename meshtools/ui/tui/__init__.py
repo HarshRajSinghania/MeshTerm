@@ -1,0 +1,35 @@
+"""A small, centralized, reusable full-screen text-UI library.
+
+Built on prompt_toolkit (for the terminal, input, and resize handling) and Rich (for all
+content rendering), this package gives the interactive app a consistent, bounded, layered
+UI: screens never overflow the terminal, long content scrolls, going deeper stacks dialogs
+over a dimmed parent, and Esc always dismisses the current layer.
+
+Public API:
+    - :class:`~meshtools.ui.tui.session.TuiSession` — the running session and prompt helpers.
+    - :class:`~meshtools.ui.tui.select.Choice` / :class:`~meshtools.ui.tui.select.Separator`
+      — items for ``session.select``.
+    - Screen classes for advanced/custom layers.
+"""
+
+from __future__ import annotations
+
+from .progress import ProgressScreen
+from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen
+from .screen import CANCEL, Screen, ScrollScreen
+from .select import Choice, SelectScreen, Separator
+from .session import TuiSession
+
+__all__ = [
+    "TuiSession",
+    "Screen",
+    "ScrollScreen",
+    "SelectScreen",
+    "Choice",
+    "Separator",
+    "TextScreen",
+    "ConfirmScreen",
+    "AutocompleteScreen",
+    "ProgressScreen",
+    "CANCEL",
+]
