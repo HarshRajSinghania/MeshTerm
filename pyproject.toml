@@ -19,6 +19,7 @@ dependencies = [
     "rich>=13.7",         # modern console rendering (progress, tables, panels)
     "prompt_toolkit>=3.0",  # full-screen interactive TUI (terminal, input, resize)
     "plotly>=5.20",       # interactive self-contained HTML charts
+    "segno>=1.6",         # pure-Python QR codes (channel share links)
     "pyvis>=0.3.2",       # interactive HTML mesh graphs
     "networkx>=3.2",      # graph model + path scoring
     "tomli>=2.0; python_version < '3.11'",  # TOML config reader on 3.10

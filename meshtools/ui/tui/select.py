@@ -159,6 +159,82 @@ class SelectScreen(Screen):
             self._index = 0
 
 
+class ReorderScreen(Screen):
+    """A list whose rows the user rearranges in place with the arrow keys.
+
+    Move the cursor with ↑/↓; press Enter to *grab* the highlighted row, then ↑/↓ carry it
+    up and down the list; press Enter again to *drop* it. The screen stays open until Esc,
+    at which point it resolves with the final order as a list of the original row indices
+    (so ``[2, 0, 1]`` means "the row that started third is now first").
+    """
+
+    def __init__(self, title: str, labels: list[str]) -> None:
+        """Build a reorder screen.
+
+        Args:
+            title: Heading shown above the list.
+            labels: The row labels, in their current order.
+        """
+        super().__init__()
+        self.title = title
+        self._labels = list(labels)
+        # order[position] == the label's original index; a moved row carries its index along.
+        self._order = list(range(len(labels)))
+        self._index = 0
+        self._grabbed = False
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """Key hint, phrased for whether a row is currently grabbed."""
+        if self._grabbed:
+            return "↑↓ move row · Enter drop · Esc done"
+        return "↑↓ choose · Enter grab · Esc done"
+
+    def render_body(self, width: int) -> list[str]:
+        """Render each row, marking the cursor (and, when grabbed, the moving row)."""
+        lines: list[str] = []
+        for pos, orig in enumerate(self._order):
+            is_cursor = pos == self._index
+            if is_cursor and self._grabbed:
+                pointer, style = "▸ ", "brand"
+            elif is_cursor:
+                pointer, style = "❯ ", "brand"
+            else:
+                pointer, style = "  ", ""
+            text = Text(pointer + self._labels[orig], style=style, no_wrap=True,
+                        overflow="ellipsis")
+            text.truncate(width)
+            lines.append(render_to_ansi(text, width))
+        self._cursor = self._index
+        return lines
+
+    def cursor_line(self) -> Optional[int]:
+        """Return the body line index of the cursor row, so the session keeps it in view."""
+        return getattr(self, "_cursor", None)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Move the cursor, carry a grabbed row, toggle grab, or finish on Esc."""
+        n = len(self._order)
+        if action == "up":
+            if self._grabbed and self._index > 0:
+                self._order[self._index - 1], self._order[self._index] = (
+                    self._order[self._index], self._order[self._index - 1])
+                self._index -= 1
+            elif not self._grabbed and n:
+                self._index = (self._index - 1) % n
+        elif action == "down":
+            if self._grabbed and self._index < n - 1:
+                self._order[self._index + 1], self._order[self._index] = (
+                    self._order[self._index], self._order[self._index + 1])
+                self._index += 1
+            elif not self._grabbed and n:
+                self._index = (self._index + 1) % n
+        elif action == "enter":
+            self._grabbed = not self._grabbed
+        elif action == "escape":
+            self.resolve(list(self._order))
+
+
 def _cursor_line(rows: list, selected: Optional[Choice], filtered: bool) -> Optional[int]:
     """Compute the rendered body line index of the selected row.
 

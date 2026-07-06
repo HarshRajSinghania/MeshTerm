@@ -2,8 +2,9 @@
 
 Drives the menu flow for the ``config`` tool: it presents the device's settings (each row
 showing its current value and any staged change), lets the user stage changes setting-by-
-setting with type-aware prompts and validation, and handles custom variables, channels,
-backup/restore and the destructive "danger zone". It returns an operation list for
+setting with type-aware prompts and validation, and handles custom variables,
+backup/restore and the destructive "danger zone". (Channels have their own first-class
+manager — see the ``channels`` tool.) It returns an operation list for
 :class:`~meshtools.tools.config.ConfigTool` to execute and log; it performs no device writes
 itself (except danger-zone actions, which run immediately and show their result at once).
 """
@@ -30,7 +31,6 @@ from .tui import Choice, Separator
 # Menu action sentinels (distinct from setting keys, which are plain strings).
 _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
-_CHANNELS = "__channels__"
 _BACKUP = "__backup__"
 _RESTORE = "__restore__"
 _DANGER = "__danger__"
@@ -75,8 +75,6 @@ async def edit_config(ctx: AppContext) -> Optional[list[tuple]]:
             await _stage_preset(ctx, pending)
         elif choice == _CUSTOM:
             await _stage_custom_var(ctx, custom, extra_ops)
-        elif choice == _CHANNELS:
-            await _stage_channel(ctx, extra_ops)
         elif choice == _BACKUP:
             await _stage_backup(ctx, extra_ops)
         elif choice == _RESTORE:
@@ -168,7 +166,6 @@ async def _main_menu(
     items.append(Choice(title="View current config (full table)", value=_VIEW))
     items.append(Choice(title="Radio presets (standard configs)", value=_PRESETS))
     items.append(Choice(title="Custom / experimental vars", value=_CUSTOM))
-    items.append(Choice(title="Channels", value=_CHANNELS))
     items.append(Choice(title="Backup to file", value=_BACKUP))
     items.append(Choice(title="Restore from file", value=_RESTORE))
     items.append(Choice(title="⚠ Danger zone", value=_DANGER))
@@ -267,24 +264,6 @@ async def _stage_custom_var(
     extra_ops.append(("set_custom", key.strip(), value))
 
 
-async def _stage_channel(ctx: AppContext, extra_ops: list[tuple]) -> None:
-    """Prompt for a channel slot's name/secret and stage a set operation."""
-    idx_raw = await ctx.ui.text("Channel index:", default="0", validate=_is_int)
-    if idx_raw is None:
-        return
-    name = await ctx.ui.text("Channel name (leading # derives the secret from the name):")
-    if not name:
-        return
-    secret_hex = await ctx.ui.text(
-        "Secret (32 hex chars / 16 bytes; blank to derive from name):",
-        validate=_is_optional_secret,
-    )
-    if secret_hex is None:
-        return
-    secret = bytes.fromhex(secret_hex) if secret_hex else None
-    extra_ops.append(("set_channel", int(idx_raw), name, secret))
-
-
 async def _stage_backup(ctx: AppContext, extra_ops: list[tuple]) -> None:
     """Prompt for a backup destination path and stage the operation."""
     path = await ctx.ui.path("Write backup to:", default="meshtools-config.toml")
@@ -372,29 +351,10 @@ async def _confirm_typed(ctx: AppContext, word: str, *, warning: str = "") -> bo
 # --- validators --------------------------------------------------------------
 
 
-def _is_int(text: str) -> bool | str:
-    """Validate that ``text`` is an integer."""
-    try:
-        int(text)
-        return True
-    except ValueError:
-        return "Enter a whole number."
-
-
 def _is_hex(text: str) -> bool | str:
     """Validate that ``text`` is a hex string."""
     try:
         bytes.fromhex(text)
         return True
-    except ValueError:
-        return "Enter hex characters only."
-
-
-def _is_optional_secret(text: str) -> bool | str:
-    """Validate an optional 16-byte hex channel secret."""
-    if text == "":
-        return True
-    try:
-        return len(bytes.fromhex(text)) == 16 or "Secret must be exactly 16 bytes (32 hex chars)."
     except ValueError:
         return "Enter hex characters only."

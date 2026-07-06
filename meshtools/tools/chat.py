@@ -3,7 +3,7 @@
 Interactively it opens a conversation picker and then a live, full-screen chat (see
 :mod:`meshtools.ui.chat`) where sent and received messages stream together. On the CLI it
 exposes ``send``, ``history``, and ``list`` subcommands for scripted use. Channels are only
-*listed* here for picking; creating and editing channel slots lives in the ``config`` tool.
+*listed* here for picking; creating and editing channel slots lives in the ``channels`` tool.
 
 Every inbound message is recorded to history by the always-on
 :class:`~meshtools.services.chat_service.ChatService`, and outbound messages are recorded on
@@ -383,10 +383,10 @@ async def _read_channels(device: Device) -> list[Conversation]:
         if channel:
             name = str(channel.get("channel_name") or idx)
             conversations.append(
-                Conversation(label=f"#{name}", is_channel=True, channel_idx=idx)
+                Conversation(label=name, is_channel=True, channel_idx=idx)
             )
     if not any(c.channel_idx == 0 for c in conversations):
-        conversations.insert(0, Conversation(label="#public", is_channel=True, channel_idx=0))
+        conversations.insert(0, Conversation(label="Public", is_channel=True, channel_idx=0))
     return conversations
 
 

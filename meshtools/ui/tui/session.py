@@ -28,7 +28,7 @@ from . import frame
 from .progress import TuiProgress
 from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen, Validator
 from .screen import CANCEL, Screen, ScrollScreen
-from .select import Choice, SelectScreen, Separator
+from .select import Choice, ReorderScreen, SelectScreen, Separator
 
 #: Maps prompt_toolkit keys to the normalized action names screens understand.
 _KEY_ACTIONS: dict[Any, str] = {
@@ -124,6 +124,11 @@ class TuiSession:
         """Show a select screen; return the chosen value or ``None`` if cancelled."""
         result = await self.run_screen(SelectScreen(title, items, default=default))
         return None if result is CANCEL else result
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Show a drag-with-arrows reorder screen; return the final order of row indices."""
+        result = await self.run_screen(ReorderScreen(title, labels))
+        return list(range(len(labels))) if result is CANCEL else result
 
     async def text(
         self,
@@ -312,5 +317,6 @@ __all__ = [
     "Choice",
     "Separator",
     "SelectScreen",
+    "ReorderScreen",
     "ScrollScreen",
 ]

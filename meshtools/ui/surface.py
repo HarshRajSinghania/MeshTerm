@@ -57,6 +57,10 @@ class Ui:
         """Prompt the user to choose one item; return its value or ``None`` if cancelled."""
         raise NotImplementedError
 
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Let the user rearrange rows with the arrows; return the new order of row indices."""
+        raise NotImplementedError
+
     async def text(
         self,
         title: str,
@@ -126,6 +130,10 @@ class PlainUi(Ui):
         return RuntimeError("interactive prompts are only available in the menu")
 
     async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -238,6 +246,10 @@ class TuiUi(Ui):
     async def select(self, title: str, items: list, *, default: Any = None) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(title, items, default=default)
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Delegate to the session's reorder screen."""
+        return await self.session.reorder(title, labels)
 
     async def text(
         self,

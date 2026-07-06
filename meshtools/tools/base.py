@@ -131,6 +131,19 @@ class Tool(ABC):
 
 _REGISTRY: dict[str, Tool] = {}
 
+#: Explicit menu ordering for tool categories. Messaging (Chat + Channels) leads because it
+#: holds the first-class, everyday features; the rest follow in a natural workflow order.
+#: Categories not listed here sort last, alphabetically, so a new category still appears.
+_CATEGORY_ORDER = ["Messaging", "Device", "Diagnostics", "Optimization", "Data"]
+
+
+def _category_rank(category: str) -> int:
+    """Return a category's sort rank (its position in ``_CATEGORY_ORDER``, else last)."""
+    try:
+        return _CATEGORY_ORDER.index(category)
+    except ValueError:
+        return len(_CATEGORY_ORDER)
+
 
 def register(cls: type[Tool]) -> type[Tool]:
     """Class decorator that instantiates a tool and adds it to the registry.
@@ -154,12 +167,19 @@ def register(cls: type[Tool]) -> type[Tool]:
 
 
 def all_tools() -> list[Tool]:
-    """Return all registered tools sorted by category then order then name.
+    """Return all registered tools sorted by category rank, then order, then name.
+
+    Categories are ordered by :data:`_CATEGORY_ORDER` (Messaging first), so the first-class
+    Chat and Channels tools lead the menu; within a category, ``order`` then ``name`` break
+    ties.
 
     Returns:
         The registered tool instances in stable menu order.
     """
-    return sorted(_REGISTRY.values(), key=lambda t: (t.category, t.order, t.name))
+    return sorted(
+        _REGISTRY.values(),
+        key=lambda t: (_category_rank(t.category), t.category, t.order, t.name),
+    )
 
 
 def get_tool(name: str) -> Optional[Tool]:
