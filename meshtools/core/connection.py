@@ -16,14 +16,17 @@ from __future__ import annotations
 import asyncio
 import random
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from .models import Contact, Hop, Observation, TraceResult
+from .events import MeshEvent
+from .models import Ack, Contact, Hop, Message, Observation, TraceResult
 
-#: Callback invoked with each :class:`Observation` as passive monitoring captures it.
-ObservationCallback = Callable[[Observation], None]
+#: Callback invoked with each :class:`~meshtools.core.events.MeshEvent` the device emits
+#: (an overheard packet, an inbound message, an acknowledgement).
+EventCallback = Callable[[MeshEvent], None]
 
-#: Zero-argument callable returned by :meth:`Device.subscribe_observations` that stops the
+#: Zero-argument callable returned by :meth:`Device.subscribe_events` that stops the
 #: subscription and releases its resources when invoked.
 Unsubscribe = Callable[[], None]
 
@@ -153,63 +156,33 @@ class Device(ABC):
             A :class:`TraceResult`; ``success`` is ``False`` on timeout.
         """
 
-    # -- passive monitoring ------------------------------------------------------
+    # -- passive event stream ----------------------------------------------------
 
     @abstractmethod
-    async def subscribe_observations(
-        self, on_observation: "ObservationCallback"
-    ) -> "Unsubscribe":
-        """Begin passively capturing overheard packets, without blocking the caller.
+    async def subscribe_events(self, on_event: "EventCallback") -> "Unsubscribe":
+        """Begin streaming the device's unsolicited inbound events, without blocking.
 
-        Subscribes to the adverts (and, where the firmware surfaces them, telemetry
-        frames) the companion overhears and invokes ``on_observation`` with each
-        :class:`~meshtools.core.models.Observation` as it arrives. Capture continues in
-        the background until the returned callable is invoked to stop it; the radio is
-        never asked to transmit, it only listens. This is the primitive behind both the
-        always-on background monitor and the bounded :meth:`listen` helper.
+        Subscribes to everything the companion surfaces on its own: overheard adverts and
+        telemetry (as :attr:`~meshtools.core.events.EventKind.OBSERVATION` events), inbound
+        direct/channel text messages (:attr:`~meshtools.core.events.EventKind.MESSAGE`),
+        and delivery acknowledgements (:attr:`~meshtools.core.events.EventKind.ACK`). Each
+        is delivered to ``on_event`` as a :class:`~meshtools.core.events.MeshEvent` as it
+        arrives. Delivery continues in the background until the returned callable is
+        invoked to stop it; the radio is never asked to transmit, it only listens. This is
+        the primitive the always-on :class:`~meshtools.services.event_hub.EventHub` is
+        built on.
 
-        Args:
-            on_observation: Callback invoked with each observation as it is heard.
-
-        Returns:
-            A zero-argument callable that stops capture and releases the subscription.
-        """
-
-    async def listen(
-        self,
-        duration_s: float,
-        *,
-        on_observation: Optional["ObservationCallback"] = None,
-    ) -> list[Observation]:
-        """Capture observations for a bounded window, then stop and return them.
-
-        A thin, foreground convenience wrapper over :meth:`subscribe_observations` for
-        one-shot captures (e.g. the scripted ``monitor --seconds`` command): it
-        subscribes, waits ``duration_s`` seconds, unsubscribes, and returns everything
-        heard. For continuous, non-blocking capture, use :meth:`subscribe_observations`
-        directly.
+        Note:
+            This carries only *unsolicited* events. Replies correlated to a request we
+            sent (a trace's ``TRACE_DATA``, a login result) are awaited by the issuing
+            command instead, so those flows work with or without a live subscription.
 
         Args:
-            duration_s: How long to listen, in seconds.
-            on_observation: Optional callback invoked with each observation as it arrives
-                (e.g. to advance a live progress display).
+            on_event: Callback invoked with each :class:`MeshEvent` as it is heard.
 
         Returns:
-            Every observation captured during the window, in arrival order.
+            A zero-argument callable that stops the stream and releases the subscription.
         """
-        captured: list[Observation] = []
-
-        def collect(obs: Observation) -> None:
-            captured.append(obs)
-            if on_observation is not None:
-                on_observation(obs)
-
-        unsubscribe = await self.subscribe_observations(collect)
-        try:
-            await asyncio.sleep(duration_s)
-        finally:
-            unsubscribe()
-        return captured
 
     # -- configuration: extra reads ---------------------------------------------
 
@@ -656,8 +629,8 @@ class MeshCoreDevice(Device):
             return b"".join(hops), path_hash_flags(trace_size) or 0
         return None
 
-    async def subscribe_observations(  # noqa: D102 - inherited docstring
-        self, on_observation: ObservationCallback
+    async def subscribe_events(  # noqa: D102 - inherited docstring
+        self, on_event: EventCallback
     ) -> Unsubscribe:
         from meshcore import EventType
 
@@ -669,16 +642,24 @@ class MeshCoreDevice(Device):
                 "monitoring isn't available. Upgrade the 'meshcore' library."
             )
 
-        def make_handler(kind: str):  # type: ignore[no-untyped-def]
+        def observation_handler(kind: str):  # type: ignore[no-untyped-def]
             def handler(event) -> None:  # noqa: ANN001
                 obs = observation_from_event(event, kind)
                 if obs is not None:
-                    on_observation(obs)
+                    on_event(MeshEvent.observation_event(obs))
 
             return handler
 
-        # Subscribe to whichever advert/telemetry event types this firmware/library build
-        # exposes. The event payload field names below are best-effort and, like the trace
+        def message_handler(event) -> None:  # noqa: ANN001
+            msg = message_from_event(event)
+            if msg is not None:
+                on_event(MeshEvent.message_event(msg))
+
+        def ack_handler(event) -> None:  # noqa: ANN001
+            on_event(MeshEvent.ack_event(ack_from_event(event)))
+
+        # Subscribe to whichever event types this firmware/library build exposes. The
+        # event payload field names the mappers read are best-effort and, like the trace
         # mapping, should be validated against your firmware's event schema.
         subs = []
         for attr, kind in (
@@ -689,7 +670,14 @@ class MeshCoreDevice(Device):
         ):
             etype = getattr(EventType, attr, None)
             if etype is not None:
-                subs.append(subscribe(etype, make_handler(kind)))
+                subs.append(subscribe(etype, observation_handler(kind)))
+        for attr in ("CONTACT_MSG_RECV", "CHANNEL_MSG_RECV"):
+            etype = getattr(EventType, attr, None)
+            if etype is not None:
+                subs.append(subscribe(etype, message_handler))
+        etype = getattr(EventType, "ACK", None)
+        if etype is not None:
+            subs.append(subscribe(etype, ack_handler))
 
         def unsubscribe() -> None:
             for sub in subs:
@@ -881,7 +869,7 @@ class MockDevice(Device):
         self._channels: dict[int, dict] = {}
         self._device_pin = 0
         self._private_key = "11" * 32
-        # Background emitter tasks spawned by ``subscribe_observations``; tracked so they
+        # Background emitter tasks spawned by ``subscribe_events``; tracked so they
         # can be cancelled on disconnect and are never garbage-collected while pending.
         self._bg_tasks: set[asyncio.Task] = set()
 
@@ -1026,22 +1014,29 @@ class MockDevice(Device):
         self._custom_vars.clear()
         self._channels.clear()
 
-    async def subscribe_observations(  # noqa: D102 - inherited docstring
-        self, on_observation: ObservationCallback
+    async def subscribe_events(  # noqa: D102 - inherited docstring
+        self, on_event: EventCallback
     ) -> Unsubscribe:
-        # Simulate a live packet stream. Emit a burst of synthetic adverts/telemetry from
+        # Simulate a live event stream. Emit a burst of synthetic adverts/telemetry from
         # the known contacts *synchronously* here, then keep emitting at a steady cadence
         # from a background task until unsubscribed. The immediate first burst means even
-        # a zero-length capture window always sees every contact (two of which carry a
-        # location), keeping bounded ``listen`` runs and their tests deterministic.
+        # a zero-length window always sees every contact (two of which carry a location)
+        # and one inbound message, keeping capture tests deterministic.
         stop = asyncio.Event()
         seq = 0
+        burst = 0
 
         def emit_burst() -> None:
-            nonlocal seq
+            nonlocal seq, burst
             for contact in self._contacts:
-                on_observation(self._synth_observation(contact, seq))
+                on_event(MeshEvent.observation_event(self._synth_observation(contact, seq)))
                 seq += 1
+            # Periodically simulate an inbound direct message so message-driven features
+            # (and their tests) have traffic to react to; the first burst always includes
+            # one so a subscriber sees a message without waiting.
+            if burst % 8 == 0:
+                on_event(MeshEvent.message_event(self._synth_message(burst // 8)))
+            burst += 1
 
         emit_burst()
 
@@ -1090,6 +1085,23 @@ class MockDevice(Device):
             rssi=round(self._rng.gauss(-95.0, 8.0), 1),
             lat=lat_lon[0] if lat_lon else None,
             lon=lat_lon[1] if lat_lon else None,
+        )
+
+    def _synth_message(self, seq: int) -> Message:
+        """Build one plausible synthetic inbound direct message (simulator only).
+
+        Args:
+            seq: Monotonic burst counter, used to rotate the sending contact and body.
+
+        Returns:
+            A :class:`Message` from one of the known contacts.
+        """
+        contact = self._contacts[seq % len(self._contacts)]
+        return Message(
+            text=f"hello from {contact.name} #{seq}",
+            sender=contact.key_prefix or contact.public_key[:12],
+            is_channel=False,
+            snr=round(self._rng.gauss(6.0, 3.0), 1),
         )
 
     def _expected_snr(self, hop_index: int) -> float:
@@ -1234,6 +1246,47 @@ def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: 
         lon=_as_float(lon) if lon else None,
         raw=payload,
     )
+
+
+def message_from_event(event) -> Optional[Message]:  # noqa: ANN001
+    """Map a meshcore ``CONTACT_MSG_RECV`` / ``CHANNEL_MSG_RECV`` event into a message.
+
+    Direct messages carry a ``pubkey_prefix`` sender; channel messages carry a
+    ``channel_idx`` instead (``type`` is ``"PRIV"`` or ``"CHAN"``). Field names are
+    best-effort and should be validated against your firmware's event schema.
+
+    Args:
+        event: A meshcore message event (anything exposing a ``payload`` mapping).
+
+    Returns:
+        The parsed :class:`Message`, or ``None`` if the payload carried no text body.
+    """
+    payload = dict(getattr(event, "payload", {}) or {})
+    text = payload.get("text")
+    if text is None:
+        return None
+    is_channel = payload.get("type") == "CHAN" or "channel_idx" in payload
+    ts = payload.get("sender_timestamp")
+    sender_ts = (
+        datetime.fromtimestamp(ts, tz=timezone.utc)
+        if isinstance(ts, (int, float)) and ts
+        else None
+    )
+    return Message(
+        text=str(text),
+        sender=None if is_channel else payload.get("pubkey_prefix"),
+        channel=payload.get("channel_idx") if is_channel else None,
+        is_channel=is_channel,
+        sender_timestamp=sender_ts,
+        snr=_as_float(payload.get("SNR", payload.get("snr"))),
+        raw=payload,
+    )
+
+
+def ack_from_event(event) -> Ack:  # noqa: ANN001
+    """Map a meshcore ``ACK`` event into an :class:`Ack` (delivery acknowledgement)."""
+    payload = dict(getattr(event, "payload", {}) or {})
+    return Ack(code=payload.get("code"), raw=payload)
 
 
 def _as_float(value: object) -> Optional[float]:

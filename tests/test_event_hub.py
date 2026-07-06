@@ -1,0 +1,196 @@
+"""Tests for the always-on event hub: fan-out, filtering, streaming, and lifecycle.
+
+All run against the :class:`MockDevice` simulator; no hardware required.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from meshtools.core.connection import (
+    _MOCK_MONITOR_INTERVAL_S as _MOCK_INTERVAL,
+)
+from meshtools.core.connection import MockDevice
+from meshtools.core.events import EventKind, MeshEvent
+from meshtools.core.models import Observation
+from meshtools.services.event_hub import EventHub
+
+
+class _StubContext:
+    """Minimal stand-in for :class:`~meshtools.context.AppContext` for hub tests."""
+
+    def __init__(self, device: MockDevice) -> None:
+        self._device = device
+        self.log = logging.getLogger("test.event_hub")
+
+    async def device(self) -> MockDevice:
+        await self._device.connect()
+        return self._device
+
+
+def _obs_event(node: str) -> MeshEvent:
+    """Build an observation event for a node id (test helper)."""
+    return MeshEvent.observation_event(Observation(node=node))
+
+
+def test_publish_fans_out_to_all_subscribers() -> None:
+    """Every subscriber receives each published event."""
+    hub = EventHub(_StubContext(MockDevice()))
+    a: list[MeshEvent] = []
+    b: list[MeshEvent] = []
+    hub.subscribe(a.append)
+    hub.subscribe(b.append)
+
+    event = _obs_event("a1")
+    hub.publish(event)
+
+    assert a == [event]
+    assert b == [event]
+
+
+def test_kind_filter_only_delivers_requested_kinds() -> None:
+    """A subscriber filtered to a kind only sees that kind; an unfiltered one sees all."""
+    hub = EventHub(_StubContext(MockDevice()))
+    observations: list[MeshEvent] = []
+    everything: list[MeshEvent] = []
+    hub.subscribe(observations.append, EventKind.OBSERVATION)
+    hub.subscribe(everything.append)  # no kinds = all
+
+    obs_event = _obs_event("a1")
+    other = MeshEvent(kind=EventKind.OBSERVATION, payload=None)  # still an OBSERVATION kind
+    hub.publish(obs_event)
+    hub.publish(other)
+
+    assert observations == [obs_event, other]  # both are OBSERVATION kind
+    assert everything == [obs_event, other]
+
+
+def test_unsubscribe_stops_delivery() -> None:
+    """A removed subscriber receives nothing further, and unsubscribe is idempotent."""
+    hub = EventHub(_StubContext(MockDevice()))
+    seen: list[MeshEvent] = []
+    unsubscribe = hub.subscribe(seen.append)
+
+    hub.publish(_obs_event("a1"))
+    unsubscribe()
+    hub.publish(_obs_event("b2"))
+    unsubscribe()  # second call is a harmless no-op
+
+    assert len(seen) == 1
+
+
+def test_failing_subscriber_does_not_break_others() -> None:
+    """A subscriber that raises is skipped; the others still receive the event."""
+    hub = EventHub(_StubContext(MockDevice()))
+    good: list[MeshEvent] = []
+
+    def boom(_event: MeshEvent) -> None:
+        raise RuntimeError("subscriber blew up")
+
+    hub.subscribe(boom)
+    hub.subscribe(good.append)
+
+    event = _obs_event("a1")
+    hub.publish(event)  # must not raise
+
+    assert good == [event]
+
+
+async def test_async_handler_is_scheduled() -> None:
+    """A handler returning a coroutine is run as a task rather than awaited inline."""
+    hub = EventHub(_StubContext(MockDevice()))
+    ran = asyncio.Event()
+
+    async def handler(_event: MeshEvent) -> None:
+        ran.set()
+
+    hub.subscribe(handler)
+    hub.publish(_obs_event("a1"))
+
+    assert not ran.is_set()  # not awaited inline
+    await asyncio.wait_for(ran.wait(), timeout=1.0)  # but scheduled and runs on the loop
+
+
+async def test_stream_yields_matching_events_then_unsubscribes() -> None:
+    """stream() yields published events and drops its subscription when closed."""
+    hub = EventHub(_StubContext(MockDevice()))
+    stream = hub.stream(EventKind.OBSERVATION)
+
+    event = _obs_event("a1")
+    hub.publish(event)
+    received = await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+    assert received is event
+
+    await stream.aclose()  # closing removes the underlying subscription
+    assert hub._subs == []
+
+
+async def test_message_events_delivered_from_device() -> None:
+    """The device's inbound messages reach a MESSAGE subscriber as message events."""
+    device = MockDevice()
+    hub = EventHub(_StubContext(device))
+    messages: list[MeshEvent] = []
+    hub.subscribe(messages.append, EventKind.MESSAGE)
+
+    await hub.start()  # the simulator's first burst carries one message synchronously
+    assert messages
+    assert all(e.kind is EventKind.MESSAGE and e.message is not None for e in messages)
+    assert messages[0].message.text
+
+    await hub.stop()
+    await device.disconnect()
+
+
+async def test_wait_for_returns_matching_event() -> None:
+    """wait_for resolves with the next event of the requested kind."""
+    device = MockDevice()
+    hub = EventHub(_StubContext(device))
+    await hub.start()
+
+    event = await hub.wait_for(EventKind.OBSERVATION, timeout=1.0)
+    assert event is not None
+    assert event.observation is not None
+
+    await hub.stop()
+    await device.disconnect()
+
+
+async def test_wait_for_honors_predicate_and_times_out() -> None:
+    """wait_for returns None when no event satisfies the predicate before the timeout."""
+    device = MockDevice()
+    hub = EventHub(_StubContext(device))
+    await hub.start()
+
+    event = await hub.wait_for(
+        EventKind.OBSERVATION, predicate=lambda _e: False, timeout=0.2
+    )
+    assert event is None
+
+    await hub.stop()
+    await device.disconnect()
+
+
+async def test_start_pumps_device_observations_then_stops() -> None:
+    """Starting subscribes to the device; observations arrive as events until stopped."""
+    device = MockDevice()
+    hub = EventHub(_StubContext(device))
+    events: list[MeshEvent] = []
+    hub.subscribe(events.append, EventKind.OBSERVATION)
+
+    assert not hub.active
+    await hub.start()
+    assert hub.active
+
+    await asyncio.sleep(_MOCK_INTERVAL * 3)
+    assert events  # the simulator's adverts flowed through as observation events
+    assert all(e.kind is EventKind.OBSERVATION for e in events)
+    assert all(e.observation is not None for e in events)
+
+    await hub.stop()
+    assert not hub.active
+    frozen = len(events)
+    await asyncio.sleep(_MOCK_INTERVAL * 3)
+    assert len(events) == frozen  # nothing more after stopping
+
+    await device.disconnect()

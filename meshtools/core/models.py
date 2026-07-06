@@ -74,6 +74,51 @@ class Observation:
 
 
 @dataclass(slots=True)
+class Message:
+    """An inbound text message the companion received (direct or on a channel).
+
+    Direct messages carry a :attr:`sender` key prefix; channel messages carry a
+    :attr:`channel` index instead. Both are surfaced by the always-on event hub as
+    :attr:`~meshtools.core.events.EventKind.MESSAGE` events, so client features (an inbox,
+    notifications) can react to them without polling.
+
+    Attributes:
+        text: The decoded message body.
+        sender: Key prefix of the sending contact (direct messages), if known.
+        channel: Channel index the message arrived on (channel messages), if applicable.
+        is_channel: Whether this is a channel message rather than a direct one.
+        sender_timestamp: The sender's own timestamp for the message, if carried.
+        snr: Signal-to-noise ratio (dB) of the reception, if reported.
+        received_at: When the companion delivered the message to us.
+        raw: Optional raw event payload for debugging/replay.
+    """
+
+    text: str
+    sender: Optional[str] = None
+    channel: Optional[int] = None
+    is_channel: bool = False
+    sender_timestamp: Optional[datetime] = None
+    snr: Optional[float] = None
+    received_at: datetime = field(default_factory=utcnow)
+    raw: Optional[dict] = None
+
+
+@dataclass(slots=True)
+class Ack:
+    """A delivery acknowledgement for a message the companion sent.
+
+    Attributes:
+        code: The ACK correlation code (hex), matching it to the sent message, if present.
+        received_at: When the acknowledgement arrived.
+        raw: Optional raw event payload for debugging/replay.
+    """
+
+    code: Optional[str] = None
+    received_at: datetime = field(default_factory=utcnow)
+    raw: Optional[dict] = None
+
+
+@dataclass(slots=True)
 class HeardNode:
     """Aggregated reception statistics for one node across many observations.
 

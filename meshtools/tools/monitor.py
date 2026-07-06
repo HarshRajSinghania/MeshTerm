@@ -5,15 +5,12 @@ with SNR, RSSI, and any shared location — to the database, building the longit
 history that the coverage map and link-quality alerting read back. It transmits nothing;
 it only listens.
 
-Capture itself runs as a non-blocking background subscription owned by
-:class:`~meshtools.services.monitor_service.MonitorService` (``ctx.monitor``), so it never
-blocks the menu. This tool is the control panel for it: toggling capture on/off (a
-preference remembered between sessions) and reviewing the heard-node history. The live
-packet counters are shown in the main-menu header, not here.
-
-The CLI subcommand additionally offers a one-shot foreground capture (``--seconds``) for
-scripting, since a short-lived CLI process has no long-running menu to host a background
-subscription.
+Listening itself is always on: the session-wide
+:class:`~meshtools.services.event_hub.EventHub` overhears every packet, and
+:class:`~meshtools.services.monitor_service.MonitorService` (``ctx.monitor``) records
+them to history as one of its subscribers. This tool is the control panel for that
+recording: toggling it on/off (a preference remembered between sessions) and reviewing the
+heard-node history. The live packet counters are shown in the main-menu header, not here.
 """
 
 from __future__ import annotations
@@ -25,15 +22,9 @@ from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.models import HeardNode, Observation
-from ..services import trace_runner
+from ..core.models import HeardNode
 from ..ui.tui import Choice
-from ..ui.widgets import make_progress
 from .base import Tool, ToolResult, register
-
-#: Cap a single foreground capture window so a scripted run can't block indefinitely;
-#: longer passive logging is done by enabling the background monitor instead.
-MAX_DURATION_S = 3600
 
 
 @register
@@ -172,13 +163,6 @@ class MonitorTool(Tool):
             off: bool = typer.Option(
                 False, "--off", help="Disable background monitoring."
             ),
-            seconds: Optional[int] = typer.Option(
-                None,
-                "--seconds",
-                "-d",
-                help=f"Capture in the foreground for N seconds now, then exit "
-                f"(1-{MAX_DURATION_S}).",
-            ),
         ) -> None:
             from ..cli import _state
 
@@ -196,110 +180,12 @@ class MonitorTool(Tool):
                     "interactive sessions"
                 )
                 return
-            if seconds is not None:
-                _run_foreground_capture(ctx, seconds)
-                return
             # No flags: report the current preference and history size.
             enabled = "[ok]on[/ok]" if store.load_enabled() else "[muted]off[/muted]"
             ctx.console.print(
                 f"background monitoring is {enabled} · "
                 f"[brand]{ctx.repo.observation_count()}[/brand] observations logged all-time"
             )
-
-
-def _run_foreground_capture(ctx: AppContext, seconds: int) -> None:
-    """Drive a one-shot foreground capture on its own event loop.
-
-    Args:
-        ctx: Shared application context.
-        seconds: Requested capture duration (clamped to ``1..MAX_DURATION_S``).
-    """
-    import asyncio
-
-    from ..cli import _drive
-
-    asyncio.run(_drive(_foreground_capture(ctx, seconds), ctx))
-
-
-async def _foreground_capture(ctx: AppContext, seconds: int) -> None:
-    """Capture overheard packets for a bounded window and print a heard-node table.
-
-    This is the scripted, blocking counterpart to the background monitor: it records to
-    its own ``monitor`` run and returns when the window elapses. Used by ``monitor
-    --seconds``.
-
-    Args:
-        ctx: Shared application context.
-        seconds: Requested capture duration (clamped to ``1..MAX_DURATION_S``).
-    """
-    duration = max(1, min(MAX_DURATION_S, int(seconds)))
-    run_id = ctx.repo.start_run(
-        "monitor", {"mode": "foreground", "duration": duration}, ctx.profile_name
-    )
-    observations: list[Observation] = []
-    try:
-        device = await ctx.device()
-        resolve = trace_runner.make_node_resolver(await device.get_contacts())
-        with make_progress(ctx.console) as progress:
-            task = progress.add_task(f"listening {duration}s", total=duration)
-
-            def on_observation(obs: Observation) -> None:
-                observations.append(obs)
-                ctx.repo.record_observation(run_id, obs)
-                progress.update(
-                    task,
-                    description=f"heard {len(observations)} pkts · "
-                    f"{_distinct(observations)} nodes",
-                )
-
-            await device.listen(duration, on_observation=on_observation)
-            progress.update(task, completed=duration)
-    except Exception as exc:  # noqa: BLE001 - record then re-raise for the CLI handler
-        ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
-        raise
-
-    heard = _aggregate(observations)
-    if heard:
-        ctx.console.print(_heard_table(heard, resolve))
-    else:
-        ctx.console.print("[muted]no packets heard during the window[/muted]")
-
-    located = sum(1 for n in heard if n.has_location)
-    ctx.repo.finish_run(
-        run_id,
-        "ok",
-        {
-            "duration_s": duration,
-            "observations": len(observations),
-            "nodes_heard": len(heard),
-            "nodes_with_location": located,
-        },
-    )
-    ctx.console.print(
-        f"[ok]✓[/ok] heard [brand]{len(observations)}[/brand] packets from "
-        f"[brand]{len(heard)}[/brand] nodes in {duration}s"
-    )
-
-
-def _distinct(observations: list[Observation]) -> int:
-    """Return the number of distinct nodes among observations."""
-    return len({o.node for o in observations})
-
-
-def _aggregate(observations: list[Observation]) -> list[HeardNode]:
-    """Group observations by node into :class:`HeardNode` records, freshest first.
-
-    Args:
-        observations: The observations captured this run.
-
-    Returns:
-        One aggregate per node, ordered by most-recently heard.
-    """
-    grouped: dict[Optional[str], list[Observation]] = {}
-    for obs in observations:
-        grouped.setdefault(obs.node, []).append(obs)
-    nodes = [HeardNode.from_observations(node, obs) for node, obs in grouped.items()]
-    return sorted(nodes, key=lambda n: n.last_seen, reverse=True)
 
 
 def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001

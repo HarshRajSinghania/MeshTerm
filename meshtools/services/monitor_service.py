@@ -1,15 +1,17 @@
-"""The passive-monitor background service.
+"""The passive-monitor history logger.
 
 Passive monitoring records every advert/telemetry frame the companion overhears to the
 database, building the longitudinal history the coverage map and link-quality alerting
-read back. Unlike a one-shot capture, it runs as a non-blocking background subscription:
-once started it logs observations as they arrive while the user keeps using the app, and
-keeps going across menu actions until stopped or the session ends.
+read back. It is not a listener in its own right: the always-on
+:class:`~meshtools.services.event_hub.EventHub` (``ctx.events``) does the listening, and
+this service is simply one of its subscribers — the one that writes observations to the
+database. Listening is therefore unconditional; the on/off preference this service owns
+controls only whether what's heard is *persisted to history*.
 
 The service is session-scoped state on the :class:`~meshtools.context.AppContext`
 (``ctx.monitor``). It owns the on/off preference (persisted via
-:class:`~meshtools.core.monitor_store.MonitorStore`), the live subscription, and the
-counters shown live in the menu.
+:class:`~meshtools.core.monitor_store.MonitorStore`), the hub subscription that records
+observations, and the counters shown live in the menu.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from ..core.connection import Unsubscribe
-from ..core.models import Observation
+from ..core.events import EventKind, MeshEvent
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class MonitorService:
-    """Manages the always-on, non-blocking passive-monitor subscription.
+    """Records overheard packets to history as a subscriber of the always-on event hub.
 
     Attributes are private; interact through the properties and the async lifecycle
     methods (:meth:`enable`, :meth:`disable`, :meth:`toggle`, :meth:`start`, :meth:`stop`,
@@ -42,7 +44,7 @@ class MonitorService:
         self._ctx = ctx
         self._store = store
         self._enabled = store.load_enabled()
-        self._unsubscribe: Optional[Unsubscribe] = None
+        self._unsubscribe: Optional[Unsubscribe] = None  # hub subscription, when recording
         self._run_id: Optional[int] = None
         self._session_count = 0
         self._run_start_count = 0
@@ -59,7 +61,7 @@ class MonitorService:
 
     @property
     def active(self) -> bool:
-        """Whether a live subscription is currently capturing."""
+        """Whether observations are currently being recorded to history."""
         return self._unsubscribe is not None
 
     @property
@@ -93,20 +95,21 @@ class MonitorService:
         return "○ monitor OFF"
 
     async def start(self) -> None:
-        """Open a background subscription and begin logging observations.
+        """Begin recording overheard observations to history. Idempotent.
 
-        Idempotent: a no-op if already active. Opens the device connection (which may
-        raise if no device can be selected) and records a ``monitor`` run that the
-        captured observations are linked to.
+        A no-op if already recording. Ensures the always-on event hub is running (which
+        opens the device connection and may raise if no device can be selected), then
+        subscribes to its observation stream and opens a ``monitor`` run for the recorded
+        observations to link to.
 
         Raises:
-            Exception: Propagates any device/subscription error after recording it; the
-                on/off preference is left unchanged so the caller can surface the problem.
+            Exception: Propagates any device/hub error after remembering it; the on/off
+                preference is left unchanged so the caller can surface the problem.
         """
         if self.active:
             return
         try:
-            device = await self._ctx.device()
+            await self._ctx.events.start()
         except Exception as exc:  # noqa: BLE001 - remember why, then re-raise
             self._error = str(exc)
             raise
@@ -115,29 +118,28 @@ class MonitorService:
         )
         self._run_start_count = self._session_count
 
-        def on_observation(obs: Observation) -> None:
+        def on_event(event: MeshEvent) -> None:
             # Runs on the event loop as packets arrive; keep it cheap and defensive so a
             # single bad write can never take down the subscription.
+            obs = event.observation
+            if obs is None:
+                return
             self._session_count += 1
             try:
                 self._ctx.repo.record_observation(run_id, obs)
             except Exception as exc:  # noqa: BLE001 - never let logging break capture
                 self._ctx.log.debug("monitor: failed to record observation: %s", exc)
 
-        try:
-            self._unsubscribe = await device.subscribe_observations(on_observation)
-        except Exception as exc:  # noqa: BLE001 - record, remember, and re-raise
-            self._ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
-            self._error = str(exc)
-            raise
+        self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
         self._run_id = run_id
         self._error = None
-        self._ctx.log.info("passive monitor started (run %s)", run_id)
+        self._ctx.log.info("passive monitor recording (run %s)", run_id)
 
     async def stop(self) -> None:
-        """Stop the background subscription and close its run record.
+        """Stop recording to history and close the run record. Idempotent.
 
-        Idempotent: a no-op if not active.
+        A no-op if not recording. The event hub keeps listening; only this service's
+        recording subscription is removed.
         """
         if not self.active:
             return

@@ -66,6 +66,10 @@ class Settings:
         trace_cooldown_s: Minimum delay between transmit bursts (duty-cycle safety).
         tx_opt_min: Lowest TX power explored by the remote-admin optimizer (dBm).
         tx_opt_max: Highest TX power explored by the remote-admin optimizer (dBm).
+        connect_on_start: Whether the interactive session opens the companion connection
+            (and starts always-on background listening) immediately at launch. When
+            ``False`` the connection is opened lazily — only once monitoring is turned on
+            or a tool first needs the radio — so launching the menu touches no serial port.
     """
 
     config_dir: Path = field(default_factory=default_config_dir)
@@ -76,6 +80,7 @@ class Settings:
     trace_cooldown_s: float = 1.0
     tx_opt_min: int = 12
     tx_opt_max: int = 28
+    connect_on_start: bool = True
 
     def __post_init__(self) -> None:
         """Derive dependent paths that were not explicitly provided."""
@@ -136,4 +141,5 @@ class Settings:
             trace_cooldown_s=float(data.get("trace_cooldown_s", 1.0)),
             tx_opt_min=int(data.get("tx_opt_min", 12)),
             tx_opt_max=int(data.get("tx_opt_max", 28)),
+            connect_on_start=bool(data.get("connect_on_start", True)),
         )

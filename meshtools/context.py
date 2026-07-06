@@ -22,6 +22,7 @@ from .persistence.logging import get_logger
 from .persistence.repository import Repository
 
 if TYPE_CHECKING:
+    from .services.event_hub import EventHub
     from .services.monitor_service import MonitorService
     from .ui.surface import Ui
 
@@ -59,6 +60,7 @@ class AppContext:
     selected_device: Optional[DiscoveredDevice] = None
     explicit_selection: bool = False
     _device: Optional[Device] = field(default=None, init=False, repr=False)
+    _events: "Optional[EventHub]" = field(default=None, init=False, repr=False)
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
@@ -85,6 +87,20 @@ class AppContext:
     def ui(self, value: "Ui") -> None:
         """Install a UI surface (used by the menu to switch to the full-screen TUI)."""
         self._ui = value
+
+    @property
+    def events(self) -> "EventHub":
+        """Return the session's always-on event hub, creating it on first use.
+
+        The hub owns the single device event subscription and fans events out to any
+        number of subscribers (the passive monitor's logging is one of them). It is
+        created idle here; the interactive session starts it once a device is available.
+        """
+        if self._events is None:
+            from .services.event_hub import EventHub
+
+            self._events = EventHub(self)
+        return self._events
 
     @property
     def monitor(self) -> "MonitorService":
@@ -147,9 +163,11 @@ class AppContext:
         return self._device
 
     async def aclose(self) -> None:
-        """Stop monitoring, disconnect the device (if connected), and close the repo."""
+        """Stop monitoring, stop the event hub, disconnect the device, and close the repo."""
         if self._monitor is not None:
             await self._monitor.aclose()
+        if self._events is not None:
+            await self._events.aclose()
         if self._device is not None:
             await self._device.disconnect()
             self._device = None

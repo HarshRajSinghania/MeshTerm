@@ -61,8 +61,10 @@ async def run_menu(ctx: AppContext) -> None:
             await _startup(ctx)
             await _menu_loop(ctx, session)
         finally:
-            # Stop background capture and close its run record even on an unexpected exit.
+            # Stop history recording (closing its run record) and the always-on event
+            # hub, even on an unexpected exit.
             await ctx.monitor.aclose()
+            await ctx.events.aclose()
 
     await session.run(main())
     ctx.console.print("[muted]bye 73![/muted]")
@@ -111,15 +113,25 @@ async def _startup(ctx: AppContext) -> None:
 
 
 async def _resume_monitor(ctx: AppContext) -> None:
-    """Resume passive monitoring if it was left enabled, ignoring a benign start failure.
+    """Start always-on background listening, and resume history recording if enabled.
 
-    A failure to start (typically no companion device selected) is non-fatal: the
-    preference stays on, so monitoring resumes automatically once a device is available.
-    The header reflects the resulting state, so nothing needs to be printed here.
+    A MeshCore client always listens while it runs, so by default the event hub is
+    started unconditionally at launch; if the passive-monitor preference is on, history
+    recording is resumed on top of it. The ``connect_on_start`` setting can defer that
+    eager connect — when it is off, the hub is left idle here and opens lazily instead
+    (when recording is turned on, or a tool first needs the radio). A failure to start
+    (typically no companion device selected) is non-fatal: the preference stays on, so
+    recording resumes automatically once a device is available. The header reflects the
+    resulting state, so nothing needs to be printed here.
 
     Args:
         ctx: The shared application context.
     """
+    if ctx.settings.connect_on_start:
+        try:
+            await ctx.events.start()
+        except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
+            pass
     if not ctx.monitor.enabled:
         return
     try:
