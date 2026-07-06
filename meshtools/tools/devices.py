@@ -17,6 +17,14 @@ from ..context import AppContext
 from ..core.discovery import discover_devices
 from .base import Tool, ToolResult, register
 
+#: "LoRa?" table cell per discovery confidence tier: a bare serial bridge is only a "maybe",
+#: since the same chip shows up on plenty of non-LoRa hardware.
+_LORA_CELL: dict[str, str] = {
+    "board": "[ok]yes[/ok]",
+    "bridge": "[warn]maybe[/warn]",
+    "unknown": "[muted]—[/muted]",
+}
+
 
 @register
 class DevicesTool(Tool):
@@ -79,6 +87,7 @@ class DevicesTool(Tool):
                     "label": d.label,
                     "vendor": d.vendor_label,
                     "likely_lora": d.is_likely_lora,
+                    "confidence": d.confidence,
                     "serial_number": d.serial_number,
                     "stable_id": d.stable_id,
                     "remembered": remembered is not None and remembered.matches(d),
@@ -107,12 +116,15 @@ class DevicesTool(Tool):
             is_remembered = remembered is not None and remembered.matches(d)
             is_active = d.port == active_port
             marker = ("●" if is_active else "") + ("★" if is_remembered else "")
+            device_name = d.product or d.description or "[muted]?[/muted]"
+            if is_remembered and remembered.node_name:  # the mesh name learned on connect
+                device_name = f"{remembered.node_name}  [muted]({device_name})[/muted]"
             table.add_row(
                 marker,
                 d.port,
-                d.product or d.description or "[muted]?[/muted]",
+                device_name,
                 d.vendor_label or "[muted]?[/muted]",
-                "[ok]yes[/ok]" if d.is_likely_lora else "[muted]—[/muted]",
+                _LORA_CELL[d.confidence],
                 d.serial_number or "[muted]—[/muted]",
             )
         ctx.ui.show(table)

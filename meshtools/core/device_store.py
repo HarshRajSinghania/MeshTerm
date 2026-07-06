@@ -26,6 +26,7 @@ class RememberedDevice:
         stable_id: The device's :attr:`DiscoveredDevice.stable_id` at connect time.
         port: The serial port it was last seen on (informational; may have changed).
         label: A friendly label for display in prompts and tables.
+        node_name: The device's own mesh node name, learned at connect time (may be empty).
         last_connected: ISO-8601 timestamp of the last successful connection.
     """
 
@@ -33,6 +34,7 @@ class RememberedDevice:
     port: str
     label: str
     last_connected: str
+    node_name: str = ""
 
     def matches(self, device: DiscoveredDevice) -> bool:
         """Return whether ``device`` is the same hardware as this record."""
@@ -69,21 +71,30 @@ class DeviceStore:
                 port=data["port"],
                 label=data.get("label", data["port"]),
                 last_connected=data.get("last_connected", ""),
+                node_name=data.get("node_name", ""),
             )
         except (KeyError, TypeError):
             return None
 
-    def remember(self, device: DiscoveredDevice) -> None:
+    def remember(self, device: DiscoveredDevice, *, node_name: str = "") -> None:
         """Record ``device`` as the last known good connection.
 
         Args:
             device: The device that just connected successfully.
+            node_name: The device's own mesh node name, if known; preserved across
+                reconnects and shown in the picker. A blank value keeps any name already
+                on file rather than erasing it.
         """
+        if not node_name:
+            existing = self.load()
+            if existing is not None and existing.matches(device):
+                node_name = existing.node_name
         record = RememberedDevice(
             stable_id=device.stable_id,
             port=device.port,
             label=device.label,
             last_connected=utcnow().isoformat(),
+            node_name=node_name,
         )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -91,6 +102,7 @@ class DeviceStore:
             "port": record.port,
             "label": record.label,
             "last_connected": record.last_connected,
+            "node_name": record.node_name,
         }
         # Atomic-ish replace so a crash mid-write can't truncate the existing record.
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")

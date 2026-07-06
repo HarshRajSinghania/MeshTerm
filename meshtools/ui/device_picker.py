@@ -19,6 +19,14 @@ from .tui import Choice, Separator
 if TYPE_CHECKING:
     from .surface import Ui
 
+#: Trailing hint per discovery confidence tier (see :attr:`DiscoveredDevice.confidence`).
+#: A bare serial bridge is only a weak hint, so it is not billed as a LoRa device.
+_QUALIFIER: dict[str, str] = {
+    "board": "  · LoRa device",
+    "bridge": "  · serial adapter",
+    "unknown": "",
+}
+
 
 async def prompt_device(
     ui: "Ui",
@@ -51,9 +59,13 @@ async def prompt_device(
     for device in devices:
         is_remembered = remembered is not None and remembered.matches(device)
         star = "★ " if is_remembered else "  "
+        # Lead with the remembered node name so a known radio is recognizable at a glance.
+        name = f"{remembered.node_name} — " if is_remembered and remembered.node_name else ""
         vendor = f"  [{device.vendor_label}]" if device.vendor_label else ""
-        lora = "  · likely LoRa" if device.is_likely_lora else ""
-        items.append(Choice(title=f"{star}{device.label}{vendor}{lora}", value=device))
+        items.append(
+            Choice(title=f"{star}{name}{device.label}{vendor}{_QUALIFIER[device.confidence]}",
+                   value=device)
+        )
         if is_remembered:
             default = device
 

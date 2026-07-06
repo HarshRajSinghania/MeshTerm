@@ -79,6 +79,39 @@ def test_discover_sorts_likely_lora_first(monkeypatch: pytest.MonkeyPatch) -> No
     assert devices[0].is_likely_lora and not devices[1].is_likely_lora
 
 
+def test_confidence_tiers_distinguish_boards_from_bridges() -> None:
+    """A native-USB board is 'board'; a bare UART bridge is only 'bridge'; else 'unknown'."""
+    board = DiscoveredDevice("COM5", vid=0x303A, pid=0x1001)  # Espressif native USB
+    bridge = DiscoveredDevice("COM6", vid=0x10C4, pid=0xEA60)  # CP210x UART bridge
+    unknown = DiscoveredDevice("COM7", vid=0x1234, pid=0x0001)
+    assert board.confidence == "board" and board.is_likely_lora
+    assert bridge.confidence == "bridge" and bridge.is_likely_lora
+    assert unknown.confidence == "unknown" and not unknown.is_likely_lora
+
+
+def test_sort_orders_boards_then_bridges_then_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery sorts LoRa boards ahead of bare serial bridges, and both ahead of unknown."""
+    _patch_ports(
+        monkeypatch,
+        [
+            FakePortInfo(device="COM9", vid=0x1234, pid=0x0001),  # unknown
+            FakePortInfo(device="COM3", vid=0x10C4, pid=0xEA60),  # bridge
+            FakePortInfo(device="COM1", vid=0x303A, pid=0x1001),  # board
+        ],
+    )
+    assert [d.port for d in discover_devices()] == ["COM1", "COM3", "COM9"]
+
+
+def test_label_does_not_repeat_the_port() -> None:
+    """A Windows description already ending in '(COM11)' is not suffixed with it again."""
+    dev = DiscoveredDevice("COM11", description="USB Serial Device (COM11)")
+    assert dev.label == "USB Serial Device (COM11)"
+    # A product name without the port still gets one appended.
+    assert DiscoveredDevice("COM5", product="Wio SX1262").label == "Wio SX1262 (COM5)"
+
+
 def test_stable_id_precedence() -> None:
     """stable_id prefers serial number, then vid:pid, then the port name."""
     assert DiscoveredDevice("COM5", serial_number="SN1", vid=1, pid=2).stable_id == "sn:SN1"
@@ -95,13 +128,25 @@ def test_device_store_round_trip(tmp_path: Path) -> None:
     assert store.load() is None  # nothing remembered yet
 
     dev = DiscoveredDevice("COM5", serial_number="SN1", product="Wio SX1262")
-    store.remember(dev)
+    store.remember(dev, node_name="BaseStation")
 
     loaded = store.load()
     assert loaded is not None
     assert loaded.stable_id == "sn:SN1"
+    assert loaded.node_name == "BaseStation"  # the mesh name learned on connect
     assert loaded.matches(dev)
     assert not loaded.matches(DiscoveredDevice("COM6", serial_number="OTHER"))
+
+
+def test_remember_keeps_known_node_name_when_none_supplied(tmp_path: Path) -> None:
+    """A later connect without a node name preserves the previously remembered one."""
+    store = DeviceStore(tmp_path / "devices.json")
+    dev = DiscoveredDevice("COM5", serial_number="SN1")
+    store.remember(dev, node_name="BaseStation")
+
+    store.remember(dev)  # e.g. the identity probe failed this time
+    loaded = store.load()
+    assert loaded is not None and loaded.node_name == "BaseStation"
 
 
 def test_device_store_tolerates_corrupt_file(tmp_path: Path) -> None:

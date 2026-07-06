@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 # USB vendor IDs frequently seen on MeshCore/Meshtastic companion hardware and the
-# USB-UART bridges they ship with. Used only to flag and sort likely devices.
+# USB-UART bridges they ship with. Used only to name, flag, and sort likely devices.
 KNOWN_LORA_VIDS: dict[int, str] = {
     0x303A: "Espressif",        # ESP32-S3 / native USB (e.g. XIAO ESP32-S3)
     0x10C4: "Silicon Labs",     # CP210x UART bridge
@@ -26,6 +26,17 @@ KNOWN_LORA_VIDS: dict[int, str] = {
     0x2886: "Seeed Studio",     # XIAO / Wio boards
     0x1915: "Nordic",           # nRF52 native USB
 }
+
+# Native-USB VIDs of LoRa companion dev boards — the chip *is* the board, so seeing one is
+# a strong signal the port is companion hardware.
+NATIVE_LORA_VIDS: frozenset[int] = frozenset({0x303A, 0x239A, 0x2886, 0x1915})
+
+# Generic USB-UART bridge chips. LoRa boards often use them, but so do countless unrelated
+# gadgets (Arduinos, GPS pucks, 3D printers…), so their presence is only a weak hint.
+UART_BRIDGE_VIDS: frozenset[int] = frozenset({0x10C4, 0x1A86, 0x0403})
+
+# Sort rank per confidence tier: boards first, then bare serial bridges, then everything else.
+_CONFIDENCE_RANK: dict[str, int] = {"board": 0, "bridge": 1, "unknown": 2}
 
 
 @dataclass(slots=True)
@@ -69,9 +80,24 @@ class DiscoveredDevice:
         return f"port:{self.port}"
 
     @property
+    def confidence(self) -> str:
+        """How likely this port is a LoRa companion, by USB vendor ID.
+
+        Returns:
+            ``"board"`` for a LoRa dev board's native USB (a strong signal), ``"bridge"``
+            for a generic USB-UART chip (a weak hint — could be anything), or ``"unknown"``
+            for an unrecognized adapter.
+        """
+        if self.vid in NATIVE_LORA_VIDS:
+            return "board"
+        if self.vid in UART_BRIDGE_VIDS:
+            return "bridge"
+        return "unknown"
+
+    @property
     def is_likely_lora(self) -> bool:
-        """Whether this device's USB vendor ID matches known companion hardware."""
-        return self.vid in KNOWN_LORA_VIDS
+        """Whether the VID belongs to a LoRa board or a serial bridge one commonly uses."""
+        return self.confidence != "unknown"
 
     @property
     def vendor_label(self) -> str:
@@ -82,14 +108,21 @@ class DiscoveredDevice:
 
     @property
     def label(self) -> str:
-        """A concise human-friendly label, e.g. ``"Wio SX1262 (COM5)"``."""
+        """A concise human-friendly label, e.g. ``"Wio SX1262 (COM5)"``.
+
+        The OS description often already ends with the port (Windows reports
+        ``"USB Serial Device (COM11)"``), so the port is not appended a second time.
+        """
         name = self.product or self.description or self.vendor_label or "Serial device"
+        suffix = f"({self.port})"
+        if name.endswith(suffix):  # avoid "… (COM11) (COM11)"
+            name = name[: -len(suffix)].rstrip()
         return f"{name} ({self.port})"
 
 
 def _sort_key(device: DiscoveredDevice) -> tuple[int, str]:
-    """Sort likely-LoRa devices first, then by port name for stable ordering."""
-    return (0 if device.is_likely_lora else 1, device.port)
+    """Sort LoRa boards first, then serial bridges, then unknown adapters; ties by port."""
+    return (_CONFIDENCE_RANK[device.confidence], device.port)
 
 
 def discover_devices() -> list[DiscoveredDevice]:

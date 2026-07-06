@@ -174,10 +174,21 @@ class AppContext:
         baudrate = self.profile.baudrate if self.profile else 115200
         self._device = make_device(mock=False, port=resolution.port, baudrate=baudrate)
         await self._device.connect()
-        # Connection succeeded: this is now the last known good device.
+        # Connection succeeded: this is now the last known good device. Learn its mesh node
+        # name (best-effort — a probe failure must not block a good connection).
         if self.selected_device is not None:
-            self.device_store.remember(self.selected_device)
+            self.device_store.remember(
+                self.selected_device, node_name=await self._node_name()
+            )
         return self._device
+
+    async def _node_name(self) -> str:
+        """Return the connected device's own mesh node name, or ``""`` if unavailable."""
+        try:
+            info = await self._device.get_self_info()
+        except Exception:  # noqa: BLE001 - identity probe is best-effort, never fatal
+            return ""
+        return str(info.get("adv_name") or info.get("name") or "")
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
