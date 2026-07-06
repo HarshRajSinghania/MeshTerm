@@ -1,0 +1,487 @@
+"""Tests for the chat feature: device send, persistence, and the chat service.
+
+All run against the :class:`MockDevice` simulator and a temporary database; no hardware.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from pathlib import Path
+
+import pytest
+
+#: Strip ANSI SGR escapes so rendered transcript lines can be asserted as plain text.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI color escapes from rendered lines for plain-text assertions."""
+    return _ANSI.sub("", text)
+
+from meshtools.core.connection import MockDevice
+from meshtools.core.events import MeshEvent
+from meshtools.core.models import (
+    ChatMessage,
+    Contact,
+    Conversation,
+    Message,
+    conversation_key,
+)
+from meshtools.persistence.repository import Repository
+from meshtools.services.chat_service import ChatService
+from meshtools.services.event_hub import EventHub
+from meshtools.ui.chat import ChatScreen
+from meshtools.ui.tui.screen import CANCEL
+
+
+class _StubSession:
+    """A session stand-in that just counts repaint requests."""
+
+    def __init__(self) -> None:
+        self.invalidations = 0
+
+    def invalidate(self) -> None:
+        self.invalidations += 1
+
+
+class _StubContext:
+    """Minimal :class:`~meshtools.context.AppContext` stand-in for chat tests."""
+
+    def __init__(self, device: MockDevice, repo: Repository) -> None:
+        self._device = device
+        self.repo = repo
+        self.log = logging.getLogger("test.chat")
+        self.profile_name = None
+        self.events = EventHub(self)
+
+    async def device(self) -> MockDevice:
+        await self._device.connect()
+        return self._device
+
+
+@pytest.fixture()
+def repo(tmp_path: Path) -> Repository:
+    r = Repository(tmp_path / "chat.db")
+    yield r
+    r.close()
+
+
+# -- domain models ------------------------------------------------------------
+
+
+def test_conversation_key_distinguishes_channels_and_directs() -> None:
+    """Channel and direct keys are stable and case-insensitive on the peer."""
+    assert conversation_key(True, 0, None) == "chan:0"
+    assert conversation_key(False, None, "AABBCC") == "dm:aabbcc"
+
+    contact = Contact(name="Alice", public_key="d4e5" + "0" * 60, key_prefix="d4e5f6a7")
+    conv = Conversation(label="Alice", is_channel=False, contact=contact)
+    assert conv.key == "dm:d4e5f6a7"
+    assert conv.peer == "d4e5f6a7"
+
+    chan = Conversation(label="#public", is_channel=True, channel_idx=2)
+    assert chan.key == "chan:2"
+    assert chan.peer is None
+
+
+def test_chat_message_from_inbound_message() -> None:
+    """An inbound direct Message maps to a received ChatMessage on the right thread."""
+    message = Message(text="hi", sender="a1b2c3d4", is_channel=False, snr=5.5)
+    chat = ChatMessage.from_message(message, peer_name="Yagi")
+    assert chat.outbound is False
+    assert chat.is_channel is False
+    assert chat.peer == "a1b2c3d4"
+    assert chat.peer_name == "Yagi"
+    assert chat.snr == 5.5
+    assert chat.key == "dm:a1b2c3d4"
+
+
+# -- device send --------------------------------------------------------------
+
+
+async def test_mock_send_direct_returns_ack() -> None:
+    """The simulator acknowledges direct messages so they show as delivered."""
+    device = MockDevice()
+    await device.connect()
+    contact = (await device.get_contacts())[0]
+    ack = await device.send_direct_message(contact, "hello")
+    assert ack is not None
+    await device.send_channel_message(0, "hi channel")  # no return, must not raise
+    await device.disconnect()
+
+
+async def test_message_pump_drains_until_empty() -> None:
+    """The RX pump pulls get_msg() until the queue is empty (the pull model).
+
+    MeshCore never pushes message bodies, so the client must pull them; without this,
+    sending works but nothing is received. Guards the immediate drain, the loop until
+    NO_MORE_MSGS, the MESSAGES_WAITING subscription, and clean teardown.
+    """
+    from meshcore import EventType
+
+    from meshtools.core.connection import MeshCoreDevice
+
+    class _Ev:
+        def __init__(self, t) -> None:  # noqa: ANN001
+            self.type = t
+
+    class _FakeCommands:
+        def __init__(self, script: list) -> None:
+            self.calls = 0
+            self._script = script
+
+        async def get_msg(self, timeout=None):  # noqa: ANN001, ANN201
+            i = min(self.calls, len(self._script) - 1)
+            self.calls += 1
+            return _Ev(self._script[i])
+
+    class _FakeMC:
+        def __init__(self, script: list) -> None:
+            self.commands = _FakeCommands(script)
+            self.subs: list = []
+
+        def subscribe(self, etype, cb):  # noqa: ANN001, ANN201
+            self.subs.append(etype)
+            return object()
+
+    # One real message, then the empty sentinel: the drain loop pulls twice.
+    mc = _FakeMC([EventType.CONTACT_MSG_RECV, EventType.NO_MORE_MSGS])
+    device = MeshCoreDevice(port="COM_TEST")
+    subs: list = []
+    stop = device._message_pump(mc, subs, mc.subscribe)
+    try:
+        await asyncio.sleep(0.01)  # let the immediate drain task run
+        assert mc.commands.calls == 2  # CONTACT_MSG_RECV then NO_MORE_MSGS
+        assert EventType.MESSAGES_WAITING in mc.subs  # low-latency push subscription
+    finally:
+        stop()
+
+
+# -- persistence --------------------------------------------------------------
+
+
+def test_record_and_load_direct_conversation(repo: Repository) -> None:
+    """Direct messages round-trip and come back in chronological order."""
+    repo.record_chat_message(ChatMessage(text="hi", outbound=True, peer="D4E5F6A7", acked=True))
+    repo.record_chat_message(ChatMessage(text="yo", outbound=False, peer="d4e5f6a7", snr=3.0))
+
+    got = repo.recent_chat_messages(is_channel=False, peer="d4e5f6a7")
+    assert [m.text for m in got] == ["hi", "yo"]
+    assert got[0].outbound is True and got[0].acked is True
+    assert got[1].outbound is False and got[1].snr == 3.0
+
+
+def test_record_and_load_channel_conversation(repo: Repository) -> None:
+    """Channel messages are keyed by slot, isolated from direct messages."""
+    repo.record_chat_message(ChatMessage(text="c0", is_channel=True, channel_idx=0))
+    repo.record_chat_message(ChatMessage(text="c1", is_channel=True, channel_idx=1))
+
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_idx=0)] == ["c0"]
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_idx=1)] == ["c1"]
+
+
+def test_last_chat_messages_returns_latest_per_conversation(repo: Repository) -> None:
+    """The picker preview shows the newest message in each conversation."""
+    repo.record_chat_message(ChatMessage(text="old", peer="aa"))
+    repo.record_chat_message(ChatMessage(text="new", peer="aa"))
+    repo.record_chat_message(ChatMessage(text="chan", is_channel=True, channel_idx=0))
+
+    lasts = repo.last_chat_messages()
+    assert lasts["dm:aa"].text == "new"
+    assert lasts["chan:0"].text == "chan"
+
+
+# -- chat service -------------------------------------------------------------
+
+
+async def test_service_records_inbound_and_tracks_unread(repo: Repository) -> None:
+    """Inbound messages are persisted and bump the conversation's unread count."""
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="ping", sender="ffeeddcc", is_channel=False))
+        )
+        assert chat.unread("dm:ffeeddcc") == 1
+        assert chat.unread_total() >= 1
+        stored = repo.recent_chat_messages(is_channel=False, peer="ffeeddcc")
+        assert [m.text for m in stored] == ["ping"]
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_service_active_conversation_suppresses_unread(repo: Repository) -> None:
+    """The open conversation clears and stops accruing unread while it stays active."""
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        chat.set_active("dm:ffeeddcc")
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="ping", sender="ffeeddcc", is_channel=False))
+        )
+        assert chat.unread("dm:ffeeddcc") == 0  # active thread doesn't accrue unread
+        assert repo.recent_chat_messages(is_channel=False, peer="ffeeddcc")  # still recorded
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+# -- chat screen --------------------------------------------------------------
+
+
+def _screen(session: _StubSession, send, *, messages=None) -> ChatScreen:
+    """Build a ChatScreen for a direct conversation with a stub session and send hook."""
+    conv = Conversation(
+        label="Alice",
+        is_channel=False,
+        contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
+    )
+    return ChatScreen(conv, messages or [], send=send, names={"d4e5f6a7": "Alice"}, session=session)
+
+
+def test_chat_screen_renders_transcript_and_input() -> None:
+    """The body shows each message and always ends with the input line."""
+    session = _StubSession()
+    messages = [ChatMessage(text="hi there", outbound=True, peer="d4e5f6a7", acked=True)]
+    screen = _screen(session, send=None, messages=messages)
+
+    lines = screen.render_body(60)
+    joined = "\n".join(lines)
+    assert "hi there" in joined
+    assert "›" in joined  # the input editor's prompt marker
+
+
+async def test_chat_screen_enter_sends_and_appends() -> None:
+    """Pressing Enter sends the line and appends the returned message to the transcript."""
+    session = _StubSession()
+    sent: list[str] = []
+
+    async def send(text: str) -> ChatMessage:
+        sent.append(text)
+        return ChatMessage(text=text, outbound=True, peer="d4e5f6a7", acked=True)
+
+    screen = _screen(session, send=send)
+    for ch in "hello":
+        screen.handle("text", ch)
+    screen.handle("enter")
+    await asyncio.sleep(0)  # let the scheduled send task run
+
+    assert sent == ["hello"]
+    assert screen._messages[-1].text == "hello"
+    assert session.invalidations > 0
+
+
+def test_chat_screen_scroll_detaches_and_end_reattaches() -> None:
+    """Scrolling up detaches from the live tail; End re-sticks to the bottom."""
+    screen = _screen(_StubSession(), send=None)
+    assert screen._stick is True
+    screen.handle("up")
+    assert screen._stick is False
+    screen.handle("end")
+    assert screen._stick is True
+
+
+def test_split_channel_sender_extracts_name_prefix() -> None:
+    """A ``Name: message`` channel line splits into sender and cleaned body."""
+    from meshtools.ui.chat import _split_channel_sender
+
+    assert _split_channel_sender("Alice: hey there") == ("Alice", "hey there")
+    assert _split_channel_sender("Yagi Repeater: online") == ("Yagi Repeater", "online")
+    # No plausible prefix: left untouched.
+    assert _split_channel_sender("just a message") == (None, "just a message")
+    assert _split_channel_sender("https://example.com") == (None, "https://example.com")
+    assert _split_channel_sender("14:30 standup") == (None, "14:30 standup")
+
+
+def test_channel_transcript_groups_by_sender() -> None:
+    """Consecutive same-sender channel messages share one header; the body is cleaned."""
+    from datetime import datetime, timezone
+
+    conv = Conversation(label="#public", is_channel=True, channel_idx=0)
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+
+    def at(minutes: int) -> datetime:
+        return base.replace(minute=24 + minutes)
+
+    messages = [
+        ChatMessage(text="Alice: hi", is_channel=True, channel_idx=0, created_at=at(0)),
+        ChatMessage(text="Alice: again", is_channel=True, channel_idx=0, created_at=at(6)),
+        ChatMessage(text="Bob: yo", is_channel=True, channel_idx=0, created_at=at(8)),
+        ChatMessage(text="hello all", outbound=True, is_channel=True, channel_idx=0, created_at=at(9)),
+    ]
+    screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession())
+    rendered = _strip_ansi("\n".join(screen._render_channel(80)))
+
+    assert rendered.count("Alice") == 1  # the two Alice messages share one header
+    assert "Bob" in rendered and "you" in rendered
+    assert "hi" in rendered and "again" in rendered  # bodies present, prefix stripped
+    assert "Alice: hi" not in rendered  # the raw name prefix is lifted into the header
+    # Each message keeps its own timestamp on its line, even when grouped under one sender.
+    stamps = [at(m).astimezone().strftime("%H:%M") for m in (0, 6, 8, 9)]
+    for stamp in stamps:
+        assert stamp in rendered
+    assert stamps[0] != stamps[1]  # grouped Alice messages show distinct times
+
+
+def _channel_screen(messages, session=None) -> ChatScreen:
+    """Build a channel ChatScreen over ``messages`` for selection/reply tests."""
+    conv = Conversation(label="#public", is_channel=True, channel_idx=0)
+    return ChatScreen(
+        conv, messages, send=None, names={}, session=session or _StubSession()
+    )
+
+
+def _channel_messages():
+    """Three inbound channel messages (Alice, Alice, Bob) for reply-selection tests."""
+    from datetime import datetime, timezone
+
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+    return [
+        ChatMessage(text="Alice: hi", is_channel=True, channel_idx=0, created_at=base),
+        ChatMessage(text="Alice: still here", is_channel=True, channel_idx=0, created_at=base),
+        ChatMessage(text="Bob: yo", is_channel=True, channel_idx=0, created_at=base),
+    ]
+
+
+def test_channel_up_enters_selection_from_newest() -> None:
+    """No message is selected until ↑ picks the newest, then steps toward older ones."""
+    screen = _channel_screen(_channel_messages())
+    assert screen._selected is None  # compose focus: nothing selected initially
+
+    screen.handle("up")
+    assert screen._selected == 2  # newest message
+    assert screen._stick is False
+    screen.handle("up")
+    assert screen._selected == 1  # steps to the previous message
+
+
+def test_channel_down_past_newest_clears_selection() -> None:
+    """Moving ↓ past the newest message returns focus to compose (nothing selected)."""
+    screen = _channel_screen(_channel_messages())
+    screen.handle("up")  # select newest (index 2)
+    assert screen._selected == 2
+
+    screen.handle("down")  # past the newest → deselect, re-stick to the tail
+    assert screen._selected is None
+    assert screen._stick is True
+
+
+def test_channel_selected_line_tracked_for_scroll() -> None:
+    """Rendering records the selected message's body line so the frame keeps it in view."""
+    screen = _channel_screen(_channel_messages())
+    screen.handle("up")  # select Bob (newest)
+    screen.render_body(80)
+    assert screen._selected_line is not None
+    # No selection → no cursor line, so the transcript free-scrolls as before.
+    screen.handle("end")
+    screen.render_body(80)
+    assert screen._selected_line is None
+
+
+def test_channel_enter_on_selection_primes_at_mention() -> None:
+    """Enter on a picked message seeds the compose line with the sender's @mention."""
+    screen = _channel_screen(_channel_messages())
+    screen.handle("up")
+    screen.handle("up")  # select an Alice message (index 1)
+    screen.handle("enter")
+
+    assert screen._editor.text == "@[Alice] "
+    assert screen._selected is None  # focus returns to compose after starting the reply
+
+
+def test_channel_typing_clears_selection() -> None:
+    """Editing the compose line drops any reply selection (compose has focus)."""
+    screen = _channel_screen(_channel_messages())
+    screen.handle("up")
+    assert screen._selected is not None
+    screen.handle("text", "x")
+    assert screen._selected is None
+    assert screen._editor.text == "x"
+
+
+def test_chat_screen_escape_cancels() -> None:
+    """Esc resolves the screen's future with CANCEL so the caller pops it."""
+    screen = _screen(_StubSession(), send=None)
+    loop = asyncio.new_event_loop()
+    try:
+        screen.future = loop.create_future()
+        screen.handle("escape")
+        assert screen.future.result() is CANCEL
+    finally:
+        loop.close()
+
+
+async def test_service_send_records_outbound(repo: Repository) -> None:
+    """Sending through the service records the outbound message with its ack state."""
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        contact = next(c for c in await device.get_contacts() if c.name == "Alice")
+        sent = await chat.send_direct(contact, "hey")
+        assert sent.outbound is True and sent.acked is True
+
+        await chat.send_channel(0, "hello all", label="#public")
+        stored = repo.recent_chat_messages(is_channel=True, channel_idx=0)
+        assert [m.text for m in stored] == ["hello all"]
+        assert stored[0].outbound is True
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+# -- end-to-end through the real session --------------------------------------
+
+
+async def test_open_chat_sends_through_real_session(tmp_path: Path) -> None:
+    """Driving open_chat with piped keys sends a message and records it, end to end."""
+    from prompt_toolkit.input.defaults import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    from rich.console import Console
+
+    from meshtools.context import AppContext
+    from meshtools.core.admin_store import AdminStore
+    from meshtools.core.config import Settings
+    from meshtools.core.device_store import DeviceStore
+    from meshtools.ui.chat import open_chat
+    from meshtools.ui.surface import TuiUi
+    from meshtools.ui.tui.session import TuiSession
+
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "e2e.db")
+    ctx = AppContext(
+        console=Console(),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+        mock=True,
+    )
+    conv = Conversation(
+        label="Alice",
+        is_channel=False,
+        contact=Contact(name="Alice", public_key="d4e5f6a7" + "0" * 56, key_prefix="d4e5f6a7"),
+    )
+    try:
+        with create_pipe_input() as inp:
+            session = TuiSession(input=inp, output=DummyOutput())
+            ctx.ui = TuiUi(session)
+
+            async def main() -> None:
+                inp.send_text("hi\r\x1b")  # type "hi", Enter (send), Esc (leave)
+                await open_chat(ctx, conv)
+
+            await asyncio.wait_for(session.run(main()), timeout=5)
+
+        stored = ctx.repo.recent_chat_messages(is_channel=False, peer="d4e5f6a7")
+        assert [m.text for m in stored] == ["hi"]
+        assert stored[0].outbound is True
+    finally:
+        await ctx.aclose()

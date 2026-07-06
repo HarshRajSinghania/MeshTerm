@@ -95,13 +95,14 @@ def compose_base(
     Returns:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
     """
-    header_lines = render_lines(header, cols)
+    # The header is a single status line: crop it to one row so a narrow terminal never
+    # wraps it onto a second line (which would push the panel down and misreport its height).
+    header_lines = render_lines(header, cols, no_wrap=True)
     header_h = len(header_lines)
     viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
     panel = _panel(base, cols - 4, viewport, active=True)
     footer = Text.from_markup(f"[muted]{footer_hint}[/muted]")
-    group = Group(header, panel, footer)
-    lines = render_lines(group, cols)
+    lines = header_lines + render_lines(Group(panel, footer), cols)
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
     if len(lines) > rows:
         lines = lines[:rows]

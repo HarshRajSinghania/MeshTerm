@@ -14,6 +14,7 @@ Two implementations are provided:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -21,6 +22,9 @@ from typing import Callable, Optional
 
 from .events import MeshEvent
 from .models import Ack, Contact, Hop, Message, Observation, TraceResult
+
+#: Module logger; enable DEBUG on ``meshtools.core.connection`` to trace the message pump.
+_log = logging.getLogger(__name__)
 
 #: Callback invoked with each :class:`~meshtools.core.events.MeshEvent` the device emits
 #: (an overheard packet, an inbound message, an acknowledgement).
@@ -33,6 +37,14 @@ Unsubscribe = Callable[[], None]
 #: How often the :class:`MockDevice` simulator emits a fresh burst of synthetic packets
 #: while a passive-monitor subscription is open (seconds).
 _MOCK_MONITOR_INTERVAL_S = 0.05
+
+#: How often the real device's inbound-message pump sweeps for queued messages, as a
+#: safety net for firmware that doesn't reliably push ``MESSAGES_WAITING`` (seconds).
+_MESSAGE_POLL_INTERVAL_S = 3.0
+
+#: Per-``get_msg`` timeout in the message pump, so a missing device reply can't wedge the
+#: drain loop (seconds).
+_MESSAGE_GET_TIMEOUT_S = 5.0
 
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
@@ -182,6 +194,36 @@ class Device(ABC):
 
         Returns:
             A zero-argument callable that stops the stream and releases the subscription.
+        """
+
+    # -- messaging ---------------------------------------------------------------
+
+    @abstractmethod
+    async def send_direct_message(self, contact: Contact, text: str) -> Optional[Ack]:
+        """Send a direct text message to a contact.
+
+        Args:
+            contact: The recipient; its ``public_key`` addresses the message.
+            text: The message body.
+
+        Returns:
+            The delivery :class:`Ack` if one arrived before the send timed out, else
+            ``None`` (the message was handed to the radio but not yet acknowledged).
+
+        Raises:
+            DeviceCommandError: If the companion rejected the send outright.
+        """
+
+    @abstractmethod
+    async def send_channel_message(self, index: int, text: str) -> None:
+        """Broadcast a text message on a channel slot.
+
+        Args:
+            index: Zero-based channel slot to transmit on.
+            text: The message body.
+
+        Raises:
+            DeviceCommandError: If the companion rejected the send.
         """
 
     # -- configuration: extra reads ---------------------------------------------
@@ -679,7 +721,12 @@ class MeshCoreDevice(Device):
         if etype is not None:
             subs.append(subscribe(etype, ack_handler))
 
+        # Drive the inbound-message pull ourselves (see ``_message_pump``): MeshCore never
+        # pushes message bodies, so without this sending works but nothing is received.
+        stop_pump = self._message_pump(mc, subs, subscribe)
+
         def unsubscribe() -> None:
+            stop_pump()
             for sub in subs:
                 unsub = getattr(sub, "unsubscribe", None)
                 if unsub is not None:
@@ -689,6 +736,103 @@ class MeshCoreDevice(Device):
                         pass
 
         return unsubscribe
+
+    def _message_pump(self, mc, subs: list, subscribe) -> Unsubscribe:  # type: ignore[no-untyped-def]
+        """Continuously pull inbound messages from the companion (the RX pull model).
+
+        MeshCore doesn't push message bodies unsolicited: the device raises a
+        ``MESSAGES_WAITING`` notification and the client must call ``get_msg()`` to retrieve
+        each queued message, which the library's reader then dispatches as
+        ``CONTACT_MSG_RECV`` / ``CHANNEL_MSG_RECV`` to the handler registered above (a
+        command's own temporary listener does not consume the event — every subscriber
+        still sees it). We drive that pull three ways so it is robust across firmware
+        builds: an immediate drain (delivers anything already queued), a drain on each
+        ``MESSAGES_WAITING`` push (low latency), and a slow timer (a safety net for builds
+        whose pushes are unreliable — the failure this fixes). Drains are serialized by a
+        lock so the overlapping triggers never issue concurrent ``get_msg`` commands.
+
+        Args:
+            mc: The connected ``MeshCore`` client.
+            subs: The subscription list to append the ``MESSAGES_WAITING`` sub to (so it is
+                torn down with the others).
+            subscribe: The client's ``subscribe`` callable.
+
+        Returns:
+            A zero-argument callable that stops the pump (its poll task and drains).
+        """
+        from meshcore import EventType
+
+        stop = asyncio.Event()
+        draining = asyncio.Lock()
+
+        async def drain() -> None:
+            # Pull until the device reports the queue is empty; each retrieved message is
+            # delivered to our handler by the reader's dispatch, so there's nothing to do
+            # with the returned event but check whether to keep going.
+            async with draining:
+                while not stop.is_set():
+                    try:
+                        event = await mc.commands.get_msg(timeout=_MESSAGE_GET_TIMEOUT_S)
+                    except Exception as exc:  # noqa: BLE001 - transient; the poll retries
+                        _log.debug("message pump: get_msg failed: %s", exc)
+                        return
+                    etype = getattr(event, "type", None)
+                    if event is None or etype in (EventType.NO_MORE_MSGS, EventType.ERROR):
+                        return
+
+        def schedule_drain(_event=None) -> None:  # noqa: ANN001 - MESSAGES_WAITING callback
+            asyncio.ensure_future(drain())
+
+        async def poll_loop() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), _MESSAGE_POLL_INTERVAL_S)
+                except asyncio.TimeoutError:
+                    await drain()  # interval elapsed; sweep for anything the push missed
+
+        waiting = getattr(EventType, "MESSAGES_WAITING", None)
+        if waiting is not None:
+            subs.append(subscribe(waiting, schedule_drain))
+        schedule_drain()  # immediate initial drain of anything already queued
+        poll_task = asyncio.ensure_future(poll_loop())
+
+        def stop_pump() -> None:
+            stop.set()  # ends the poll loop and any in-flight drain at the next check
+            poll_task.cancel()
+
+        return stop_pump
+
+    async def send_direct_message(  # noqa: D102 - inherited docstring
+        self, contact: Contact, text: str
+    ) -> Optional[Ack]:
+        from meshcore import EventType
+
+        mc = self._require()
+        pub = self._node_pubkey(contact)
+        result = await mc.commands.send_msg(pub, text)
+        if result is None or getattr(result, "is_error", lambda: False)():
+            raise DeviceCommandError(
+                f"failed to send message to {contact.name!r}: "
+                f"{getattr(result, 'payload', {})}"
+            )
+        # The companion acknowledges the send immediately with an ``expected_ack`` code and
+        # a suggested wait; the recipient's delivery ACK arrives later carrying that code.
+        payload = getattr(result, "payload", {}) or {}
+        expected = payload.get("expected_ack")
+        expected_hex = expected.hex() if isinstance(expected, (bytes, bytearray)) else expected
+        if not expected_hex:
+            return None
+        suggested = payload.get("suggested_timeout")
+        timeout = suggested / 1000 * 1.2 if suggested else 8.0
+        ack = await mc.wait_for_event(
+            EventType.ACK, attribute_filters={"code": expected_hex}, timeout=timeout
+        )
+        return ack_from_event(ack) if ack is not None else None
+
+    async def send_channel_message(  # noqa: D102 - inherited docstring
+        self, index: int, text: str
+    ) -> None:
+        self._ok(await self._require().commands.send_chan_msg(index, text))
 
     @staticmethod
     def _ok(event):  # type: ignore[no-untyped-def]
@@ -894,6 +1038,19 @@ class MockDevice(Device):
 
     async def set_tx_power(self, value: int) -> None:  # noqa: D102 - inherited docstring
         self._tx_power = value
+
+    async def send_direct_message(  # noqa: D102 - inherited docstring
+        self, contact: Contact, text: str
+    ) -> Optional[Ack]:
+        await asyncio.sleep(0)
+        # The simulator "delivers" instantly and always acknowledges, so outbound direct
+        # messages show as acked without a radio.
+        return Ack(code="mock")
+
+    async def send_channel_message(  # noqa: D102 - inherited docstring
+        self, index: int, text: str
+    ) -> None:
+        await asyncio.sleep(0)
 
     async def admin_login(self, node: Contact, password: str) -> bool:  # noqa: D102
         await asyncio.sleep(0)

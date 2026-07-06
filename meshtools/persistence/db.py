@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -90,11 +90,30 @@ CREATE TABLE IF NOT EXISTS observations (
     observed_at TEXT    NOT NULL
 );
 
+-- One chat message, sent or received, on a channel or with a contact. Unlike the other
+-- measurement tables these are not tied to a single tool run (they arrive unsolicited via
+-- the event hub), so run_id is nullable and detaches rather than cascades.
+CREATE TABLE IF NOT EXISTS messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+    outbound    INTEGER NOT NULL DEFAULT 0,
+    is_channel  INTEGER NOT NULL DEFAULT 0,
+    channel_idx INTEGER,
+    peer        TEXT,
+    peer_name   TEXT,
+    text        TEXT    NOT NULL,
+    snr         REAL,
+    acked       INTEGER,
+    created_at  TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_traces_run ON traces(run_id);
 CREATE INDEX IF NOT EXISTS idx_trace_hops_trace ON trace_hops(trace_id);
 CREATE INDEX IF NOT EXISTS idx_tx_samples_run ON tx_samples(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
+CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_idx);
+CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);
 """
 
 

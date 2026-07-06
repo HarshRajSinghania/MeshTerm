@@ -22,6 +22,7 @@ from .persistence.logging import get_logger
 from .persistence.repository import Repository
 
 if TYPE_CHECKING:
+    from .services.chat_service import ChatService
     from .services.event_hub import EventHub
     from .services.monitor_service import MonitorService
     from .ui.surface import Ui
@@ -62,6 +63,7 @@ class AppContext:
     _device: Optional[Device] = field(default=None, init=False, repr=False)
     _events: "Optional[EventHub]" = field(default=None, init=False, repr=False)
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
+    _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     @property
@@ -120,6 +122,21 @@ class AppContext:
         return self._monitor
 
     @property
+    def chat(self) -> "ChatService":
+        """Return the session's chat service, creating it on first use.
+
+        The service records inbound messages to history (as a subscriber of the always-on
+        event hub) and owns the outbound send path and the per-conversation unread counts.
+        It is created idle here; the interactive session starts it once a device is
+        available (and the live chat screen starts it lazily otherwise).
+        """
+        if self._chat is None:
+            from .services.chat_service import ChatService
+
+            self._chat = ChatService(self)
+        return self._chat
+
+    @property
     def log(self):  # type: ignore[no-untyped-def]
         """The application logger."""
         return get_logger()
@@ -163,9 +180,11 @@ class AppContext:
         return self._device
 
     async def aclose(self) -> None:
-        """Stop monitoring, stop the event hub, disconnect the device, and close the repo."""
+        """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
         if self._monitor is not None:
             await self._monitor.aclose()
+        if self._chat is not None:
+            await self._chat.aclose()
         if self._events is not None:
             await self._events.aclose()
         if self._device is not None:

@@ -47,12 +47,14 @@ def _console(width: int) -> Console:
     return console
 
 
-def render_to_ansi(renderable: RenderableType, width: int) -> str:
+def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> str:
     """Render a Rich renderable to an ANSI string at ``width`` columns.
 
     Args:
         renderable: Any Rich renderable (table, panel, text, group, markup string).
         width: Target width in columns; content wraps/pads to it.
+        no_wrap: When ``True``, keep the content on a single line — show what fits and
+            crop the overflow (with an ellipsis) instead of wrapping onto more rows.
 
     Returns:
         The rendered output as an ANSI-escaped string, without a trailing newline.
@@ -60,11 +62,14 @@ def render_to_ansi(renderable: RenderableType, width: int) -> str:
     width = max(1, width)
     console = _console(width)
     with console.capture() as capture:
-        console.print(renderable, end="")
+        if no_wrap:
+            console.print(renderable, end="", no_wrap=True, overflow="ellipsis", crop=True)
+        else:
+            console.print(renderable, end="")
     return capture.get()
 
 
-def render_lines(renderable: RenderableType, width: int) -> list[str]:
+def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> list[str]:
     """Render a Rich renderable to a list of ANSI lines at ``width`` columns.
 
     Each returned line is an independently styled ANSI string, so the caller can slice a
@@ -73,12 +78,14 @@ def render_lines(renderable: RenderableType, width: int) -> list[str]:
     Args:
         renderable: Any Rich renderable.
         width: Target width in columns.
+        no_wrap: When ``True``, keep the content to a single cropped line (see
+            :func:`render_to_ansi`).
 
     Returns:
         The rendered lines, newline-free. A trailing empty line (from the final newline)
         is dropped so line counts match visible rows.
     """
-    ansi = render_to_ansi(renderable, width)
+    ansi = render_to_ansi(renderable, width, no_wrap=no_wrap)
     lines = ansi.split("\n")
     if lines and lines[-1] == "":
         lines.pop()

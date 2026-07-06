@@ -118,6 +118,125 @@ class Ack:
     raw: Optional[dict] = None
 
 
+def conversation_key(
+    is_channel: bool, channel_idx: Optional[int], peer: Optional[str]
+) -> str:
+    """Return a stable key identifying a chat conversation.
+
+    A conversation is either a channel or a direct exchange with one contact; this key
+    is how history, unread counts, and the live screen all agree on which thread a message
+    belongs to.
+
+    Args:
+        is_channel: Whether the conversation is a channel.
+        channel_idx: The channel slot (for channel conversations).
+        peer: The contact's key prefix (for direct conversations).
+
+    Returns:
+        ``"chan:<idx>"`` for a channel or ``"dm:<peer>"`` (lowercased) for a direct
+        exchange.
+    """
+    if is_channel:
+        return f"chan:{channel_idx}"
+    return f"dm:{(peer or '').lower()}"
+
+
+@dataclass(slots=True)
+class ChatMessage:
+    """A chat message, sent or received, on a channel or with a contact.
+
+    This is the persisted, display-oriented view of a message: it unifies the outbound
+    messages we send with the inbound :class:`Message` events the hub delivers, so a
+    conversation transcript is a single ordered list of these. Each belongs to exactly one
+    conversation — a channel (:attr:`is_channel` with :attr:`channel_idx`) or a direct
+    exchange with a contact (:attr:`peer` holding the contact's key prefix).
+
+    Attributes:
+        text: The message body.
+        outbound: ``True`` if we sent it, ``False`` if we received it.
+        is_channel: Whether it belongs to a channel rather than a direct exchange.
+        channel_idx: The channel slot, for channel messages.
+        peer: The other party's key prefix, for direct messages.
+        peer_name: A friendly name for the peer/channel, snapshotted for display.
+        snr: Signal-to-noise ratio (dB) of an inbound reception, if reported.
+        acked: For an outbound direct message, whether delivery was acknowledged; ``None``
+            when not applicable (a channel broadcast or an inbound message).
+        created_at: When the message was sent or received.
+    """
+
+    text: str
+    outbound: bool = False
+    is_channel: bool = False
+    channel_idx: Optional[int] = None
+    peer: Optional[str] = None
+    peer_name: Optional[str] = None
+    snr: Optional[float] = None
+    acked: Optional[bool] = None
+    created_at: datetime = field(default_factory=utcnow)
+
+    @property
+    def key(self) -> str:
+        """The key of the conversation this message belongs to."""
+        return conversation_key(self.is_channel, self.channel_idx, self.peer)
+
+    @classmethod
+    def from_message(
+        cls, message: "Message", *, peer_name: Optional[str] = None
+    ) -> "ChatMessage":
+        """Build an inbound :class:`ChatMessage` from a received :class:`Message`.
+
+        Args:
+            message: The inbound message delivered by the event hub.
+            peer_name: A friendly name for the sender, resolved from contacts if known.
+
+        Returns:
+            The equivalent inbound :class:`ChatMessage`.
+        """
+        return cls(
+            text=message.text,
+            outbound=False,
+            is_channel=message.is_channel,
+            channel_idx=message.channel,
+            peer=None if message.is_channel else (message.sender or None),
+            peer_name=peer_name,
+            snr=message.snr,
+            # Prefer the sender's own timestamp (the actual moment the message was
+            # composed) over ``received_at`` (when we happened to pull it off the radio),
+            # so the transcript reflects message time rather than retrieval time. Falls
+            # back to the receive time when the sender carried no timestamp.
+            created_at=message.sender_timestamp or message.received_at,
+        )
+
+
+@dataclass(slots=True)
+class Conversation:
+    """A selectable chat thread: a channel or a direct exchange with a contact.
+
+    Attributes:
+        label: Display name (e.g. ``#general`` or ``Alice``).
+        is_channel: Whether this is a channel rather than a direct conversation.
+        channel_idx: The channel slot, for channels.
+        contact: The contact, for direct conversations.
+    """
+
+    label: str
+    is_channel: bool
+    channel_idx: Optional[int] = None
+    contact: Optional[Contact] = None
+
+    @property
+    def peer(self) -> Optional[str]:
+        """The peer key prefix for a direct conversation, else ``None``."""
+        if self.is_channel or self.contact is None:
+            return None
+        return self.contact.key_prefix or self.contact.public_key[:12] or None
+
+    @property
+    def key(self) -> str:
+        """The conversation's stable key (see :func:`conversation_key`)."""
+        return conversation_key(self.is_channel, self.channel_idx, self.peer)
+
+
 @dataclass(slots=True)
 class HeardNode:
     """Aggregated reception statistics for one node across many observations.

@@ -19,6 +19,7 @@ turned into interactive HTML visualizations.
 | **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
 | **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
+| **Chat** | ✅ working | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged to SQLite, unread counts show in the menu header, and `chat send/history/list` script the same from the CLI. Channels are picked here; edit them in `config`. |
 | **Passive monitor** | ✅ working | Toggle a non-blocking background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you keep using the app; on/off is remembered between sessions and live packet counts show in the menu. |
 | **Link health** | ✅ working | Compare a target's recent traces to its rolling baseline and flag SNR/reliability regressions, end-to-end and per hop. |
 | **Route map** | ✅ working | Aggregate trace history into an interactive route-stability graph — which links are stable, which the mesh flaps between, with churn metrics. |
@@ -49,6 +50,13 @@ meshtools trace --target Alice --path "3d,Bravo-Repeater,f2"
 meshtools tx-optimize --target Alice --samples 6 --step 3 --apply
 meshtools info
 meshtools history
+
+# Messaging: live chat in the menu, or scripted from the CLI
+meshtools chat                                  # interactive: pick a conversation, chat live
+meshtools chat send --to Alice "on my way"      # direct message
+meshtools chat send --channel 0 "net in 5"      # channel broadcast
+meshtools chat history --to Alice
+meshtools chat list
 
 # Device configuration: view, set, back up, restore
 meshtools config                       # show all current settings

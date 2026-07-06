@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..core.models import (
+    ChatMessage,
     HeardNode,
     Hop,
     Observation,
@@ -382,3 +383,102 @@ class Repository:
 
         nodes = [HeardNode.from_observations(node, obs) for node, obs in grouped.items()]
         return sorted(nodes, key=lambda n: n.last_seen, reverse=True)
+
+    # -- chat messages ----------------------------------------------------------
+
+    def record_chat_message(
+        self, msg: ChatMessage, *, run_id: Optional[int] = None
+    ) -> int:
+        """Persist one chat message (sent or received).
+
+        Args:
+            msg: The message to store. Its ``peer`` is normalized to lowercase so a
+                direct conversation queries back consistently.
+            run_id: The owning background ``chat`` run, if any (inbound messages log to
+                one; outbound sends may not).
+
+        Returns:
+            The new message's primary key.
+        """
+        peer = msg.peer.lower() if msg.peer else None
+        cur = self._conn.execute(
+            "INSERT INTO messages "
+            "(run_id, outbound, is_channel, channel_idx, peer, peer_name, text, snr, "
+            "acked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                int(msg.outbound),
+                int(msg.is_channel),
+                msg.channel_idx,
+                peer,
+                msg.peer_name,
+                msg.text,
+                msg.snr,
+                None if msg.acked is None else int(msg.acked),
+                msg.created_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def recent_chat_messages(
+        self,
+        *,
+        is_channel: bool,
+        channel_idx: Optional[int] = None,
+        peer: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[ChatMessage]:
+        """Return a conversation's most recent messages, oldest-first.
+
+        Args:
+            is_channel: Whether to load a channel conversation.
+            channel_idx: The channel slot (channel conversations).
+            peer: The contact key prefix (direct conversations).
+            limit: Maximum number of messages to return.
+
+        Returns:
+            The messages in chronological order (ready to render as a transcript).
+        """
+        if is_channel:
+            where, params = "is_channel = 1 AND channel_idx = ?", [channel_idx]
+        else:
+            where, params = "is_channel = 0 AND peer = ?", [(peer or "").lower()]
+        rows = self._conn.execute(
+            f"SELECT * FROM messages WHERE {where} ORDER BY id DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+        return [self._row_to_chat(row) for row in reversed(rows)]
+
+    def last_chat_messages(self) -> dict[str, ChatMessage]:
+        """Return the latest message per conversation, keyed by conversation key.
+
+        Backs the conversation picker's preview snippets. One row per distinct
+        conversation, taken as the highest-id (most recent) message in each.
+
+        Returns:
+            A mapping of :func:`~meshtools.core.models.conversation_key` to its latest
+            :class:`ChatMessage`.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM messages WHERE id IN ("
+            "  SELECT MAX(id) FROM messages GROUP BY "
+            "  CASE WHEN is_channel = 1 THEN 'chan:' || channel_idx "
+            "       ELSE 'dm:' || peer END)"
+        ).fetchall()
+        return {msg.key: msg for msg in (self._row_to_chat(r) for r in rows)}
+
+    @staticmethod
+    def _row_to_chat(row: sqlite3.Row) -> ChatMessage:
+        """Rebuild a :class:`ChatMessage` from a ``messages`` row."""
+        return ChatMessage(
+            text=row["text"],
+            outbound=bool(row["outbound"]),
+            is_channel=bool(row["is_channel"]),
+            channel_idx=row["channel_idx"],
+            peer=row["peer"],
+            peer_name=row["peer_name"],
+            snr=row["snr"],
+            acked=None if row["acked"] is None else bool(row["acked"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )

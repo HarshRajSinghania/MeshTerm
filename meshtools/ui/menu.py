@@ -9,14 +9,41 @@ prompts layer as dialogs, and its output appears in a bounded, scrollable result
 
 from __future__ import annotations
 
+import logging
+from contextlib import contextmanager
+from typing import Iterator
+
+from rich.logging import RichHandler
 from rich.text import Text
 
 from .. import __version__
 from ..context import AppContext
+from ..persistence.logging import get_logger
 from ..tools import all_tools
 from .surface import TuiUi
 from .theme import make_console
 from .tui import Choice, Separator, TuiSession
+
+
+@contextmanager
+def _silence_console_logging() -> Iterator[None]:
+    """Detach console log handlers for the life of the full-screen TUI.
+
+    The full-screen session owns the terminal via prompt_toolkit; any handler that
+    writes log lines to the same console (the :class:`RichHandler` installed by
+    :func:`configure_logging`) corrupts the frame — most visibly when toggling the
+    monitor, which connects the device and emits INFO records on demand. File logging is
+    untouched, so the JSON-lines record stays complete; the handlers are restored on exit.
+    """
+    logger = get_logger()
+    detached = [h for h in logger.handlers if isinstance(h, RichHandler)]
+    for handler in detached:
+        logger.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in detached:
+            logger.addHandler(handler)
 
 
 def _header(ctx: AppContext) -> Text:
@@ -37,9 +64,20 @@ def _header(ctx: AppContext) -> Text:
         target = ctx.selected_device.label
     else:
         target = "[muted]no device[/muted]"
+    unread = ctx.chat.unread_total()
+    chat_segment = f"  ·  [accent]✉ {unread} unread[/accent]" if unread else ""
+    # Colour only the leading status glyph (● / ○) — green when the monitor is on
+    # (enabled), red when off — leaving the rest of the text muted as before.
+    status = ctx.monitor.status_text()
+    glyph, rest = status[:1], status[1:]
+    glyph_style = "ok" if ctx.monitor.enabled else "err"
+    # The frame crops this to a single line (see frame.compose_base), so a narrow terminal
+    # shows what fits and chops the rest rather than wrapping onto a second row.
     return Text.from_markup(
         f"[brand]MeshTools[/brand] [muted]v{__version__}[/muted]  ·  "
-        f"[muted]device:[/muted] {target}  ·  [muted]{ctx.monitor.status_text()}[/muted]"
+        f"[muted]device:[/muted] {target}  ·  "
+        f"[{glyph_style}]{glyph}[/{glyph_style}][muted]{rest}[/muted]"
+        f"{chat_segment}"
     )
 
 
@@ -61,12 +99,14 @@ async def run_menu(ctx: AppContext) -> None:
             await _startup(ctx)
             await _menu_loop(ctx, session)
         finally:
-            # Stop history recording (closing its run record) and the always-on event
-            # hub, even on an unexpected exit.
+            # Stop history + chat recording (closing their run records) and the always-on
+            # event hub, even on an unexpected exit.
             await ctx.monitor.aclose()
+            await ctx.chat.aclose()
             await ctx.events.aclose()
 
-    await session.run(main())
+    with _silence_console_logging():
+        await session.run(main())
     ctx.console.print("[muted]bye 73![/muted]")
 
 
@@ -77,6 +117,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         ctx: The shared application context.
         session: The running TUI session.
     """
+    last_selection: str | None = None
     while True:
         items: list = []
         current_category: str | None = None
@@ -88,9 +129,14 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         items.append(Separator(" "))
         items.append(Choice(title="quit", value="__quit__"))
 
-        selection = await session.select("What would you like to do?", items)
+        # Re-highlight the tool the user just backed out of, so returning to the menu
+        # lands the cursor where they left rather than at the top.
+        selection = await session.select(
+            "What would you like to do?", items, default=last_selection
+        )
         if selection in (None, "__quit__"):
             return
+        last_selection = selection
         await _run_selection(ctx, selection)
 
 
@@ -130,6 +176,13 @@ async def _resume_monitor(ctx: AppContext) -> None:
     if ctx.settings.connect_on_start:
         try:
             await ctx.events.start()
+        except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
+            pass
+        # Record inbound messages from launch so the inbox and unread badge stay current
+        # even before the chat screen is opened. Deferred (like the hub) when connect on
+        # start is off; the chat screen starts it lazily then.
+        try:
+            await ctx.chat.start()
         except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
             pass
     if not ctx.monitor.enabled:

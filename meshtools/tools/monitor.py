@@ -107,11 +107,9 @@ class MonitorTool(Tool):
                          "error": str(exc)},
                 message=f"[warn]monitoring enabled but capture couldn't start:[/warn] {exc}",
             )
-        state = "[ok]● ON[/ok]" if now_on else "[muted]○ OFF[/muted]"
-        return ToolResult(
-            summary={"enabled": now_on, "active": ctx.monitor.active},
-            message=f"passive monitor is now {state}",
-        )
+        # No confirmation message: the new state is already shown live in the header's
+        # monitor indicator, so a result window here would just be redundant noise.
+        return ToolResult(summary={"enabled": now_on, "active": ctx.monitor.active})
 
     @staticmethod
     def _view(ctx: AppContext) -> ToolResult:
