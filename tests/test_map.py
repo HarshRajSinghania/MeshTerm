@@ -231,6 +231,32 @@ def test_render_map_drops_crowded_labels_favouring_repeaters() -> None:
     assert ("NODEONE" in out) != ("NODETWO" in out)
 
 
+def _glyph_color(lines: list[str], glyph: str) -> tuple[int, int, int]:
+    """Extract the truecolour ``(r, g, b)`` the given glyph was rendered with."""
+    m = re.search(
+        r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?" + re.escape(glyph), "".join(lines)
+    )
+    assert m, f"glyph {glyph!r} not found with a colour"
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def test_render_map_brightens_piled_markers() -> None:
+    """A cell many nodes share renders its glyph brighter than a lone node's."""
+    from meshtools.ui.map_render import _NODE, MapMarker, render_map
+
+    base = parse_hex(_NODE[1])
+    vp = Viewport(45.50, -73.57, 14, 60, 40)
+
+    lone = render_map(vp, {}, [MapMarker("solo", 45.50, -73.57)])
+    assert _glyph_color(lone, "●") == base  # a single node keeps its base colour
+
+    crowd = [MapMarker(f"n{i}", 45.50, -73.57) for i in range(8)]
+    piled = _glyph_color(render_map(vp, {}, crowd), "●")
+    # Washed toward white: every channel is brighter than the base cyan.
+    assert all(p > b for p, b in zip(piled, base))
+    assert piled != base
+
+
 def test_render_map_works_without_basemap() -> None:
     """With no tiles the nodes still render on a blank grid (the offline fallback)."""
     from meshtools.ui.map_render import MapMarker, render_map

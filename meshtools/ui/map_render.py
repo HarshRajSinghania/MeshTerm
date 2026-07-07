@@ -13,6 +13,8 @@ important feature visible where things overlap (rivers over water, major roads o
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -306,10 +308,36 @@ def _marker_style(marker: MapMarker) -> tuple[str, str]:
     return _NODE
 
 
+#: How many piled nodes it takes for a marker's glyph to reach full brightness.
+_PILE_FULL = 8
+
+
+def _pile_color(color: RGB, count: int, *, cap: int = _PILE_FULL) -> RGB:
+    """Brighten a marker's colour by how many nodes share its cell.
+
+    One cell can only show a single glyph, so where many nodes fall on the same spot the
+    map would otherwise hide the crowd behind one marker. Instead we keep the top node's
+    glyph and wash its colour toward white as the pile grows, so a bright marker reads as
+    a busy cluster. The ramp is logarithmic (2 nodes → a clear lift, saturating around
+    ``cap``) so it stays informative without a lone extra node looking crowded.
+    """
+    if count <= 1:
+        return color
+    t = min(1.0, math.log2(count) / math.log2(cap))
+    r, g, b = color
+    return (
+        round(r + (255 - r) * t),
+        round(g + (255 - g) * t),
+        round(b + (255 - b) * t),
+    )
+
+
 def _draw_nodes(canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker]) -> None:
     """Overlay mesh nodes: every glyph, then labels by importance until they collide.
 
     Glyphs are drawn lowest-priority first so self/repeaters land on top of leaf nodes.
+    Where several nodes share a cell the surviving glyph is brightened by the pile size
+    (:func:`_pile_color`) so crowded spots glow rather than silently hiding the crowd.
     Labels are then placed highest-priority first — self, then repeaters, then leaf
     nodes — each only if it fits without overlapping. So on a crowded map the important
     labels win the available space and the rest show as a bare marker (no overlap).
@@ -322,9 +350,13 @@ def _draw_nodes(canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker])
             continue
         placed.append((marker, ix, iy))
 
+    # A cell is (dot_x >> 1, dot_y >> 2); count how many nodes land on each.
+    pile = Counter((ix >> 1, iy >> 2) for _, ix, iy in placed)
+
     for marker, ix, iy in sorted(placed, key=lambda p: p[0]._rank()):
         glyph, color = _marker_style(marker)
-        canvas.marker(ix, iy, glyph, parse_hex(color))
+        count = pile[(ix >> 1, iy >> 2)]
+        canvas.marker(ix, iy, glyph, _pile_color(parse_hex(color), count))
 
     for marker, ix, iy in sorted(placed, key=lambda p: -p[0]._rank()):
         _, color = _marker_style(marker)
