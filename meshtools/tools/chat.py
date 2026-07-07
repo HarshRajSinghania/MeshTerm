@@ -21,16 +21,17 @@ from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.channels import DEFAULT_PUBLIC_SECRET, channel_identity
+from ..core.channels import (
+    CHANNEL_SLOT_PROBE_CAP,
+    DEFAULT_PUBLIC_SECRET,
+    channel_identity,
+)
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation
 from ..ui.tui import Choice, Separator
 from ..ui.widgets import channel_glyph
 from .base import Tool, ToolResult, register
-
-#: How many channel slots to probe when listing channels to chat on.
-_MAX_CHANNELS = 8
 
 #: How many recent messages ``chat history`` prints by default.
 _HISTORY_LIMIT = 50
@@ -188,7 +189,7 @@ class ChatTool(Tool):
 
         contact = _resolve_contact(await device.get_contacts(), str(params["to"]))
         message = await ctx.chat.send_direct(contact, text)
-        state = "[ok]delivered[/ok]" if message.acked else "[warn]no ack[/warn]"
+        state = "[ok]✅ delivered[/ok]" if message.acked else "[warn]❌ no ack[/warn]"
         ctx.ui.note(f"[ok]✓[/ok] sent to [brand]{contact.name}[/brand] — {state}")
         return ToolResult(summary={"to": contact.name, "acked": bool(message.acked)})
 
@@ -387,7 +388,7 @@ async def _read_channels(device: Device) -> list[Conversation]:
         channel 0).
     """
     conversations: list[Conversation] = []
-    for idx in range(_MAX_CHANNELS):
+    for idx in range(CHANNEL_SLOT_PROBE_CAP):
         try:
             channel = await device.get_channel(idx)
         except Exception:  # noqa: BLE001 - firmware may not support channel reads

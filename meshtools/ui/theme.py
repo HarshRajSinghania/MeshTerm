@@ -9,6 +9,9 @@ MESH_THEME = Theme(
     {
         "brand": "bold #5eead4",
         "accent": "bold #818cf8",
+        # Our own messages in a chat: pure white, deliberately outside the per-sender hue
+        # palette (see meshtools.ui.chat._SENDER_COLORS) so "you" is always easy to spot.
+        "you": "bold #ffffff",
         "ok": "bold #4ade80",
         "warn": "bold #fbbf24",
         "err": "bold #f87171",

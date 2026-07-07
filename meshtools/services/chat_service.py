@@ -19,16 +19,13 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Optional
 
-from ..core.channels import channel_identity
+from ..core.channels import CHANNEL_SLOT_PROBE_CAP, channel_identity
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Message, utcnow
 
 if TYPE_CHECKING:
     from ..context import AppContext
-
-#: Channel slots the firmware exposes; matches the chat/channel-manager probes.
-_MAX_CHANNELS = 8
 
 
 def _fallback_channel_id(idx: Optional[int]) -> str:
@@ -108,7 +105,7 @@ class ChatService:
         """
         device = await self._ctx.device()
         ids: dict[int, str] = {}
-        for idx in range(_MAX_CHANNELS):
+        for idx in range(CHANNEL_SLOT_PROBE_CAP):
             try:
                 payload = await device.get_channel(idx)
             except Exception:  # noqa: BLE001 - firmware may not support channel reads
@@ -276,8 +273,31 @@ class ChatService:
             acked=ack is not None,
             created_at=utcnow(),
         )
-        self._ctx.repo.record_chat_message(chat, run_id=self._run_id)
+        chat.row_id = self._ctx.repo.record_chat_message(chat, run_id=self._run_id)
         return chat
+
+    async def resend_direct(self, contact: Contact, message: ChatMessage) -> ChatMessage:
+        """Re-attempt delivery of an unacknowledged direct message, updating it in place.
+
+        Used to retry a message that was transmitted but never acknowledged (its ``acked``
+        is ``False``). The same stored row is reused — its delivery state is updated rather
+        than a duplicate transcript entry created — so the message simply flips to delivered
+        (or stays unacknowledged for another retry).
+
+        Args:
+            contact: The recipient.
+            message: The previously-sent :class:`ChatMessage` to re-transmit; mutated in
+                place with the new delivery state.
+
+        Returns:
+            The same ``message``, with :attr:`~ChatMessage.acked` refreshed.
+        """
+        device = await self._ctx.device()
+        ack = await device.send_direct_message(contact, message.text)
+        message.acked = ack is not None
+        if message.row_id is not None:
+            self._ctx.repo.update_chat_ack(message.row_id, message.acked)
+        return message
 
     async def send_channel(
         self, index: int, text: str, *, label: Optional[str] = None

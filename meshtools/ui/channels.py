@@ -22,6 +22,8 @@ from rich.table import Table
 from rich.text import Text
 
 from ..core.channels import (
+    CHANNEL_SLOT_PROBE_CAP,
+    MAX_CHANNELS,
     channel_hash,
     channel_identity,
     derive_secret,
@@ -41,9 +43,6 @@ from .widgets import channel_glyph
 
 if TYPE_CHECKING:
     from ..context import AppContext
-
-#: How many channel slots the firmware exposes (0-based); matches the chat/backup probes.
-_MAX_CHANNELS = 8
 
 # Top-menu action sentinels (distinct from a plain slot index, which selects that channel).
 _CREATE = "__create__"
@@ -125,30 +124,55 @@ async def manage_channels(ctx: "AppContext") -> int:
         The number of channels created, changed, or cleared during the session.
     """
     device = await ctx.device()
+    # The firmware's slot count is fixed for the session, so discover it once (a read-only
+    # probe) rather than assuming a hard-coded 8; it drives the free-slot check and the
+    # used/total display below. A device that can't report any slots falls back to the
+    # standard count so the manager stays usable instead of showing zero capacity.
+    capacity = await device.channel_capacity() or MAX_CHANNELS
     changes = 0
     highlight: Optional[object] = None
 
     while True:
         slots = await _read_slots(device)
-        choice = await _main_menu(ctx, slots, default=highlight)
+        choice = await _main_menu(ctx, slots, capacity, default=highlight)
         if choice in (None, _BACK):
             return changes
         highlight = choice
+        before = changes
         if choice == _CREATE:
-            changes += await _create_private(ctx, device, slots)
+            changes += await _create_private(ctx, device, slots, capacity)
         elif choice == _PUBLIC:
-            changes += await _add_public(ctx, device, slots)
+            changes += await _add_public(ctx, device, slots, capacity)
         elif choice == _JOIN:
-            changes += await _join_with_key(ctx, device, slots)
+            changes += await _join_with_key(ctx, device, slots, capacity)
         elif choice == _IMPORT:
-            changes += await _import_link(ctx, device, slots)
+            changes += await _import_link(ctx, device, slots, capacity)
         elif choice == _REORDER:
             changes += await _reorder_channels(ctx, device, slots)
         else:  # an existing slot index
             slot = next((s for s in slots if s.idx == choice), None)
             if slot is not None:
                 changes += await _channel_detail(ctx, device, slot)
+        if changes > before:
+            # A slot's occupant changed (created, re-keyed, cleared, or moved). Inbound
+            # messages carry only a slot index, which the chat service maps to a channel
+            # identity through a cache keyed by slot; refresh it now so a message on a
+            # reused/re-keyed slot is filed under the channel that's actually there and not
+            # the one that used to be — otherwise its transcript surfaces in the wrong chat.
+            await _refresh_chat_channels(ctx)
     # unreachable
+
+
+async def _refresh_chat_channels(ctx: "AppContext") -> None:
+    """Rebuild the chat service's slot→identity cache after a channel mutation.
+
+    Best-effort: a device read hiccup here must never break the channel manager, and the
+    cache also self-heals on the next miss, so a failure is only logged.
+    """
+    try:
+        await ctx.chat.refresh_channels()
+    except Exception as exc:  # noqa: BLE001 - refresh is best-effort; never fatal here
+        ctx.log.debug("channels: chat cache refresh failed: %s", exc)
 
 
 # --- reading -----------------------------------------------------------------
@@ -157,6 +181,10 @@ async def manage_channels(ctx: "AppContext") -> int:
 async def _read_slots(device: Device) -> list[ChannelSlot]:
     """Probe the channel slots and return the configured ones, in index order.
 
+    The scan runs up to :data:`CHANNEL_SLOT_PROBE_CAP` and stops as soon as the firmware
+    rejects a slot index, so it reads exactly the slots the device actually has regardless
+    of its capacity.
+
     Args:
         device: The connected device to query.
 
@@ -164,7 +192,7 @@ async def _read_slots(device: Device) -> list[ChannelSlot]:
         One :class:`ChannelSlot` per configured slot (an empty slot is skipped).
     """
     slots: list[ChannelSlot] = []
-    for idx in range(_MAX_CHANNELS):
+    for idx in range(CHANNEL_SLOT_PROBE_CAP):
         try:
             payload = await device.get_channel(idx)
         except Exception:  # noqa: BLE001 - firmware may not support channel reads
@@ -180,10 +208,10 @@ async def _read_slots(device: Device) -> list[ChannelSlot]:
     return slots
 
 
-def _next_free_slot(slots: list[ChannelSlot]) -> Optional[int]:
+def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
     """Return the lowest unused slot index, or ``None`` when every slot is full."""
     used = {s.idx for s in slots}
-    return next((i for i in range(_MAX_CHANNELS) if i not in used), None)
+    return next((i for i in range(capacity) if i not in used), None)
 
 
 def _slot_label(slot: ChannelSlot) -> str:
@@ -197,10 +225,10 @@ def _slot_label(slot: ChannelSlot) -> str:
 
 
 async def _main_menu(
-    ctx: "AppContext", slots: list[ChannelSlot], *, default: object = None
+    ctx: "AppContext", slots: list[ChannelSlot], capacity: int, *, default: object = None
 ) -> object:
     """Show the channel list and the add-a-channel actions; return the chosen value."""
-    items: list = [Separator("── Channels ──")]
+    items: list = [Separator(f"── Channels ({len(slots)}/{capacity}) ──")]
     if slots:
         for slot in slots:
             items.append(Choice(title=_slot_label(slot), value=slot.idx))
@@ -259,10 +287,10 @@ async def _channel_detail(ctx: "AppContext", device: Device, slot: ChannelSlot) 
 
 
 async def _create_private(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot]
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Create a private channel with a fresh random key on the next free slot."""
-    idx = await _pick_free_slot(ctx, slots)
+    idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
     name = await ctx.ui.text("Channel name:", validate=_nonblank)
@@ -275,9 +303,11 @@ async def _create_private(
     return 1
 
 
-async def _add_public(ctx: "AppContext", device: Device, slots: list[ChannelSlot]) -> int:
+async def _add_public(
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+) -> int:
     """Create a public channel whose key is derived from its (``#``-prefixed) name."""
-    idx = await _pick_free_slot(ctx, slots)
+    idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
     raw = await ctx.ui.text(
@@ -298,10 +328,10 @@ async def _add_public(ctx: "AppContext", device: Device, slots: list[ChannelSlot
 
 
 async def _join_with_key(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot]
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Join an existing private channel by entering its name and 16-byte key."""
-    idx = await _pick_free_slot(ctx, slots)
+    idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
     name = await ctx.ui.text("Channel name:", validate=_nonblank)
@@ -319,10 +349,10 @@ async def _join_with_key(
 
 
 async def _import_link(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot]
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Import a channel from a pasted ``meshcore://channel/add`` link."""
-    idx = await _pick_free_slot(ctx, slots)
+    idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
     url = await ctx.ui.text(
@@ -412,13 +442,11 @@ async def _reorder_channels(
     order = await ctx.ui.reorder("Reorder channels", labels)
     if not order or order == list(range(len(slots))):
         return 0  # cancelled or left unchanged
-    changes = await _apply_order(device, slots, order)
-    if changes:
-        # Chat history is keyed by each channel's intrinsic identity, not its slot, so it
-        # follows the channels automatically — reordering needs no history migration. Just
-        # refresh the slot-index→identity cache so freshly-moved slots resolve correctly.
-        await ctx.chat.refresh_channels()
-    return changes
+    # Chat history is keyed by each channel's intrinsic identity, not its slot, so it follows
+    # the channels automatically — reordering needs no history migration. The slot→identity
+    # cache the chat service resolves inbound messages through is refreshed centrally by
+    # manage_channels once any change lands (see :func:`_refresh_chat_channels`).
+    return await _apply_order(device, slots, order)
 
 
 # --- shared views ------------------------------------------------------------
@@ -473,9 +501,11 @@ async def _open_chat(ctx: "AppContext", slot: ChannelSlot) -> None:
     await open_chat(ctx, slot.conversation)
 
 
-async def _pick_free_slot(ctx: "AppContext", slots: list[ChannelSlot]) -> Optional[int]:
+async def _pick_free_slot(
+    ctx: "AppContext", slots: list[ChannelSlot], capacity: int
+) -> Optional[int]:
     """Return the next free slot, warning (and returning ``None``) if all are full."""
-    idx = _next_free_slot(slots)
+    idx = _next_free_slot(slots, capacity)
     if idx is None:
         await ctx.ui.view(
             Text.from_markup(

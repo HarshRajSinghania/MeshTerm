@@ -23,7 +23,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.events import EventKind, MeshEvent
-from ..core.models import ChatMessage, Contact, Conversation, Message
+from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import snr_style
 from .tui.prompt import _LineEditor
 from .tui.render import render_lines
@@ -57,6 +57,33 @@ _SENDER_COLORS = (
 #: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
 #: be followed by ``": "`` — conservative enough to leave ``http://…`` and ``note:x`` alone.
 _SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
+
+
+#: Delivery-state indicators for an outbound direct message, shown at the end of its line:
+#: awaiting the ack, acknowledged, or transmitted-but-unacknowledged (retryable via Ctrl-R).
+_SENDING, _DELIVERED, _FAILED = "⏳", "✅", "❌"
+
+#: How many UTF-8 bytes a single outgoing message may carry, by conversation kind. MeshCore's
+#: LoRa payload caps a direct message at 150 bytes and an (unscoped) channel broadcast at 130;
+#: over the limit the companion would silently drop the packet, so we block the send instead
+#: and show the running byte budget in the compose bar.
+_DM_BYTE_LIMIT = 150
+_CHANNEL_BYTE_LIMIT = 130
+
+#: Byte-counter thresholds (bytes *remaining*) at which its color escalates, plus the two
+#: mid-band hues. The theme's ``warn``/``err`` sit too close together (an amber that reads
+#: orange, then red), so the counter names a truer yellow and orange directly to keep the
+#: green→yellow→orange→red fuel gauge visibly stepped.
+_BYTES_TIGHT, _BYTES_LOW = 20, 10
+_BYTES_YELLOW = "bold #fde047"
+_BYTES_ORANGE = "bold #ff9500"
+
+
+def _delivery_glyph(acked: Optional[bool]) -> str:
+    """Map an outbound direct message's ``acked`` state to its delivery emoji."""
+    if acked is None:
+        return _SENDING
+    return _DELIVERED if acked else _FAILED
 
 
 def _split_channel_sender(text: str) -> tuple[Optional[str], str]:
@@ -99,6 +126,7 @@ class ChatScreen(Screen):
         send: Callable[[str], Awaitable[Optional[ChatMessage]]],
         names: dict[str, str],
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
+        resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None,
     ) -> None:
         """Build the chat screen.
 
@@ -111,12 +139,15 @@ class ChatScreen(Screen):
                 direct messages.
             session: The running :class:`~meshtools.ui.tui.session.TuiSession`, used to
                 request repaints when messages arrive or a send completes.
+            resend: Async callable that re-attempts delivery of an unacknowledged direct
+                message, updating it in place (direct chats only; ``None`` for channels).
         """
         super().__init__()
         self.title = conversation.label
         self._is_channel = conversation.is_channel
         self._messages = list(messages)
         self._send = send
+        self._resend = resend
         self._names = names
         self._session = session
         self._editor = _LineEditor()
@@ -133,6 +164,8 @@ class ChatScreen(Screen):
     def footer_hint(self) -> str:
         """Key hint, reflecting whether a message is picked for reply (channels only)."""
         if not self._is_channel:
+            if any(m.outbound and m.acked is False for m in self._messages):
+                return "Enter send · Ctrl-R retry failed · ↑↓ scroll · Esc back"
             return "Enter send · ↑↓/PgUp scroll · End latest · Esc back"
         if self._selected is not None:
             return "Enter reply (@mention) · ↑↓ pick · End/Esc cancel"
@@ -155,20 +188,21 @@ class ChatScreen(Screen):
         self._selected_line = None
         if not self._messages:
             lines = render_lines(Text("No messages yet — say hello!", style="muted"), width)
-        elif self._is_channel:
-            # Channels carry many senders, so group consecutive messages from one sender
-            # under a colored header (Discord/Slack style) rather than the flat one-line
-            # format used for the two-party direct view. Rendering per-message also lets us
-            # record where the picked reply target lands (see _selected_line / cursor_line).
+        else:
+            # Both direct and channel threads use the same grouped, Discord/Slack-style
+            # transcript: consecutive messages from one sender share a colored header, with
+            # day dividers between them. Rendering per-message also lets us record where the
+            # picked reply target lands (channels only; see _selected_line / cursor_line).
             if self._selected is not None:
                 self._selected = max(0, min(self._selected, len(self._messages) - 1))
-            lines = self._render_channel(width)
-        else:
-            lines = render_lines(Group(*(self._format(m) for m in self._messages)), width)
+            lines = self._render_grouped(width)
 
+        limit = self._byte_limit()
+        used = self._used_bytes()
         footer_parts: list[RenderableType] = [
             Text("─" * width, style="muted"),
-            self._editor.render(),
+            self._editor.render(overflow_at=self._overflow_at(limit)),
+            self._byte_counter(width, used, limit),
         ]
         if self._is_channel and self._selected is not None:
             footer_parts.append(self._reply_banner())
@@ -186,25 +220,53 @@ class ChatScreen(Screen):
         """Keep the picked reply target in view; otherwise free scroll (managed by stick)."""
         return self._selected_line
 
-    def _format(self, message: ChatMessage) -> Text:
-        """Render one transcript message as ``HH:MM  who  text`` with quality cues."""
-        stamp = message.created_at.astimezone().strftime("%H:%M")
-        if message.outbound:
-            who, style = "you", "accent"
-        elif message.is_channel:
-            who, style = (message.peer_name or "·"), "brand"
-        else:
-            who, style = (self._name(message.peer) or message.peer or "?"), "brand"
+    # --- outgoing byte budget ------------------------------------------------
 
-        line = Text()
-        line.append(f"{stamp} ", style="muted")
-        line.append(f"{who:>10.10} ", style=style)
-        line.append(message.text)
-        if message.outbound and message.acked is False:
-            line.append("  ⚠ no ack", style="warn")
-        if message.snr is not None:
-            line.append(f"  {message.snr:+.0f} dB", style=snr_style(message.snr))
-        return line
+    def _byte_limit(self) -> int:
+        """The UTF-8 byte ceiling for a message in this conversation (channel vs direct)."""
+        return _CHANNEL_BYTE_LIMIT if self._is_channel else _DM_BYTE_LIMIT
+
+    def _used_bytes(self) -> int:
+        """UTF-8 byte length of the current compose buffer — what counts against the limit."""
+        return len(self._editor.text.encode("utf-8"))
+
+    def _overflow_at(self, limit: int) -> Optional[int]:
+        """Index of the first compose character whose bytes spill past ``limit``, else ``None``.
+
+        Walking by character (not byte) keeps multibyte input intact: an emoji or accented
+        letter is entirely under or entirely over the line, never split mid-sequence.
+        """
+        total = 0
+        for i, ch in enumerate(self._editor.text):
+            total += len(ch.encode("utf-8"))
+            if total > limit:
+                return i
+        return None
+
+    def _byte_counter(self, width: int, used: int, limit: int) -> Text:
+        """Right-aligned ``used/limit`` budget; only ``used`` is colored by how much is left.
+
+        Green with room to spare, yellow within :data:`_BYTES_TIGHT` bytes, orange within
+        :data:`_BYTES_LOW`, and red once the limit is met or exceeded — so the number reads as
+        a fuel gauge while the ``/limit`` suffix stays muted (it never changes).
+        """
+        tail = f"/{limit}"
+        pad = max(0, width - len(str(used)) - len(tail))
+        counter = Text(" " * pad)
+        counter.append(str(used), style=self._byte_style(limit - used))
+        counter.append(tail, style="muted")
+        return counter
+
+    @staticmethod
+    def _byte_style(remaining: int) -> str:
+        """Map bytes remaining to the counter's escalating color (green→yellow→orange→red)."""
+        if remaining <= 0:
+            return "err"  # at or over the limit — the send is blocked
+        if remaining <= _BYTES_LOW:
+            return _BYTES_ORANGE
+        if remaining <= _BYTES_TIGHT:
+            return _BYTES_YELLOW
+        return "ok"
 
     def _name(self, peer: Optional[str]) -> Optional[str]:
         """Resolve a sender key prefix to a contact name (exact, then prefix match)."""
@@ -218,24 +280,28 @@ class ChatScreen(Screen):
                 return name
         return None
 
-    # --- channel (grouped) rendering -----------------------------------------
+    # --- grouped rendering ---------------------------------------------------
 
-    def _render_channel(self, width: int) -> list[str]:
-        """Render the channel transcript to ANSI lines, tracking the picked message's row.
+    def _render_grouped(self, width: int) -> list[str]:
+        """Render the transcript to ANSI lines, tracking the picked message's row.
 
-        Consecutive messages from the same sender on the same day share one colored header,
-        with each message body indented below. A muted divider marks each new day, and a
-        blank line separates distinct sender groups. Rendering message-by-message (rather
-        than as one Group) lets us record the body line of the selected reply target in
-        :attr:`_selected_line` so the frame can scroll it into view.
+        Serves both direct and channel threads. Consecutive messages from the same sender on
+        the same day share one colored header, with each message body indented below. A muted
+        divider marks each new day, and a blank line separates distinct sender groups.
+        Rendering message-by-message (rather than as one Group) lets us record the body line
+        of the selected reply target in :attr:`_selected_line` so the frame can scroll it into
+        view (channels only; direct threads never select).
         """
         lines: list[str] = []
-        prev_sender: Optional[str] = None
+        prev_group: Optional[tuple[bool, str]] = None
         prev_day = None
         for idx, message in enumerate(self._messages):
             stamp = message.created_at.astimezone()
             day = stamp.date()
             sender, body = self._sender_and_body(message)
+            # Group by (are-we-the-sender, display name), not the name alone, so our own
+            # messages never merge with a remote sender who happens to be named the same.
+            group = (message.outbound, sender)
             new_day = day != prev_day
             if new_day:
                 if lines:
@@ -243,27 +309,35 @@ class ChatScreen(Screen):
                 lines += render_lines(
                     Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
                 )
-            if new_day or sender != prev_sender:
+            if new_day or group != prev_group:
                 if not new_day and lines:
                     lines += render_lines(Text(""), width)  # gap between sender groups
-                lines += render_lines(self._group_header(sender), width)
+                header = self._group_header(sender, is_self=message.outbound)
+                lines += render_lines(header, width)
             selected = idx == self._selected
             if selected:
                 self._selected_line = len(lines)
             lines += render_lines(self._body_line(body, message, selected=selected), width)
-            prev_sender, prev_day = sender, day
+            prev_group, prev_day = group, day
         return lines
 
     def _sender_and_body(self, message: ChatMessage) -> tuple[str, str]:
-        """Return the display sender and cleaned body for a channel message."""
+        """Return the display sender and cleaned body for a message.
+
+        Our own messages are ``you``. Inbound channel messages carry a ``Name: `` prefix we
+        lift into the sender (falling back to ``·`` when absent); inbound direct messages take
+        the sender from the resolved contact name (or the raw key, or ``?``).
+        """
         if message.outbound:
             return "you", message.text
-        name, body = _split_channel_sender(message.text)
-        return (name or "·"), body
+        if message.is_channel:
+            name, body = _split_channel_sender(message.text)
+            return (name or "·"), body
+        return (self._name(message.peer) or message.peer or "?"), message.text
 
-    def _group_header(self, sender: str) -> Text:
+    def _group_header(self, sender: str, *, is_self: bool = False) -> Text:
         """Build the sender header that starts a group, colored per sender."""
-        return Text(sender, style=self._sender_style(sender))
+        return Text(sender, style=self._sender_style(sender, is_self=is_self))
 
     def _body_line(self, body: str, message: ChatMessage, *, selected: bool = False) -> Text:
         """Build one indented message line, each stamped with its own time.
@@ -279,24 +353,37 @@ class ChatScreen(Screen):
         line.append("❯ " if selected else "  ", style="brand" if selected else None)
         line.append(f"{stamp:%H:%M}  ", style="brand" if selected else "muted")
         line.append(body, style="brand" if selected else None)
-        if message.outbound and message.acked is False:
-            line.append("  ⚠ no ack", style="warn")
+        if message.outbound:
+            # Direct messages track per-message delivery (⏳ → ✅/❌, retryable); channel
+            # broadcasts have no ack, so only flag one that failed to leave the companion.
+            if message.is_channel:
+                if message.acked is False:
+                    line.append("  ⚠ no ack", style="warn")
+            else:
+                line.append(f"  {_delivery_glyph(message.acked)}")
         if message.snr is not None:
             line.append(f"  {message.snr:+.0f} dB", style=snr_style(message.snr))
         return line
 
     def _reply_banner(self) -> Text:
         """One-line cue shown above the input when a message is picked to reply to."""
-        sender, _ = self._sender_and_body(self._messages[self._selected])
-        who = sender if sender not in ("·", "you") else "this message"
+        message = self._messages[self._selected]
+        sender, _ = self._sender_and_body(message)
+        who = "this message" if message.outbound or sender == "·" else sender
         return Text(
             f"↩ Enter to reply to {who} with an @mention · End to cancel", style="accent"
         )
 
-    def _sender_style(self, sender: str) -> str:
-        """Pick a stable color for a channel sender (accent for us, muted for unknown)."""
-        if sender == "you":
-            return "accent"
+    def _sender_style(self, sender: str, *, is_self: bool = False) -> str:
+        """Pick a stable color for a channel sender.
+
+        Our own messages are white — keyed on ``is_self`` (the message being outbound), not
+        on the ``"you"`` label, so a remote sender who happens to be named ``you`` still gets
+        a hue from the palette rather than masquerading as us. ``·`` (unknown) is muted; every
+        other sender gets a stable hue derived from its name.
+        """
+        if is_self:
+            return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
             return "muted"
         return _SENDER_COLORS[sum(map(ord, sender)) % len(_SENDER_COLORS)]
@@ -314,6 +401,8 @@ class ChatScreen(Screen):
         """Direct-chat input: send on Enter, scroll the transcript, edit, or leave on Esc."""
         if action == "enter":
             self._submit()
+        elif action == "retry":
+            self._retry()
         elif action == "escape":
             self.resolve(CANCEL)
         elif action == "up":
@@ -333,6 +422,7 @@ class ChatScreen(Screen):
             self._stick = True
         else:
             if self._editor.edit(action, data):
+                self._status = ""  # trimming clears the "too long" notice
                 self._stick = True  # typing snaps back to the live tail
 
     def _handle_channel(self, action: str, data: str = "") -> None:
@@ -372,6 +462,7 @@ class ChatScreen(Screen):
         else:
             if self._editor.edit(action, data):
                 # Touching the compose line returns focus there — nothing stays selected.
+                self._status = ""  # trimming clears the "too long" notice
                 self._clear_selection()
                 self._stick = True
 
@@ -406,36 +497,127 @@ class ChatScreen(Screen):
         """Prime the compose line with an ``@mention`` of the picked message's sender."""
         message = self._messages[self._selected]
         sender, _ = self._sender_and_body(message)
-        mention = f"@[{sender}] " if sender and sender not in ("you", "·") else "@"
+        named = not message.outbound and sender != "·"
+        mention = f"@[{sender}] " if named else "@"
         self._editor = _LineEditor(mention + self._editor.text)
         self._clear_selection()
         self._stick = True
         self._session.invalidate()
 
     def _submit(self) -> None:
-        """Send the current input line as a message (scheduled off the key handler)."""
+        """Send the current input line as a message (scheduled off the key handler).
+
+        Refuses an over-budget line: the buffer is kept intact (so the user can trim it) and
+        the overage is reported, matching the red overflow the compose bar already shows.
+        """
         text = self._editor.text.strip()
         if not text or self._sending:
             return
+        limit = self._byte_limit()
+        over = self._used_bytes() - limit
+        if over > 0:
+            self._status = f"Too long by {over} byte{'s' if over != 1 else ''} — trim to send."
+            self._session.invalidate()
+            return
         self._editor = _LineEditor()
         self._sending = True
-        self._status = "sending…"
         self._stick = True
+        if self._is_channel:
+            self._status = "sending…"
+            self._session.invalidate()
+            asyncio.ensure_future(self._send_channel(text))
+        else:
+            # Direct chats show an optimistic bubble whose trailing glyph tracks delivery:
+            # ⏳ now, then ✅/❌ once the ack resolves (or times out). acked=None ⇒ ⏳.
+            pending = ChatMessage(text=text, outbound=True, created_at=utcnow())
+            self._messages.append(pending)
+            self._status = ""
+            self._session.invalidate()
+            asyncio.ensure_future(self._send_direct(pending))
 
-        async def _run() -> None:
-            try:
-                message = await self._send(text)
-                if message is not None:
-                    self._messages.append(message)
-                self._status = ""
-            except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
-                self._status = f"send failed: {exc}"
-            finally:
-                self._sending = False
-                self._stick = True
-                self._session.invalidate()
+    async def _send_channel(self, text: str) -> None:
+        """Broadcast a channel message and append it once the companion accepts it."""
+        try:
+            message = await self._send(text)
+            if message is not None:
+                self._messages.append(message)
+            self._status = ""
+        except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
+            self._status = f"send failed: {exc}"
+        finally:
+            self._sending = False
+            self._stick = True
+            self._session.invalidate()
 
-        asyncio.ensure_future(_run())
+    async def _send_direct(self, pending: ChatMessage) -> None:
+        """Await delivery of the optimistic ``pending`` bubble, swapping in the stored row.
+
+        On success the pending bubble is replaced by the recorded message (carrying its
+        resolved ``acked`` state and row id, so a ❌ can later be retried in place). A hard
+        failure — the companion rejecting the send outright — drops the bubble and reports
+        the error inline, matching how a failed send has always surfaced.
+        """
+        try:
+            message = await self._send(pending.text)
+        except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
+            self._discard(pending)
+            self._status = f"send failed: {exc}"
+        else:
+            if message is not None:
+                self._swap(pending, message)
+            else:
+                self._discard(pending)
+            self._status = ""
+        finally:
+            self._sending = False
+            self._stick = True
+            self._session.invalidate()
+
+    def _retry(self) -> None:
+        """Re-attempt delivery of the most recent unacknowledged direct message (Ctrl-R)."""
+        if self._sending or self._resend is None:
+            return
+        target = next(
+            (m for m in reversed(self._messages) if m.outbound and m.acked is False),
+            None,
+        )
+        if target is None:
+            return
+        self._sending = True
+        target.acked = None  # back to ⏳ while the retry is in flight
+        self._status = "retrying…"
+        self._stick = True
+        self._session.invalidate()
+        asyncio.ensure_future(self._resend_message(target))
+
+    async def _resend_message(self, message: ChatMessage) -> None:
+        """Drive a retry to completion, refreshing the message's delivery state in place."""
+        assert self._resend is not None
+        try:
+            await self._resend(message)
+        except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
+            message.acked = False
+            self._status = f"retry failed: {exc}"
+        else:
+            self._status = "" if message.acked else "still no ack — Ctrl-R to retry"
+        finally:
+            self._sending = False
+            self._stick = True
+            self._session.invalidate()
+
+    def _swap(self, old: ChatMessage, new: ChatMessage) -> None:
+        """Replace an optimistic bubble with its recorded message, in place."""
+        try:
+            self._messages[self._messages.index(old)] = new
+        except ValueError:  # pragma: no cover - the bubble is always still present
+            self._messages.append(new)
+
+    def _discard(self, message: ChatMessage) -> None:
+        """Drop an optimistic bubble that never became a real message."""
+        try:
+            self._messages.remove(message)
+        except ValueError:  # pragma: no cover - defensive
+            pass
 
 
 async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
@@ -485,7 +667,16 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         assert conversation.contact is not None
         return await ctx.chat.send_direct(conversation.contact, text)
 
-    screen = ChatScreen(conversation, history, send=send, names=names, session=session)
+    resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None
+    if not conversation.is_channel:
+
+        async def resend(message: ChatMessage) -> ChatMessage:
+            assert conversation.contact is not None
+            return await ctx.chat.resend_direct(conversation.contact, message)
+
+    screen = ChatScreen(
+        conversation, history, send=send, names=names, session=session, resend=resend
+    )
     ctx.chat.set_active(conversation.key)
 
     def on_event(event: MeshEvent) -> None:

@@ -15,6 +15,7 @@ import typer
 from rich.table import Table
 
 from ..context import AppContext
+from ..core.channels import CHANNEL_SLOT_PROBE_CAP
 from ..core.config_io import backup_config, plan_restore, read_backup
 from ..core.connection import Device
 from ..core.device_config import (
@@ -24,9 +25,6 @@ from ..core.device_config import (
     parse_value,
 )
 from .base import Tool, ToolResult, register
-
-# How many channel slots to probe when backing up.
-_MAX_CHANNELS = 8
 
 
 @register
@@ -331,7 +329,7 @@ async def _export_key(
 async def _read_channels(device: Device) -> list[dict]:
     """Probe channel slots and return the configured ones."""
     channels: list[dict] = []
-    for idx in range(_MAX_CHANNELS):
+    for idx in range(CHANNEL_SLOT_PROBE_CAP):
         try:
             ch = await device.get_channel(idx)
         except Exception:  # noqa: BLE001 - firmware may not support channel reads

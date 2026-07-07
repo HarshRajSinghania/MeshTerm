@@ -61,22 +61,25 @@ class _LineEditor:
             return False
         return True
 
-    def render(self, mask: bool = False) -> Text:
+    def render(self, mask: bool = False, *, overflow_at: Optional[int] = None) -> Text:
         """Render the current line with a reverse-video cursor cell.
 
         Args:
             mask: When ``True``, replace each character with a bullet (password entry).
+            overflow_at: Character index at which the text spills past a byte budget; that
+                character and everything after it are shown in the error style so the user
+                can see exactly what to trim. ``None`` (the default) styles the line plainly.
         """
         shown = "•" * len(self.text) if mask else self.text
         text = Text("› ", style="accent")
-        before, at, after = (
-            shown[: self.cursor],
-            shown[self.cursor : self.cursor + 1],
-            shown[self.cursor + 1 :],
-        )
-        text.append(before)
-        text.append(at or " ", style="reverse")
-        text.append(after)
+        for i, ch in enumerate(shown):
+            over = overflow_at is not None and i >= overflow_at
+            if i == self.cursor:
+                text.append(ch, style="reverse err" if over else "reverse")
+            else:
+                text.append(ch, style="err" if over else None)
+        if self.cursor >= len(shown):  # cursor past the last character → trailing block
+            text.append(" ", style="reverse")
         return text
 
 

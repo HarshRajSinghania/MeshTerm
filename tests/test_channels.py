@@ -156,9 +156,28 @@ def test_next_free_slot_finds_gaps_and_full() -> None:
     """The next free slot skips used indices and is None when every slot is taken."""
     slots = [ChannelSlot(idx=0, name="a", secret=b"\x00" * 16),
              ChannelSlot(idx=2, name="c", secret=b"\x00" * 16)]
-    assert _next_free_slot(slots) == 1
+    assert _next_free_slot(slots, capacity=8) == 1
     full = [ChannelSlot(idx=i, name=str(i), secret=b"\x00" * 16) for i in range(8)]
-    assert _next_free_slot(full) is None
+    assert _next_free_slot(full, capacity=8) is None
+    # With a larger discovered capacity the same "full-at-8" set still has room.
+    assert _next_free_slot(full, capacity=16) == 8
+
+
+async def test_channel_capacity_is_probed_not_assumed(ctx: AppContext) -> None:
+    """Capacity comes from probing the device, and counts slots, not their occupants."""
+    device = await ctx.device()
+    assert await device.channel_capacity() == 8  # the mock models stock 8-slot firmware
+    # Occupying some slots must not change the ceiling — capacity is how many slots exist.
+    await device.set_channel(0, "Alpha", bytes(range(16)))
+    await device.set_channel(3, "Bravo", bytes(range(16)))
+    assert await device.channel_capacity() == 8
+
+
+async def test_channel_capacity_tracks_a_larger_ceiling(ctx: AppContext) -> None:
+    """Firmware with more slots is discovered as such — no hard-coded 8 anywhere."""
+    device = await ctx.device()
+    device._max_channels = 12  # simulate a firmware build with a larger slot table
+    assert await device.channel_capacity() == 12
 
 
 async def test_apply_order_relays_channels_into_new_positions(ctx: AppContext) -> None:
@@ -187,6 +206,88 @@ def test_channel_identity_is_stable_across_slot_moves() -> None:
 
     other = ChannelSlot(idx=2, name="Ops", secret=bytes(range(16, 32)))
     assert other.identity != at_two.identity  # a different key → a different channel
+
+
+class _ScriptedUi:
+    """A UI surface that replays queued answers, for driving the channel manager headless.
+
+    ``select``/``text``/``confirm`` each pop their next scripted answer; the display methods
+    are no-ops. Enough of the :class:`~meshtools.ui.surface.Ui` contract for the channel
+    manager's create/clear flows.
+    """
+
+    def __init__(self, selects: list, texts: list, confirms: list) -> None:
+        self._selects = list(selects)
+        self._texts = list(texts)
+        self._confirms = list(confirms)
+
+    def show(self, *renderables) -> None:  # noqa: ANN002
+        pass
+
+    def note(self, markup: str) -> None:
+        pass
+
+    async def view(self, renderable, *, title: str = "", footer_hint: str = "") -> None:  # noqa: ANN001
+        pass
+
+    async def select(self, title: str, items: list, *, default=None):  # noqa: ANN001, ANN201
+        return self._selects.pop(0) if self._selects else "__back__"
+
+    async def text(self, title: str, *, default: str = "", validate=None, help_text: str = "", password: bool = False):  # noqa: ANN001, ANN201
+        return self._texts.pop(0)
+
+    async def confirm(self, title: str, *, default: bool = True):  # noqa: ANN201
+        return self._confirms.pop(0)
+
+
+async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppContext) -> None:
+    """Clearing a channel and creating another that reuses its slot must not cross history.
+
+    Reproduces the reported bug: inbound channel messages carry only a slot index, which the
+    chat service maps to a channel identity through a cache. When a slot is cleared and a new
+    channel takes it, a stale cache filed the newcomer's messages under the old channel — so
+    opening the old channel showed the new one's transcript. The manager must refresh the
+    cache after the mutation so a message on the reused slot lands in the right channel.
+    """
+    from meshtools.core.channels import channel_identity
+    from meshtools.core.events import MeshEvent
+    from meshtools.core.models import Message
+    from meshtools.ui.channels import _BACK, _CLEAR, _CREATE, manage_channels
+
+    device = await ctx.device()
+    await device.set_channel(0, "Public", DEFAULT_PUBLIC_SECRET)
+    public_id = channel_identity("Public", DEFAULT_PUBLIC_SECRET)
+
+    await ctx.chat.start()  # prime the slot→identity cache (slot 0 == Public)
+    try:
+        # A message on Public arrives before we touch anything — files under Public.
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="hi public", channel=0, is_channel=True))
+        )
+
+        # Drive the manager: open Public's detail → clear it, then create a new private
+        # channel (which reuses freed slot 0), then back out.
+        ctx.ui = _ScriptedUi(
+            selects=[0, _CLEAR, _CREATE, _BACK],
+            texts=["Ops"],  # the new channel's name
+            confirms=[True],  # confirm the clear
+        )
+        await manage_channels(ctx)
+
+        ops = next(s for s in await _read_slots(device) if s.name == "Ops")
+        assert ops.idx == 0  # the new channel took the freed slot
+
+        # A message now arrives on slot 0 — which is Ops, not Public.
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="ops secret", channel=0, is_channel=True))
+        )
+
+        public_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=public_id)
+        ops_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=ops.identity)
+        assert [m.text for m in public_msgs] == ["hi public"]  # unchanged, no leakage
+        assert [m.text for m in ops_msgs] == ["ops secret"]  # filed under the right channel
+    finally:
+        await ctx.chat.stop()
 
 
 async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -> None:

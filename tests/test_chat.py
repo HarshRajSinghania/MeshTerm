@@ -409,6 +409,141 @@ async def test_chat_screen_enter_sends_and_appends() -> None:
     assert session.invalidations > 0
 
 
+def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
+    """The compose bar shows ``used/limit`` with only the used count styled (the max is muted)."""
+    from rich.text import Text
+
+    screen = _screen(_StubSession(), send=None)
+    for ch in "hello":
+        screen.handle("text", ch)
+    counter = screen._byte_counter(80, screen._used_bytes(), screen._byte_limit())
+    assert isinstance(counter, Text)
+    assert counter.plain.strip() == "5/150"  # 5 bytes used of the 150-byte direct-message cap
+    # Only the "5" carries a color; the "/150" tail stays muted (it never changes).
+    used_at = counter.plain.index("5")
+    slash_at = counter.plain.index("/")
+    used_spans = [s for s in counter.spans if s.start <= used_at < s.end]
+    tail_spans = [s for s in counter.spans if s.start <= slash_at < s.end]
+    assert used_spans and used_spans[0].style == "ok"  # green with room to spare
+    assert tail_spans and tail_spans[0].style == "muted"
+
+
+def test_byte_style_escalates_as_budget_runs_out() -> None:
+    """The used-byte color steps green → yellow → orange → red as fewer bytes remain."""
+    from meshtools.ui.chat import _BYTES_ORANGE, _BYTES_YELLOW
+
+    style = ChatScreen._byte_style
+    assert style(80) == "ok"  # plenty left → green
+    assert style(20) == _BYTES_YELLOW  # within the tight band → yellow
+    assert style(10) == _BYTES_ORANGE  # within the low band → orange
+    assert style(0) == "err"  # limit reached → red
+    assert style(-5) == "err"  # over the limit → still red
+
+
+def test_channel_byte_limit_is_lower_than_direct() -> None:
+    """A channel broadcast has a tighter byte budget than a direct message."""
+    from meshtools.ui.chat import _CHANNEL_BYTE_LIMIT, _DM_BYTE_LIMIT
+
+    direct = _screen(_StubSession(), send=None)
+    channel = _channel_screen([])
+    assert direct._byte_limit() == _DM_BYTE_LIMIT == 150
+    assert channel._byte_limit() == _CHANNEL_BYTE_LIMIT == 130
+
+
+def test_overflow_counts_multibyte_characters_by_byte() -> None:
+    """An emoji (4 UTF-8 bytes) counts as 4 toward the budget, and overflow marks whole chars."""
+    screen = _channel_screen([])  # 130-byte limit
+    # 32 emojis = 128 bytes (under), a 33rd tips to 132 (over) at that whole character.
+    for _ in range(33):
+        screen.handle("text", "😀")
+    assert screen._used_bytes() == 33 * 4
+    assert screen._overflow_at(screen._byte_limit()) == 32  # the 33rd emoji is the first over
+
+
+async def test_over_limit_message_is_not_sent_and_buffer_is_kept() -> None:
+    """Enter on an over-budget line reports the overage and sends nothing, keeping the text."""
+    session = _StubSession()
+    sent: list[str] = []
+
+    async def send(text: str) -> ChatMessage:
+        sent.append(text)
+        return ChatMessage(text=text, outbound=True, peer="d4e5f6a7", acked=True)
+
+    screen = _screen(session, send=send)
+    for ch in "x" * 151:  # one byte past the 150-byte direct cap
+        screen.handle("text", ch)
+    screen.handle("enter")
+    await asyncio.sleep(0)  # nothing should have been scheduled, but let the loop turn
+
+    assert sent == []  # the send was refused
+    assert screen._editor.text == "x" * 151  # buffer kept intact so the user can trim it
+    assert "Too long by 1 byte" in screen._status
+    # Trimming back under the limit clears the notice.
+    screen.handle("backspace")
+    assert screen._status == ""
+
+
+def test_chat_screen_shows_delivery_glyphs() -> None:
+    """Each outbound direct message ends with its delivery emoji (⏳ / ✅ / ❌)."""
+    messages = [
+        ChatMessage(text="delivered", outbound=True, peer="d4e5f6a7", acked=True),
+        ChatMessage(text="dropped", outbound=True, peer="d4e5f6a7", acked=False),
+        ChatMessage(text="inflight", outbound=True, peer="d4e5f6a7", acked=None),
+    ]
+    screen = _screen(_StubSession(), send=None, messages=messages)
+
+    joined = "\n".join(screen.render_body(60))
+    assert "✅" in joined and "❌" in joined and "⏳" in joined
+    # A failed message advertises the retry shortcut in the footer hint.
+    assert "Ctrl-R" in screen.footer_hint
+
+
+def test_direct_transcript_groups_under_sender_headers() -> None:
+    """Direct chats use the same grouped layout as channels: one header per sender run."""
+    from datetime import datetime, timezone
+
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+    messages = [
+        ChatMessage(text="hi", peer="d4e5f6a7", created_at=base),
+        ChatMessage(text="you there?", peer="d4e5f6a7", created_at=base),
+        ChatMessage(text="yes!", outbound=True, peer="d4e5f6a7", acked=True, created_at=base),
+    ]
+    screen = _screen(_StubSession(), send=None, messages=messages)
+    rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
+
+    # Inbound sender resolves to the contact name (from the names map), not the raw key.
+    assert rendered.count("Alice") == 1  # the two inbound messages share one header
+    assert "d4e5f6a7" not in rendered  # the key is never shown when a name is known
+    assert "you" in rendered  # our own reply gets its own header
+    assert "hi" in rendered and "you there?" in rendered and "yes!" in rendered
+    assert "✅" in rendered  # the outbound message keeps its delivery glyph
+
+
+async def test_chat_screen_retry_resends_failed_message() -> None:
+    """Ctrl-R re-attempts the latest unacknowledged message, flipping it in place."""
+    session = _StubSession()
+    failed = ChatMessage(text="oops", outbound=True, peer="d4e5f6a7", acked=False, row_id=7)
+
+    async def resend(message: ChatMessage) -> ChatMessage:
+        message.acked = True  # the retry gets through this time
+        return message
+
+    conv = Conversation(
+        label="Alice",
+        is_channel=False,
+        contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
+    )
+    screen = ChatScreen(
+        conv, [failed], send=None, names={}, session=session, resend=resend
+    )
+
+    screen.handle("retry")
+    await asyncio.sleep(0)  # let the scheduled resend task run
+
+    assert screen._messages[-1].acked is True  # same object, now acknowledged
+    assert "✅" in "\n".join(screen.render_body(60))
+
+
 def test_chat_screen_scroll_detaches_and_end_reattaches() -> None:
     """Scrolling up detaches from the live tail; End re-sticks to the bottom."""
     screen = _screen(_StubSession(), send=None)
@@ -448,7 +583,7 @@ def test_channel_transcript_groups_by_sender() -> None:
         ChatMessage(text="hello all", outbound=True, is_channel=True, channel_idx=0, created_at=at(9)),
     ]
     screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession())
-    rendered = _strip_ansi("\n".join(screen._render_channel(80)))
+    rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
 
     assert rendered.count("Alice") == 1  # the two Alice messages share one header
     assert "Bob" in rendered and "you" in rendered
@@ -459,6 +594,34 @@ def test_channel_transcript_groups_by_sender() -> None:
     for stamp in stamps:
         assert stamp in rendered
     assert stamps[0] != stamps[1]  # grouped Alice messages show distinct times
+
+
+def test_channel_self_style_keyed_on_concept_not_label() -> None:
+    """Our white 'self' style follows the message being outbound, not the 'you' label.
+
+    A remote sender who happens to be named 'you' must still get a palette hue, never the
+    white style reserved for us.
+    """
+    from meshtools.ui.chat import _SENDER_COLORS
+
+    screen = _channel_screen([])
+    assert screen._sender_style("you", is_self=True) == "you"  # us → white
+    remote = screen._sender_style("you", is_self=False)
+    assert remote != "you" and remote in _SENDER_COLORS  # remote 'you' → a normal hue
+
+
+def test_channel_own_messages_do_not_merge_with_remote_namesake() -> None:
+    """A remote sender literally named 'you' groups separately from our own messages."""
+    from datetime import datetime, timezone
+
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+    messages = [
+        ChatMessage(text="you: impostor", is_channel=True, channel_idx=0, created_at=base),
+        ChatMessage(text="mine", outbound=True, is_channel=True, channel_idx=0, created_at=base),
+    ]
+    screen = _channel_screen(messages)
+    rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
+    assert rendered.count("you") == 2  # two separate headers, not one merged group
 
 
 def _channel_screen(messages, session=None) -> ChatScreen:
@@ -565,6 +728,31 @@ async def test_service_send_records_outbound(repo: Repository) -> None:
         stored = repo.recent_chat_messages(is_channel=True, channel_id=channel_id)
         assert [m.text for m in stored] == ["hello all"]
         assert stored[0].outbound is True
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_service_resend_updates_ack_in_place(repo: Repository) -> None:
+    """Resending a failed message flips its stored ack rather than adding a duplicate row."""
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        contact = next(c for c in await device.get_contacts() if c.name == "Alice")
+        peer = contact.key_prefix or contact.public_key[:12]
+        failed = ChatMessage(
+            text="retry me", outbound=True, peer=peer, peer_name=contact.name, acked=False
+        )
+        failed.row_id = repo.record_chat_message(failed)
+
+        await chat.resend_direct(contact, failed)
+
+        assert failed.acked is True  # the mock always acknowledges
+        stored = repo.recent_chat_messages(is_channel=False, peer=peer)
+        assert len(stored) == 1  # updated in place, not duplicated
+        assert stored[0].acked is True
     finally:
         await chat.stop()
         await device.disconnect()

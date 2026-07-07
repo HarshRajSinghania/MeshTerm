@@ -166,9 +166,12 @@ class ChatMessage:
         peer: The other party's key prefix, for direct messages.
         peer_name: A friendly name for the peer/channel, snapshotted for display.
         snr: Signal-to-noise ratio (dB) of an inbound reception, if reported.
-        acked: For an outbound direct message, whether delivery was acknowledged; ``None``
-            when not applicable (a channel broadcast or an inbound message).
+        acked: Delivery state of an outbound direct message: ``True`` acknowledged, ``False``
+            sent but not acknowledged (retryable), ``None`` either still awaiting the ack
+            or not applicable (a channel broadcast or an inbound message).
         created_at: When the message was sent or received.
+        row_id: The ``messages`` table primary key once persisted, used to update an
+            outbound message's delivery state in place on retry; ``None`` until stored.
     """
 
     text: str
@@ -181,6 +184,7 @@ class ChatMessage:
     snr: Optional[float] = None
     acked: Optional[bool] = None
     created_at: datetime = field(default_factory=utcnow)
+    row_id: Optional[int] = None
 
     @property
     def key(self) -> str:

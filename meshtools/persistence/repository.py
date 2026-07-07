@@ -422,6 +422,18 @@ class Repository:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    def update_chat_ack(self, message_id: int, acked: bool) -> None:
+        """Update one outbound message's delivery acknowledgement (used on retry).
+
+        Args:
+            message_id: The ``messages`` row to update.
+            acked: The new delivery state — ``True`` acknowledged, ``False`` not.
+        """
+        self._conn.execute(
+            "UPDATE messages SET acked = ? WHERE id = ?", (int(acked), message_id)
+        )
+        self._conn.commit()
+
     def recent_chat_messages(
         self,
         *,
@@ -510,4 +522,5 @@ class Repository:
             snr=row["snr"],
             acked=None if row["acked"] is None else bool(row["acked"]),
             created_at=datetime.fromisoformat(row["created_at"]),
+            row_id=row["id"],
         )

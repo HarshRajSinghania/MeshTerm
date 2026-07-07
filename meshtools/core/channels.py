@@ -18,6 +18,16 @@ from urllib.parse import parse_qs, quote, urlsplit
 #: A channel shared secret is exactly 16 bytes (128-bit), per the MeshCore protocol.
 CHANNEL_SECRET_BYTES = 16
 
+#: The channel-slot capacity assumed when a device can't be probed. Stock MeshCore companion
+#: firmware is built with 8 slots; :meth:`meshtools.core.connection.Device.channel_capacity`
+#: discovers the real number from the hardware at runtime, so this is only the fallback.
+MAX_CHANNELS = 8
+
+#: Ceiling for a slot probe. A channel slot is addressed on the wire by a single byte, so this
+#: is generous headroom over any real firmware while still bounding a scan against a device that
+#: never rejects an out-of-range index (so the probe can't loop forever).
+CHANNEL_SLOT_PROBE_CAP = 64
+
 #: The default public channel every MeshCore device ships with on slot 0.
 DEFAULT_PUBLIC_NAME = "public"
 

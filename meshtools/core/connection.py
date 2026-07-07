@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
+from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
 from .models import Ack, Contact, Hop, Message, Observation, TraceResult
 
@@ -255,6 +256,30 @@ class Device(ABC):
             A dict with ``channel_idx``, ``channel_name`` and ``channel_secret``
             (16 raw bytes), or ``None`` when the slot is empty.
         """
+
+    async def channel_capacity(self) -> int:
+        """Discover how many channel slots this device exposes (read-only, non-destructive).
+
+        Reads slots from 0 upward until the firmware rejects an index. An *empty* slot is a
+        valid index and returns ``None`` without stopping the scan; only an out-of-range index
+        makes the firmware answer with an error, which surfaces here as an exception. The scan
+        is bounded by :data:`CHANNEL_SLOT_PROBE_CAP` so a device that never rejects an index
+        can't loop forever — in that case the cap itself is reported.
+
+        This only ever *reads* channel configuration, so it is safe to call against a live
+        device without disturbing its state.
+
+        Returns:
+            The number of addressable channel slots the firmware was built with.
+        """
+        count = 0
+        for idx in range(CHANNEL_SLOT_PROBE_CAP):
+            try:
+                await self.get_channel(idx)
+            except Exception:  # noqa: BLE001 - a rejected index is how firmware signals its ceiling
+                break
+            count = idx + 1
+        return count
 
     # -- configuration: settable values -----------------------------------------
 
@@ -1012,6 +1037,9 @@ class MockDevice(Device):
         self._path_hash_mode = 0
         self._custom_vars: dict[str, str] = {}
         self._channels: dict[int, dict] = {}
+        # Model the firmware's fixed slot count: reads past it are rejected, exactly as a
+        # real device signals its ceiling (so ``channel_capacity`` discovers 8 on the mock).
+        self._max_channels = 8
         self._device_pin = 0
         self._private_key = "11" * 32
         # Background emitter tasks spawned by ``subscribe_events``; tracked so they
@@ -1108,6 +1136,8 @@ class MockDevice(Device):
         return dict(self._custom_vars)
 
     async def get_channel(self, index: int) -> Optional[dict]:  # noqa: D102
+        if index >= self._max_channels:
+            raise DeviceCommandError(f"channel index {index} out of range")
         return self._channels.get(index)
 
     async def set_name(self, name: str) -> None:  # noqa: D102 - inherited docstring
