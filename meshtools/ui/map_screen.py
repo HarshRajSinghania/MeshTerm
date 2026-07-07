@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
-from ..core.geo import EARTH_RADIUS_KM, Viewport
+from ..core.geo import EARTH_RADIUS_KM, Viewport, clamp_lat
 from ..core.mvt import Layer
 from ..services.basemap import BasemapSource
 from .map_render import MapMarker, render_map
@@ -60,6 +60,9 @@ class MapScreen(Screen):
         markers: list[MapMarker],
         source: BasemapSource,
         max_tile_zoom: int,
+        *,
+        saved_view: Optional[tuple[float, float, int]] = None,
+        on_view_change: Optional[Callable[[Viewport], None]] = None,
     ) -> None:
         """Create the map screen.
 
@@ -68,6 +71,10 @@ class MapScreen(Screen):
             markers: The located mesh nodes to plot (must be non-empty).
             source: The vector-tile source (already resolved/warmed).
             max_tile_zoom: The source's max zoom, captured off the event loop at open time.
+            saved_view: A previously persisted ``(center_lat, center_lon, zoom)`` to reopen
+                on, or ``None`` to frame the nodes instead.
+            on_view_change: Called with the viewport whenever the centre or zoom changes, so
+                the caller can persist it. Deduplicated — only actual changes fire it.
         """
         super().__init__()
         self.title = "mesh map"
@@ -75,6 +82,11 @@ class MapScreen(Screen):
         self._markers = markers
         self._source = source
         self._max_tile_zoom = max_tile_zoom
+        self._saved_view = saved_view
+        self._on_view_change = on_view_change
+        # The view last handed to ``on_view_change``; seeded with the restored view so
+        # reopening unchanged doesn't rewrite it.
+        self._last_saved = saved_view
         self._viewport: Optional[Viewport] = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
         # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
@@ -100,12 +112,7 @@ class MapScreen(Screen):
         dot_w, dot_h = cell_w * 2, cell_h * 4
 
         if self._viewport is None:
-            self._viewport = Viewport.fit(
-                [(m.lat, m.lon) for m in self._markers],
-                dot_w,
-                dot_h,
-                max_zoom=self._max_tile_zoom,
-            )
+            self._viewport = self._initial_viewport(dot_w, dot_h)
             self._size = (dot_w, dot_h)
         elif self._size != (dot_w, dot_h):
             self._viewport = self._viewport.resized(dot_w, dot_h)
@@ -113,8 +120,33 @@ class MapScreen(Screen):
 
         self._ensure_tiles(self._viewport)
         self.title = self._title(self._viewport)
+        self._persist()
         tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
         return render_map(self._viewport, tiles, self._markers)
+
+    def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
+        """Restore the saved view (clamped to sane bounds) or frame the nodes."""
+        if self._saved_view is not None:
+            lat, lon, zoom = self._saved_view
+            z = max(2, min(int(zoom), self._max_tile_zoom + _OVERZOOM))
+            return Viewport(clamp_lat(lat), lon, z, dot_w, dot_h)
+        return Viewport.fit(
+            [(m.lat, m.lon) for m in self._markers],
+            dot_w,
+            dot_h,
+            max_zoom=self._max_tile_zoom,
+        )
+
+    def _persist(self) -> None:
+        """Hand the current centre/zoom to ``on_view_change`` if it changed since last time."""
+        vp = self._viewport
+        if vp is None or self._on_view_change is None:
+            return
+        view = (vp.center_lat, vp.center_lon, vp.zoom)
+        if view == self._last_saved:
+            return
+        self._last_saved = view
+        self._on_view_change(vp)
 
     def _title(self, vp: Viewport) -> str:
         """A compact status title: zoom, node count, and scale (metres per dot)."""
@@ -169,6 +201,7 @@ class MapScreen(Screen):
             self._pan(vp, action[len("shift_"):], fine=True)
         elif action == "text":
             self._handle_key(data, vp)
+        self._persist()
 
     def _pan(self, vp: Viewport, direction: str, *, fine: bool) -> None:
         """Pan by one coarse step, or — when ``fine`` — a single character cell.
@@ -231,5 +264,14 @@ async def open_map(ctx: "AppContext", markers: list[MapMarker]) -> None:
     source = basemap_source(ctx)
     # Resolve the tile template/zoom in a worker thread so the UI thread never blocks.
     max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
-    screen = MapScreen(session, markers, source, max_zoom)
+    screen = MapScreen(
+        session,
+        markers,
+        source,
+        max_zoom,
+        saved_view=ctx.repo.get_map_view(),
+        on_view_change=lambda vp: ctx.repo.set_map_view(
+            vp.center_lat, vp.center_lon, vp.zoom
+        ),
+    )
     await session.run_screen(screen)

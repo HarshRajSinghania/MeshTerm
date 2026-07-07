@@ -510,6 +510,40 @@ class Repository:
             self._conn.commit()
         return changed
 
+    # -- persisted UI state -----------------------------------------------------
+
+    def get_map_view(self) -> Optional[tuple[float, float, int]]:
+        """Return the last saved map viewport as ``(center_lat, center_lon, zoom)``.
+
+        Lets the interactive map reopen exactly where the user left it. Returns ``None``
+        when no view has been saved yet, or a stored value can't be parsed (treated as
+        absent rather than an error, so a corrupt row just refits to the nodes).
+        """
+        row = self._conn.execute(
+            "SELECT value FROM app_state WHERE key = 'map_view'"
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row["value"])
+            return float(data["lat"]), float(data["lon"]), int(data["zoom"])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def set_map_view(self, lat: float, lon: float, zoom: int) -> None:
+        """Persist the map viewport so the next session reopens on the same spot.
+
+        Args:
+            lat: Latitude at the centre of the view.
+            lon: Longitude at the centre of the view.
+            zoom: Display zoom level.
+        """
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_state(key, value) VALUES ('map_view', ?)",
+            (json.dumps({"lat": lat, "lon": lon, "zoom": zoom}),),
+        )
+        self._conn.commit()
+
     @staticmethod
     def _row_to_chat(row: sqlite3.Row) -> ChatMessage:
         """Rebuild a :class:`ChatMessage` from a ``messages`` row."""

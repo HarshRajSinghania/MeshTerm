@@ -10,10 +10,17 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Small key/value store for UI state that should survive across sessions (e.g. the last
+-- map viewport), independent of any tool run. New keys need no schema change.
+CREATE TABLE IF NOT EXISTS app_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );

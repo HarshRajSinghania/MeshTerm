@@ -348,6 +348,18 @@ async def test_map_tool_static_render_plots_contacts(ctx) -> None:
     assert "1 pkts" in out  # the seeded observation's detail merged onto the contact
 
 
+def test_repository_round_trips_map_view(ctx) -> None:
+    """The saved map viewport persists and reads back; absent by default."""
+    assert ctx.repo.get_map_view() is None
+    ctx.repo.set_map_view(45.51, -73.57, 13)
+    lat, lon, zoom = ctx.repo.get_map_view()
+    assert (lat, lon) == pytest.approx((45.51, -73.57))
+    assert zoom == 13
+    # A later save overwrites the single stored view.
+    ctx.repo.set_map_view(40.0, -74.0, 9)
+    assert ctx.repo.get_map_view() == pytest.approx((40.0, -74.0, 9))
+
+
 async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     """With no located contacts and no located history the tool returns cleanly."""
     async def _no_contacts(_ctx):
@@ -449,6 +461,36 @@ def test_map_screen_shift_pans_by_a_single_cell() -> None:
     screen._viewport = start
     screen.handle("text", "D")
     assert screen._viewport.center_lon == pytest.approx(start.center_lon + fine)
+
+
+def test_map_screen_restores_and_persists_view() -> None:
+    """The screen reopens on a saved view and reports every centre/zoom change."""
+    from meshtools.ui.map_render import MapMarker
+    from meshtools.ui.map_screen import MapScreen
+
+    saved: list[tuple[float, float, int]] = []
+    markers = [MapMarker("A", 45.50, -73.60), MapMarker("B", 45.40, -73.50)]
+    screen = MapScreen(
+        _StubSession(80, 24), markers, _StubSource(), 14,
+        saved_view=(46.80, -71.20, 12),
+        on_view_change=lambda vp: saved.append(
+            (vp.center_lat, vp.center_lon, vp.zoom)
+        ),
+    )
+
+    screen.render_body(80)
+    # Restored to the saved centre/zoom, not a fit of the markers.
+    assert screen._viewport.zoom == 12
+    assert screen._viewport.center_lat == pytest.approx(46.80)
+    assert screen._viewport.center_lon == pytest.approx(-71.20)
+    assert saved == []  # reopening unchanged doesn't rewrite the stored view
+
+    screen.handle("text", "d")  # pan east persists the moved view
+    assert saved and saved[-1][2] == 12  # zoom unchanged
+    assert saved[-1][1] > -71.20  # centre moved east
+
+    screen.handle("text", "=")  # zooming in persists too
+    assert saved[-1][2] == 13
 
 
 def test_map_screen_escape_dismisses() -> None:
