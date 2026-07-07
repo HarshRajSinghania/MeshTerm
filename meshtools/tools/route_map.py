@@ -19,11 +19,12 @@ from ..context import AppContext
 from ..services import route_stability, trace_runner
 from ..services.route_stability import RouteGraph
 from ..ui.theme import snr_style
-from ..ui.tui import Choice
+from ..ui.tui import Choice, Separator
 from ..viz.route_graph import render_route_graph
 from .base import Tool, ToolResult, register
 
 _WHOLE_MESH = "(whole mesh)"
+_BACK = "__back__"
 
 
 @register
@@ -47,9 +48,14 @@ class RouteMapTool(Tool):
         targets = ctx.repo.traced_targets()
         choice = await ctx.ui.select(
             "Map routing for:",
-            [Choice(_WHOLE_MESH, _WHOLE_MESH), *(Choice(t, t) for t in targets)],
+            [
+                Choice(_WHOLE_MESH, _WHOLE_MESH),
+                *(Choice(t, t) for t in targets),
+                Separator(" "),
+                Choice("Back", _BACK),
+            ],
         )
-        if choice is None:
+        if choice in (None, _BACK):
             return None
         samples = await ctx.ui.text(
             "Take how many fresh traces first? (0 = use stored history only)",

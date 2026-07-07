@@ -17,6 +17,7 @@ from meshtools.context import AppContext
 from meshtools.core.admin_store import AdminStore
 from meshtools.core.channels import (
     CHANNEL_SECRET_BYTES,
+    DEFAULT_PUBLIC_SECRET,
     channel_hash,
     derive_secret,
     full_channel_hash,
@@ -29,7 +30,13 @@ from meshtools.core.config import Settings
 from meshtools.core.device_store import DeviceStore
 from meshtools.persistence.repository import Repository
 from meshtools.tools.channels import ChannelsTool
-from meshtools.ui.channels import ChannelSlot, _apply_order, _next_free_slot, _read_slots
+from meshtools.services.chat_service import ChatService
+from meshtools.ui.channels import (
+    ChannelSlot,
+    _apply_order,
+    _next_free_slot,
+    _read_slots,
+)
 from meshtools.ui.qr import qr_text
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -131,8 +138,18 @@ def test_channel_slot_classifies_public_and_private() -> None:
     assert derived.is_public  # key derived from the name, even without a leading #
     private = ChannelSlot(idx=2, name="Ops", secret=bytes(range(16)))
     assert not private.is_public
+    assert not private.is_name_derived
+    # The firmware default "Public" is public but keyed by a fixed well-known secret, not by
+    # its name — so it reads as public without being name-derived (its key must be preserved).
+    default_public = ChannelSlot(idx=0, name="Public", secret=DEFAULT_PUBLIC_SECRET)
+    assert default_public.is_public
+    assert not default_public.is_name_derived
+    assert channel_hash(DEFAULT_PUBLIC_SECRET) == "11"  # the fingerprint devices report for it
     assert private.conversation.is_channel and private.conversation.channel_idx == 2
     assert private.conversation.label == "Ops"  # raw name, no forced leading '#'
+    # The conversation is keyed by the channel's identity, not its slot.
+    assert private.conversation.channel_id == private.identity
+    assert private.conversation.key == f"chan:{private.identity}"
 
 
 def test_next_free_slot_finds_gaps_and_full() -> None:
@@ -160,6 +177,55 @@ async def test_apply_order_relays_channels_into_new_positions(ctx: AppContext) -
     assert after[0].name == "Gamma" and after[0].secret == bytes(range(16, 32))
     assert after[1].name == "#beta" and after[1].is_public  # public key re-derived in place
     assert after[2].name == "Alpha" and after[2].secret == bytes(range(16))
+
+
+def test_channel_identity_is_stable_across_slot_moves() -> None:
+    """A channel's identity depends on its key material, not on which slot it occupies."""
+    at_two = ChannelSlot(idx=2, name="Ops", secret=bytes(range(16)))
+    at_five = ChannelSlot(idx=5, name="Ops", secret=bytes(range(16)))
+    assert at_two.identity == at_five.identity  # same channel, different slot → same identity
+
+    other = ChannelSlot(idx=2, name="Ops", secret=bytes(range(16, 32)))
+    assert other.identity != at_two.identity  # a different key → a different channel
+
+
+async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -> None:
+    """Reordering channels leaves each channel's transcript with it — no migration needed.
+
+    Reproduces the reported bug's setup (a channel moved to a new slot) and asserts the fix:
+    because history is keyed by channel identity rather than slot, the moved channel keeps
+    its own messages and the slot it landed on inherits none.
+    """
+    device = await ctx.device()
+    await device.set_channel(0, "Alpha", bytes(range(16)))
+    await device.set_channel(1, "Beta", bytes(range(16, 32)))
+
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await chat.send_channel(0, "hello from alpha", label="Alpha")
+        await chat.send_channel(1, "hello from beta", label="Beta")
+
+        slots = await _read_slots(device)
+        before = {s.name: s for s in slots}
+        alpha_id, beta_id = before["Alpha"].identity, before["Beta"].identity
+
+        # Swap the two channels' slots, then refresh the service's slot→identity cache.
+        writes = await _apply_order(device, slots, [1, 0])
+        assert writes == 2
+        await chat.refresh_channels()
+
+        after = {s.name: s for s in await _read_slots(device)}
+        assert after["Alpha"].idx == 1 and after["Beta"].idx == 0  # slots actually swapped
+        assert after["Alpha"].identity == alpha_id  # identity is unchanged by the move
+
+        # History still resolves per channel by identity — no transcript was inherited.
+        alpha_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=alpha_id)
+        beta_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=beta_id)
+        assert [m.text for m in alpha_msgs] == ["hello from alpha"]
+        assert [m.text for m in beta_msgs] == ["hello from beta"]
+    finally:
+        await chat.stop()
 
 
 # -- the tool against the simulator -------------------------------------------

@@ -13,17 +13,20 @@ send, so ``history`` reflects the full transcript regardless of which path produ
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+import time
+from typing import Any, Callable, Optional, Union
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
+from ..core.channels import DEFAULT_PUBLIC_SECRET, channel_identity
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation
 from ..ui.tui import Choice, Separator
+from ..ui.widgets import channel_glyph
 from .base import Tool, ToolResult, register
 
 #: How many channel slots to probe when listing channels to chat on.
@@ -108,17 +111,25 @@ class ChatTool(Tool):
         device = await ctx.device()
         channels = await _read_channels(device)
         contacts = await device.get_contacts()
+        # A stable snapshot orders the rows (so the list doesn't reshuffle under the cursor),
+        # while a self-refreshing view feeds each row's live preview (see _LiveLasts).
         lasts = ctx.repo.last_chat_messages()
+        live = _LiveLasts(ctx, seed=lasts)
 
         items: list = [Separator("── Channels ──")]
         for conversation in channels:
-            items.append(Choice(title=_title(ctx, conversation, lasts), value=conversation))
+            items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
 
         items.append(Separator("── Direct ──"))
         if contacts:
-            for contact in contacts:
-                conversation = Conversation(label=contact.name, is_channel=False, contact=contact)
-                items.append(Choice(title=_title(ctx, conversation, lasts), value=conversation))
+            # List contacts by recency — those with messages first, newest exchange at the
+            # top — then the never-contacted ones alphabetically (see _recency_key).
+            direct = [
+                Conversation(label=c.name, is_channel=False, contact=c) for c in contacts
+            ]
+            direct.sort(key=lambda conv: _recency_key(conv, lasts))
+            for conversation in direct:
+                items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
         else:
             items.append(Separator("  (no contacts yet — receive an advert first)"))
 
@@ -187,8 +198,9 @@ class ChatTool(Tool):
         channel = params.get("channel")
         to = params.get("to")
         if channel is not None:
+            channel_id = await ctx.chat.channel_id_for(int(channel))
             messages = ctx.repo.recent_chat_messages(
-                is_channel=True, channel_idx=int(channel), limit=limit
+                is_channel=True, channel_id=channel_id, limit=limit
             )
             label = f"#{channel}"
         else:
@@ -382,11 +394,27 @@ async def _read_channels(device: Device) -> list[Conversation]:
             break
         if channel:
             name = str(channel.get("channel_name") or idx)
+            secret = bytes(channel.get("channel_secret") or b"\x00" * 16)
             conversations.append(
-                Conversation(label=name, is_channel=True, channel_idx=idx)
+                Conversation(
+                    label=name,
+                    is_channel=True,
+                    channel_idx=idx,
+                    channel_id=channel_identity(name, secret),
+                    secret=secret,
+                )
             )
     if not any(c.channel_idx == 0 for c in conversations):
-        conversations.insert(0, Conversation(label="Public", is_channel=True, channel_idx=0))
+        conversations.insert(
+            0,
+            Conversation(
+                label="Public",
+                is_channel=True,
+                channel_idx=0,
+                channel_id="slot:0",
+                secret=DEFAULT_PUBLIC_SECRET,
+            ),
+        )
     return conversations
 
 
@@ -411,29 +439,147 @@ def _resolve_contact(contacts: list[Contact], needle: str) -> Contact:
     raise typer.BadParameter(f"no contact matches {needle!r}")
 
 
-def _title(ctx: AppContext, conversation: Conversation, lasts: dict) -> str:
-    """Build a picker row title: label, an unread marker, and a last-message snippet.
+def _recency_key(conversation: Conversation, lasts: dict) -> tuple:
+    """Sort key ordering conversations by recency, then name.
 
-    Choice titles render as plain text, so markup is avoided; the unread count shows as a
-    ``●`` badge and the most recent message as a short trailing preview.
+    Conversations that have been chatted with sort first, most-recent exchange at the top;
+    those never chatted with sort after them, alphabetically by label. The leading ``0``/``1``
+    keeps the two groups apart so their differently-typed tie-breakers never compare.
 
     Args:
-        ctx: Shared application context (for the unread count).
-        conversation: The conversation the row represents.
+        conversation: The conversation to rank.
         lasts: Map of conversation key to its most recent message.
 
     Returns:
-        A single-line plain-text title.
+        A tuple usable as a ``sorted`` key.
     """
-    parts = [conversation.label]
-    unread = ctx.chat.unread(conversation.key)
-    if unread:
-        parts.append(f"  ● {unread}")
     last: Optional[ChatMessage] = lasts.get(conversation.key)
     if last is not None:
-        who = "you: " if last.outbound else ""
-        parts.append(f"   · {who}{last.text[:32]}")
-    return "".join(parts)
+        return (0, -last.created_at.timestamp())
+    return (1, conversation.label.casefold())
+
+
+class _LiveLasts:
+    """A self-refreshing view of each conversation's most recent message.
+
+    The picker snapshots :meth:`~meshtools.persistence.repository.Repository.last_chat_messages`
+    once to *order* the rows (so the list never reshuffles under the cursor), but the row
+    previews read through this so a message arriving while the list is open updates the
+    sender/text preview on the next repaint. It re-queries the repository at most a few times a
+    second (bounded by ``ttl``) rather than once per row per repaint, so a wide list stays cheap.
+    """
+
+    def __init__(self, ctx: AppContext, *, seed: dict, ttl: float = 0.5) -> None:
+        """Bind to a context, seeding the cache with the snapshot already loaded at open."""
+        self._ctx = ctx
+        self._ttl = ttl
+        self._cache = seed
+        self._at = time.monotonic()
+
+    def get(self, key: str) -> Optional[ChatMessage]:
+        """Return the latest message for ``key``, refreshing the cache once its TTL lapses."""
+        now = time.monotonic()
+        if now - self._at >= self._ttl:
+            try:
+                self._cache = self._ctx.repo.last_chat_messages()
+            except Exception:  # noqa: BLE001 - keep the last good snapshot on a read error
+                pass
+            self._at = now
+        return self._cache.get(key)
+
+
+#: Column width (display cells) the conversation label is padded/ellipsized to, so the unread
+#: badge and message preview line up in fixed lanes down the picker.
+_LABEL_WIDTH = 22
+#: Width of the unread-badge lane between the label and the preview (fits ``● 999``).
+_BADGE_WIDTH = 5
+#: Longest message preview shown before it is ellipsized.
+_PREVIEW_WIDTH = 42
+
+
+def _row_title(
+    ctx: AppContext, conversation: Conversation, lasts: "_LiveLasts"
+) -> Callable[[], Union[str, Text]]:
+    """Return a picker-row title *callable* the select screen re-renders on each repaint.
+
+    Both the unread badge and the last-message preview are read live, so a message arriving
+    while the picker sits open updates that row's ``●`` count *and* its sender/text preview on
+    the next repaint (the session already repaints ~1×/s for the header).
+
+    Args:
+        ctx: Shared application context (for the live unread count).
+        conversation: The conversation the row represents.
+        lasts: The self-refreshing latest-message view feeding the preview.
+
+    Returns:
+        A zero-argument callable producing the current row title.
+    """
+    return lambda: _title(ctx, conversation, lasts)
+
+
+def _title(
+    ctx: AppContext, conversation: Conversation, lasts: "_LiveLasts"
+) -> Union[str, Text]:
+    """Build a picker row as fixed-width columns: label, unread badge, message preview.
+
+    Alignment carries the readability: the label is padded to a fixed lane, the unread ``●``
+    badge sits in its own lane, and the preview lines up across every row regardless of how
+    long the names or counts are. When there is unread, the row is returned as a Rich
+    :class:`~rich.text.Text` so the ``●`` glyph alone can be tinted red; otherwise a plain
+    string suffices.
+
+    Args:
+        ctx: Shared application context (for the live unread count).
+        conversation: The conversation the row represents.
+        lasts: The self-refreshing latest-message view.
+
+    Returns:
+        The row title — a plain ``str``, or a ``Text`` with a red ``●`` when unread.
+    """
+    unread = ctx.chat.unread(conversation.key)
+    badge = f"● {unread}" if unread else ""
+    last = lasts.get(conversation.key)
+    preview = _preview(last) if last is not None else ""
+    # A channel leads with its openness marker (＃ / 🌐 / 🔒); a direct chat with a person glyph
+    # — 💬 once we've exchanged messages, 👤 for a contact we haven't talked to yet. Every glyph
+    # is one double-width cell, so the label lane still lines up across rows.
+    if conversation.is_channel:
+        glyph = channel_glyph(conversation.label, conversation.secret)
+    else:
+        glyph = "💬" if last is not None else "👤"
+    line = f"{glyph} {_fit(conversation.label, _LABEL_WIDTH)}  {badge:<{_BADGE_WIDTH}}  {preview}".rstrip()
+    if not unread:
+        return line
+    text = Text(line)
+    dot = line.index("●")  # only the badge carries this glyph; colour just it red
+    text.stylize("err", dot, dot + 1)
+    return text
+
+
+def _preview(last: ChatMessage, *, width: int = _PREVIEW_WIDTH) -> str:
+    """One-line preview of the latest message, ``you:``-prefixed when we sent it.
+
+    Only our own outbound messages get an author prefix. Inbound channel messages already
+    carry the sender's node name inline in their text (the firmware embeds it), and an inbound
+    direct message's author is the row's own label — so neither needs one added here.
+
+    Args:
+        last: The most recent message in the conversation.
+        width: The column budget before the preview is ellipsized.
+
+    Returns:
+        A single-line, length-bounded preview string.
+    """
+    who = "you: " if last.outbound else ""
+    body = f"{who}{last.text}".replace("\n", " ")
+    return body[: width - 1] + "…" if len(body) > width else body
+
+
+def _fit(text: str, width: int) -> str:
+    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that would overflow."""
+    if len(text) > width:
+        return text[: width - 1] + "…"
+    return text.ljust(width)
 
 
 def _history_table(label: str, messages: list[ChatMessage]) -> Table:

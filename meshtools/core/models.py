@@ -119,25 +119,28 @@ class Ack:
 
 
 def conversation_key(
-    is_channel: bool, channel_idx: Optional[int], peer: Optional[str]
+    is_channel: bool, channel_id: Optional[str], peer: Optional[str]
 ) -> str:
     """Return a stable key identifying a chat conversation.
 
     A conversation is either a channel or a direct exchange with one contact; this key
     is how history, unread counts, and the live screen all agree on which thread a message
-    belongs to.
+    belongs to. It is deliberately keyed on something *intrinsic* to the conversation — a
+    channel's identity (derived from its secret; see
+    :func:`~meshtools.core.channels.channel_identity`) and a contact's key prefix — never on
+    a slot index or list position, so reordering channels never re-points history.
 
     Args:
         is_channel: Whether the conversation is a channel.
-        channel_idx: The channel slot (for channel conversations).
+        channel_id: The channel's slot-independent identity (for channel conversations).
         peer: The contact's key prefix (for direct conversations).
 
     Returns:
-        ``"chan:<idx>"`` for a channel or ``"dm:<peer>"`` (lowercased) for a direct
+        ``"chan:<identity>"`` for a channel or ``"dm:<peer>"`` (lowercased) for a direct
         exchange.
     """
     if is_channel:
-        return f"chan:{channel_idx}"
+        return f"chan:{channel_id}"
     return f"dm:{(peer or '').lower()}"
 
 
@@ -155,7 +158,11 @@ class ChatMessage:
         text: The message body.
         outbound: ``True`` if we sent it, ``False`` if we received it.
         is_channel: Whether it belongs to a channel rather than a direct exchange.
-        channel_idx: The channel slot, for channel messages.
+        channel_id: The channel's slot-independent identity, for channel messages. This is
+            what the message is keyed to, so its history follows the channel across slot
+            reorders (see :func:`~meshtools.core.channels.channel_identity`).
+        channel_idx: The channel slot the message went out on / arrived on. Retained only
+            for reference and legacy backfill — the conversation key never uses it.
         peer: The other party's key prefix, for direct messages.
         peer_name: A friendly name for the peer/channel, snapshotted for display.
         snr: Signal-to-noise ratio (dB) of an inbound reception, if reported.
@@ -167,6 +174,7 @@ class ChatMessage:
     text: str
     outbound: bool = False
     is_channel: bool = False
+    channel_id: Optional[str] = None
     channel_idx: Optional[int] = None
     peer: Optional[str] = None
     peer_name: Optional[str] = None
@@ -177,17 +185,24 @@ class ChatMessage:
     @property
     def key(self) -> str:
         """The key of the conversation this message belongs to."""
-        return conversation_key(self.is_channel, self.channel_idx, self.peer)
+        return conversation_key(self.is_channel, self.channel_id, self.peer)
 
     @classmethod
     def from_message(
-        cls, message: "Message", *, peer_name: Optional[str] = None
+        cls,
+        message: "Message",
+        *,
+        peer_name: Optional[str] = None,
+        channel_id: Optional[str] = None,
     ) -> "ChatMessage":
         """Build an inbound :class:`ChatMessage` from a received :class:`Message`.
 
         Args:
             message: The inbound message delivered by the event hub.
             peer_name: A friendly name for the sender, resolved from contacts if known.
+            channel_id: The channel's resolved identity (channel messages only). The wire
+                carries only a slot index, so the caller resolves it to the channel's
+                intrinsic identity before recording.
 
         Returns:
             The equivalent inbound :class:`ChatMessage`.
@@ -196,6 +211,7 @@ class ChatMessage:
             text=message.text,
             outbound=False,
             is_channel=message.is_channel,
+            channel_id=channel_id if message.is_channel else None,
             channel_idx=message.channel,
             peer=None if message.is_channel else (message.sender or None),
             peer_name=peer_name,
@@ -215,13 +231,19 @@ class Conversation:
     Attributes:
         label: Display name (e.g. ``#general`` or ``Alice``).
         is_channel: Whether this is a channel rather than a direct conversation.
-        channel_idx: The channel slot, for channels.
+        channel_idx: The channel slot to address for sending / live matching, for channels.
+        channel_id: The channel's slot-independent identity, used to key its history (see
+            :func:`~meshtools.core.channels.channel_identity`).
+        secret: The channel's 16-byte secret, for channels — used only to show its
+            public/private openness marker; ``None`` when unknown.
         contact: The contact, for direct conversations.
     """
 
     label: str
     is_channel: bool
     channel_idx: Optional[int] = None
+    channel_id: Optional[str] = None
+    secret: Optional[bytes] = None
     contact: Optional[Contact] = None
 
     @property
@@ -234,7 +256,7 @@ class Conversation:
     @property
     def key(self) -> str:
         """The conversation's stable key (see :func:`conversation_key`)."""
-        return conversation_key(self.is_channel, self.channel_idx, self.peer)
+        return conversation_key(self.is_channel, self.channel_id, self.peer)
 
 
 @dataclass(slots=True)

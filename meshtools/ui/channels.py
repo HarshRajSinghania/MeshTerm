@@ -23,9 +23,11 @@ from rich.text import Text
 
 from ..core.channels import (
     channel_hash,
+    channel_identity,
     derive_secret,
     full_channel_hash,
-    is_public_name,
+    is_name_derived,
+    is_public_channel,
     normalize_secret,
     parse_share_url,
     random_secret,
@@ -35,6 +37,7 @@ from ..core.connection import Device
 from ..core.models import Conversation
 from .qr import qr_text
 from .tui import Choice, Separator
+from .widgets import channel_glyph
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -73,9 +76,17 @@ class ChannelSlot:
     secret: bytes
 
     @property
+    def is_name_derived(self) -> bool:
+        """Whether this channel's key is reproducible from its name (so it needn't be stored)."""
+        return is_name_derived(self.name, self.secret)
+
+    @property
     def is_public(self) -> bool:
-        """Whether this channel's key is derived from its name (a public channel)."""
-        return is_public_name(self.name) or self.secret == derive_secret(self.name)
+        """Whether this channel is public (shared meshwide) rather than a private one.
+
+        Covers both name-derived channels and the firmware's fixed-key default ``Public``.
+        """
+        return is_public_channel(self.name, self.secret)
 
     @property
     def hash(self) -> str:
@@ -88,9 +99,20 @@ class ChannelSlot:
         return full_channel_hash(self.secret)
 
     @property
+    def identity(self) -> str:
+        """The channel's slot-independent identity, used to key its chat history."""
+        return channel_identity(self.name, self.secret)
+
+    @property
     def conversation(self) -> Conversation:
         """A :class:`~meshtools.core.models.Conversation` for opening this channel in chat."""
-        return Conversation(label=self.name, is_channel=True, channel_idx=self.idx)
+        return Conversation(
+            label=self.name,
+            is_channel=True,
+            channel_idx=self.idx,
+            channel_id=self.identity,
+            secret=self.secret,
+        )
 
 
 async def manage_channels(ctx: "AppContext") -> int:
@@ -166,8 +188,9 @@ def _next_free_slot(slots: list[ChannelSlot]) -> Optional[int]:
 
 def _slot_label(slot: ChannelSlot) -> str:
     """Format a channel for a menu row: name, public/private, and hash (no slot index)."""
-    lock = "＃ public " if slot.is_public else "🔒 private"
-    return f"{slot.name:<18.18} {lock}  hash {slot.hash}"
+    glyph = channel_glyph(slot.name, slot.secret)  # ＃ / 🌐 / 🔒
+    word = "private" if glyph == "🔒" else "public"
+    return f"{slot.name:<18.18} {glyph} {word:<7}  hash {slot.hash}"
 
 
 # --- menus -------------------------------------------------------------------
@@ -212,6 +235,7 @@ async def _channel_detail(ctx: "AppContext", device: Device, slot: ChannelSlot) 
                 Choice(title="💬 Open in chat", value=_CHAT),
                 Choice(title="✎ Rename / change key", value=_EDIT),
                 Choice(title="🗑 Clear this slot", value=_CLEAR),
+                Separator(" "),
                 Choice(title="Back", value=_BACK),
             ],
         )
@@ -324,7 +348,7 @@ async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
     name = name.strip()
     key = await ctx.ui.text(
         "Channel key (32 hex chars; blank to derive from the name):",
-        default="" if slot.is_public else slot.secret.hex(),
+        default="" if slot.is_name_derived else slot.secret.hex(),
         validate=_optional_secret,
     )
     if key is None:
@@ -351,8 +375,8 @@ async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
 
 
 async def _write_slot(device: Device, idx: int, slot: ChannelSlot) -> None:
-    """Write ``slot``'s contents into slot ``idx`` (public channels re-derive their key)."""
-    secret = None if slot.is_public else slot.secret
+    """Write ``slot``'s contents into slot ``idx`` (name-derived channels re-derive their key)."""
+    secret = None if slot.is_name_derived else slot.secret
     await device.set_channel(idx, slot.name, secret)
 
 
@@ -388,7 +412,13 @@ async def _reorder_channels(
     order = await ctx.ui.reorder("Reorder channels", labels)
     if not order or order == list(range(len(slots))):
         return 0  # cancelled or left unchanged
-    return await _apply_order(device, slots, order)
+    changes = await _apply_order(device, slots, order)
+    if changes:
+        # Chat history is keyed by each channel's intrinsic identity, not its slot, so it
+        # follows the channels automatically — reordering needs no history migration. Just
+        # refresh the slot-index→identity cache so freshly-moved slots resolve correctly.
+        await ctx.chat.refresh_channels()
+    return changes
 
 
 # --- shared views ------------------------------------------------------------
@@ -423,7 +453,13 @@ async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
     table.add_column("", style="muted")
     table.add_column("")
     table.add_row("Name", Text(slot.name, style="brand"))
-    table.add_row("Type", "public (key from name)" if slot.is_public else "private")
+    if slot.is_name_derived:
+        kind = "public (key from name)"
+    elif slot.is_public:
+        kind = "public (default channel)"
+    else:
+        kind = "private"
+    table.add_row("Type", kind)
     table.add_row("Hash", _hash_text(slot.full_hash))
     table.add_row("Key", Text(slot.secret.hex(), style="warn"))
     table.add_row("Link", Text(share_url(slot.name, slot.secret), style="accent"))

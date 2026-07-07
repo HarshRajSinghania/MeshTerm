@@ -116,6 +116,23 @@ def test_select_cursor_line_tracks_selection() -> None:
     assert screen.cursor_line() == 2
 
 
+def test_select_callable_title_re_renders_live() -> None:
+    """A callable title is resolved on every repaint, so a live badge tracks state."""
+    unread = {"n": 0}
+    screen = SelectScreen("pick", [Choice(lambda: f"chan ● {unread['n']}", 1)])
+    assert "chan ● 0" in "\n".join(screen.render_body(40))
+    unread["n"] = 3  # a message arrived while the list is open
+    assert "chan ● 3" in "\n".join(screen.render_body(40))
+
+
+def test_select_filter_matches_callable_title() -> None:
+    """Type-to-filter matches against a callable title's current text."""
+    screen = SelectScreen("pick", [Choice(lambda: "alpha", 1), Choice("beta", 2)])
+    screen.handle("text", "alp")
+    assert [r.label for r in screen._rows()] == ["alpha"]
+    assert _run(screen, "enter") == 1
+
+
 # --- scroll ------------------------------------------------------------------
 
 

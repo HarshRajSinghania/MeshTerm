@@ -470,7 +470,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
 
     history = ctx.repo.recent_chat_messages(
         is_channel=conversation.is_channel,
-        channel_idx=conversation.channel_idx,
+        channel_id=conversation.channel_id,
         peer=conversation.peer,
         limit=_HISTORY_LIMIT,
     )
@@ -492,7 +492,11 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         message = event.message
         if message is not None and _belongs(message, conversation):
             peer_name = names.get((message.sender or "").lower())
-            screen.append(ChatMessage.from_message(message, peer_name=peer_name))
+            screen.append(
+                ChatMessage.from_message(
+                    message, peer_name=peer_name, channel_id=conversation.channel_id
+                )
+            )
 
     unsubscribe = ctx.events.subscribe(on_event, EventKind.MESSAGE)
     try:

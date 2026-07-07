@@ -237,13 +237,15 @@ async def _stage_preset(ctx: AppContext, pending: dict[str, Any]) -> None:
     """Pick a standard radio preset and stage all of its fields for review/apply."""
     from ..core.device_config import RADIO_PRESETS
 
-    items = [
+    items: list = [
         Choice(
             title=f"{p.name}: {p.freq} MHz, BW {p.bw}, SF{p.sf}, CR{p.cr}  —  {p.help}",
             value=i,
         )
         for i, p in enumerate(RADIO_PRESETS)
     ]
+    items.append(Separator(" "))
+    items.append(Choice(title="Back", value=None))
     idx = await ctx.ui.select("Apply which radio preset?", items)
     if idx is None:
         return
@@ -303,6 +305,7 @@ async def _danger_zone(ctx: AppContext, device: Any, snapshot: dict) -> bool:
             Choice("Export private key", value="export_key"),
             Choice("Import private key", value="import_key"),
             Choice("Factory reset (erase all)", value="factory_reset"),
+            Separator(" "),
             Choice("Back", value=None),
         ],
     )

@@ -21,6 +21,16 @@ CHANNEL_SECRET_BYTES = 16
 #: The default public channel every MeshCore device ships with on slot 0.
 DEFAULT_PUBLIC_NAME = "public"
 
+#: MeshCore's built-in public channel ships on slot 0 as ``Public`` with this fixed 16-byte
+#: key — it is *not* derived from the name, so it can't be recognized by the ``#`` / name-key
+#: heuristics and must be matched on its well-known secret instead.
+DEFAULT_PUBLIC_SECRET = bytes.fromhex("8b3387e9c5cdea6ac9e5edbaa115cd72")
+
+#: Secrets of well-known public channels — public (shared meshwide) regardless of their name
+#: or whether their key is name-derived. Today just the firmware default above; a frozenset so
+#: further authoritative public channels can be added over time.
+KNOWN_PUBLIC_SECRETS = frozenset({DEFAULT_PUBLIC_SECRET})
+
 
 def is_public_name(name: str) -> bool:
     """Whether a channel name is a public one whose key derives from the name.
@@ -33,6 +43,41 @@ def is_public_name(name: str) -> bool:
         key), ``False`` otherwise.
     """
     return name.startswith("#")
+
+
+def is_name_derived(name: str, secret: bytes) -> bool:
+    """Whether a channel's key is reproducible from its name.
+
+    ``True`` for a ``#``-prefixed name and for any channel whose stored secret already equals
+    ``derive_secret(name)``. Such a channel need not store its key — the firmware recomputes it
+    from the name — so re-keying or reordering it can pass no secret at all.
+
+    Args:
+        name: The channel name.
+        secret: The 16-byte secret stored in the slot.
+
+    Returns:
+        ``True`` if the name alone reproduces the key.
+    """
+    return is_public_name(name) or bytes(secret) == derive_secret(name)
+
+
+def is_public_channel(name: str, secret: bytes) -> bool:
+    """Whether a channel is public — shared across the mesh rather than a private, off-mesh one.
+
+    A channel counts as public when its key is name-derived (see :func:`is_name_derived`) *or*
+    it is a :data:`KNOWN_PUBLIC_SECRETS` channel — notably the firmware's default ``Public``,
+    whose key is a fixed well-known value rather than one derived from its name. The latter is
+    why a plain name/``#`` check alone would mislabel it as private.
+
+    Args:
+        name: The channel name.
+        secret: The 16-byte secret stored in the slot.
+
+    Returns:
+        ``True`` if the channel is public.
+    """
+    return is_name_derived(name, secret) or bytes(secret) in KNOWN_PUBLIC_SECRETS
 
 
 def derive_secret(name: str) -> bytes:
@@ -94,6 +139,44 @@ def full_channel_hash(secret: bytes) -> str:
         A 64-character lowercase hex string.
     """
     return sha256(bytes(secret)).hexdigest()
+
+
+def effective_secret(name: str, secret: bytes) -> bytes:
+    """Return the key a channel actually encrypts with, resolving public channels by name.
+
+    A public channel's key is *derived from its name*, so the key material a device happens
+    to have stored in the slot (some firmware/simulators keep zeros) is not its true secret.
+    Private channels use their stored secret as-is.
+
+    Args:
+        name: The channel name (a leading ``#`` marks it public).
+        secret: The 16-byte secret stored in the slot.
+
+    Returns:
+        The channel's effective 16-byte secret.
+    """
+    if is_name_derived(name, secret):
+        return derive_secret(name)
+    return bytes(secret)
+
+
+def channel_identity(name: str, secret: bytes) -> str:
+    """Return a channel's stable identity — independent of which slot it occupies.
+
+    The identity is ``sha256`` of the channel's :func:`effective_secret`, so it is intrinsic
+    to the channel itself (its key material) rather than to its UX position. Reordering
+    channel slots therefore never changes a channel's identity, and every device that shares
+    the channel — a public channel by name, a private one by its exchanged key — computes the
+    same value. Hashing keeps the raw secret out of anything the identity is stored in.
+
+    Args:
+        name: The channel name.
+        secret: The 16-byte secret stored in the slot.
+
+    Returns:
+        A 64-character lowercase hex identity.
+    """
+    return full_channel_hash(effective_secret(name, secret))
 
 
 def channel_hash(secret: bytes) -> str:

@@ -32,6 +32,8 @@ async def prompt_device(
     ui: "Ui",
     devices: list[DiscoveredDevice],
     remembered: Optional[RememberedDevice],
+    *,
+    cancel_label: str = "Skip (use --mock / configure later)",
 ) -> Optional[DiscoveredDevice]:
     """Prompt the user to choose a companion device.
 
@@ -39,10 +41,12 @@ async def prompt_device(
         ui: The interactive UI surface used to render the picker.
         devices: Discovered devices (likely-LoRa first).
         remembered: The remembered default, if any, used to mark and preselect a row.
+        cancel_label: Label for the final "don't pick" row — "Skip…" at startup (there is
+            no going back yet), "Back" when re-picking from the devices tool.
 
     Returns:
-        The chosen :class:`DiscoveredDevice`, or ``None`` if the user cancelled or chose to
-        skip device selection (e.g. to run against ``--mock`` / configure later).
+        The chosen :class:`DiscoveredDevice`, or ``None`` if the user cancelled or chose the
+        cancel row (e.g. to run against ``--mock`` / configure later).
     """
     if not devices:
         await ui.view(
@@ -70,6 +74,6 @@ async def prompt_device(
             default = device
 
     items.append(Separator(" "))
-    items.append(Choice(title="skip (use --mock / configure later)", value=None))
+    items.append(Choice(title=cancel_label, value=None))
 
     return await ui.select("Select a companion device:", items, default=default)

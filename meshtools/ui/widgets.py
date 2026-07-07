@@ -18,6 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .. import __version__
+from ..core.channels import is_name_derived, is_public_channel, is_public_name
 from ..core.models import (
     LOCAL_DEVICE_LABEL,
     Contact,
@@ -33,6 +34,30 @@ if TYPE_CHECKING:
 
 #: Maps a hop's raw key-prefix hash to a display label (a contact name when known).
 NodeResolver = Callable[[Optional[str]], Optional[str]]
+
+
+def channel_glyph(name: str, secret: Optional[bytes]) -> str:
+    """The one-character openness marker for a channel, shared across channel-facing screens.
+
+    ``＃`` marks a name-derived (``#``-style) channel, ``🌐`` a fixed-key well-known public
+    channel (e.g. the firmware default ``Public``), and ``🔒`` a private one. Every glyph is a
+    single double-width cell, so callers can prefix rows with ``"{glyph} "`` without disturbing
+    column alignment. When the secret is unknown, the name alone is used to guess.
+
+    Args:
+        name: The channel name.
+        secret: The channel's 16-byte secret, or ``None`` when only the name is known.
+
+    Returns:
+        A single-character glyph.
+    """
+    if secret is None:
+        return "＃" if is_public_name(name) else "🔒"
+    if is_name_derived(name, secret):
+        return "＃"
+    if is_public_channel(name, secret):
+        return "🌐"
+    return "🔒"
 
 #: Non-breaking space, used in the route line to keep ``name (hash)`` and a node's
 #: trailing arrow on the same line so wraps only ever land *after* an arrow.
@@ -411,6 +436,24 @@ def stats_panel(
     return Panel(body, title="[accent]trace summary[/accent]", border_style="accent", expand=False)
 
 
+def _contact_recency_key(contact: Contact) -> tuple:
+    """Sort key ordering contacts by last-heard time (newest first), then name.
+
+    Contacts with a known ``last_seen`` sort first, most-recent advert at the top; those
+    never heard sort after them, alphabetically. The leading ``0``/``1`` keeps the two
+    groups apart so their differently-typed tie-breakers never compare.
+
+    Args:
+        contact: The contact to rank.
+
+    Returns:
+        A tuple usable as a ``sorted`` key.
+    """
+    if contact.last_seen is not None:
+        return (0, -contact.last_seen.timestamp())
+    return (1, contact.name.casefold())
+
+
 def nodes_table(
     self_name: str,
     self_key: str,
@@ -442,7 +485,8 @@ def nodes_table(
         highlighted_hash(self_key, prefix_bytes) if self_key else unknown,
     )
     table.add_section()
-    for c in contacts:
+    # Most-recently-heard contacts first; those never heard fall to the end, alphabetically.
+    for c in sorted(contacts, key=_contact_recency_key):
         table.add_row(
             Text(c.name, style="brand"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,

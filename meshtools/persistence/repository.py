@@ -403,12 +403,13 @@ class Repository:
         peer = msg.peer.lower() if msg.peer else None
         cur = self._conn.execute(
             "INSERT INTO messages "
-            "(run_id, outbound, is_channel, channel_idx, peer, peer_name, text, snr, "
-            "acked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, outbound, is_channel, channel_id, channel_idx, peer, peer_name, text, "
+            "snr, acked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 int(msg.outbound),
                 int(msg.is_channel),
+                msg.channel_id,
                 msg.channel_idx,
                 peer,
                 msg.peer_name,
@@ -425,7 +426,7 @@ class Repository:
         self,
         *,
         is_channel: bool,
-        channel_idx: Optional[int] = None,
+        channel_id: Optional[str] = None,
         peer: Optional[str] = None,
         limit: int = 200,
     ) -> list[ChatMessage]:
@@ -433,7 +434,7 @@ class Repository:
 
         Args:
             is_channel: Whether to load a channel conversation.
-            channel_idx: The channel slot (channel conversations).
+            channel_id: The channel's slot-independent identity (channel conversations).
             peer: The contact key prefix (direct conversations).
             limit: Maximum number of messages to return.
 
@@ -441,7 +442,7 @@ class Repository:
             The messages in chronological order (ready to render as a transcript).
         """
         if is_channel:
-            where, params = "is_channel = 1 AND channel_idx = ?", [channel_idx]
+            where, params = "is_channel = 1 AND channel_id = ?", [channel_id]
         else:
             where, params = "is_channel = 0 AND peer = ?", [(peer or "").lower()]
         rows = self._conn.execute(
@@ -463,10 +464,37 @@ class Repository:
         rows = self._conn.execute(
             "SELECT * FROM messages WHERE id IN ("
             "  SELECT MAX(id) FROM messages GROUP BY "
-            "  CASE WHEN is_channel = 1 THEN 'chan:' || channel_idx "
+            "  CASE WHEN is_channel = 1 THEN 'chan:' || channel_id "
             "       ELSE 'dm:' || peer END)"
         ).fetchall()
         return {msg.key: msg for msg in (self._row_to_chat(r) for r in rows)}
+
+    def backfill_channel_ids(self, mapping: dict[int, str]) -> int:
+        """Give legacy channel messages an identity, keyed by the slot they were stored on.
+
+        Messages written before channel history was keyed by identity have a ``NULL``
+        ``channel_id``. There is no record of which channel occupied each slot back then, so
+        the best available guess is the channel *currently* at that slot. ``mapping`` maps a
+        slot index to the identity of the channel now there; only rows still missing an
+        identity are touched, so this is safe to run on every startup.
+
+        Args:
+            mapping: Slot index to the current channel identity at that slot.
+
+        Returns:
+            The number of legacy rows given an identity.
+        """
+        changed = 0
+        for idx, channel_id in mapping.items():
+            cur = self._conn.execute(
+                "UPDATE messages SET channel_id = ? "
+                "WHERE is_channel = 1 AND channel_id IS NULL AND channel_idx = ?",
+                (channel_id, idx),
+            )
+            changed += cur.rowcount
+        if changed:
+            self._conn.commit()
+        return changed
 
     @staticmethod
     def _row_to_chat(row: sqlite3.Row) -> ChatMessage:
@@ -475,6 +503,7 @@ class Repository:
             text=row["text"],
             outbound=bool(row["outbound"]),
             is_channel=bool(row["is_channel"]),
+            channel_id=row["channel_id"],
             channel_idx=row["channel_idx"],
             peer=row["peer"],
             peer_name=row["peer_name"],

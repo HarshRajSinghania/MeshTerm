@@ -36,24 +36,26 @@ class DevicesTool(Tool):
     order = 5
 
     async def prompt_params(self, ctx: AppContext) -> dict[str, Any]:
-        """In the menu, offer to change the session's active device.
+        """In the menu, show the device picker so the user can change the active device.
+
+        The picker itself carries a "Back" row, so it reads like every other menu screen
+        rather than a bare yes/no confirmation.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"select": True}`` when the user opted to re-pick a device, else ``{}``.
+            Always ``{}`` — the table in :meth:`run` reflects the (possibly changed) device.
         """
         if ctx.mock:
-            return {}
-        change = await ctx.ui.confirm("Change the active companion device?", default=False)
-        if not change:
             return {}
 
         from ..ui.device_picker import prompt_device
 
         devices = discover_devices()
-        chosen = await prompt_device(ctx.ui, devices, ctx.device_store.load())
+        chosen = await prompt_device(
+            ctx.ui, devices, ctx.device_store.load(), cancel_label="Back"
+        )
         if chosen is not None:
             ctx.selected_device = chosen
             ctx.port_override = chosen.port
@@ -61,7 +63,7 @@ class DevicesTool(Tool):
                 f"[ok]●[/ok] active device set to [accent]{chosen.label}[/accent] "
                 "[muted](remembered once it connects)[/muted]"
             )
-        return {"select": True}
+        return {}
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Enumerate serial devices and render them as a table.

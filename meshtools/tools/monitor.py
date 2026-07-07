@@ -23,7 +23,7 @@ from rich.text import Text
 
 from ..context import AppContext
 from ..core.models import HeardNode
-from ..ui.tui import Choice
+from ..ui.tui import Choice, Separator
 from .base import Tool, ToolResult, register
 
 
@@ -52,6 +52,7 @@ class MonitorTool(Tool):
             [
                 Choice(toggle_label, value="toggle"),
                 Choice("View heard nodes (all time)", value="view"),
+                Separator(" "),
                 Choice("Back", value="__back__"),
             ],
         )

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS messages (
     run_id      INTEGER REFERENCES runs(id) ON DELETE SET NULL,
     outbound    INTEGER NOT NULL DEFAULT 0,
     is_channel  INTEGER NOT NULL DEFAULT 0,
-    channel_idx INTEGER,
+    channel_id  TEXT,             -- a channel's slot-independent identity (its history key)
+    channel_idx INTEGER,          -- the slot it went out on / arrived on (reference only)
     peer        TEXT,
     peer_name   TEXT,
     text        TEXT    NOT NULL,
@@ -112,7 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_trace_hops_trace ON trace_hops(trace_id);
 CREATE INDEX IF NOT EXISTS idx_tx_samples_run ON tx_samples(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
-CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_idx);
 CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);
 """
 
@@ -131,9 +131,30 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database's tables up to the current schema.
+
+    ``executescript(_SCHEMA)`` only *creates* missing tables (``IF NOT EXISTS``); it cannot
+    add a column to a table an older version already created. Column additions are applied
+    here, guarded so the migration is idempotent and safe to run on every open. Indexes on
+    added columns are created here too (not in ``_SCHEMA``), so ``executescript`` never
+    references a column an older database hasn't grown yet.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "channel_id" not in columns:
+        # v3 -> v4: channel history moved from being keyed by slot index to a
+        # slot-independent channel identity. Existing rows are backfilled lazily at runtime
+        # (see Repository.backfill_channel_ids) once the device's channels can be read.
+        conn.execute("ALTER TABLE messages ADD COLUMN channel_id TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id)"
+    )

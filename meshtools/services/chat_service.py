@@ -16,14 +16,30 @@ communications, not overheard noise, so they are always recorded while a device 
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Optional
 
+from ..core.channels import channel_identity
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Message, utcnow
 
 if TYPE_CHECKING:
     from ..context import AppContext
+
+#: Channel slots the firmware exposes; matches the chat/channel-manager probes.
+_MAX_CHANNELS = 8
+
+
+def _fallback_channel_id(idx: Optional[int]) -> str:
+    """Identity for a channel we can't read (an unconfigured/unknown slot).
+
+    Only used when the device has no channel to identify at ``idx`` — a degenerate case a
+    configured channel never hits. It is still slot-derived (there is nothing intrinsic to
+    key on), so it is the one place the old slot coupling survives, and only for channels
+    that have no real identity yet.
+    """
+    return f"slot:{idx}"
 
 
 class ChatService:
@@ -47,6 +63,10 @@ class ChatService:
         self._unread: dict[str, int] = {}
         self._active: Optional[str] = None
         self._session_count = 0
+        # Cache of channel slot index -> the channel's intrinsic identity. The wire only
+        # tells us a message's slot index, so this bridges it to the identity history is
+        # keyed by. Rebuilt from the device on demand (see :meth:`refresh_channels`).
+        self._channel_ids: dict[int, str] = {}
 
     @property
     def active(self) -> bool:
@@ -79,6 +99,50 @@ class ChatService:
         if key is not None:
             self._unread.pop(key, None)
 
+    async def refresh_channels(self) -> None:
+        """Rebuild the slot-index -> channel-identity map from the device's channel table.
+
+        The map is what lets an inbound message (which carries only a slot index) be recorded
+        against its channel's intrinsic identity. It is rebuilt wholesale so a reordered,
+        renamed, re-keyed, or cleared slot is reflected accurately.
+        """
+        device = await self._ctx.device()
+        ids: dict[int, str] = {}
+        for idx in range(_MAX_CHANNELS):
+            try:
+                payload = await device.get_channel(idx)
+            except Exception:  # noqa: BLE001 - firmware may not support channel reads
+                break
+            if not payload:
+                continue  # an empty slot; keep scanning (slots can be non-contiguous)
+            name = str(payload.get("channel_name") or "")
+            secret = bytes(payload.get("channel_secret") or b"\x00" * 16)
+            ids[idx] = channel_identity(name, secret)
+        self._channel_ids = ids
+
+    async def channel_id_for(self, idx: int) -> str:
+        """Resolve a channel slot index to its intrinsic identity (reading the device once).
+
+        Refreshes the cache on a miss, then falls back to a slot-derived identity only if the
+        device has no channel there. The fallback is cached so a stream of messages on an
+        unconfigured slot doesn't re-read the device on every one.
+
+        Args:
+            idx: The channel slot index the wire reported.
+
+        Returns:
+            The channel's identity, suitable for keying its history.
+        """
+        cid = self._channel_ids.get(idx)
+        if cid is not None:
+            return cid
+        await self.refresh_channels()
+        cid = self._channel_ids.get(idx)
+        if cid is None:
+            cid = _fallback_channel_id(idx)
+            self._channel_ids[idx] = cid
+        return cid
+
     async def start(self) -> None:
         """Begin recording inbound messages to history. Idempotent.
 
@@ -107,6 +171,22 @@ class ChatService:
         self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.MESSAGE)
         self._run_id = run_id
         self._ctx.log.info("chat recording (run %s)", run_id)
+        await self._prime_channels()
+
+    async def _prime_channels(self) -> None:
+        """Warm the channel-identity cache and backfill legacy (index-keyed) history.
+
+        Reading the channels up front means most inbound messages resolve their identity
+        from the cache without a device round-trip. It also backfills any pre-identity
+        messages using the channels currently in each slot — best-effort, since the old
+        slot-to-channel mapping wasn't recorded.
+        """
+        try:
+            await self.refresh_channels()
+            if self._channel_ids:
+                self._ctx.repo.backfill_channel_ids(dict(self._channel_ids))
+        except Exception as exc:  # noqa: BLE001 - priming is best-effort, never fatal
+            self._ctx.log.debug("chat: channel priming failed: %s", exc)
 
     async def stop(self) -> None:
         """Stop recording and close the run record. Idempotent.
@@ -134,11 +214,38 @@ class ChatService:
     def _record_inbound(self, run_id: int, message: Message) -> None:
         """Persist one inbound message and bump its conversation's unread count.
 
+        Channel messages are keyed by identity, but the wire carries only a slot index. When
+        the slot is already cached this resolves synchronously; on a cache miss (a channel
+        added since the last device read) resolution is deferred to the event loop so the
+        message is still recorded against its intrinsic identity.
+
         Args:
             run_id: The owning background ``chat`` run.
             message: The received message to record.
         """
-        chat = ChatMessage.from_message(message)
+        if message.is_channel:
+            channel_id = self._channel_ids.get(message.channel)
+            if channel_id is None:
+                asyncio.ensure_future(self._resolve_then_record(run_id, message))
+                return
+        else:
+            channel_id = None
+        self._store_inbound(run_id, message, channel_id)
+
+    async def _resolve_then_record(self, run_id: int, message: Message) -> None:
+        """Resolve an uncached channel's identity off the event loop, then record it."""
+        try:
+            channel_id = await self.channel_id_for(message.channel)
+        except Exception as exc:  # noqa: BLE001 - fall back rather than drop the message
+            self._ctx.log.debug("chat: channel resolve failed: %s", exc)
+            channel_id = _fallback_channel_id(message.channel)
+        self._store_inbound(run_id, message, channel_id)
+
+    def _store_inbound(
+        self, run_id: int, message: Message, channel_id: Optional[str]
+    ) -> None:
+        """Persist an inbound message under a resolved identity and bump its unread count."""
+        chat = ChatMessage.from_message(message, channel_id=channel_id)
         self._session_count += 1
         if chat.key != self._active:
             self._unread[chat.key] = self._unread.get(chat.key, 0) + 1
@@ -192,6 +299,7 @@ class ChatService:
             text=text,
             outbound=True,
             is_channel=True,
+            channel_id=await self.channel_id_for(index),
             channel_idx=index,
             peer_name=label,
             created_at=utcnow(),

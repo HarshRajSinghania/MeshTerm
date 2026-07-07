@@ -20,6 +20,7 @@ def _strip_ansi(text: str) -> str:
     """Remove ANSI color escapes from rendered lines for plain-text assertions."""
     return _ANSI.sub("", text)
 
+from meshtools.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshtools.core.connection import MockDevice
 from meshtools.core.events import MeshEvent
 from meshtools.core.models import (
@@ -32,6 +33,7 @@ from meshtools.core.models import (
 from meshtools.persistence.repository import Repository
 from meshtools.services.chat_service import ChatService
 from meshtools.services.event_hub import EventHub
+from meshtools.tools.chat import _LiveLasts, _preview, _title
 from meshtools.ui.chat import ChatScreen
 from meshtools.ui.tui.screen import CANCEL
 
@@ -72,8 +74,8 @@ def repo(tmp_path: Path) -> Repository:
 
 
 def test_conversation_key_distinguishes_channels_and_directs() -> None:
-    """Channel and direct keys are stable and case-insensitive on the peer."""
-    assert conversation_key(True, 0, None) == "chan:0"
+    """Channel keys use the channel's identity; direct keys are case-insensitive on the peer."""
+    assert conversation_key(True, "deadbeef", None) == "chan:deadbeef"
     assert conversation_key(False, None, "AABBCC") == "dm:aabbcc"
 
     contact = Contact(name="Alice", public_key="d4e5" + "0" * 60, key_prefix="d4e5f6a7")
@@ -81,8 +83,8 @@ def test_conversation_key_distinguishes_channels_and_directs() -> None:
     assert conv.key == "dm:d4e5f6a7"
     assert conv.peer == "d4e5f6a7"
 
-    chan = Conversation(label="#public", is_channel=True, channel_idx=2)
-    assert chan.key == "chan:2"
+    chan = Conversation(label="#public", is_channel=True, channel_idx=2, channel_id="deadbeef")
+    assert chan.key == "chan:deadbeef"  # keyed by identity, not the slot index
     assert chan.peer is None
 
 
@@ -174,23 +176,152 @@ def test_record_and_load_direct_conversation(repo: Repository) -> None:
 
 
 def test_record_and_load_channel_conversation(repo: Repository) -> None:
-    """Channel messages are keyed by slot, isolated from direct messages."""
-    repo.record_chat_message(ChatMessage(text="c0", is_channel=True, channel_idx=0))
-    repo.record_chat_message(ChatMessage(text="c1", is_channel=True, channel_idx=1))
+    """Channel messages are keyed by channel identity, isolated from direct messages."""
+    repo.record_chat_message(ChatMessage(text="c0", is_channel=True, channel_id="aa00"))
+    repo.record_chat_message(ChatMessage(text="c1", is_channel=True, channel_id="bb11"))
 
-    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_idx=0)] == ["c0"]
-    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_idx=1)] == ["c1"]
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="aa00")] == ["c0"]
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="bb11")] == ["c1"]
 
 
 def test_last_chat_messages_returns_latest_per_conversation(repo: Repository) -> None:
     """The picker preview shows the newest message in each conversation."""
     repo.record_chat_message(ChatMessage(text="old", peer="aa"))
     repo.record_chat_message(ChatMessage(text="new", peer="aa"))
-    repo.record_chat_message(ChatMessage(text="chan", is_channel=True, channel_idx=0))
+    repo.record_chat_message(ChatMessage(text="chan", is_channel=True, channel_id="aa00"))
 
     lasts = repo.last_chat_messages()
     assert lasts["dm:aa"].text == "new"
-    assert lasts["chan:0"].text == "chan"
+    assert lasts["chan:aa00"].text == "chan"
+
+
+# -- picker row rendering -----------------------------------------------------
+
+
+class _FakeChat:
+    """Stand-in for the chat service exposing just the unread lookup a row title reads."""
+
+    def __init__(self, unread: dict[str, int]) -> None:
+        self._unread = unread
+
+    def unread(self, key: str) -> int:
+        return self._unread.get(key, 0)
+
+
+class _RowCtx:
+    """Minimal ctx exposing only what the picker-row helpers touch (repo + chat)."""
+
+    def __init__(self, repo: Repository, unread: dict[str, int] | None = None) -> None:
+        self.repo = repo
+        self.chat = _FakeChat(unread or {})
+
+
+def test_live_lasts_refreshes_preview_after_ttl(repo: Repository) -> None:
+    """A new message becomes visible through _LiveLasts once the cache TTL lapses."""
+    repo.record_chat_message(ChatMessage(text="first", is_channel=True, channel_id="c0"))
+    live = _LiveLasts(_RowCtx(repo), seed=repo.last_chat_messages(), ttl=0)  # 0 => always fresh
+    assert live.get("chan:c0").text == "first"
+    repo.record_chat_message(ChatMessage(text="second", is_channel=True, channel_id="c0"))
+    assert live.get("chan:c0").text == "second"  # picked up live, not stuck on the seed
+
+
+def test_live_lasts_serves_seed_within_ttl(repo: Repository) -> None:
+    """Within the TTL the seeded snapshot is served without re-querying the repository."""
+    live = _LiveLasts(_RowCtx(repo), seed={"chan:c0": ChatMessage(text="seed")}, ttl=999)
+    repo.record_chat_message(ChatMessage(text="later", is_channel=True, channel_id="c0"))
+    assert live.get("chan:c0").text == "seed"
+
+
+def test_preview_prefixes_own_messages_only() -> None:
+    """Only outbound messages get a ``you:`` prefix; inbound text is shown verbatim.
+
+    Channel senders are embedded inline in the message text by the firmware, so no author is
+    synthesized (that would double it), and a direct message's author is the row label.
+    """
+    chan_in = ChatMessage(text="Bob: hi", is_channel=True, channel_idx=0)  # sender inline
+    assert _preview(chan_in) == "Bob: hi"
+    dm_in = ChatMessage(text="hey", peer="aa", peer_name="Bob")
+    assert _preview(dm_in) == "hey"
+    mine = ChatMessage(text="yo", outbound=True, is_channel=True, channel_idx=0)
+    assert _preview(mine) == "you: yo"
+
+
+def test_preview_ellipsizes_long_text() -> None:
+    """An over-long preview is clipped to the width budget with a trailing ellipsis."""
+    long = ChatMessage(text="x" * 100, is_channel=True, channel_idx=0)
+    out = _preview(long, width=10)
+    assert len(out) == 10 and out.endswith("…")
+
+
+def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
+    """A channel row renders its live unread badge and its author-prefixed preview."""
+    conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
+    ctx = _RowCtx(repo, unread={"chan:c0": 3})
+    last = ChatMessage(text="Bob: hi there", is_channel=True, channel_id="c0")  # sender inline
+    title = _title(ctx, conv, {"chan:c0": last})
+    line = title.plain  # a Text, since there is unread
+    assert line.startswith("🔒 General")  # a private channel leads with its openness glyph
+    assert "● 3" in line
+    assert "Bob: hi there" in line
+
+
+def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
+    """With unread the row is a Text whose ``●`` glyph (only) is styled red; else a plain str."""
+    from rich.text import Text
+
+    conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
+    unread = _title(_RowCtx(repo, unread={"chan:c0": 2}), conv, {})
+    assert isinstance(unread, Text)
+    dot = unread.plain.index("●")
+    reddened = [
+        span for span in unread.spans if span.style == "err" and span.start <= dot < span.end
+    ]
+    assert reddened and all(span.end - span.start == 1 for span in reddened)  # just the glyph
+
+    read = _title(_RowCtx(repo, unread={}), conv, {})
+    assert isinstance(read, str)  # no badge -> plain string, no styling
+
+
+def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository) -> None:
+    """The preview starts at the same column whether the label is short or (clipped) long."""
+    ctx = _RowCtx(repo)
+    short = Conversation(label="A", is_channel=True, channel_idx=0, channel_id="c0")
+    long = Conversation(label="A much longer channel name here", is_channel=True, channel_idx=1, channel_id="c1")
+    m0 = ChatMessage(text="X: hello", is_channel=True, channel_id="c0")
+    m1 = ChatMessage(text="Y: hello", is_channel=True, channel_id="c1")
+    l0 = _title(ctx, short, {"chan:c0": m0})
+    l1 = _title(ctx, long, {"chan:c1": m1})
+    assert l0.index("X: hello") == l1.index("Y: hello")
+
+
+def test_title_leads_with_openness_glyph(repo: Repository) -> None:
+    """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 fixed-key public, 🔒 private."""
+    ctx = _RowCtx(repo)
+    head = lambda conv: _title(ctx, conv, {}).split(" ", 1)[0]
+    named = Conversation(
+        label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
+    )
+    public = Conversation(
+        label="Public", is_channel=True, channel_id="c1", secret=DEFAULT_PUBLIC_SECRET
+    )
+    private = Conversation(
+        label="Ops", is_channel=True, channel_id="c2", secret=bytes(range(16))
+    )
+    assert head(named) == "＃"
+    assert head(public) == "🌐"
+    assert head(private) == "🔒"
+
+
+def test_title_contact_glyph_reflects_conversation_history(repo: Repository) -> None:
+    """A contact shows 💬 once we've exchanged messages, 👤 before any conversation exists."""
+    ctx = _RowCtx(repo)
+    contact = Conversation(
+        label="Alice", is_channel=False, contact=Contact(name="Alice", public_key="d4" + "0" * 62)
+    )
+    head = lambda lasts: _title(ctx, contact, lasts).split(" ", 1)[0]
+    assert head({}) == "👤"  # no history yet — a contact we haven't talked to
+    last = ChatMessage(text="hi", peer=contact.peer)
+    assert head({contact.key: last}) == "💬"  # we've exchanged messages
 
 
 # -- chat service -------------------------------------------------------------
@@ -430,7 +561,8 @@ async def test_service_send_records_outbound(repo: Repository) -> None:
         assert sent.outbound is True and sent.acked is True
 
         await chat.send_channel(0, "hello all", label="#public")
-        stored = repo.recent_chat_messages(is_channel=True, channel_idx=0)
+        channel_id = await chat.channel_id_for(0)
+        stored = repo.recent_chat_messages(is_channel=True, channel_id=channel_id)
         assert [m.text for m in stored] == ["hello all"]
         assert stored[0].outbound is True
     finally:

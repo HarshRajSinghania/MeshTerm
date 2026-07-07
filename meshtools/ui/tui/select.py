@@ -9,7 +9,7 @@ arbitrary objects, so the same screen drives the main menu (tool names), the dev
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Union
 
 from rich.text import Text
 
@@ -22,12 +22,25 @@ class Choice:
     """One selectable row.
 
     Attributes:
-        title: Text shown for the row.
+        title: Text shown for the row — a plain string or a Rich :class:`~rich.text.Text`
+            (for a coloured segment such as an unread badge). Either may instead be a
+            zero-argument callable resolved fresh on every repaint, so a row can track state
+            that changes while the list is open.
         value: Value returned when the row is chosen.
     """
 
-    title: str
+    title: Union[str, Text, Callable[[], Union[str, Text]]]
     value: Any
+
+    @property
+    def label(self) -> Union[str, Text]:
+        """The row's current text, resolving a callable title on each read."""
+        return self.title() if callable(self.title) else self.title
+
+
+def _plain(label: Union[str, Text]) -> str:
+    """The plain-text form of a row label, for filtering (a :class:`Text` keeps its ``plain``)."""
+    return label.plain if isinstance(label, Text) else label
 
 
 @dataclass
@@ -93,7 +106,9 @@ class SelectScreen(Screen):
             return self._items
         needle = self._filter.lower()
         return [
-            it for it in self._items if isinstance(it, Choice) and needle in it.title.lower()
+            it
+            for it in self._items
+            if isinstance(it, Choice) and needle in _plain(it.label).lower()
         ]
 
     def _choices(self, rows: Optional[list] = None) -> list:
@@ -120,7 +135,15 @@ class SelectScreen(Screen):
             is_sel = item is selected
             pointer = "❯ " if is_sel else "  "
             style = "brand" if is_sel else ""
-            text = Text(pointer + item.title, style=style, no_wrap=True, overflow="ellipsis")
+            label = item.label
+            # A Text label carries its own spans (e.g. a red badge); keep them and lay the
+            # row's base style underneath, so the highlight tints the row while the badge
+            # keeps its colour. A plain string is styled uniformly as before.
+            text = Text(pointer, style=style)
+            text.append_text(label if isinstance(label, Text) else Text(label))
+            text.style = style
+            text.no_wrap = True
+            text.overflow = "ellipsis"
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
         if not choices:

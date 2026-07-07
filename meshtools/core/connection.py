@@ -455,6 +455,7 @@ class MeshCoreDevice(Device):
                     name=info.get("adv_name", name),
                     public_key=info.get("public_key", ""),
                     key_prefix=info.get("public_key", "")[:12],
+                    last_seen=_advert_time(info.get("last_advert")),
                 )
             )
         return contacts
@@ -1454,6 +1455,27 @@ def _as_float(value: object) -> Optional[float]:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _advert_time(last_advert: object) -> Optional[datetime]:
+    """Convert a contact's ``last_advert`` Unix timestamp to a UTC datetime.
+
+    The firmware reports the seconds-since-epoch of a contact's most recent advert; a
+    zero/absent/garbage value means "never heard", which maps to ``None``.
+
+    Args:
+        last_advert: The raw ``last_advert`` field from a contact payload.
+
+    Returns:
+        A timezone-aware UTC :class:`datetime`, or ``None`` when unknown.
+    """
+    try:
+        seconds = int(last_advert)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc)
 
 
 def _mock_pub(prefix: str) -> str:
