@@ -133,35 +133,44 @@ class MapCanvas:
 
     # -- overlay (markers + labels) --------------------------------------------
 
-    def marker(
-        self,
-        x: int,
-        y: int,
-        glyph: str,
-        color: RGB,
-        *,
-        label: str = "",
-        label_color: Optional[RGB] = None,
-    ) -> None:
-        """Place a marker glyph at dot ``(x, y)`` with an optional label beside it.
+    def marker(self, x: int, y: int, glyph: str, color: RGB) -> None:
+        """Place a marker glyph at dot ``(x, y)``.
 
-        Markers always draw (they are the point of the map). The label is placed to the
-        right when there's room, otherwise to the left, and its cells are reserved so
-        basemap labels avoid them.
+        Markers always draw (they are the point of the map) and reserve their cell so
+        labels route around them. The label, if any, is placed separately via
+        :meth:`marker_label` so it can be dropped (bare glyph) when the map is crowded.
         """
         cx, cy = x >> 1, y >> 2
         if not (0 <= cx < self.cell_w and 0 <= cy < self.cell_h):
             return
         self._overlay[(cx, cy)] = (glyph, color, True)
         self._occupied.add((cx, cy))
-        if label:
-            lc = label_color or color
-            # Prefer the label to the right of the marker (one blank cell gap); fall back to
-            # the left when it would overflow — never overwriting the marker glyph itself.
-            if cx + 2 + len(label) <= self.cell_w:
-                self._place_run(cx + 2, cy, label, lc, bold=True)
-            else:
-                self._place_run(max(0, cx - 1 - len(label)), cy, label, lc, bold=True)
+
+    def marker_label(
+        self,
+        x: int,
+        y: int,
+        text: str,
+        color: RGB,
+        *,
+        label_color: Optional[RGB] = None,
+    ) -> bool:
+        """Place a label beside the marker at dot ``(x, y)``, only if it fits cleanly.
+
+        The label goes to the right of the marker (one blank cell gap) when there's room,
+        else to the left — but never over another marker or label. When neither side is
+        free the label is dropped and just the marker glyph shows, so a crowded map stays
+        legible. Returns whether the label was placed.
+        """
+        if not text:
+            return False
+        cx, cy = x >> 1, y >> 2
+        if not (0 <= cx < self.cell_w and 0 <= cy < self.cell_h):
+            return False
+        lc = label_color or color
+        if self._place_run(cx + 2, cy, text, lc, bold=True, checked=True):
+            return True
+        return self._place_run(cx - 1 - len(text), cy, text, lc, bold=True, checked=True)
 
     def place_label(
         self, x: float, y: float, text: str, color: RGB, *, bold: bool = False
@@ -196,8 +205,11 @@ class MapCanvas:
         """Write ``text`` starting at cell ``(start_cx, cy)``.
 
         With ``checked`` the run is skipped entirely if any target cell (or a one-cell
-        horizontal margin) is already claimed or off-canvas; otherwise it is forced and
-        simply clipped to the canvas. Returns whether anything was placed.
+        margin on every side, including the rows directly above and below) is already
+        claimed or off-canvas; otherwise it is forced and simply clipped to the canvas.
+        The vertical margin keeps text from stacking flush across rows, which is what
+        otherwise lets dense areas silt up into a solid block of labels. Returns whether
+        anything was placed.
         """
         if not (0 <= cy < self.cell_h):
             return False
@@ -206,7 +218,11 @@ class MapCanvas:
             if start_cx < 0 or start_cx + len(text) > self.cell_w:
                 return False
             margin = range(start_cx - 1, start_cx + len(text) + 1)
-            if any((mx, cy) in self._occupied for mx in margin):
+            if any(
+                (mx, my) in self._occupied
+                for my in (cy - 1, cy, cy + 1)
+                for mx in margin
+            ):
                 return False
         placed = False
         for offset, ch in enumerate(text):

@@ -6,6 +6,8 @@ the UI never blocks on the network), and redraws via :func:`~meshtools.ui.map_re
 render_map`. Keys:
 
 * ``w`` / ``a`` / ``s`` / ``d`` (or the arrow keys) pan north / west / south / east,
+* holding **Shift** (Shift+arrows, or the uppercase ``W`` / ``A`` / ``S`` / ``D``) pans by a
+  single character cell for fine positioning,
 * ``=`` / ``+`` zoom in, ``-`` / ``_`` zoom out,
 * ``r`` recenters and refits to the nodes,
 * ``Esc`` / ``q`` leaves the map.
@@ -29,8 +31,19 @@ from .tui.screen import Screen
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Fraction of the view a single pan keypress moves.
+#: Fraction of the view a single (coarse) pan keypress moves.
 _PAN_STEP = 0.30
+
+#: Unit pan direction (east, south) for each directional action / key.
+_PAN_DIRS: dict[str, tuple[int, int]] = {
+    "up": (0, -1),
+    "down": (0, 1),
+    "left": (-1, 0),
+    "right": (1, 0),
+}
+
+#: Which pan direction each letter key drives (w/a/s/d ≈ north/west/south/east).
+_PAN_KEYS: dict[str, str] = {"w": "up", "a": "left", "s": "down", "d": "right"}
 
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
@@ -73,7 +86,7 @@ class MapScreen(Screen):
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hints plus a live tile-loading indicator."""
-        base = "wasd/↑↓←→ pan · +/- zoom · r reset · Esc back"
+        base = "wasd/↑↓←→ pan (⇧ fine) · +/- zoom · r reset · Esc back"
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:
@@ -150,40 +163,45 @@ class MapScreen(Screen):
             return
         if vp is None:
             return
-        if action == "up":
-            self._viewport = vp.panned(0, -_PAN_STEP)
-        elif action == "down":
-            self._viewport = vp.panned(0, _PAN_STEP)
-        elif action == "left":
-            self._viewport = vp.panned(-_PAN_STEP, 0)
-        elif action == "right":
-            self._viewport = vp.panned(_PAN_STEP, 0)
+        if action in _PAN_DIRS:
+            self._pan(vp, action, fine=False)
+        elif action.startswith("shift_") and action[len("shift_"):] in _PAN_DIRS:
+            self._pan(vp, action[len("shift_"):], fine=True)
         elif action == "text":
             self._handle_key(data, vp)
 
+    def _pan(self, vp: Viewport, direction: str, *, fine: bool) -> None:
+        """Pan by one coarse step, or — when ``fine`` — a single character cell.
+
+        A character cell is 2 braille dots wide and 4 tall, so the fine step is that many
+        dots expressed as a fraction of the current view.
+        """
+        dx, dy = _PAN_DIRS[direction]
+        if fine:
+            self._viewport = vp.panned(dx * 2 / vp.dot_w, dy * 4 / vp.dot_h)
+        else:
+            self._viewport = vp.panned(dx * _PAN_STEP, dy * _PAN_STEP)
+
     def _handle_key(self, key: str, vp: Viewport) -> None:
-        """Handle a printable-key action (pan/zoom/reset/quit)."""
-        key = key.lower()
-        if key == "w":
-            self._viewport = vp.panned(0, -_PAN_STEP)
-        elif key == "s":
-            self._viewport = vp.panned(0, _PAN_STEP)
-        elif key == "a":
-            self._viewport = vp.panned(-_PAN_STEP, 0)
-        elif key == "d":
-            self._viewport = vp.panned(_PAN_STEP, 0)
-        elif key in ("=", "+"):
+        """Handle a printable-key action (pan/zoom/reset/quit).
+
+        An uppercase pan letter (Shift held) pans by a single cell for fine positioning.
+        """
+        low = key.lower()
+        if low in _PAN_KEYS:
+            self._pan(vp, _PAN_KEYS[low], fine=key.isupper())
+        elif low in ("=", "+"):
             self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
-        elif key in ("-", "_"):
+        elif low in ("-", "_"):
             self._viewport = vp.zoomed(-1)
-        elif key == "r":
+        elif low == "r":
             self._viewport = Viewport.fit(
                 [(m.lat, m.lon) for m in self._markers],
                 vp.dot_w,
                 vp.dot_h,
                 max_zoom=self._max_tile_zoom,
             )
-        elif key == "q":
+        elif low == "q":
             self.resolve(None)
 
 

@@ -50,12 +50,28 @@ class Contact:
         public_key: Full public key hex string, if known.
         key_prefix: Short key prefix used to address the node.
         last_seen: When the node was last heard, if known.
+        node_type: Advert type of the node (see the ``NODE_TYPE_*`` constants), if known.
+        lat: Latitude the node last advertised (decimal degrees), if it shared one.
+        lon: Longitude the node last advertised (decimal degrees), if it shared one.
     """
 
     name: str
     public_key: str = ""
     key_prefix: str = ""
     last_seen: Optional[datetime] = None
+    node_type: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+    @property
+    def has_location(self) -> bool:
+        """Whether this contact advertised a usable latitude/longitude."""
+        return self.lat is not None and self.lon is not None
+
+    @property
+    def is_repeater(self) -> bool:
+        """Whether this contact advertises as a repeater (fixed infrastructure)."""
+        return self.node_type == NODE_TYPE_REPEATER
 
 
 @dataclass(slots=True)

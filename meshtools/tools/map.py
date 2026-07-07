@@ -54,8 +54,8 @@ class MapTool(Tool):
         markers = await self._gather(ctx)
         if not markers:
             ctx.ui.note(
-                "[muted]no nodes have shared a location yet — turn on the passive "
-                "monitor and wait for located adverts[/muted]"
+                "[muted]no contacts or heard nodes have shared a location yet — a node "
+                "appears here once it advertises coordinates[/muted]"
             )
             return ToolResult(summary={"located": 0})
 
@@ -85,29 +85,62 @@ class MapTool(Tool):
     # -- marker gathering -------------------------------------------------------
 
     async def _gather(self, ctx: AppContext) -> list["MapMarker"]:
-        """Collect located heard nodes plus our own node (when its position is known)."""
+        """Collect every located node to plot: the device's contacts, plus our own node.
+
+        The companion's **contact list** is the authoritative source for a node's name,
+        type (repeater vs. leaf), and advertised position — the passive-monitor
+        observations only carry a location for the rare node that broadcasts one in an
+        advert. So contacts drive the markers, and each contact is enriched with signal
+        detail from the observations when we've overheard it directly.
+        """
         from ..ui.map_render import MapMarker
 
+        observed = {n.node: n for n in ctx.repo.heard_nodes() if n.node}
         markers: list[MapMarker] = []
-        for node in ctx.repo.heard_nodes():
-            if not node.has_location:
+        seen: set[str] = set()
+
+        for contact in await self._contacts(ctx):
+            if not contact.has_location:
                 continue
-            detail = f"{node.count} pkts"
-            if node.median_snr is not None:
-                detail += f" · {node.median_snr:+.1f} dB"
+            key = contact.key_prefix or (contact.public_key or "")[:12]
+            if key:
+                seen.add(key)
+            markers.append(
+                MapMarker(
+                    label=contact.name or key or "?",
+                    lat=float(contact.lat),
+                    lon=float(contact.lon),
+                    is_repeater=contact.is_repeater,
+                    detail=_signal_detail(observed.get(key)),
+                )
+            )
+
+        # A node we overheard advertising a location but that isn't in our contacts.
+        for node in observed.values():
+            if not node.has_location or node.node in seen:
+                continue
             markers.append(
                 MapMarker(
                     label=node.name or node.node or "?",
                     lat=float(node.lat),
                     lon=float(node.lon),
                     is_repeater=node.is_repeater,
-                    detail=detail,
+                    detail=_signal_detail(node),
                 )
             )
+
         self_marker = await self._self_marker(ctx)
         if self_marker is not None:
             markers.append(self_marker)
         return markers
+
+    @staticmethod
+    async def _contacts(ctx: AppContext) -> list:
+        """Fetch the device's contacts, best-effort (an unreachable radio yields none)."""
+        try:
+            return await (await ctx.device()).get_contacts()
+        except Exception:  # noqa: BLE001 - the map still works from observations alone
+            return []
 
     @staticmethod
     async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
@@ -215,6 +248,16 @@ def _legend(markers: list["MapMarker"]) -> Table:
             Text(m.detail, style="muted"),
         )
     return table
+
+
+def _signal_detail(node: object) -> str:
+    """A compact 'N pkts · +x.x dB' reception note for a heard node, or '' if unheard."""
+    if node is None:
+        return ""
+    detail = f"{node.count} pkts"  # type: ignore[attr-defined]
+    if node.median_snr is not None:  # type: ignore[attr-defined]
+        detail += f" · {node.median_snr:+.1f} dB"  # type: ignore[attr-defined]
+    return detail
 
 
 def _as_float(value: object) -> Optional[float]:

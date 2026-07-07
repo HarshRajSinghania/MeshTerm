@@ -297,17 +297,35 @@ def _add_line_label(
     frame.labels.append(_Label(rank, dx, dy, text, parse_hex(color), bold, min_zoom))
 
 
+def _marker_style(marker: MapMarker) -> tuple[str, str]:
+    """The glyph and colour for a marker: self, repeater, or leaf node."""
+    if marker.is_self:
+        return _SELF
+    if marker.is_repeater:
+        return _REPEATER
+    return _NODE
+
+
 def _draw_nodes(canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker]) -> None:
-    """Overlay mesh nodes (lowest priority first, so self/repeaters land on top)."""
-    for marker in sorted(markers, key=lambda m: m._rank()):
+    """Overlay mesh nodes: every glyph, then labels by importance until they collide.
+
+    Glyphs are drawn lowest-priority first so self/repeaters land on top of leaf nodes.
+    Labels are then placed highest-priority first — self, then repeaters, then leaf
+    nodes — each only if it fits without overlapping. So on a crowded map the important
+    labels win the available space and the rest show as a bare marker (no overlap).
+    """
+    placed: list[tuple[MapMarker, int, int]] = []
+    for marker in markers:
         x, y = viewport.lonlat_to_dot(marker.lat, marker.lon)
         ix, iy = int(round(x)), int(round(y))
         if not (0 <= ix < viewport.dot_w and 0 <= iy < viewport.dot_h):
             continue
-        if marker.is_self:
-            glyph, color = _SELF
-        elif marker.is_repeater:
-            glyph, color = _REPEATER
-        else:
-            glyph, color = _NODE
-        canvas.marker(ix, iy, glyph, parse_hex(color), label=marker.label)
+        placed.append((marker, ix, iy))
+
+    for marker, ix, iy in sorted(placed, key=lambda p: p[0]._rank()):
+        glyph, color = _marker_style(marker)
+        canvas.marker(ix, iy, glyph, parse_hex(color))
+
+    for marker, ix, iy in sorted(placed, key=lambda p: -p[0]._rank()):
+        _, color = _marker_style(marker)
+        canvas.marker_label(ix, iy, marker.label, parse_hex(color))

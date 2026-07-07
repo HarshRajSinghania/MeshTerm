@@ -484,12 +484,16 @@ class MeshCoreDevice(Device):
         contacts: list[Contact] = []
         for name, info in payload.items():
             info = info or {}
+            lat, lon = _contact_location(info)
             contacts.append(
                 Contact(
                     name=info.get("adv_name", name),
                     public_key=info.get("public_key", ""),
                     key_prefix=info.get("public_key", "")[:12],
                     last_seen=_advert_time(info.get("last_advert")),
+                    node_type=_as_int(info.get("type", info.get("adv_type"))),
+                    lat=lat,
+                    lon=lon,
                 )
             )
         return contacts
@@ -1010,10 +1014,14 @@ class MockDevice(Device):
         self._tx_power = 20
         self._connected = False
         self._contacts = [
-            Contact(name="Yagi-Repeater", public_key=_mock_pub("a1b2c3d4"), key_prefix="a1b2c3d4"),
-            Contact(name="Local-Repeater", public_key=_mock_pub("b2c3d4e5"), key_prefix="b2c3d4e5"),
-            Contact(name="Observer-Bot", public_key=_mock_pub("c3d4e5f6"), key_prefix="c3d4e5f6"),
-            Contact(name="Alice", public_key=_mock_pub("d4e5f6a7"), key_prefix="d4e5f6a7"),
+            Contact(name="Yagi-Repeater", public_key=_mock_pub("a1b2c3d4"), key_prefix="a1b2c3d4",
+                    node_type=NODE_TYPE_REPEATER, lat=45.5019, lon=-73.5674),
+            Contact(name="Local-Repeater", public_key=_mock_pub("b2c3d4e5"), key_prefix="b2c3d4e5",
+                    node_type=NODE_TYPE_REPEATER, lat=45.4768, lon=-73.5990),
+            Contact(name="Observer-Bot", public_key=_mock_pub("c3d4e5f6"), key_prefix="c3d4e5f6",
+                    node_type=NODE_TYPE_CHAT, lat=45.4880, lon=-73.5810),
+            Contact(name="Alice", public_key=_mock_pub("d4e5f6a7"), key_prefix="d4e5f6a7",
+                    node_type=NODE_TYPE_CHAT),
         ]
         # Remote-admin simulation: which nodes we're "logged in" to, and each tuned
         # node's transmit power keyed by full public key. ``_default_remote_tx`` is the
@@ -1530,6 +1538,26 @@ def _advert_time(last_advert: object) -> Optional[datetime]:
     if seconds <= 0:
         return None
     return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+
+def _contact_location(info: dict) -> tuple[Optional[float], Optional[float]]:
+    """Extract a contact's advertised ``(lat, lon)``, or ``(None, None)`` if it has none.
+
+    A node that has never set coordinates advertises ``0.0/0.0`` (null island), which the
+    firmware reports verbatim; we treat that as "no location" rather than plotting the
+    Gulf of Guinea.
+
+    Args:
+        info: One contact's raw info mapping from the companion's contacts payload.
+
+    Returns:
+        The advertised latitude and longitude in decimal degrees, or ``(None, None)``.
+    """
+    lat = _as_float(info.get("adv_lat", info.get("lat")))
+    lon = _as_float(info.get("adv_lon", info.get("lon")))
+    if lat is None or lon is None or (abs(lat) < 1e-6 and abs(lon) < 1e-6):
+        return None, None
+    return lat, lon
 
 
 def _mock_pub(prefix: str) -> str:

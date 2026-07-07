@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import re
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,6 @@ from rich.console import Console
 
 from meshtools.core.geo import BBox, Viewport, haversine_km, lonlat_to_world, world_to_lonlat
 from meshtools.core.models import (
-    NODE_TYPE_CHAT,
     NODE_TYPE_REPEATER,
     Observation,
     utcnow,
@@ -153,7 +151,8 @@ def test_canvas_priority_decides_cell_colour() -> None:
 def test_canvas_marker_and_label_do_not_overprint() -> None:
     """A marker keeps its glyph and places its label in a neighbouring cell."""
     canvas = MapCanvas(20, 3)
-    canvas.marker(4, 4, "★", (255, 255, 255), label="me")
+    canvas.marker(4, 4, "★", (255, 255, 255))
+    assert canvas.marker_label(4, 4, "me", (255, 255, 255))
     out = _plain(canvas.to_ansi_lines())
     assert "★" in out and "me" in out
     row = out.splitlines()[1]
@@ -165,6 +164,16 @@ def test_canvas_label_collision_is_avoided() -> None:
     canvas = MapCanvas(20, 1)
     assert canvas.place_label(10, 0, "First", (200, 200, 200))
     assert not canvas.place_label(10, 0, "Second", (200, 200, 200))  # overlaps → skipped
+
+
+def test_canvas_labels_keep_a_vertical_gap() -> None:
+    """A checked label is skipped when it would sit flush above/below existing text."""
+    canvas = MapCanvas(20, 3)
+    assert canvas.place_label(20, 4, "Row1", (200, 200, 200))  # dot y=4 → cell row 1
+    # Directly below (cell row 2) with overlapping columns: rejected for lack of a gap.
+    assert not canvas.place_label(20, 8, "Row2", (200, 200, 200))
+    # Same row but clear of the horizontal span still fits.
+    assert canvas.place_label(2, 4, "Far", (200, 200, 200))
 
 
 def test_parse_hex() -> None:
@@ -201,6 +210,25 @@ def test_render_map_prioritises_repeater_glyph() -> None:
     ]
     out = _plain(render_map(vp, {}, markers))
     assert "▲" in out and "●" not in out
+
+
+def test_render_map_drops_crowded_labels_favouring_repeaters() -> None:
+    """When labels can't all fit, the repeater's wins and a crowded node's is dropped."""
+    from meshtools.ui.map_render import MapMarker, render_map
+
+    # Three nodes stacked on one spot: only the two sides (left/right) can hold a label,
+    # so one of the three must show as a bare marker — and the repeater must not be it.
+    vp = Viewport(45.50, -73.57, 14, 40, 8)
+    markers = [
+        MapMarker("NODEONE", 45.50, -73.57),
+        MapMarker("NODETWO", 45.50, -73.57),
+        MapMarker("REPEATER", 45.50, -73.57, is_repeater=True),
+    ]
+    out = _plain(render_map(vp, {}, markers))
+    assert "▲" in out  # the repeater's glyph is on top
+    assert "REPEATER" in out  # and it keeps its label (placed first)
+    # Only one of the two leaf nodes could fit a label; the other is a bare marker.
+    assert ("NODEONE" in out) != ("NODETWO" in out)
 
 
 def test_render_map_works_without_basemap() -> None:
@@ -269,39 +297,37 @@ def ctx(tmp_path: Path):
     context.repo.close()
 
 
-def _seed_located_nodes(repo) -> None:
-    """Record a repeater and a leaf node (each located) plus one node with no fix."""
-    run_id = repo.start_run("monitor", {})
-    now = utcnow()
-    repo.record_observation(
-        run_id,
-        Observation(node="a1", name="Yagi", node_type=NODE_TYPE_REPEATER, snr=6.0,
-                    lat=45.55, lon=-73.55, observed_at=now),
-    )
-    repo.record_observation(
-        run_id,
-        Observation(node="d4", name="Alice", node_type=NODE_TYPE_CHAT, snr=3.0,
-                    lat=45.40, lon=-73.60, observed_at=now + timedelta(seconds=1)),
-    )
-    repo.record_observation(
-        run_id, Observation(node="c3", name="Bot", node_type=NODE_TYPE_CHAT, snr=1.0)
-    )
+async def test_map_tool_static_render_plots_contacts(ctx) -> None:
+    """The CLI path plots the device's located contacts and reports the breakdown.
 
-
-async def test_map_tool_static_render_counts_repeaters(ctx) -> None:
-    """The CLI path renders located nodes (basemap off) and reports the breakdown."""
-    _seed_located_nodes(ctx.repo)
+    The mock companion's contacts carry two located repeaters and one located leaf node
+    (a fourth, Alice, has no fix), so the contact list — not the observation history — is
+    what fills the map.
+    """
+    # Seed an observation whose key matches a located contact, so its reception detail is
+    # merged onto that contact's marker.
+    run_id = ctx.repo.start_run("monitor", {})
+    ctx.repo.record_observation(
+        run_id,
+        Observation(node="a1b2c3d4", name="Yagi-Repeater", node_type=NODE_TYPE_REPEATER,
+                    snr=6.0, observed_at=utcnow()),
+    )
     result = await MapTool().run(ctx, {"static": True, "basemap": False})
-    assert result.summary["located"] == 2  # the mock companion has no fix (0/0)
-    assert result.summary["repeaters"] == 1
+    assert result.summary["located"] == 3
+    assert result.summary["repeaters"] == 2
     assert result.summary["nodes"] == 1
     assert result.summary["self_located"] is False
-    # Something was rendered into the plain UI surface.
-    assert ctx.console.file.getvalue() != ""
+    out = ctx.console.file.getvalue()
+    assert out != ""
+    assert "1 pkts" in out  # the seeded observation's detail merged onto the contact
 
 
-async def test_map_tool_reports_nothing_to_plot(ctx) -> None:
-    """With no located history the tool returns cleanly instead of rendering."""
+async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
+    """With no located contacts and no located history the tool returns cleanly."""
+    async def _no_contacts(_ctx):
+        return []
+
+    monkeypatch.setattr(MapTool, "_contacts", staticmethod(_no_contacts))
     result = await MapTool().run(ctx, {"static": True, "basemap": False})
     assert result.summary == {"located": 0}
 
@@ -366,6 +392,37 @@ def test_map_screen_renders_pans_zooms_and_resets() -> None:
     # Offline source: nodes still render and both markers are present.
     assert "▲" in _plain(screen.render_body(80)) and "●" in _plain(screen.render_body(80))
     assert "offline" in screen.footer_hint
+
+
+def test_map_screen_shift_pans_by_a_single_cell() -> None:
+    """Holding Shift (Shift+arrow, or uppercase WASD) pans finely, by one character cell."""
+    from meshtools.core.geo import lonlat_to_world, world_to_lonlat
+    from meshtools.ui.map_render import MapMarker
+    from meshtools.ui.map_screen import MapScreen
+
+    markers = [MapMarker("A", 45.50, -73.60), MapMarker("B", 45.40, -73.50)]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
+    screen.render_body(80)
+    start = screen._viewport
+
+    # A coarse east pan (30% of the view) moves much further than a fine one.
+    screen.handle("right")
+    coarse = screen._viewport.center_lon - start.center_lon
+
+    screen._viewport = start
+    screen.handle("shift_right")
+    fine = screen._viewport.center_lon - start.center_lon
+    assert 0 < fine < coarse
+
+    # The fine step is exactly one cell (2 dots) east at the current zoom.
+    cx, cy = lonlat_to_world(start.center_lat, start.center_lon, start.zoom)
+    _, expected_lon = world_to_lonlat(cx + 2, cy, start.zoom)
+    assert screen._viewport.center_lon == pytest.approx(expected_lon)
+
+    # Uppercase WASD is the same fine step via the text path.
+    screen._viewport = start
+    screen.handle("text", "D")
+    assert screen._viewport.center_lon == pytest.approx(start.center_lon + fine)
 
 
 def test_map_screen_escape_dismisses() -> None:
