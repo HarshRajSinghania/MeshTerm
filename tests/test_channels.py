@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from meshtools.context import AppContext
-from meshtools.core.admin_store import AdminStore
-from meshtools.core.channels import (
+from meshterm.context import AppContext
+from meshterm.core.admin_store import AdminStore
+from meshterm.core.channels import (
     CHANNEL_SECRET_BYTES,
     DEFAULT_PUBLIC_SECRET,
     channel_hash,
@@ -26,18 +26,18 @@ from meshtools.core.channels import (
     random_secret,
     share_url,
 )
-from meshtools.core.config import Settings
-from meshtools.core.device_store import DeviceStore
-from meshtools.persistence.repository import Repository
-from meshtools.tools.channels import ChannelsTool
-from meshtools.services.chat_service import ChatService
-from meshtools.ui.channels import (
+from meshterm.core.config import Settings
+from meshterm.core.device_store import DeviceStore
+from meshterm.persistence.repository import Repository
+from meshterm.tools.channels import ChannelsTool
+from meshterm.services.chat_service import ChatService
+from meshterm.ui.channels import (
     ChannelSlot,
     _apply_order,
     _next_free_slot,
     _read_slots,
 )
-from meshtools.ui.qr import qr_text
+from meshterm.ui.qr import qr_text
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -212,7 +212,7 @@ class _ScriptedUi:
     """A UI surface that replays queued answers, for driving the channel manager headless.
 
     ``select``/``text``/``confirm`` each pop their next scripted answer; the display methods
-    are no-ops. Enough of the :class:`~meshtools.ui.surface.Ui` contract for the channel
+    are no-ops. Enough of the :class:`~meshterm.ui.surface.Ui` contract for the channel
     manager's create/clear flows.
     """
 
@@ -249,10 +249,10 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
     opening the old channel showed the new one's transcript. The manager must refresh the
     cache after the mutation so a message on the reused slot lands in the right channel.
     """
-    from meshtools.core.channels import channel_identity
-    from meshtools.core.events import MeshEvent
-    from meshtools.core.models import Message
-    from meshtools.ui.channels import _BACK, _CLEAR, _CREATE, manage_channels
+    from meshterm.core.channels import channel_identity
+    from meshterm.core.events import MeshEvent
+    from meshterm.core.models import Message
+    from meshterm.ui.channels import _BACK, _CLEAR, _CREATE, manage_channels
 
     device = await ctx.device()
     await device.set_channel(0, "Public", DEFAULT_PUBLIC_SECRET)

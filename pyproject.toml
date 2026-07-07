@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "meshtools"
+name = "meshterm"
 version = "0.1.0"
 description = "A modern command-line toolkit for tuning and exploring a MeshCore mesh."
 readme = "README.md"
@@ -34,10 +34,10 @@ dev = [
 ]
 
 [project.scripts]
-meshtools = "meshtools.cli:main"
+meshterm = "meshterm.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["meshtools"]
+packages = ["meshterm"]
 
 [tool.ruff]
 line-length = 100

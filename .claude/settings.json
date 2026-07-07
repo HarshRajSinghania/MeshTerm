@@ -2,7 +2,7 @@
   "permissions": {
     "defaultMode": "dontAsk",
     "additionalDirectories": [
-      "C:\\Users\\user\\.config\\meshtools\\output"
+      "C:\\Users\\user\\.config\\meshterm\\output"
     ]
   }
 }

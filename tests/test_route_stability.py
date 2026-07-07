@@ -5,9 +5,9 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from meshtools.core.models import Hop, TraceResult
-from meshtools.services import route_stability
-from meshtools.services.route_stability import RouteGraph
+from meshterm.core.models import Hop, TraceResult
+from meshterm.services import route_stability
+from meshterm.services.route_stability import RouteGraph
 
 
 def _trace(*nodes: str, snr: float = 5.0) -> TraceResult:
@@ -200,7 +200,7 @@ def test_multi_target_graph_without_target() -> None:
 
 def test_render_route_graph_writes_html(tmp_path: Path) -> None:
     """The pyvis renderer produces a self-contained HTML file."""
-    from meshtools.viz.route_graph import render_route_graph
+    from meshterm.viz.route_graph import render_route_graph
 
     traces = [_trace("3d", "f2") for _ in range(3)] + [_trace("aa", "f2")]
     graph = route_stability.build_route_graph(traces, target="f2")
@@ -214,7 +214,7 @@ def test_render_route_graph_writes_html(tmp_path: Path) -> None:
 
 def test_render_empty_graph_writes_valid_html(tmp_path: Path) -> None:
     """An empty graph still produces a valid HTML file."""
-    from meshtools.viz.route_graph import render_route_graph
+    from meshterm.viz.route_graph import render_route_graph
 
     graph = RouteGraph(target="nobody")
     out = render_route_graph(graph, tmp_path)
@@ -225,7 +225,7 @@ def test_render_empty_graph_writes_valid_html(tmp_path: Path) -> None:
 
 def test_render_creates_output_dir(tmp_path: Path) -> None:
     """The renderer creates the output directory if it doesn't exist."""
-    from meshtools.viz.route_graph import render_route_graph
+    from meshterm.viz.route_graph import render_route_graph
 
     nested = tmp_path / "a" / "b"
     graph = route_stability.build_route_graph([_trace("x")], target="x")
@@ -235,7 +235,7 @@ def test_render_creates_output_dir(tmp_path: Path) -> None:
 
 def test_render_whole_mesh_filename(tmp_path: Path) -> None:
     """Whole-mesh graphs use 'mesh' in the filename, not an empty slug."""
-    from meshtools.viz.route_graph import render_route_graph
+    from meshterm.viz.route_graph import render_route_graph
 
     graph = route_stability.build_route_graph([_trace("x")], target=None)
     out = render_route_graph(graph, tmp_path)
@@ -247,7 +247,7 @@ def test_render_whole_mesh_filename(tmp_path: Path) -> None:
 
 def test_snr_color_thresholds() -> None:
     """SNR-to-colour mapping covers all four bands."""
-    from meshtools.viz.route_graph import _snr_color
+    from meshterm.viz.route_graph import _snr_color
 
     assert _snr_color(10.0) == "#4ade80"   # strong
     assert _snr_color(5.0) == "#4ade80"    # boundary: strong
@@ -260,7 +260,7 @@ def test_snr_color_thresholds() -> None:
 
 def test_slug_edge_cases() -> None:
     """Slug handles special characters and pathological inputs."""
-    from meshtools.viz.route_graph import _slug
+    from meshterm.viz.route_graph import _slug
 
     assert _slug("Alice") == "alice"
     assert _slug("my node") == "my-node"
@@ -274,7 +274,7 @@ def test_slug_edge_cases() -> None:
 
 def test_graph_panel_with_links() -> None:
     """The Rich panel renders without error when there are links."""
-    from meshtools.tools.route_map import _graph_panel
+    from meshterm.tools.route_map import _graph_panel
 
     traces = [_trace("relay", "dest") for _ in range(3)]
     graph = route_stability.build_route_graph(traces, target="dest")
@@ -284,7 +284,7 @@ def test_graph_panel_with_links() -> None:
 
 def test_graph_panel_empty() -> None:
     """The Rich panel renders without error on an empty graph."""
-    from meshtools.tools.route_map import _graph_panel
+    from meshterm.tools.route_map import _graph_panel
 
     graph = RouteGraph(target="nobody")
     panel = _graph_panel(graph)
@@ -293,7 +293,7 @@ def test_graph_panel_empty() -> None:
 
 def test_is_nonneg_int_validator() -> None:
     """The questionary validator accepts zero/positive and rejects negative/non-int."""
-    from meshtools.tools.route_map import _is_nonneg_int
+    from meshterm.tools.route_map import _is_nonneg_int
 
     assert _is_nonneg_int("0") is True
     assert _is_nonneg_int("5") is True

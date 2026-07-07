@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from meshtools.core.models import Hop, TraceResult
-from meshtools.persistence.repository import Repository
+from meshterm.core.models import Hop, TraceResult
+from meshterm.persistence.repository import Repository
 
 
 @pytest.fixture()

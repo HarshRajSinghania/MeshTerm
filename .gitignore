@@ -14,6 +14,6 @@ dist/
 # Other virtual environments
 venv/
 
-# MeshTools runtime data
+# MeshTerm runtime data
 *.db
 output/

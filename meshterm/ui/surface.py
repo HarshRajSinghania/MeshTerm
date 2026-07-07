@@ -1,0 +1,291 @@
+"""The UI surface: one small API tools use for input and output, in either front-end.
+
+Tools never touch ``questionary`` or a raw console anymore — they talk to ``ctx.ui``. Two
+implementations back it:
+
+* :class:`PlainUi` (scripted CLI): prints immediately and uses a Rich progress bar, so CLI
+  behavior is byte-for-byte what it was before the TUI existed.
+* :class:`TuiUi` (interactive menu): collects a tool's output and presents it in a bounded,
+  scrollable result window, and routes every prompt/progress through the full-screen
+  :class:`~meshterm.ui.tui.session.TuiSession`.
+
+The interactive prompt methods are only ever reached from a tool's ``prompt_params`` (menu
+only), so :class:`PlainUi` leaves them unsupported.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Optional
+
+from rich.console import Console, Group, RenderableType
+from rich.text import Text
+
+from .tui.session import TuiSession
+
+#: A validator returns ``True`` when input is acceptable, or an error message to show.
+Validator = Callable[[str], "bool | str"]
+
+
+class Ui:
+    """Abstract UI surface. See :class:`PlainUi` and :class:`TuiUi` for the two backends."""
+
+    def show(self, *renderables: RenderableType) -> None:
+        """Display one or more Rich renderables (tables, panels, text)."""
+        raise NotImplementedError
+
+    def note(self, markup: str) -> None:
+        """Display a short line of Rich-markup text."""
+        raise NotImplementedError
+
+    async def view(
+        self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
+    ) -> None:
+        """Show a renderable immediately in a dismissable window (prints in CLI mode)."""
+        raise NotImplementedError
+
+    async def present(self, *, title: str = "") -> None:
+        """Flush any buffered output to the user (a no-op when output is immediate)."""
+
+    def discard(self) -> None:
+        """Drop any buffered-but-unshown output (a no-op when output is immediate)."""
+
+    def progress(self, title: str = "Working"):  # noqa: ANN201 - context manager, varies by backend
+        """Return a progress context manager exposing ``add_task``/``advance``/``update``."""
+        raise NotImplementedError
+
+    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+        """Prompt the user to choose one item; return its value or ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Let the user rearrange rows with the arrows; return the new order of row indices."""
+        raise NotImplementedError
+
+    async def text(
+        self,
+        title: str,
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        password: bool = False,
+    ) -> Optional[str]:
+        """Prompt for a line of text; return it or ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+        """Prompt yes/no; return the answer or ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def autocomplete(
+        self,
+        title: str,
+        choices: list[str],
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+    ) -> Optional[str]:
+        """Prompt for free text with suggestions; return it or ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+        """Prompt for a filesystem path; return it or ``None`` if cancelled."""
+        raise NotImplementedError
+
+
+class PlainUi(Ui):
+    """CLI surface: print directly to the console; interactive prompts are unsupported."""
+
+    def __init__(self, console: Console) -> None:
+        """Bind the surface to a Rich console.
+
+        Args:
+            console: The console tool output is printed to.
+        """
+        self.console = console
+
+    def show(self, *renderables: RenderableType) -> None:
+        """Print each renderable to the console immediately."""
+        for renderable in renderables:
+            self.console.print(renderable)
+
+    def note(self, markup: str) -> None:
+        """Print a markup line to the console immediately."""
+        self.console.print(markup)
+
+    async def view(
+        self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
+    ) -> None:
+        """Print the renderable immediately (there is no windowing in CLI mode)."""
+        self.console.print(renderable)
+
+    def progress(self, title: str = "Working"):  # noqa: ANN201
+        """Return the Rich progress bar used for scripted runs."""
+        from .widgets import make_progress
+
+        return make_progress(self.console)
+
+    def _no_prompt(self) -> RuntimeError:
+        """Build the error raised if a rich prompt is reached on the non-interactive path."""
+        return RuntimeError("interactive prompts are only available in the menu")
+
+    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def text(
+        self,
+        title: str,
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        password: bool = False,
+    ) -> Optional[str]:
+        """Prompt on the terminal (line editor / getpass), re-asking until valid.
+
+        A few tools (e.g. a remote-admin password) can legitimately prompt from a scripted
+        run when no flag was supplied, so this stays functional on the CLI.
+
+        Returns:
+            The entered string, or ``None`` on EOF / interrupt.
+        """
+        import getpass
+
+        prompt = f"{title} " if not default else f"{title} [{default}] "
+        while True:
+            try:
+                raw = getpass.getpass(prompt) if password else input(prompt)
+            except (EOFError, KeyboardInterrupt):
+                return None
+            value = raw if raw != "" else default
+            if validate is not None:
+                result = validate(value)
+                if result is not True:
+                    self.console.print(f"[err]{result}[/err]")
+                    continue
+            return value
+
+    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def autocomplete(
+        self,
+        title: str,
+        choices: list[str],
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+    ) -> Optional[str]:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+
+class TuiUi(Ui):
+    """Interactive surface: buffer output for a result window; route prompts to the session."""
+
+    def __init__(self, session: TuiSession) -> None:
+        """Bind the surface to a running session.
+
+        Args:
+            session: The full-screen session that renders prompts and windows.
+        """
+        self.session = session
+        self._buffer: list[RenderableType] = []
+
+    # --- output --------------------------------------------------------------
+
+    def show(self, *renderables: RenderableType) -> None:
+        """Collect renderables for the next result window."""
+        self._buffer.extend(renderables)
+
+    def note(self, markup: str) -> None:
+        """Collect a markup line for the next result window."""
+        self._buffer.append(Text.from_markup(markup))
+
+    async def present(self, *, title: str = "") -> None:
+        """Show everything buffered since the last present in a scrollable window.
+
+        Clears the buffer afterward. Does nothing if nothing was buffered (e.g. a tool
+        that only produced a file artifact and an empty message).
+
+        Args:
+            title: Heading for the result window.
+        """
+        if not self._buffer:
+            return
+        body = self._buffer[0] if len(self._buffer) == 1 else Group(*self._buffer)
+        self._buffer = []
+        await self.session.scroll(body, title=title)
+
+    def discard(self) -> None:
+        """Drop any buffered output without showing it."""
+        self._buffer = []
+
+    async def view(
+        self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
+    ) -> None:
+        """Show a renderable immediately in a dismissable scroll window."""
+        await self.session.scroll(renderable, title=title, footer_hint=footer_hint)
+
+    def progress(self, title: str = "Working"):  # noqa: ANN201
+        """Return a progress dialog context manager for the session."""
+        return self.session.progress(title)
+
+    # --- input ---------------------------------------------------------------
+
+    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+        """Delegate to the session's select screen."""
+        return await self.session.select(title, items, default=default)
+
+    async def reorder(self, title: str, labels: list[str]) -> list[int]:
+        """Delegate to the session's reorder screen."""
+        return await self.session.reorder(title, labels)
+
+    async def text(
+        self,
+        title: str,
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        password: bool = False,
+    ) -> Optional[str]:
+        """Delegate to the session's text screen."""
+        return await self.session.text(
+            title,
+            default=default,
+            validate=validate,
+            help_text=help_text,
+            password=password,
+        )
+
+    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+        """Delegate to the session's confirm screen."""
+        return await self.session.confirm(title, default=default)
+
+    async def autocomplete(
+        self,
+        title: str,
+        choices: list[str],
+        *,
+        default: str = "",
+        validate: Optional[Validator] = None,
+    ) -> Optional[str]:
+        """Delegate to the session's autocomplete screen."""
+        return await self.session.autocomplete(
+            title, choices, default=default, validate=validate
+        )
+
+    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+        """Prompt for a path as free text (with the current value prefilled)."""
+        return await self.session.text(title, default=default, help_text="filesystem path")

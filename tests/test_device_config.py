@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 import typer
 
-from meshtools.core.config_io import backup_config, plan_restore, read_backup
-from meshtools.core.connection import MockDevice
-from meshtools.core.device_config import (
+from meshterm.core.config_io import backup_config, plan_restore, read_backup
+from meshterm.core.connection import MockDevice
+from meshterm.core.device_config import (
     RADIO_PRESETS,
     DeviceConfigError,
     build_snapshot,
@@ -20,7 +20,7 @@ from meshtools.core.device_config import (
     get_spec,
     parse_value,
 )
-from meshtools.tools.config import _require_yes
+from meshterm.tools.config import _require_yes
 
 
 async def _connected_mock() -> MockDevice:
@@ -71,7 +71,7 @@ def test_path_hash_mode_is_strict_enum() -> None:
 
 def test_highlighted_hash_highlights_path_hash_prefix() -> None:
     """The full key is shown with only its path-hash prefix bytes highlighted."""
-    from meshtools.ui.widgets import highlighted_hash
+    from meshterm.ui.widgets import highlighted_hash
 
     pub = "aabbccddee" + "00" * 27
     # mode 2 => 3-byte hashes => first 6 hex chars are the addressable prefix.
@@ -84,8 +84,8 @@ def test_highlighted_hash_highlights_path_hash_prefix() -> None:
 
 def test_nodes_table_lists_us_first_with_full_keys() -> None:
     """The nodes table puts our node first (name highlighted) with full keys."""
-    from meshtools.core.models import Contact
-    from meshtools.ui.widgets import nodes_table
+    from meshterm.core.models import Contact
+    from meshterm.ui.widgets import nodes_table
 
     contacts = [Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6")]
     table = nodes_table("Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes=3)

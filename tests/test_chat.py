@@ -20,22 +20,22 @@ def _strip_ansi(text: str) -> str:
     """Remove ANSI color escapes from rendered lines for plain-text assertions."""
     return _ANSI.sub("", text)
 
-from meshtools.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
-from meshtools.core.connection import MockDevice
-from meshtools.core.events import MeshEvent
-from meshtools.core.models import (
+from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
+from meshterm.core.connection import MockDevice
+from meshterm.core.events import MeshEvent
+from meshterm.core.models import (
     ChatMessage,
     Contact,
     Conversation,
     Message,
     conversation_key,
 )
-from meshtools.persistence.repository import Repository
-from meshtools.services.chat_service import ChatService
-from meshtools.services.event_hub import EventHub
-from meshtools.tools.chat import _LiveLasts, _preview, _title
-from meshtools.ui.chat import ChatScreen
-from meshtools.ui.tui.screen import CANCEL
+from meshterm.persistence.repository import Repository
+from meshterm.services.chat_service import ChatService
+from meshterm.services.event_hub import EventHub
+from meshterm.tools.chat import _LiveLasts, _preview, _title
+from meshterm.ui.chat import ChatScreen
+from meshterm.ui.tui.screen import CANCEL
 
 
 class _StubSession:
@@ -49,7 +49,7 @@ class _StubSession:
 
 
 class _StubContext:
-    """Minimal :class:`~meshtools.context.AppContext` stand-in for chat tests."""
+    """Minimal :class:`~meshterm.context.AppContext` stand-in for chat tests."""
 
     def __init__(self, device: MockDevice, repo: Repository) -> None:
         self._device = device
@@ -123,7 +123,7 @@ async def test_message_pump_drains_until_empty() -> None:
     """
     from meshcore import EventType
 
-    from meshtools.core.connection import MeshCoreDevice
+    from meshterm.core.connection import MeshCoreDevice
 
     class _Ev:
         def __init__(self, t) -> None:  # noqa: ANN001
@@ -374,7 +374,7 @@ async def test_service_files_channel_message_by_current_slot_occupant(repo: Repo
     must not misroute later messages: resolution reads the slot fresh, so a message on slot 0
     lands in whatever channel occupies slot 0 at that moment — never a stale cached identity.
     """
-    from meshtools.core.channels import channel_identity
+    from meshterm.core.channels import channel_identity
 
     device = MockDevice()
     ctx = _StubContext(device, repo)
@@ -417,7 +417,7 @@ async def test_service_records_channel_messages_in_arrival_order(repo: Repositor
     Each channel message resolves its identity with a device read; the serial inbound worker
     guarantees they still land in the transcript (ordered by insertion) in the order received.
     """
-    from meshtools.core.channels import channel_identity
+    from meshterm.core.channels import channel_identity
 
     device = MockDevice()
     ctx = _StubContext(device, repo)
@@ -507,7 +507,7 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
 
 def test_byte_style_escalates_as_budget_runs_out() -> None:
     """The used-byte color steps green → yellow → orange → red as fewer bytes remain."""
-    from meshtools.ui.chat import _BYTES_ORANGE, _BYTES_YELLOW
+    from meshterm.ui.chat import _BYTES_ORANGE, _BYTES_YELLOW
 
     style = ChatScreen._byte_style
     assert style(80) == "ok"  # plenty left → green
@@ -519,7 +519,7 @@ def test_byte_style_escalates_as_budget_runs_out() -> None:
 
 def test_channel_byte_limit_is_lower_than_direct() -> None:
     """A channel broadcast has a tighter byte budget than a direct message."""
-    from meshtools.ui.chat import _CHANNEL_BYTE_LIMIT, _DM_BYTE_LIMIT
+    from meshterm.ui.chat import _CHANNEL_BYTE_LIMIT, _DM_BYTE_LIMIT
 
     direct = _screen(_StubSession(), send=None)
     channel = _channel_screen([])
@@ -633,7 +633,7 @@ def test_chat_screen_scroll_detaches_and_end_reattaches() -> None:
 
 def test_split_channel_sender_extracts_name_prefix() -> None:
     """A ``Name: message`` channel line splits into sender and cleaned body."""
-    from meshtools.ui.chat import _split_channel_sender
+    from meshterm.ui.chat import _split_channel_sender
 
     assert _split_channel_sender("Alice: hey there") == ("Alice", "hey there")
     assert _split_channel_sender("Yagi Repeater: online") == ("Yagi Repeater", "online")
@@ -679,7 +679,7 @@ def test_channel_self_style_keyed_on_concept_not_label() -> None:
     A remote sender who happens to be named 'you' must still get a palette hue, never the
     white style reserved for us.
     """
-    from meshtools.ui.chat import _SENDER_COLORS
+    from meshterm.ui.chat import _SENDER_COLORS
 
     screen = _channel_screen([])
     assert screen._sender_style("you", is_self=True) == "you"  # us → white
@@ -844,13 +844,13 @@ async def test_open_chat_sends_through_real_session(tmp_path: Path) -> None:
     from prompt_toolkit.output import DummyOutput
     from rich.console import Console
 
-    from meshtools.context import AppContext
-    from meshtools.core.admin_store import AdminStore
-    from meshtools.core.config import Settings
-    from meshtools.core.device_store import DeviceStore
-    from meshtools.ui.chat import open_chat
-    from meshtools.ui.surface import TuiUi
-    from meshtools.ui.tui.session import TuiSession
+    from meshterm.context import AppContext
+    from meshterm.core.admin_store import AdminStore
+    from meshterm.core.config import Settings
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui.chat import open_chat
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
 
     settings = Settings(config_dir=tmp_path, db_path=tmp_path / "e2e.db")
     ctx = AppContext(

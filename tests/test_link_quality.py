@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from meshtools.core.models import Hop, TraceResult, utcnow
-from meshtools.services import link_quality
+from meshterm.core.models import Hop, TraceResult, utcnow
+from meshterm.services import link_quality
 
 _NOW = utcnow()
 

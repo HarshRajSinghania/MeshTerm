@@ -15,15 +15,15 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from meshtools.core.geo import BBox, Viewport, haversine_km, lonlat_to_world, world_to_lonlat
-from meshtools.core.models import (
+from meshterm.core.geo import BBox, Viewport, haversine_km, lonlat_to_world, world_to_lonlat
+from meshterm.core.models import (
     NODE_TYPE_REPEATER,
     Observation,
     utcnow,
 )
-from meshtools.core.mvt import GEOM_LINE, GEOM_POLYGON, decode_tile
-from meshtools.tools.map import MapTool
-from meshtools.ui.mapcanvas import MapCanvas, parse_hex
+from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, decode_tile
+from meshterm.tools.map import MapTool
+from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tile_14_4843_5861.mvt"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -187,7 +187,7 @@ def test_parse_hex() -> None:
 
 def test_render_map_draws_basemap_streets_and_labels() -> None:
     """Rendering the real fixture yields braille geometry and a place label."""
-    from meshtools.ui.map_render import MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
 
     vp = Viewport(45.5019, -73.5674, 14, 180, 120)
     layers = decode_tile(_FIXTURE.read_bytes())
@@ -201,7 +201,7 @@ def test_render_map_draws_basemap_streets_and_labels() -> None:
 
 def test_render_map_prioritises_repeater_glyph() -> None:
     """A repeater and a node at the same spot resolve to the repeater's marker on top."""
-    from meshtools.ui.map_render import MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
 
     vp = Viewport(45.50, -73.57, 14, 60, 40)
     markers = [
@@ -214,7 +214,7 @@ def test_render_map_prioritises_repeater_glyph() -> None:
 
 def test_render_map_drops_crowded_labels_favouring_repeaters() -> None:
     """When labels can't all fit, the repeater's wins and a crowded node's is dropped."""
-    from meshtools.ui.map_render import MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
 
     # Three nodes stacked on one spot: only the two sides (left/right) can hold a label,
     # so one of the three must show as a bare marker — and the repeater must not be it.
@@ -242,7 +242,7 @@ def _glyph_color(lines: list[str], glyph: str) -> tuple[int, int, int]:
 
 def test_render_map_brightens_piled_markers() -> None:
     """A cell many nodes share renders its glyph brighter than a lone node's."""
-    from meshtools.ui.map_render import _NODE, MapMarker, render_map
+    from meshterm.ui.map_render import _NODE, MapMarker, render_map
 
     base = parse_hex(_NODE[1])
     vp = Viewport(45.50, -73.57, 14, 60, 40)
@@ -259,7 +259,7 @@ def test_render_map_brightens_piled_markers() -> None:
 
 def test_render_map_works_without_basemap() -> None:
     """With no tiles the nodes still render on a blank grid (the offline fallback)."""
-    from meshtools.ui.map_render import MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
 
     vp = Viewport.fit([(45.5, -73.6), (45.4, -73.5)], 120, 80, max_zoom=14)
     markers = [
@@ -275,7 +275,7 @@ def test_render_map_works_without_basemap() -> None:
 
 def test_basemap_source_offline_is_graceful(tmp_path: Path) -> None:
     """An unreachable source reports unavailable and returns no tiles, never raising."""
-    from meshtools.services.basemap import BasemapSource
+    from meshterm.services.basemap import BasemapSource
 
     src = BasemapSource(tmp_path / "cache", tilejson_url="http://127.0.0.1:1/none", timeout=0.2)
     assert src.available is False
@@ -285,7 +285,7 @@ def test_basemap_source_offline_is_graceful(tmp_path: Path) -> None:
 
 def test_basemap_source_reads_cached_tile(tmp_path: Path) -> None:
     """A tile already on disk is decoded without any network access."""
-    from meshtools.services.basemap import BasemapSource
+    from meshterm.services.basemap import BasemapSource
 
     cache = tmp_path / "cache"
     dest = cache / "tiles" / "14" / "4843"
@@ -303,12 +303,12 @@ def test_basemap_source_reads_cached_tile(tmp_path: Path) -> None:
 @pytest.fixture()
 def ctx(tmp_path: Path):
     """A mock-backed application context with the plain (console) UI surface."""
-    from meshtools.context import AppContext
-    from meshtools.core.admin_store import AdminStore
-    from meshtools.core.config import Settings
-    from meshtools.core.device_store import DeviceStore
-    from meshtools.persistence.repository import Repository
-    from meshtools.ui.theme import MESH_THEME
+    from meshterm.context import AppContext
+    from meshterm.core.admin_store import AdminStore
+    from meshterm.core.config import Settings
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.persistence.repository import Repository
+    from meshterm.ui.theme import MESH_THEME
 
     settings = Settings(config_dir=tmp_path, db_path=tmp_path / "map.db")
     context = AppContext(
@@ -396,9 +396,9 @@ class _StubSource:
 
 def test_map_screen_renders_pans_zooms_and_resets() -> None:
     """The interactive screen fills its body, and wasd/zoom/reset move the viewport."""
-    from meshtools.core.geo import Viewport
-    from meshtools.ui.map_render import MapMarker
-    from meshtools.ui.map_screen import MapScreen
+    from meshterm.core.geo import Viewport
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
 
     session = _StubSession(80, 24)
     markers = [
@@ -434,9 +434,9 @@ def test_map_screen_renders_pans_zooms_and_resets() -> None:
 
 def test_map_screen_shift_pans_by_a_single_cell() -> None:
     """Holding Shift (Shift+arrow, or uppercase WASD) pans finely, by one character cell."""
-    from meshtools.core.geo import lonlat_to_world, world_to_lonlat
-    from meshtools.ui.map_render import MapMarker
-    from meshtools.ui.map_screen import MapScreen
+    from meshterm.core.geo import lonlat_to_world, world_to_lonlat
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
 
     markers = [MapMarker("A", 45.50, -73.60), MapMarker("B", 45.40, -73.50)]
     screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
@@ -465,8 +465,8 @@ def test_map_screen_shift_pans_by_a_single_cell() -> None:
 
 def test_map_screen_restores_and_persists_view() -> None:
     """The screen reopens on a saved view and reports every centre/zoom change."""
-    from meshtools.ui.map_render import MapMarker
-    from meshtools.ui.map_screen import MapScreen
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
 
     saved: list[tuple[float, float, int]] = []
     markers = [MapMarker("A", 45.50, -73.60), MapMarker("B", 45.40, -73.50)]
@@ -497,8 +497,8 @@ def test_map_screen_escape_dismisses() -> None:
     """Esc resolves the screen's future with None (backs out to the menu)."""
     import asyncio
 
-    from meshtools.ui.map_render import MapMarker
-    from meshtools.ui.map_screen import MapScreen
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
 
     screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
 

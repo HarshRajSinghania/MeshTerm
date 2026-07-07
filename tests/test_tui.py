@@ -1,4 +1,4 @@
-"""Unit tests for the reusable text-UI library (``meshtools.ui.tui``).
+"""Unit tests for the reusable text-UI library (``meshterm.ui.tui``).
 
 These exercise the pure logic — ANSI rendering/slicing, selection filtering and navigation,
 scroll math, the frame composition's terminal-fit guarantee, prompt editing/validation, and
@@ -15,13 +15,13 @@ from prompt_toolkit.output import DummyOutput
 from rich.table import Table
 from rich.text import Text
 
-from meshtools.ui.tui import frame
-from meshtools.ui.tui.progress import ProgressScreen
-from meshtools.ui.tui.prompt import AutocompleteScreen, ConfirmScreen, TextScreen
-from meshtools.ui.tui.render import render_lines, render_to_ansi
-from meshtools.ui.tui.screen import CANCEL, ScrollScreen
-from meshtools.ui.tui.select import Choice, SelectScreen, Separator
-from meshtools.ui.tui.session import TuiSession
+from meshterm.ui.tui import frame
+from meshterm.ui.tui.progress import ProgressScreen
+from meshterm.ui.tui.prompt import AutocompleteScreen, ConfirmScreen, TextScreen
+from meshterm.ui.tui.render import render_lines, render_to_ansi
+from meshterm.ui.tui.screen import CANCEL, ScrollScreen
+from meshterm.ui.tui.select import Choice, SelectScreen, Separator
+from meshterm.ui.tui.session import TuiSession
 
 _UNSET = object()
 

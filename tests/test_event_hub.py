@@ -8,17 +8,17 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from meshtools.core.connection import (
+from meshterm.core.connection import (
     _MOCK_MONITOR_INTERVAL_S as _MOCK_INTERVAL,
 )
-from meshtools.core.connection import MockDevice
-from meshtools.core.events import EventKind, MeshEvent
-from meshtools.core.models import Observation
-from meshtools.services.event_hub import EventHub
+from meshterm.core.connection import MockDevice
+from meshterm.core.events import EventKind, MeshEvent
+from meshterm.core.models import Observation
+from meshterm.services.event_hub import EventHub
 
 
 class _StubContext:
-    """Minimal stand-in for :class:`~meshtools.context.AppContext` for hub tests."""
+    """Minimal stand-in for :class:`~meshterm.context.AppContext` for hub tests."""
 
     def __init__(self, device: MockDevice) -> None:
         self._device = device

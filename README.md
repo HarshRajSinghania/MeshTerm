@@ -1,9 +1,9 @@
-# MeshTools
+# MeshTerm
 
 A modern, extensible command-line toolkit for tuning and exploring a
 [MeshCore](https://meshcore.co.uk/) mesh through a serial-connected companion device.
 
-MeshTools is interactive by default (a Rich + Questionary menu) and fully scriptable
+MeshTerm is interactive by default (a Rich + Questionary menu) and fully scriptable
 (every menu option is also a Typer subcommand). Every run is logged to SQLite and can be
 turned into interactive HTML visualizations.
 
@@ -38,39 +38,39 @@ Python 3.10+ is required (matching the `meshcore` library).
 
 ```bash
 # Interactive menu (default)
-meshtools
+meshterm
 
 # Scripted: every menu option is also a subcommand
-meshtools trace --target Alice --samples 10 --profile yagi
+meshterm trace --target Alice --samples 10 --profile yagi
 
 # Force a route through specific repeaters (MeshCore-app style): comma-separated
 # contact names and/or hex key prefixes, mixed freely. Blank lets the device route.
-meshtools trace --target Alice --path "3d,f2,3d"
-meshtools trace --target Alice --path "3d,Bravo-Repeater,f2"
-meshtools tx-optimize --target Alice --samples 6 --step 3 --apply
-meshtools info
-meshtools history
+meshterm trace --target Alice --path "3d,f2,3d"
+meshterm trace --target Alice --path "3d,Bravo-Repeater,f2"
+meshterm tx-optimize --target Alice --samples 6 --step 3 --apply
+meshterm info
+meshterm history
 
 # Messaging: live chat in the menu, or scripted from the CLI
-meshtools chat                                  # interactive: pick a conversation, chat live
-meshtools chat send --to Alice "on my way"      # direct message
-meshtools chat send --channel 0 "net in 5"      # channel broadcast
-meshtools chat history --to Alice
-meshtools chat list
+meshterm chat                                  # interactive: pick a conversation, chat live
+meshterm chat send --to Alice "on my way"      # direct message
+meshterm chat send --channel 0 "net in 5"      # channel broadcast
+meshterm chat history --to Alice
+meshterm chat list
 
 # Device configuration: view, set, back up, restore
-meshtools config                       # show all current settings
-meshtools config set radio_sf 9        # change one setting
-meshtools config backup node.toml      # archive every setting to TOML
-meshtools config restore node.toml --dry-run
+meshterm config                       # show all current settings
+meshterm config set radio_sf 9        # change one setting
+meshterm config backup node.toml      # archive every setting to TOML
+meshterm config restore node.toml --dry-run
 
 # No radio attached? Use the built-in simulator for development.
-meshtools --mock trace --target Alice
+meshterm --mock trace --target Alice
 ```
 
 ## Architecture
 
-MeshTools is layered so features are added by dropping a single file in `meshtools/tools/`:
+MeshTerm is layered so features are added by dropping a single file in `meshterm/tools/`:
 
 ```
 cli.py        Typer app; no subcommand -> interactive menu

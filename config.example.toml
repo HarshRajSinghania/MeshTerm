@@ -1,15 +1,15 @@
-# MeshTools configuration.
-# Copy to ~/.config/meshtools/config.toml (or pass --db / --port on the CLI).
+# MeshTerm configuration.
+# Copy to ~/.config/meshterm/config.toml (or pass --db / --port on the CLI).
 #
-# Profiles are optional. With no profile and no --port, MeshTools discovers attached
+# Profiles are optional. With no profile and no --port, MeshTerm discovers attached
 # serial devices, lets you pick one (interactively) or uses the single one present, and
 # remembers the last device that connected as the default for next time. Define profiles
 # below only to give your hardware stable aliases (e.g. --profile yagi).
 
 default_profile = "s3"
 trace_cooldown_s = 1.0
-# db_path = "C:/Users/you/meshtools/meshtools.db"
-# output_dir = "C:/Users/you/meshtools/output"
+# db_path = "C:/Users/you/meshterm/meshterm.db"
+# output_dir = "C:/Users/you/meshterm/output"
 
 # One [profiles.<name>] block per physical companion device.
 [profiles.s3]

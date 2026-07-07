@@ -13,23 +13,23 @@ from pathlib import Path
 
 import pytest
 
-from meshtools.core.connection import (
+from meshterm.core.connection import (
     _MOCK_MONITOR_INTERVAL_S as _MOCK_INTERVAL,
 )
-from meshtools.core.connection import (
+from meshterm.core.connection import (
     MockDevice,
     ack_from_event,
     message_from_event,
     observation_from_event,
 )
-from meshtools.core.models import HeardNode, Observation, utcnow
-from meshtools.core.monitor_store import MonitorStore
-from meshtools.persistence.repository import Repository
-from meshtools.services.monitor_service import MonitorService
+from meshterm.core.models import HeardNode, Observation, utcnow
+from meshterm.core.monitor_store import MonitorStore
+from meshterm.persistence.repository import Repository
+from meshterm.services.monitor_service import MonitorService
 
 
 class _StubContext:
-    """Minimal stand-in for :class:`~meshtools.context.AppContext` for service tests."""
+    """Minimal stand-in for :class:`~meshterm.context.AppContext` for service tests."""
 
     def __init__(self, repo: Repository, device: MockDevice) -> None:
         self.repo = repo
@@ -45,7 +45,7 @@ class _StubContext:
     @property
     def events(self):
         """Lazily build a real event hub bound to this stub context (as AppContext does)."""
-        from meshtools.services.event_hub import EventHub
+        from meshterm.services.event_hub import EventHub
 
         if self._events is None:
             self._events = EventHub(self)

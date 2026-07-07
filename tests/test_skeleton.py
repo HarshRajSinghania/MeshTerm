@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from meshtools.core.connection import DeviceCommandError, MockDevice, clamp_tx_power
-from meshtools.core.models import Contact, TraceResult, TraceStats
-from meshtools.persistence.repository import Repository
-from meshtools.services import trace_runner
+from meshterm.core.connection import DeviceCommandError, MockDevice, clamp_tx_power
+from meshterm.core.models import Contact, TraceResult, TraceStats
+from meshterm.persistence.repository import Repository
+from meshterm.services import trace_runner
 
 
 def test_clamp_tx_power() -> None:
@@ -24,7 +24,7 @@ def test_clamp_tx_power() -> None:
 
 def test_trace_stats_aggregation() -> None:
     """Robust stats reflect successes and bottleneck SNR."""
-    from meshtools.core.models import Hop
+    from meshterm.core.models import Hop
 
     traces = [
         TraceResult(target="x", success=True, hops=[Hop(0, "a", 5.0), Hop(1, "b", -2.0)]),
@@ -73,7 +73,7 @@ def test_path_hash_flags_power_of_two_only() -> None:
 
 def test_parse_trace_hops_reads_path_snr() -> None:
     """Per-hop SNR comes from payload['path'] dicts; the final hash-less node counts."""
-    from meshtools.core.connection import parse_trace_hops
+    from meshterm.core.connection import parse_trace_hops
 
     payload = {
         "path": [
@@ -90,15 +90,15 @@ def test_parse_trace_hops_reads_path_snr() -> None:
 
 def test_parse_trace_hops_empty_without_path() -> None:
     """A reply with no parsed path yields no hops (SNR shows as n/a)."""
-    from meshtools.core.connection import parse_trace_hops
+    from meshterm.core.connection import parse_trace_hops
 
     assert parse_trace_hops({}) == []
 
 
 def test_route_text_annotates_nodes_with_command_width_hash() -> None:
     """The route shows each node's hash at the command's path-hash width."""
-    from meshtools.core.models import Hop
-    from meshtools.ui.widgets import _route_text
+    from meshterm.core.models import Hop
+    from meshterm.ui.widgets import _route_text
 
     resolve = trace_runner.make_node_resolver(
         [Contact(name="Alice", public_key="3d63c6" + "00" * 26, key_prefix="3d63c6429436")]
@@ -120,8 +120,8 @@ def test_route_text_annotates_nodes_with_command_width_hash() -> None:
 
 def test_route_text_annotates_our_device_with_hash() -> None:
     """Given our key, both endpoints (us) carry our hash at the command width."""
-    from meshtools.core.models import Hop
-    from meshtools.ui.widgets import _route_text
+    from meshterm.core.models import Hop
+    from meshterm.ui.widgets import _route_text
 
     result = TraceResult(
         target="x",
@@ -138,8 +138,8 @@ def test_route_text_annotates_our_device_with_hash() -> None:
 
 def test_traces_table_annotates_links_with_hashes() -> None:
     """The per-trace From→To column shows ``name (hash)``, including our device."""
-    from meshtools.core.models import Hop
-    from meshtools.ui.widgets import traces_table
+    from meshterm.core.models import Hop
+    from meshterm.ui.widgets import traces_table
 
     resolve = trace_runner.make_node_resolver(
         [Contact(name="Alice", public_key="3d63c6" + "00" * 26, key_prefix="3d63c6429436")]
@@ -161,8 +161,8 @@ def test_traces_table_annotates_links_with_hashes() -> None:
 
 def test_route_text_unknown_node_shows_hash_only() -> None:
     """An unresolved node shows just its hash, truncated to the command width."""
-    from meshtools.core.models import Hop
-    from meshtools.ui.widgets import _route_text
+    from meshterm.core.models import Hop
+    from meshterm.ui.widgets import _route_text
 
     result = TraceResult(
         target="x",
@@ -204,7 +204,7 @@ async def test_mock_device_blank_path_traces() -> None:
 
 def test_trace_edges_endpoints_are_our_device() -> None:
     """The first edge originates at us and the last edge returns to us (#3/#4)."""
-    from meshtools.core.models import Hop
+    from meshterm.core.models import Hop
 
     result = TraceResult(
         target="Alice",
@@ -222,7 +222,7 @@ def test_trace_edges_endpoints_are_our_device() -> None:
 
 def test_trace_stats_reports_per_hop_medians() -> None:
     """Aggregation yields a median SNR for every hop position (#5)."""
-    from meshtools.core.models import Hop
+    from meshterm.core.models import Hop
 
     traces = [
         TraceResult(target="x", success=True, hops=[Hop(0, "a", 4.0), Hop(1, None, 0.0)]),
@@ -283,7 +283,7 @@ async def test_admin_login_rejects_wrong_password() -> None:
 
 async def test_tx_optimizer_finds_simulator_peak(tmp_path: Path) -> None:
     """The optimizer converges near the simulated remote optimum and applies it."""
-    from meshtools.services import tx_optimizer
+    from meshterm.services import tx_optimizer
 
     device, admin, target, path = await _setup_link(optimal_remote_tx=20)
 
@@ -300,7 +300,7 @@ async def test_tx_optimizer_finds_simulator_peak(tmp_path: Path) -> None:
 
 async def test_tx_optimizer_no_apply_restores_original(tmp_path: Path) -> None:
     """With apply off, the node is left at the power it started with."""
-    from meshtools.services import tx_optimizer
+    from meshterm.services import tx_optimizer
 
     device, admin, target, path = await _setup_link()
     await device.set_remote_tx_power(admin, 15)  # a known starting power
@@ -317,8 +317,8 @@ async def test_tx_optimizer_no_apply_restores_original(tmp_path: Path) -> None:
 
 def test_select_best_prefers_reliability_then_lowest_power() -> None:
     """A 100%-reliable level beats a flakier higher-SNR one; ties go to lower TX."""
-    from meshtools.core.models import TraceStats, TxLevelResult
-    from meshtools.services.tx_optimizer import select_best
+    from meshterm.core.models import TraceStats, TxLevelResult
+    from meshterm.services.tx_optimizer import select_best
 
     def level(tx: int, snr: float, successes: int, samples: int = 5) -> TxLevelResult:
         return TxLevelResult(
@@ -340,7 +340,7 @@ def test_select_best_prefers_reliability_then_lowest_power() -> None:
 
 def test_round_trip_path_mirrors_back_to_a_reachable_node() -> None:
     """The trace path goes out to the target and back, so a near node answers."""
-    from meshtools.services.tx_optimizer import _round_trip_path
+    from meshterm.services.tx_optimizer import _round_trip_path
 
     assert _round_trip_path(["3f", "f2"]) == "3f,f2,3f"
     assert _round_trip_path(["3d", "3f", "f2"]) == "3d,3f,f2,3f,3d"
@@ -349,8 +349,8 @@ def test_round_trip_path_mirrors_back_to_a_reachable_node() -> None:
 
 def test_trace_target_snr_matches_target_hop_not_position() -> None:
     """The target's SNR is read from its hash, even when it's the turn-around hop."""
-    from meshtools.core.models import Hop
-    from meshtools.services.tx_optimizer import trace_target_snr
+    from meshterm.core.models import Hop
+    from meshterm.services.tx_optimizer import trace_target_snr
 
     # Round trip 3f -> f2 -> 3f -> us: the f2 hop (index 1) is what we want, not the
     # later 3f hop or the hash-less return hop.
@@ -366,8 +366,8 @@ def test_tx_plot_writes_html(tmp_path: Path) -> None:
     """The Plotly renderer produces a self-contained HTML file."""
     import asyncio
 
-    from meshtools.services import tx_optimizer
-    from meshtools.viz.tx_plot import render_tx_optimization
+    from meshterm.services import tx_optimizer
+    from meshterm.viz.tx_plot import render_tx_optimization
 
     async def _build():
         device, admin, target, path = await _setup_link()
@@ -415,7 +415,7 @@ async def test_three_byte_route_appends_destination_hash() -> None:
     width), and the destination's own hash is appended as the final hop — a trace
     only replies when its destination is the last hop.
     """
-    from meshtools.core.connection import MeshCoreDevice
+    from meshterm.core.connection import MeshCoreDevice
 
     mc = _mc_with(
         {
@@ -447,7 +447,7 @@ async def test_direct_neighbor_resolves_to_destination_hash() -> None:
     contact's mode unknown (-1) the region's path-hash mode (3-byte) sets the width,
     collapsed to the representable 2 bytes.
     """
-    from meshtools.core.connection import MeshCoreDevice
+    from meshterm.core.connection import MeshCoreDevice
 
     mc = _mc_with(
         {
@@ -474,7 +474,7 @@ async def test_direct_neighbor_resolves_to_destination_hash() -> None:
 
 async def test_unknown_contact_resolves_to_none() -> None:
     """An unrecognized target yields ``None`` so the trace can fall back to path-less."""
-    from meshtools.core.connection import MeshCoreDevice
+    from meshterm.core.connection import MeshCoreDevice
 
     mc = _mc_with(
         {
@@ -495,7 +495,7 @@ async def test_unknown_contact_resolves_to_none() -> None:
 
 async def test_contacts_payload_retries_transient_error() -> None:
     """A transient 'no event received' on contacts retrieval is retried, not fatal."""
-    from meshtools.core.connection import MeshCoreDevice
+    from meshterm.core.connection import MeshCoreDevice
 
     calls = {"n": 0}
 
@@ -527,7 +527,7 @@ async def test_contacts_payload_retries_transient_error() -> None:
 
 async def test_contacts_payload_raises_clean_error_after_retries() -> None:
     """Persistent contacts-retrieval failure raises a clean, actionable error."""
-    from meshtools.core.connection import DeviceCommandError, MeshCoreDevice
+    from meshterm.core.connection import DeviceCommandError, MeshCoreDevice
 
     class _Err:
         payload = {"reason": "no event received during contacts retrieval"}
@@ -550,7 +550,7 @@ async def test_contacts_payload_raises_clean_error_after_retries() -> None:
 
 async def test_latest_trace_returns_previous_run(tmp_path: Path) -> None:
     """latest_trace rehydrates the most recent stored trace, excluding a given run."""
-    from meshtools.core.models import Hop
+    from meshterm.core.models import Hop
 
     repo = Repository(tmp_path / "prev.db")
     old_run = repo.start_run("trace", {"target": "Alice"})

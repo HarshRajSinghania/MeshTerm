@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from meshtools.core.connection import DeviceCommandError, MeshCoreDevice
+from meshterm.core.connection import DeviceCommandError, MeshCoreDevice
 
 
 class _Event:

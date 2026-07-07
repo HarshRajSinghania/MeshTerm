@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meshtools.core.config import Settings
+from meshterm.core.config import Settings
 
 
 def test_connect_on_start_defaults_true() -> None:

@@ -12,10 +12,10 @@ from typing import Optional
 
 import pytest
 
-from meshtools.core.config import DeviceProfile
-from meshtools.core.device_store import DeviceStore
-from meshtools.core.discovery import DiscoveredDevice, discover_devices
-from meshtools.core.selection import DeviceSelectionError, resolve_device
+from meshterm.core.config import DeviceProfile
+from meshterm.core.device_store import DeviceStore
+from meshterm.core.discovery import DiscoveredDevice, discover_devices
+from meshterm.core.selection import DeviceSelectionError, resolve_device
 
 
 @dataclass
@@ -208,7 +208,7 @@ def test_resolve_no_devices_raises() -> None:
 
 def _remember(device: DiscoveredDevice):
     """Build a RememberedDevice for ``device`` without touching disk."""
-    from meshtools.core.device_store import RememberedDevice
+    from meshterm.core.device_store import RememberedDevice
 
     return RememberedDevice(
         stable_id=device.stable_id, port=device.port, label=device.label, last_connected=""

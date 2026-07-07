@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from meshtools.services import link_budget
-from meshtools.services.link_budget import RadioConfig
+from meshterm.services import link_budget
+from meshterm.services.link_budget import RadioConfig
 
 
 def test_symbol_time_and_low_data_rate() -> None:
