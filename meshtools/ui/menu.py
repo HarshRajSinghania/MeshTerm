@@ -23,6 +23,7 @@ from ..tools import all_tools
 from .surface import TuiUi
 from .theme import make_console
 from .tui import Choice, Separator, TuiSession
+from .tui.emoji_width import calibrate as calibrate_emoji_width
 
 
 @contextmanager
@@ -91,6 +92,11 @@ async def run_menu(ctx: AppContext) -> None:
     Args:
         ctx: The shared application context.
     """
+    # Measure how this terminal renders emoji and align Rich to it, before
+    # prompt_toolkit takes over the screen. This keeps every panel border — and
+    # every chat bubble — aligned regardless of the terminal's emoji widths.
+    calibrate_emoji_width()
+
     session = TuiSession(header=lambda: _header(ctx))
     ctx.ui = TuiUi(session)
 
