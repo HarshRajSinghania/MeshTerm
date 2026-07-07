@@ -15,6 +15,22 @@ from typing import Optional
 #: Label used for our own (local) device when framing a trace path's endpoints.
 LOCAL_DEVICE_LABEL = "us"
 
+# MeshCore advert types — the low nibble of an advert's flag byte — classify the kind of
+# node an advert announces. Repeaters are fixed infrastructure and carry the mesh, so
+# location-aware features (e.g. the map) prioritise them over ordinary leaf nodes.
+NODE_TYPE_CHAT = 1
+NODE_TYPE_REPEATER = 2
+NODE_TYPE_ROOM = 3
+NODE_TYPE_SENSOR = 4
+
+#: Human-readable label for each advert type, for legends and summaries.
+NODE_TYPE_LABELS = {
+    NODE_TYPE_CHAT: "node",
+    NODE_TYPE_REPEATER: "repeater",
+    NODE_TYPE_ROOM: "room",
+    NODE_TYPE_SENSOR: "sensor",
+}
+
 
 def utcnow() -> datetime:
     """Return a timezone-aware UTC timestamp.
@@ -54,6 +70,8 @@ class Observation:
         node: Key prefix / hash identifying the transmitting node, if known.
         name: Friendly name advertised by the node, if carried.
         kind: Packet class, e.g. ``advert`` or ``telemetry``.
+        node_type: Advert type of the transmitting node (see the ``NODE_TYPE_*`` constants),
+            e.g. :data:`NODE_TYPE_REPEATER`; ``None`` when the packet did not carry it.
         snr: Signal-to-noise ratio (dB) the companion measured, if reported.
         rssi: Received signal strength (dBm), if reported.
         lat: Advertised latitude (decimal degrees), when the node shares location.
@@ -65,6 +83,7 @@ class Observation:
     node: Optional[str]
     name: Optional[str] = None
     kind: str = "advert"
+    node_type: Optional[int] = None
     snr: Optional[float] = None
     rssi: Optional[float] = None
     lat: Optional[float] = None
@@ -277,6 +296,8 @@ class HeardNode:
         last_seen: Timestamp of the most recent observation.
         lat: Most recent advertised latitude, if the node shared one.
         lon: Most recent advertised longitude, if the node shared one.
+        node_type: Most recent advert type seen for the node (see the ``NODE_TYPE_*``
+            constants), if any observation carried it.
     """
 
     node: Optional[str]
@@ -288,11 +309,17 @@ class HeardNode:
     last_seen: datetime
     lat: Optional[float] = None
     lon: Optional[float] = None
+    node_type: Optional[int] = None
 
     @property
     def has_location(self) -> bool:
         """Whether this node reported a usable latitude/longitude."""
         return self.lat is not None and self.lon is not None
+
+    @property
+    def is_repeater(self) -> bool:
+        """Whether this node advertised itself as a repeater."""
+        return self.node_type == NODE_TYPE_REPEATER
 
     @classmethod
     def from_observations(
@@ -315,6 +342,7 @@ class HeardNode:
             (o for o in reversed(ordered) if o.lat is not None and o.lon is not None), None
         )
         name = next((o.name for o in reversed(ordered) if o.name), None)
+        node_type = next((o.node_type for o in reversed(ordered) if o.node_type is not None), None)
         return cls(
             node=node,
             name=name,
@@ -325,6 +353,7 @@ class HeardNode:
             last_seen=latest.observed_at,
             lat=located.lat if located else None,
             lon=located.lon if located else None,
+            node_type=node_type,
         )
 
 

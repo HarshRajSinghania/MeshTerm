@@ -251,6 +251,23 @@ class TuiSession:
         size = self._app.output.get_size()  # type: ignore[union-attr]
         return max(20, size.columns), max(6, size.rows)
 
+    def base_body_size(self) -> tuple[int, int]:
+        """Return the ``(width, height)`` in cells available to the base screen's body.
+
+        Mirrors the layout math in :func:`~meshtools.ui.tui.frame.compose_base` so a
+        full-screen screen (e.g. the map) can size its own content to fill the frame exactly,
+        without waiting a repaint to learn its height.
+
+        Returns:
+            The inner content width and the body viewport height, both in character cells.
+        """
+        from .render import render_lines
+
+        cols, rows = self._size()
+        header_h = len(render_lines(self._header(), cols, no_wrap=True))
+        viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
+        return cols - 4, viewport
+
     def _base_screen(self) -> Optional[Screen]:
         """The screen drawn as the background (parent of a floating dialog, else the top)."""
         if not self._stack:

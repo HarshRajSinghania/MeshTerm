@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS observations (
     node        TEXT,
     name        TEXT,
     kind        TEXT    NOT NULL DEFAULT 'advert',
+    node_type   INTEGER,          -- advert type (repeater/chat/room/...), when carried
     snr         REAL,
     rssi        REAL,
     lat         REAL,
@@ -149,8 +150,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     added columns are created here too (not in ``_SCHEMA``), so ``executescript`` never
     references a column an older database hasn't grown yet.
     """
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
-    if "channel_id" not in columns:
+    message_cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "channel_id" not in message_cols:
         # v3 -> v4: channel history moved from being keyed by slot index to a
         # slot-independent channel identity. Existing rows are backfilled lazily at runtime
         # (see Repository.backfill_channel_ids) once the device's channels can be read.
@@ -158,3 +159,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id)"
     )
+
+    observation_cols = {row["name"] for row in conn.execute("PRAGMA table_info(observations)")}
+    if "node_type" not in observation_cols:
+        # v4 -> v5: observations gained the transmitting node's advert type, so the map can
+        # tell repeaters from leaf nodes. Older rows simply carry NULL (type unknown).
+        conn.execute("ALTER TABLE observations ADD COLUMN node_type INTEGER")

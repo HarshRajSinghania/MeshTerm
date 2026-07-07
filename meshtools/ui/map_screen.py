@@ -1,0 +1,217 @@
+"""The interactive full-screen map: a pannable, zoomable slippy map in the terminal.
+
+This drives the braille street map inside the TUI. It owns a :class:`~meshtools.core.geo.
+Viewport` over the mesh's nodes, fetches the vector tiles covering it in the background (so
+the UI never blocks on the network), and redraws via :func:`~meshtools.ui.map_render.
+render_map`. Keys:
+
+* ``w`` / ``a`` / ``s`` / ``d`` (or the arrow keys) pan north / west / south / east,
+* ``=`` / ``+`` zoom in, ``-`` / ``_`` zoom out,
+* ``r`` recenters and refits to the nodes,
+* ``Esc`` / ``q`` leaves the map.
+
+With no network (and no cached tiles) the basemap is simply absent and nodes are plotted on a
+blank grid — the map still works, it just has no streets.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import math
+from typing import TYPE_CHECKING, Optional
+
+from ..core.geo import EARTH_RADIUS_KM, Viewport
+from ..core.mvt import Layer
+from ..services.basemap import BasemapSource
+from .map_render import MapMarker, render_map
+from .tui.screen import Screen
+
+if TYPE_CHECKING:
+    from ..context import AppContext
+
+#: Fraction of the view a single pan keypress moves.
+_PAN_STEP = 0.30
+
+#: How far past the tile source's max zoom the display may go (lower tiles are magnified).
+_OVERZOOM = 2
+
+
+class MapScreen(Screen):
+    """A full-screen, keyboard-driven map of the mesh's located nodes over an OSM basemap."""
+
+    floating = False
+
+    def __init__(
+        self,
+        session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
+        markers: list[MapMarker],
+        source: BasemapSource,
+        max_tile_zoom: int,
+    ) -> None:
+        """Create the map screen.
+
+        Args:
+            session: The running TUI session (for size + repaint scheduling).
+            markers: The located mesh nodes to plot (must be non-empty).
+            source: The vector-tile source (already resolved/warmed).
+            max_tile_zoom: The source's max zoom, captured off the event loop at open time.
+        """
+        super().__init__()
+        self.title = "mesh map"
+        self._session = session
+        self._markers = markers
+        self._source = source
+        self._max_tile_zoom = max_tile_zoom
+        self._viewport: Optional[Viewport] = None
+        self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
+        # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
+        self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
+        self._pending: set[tuple[int, int, int]] = set()
+
+    # --- rendering -----------------------------------------------------------
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """Key hints plus a live tile-loading indicator."""
+        base = "wasd/↑↓←→ pan · +/- zoom · r reset · Esc back"
+        if self._pending:
+            return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
+        if not self._source.available:
+            return f"{base} · [warn]offline — no basemap[/warn]"
+        return base
+
+    def render_body(self, width: int) -> list[str]:
+        """Build (or resize) the viewport, ensure its tiles, and render the frame."""
+        _, cell_h = self._session.base_body_size()
+        cell_w = width
+        dot_w, dot_h = cell_w * 2, cell_h * 4
+
+        if self._viewport is None:
+            self._viewport = Viewport.fit(
+                [(m.lat, m.lon) for m in self._markers],
+                dot_w,
+                dot_h,
+                max_zoom=self._max_tile_zoom,
+            )
+            self._size = (dot_w, dot_h)
+        elif self._size != (dot_w, dot_h):
+            self._viewport = self._viewport.resized(dot_w, dot_h)
+            self._size = (dot_w, dot_h)
+
+        self._ensure_tiles(self._viewport)
+        self.title = self._title(self._viewport)
+        tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
+        return render_map(self._viewport, tiles, self._markers)
+
+    def _title(self, vp: Viewport) -> str:
+        """A compact status title: zoom, node count, and scale (metres per dot)."""
+        # Ground metres per braille dot at the view centre, for a rough sense of scale.
+        m_per_dot = (
+            2 * math.pi * EARTH_RADIUS_KM * 1000
+            * math.cos(math.radians(vp.center_lat))
+            / (256 * (2**vp.zoom))
+        )
+        scale = f"{m_per_dot * vp.dot_w:.0f} m across" if m_per_dot * vp.dot_w < 1000 else \
+            f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
+        return f"mesh map · z{vp.zoom} · {len(self._markers)} nodes · {scale}"
+
+    # --- tiles ---------------------------------------------------------------
+
+    def _ensure_tiles(self, vp: Viewport) -> None:
+        """Schedule background fetches for any visible tiles not yet loaded or pending."""
+        if not self._source.available:  # offline (resolved at open time) — nodes only
+            return
+        for t in vp.tiles(self._max_tile_zoom):
+            if t in self._tiles or t in self._pending:
+                continue
+            self._pending.add(t)
+            try:
+                asyncio.ensure_future(self._load(t))
+            except RuntimeError:  # pragma: no cover - no running loop (non-interactive)
+                self._pending.discard(t)
+
+    async def _load(self, t: tuple[int, int, int]) -> None:
+        """Fetch+decode one tile off the event loop, then repaint."""
+        try:
+            layers = await asyncio.to_thread(self._source.load_tile, *t)
+        except Exception:  # noqa: BLE001 - a failed tile is just an absent one
+            layers = None
+        self._tiles[t] = layers
+        self._pending.discard(t)
+        self._session.invalidate()
+
+    # --- input ---------------------------------------------------------------
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Pan, zoom, reset, or exit in response to a normalized key action."""
+        vp = self._viewport
+        if action == "escape":
+            self.resolve(None)
+            return
+        if vp is None:
+            return
+        if action == "up":
+            self._viewport = vp.panned(0, -_PAN_STEP)
+        elif action == "down":
+            self._viewport = vp.panned(0, _PAN_STEP)
+        elif action == "left":
+            self._viewport = vp.panned(-_PAN_STEP, 0)
+        elif action == "right":
+            self._viewport = vp.panned(_PAN_STEP, 0)
+        elif action == "text":
+            self._handle_key(data, vp)
+
+    def _handle_key(self, key: str, vp: Viewport) -> None:
+        """Handle a printable-key action (pan/zoom/reset/quit)."""
+        key = key.lower()
+        if key == "w":
+            self._viewport = vp.panned(0, -_PAN_STEP)
+        elif key == "s":
+            self._viewport = vp.panned(0, _PAN_STEP)
+        elif key == "a":
+            self._viewport = vp.panned(-_PAN_STEP, 0)
+        elif key == "d":
+            self._viewport = vp.panned(_PAN_STEP, 0)
+        elif key in ("=", "+"):
+            self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
+        elif key in ("-", "_"):
+            self._viewport = vp.zoomed(-1)
+        elif key == "r":
+            self._viewport = Viewport.fit(
+                [(m.lat, m.lon) for m in self._markers],
+                vp.dot_w,
+                vp.dot_h,
+                max_zoom=self._max_tile_zoom,
+            )
+        elif key == "q":
+            self.resolve(None)
+
+
+def basemap_source(ctx: "AppContext") -> BasemapSource:
+    """Build the vector-tile source backed by the app's on-disk tile cache."""
+    return BasemapSource(ctx.settings.config_dir / "tilecache")
+
+
+async def open_map(ctx: "AppContext", markers: list[MapMarker]) -> None:
+    """Open the interactive full-screen map over ``markers`` and run until dismissed.
+
+    Warms the tile source off the event loop (so the first paint doesn't block on the
+    network), then pushes the :class:`MapScreen` and awaits its dismissal.
+
+    Args:
+        ctx: Shared application context (must be in the interactive menu).
+        markers: The located mesh nodes to plot (non-empty).
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    from .surface import TuiUi
+
+    if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("the interactive map is only available in the menu")
+    session = ctx.ui.session
+    source = basemap_source(ctx)
+    # Resolve the tile template/zoom in a worker thread so the UI thread never blocks.
+    max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
+    screen = MapScreen(session, markers, source, max_zoom)
+    await session.run_screen(screen)

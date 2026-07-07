@@ -320,13 +320,14 @@ class Repository:
         """
         self._conn.execute(
             "INSERT INTO observations "
-            "(run_id, node, name, kind, snr, rssi, lat, lon, observed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
                 obs.name,
                 obs.kind,
+                obs.node_type,
                 obs.snr,
                 obs.rssi,
                 obs.lat,
@@ -361,7 +362,7 @@ class Repository:
         Returns:
             One :class:`HeardNode` per distinct node, ordered by most-recently heard.
         """
-        sql = "SELECT node, name, snr, rssi, lat, lon, observed_at FROM observations"
+        sql = "SELECT node, name, node_type, snr, rssi, lat, lon, observed_at FROM observations"
         params: list[Any] = []
         if since is not None:
             sql += " WHERE observed_at >= ?"
@@ -373,6 +374,7 @@ class Repository:
             obs = Observation(
                 node=row["node"],
                 name=row["name"],
+                node_type=row["node_type"],
                 snr=row["snr"],
                 rssi=row["rssi"],
                 lat=row["lat"],

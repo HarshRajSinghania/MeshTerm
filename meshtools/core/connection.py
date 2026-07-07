@@ -22,7 +22,16 @@ from typing import Callable, Optional
 
 from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
-from .models import Ack, Contact, Hop, Message, Observation, TraceResult
+from .models import (
+    NODE_TYPE_CHAT,
+    NODE_TYPE_REPEATER,
+    Ack,
+    Contact,
+    Hop,
+    Message,
+    Observation,
+    TraceResult,
+)
 
 #: Module logger; enable DEBUG on ``meshtools.core.connection`` to trace the message pump.
 _log = logging.getLogger(__name__)
@@ -1265,10 +1274,14 @@ class MockDevice(Device):
             ``advert`` otherwise, carrying a location for the simulated repeaters.
         """
         lat_lon = self._MOCK_LOCATIONS.get(contact.name)
+        # The two located nodes are the simulated repeaters (fixed infrastructure); the rest
+        # advertise as ordinary chat nodes, so the map has both classes to prioritise.
+        node_type = NODE_TYPE_REPEATER if contact.name in self._MOCK_LOCATIONS else NODE_TYPE_CHAT
         return Observation(
             node=contact.key_prefix or contact.public_key[:12],
             name=contact.name,
             kind="telemetry" if seq % 4 == 3 else "advert",
+            node_type=node_type,
             snr=round(self._rng.gauss(6.0, 3.0), 1),
             rssi=round(self._rng.gauss(-95.0, 8.0), 1),
             lat=lat_lon[0] if lat_lon else None,
@@ -1428,6 +1441,7 @@ def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: 
         node=node,
         name=payload.get("adv_name") or payload.get("name"),
         kind=kind,
+        node_type=_as_int(payload.get("adv_type", payload.get("type"))),
         snr=_as_float(payload.get("snr")),
         rssi=_as_float(payload.get("rssi")),
         lat=_as_float(lat) if lat else None,
@@ -1483,6 +1497,16 @@ def _as_float(value: object) -> Optional[float]:
         return None
     try:
         return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: object) -> Optional[int]:
+    """Best-effort int conversion, returning ``None`` on missing/garbage values."""
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
 
