@@ -260,10 +260,13 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
 
     await ctx.chat.start()  # prime the slot→identity cache (slot 0 == Public)
     try:
-        # A message on Public arrives before we touch anything — files under Public.
+        # A message on Public arrives before we touch anything — files under Public. The
+        # inbound worker resolves it against the slot as it stands now (Public), which is
+        # exactly what happens live: messages are recorded on arrival, ahead of any later edit.
         ctx.events.publish(
             MeshEvent.message_event(Message(text="hi public", channel=0, is_channel=True))
         )
+        await ctx.chat._queue.join()
 
         # Drive the manager: open Public's detail → clear it, then create a new private
         # channel (which reuses freed slot 0), then back out.
@@ -281,6 +284,7 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
         ctx.events.publish(
             MeshEvent.message_event(Message(text="ops secret", channel=0, is_channel=True))
         )
+        await ctx.chat._queue.join()
 
         public_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=public_id)
         ops_msgs = ctx.repo.recent_chat_messages(is_channel=True, channel_id=ops.identity)

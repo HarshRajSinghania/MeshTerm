@@ -337,6 +337,7 @@ async def test_service_records_inbound_and_tracks_unread(repo: Repository) -> No
         ctx.events.publish(
             MeshEvent.message_event(Message(text="ping", sender="ffeeddcc", is_channel=False))
         )
+        await chat._queue.join()  # let the inbound worker resolve and record the message
         assert chat.unread("dm:ffeeddcc") == 1
         assert chat.unread_total() >= 1
         stored = repo.recent_chat_messages(is_channel=False, peer="ffeeddcc")
@@ -357,8 +358,84 @@ async def test_service_active_conversation_suppresses_unread(repo: Repository) -
         ctx.events.publish(
             MeshEvent.message_event(Message(text="ping", sender="ffeeddcc", is_channel=False))
         )
+        await chat._queue.join()  # let the inbound worker resolve and record the message
         assert chat.unread("dm:ffeeddcc") == 0  # active thread doesn't accrue unread
         assert repo.recent_chat_messages(is_channel=False, peer="ffeeddcc")  # still recorded
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_service_files_channel_message_by_current_slot_occupant(repo: Repository) -> None:
+    """A channel message is filed under whatever channel is in its slot *now*.
+
+    The wire reports only a slot index, which the firmware assigns from the channel's current
+    position. Reordering the slots (here simulated out of band, without notifying the service)
+    must not misroute later messages: resolution reads the slot fresh, so a message on slot 0
+    lands in whatever channel occupies slot 0 at that moment — never a stale cached identity.
+    """
+    from meshtools.core.channels import channel_identity
+
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    await device.connect()
+    secret_a, secret_b = bytes(range(16)), bytes(range(16, 32))
+    await device.set_channel(0, "Alpha", secret_a)
+    await device.set_channel(1, "Bravo", secret_b)
+    id_a = channel_identity("Alpha", secret_a)
+    id_b = channel_identity("Bravo", secret_b)
+
+    chat = ChatService(ctx)
+    await chat.start()  # primes slot 0 -> Alpha, slot 1 -> Bravo
+    try:
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="from alpha", is_channel=True, channel=0))
+        )
+        await chat._queue.join()
+
+        # Swap the occupants of slots 0 and 1 out of band — the service is never told.
+        await device.set_channel(0, "Bravo", secret_b)
+        await device.set_channel(1, "Alpha", secret_a)
+
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="from bravo", is_channel=True, channel=0))
+        )
+        await chat._queue.join()
+
+        alpha = repo.recent_chat_messages(is_channel=True, channel_id=id_a)
+        bravo = repo.recent_chat_messages(is_channel=True, channel_id=id_b)
+        assert [m.text for m in alpha] == ["from alpha"]  # unaffected by the reorder
+        assert [m.text for m in bravo] == ["from bravo"]  # not misfiled under Alpha's identity
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_service_records_channel_messages_in_arrival_order(repo: Repository) -> None:
+    """A burst of channel messages is recorded in arrival order despite async resolution.
+
+    Each channel message resolves its identity with a device read; the serial inbound worker
+    guarantees they still land in the transcript (ordered by insertion) in the order received.
+    """
+    from meshtools.core.channels import channel_identity
+
+    device = MockDevice()
+    ctx = _StubContext(device, repo)
+    await device.connect()
+    secret = bytes(range(16))
+    await device.set_channel(0, "Alpha", secret)
+    channel_id = channel_identity("Alpha", secret)
+
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        for i in range(5):
+            ctx.events.publish(
+                MeshEvent.message_event(Message(text=f"m{i}", is_channel=True, channel=0))
+            )
+        await chat._queue.join()
+        stored = repo.recent_chat_messages(is_channel=True, channel_id=channel_id)
+        assert [m.text for m in stored] == ["m0", "m1", "m2", "m3", "m4"]
     finally:
         await chat.stop()
         await device.disconnect()

@@ -408,6 +408,12 @@ class MeshCoreDevice(Device):
         self._port = port
         self._baudrate = baudrate
         self._mc = None  # type: ignore[var-annotated]  # meshcore.MeshCore
+        # Serializes channel reads. The meshcore library's get_channel waits for "the next
+        # CHANNEL_INFO event" with no correlation to the index it asked for, and the dispatcher
+        # fans that event to *every* in-flight waiter — so two concurrent reads both resolve on
+        # the first response and one caller silently gets the other's channel. Holding this lock
+        # keeps at most one channel read outstanding, so the response is unambiguously ours.
+        self._channel_read_lock = asyncio.Lock()
 
     async def connect(self) -> None:  # noqa: D102 - inherited docstring
         if self._mc is not None:
@@ -906,8 +912,19 @@ class MeshCoreDevice(Device):
         return dict(getattr(event, "payload", {}) or {})
 
     async def get_channel(self, index: int) -> Optional[dict]:  # noqa: D102
-        event = self._ok(await self._require().commands.get_channel(index))
+        # The read is serialized (see self._channel_read_lock) so the uncorrelated
+        # CHANNEL_INFO response can't be stolen by a concurrent read. We still verify the
+        # response is for the slot we asked about: a stray CHANNEL_INFO (from another source,
+        # or a slow response arriving after a timeout) would otherwise misidentify the slot and
+        # misfile a channel's messages. On mismatch we raise rather than return foreign data.
+        async with self._channel_read_lock:
+            event = self._ok(await self._require().commands.get_channel(index))
         payload = getattr(event, "payload", {}) or {}
+        got = payload.get("channel_idx")
+        if got is not None and int(got) != index:
+            raise DeviceCommandError(
+                f"channel read for slot {index} returned slot {got}"
+            )
         if not payload.get("channel_name"):
             return None
         return payload

@@ -60,9 +60,15 @@ class ChatService:
         self._unread: dict[str, int] = {}
         self._active: Optional[str] = None
         self._session_count = 0
-        # Cache of channel slot index -> the channel's intrinsic identity. The wire only
-        # tells us a message's slot index, so this bridges it to the identity history is
-        # keyed by. Rebuilt from the device on demand (see :meth:`refresh_channels`).
+        # Inbound messages are recorded off a single serialized worker (see
+        # :meth:`_process_inbound`) so channel messages — whose identity is resolved with an
+        # async device read — are still stored in the order they arrived. The queue is the
+        # hand-off from the (synchronous) hub callback to that worker.
+        self._queue: Optional["asyncio.Queue[Message]"] = None
+        self._worker: Optional["asyncio.Task[None]"] = None
+        # Last-known channel slot index -> intrinsic identity. Inbound resolution reads the
+        # slot fresh every time (see :meth:`channel_id_for`), so this is not the source of
+        # truth — only a warm map for priming/backfill and a fallback when a read fails.
         self._channel_ids: dict[int, str] = {}
 
     @property
@@ -118,11 +124,16 @@ class ChatService:
         self._channel_ids = ids
 
     async def channel_id_for(self, idx: int) -> str:
-        """Resolve a channel slot index to its intrinsic identity (reading the device once).
+        """Resolve a channel slot index to its intrinsic identity, reading the slot fresh.
 
-        Refreshes the cache on a miss, then falls back to a slot-derived identity only if the
-        device has no channel there. The fallback is cached so a stream of messages on an
-        unconfigured slot doesn't re-read the device on every one.
+        The slot's *current* occupant is read from the device every call, so the identity
+        always reflects the channel that is actually in that slot right now — even if the
+        slots were reordered or re-keyed (in this app, via the CLI/config tool, or on another
+        client such as the phone app) since the cache was last built. Trusting a session-long
+        slot→identity cache instead is exactly what let a reorder misfile a channel's
+        messages. The resolved identity refreshes the cache; a transient read failure falls
+        back to the last identity we saw for the slot (so a blip doesn't split a channel's
+        history), and only a genuinely empty slot yields the slot-derived identity.
 
         Args:
             idx: The channel slot index the wire reported.
@@ -130,15 +141,19 @@ class ChatService:
         Returns:
             The channel's identity, suitable for keying its history.
         """
-        cid = self._channel_ids.get(idx)
-        if cid is not None:
-            return cid
-        await self.refresh_channels()
-        cid = self._channel_ids.get(idx)
-        if cid is None:
-            cid = _fallback_channel_id(idx)
+        try:
+            device = await self._ctx.device()
+            payload = await device.get_channel(idx)
+        except Exception as exc:  # noqa: BLE001 - fall back rather than misroute or drop
+            self._ctx.log.debug("chat: channel read for slot %s failed: %s", idx, exc)
+            return self._channel_ids.get(idx) or _fallback_channel_id(idx)
+        if payload:
+            name = str(payload.get("channel_name") or "")
+            secret = bytes(payload.get("channel_secret") or b"\x00" * 16)
+            cid = channel_identity(name, secret)
             self._channel_ids[idx] = cid
-        return cid
+            return cid
+        return _fallback_channel_id(idx)
 
     async def start(self) -> None:
         """Begin recording inbound messages to history. Idempotent.
@@ -157,13 +172,17 @@ class ChatService:
         run_id = self._ctx.repo.start_run(
             "chat", {"mode": "background"}, self._ctx.profile_name
         )
+        self._queue = asyncio.Queue()
+        self._worker = asyncio.ensure_future(self._process_inbound(run_id))
 
         def on_event(event: MeshEvent) -> None:
-            # Runs on the event loop as messages arrive; keep it cheap and defensive so a
-            # single bad write can never take down the subscription.
+            # Runs on the event loop as messages arrive; keep it cheap and non-blocking. It
+            # only hands the message to the worker queue — resolution and the database write
+            # happen off the worker so a slow device read can never stall the event pump.
             message = event.message
-            if message is not None:
-                self._record_inbound(run_id, message)
+            queue = self._queue
+            if message is not None and queue is not None:
+                queue.put_nowait(message)
 
         self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.MESSAGE)
         self._run_id = run_id
@@ -171,12 +190,12 @@ class ChatService:
         await self._prime_channels()
 
     async def _prime_channels(self) -> None:
-        """Warm the channel-identity cache and backfill legacy (index-keyed) history.
+        """Warm the fallback channel-identity map and backfill legacy (index-keyed) history.
 
-        Reading the channels up front means most inbound messages resolve their identity
-        from the cache without a device round-trip. It also backfills any pre-identity
-        messages using the channels currently in each slot — best-effort, since the old
-        slot-to-channel mapping wasn't recorded.
+        Reading the channels up front seeds the map that :meth:`channel_id_for` falls back to
+        when a per-message read fails. It also backfills any pre-identity messages using the
+        channels currently in each slot — best-effort, since the old slot-to-channel mapping
+        wasn't recorded.
         """
         try:
             await self.refresh_channels()
@@ -189,7 +208,7 @@ class ChatService:
         """Stop recording and close the run record. Idempotent.
 
         A no-op if not recording. The event hub keeps listening; only this service's
-        recording subscription is removed.
+        recording subscription and its inbound worker are removed.
         """
         if not self.active:
             return
@@ -198,6 +217,14 @@ class ChatService:
             self._unsubscribe()
         finally:
             self._unsubscribe = None
+        if self._worker is not None:
+            self._worker.cancel()
+            try:
+                await self._worker
+            except asyncio.CancelledError:
+                pass
+            self._worker = None
+        self._queue = None
         if self._run_id is not None:
             self._ctx.repo.finish_run(
                 self._run_id, "ok", {"messages": self._session_count}
@@ -208,35 +235,32 @@ class ChatService:
         """Stop recording at session end."""
         await self.stop()
 
-    def _record_inbound(self, run_id: int, message: Message) -> None:
-        """Persist one inbound message and bump its conversation's unread count.
+    async def _process_inbound(self, run_id: int) -> None:
+        """Serially resolve and record queued inbound messages, preserving arrival order.
 
-        Channel messages are keyed by identity, but the wire carries only a slot index. When
-        the slot is already cached this resolves synchronously; on a cache miss (a channel
-        added since the last device read) resolution is deferred to the event loop so the
-        message is still recorded against its intrinsic identity.
+        A single worker drains the queue so that channel messages — whose identity is
+        resolved with an async device read (see :meth:`channel_id_for`) — are still stored in
+        the order they arrived. History is ordered by insertion, so recording concurrently
+        could interleave two messages by their differing read latencies; the serial worker
+        makes that impossible while still resolving each against the live device.
 
         Args:
-            run_id: The owning background ``chat`` run.
-            message: The received message to record.
+            run_id: The owning background ``chat`` run to link recorded messages to.
         """
-        if message.is_channel:
-            channel_id = self._channel_ids.get(message.channel)
-            if channel_id is None:
-                asyncio.ensure_future(self._resolve_then_record(run_id, message))
-                return
-        else:
-            channel_id = None
-        self._store_inbound(run_id, message, channel_id)
-
-    async def _resolve_then_record(self, run_id: int, message: Message) -> None:
-        """Resolve an uncached channel's identity off the event loop, then record it."""
-        try:
-            channel_id = await self.channel_id_for(message.channel)
-        except Exception as exc:  # noqa: BLE001 - fall back rather than drop the message
-            self._ctx.log.debug("chat: channel resolve failed: %s", exc)
-            channel_id = _fallback_channel_id(message.channel)
-        self._store_inbound(run_id, message, channel_id)
+        assert self._queue is not None
+        while True:
+            message = await self._queue.get()
+            try:
+                channel_id = (
+                    await self.channel_id_for(message.channel)
+                    if message.is_channel
+                    else None
+                )
+                self._store_inbound(run_id, message, channel_id)
+            except Exception as exc:  # noqa: BLE001 - one bad message must not kill the worker
+                self._ctx.log.debug("chat: failed to record message: %s", exc)
+            finally:
+                self._queue.task_done()
 
     def _store_inbound(
         self, run_id: int, message: Message, channel_id: Optional[str]
