@@ -1,9 +1,9 @@
-"""The ``devices`` tool: enumerate serial companion devices and (in the menu) pick one.
+"""The ``devices`` tool: enumerate attached serial companion devices.
 
-Discovery never opens the radio — it only lists what is attached. On the CLI this is a
-read-only inventory; selection there happens by passing ``--port`` to a command, which is
-remembered after it connects. In the interactive menu this tool additionally offers the
-device picker to change the session's active device.
+Discovery never opens the radio — it only lists what is attached. This is a read-only
+inventory in both the menu and the CLI; it flags likely LoRa hardware and marks the active
+and remembered devices. Selecting a companion is a startup-only concern: pass ``--port`` on
+the CLI (remembered after it connects), or pick from the prompt shown when the menu launches.
 """
 
 from __future__ import annotations
@@ -31,39 +31,9 @@ class DevicesTool(Tool):
     """List attached serial devices, flag likely LoRa hardware, mark the default."""
 
     name = "devices"
-    help = "List attached serial devices and pick the companion to use."
+    help = "List attached serial devices and flag likely LoRa hardware."
     category = "Device"
     order = 5
-
-    async def prompt_params(self, ctx: AppContext) -> dict[str, Any]:
-        """In the menu, show the device picker so the user can change the active device.
-
-        The picker itself carries a "Back" row, so it reads like every other menu screen
-        rather than a bare yes/no confirmation.
-
-        Args:
-            ctx: Shared application context.
-
-        Returns:
-            Always ``{}`` — the table in :meth:`run` reflects the (possibly changed) device.
-        """
-        if ctx.mock:
-            return {}
-
-        from ..ui.device_picker import prompt_device
-
-        devices = discover_devices()
-        chosen = await prompt_device(
-            ctx.ui, devices, ctx.device_store.load(), cancel_label="Back"
-        )
-        if chosen is not None:
-            ctx.selected_device = chosen
-            ctx.port_override = chosen.port
-            ctx.ui.note(
-                f"[ok]●[/ok] active device set to [accent]{chosen.label}[/accent] "
-                "[muted](remembered once it connects)[/muted]"
-            )
-        return {}
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Enumerate serial devices and render them as a table.

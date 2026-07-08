@@ -1,9 +1,9 @@
 """Interactive companion-device picker, rendered in the full-screen session.
 
-Shown at the start of the interactive menu (and from the ``devices`` tool) when no port was
-given explicitly. It lists the discovered devices, marks the remembered "last known good"
-one, and preselects it as the default. The chosen device becomes the session's active
-device; it is persisted as the new default once it actually connects.
+Shown once at the start of the interactive menu when no port was given explicitly. It lists
+the discovered devices, marks the remembered "last known good" one, and preselects it as the
+default. The chosen device becomes the session's active device; it is persisted as the new
+default once it actually connects.
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ async def prompt_device(
     ui: "Ui",
     devices: list[DiscoveredDevice],
     remembered: Optional[RememberedDevice],
-    *,
-    cancel_label: str = "Skip (use --mock / configure later)",
 ) -> Optional[DiscoveredDevice]:
     """Prompt the user to choose a companion device.
 
@@ -41,8 +39,6 @@ async def prompt_device(
         ui: The interactive UI surface used to render the picker.
         devices: Discovered devices (likely-LoRa first).
         remembered: The remembered default, if any, used to mark and preselect a row.
-        cancel_label: Label for the final "don't pick" row — "Skip…" at startup (there is
-            no going back yet), "Back" when re-picking from the devices tool.
 
     Returns:
         The chosen :class:`DiscoveredDevice`, or ``None`` if the user cancelled or chose the
@@ -74,6 +70,6 @@ async def prompt_device(
             default = device
 
     items.append(Separator(" "))
-    items.append(Choice(title=cancel_label, value=None))
+    items.append(Choice(title="Skip (use --mock / configure later)", value=None))
 
     return await ui.select("Select a companion device:", items, default=default)
