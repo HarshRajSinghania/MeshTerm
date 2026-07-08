@@ -1,9 +1,10 @@
 """The ``devices`` tool: enumerate attached serial companion devices.
 
 Discovery never opens the radio — it only lists what is attached. This is a read-only
-inventory in both the menu and the CLI; it flags likely LoRa hardware and marks the active
-and remembered devices. Selecting a companion is a startup-only concern: pass ``--port`` on
-the CLI (remembered after it connects), or pick from the prompt shown when the menu launches.
+inventory in both the menu and the CLI; it marks devices already confirmed as MeshCore
+companions (and the active one). Selecting a companion is a startup-only concern: pass
+``--port`` on the CLI (remembered after it connects), or pick from the prompt shown when the
+menu launches (which smoke-tests the choice before confirming it).
 """
 
 from __future__ import annotations
@@ -17,13 +18,18 @@ from ..context import AppContext
 from ..core.discovery import discover_devices
 from .base import Tool, ToolResult, register
 
-#: "LoRa?" table cell per discovery confidence tier: a bare serial bridge is only a "maybe",
-#: since the same chip shows up on plenty of non-LoRa hardware.
-_LORA_CELL: dict[str, str] = {
-    "board": "[ok]yes[/ok]",
+#: "MeshCore?" table cell per discovery confidence tier, for devices we have *not* yet
+#: confirmed. The USB vendor ID is only a hint — a native-USB board or a bare bridge chip
+#: is a "maybe", never a "yes" — so nothing is billed as MeshCore until a connection proves
+#: it (see ``_confirmed_cell``).
+_MAYBE_CELL: dict[str, str] = {
+    "board": "[warn]maybe[/warn]",
     "bridge": "[warn]maybe[/warn]",
     "unknown": "[muted]—[/muted]",
 }
+
+#: "MeshCore?" cell for a device already confirmed to speak the protocol.
+_CONFIRMED_CELL = "[ok]yes[/ok]"
 
 
 @register
@@ -46,6 +52,7 @@ class DevicesTool(Tool):
             A :class:`ToolResult` summarizing how many devices were found.
         """
         devices = discover_devices()
+        known = ctx.device_store.load_all()
         remembered = ctx.device_store.load()
         active = ctx.selected_device
         active_port = ctx.port_override or (active.port if active else None)
@@ -60,6 +67,7 @@ class DevicesTool(Tool):
                     "vendor": d.vendor_label,
                     "likely_lora": d.is_likely_lora,
                     "confidence": d.confidence,
+                    "confirmed": d.stable_id in known,
                     "serial_number": d.serial_number,
                     "stable_id": d.stable_id,
                     "remembered": remembered is not None and remembered.matches(d),
@@ -78,30 +86,30 @@ class DevicesTool(Tool):
             return ToolResult(summary={"count": 0})
 
         table = Table(title="Serial devices", border_style="muted", expand=False)
-        table.add_column("", style="ok", no_wrap=True)  # active/remembered markers
+        table.add_column("", style="ok", no_wrap=True)  # active/confirmed markers
         table.add_column("Port", style="brand")
         table.add_column("Device")
         table.add_column("Vendor", style="muted")
-        table.add_column("LoRa?", justify="center")
+        table.add_column("MeshCore?", justify="center")
         table.add_column("Serial", style="muted")
         for d in devices:
-            is_remembered = remembered is not None and remembered.matches(d)
+            confirmed = known.get(d.stable_id)  # the remembered record, if ever confirmed
             is_active = d.port == active_port
-            marker = ("●" if is_active else "") + ("★" if is_remembered else "")
+            marker = ("●" if is_active else "") + ("★" if confirmed else "")
             device_name = d.product or d.description or "[muted]?[/muted]"
-            if is_remembered and remembered.node_name:  # the mesh name learned on connect
-                device_name = f"{remembered.node_name}  [muted]({device_name})[/muted]"
+            if confirmed and confirmed.node_name:  # the mesh name learned on connect
+                device_name = f"{confirmed.node_name}  [muted]({device_name})[/muted]"
             table.add_row(
                 marker,
                 d.port,
                 device_name,
                 d.vendor_label or "[muted]?[/muted]",
-                _LORA_CELL[d.confidence],
+                _CONFIRMED_CELL if confirmed else _MAYBE_CELL[d.confidence],
                 d.serial_number or "[muted]—[/muted]",
             )
         ctx.ui.show(table)
         ctx.ui.note(
-            "[muted]● active   ★ remembered default. "
+            "[muted]● active   ★ confirmed MeshCore device. "
             "Pass --port <PORT> to select on the CLI.[/muted]"
         )
         return ToolResult(summary={"count": len(devices)})

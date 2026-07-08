@@ -76,7 +76,45 @@ def configure_logging(
     file_handler.setFormatter(JsonlFormatter())
     logger.addHandler(file_handler)
 
+    _quiet_library_console(file_handler)
+
     return logger
+
+
+#: Third-party loggers that must never write to the terminal — their records would print
+#: straight over the full-screen TUI. Routed to the file handler instead so they stay
+#: captured for debugging. ``meshcore`` is the notable offender: it calls
+#: ``logging.basicConfig(level=INFO)`` on import (e.g. "INFO:meshcore:Serial Connection
+#: started").
+_LIBRARY_LOGGERS: tuple[str, ...] = ("meshcore",)
+
+
+def _quiet_library_console(file_handler: logging.Handler) -> None:
+    """Keep noisy third-party libraries off the terminal (they corrupt the TUI).
+
+    The ``meshcore`` client calls ``logging.basicConfig(level=INFO)`` when it is imported,
+    which installs a stream handler on the *root* logger that prints its INFO lines straight
+    over the screen. Two guards prevent that:
+
+    1. Give the root logger a :class:`~logging.NullHandler` so ``basicConfig`` — which only
+       acts when the root has no handlers — becomes a no-op and never adds its stream handler.
+    2. Take each known library logger off propagation and attach only ``file_handler``, so
+       its records are still captured to the JSON-lines log but never reach the console, even
+       if some other code path installs a root stream handler anyway.
+
+    Args:
+        file_handler: The application's file handler to also capture library records to.
+    """
+    root = logging.getLogger()
+    if not any(isinstance(h, logging.NullHandler) for h in root.handlers):
+        root.addHandler(logging.NullHandler())
+
+    for name in _LIBRARY_LOGGERS:
+        lib = logging.getLogger(name)
+        lib.handlers.clear()
+        lib.setLevel(logging.INFO)
+        lib.propagate = False
+        lib.addHandler(file_handler)
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:

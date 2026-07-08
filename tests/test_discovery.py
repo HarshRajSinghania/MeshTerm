@@ -156,6 +156,44 @@ def test_device_store_tolerates_corrupt_file(tmp_path: Path) -> None:
     assert DeviceStore(path).load() is None
 
 
+def test_device_store_remembers_every_confirmed_device(tmp_path: Path) -> None:
+    """Confirmed devices are all kept; ``load`` returns the most recently connected one."""
+    store = DeviceStore(tmp_path / "devices.json")
+    first = DiscoveredDevice("COM5", serial_number="SN1", product="Wio")
+    second = DiscoveredDevice("COM6", serial_number="SN2", product="Heltec")
+
+    store.remember(first, node_name="Base")
+    store.remember(second, node_name="Roamer")
+
+    registry = store.load_all()
+    assert set(registry) == {"sn:SN1", "sn:SN2"}  # both remembered forever
+    assert store.is_known(first) and store.is_known(second)
+    assert not store.is_known(DiscoveredDevice("COM7", serial_number="SN3"))
+
+    last = store.load()
+    assert last is not None and last.stable_id == "sn:SN2"  # most recent is the default
+
+    # Re-confirming the first makes it the default again without dropping the second.
+    store.remember(first)
+    assert store.load().stable_id == "sn:SN1"
+    assert set(store.load_all()) == {"sn:SN1", "sn:SN2"}
+
+
+def test_device_store_migrates_old_flat_format(tmp_path: Path) -> None:
+    """A pre-registry flat record still reads back as a one-entry registry."""
+    path = tmp_path / "devices.json"
+    path.write_text(
+        '{"stable_id": "sn:SN1", "port": "COM5", "label": "Wio (COM5)", '
+        '"last_connected": "2025-01-01T00:00:00", "node_name": "Base"}',
+        encoding="utf-8",
+    )
+    store = DeviceStore(path)
+    loaded = store.load()
+    assert loaded is not None and loaded.stable_id == "sn:SN1"
+    assert loaded.node_name == "Base"
+    assert set(store.load_all()) == {"sn:SN1"}
+
+
 # -- selection -----------------------------------------------------------------
 
 

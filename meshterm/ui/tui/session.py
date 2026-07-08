@@ -27,7 +27,7 @@ from rich.text import Text
 from . import frame
 from .progress import TuiProgress
 from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen, Validator
-from .screen import CANCEL, Screen, ScrollScreen
+from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
 #: Maps prompt_toolkit keys to the normalized action names screens understand.
@@ -171,6 +171,53 @@ class TuiSession:
         screen.banner = banner
         screen.footnote = footnote
         await self.run_screen(screen)
+
+    async def busy_startup(
+        self,
+        message: str,
+        coro: Any,
+        *,
+        title: str = "",
+        banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
+        interval: float = 0.12,
+    ) -> Any:
+        """Await ``coro`` while showing an animated spinner on the chromeless splash.
+
+        Keeps the startup splash on screen (same wordmark and box) and swaps its contents for
+        an ASCII spinner beside ``message`` while the awaited task runs, then returns the
+        task's result. A background timer advances the spinner and repaints every
+        ``interval`` seconds; it is always cancelled and the splash popped before returning.
+
+        Args:
+            message: The line shown beside the spinner (e.g. "Talking to Wio on COM5…").
+            coro: The awaitable to run (e.g. a device smoke test).
+            title: Optional panel title for the splash box.
+            banner: Wordmark rows drawn above the box (as on the other startup splashes).
+            footnote: Muted line drawn below the box.
+            interval: Seconds between spinner frames.
+
+        Returns:
+            Whatever ``coro`` resolves to.
+        """
+        screen = BusyScreen(message, title=title)
+        screen.chrome = False
+        screen.banner = banner
+        screen.footnote = footnote
+        self.push(screen)
+
+        async def animate() -> None:
+            while True:
+                await asyncio.sleep(interval)
+                screen.tick()
+                self.invalidate()
+
+        ticker = asyncio.ensure_future(animate())
+        try:
+            return await coro
+        finally:
+            ticker.cancel()
+            self.pop(screen)
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Show a drag-with-arrows reorder screen; return the final order of row indices."""

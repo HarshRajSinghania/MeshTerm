@@ -398,15 +398,23 @@ class MeshCoreDevice(Device):
         firmware version, as event payload field names vary between releases.
     """
 
-    def __init__(self, port: str, baudrate: int = 115200) -> None:
+    def __init__(
+        self, port: str, baudrate: int = 115200, connect_timeout: Optional[float] = None
+    ) -> None:
         """Initialize the device wrapper.
 
         Args:
             port: Serial port path (e.g. ``COM5`` or ``/dev/ttyUSB0``).
             baudrate: Serial baud rate.
+            connect_timeout: Handshake timeout (seconds) for the initial connection, passed
+                to the client as its default command timeout. ``None`` uses the ``meshcore``
+                library default (~15s). The startup smoke test sets a short value so a
+                non-responsive port is rejected quickly instead of blocking on the full
+                default handshake window.
         """
         self._port = port
         self._baudrate = baudrate
+        self._connect_timeout = connect_timeout
         self._mc = None  # type: ignore[var-annotated]  # meshcore.MeshCore
         # Serializes channel reads. The meshcore library's get_channel waits for "the next
         # CHANNEL_INFO event" with no correlation to the index it asked for, and the dispatcher
@@ -427,7 +435,18 @@ class MeshCoreDevice(Device):
                 "--mock for the simulator."
             ) from exc
 
-        self._mc = await MeshCore.create_serial(self._port, self._baudrate)
+        self._mc = await MeshCore.create_serial(
+            self._port, self._baudrate, default_timeout=self._connect_timeout
+        )
+        # ``create_serial`` returns ``None`` (after cleaning up its own connection) when the
+        # node never answers the identity handshake — i.e. the port isn't a MeshCore serial
+        # companion. Surface that as a clean, recoverable error rather than leaving a
+        # half-open device whose next command fails with a confusing "not connected".
+        if self._mc is None:
+            raise DeviceCommandError(
+                f"no response from a MeshCore companion on {self._port}; it may not be a "
+                "MeshCore device, or it may be powered off or in use by another program."
+            )
 
     async def disconnect(self) -> None:  # noqa: D102 - inherited docstring
         if self._mc is None:
@@ -1650,3 +1669,45 @@ def make_device(
             "No serial port configured. Pass --port, set a profile, or use --mock."
         )
     return MeshCoreDevice(port=port, baudrate=baudrate)
+
+
+async def smoke_test_meshcore(
+    port: str, baudrate: int = 115200, *, timeout: float = 6.0
+) -> Optional[dict]:
+    """Briefly open ``port`` and confirm a MeshCore companion answers there.
+
+    Opens a real serial connection and issues a single identity query (the APPSTART that
+    backs :meth:`MeshCoreDevice.get_self_info`). A genuine companion replies with a
+    self-info payload; anything else — a non-MeshCore serial gadget, the wrong baud rate,
+    an unresponsive port — never answers and is cut off by ``timeout``. The connection is
+    always closed before returning, so this is a non-destructive probe used by the startup
+    picker to verify a chosen device before committing to it.
+
+    Args:
+        port: Serial port to probe (e.g. ``COM5`` or ``/dev/ttyUSB0``).
+        baudrate: Serial baud rate.
+        timeout: Seconds to wait for the connection and for the identity reply.
+
+    Returns:
+        The device's self-info dict on success (so the caller can also learn its mesh node
+        name from the same handshake), or ``None`` if it is not a reachable MeshCore
+        companion.
+    """
+    # ``timeout`` is the handshake window handed to the client, so a non-MeshCore port is
+    # rejected in ~``timeout`` seconds and the client cleans up its own connection. The outer
+    # ``wait_for`` is only a safety net a few seconds beyond that, so we never cancel the
+    # client mid-handshake (which would leak the open port). A real companion answers in well
+    # under a second, so this never delays a good device.
+    device = MeshCoreDevice(port=port, baudrate=baudrate, connect_timeout=timeout)
+    info: Optional[dict] = None
+    try:
+        await asyncio.wait_for(device.connect(), timeout + 4.0)
+        info = await asyncio.wait_for(device.get_self_info(), timeout)
+    except Exception:  # noqa: BLE001 - any failure just means "not confirmed"
+        info = None
+    finally:
+        try:
+            await device.disconnect()
+        except Exception:  # noqa: BLE001 - best-effort cleanup of the probe connection
+            pass
+    return dict(info) if info else None

@@ -153,11 +153,17 @@ async def _startup(ctx: AppContext) -> None:
         ctx: The shared application context to update with the selection.
     """
     if not (ctx.mock or ctx.explicit_selection):
-        from ..core.discovery import discover_devices
+        from ..core.connection import smoke_test_meshcore
+        from ..core.discovery import DiscoveredDevice, discover_devices
         from .device_picker import prompt_device
 
         devices = discover_devices()
-        chosen = await prompt_device(ctx.ui, devices, ctx.device_store.load())
+        baudrate = ctx.profile.baudrate if ctx.profile else 115200
+
+        async def verify(device: DiscoveredDevice):
+            return await smoke_test_meshcore(device.port, baudrate)
+
+        chosen = await prompt_device(ctx.ui, devices, ctx.device_store, verify)
         if chosen is not None:
             ctx.selected_device = chosen
             ctx.port_override = chosen.port

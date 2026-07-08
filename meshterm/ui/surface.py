@@ -80,6 +80,18 @@ class Ui:
         """Show a message on a chromeless startup splash until the user dismisses it."""
         raise NotImplementedError
 
+    async def busy_startup(
+        self,
+        message: str,
+        coro: Any,
+        *,
+        title: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Any:
+        """Await ``coro`` while showing a spinner on the startup splash; return its result."""
+        raise NotImplementedError
+
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Let the user rearrange rows with the arrows; return the new order of row indices."""
         raise NotImplementedError
@@ -178,6 +190,18 @@ class PlainUi(Ui):
     ) -> None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
+
+    async def busy_startup(
+        self,
+        message: str,
+        coro: Any,
+        *,
+        title: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Any:
+        """No splash in scripted CLI mode; just await the task and return its result."""
+        return await coro
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Unsupported in scripted CLI mode."""
@@ -318,6 +342,20 @@ class TuiUi(Ui):
         """Delegate to the session's chromeless startup message splash."""
         await self.session.notify_startup(
             renderable, title=title, banner=banner, footnote=footnote
+        )
+
+    async def busy_startup(
+        self,
+        message: str,
+        coro: Any,
+        *,
+        title: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Any:
+        """Delegate to the session's animated-spinner startup splash."""
+        return await self.session.busy_startup(
+            message, coro, title=title, banner=banner, footnote=footnote
         )
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:

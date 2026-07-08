@@ -284,8 +284,9 @@ def test_autocomplete_accepts_free_text() -> None:
 # --- device picker -----------------------------------------------------------
 
 
-def test_device_picker_builds_aligned_columns() -> None:
+def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     """The picker lays devices out in columns that line up across rows of differing widths."""
+    from meshterm.core.device_store import DeviceStore
     from meshterm.core.discovery import DiscoveredDevice
     from meshterm.ui.device_picker import prompt_device
 
@@ -302,9 +303,13 @@ def test_device_picker_builds_aligned_columns() -> None:
             captured["items"] = items
             captured["banner"] = banner
             captured["footnote"] = footnote
-            return None
+            return None  # skip: never reaches the smoke test
 
-    asyncio.run(prompt_device(_Ui(), devices, None))
+    async def _never(_device):  # verify is unused when the user skips
+        raise AssertionError("verify should not run when selection is skipped")
+
+    store = DeviceStore(tmp_path / "devices.json")
+    asyncio.run(prompt_device(_Ui(), devices, store, _never))
     # The banner (wordmark) is passed through so the splash can draw it.
     assert captured["banner"] and any("█" in row for row in captured["banner"])
     # A copyright footnote rides along for the splash to render below the box.
@@ -314,6 +319,73 @@ def test_device_picker_builds_aligned_columns() -> None:
     assert len(rows) == 2
     assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), rows))
     assert rows[0].index("COM5") == rows[1].index("/dev/ttyUSB0")
+
+
+class _PickerUi:
+    """A fake splash UI that always selects the first device, then dismisses messages."""
+
+    def __init__(self) -> None:
+        self.notes: list = []
+
+    async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        return next(it.value for it in items if isinstance(it, Choice))
+
+    async def notify_startup(self, renderable, *, title="", banner=None, footnote=None):
+        self.notes.append(renderable)
+
+    async def busy_startup(self, message, coro, *, title="", banner=None, footnote=None):
+        return await coro
+
+
+def test_device_picker_smoke_tests_and_reprompts(tmp_path) -> None:
+    """A failed smoke test re-prompts; a passing one is remembered as confirmed."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import prompt_device
+
+    devices = [DiscoveredDevice(port="COM5", serial_number="SN1", product="Wio SX1262")]
+    store = DeviceStore(tmp_path / "devices.json")
+    ui = _PickerUi()
+
+    # First probe fails (not MeshCore), second answers with self-info.
+    results = [None, {"adv_name": "BaseStation"}]
+
+    async def verify(_device):
+        return results.pop(0)
+
+    chosen = asyncio.run(prompt_device(ui, devices, store, verify))
+    assert chosen is devices[0]
+    assert len(ui.notes) == 1  # the "not a MeshCore device" message was shown once
+    remembered = store.load()
+    assert remembered is not None and remembered.node_name == "BaseStation"
+    assert store.is_known(devices[0])
+
+
+# --- busy splash --------------------------------------------------------------
+
+
+def test_busy_screen_spins_over_its_message() -> None:
+    """The busy splash shows an ASCII spinner beside its message and advances on tick."""
+    from rich.text import Text as RichText
+
+    from meshterm.ui.tui.screen import BusyScreen
+
+    screen = BusyScreen("Talking to Wio on COM5…")
+
+    def glyph() -> str:
+        """The first (spinner) character of the rendered body, ANSI codes stripped."""
+        return RichText.from_ansi("\n".join(screen.render_body(60))).plain.lstrip()[0]
+
+    plain = RichText.from_ansi("\n".join(screen.render_body(60))).plain
+    assert "Talking to Wio on COM5" in plain
+    assert glyph() in BusyScreen._FRAMES  # a spinner glyph leads the line
+
+    # Ticking cycles through every frame and returns to the first.
+    seen = {glyph()}
+    for _ in range(len(BusyScreen._FRAMES) - 1):
+        screen.tick()
+        seen.add(glyph())
+    assert seen == set(BusyScreen._FRAMES)
 
 
 # --- progress ----------------------------------------------------------------
@@ -363,6 +435,29 @@ async def test_session_select_dispatches_piped_keys() -> None:
         inp.send_text("\x1b[B\x1b[B\r")  # Down, Down, Enter -> third choice
         await asyncio.wait_for(session.run(main()), timeout=5)
     assert captured["value"] == 3
+
+
+async def test_session_busy_startup_animates_and_returns() -> None:
+    """busy_startup awaits the task behind a chromeless spinner splash, then pops it."""
+    from meshterm.ui.tui.screen import BusyScreen
+
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+        captured = {}
+
+        async def work() -> str:
+            # While the task runs the busy splash is the chromeless base screen.
+            assert isinstance(session.top, BusyScreen)
+            assert session.top.chrome is False
+            await asyncio.sleep(0.3)  # long enough for the spinner to tick at least once
+            return "ok"
+
+        async def main() -> None:
+            captured["value"] = await session.busy_startup("checking…", work())
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert captured["value"] == "ok"
+    assert session.top is None  # the splash was popped when the task finished
 
 
 async def test_session_text_dispatches_typed_keys() -> None:

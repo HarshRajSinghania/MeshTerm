@@ -16,6 +16,7 @@ import asyncio
 from typing import Any, Optional, Sequence
 
 from rich.console import RenderableType
+from rich.text import Text
 
 from .render import render_lines
 
@@ -191,3 +192,43 @@ class ScrollScreen(Screen):
             self.scroll = max(0, self._total - self._viewport)
         elif action in ("escape", "enter"):
             self.resolve(None)
+
+
+class BusyScreen(Screen):
+    """A non-interactive splash body: an animated Braille spinner beside a message.
+
+    Used to keep the startup splash on screen — its wordmark and box unchanged — while a
+    short async task runs (e.g. smoke-testing a chosen companion device). It set as a
+    chromeless base so it redraws the same centered-under-the-wordmark splash, only swapping
+    the box's contents. It resolves nothing and ignores every key; the session pops it when
+    the awaited task completes.
+    """
+
+    #: Braille-dot spinner frames, cycled on each :meth:`tick`.
+    _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    footer_hint = "working…"
+    floating = False
+
+    def __init__(self, message: str, *, title: str = "") -> None:
+        """Start a busy splash showing ``message`` under an optional ``title``."""
+        super().__init__()
+        self.title = title
+        self._message = message
+        self._frame = 0
+
+    def tick(self) -> None:
+        """Advance the spinner to its next frame (driven by the session's animation timer)."""
+        self._frame = (self._frame + 1) % len(self._FRAMES)
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the current spinner frame followed by the message."""
+        line = Text()
+        line.append(self._FRAMES[self._frame], style="accent")
+        line.append("  ")
+        line.append(self._message)
+        return render_lines(line, width)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Swallow all keys: the splash dismisses itself when the task finishes."""
+        return
