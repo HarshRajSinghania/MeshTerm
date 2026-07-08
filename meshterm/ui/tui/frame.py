@@ -14,7 +14,7 @@ from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
-from .render import render_lines, render_to_ansi
+from .render import render_lines
 from .screen import Screen, ScrollScreen
 
 
@@ -129,12 +129,17 @@ def _center(lines: list[str], cols: int) -> list[str]:
 
 
 def _banner_lines(banner: Sequence[str], cols: int) -> list[str]:
-    """Render the wordmark rows in the brand colour, centered within ``cols``."""
+    """Center the wordmark rows (already-coloured ANSI) as one left-aligned block.
+
+    Each row is padded to the block's widest display width first, so the shared left margin
+    keeps the art internally aligned rather than centering every row on its own axis.
+    """
     if not banner:
         return []
-    width = max(cell_len(row) for row in banner)
-    lines = [render_to_ansi(Text(row, style="brand"), width) for row in banner]
-    return _center(lines, cols)
+    widths = [cell_len(Text.from_ansi(row).plain) for row in banner]
+    width = max(widths)
+    padded = [row + " " * (width - w) for row, w in zip(banner, widths)]
+    return _center(padded, cols)
 
 
 def compose_startup(screen: Screen, cols: int, rows: int) -> str:
@@ -182,7 +187,13 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     )
     panel_lines = _center(render_lines(panel, inner_w + 4), cols)
 
-    block = banner + ([""] if banner else []) + panel_lines
+    # A small muted line (e.g. a copyright notice) sits a blank row below the box.
+    footnote_lines: list[str] = []
+    if screen.footnote:
+        note = Text.from_markup(f"[muted]{screen.footnote}[/muted]")
+        footnote_lines = [""] + _center(render_lines(note, cell_len(screen.footnote)), cols)
+
+    block = banner + ([""] if banner else []) + panel_lines + footnote_lines
     top = max(0, (rows - len(block)) // 2)
     lines = [""] * top + block
     if len(lines) > rows:

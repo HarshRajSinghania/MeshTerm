@@ -39,6 +39,8 @@ class Screen:
             session instead centers it under the :attr:`banner` with no status bars.
         banner: Block-glyph art (one string per row) drawn, centered, above a chromeless
             base screen. Ignored while ``chrome`` is ``True``.
+        footnote: A short line drawn muted and centered *below* a chromeless base screen's
+            box (e.g. a copyright notice). Ignored while ``chrome`` is ``True``.
     """
 
     title: str = ""
@@ -46,6 +48,7 @@ class Screen:
     floating: bool = True
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
+    footnote: Optional[str] = None
 
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""

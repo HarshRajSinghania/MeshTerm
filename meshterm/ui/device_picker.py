@@ -10,6 +10,7 @@ it actually connects.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from rich.cells import cell_len
@@ -17,11 +18,16 @@ from rich.text import Text
 
 from ..core.device_store import RememberedDevice
 from ..core.discovery import DiscoveredDevice
-from .logo import LOGO
+from .logo import load_logo
 from .tui import Choice, Separator
 
 if TYPE_CHECKING:
     from .surface import Ui
+
+
+def _copyright() -> str:
+    """The splash's muted copyright line, dated to the current year."""
+    return f"© {datetime.now().year} Johnputer"
 
 #: Trailing tag per discovery confidence tier (see :attr:`DiscoveredDevice.confidence`).
 #: A bare serial bridge is only a weak hint, so it is not billed as a LoRa device.
@@ -69,7 +75,8 @@ async def prompt_device(
                 "Plug one in, pass [accent]--port[/accent], or run with [accent]--mock[/accent]."
             ),
             title="Select a companion device",
-            banner=LOGO,
+            banner=load_logo(),
+            footnote=_copyright(),
         )
         return None
 
@@ -117,5 +124,6 @@ async def prompt_device(
             default = device
 
     return await ui.select_startup(
-        "Select a companion device", items, default=default, banner=LOGO
+        "Select a companion device", items, default=default, banner=load_logo(),
+        footnote=_copyright(),
     )

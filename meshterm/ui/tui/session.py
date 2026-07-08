@@ -137,19 +137,22 @@ class TuiSession:
         *,
         default: Any = None,
         banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
         footer_hint: str = "↑↓ move · Enter select · Esc skip",
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 
         Like :meth:`select`, but drawn without the header/footer status bars and centered
         under ``banner`` — the startup device picker's presentation. Type-to-filter is off:
-        the device list is short and fixed, so stray keys never narrow it.
+        the device list is short and fixed, so stray keys never narrow it. An optional
+        ``footnote`` (e.g. a copyright notice) sits muted below the box.
         """
         screen = SelectScreen(
             title, items, default=default, footer_hint=footer_hint, filterable=False
         )
         screen.chrome = False
         screen.banner = banner
+        screen.footnote = footnote
         result = await self.run_screen(screen)
         return None if result is CANCEL else result
 
@@ -159,12 +162,14 @@ class TuiSession:
         *,
         title: str = "",
         banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
         footer_hint: str = "Enter continue",
     ) -> None:
         """Show a chromeless message splash (banner above a boxed renderable) until dismissed."""
         screen = ScrollScreen(renderable, title=title, footer_hint=footer_hint)
         screen.chrome = False
         screen.banner = banner
+        screen.footnote = footnote
         await self.run_screen(screen)
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:

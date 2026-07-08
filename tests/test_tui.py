@@ -200,6 +200,17 @@ def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
 
 
+def test_compose_startup_shows_footnote_below_box() -> None:
+    """A footnote (e.g. a copyright) is drawn, muted and centered, below the box."""
+    screen = SelectScreen("pick", [Choice("a", 1)])
+    screen.chrome = False
+    screen.footnote = "© 2026 Johnputer"
+    lines = Text.from_ansi(frame.compose_startup(screen, 80, 20)).plain.split("\n")
+    note = next(ln for ln in lines if "Homestead" in ln)
+    assert note.strip() == "© 2026 Johnputer"  # its own line
+    assert note.startswith("   ")  # centered, not flush-left
+
+
 def test_compose_startup_box_is_horizontally_centered() -> None:
     """The content-sized box is centered, so its rows carry a leading left margin."""
     screen = SelectScreen("pick", [Choice("a", 1)])
@@ -285,14 +296,19 @@ def test_device_picker_builds_aligned_columns() -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None):
+        async def select_startup(
+            self, title, items, *, default=None, banner=None, footnote=None
+        ):
             captured["items"] = items
             captured["banner"] = banner
+            captured["footnote"] = footnote
             return None
 
     asyncio.run(prompt_device(_Ui(), devices, None))
     # The banner (wordmark) is passed through so the splash can draw it.
     assert captured["banner"] and any("█" in row for row in captured["banner"])
+    # A copyright footnote rides along for the splash to render below the box.
+    assert "Homestead" in captured["footnote"]
     # Each device row's port sits at the same column, proving the name column is padded.
     rows = [it.label.plain for it in captured["items"] if isinstance(it, Choice)]
     assert len(rows) == 2
