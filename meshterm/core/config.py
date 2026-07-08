@@ -1,6 +1,6 @@
 """Configuration and named device profiles.
 
-Settings are read from a TOML file (default ``~/.config/meshterm/config.toml``) and may
+Settings are read from a TOML file (default ``~/.meshterm/config.toml``) and may
 be overridden per-invocation by CLI flags. Profiles let you alias your hardware
 (``yagi`` repeater, ``local`` repeater, ``observer`` bot, ``s3`` serial companion) to a
 serial port and defaults so commands can target them by name.
@@ -22,16 +22,13 @@ else:  # pragma: no cover - exercised only on 3.10
 def default_config_dir() -> Path:
     """Return the directory MeshTerm uses for config and data.
 
-    Honors ``$XDG_CONFIG_HOME`` when set; otherwise falls back to ``~/.config``.
+    Resolves to ``.meshterm`` under the OS-defined home directory (``%USERPROFILE%``
+    on Windows, ``$HOME`` on Unix), as reported by :meth:`Path.home`.
 
     Returns:
         The resolved configuration directory path (not guaranteed to exist).
     """
-    import os
-
-    base = os.environ.get("XDG_CONFIG_HOME")
-    root = Path(base) if base else Path.home() / ".config"
-    return root / "meshterm"
+    return Path.home() / ".meshterm"
 
 
 @dataclass(slots=True)

@@ -1,5 +1,5 @@
 # MeshTerm configuration.
-# Copy to ~/.config/meshterm/config.toml (or pass --db / --port on the CLI).
+# Copy to ~/.meshterm/config.toml (or pass --db / --port on the CLI).
 #
 # Profiles are optional. With no profile and no --port, MeshTerm discovers attached
 # serial devices, lets you pick one (interactively) or uses the single one present, and
