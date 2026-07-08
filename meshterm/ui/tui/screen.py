@@ -13,7 +13,7 @@ push/await/pop model behind ``await session.select(...)`` and friends.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from rich.console import RenderableType
 
@@ -34,11 +34,18 @@ class Screen:
         future: Resolved with the screen's result (or :data:`CANCEL`) when it commits.
         floating: Whether the session should draw this screen as a centered dialog over
             the dimmed screen beneath it (deeper layers float; the base does not).
+        chrome: Whether, as the base screen, this layer is wrapped in the session's
+            persistent header/footer frame. A startup splash sets this ``False`` so the
+            session instead centers it under the :attr:`banner` with no status bars.
+        banner: Block-glyph art (one string per row) drawn, centered, above a chromeless
+            base screen. Ignored while ``chrome`` is ``True``.
     """
 
     title: str = ""
     footer_hint: str = "Esc back"
     floating: bool = True
+    chrome: bool = True
+    banner: Optional[Sequence[str]] = None
 
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""

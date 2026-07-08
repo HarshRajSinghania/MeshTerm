@@ -7,11 +7,14 @@ header and footer so the whole view fits the terminal exactly (never overflowing
 
 from __future__ import annotations
 
+from typing import Sequence
+
+from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
-from .render import render_lines
+from .render import render_lines, render_to_ansi
 from .screen import Screen, ScrollScreen
 
 
@@ -104,6 +107,84 @@ def compose_base(
     footer = Text.from_markup(f"[muted]{footer_hint}[/muted]")
     lines = header_lines + render_lines(Group(panel, footer), cols)
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
+    if len(lines) > rows:
+        lines = lines[:rows]
+    else:
+        lines += [""] * (rows - len(lines))
+    return "\n".join(lines)
+
+
+def _ansi_width(line: str) -> int:
+    """Return the display width of an ANSI line, ignoring its trailing padding."""
+    return cell_len(Text.from_ansi(line).plain.rstrip())
+
+
+def _center(lines: list[str], cols: int) -> list[str]:
+    """Left-pad each ANSI line so the block is horizontally centered within ``cols``."""
+    out: list[str] = []
+    for line in lines:
+        pad = max(0, (cols - cell_len(Text.from_ansi(line).plain)) // 2)
+        out.append(" " * pad + line)
+    return out
+
+
+def _banner_lines(banner: Sequence[str], cols: int) -> list[str]:
+    """Render the wordmark rows in the brand colour, centered within ``cols``."""
+    if not banner:
+        return []
+    width = max(cell_len(row) for row in banner)
+    lines = [render_to_ansi(Text(row, style="brand"), width) for row in banner]
+    return _center(lines, cols)
+
+
+def compose_startup(screen: Screen, cols: int, rows: int) -> str:
+    """Compose a chromeless splash: a centered wordmark above a content-sized panel.
+
+    Unlike :func:`compose_base`, this draws no header or footer status bars and does not
+    stretch the panel across the terminal — the box is sized to its own content (the device
+    list) and the whole block is centered on screen. Used for the startup device picker.
+
+    Args:
+        screen: The chromeless base screen (its ``banner`` supplies the wordmark).
+        cols: Terminal width.
+        rows: Terminal height.
+
+    Returns:
+        An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
+    """
+    banner = _banner_lines(screen.banner or [], cols)
+
+    # Size the box to its widest real row (probe at a generous width, then measure), never
+    # wider than the terminal and never narrower than the title/hint it must show.
+    probe = max(10, min(cols - 6, 100))
+    measured = max((_ansi_width(line) for line in screen.render_body(probe)), default=10)
+    inner_w = max(measured, cell_len(screen.title), cell_len(screen.footer_hint))
+    inner_w = max(10, min(inner_w, cols - 6))
+
+    # Leave room for the banner (and the blank line under it) plus the panel's own border.
+    reserved = len(banner) + (1 if banner else 0) + 2
+    body_lines = screen.render_body(inner_w)
+    viewport = max(1, min(len(body_lines), rows - reserved))
+    visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
+
+    body = Text.from_ansi("\n".join(visible))
+    subtitle = f"[muted]{screen.footer_hint}[/muted]"
+    if more_above or more_below:
+        arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
+        subtitle = f"[muted]{arrow} · {screen.footer_hint}[/muted]"
+    panel = Panel(
+        body,
+        title=f"[accent]{screen.title}[/accent]" if screen.title else None,
+        subtitle=subtitle,
+        border_style="accent",
+        padding=(0, 1),
+        width=inner_w + 4,
+    )
+    panel_lines = _center(render_lines(panel, inner_w + 4), cols)
+
+    block = banner + ([""] if banner else []) + panel_lines
+    top = max(0, (rows - len(block)) // 2)
+    lines = [""] * top + block
     if len(lines) > rows:
         lines = lines[:rows]
     else:

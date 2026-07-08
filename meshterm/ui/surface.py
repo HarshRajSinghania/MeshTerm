@@ -57,6 +57,18 @@ class Ui:
         """Prompt the user to choose one item; return its value or ``None`` if cancelled."""
         raise NotImplementedError
 
+    async def select_startup(
+        self, title: str, items: list, *, default: Any = None, banner: Any = None
+    ) -> Any:
+        """Choose one item on a chromeless startup splash; ``None`` if skipped."""
+        raise NotImplementedError
+
+    async def notify_startup(
+        self, renderable: RenderableType, *, title: str = "", banner: Any = None
+    ) -> None:
+        """Show a message on a chromeless startup splash until the user dismisses it."""
+        raise NotImplementedError
+
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Let the user rearrange rows with the arrows; return the new order of row indices."""
         raise NotImplementedError
@@ -130,6 +142,18 @@ class PlainUi(Ui):
         return RuntimeError("interactive prompts are only available in the menu")
 
     async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def select_startup(
+        self, title: str, items: list, *, default: Any = None, banner: Any = None
+    ) -> Any:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def notify_startup(
+        self, renderable: RenderableType, *, title: str = "", banner: Any = None
+    ) -> None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -246,6 +270,20 @@ class TuiUi(Ui):
     async def select(self, title: str, items: list, *, default: Any = None) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(title, items, default=default)
+
+    async def select_startup(
+        self, title: str, items: list, *, default: Any = None, banner: Any = None
+    ) -> Any:
+        """Delegate to the session's chromeless startup select splash."""
+        return await self.session.select_startup(
+            title, items, default=default, banner=banner
+        )
+
+    async def notify_startup(
+        self, renderable: RenderableType, *, title: str = "", banner: Any = None
+    ) -> None:
+        """Delegate to the session's chromeless startup message splash."""
+        await self.session.notify_startup(renderable, title=title, banner=banner)
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Delegate to the session's reorder screen."""

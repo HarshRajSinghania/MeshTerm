@@ -71,6 +71,7 @@ class SelectScreen(Screen):
         *,
         default: Any = None,
         footer_hint: str = "↑↓ move · type to filter · Enter select · Esc back",
+        filterable: bool = True,
     ) -> None:
         """Build a select screen.
 
@@ -79,10 +80,13 @@ class SelectScreen(Screen):
             items: A list of :class:`Choice` and :class:`Separator` in display order.
             default: A choice value to pre-highlight, if present.
             footer_hint: Footer key hint.
+            filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
+                the startup device picker) where type-to-filter would only get in the way.
         """
         super().__init__()
         self.title = title
         self.footer_hint = footer_hint
+        self._filterable = filterable
         self._items = items
         self._filter = ""
         # Index into the currently-selectable (filtered) choices.
@@ -174,10 +178,10 @@ class SelectScreen(Screen):
                 self.resolve(choices[self._index].value)
         elif action == "escape":
             super().handle("escape")
-        elif action == "backspace":
+        elif action == "backspace" and self._filterable:
             self._filter = self._filter[:-1]
             self._index = 0
-        elif action == "text" and data.isprintable():
+        elif action == "text" and self._filterable and data.isprintable():
             self._filter += data
             self._index = 0
 

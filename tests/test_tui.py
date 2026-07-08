@@ -104,6 +104,15 @@ def test_select_filter_narrows_and_hides_separators() -> None:
     assert _run(screen, "enter") == 1
 
 
+def test_select_non_filterable_ignores_typing() -> None:
+    """With filtering off, typed keys neither narrow the list nor add a filter line."""
+    screen = SelectScreen("pick", [Choice("alpha", 1), Choice("beta", 2)], filterable=False)
+    screen.handle("text", "a")
+    screen.handle("backspace")
+    assert screen._filter == ""
+    assert len(screen._rows()) == 2  # nothing was filtered out
+
+
 def test_select_escape_cancels() -> None:
     """Esc resolves the sentinel rather than a value."""
     assert _run(_menu(), "escape") is CANCEL
@@ -177,6 +186,29 @@ def test_compose_dialog_is_bounded() -> None:
     assert out.count("\n") + 1 <= 20
 
 
+def test_compose_startup_is_chromeless_and_shows_banner() -> None:
+    """The startup splash fills the height, draws the banner, and omits header/footer bars."""
+    screen = SelectScreen("pick", [Choice("alpha", 1), Choice("beta", 2)])
+    screen.chrome = False
+    screen.banner = ["LOGO-ROW-A", "LOGO-ROW-B"]
+    out = frame.compose_startup(screen, 80, 24)
+    assert out.count("\n") + 1 == 24  # fills the terminal height exactly
+    plain = Text.from_ansi(out).plain
+    assert "LOGO-ROW-A" in plain and "LOGO-ROW-B" in plain  # banner is drawn
+    assert "pick" in plain  # the box keeps its title
+    # The box is content-sized, not full width: no rendered line spans the whole terminal.
+    assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
+
+
+def test_compose_startup_box_is_horizontally_centered() -> None:
+    """The content-sized box is centered, so its rows carry a leading left margin."""
+    screen = SelectScreen("pick", [Choice("a", 1)])
+    screen.chrome = False
+    lines = Text.from_ansi(frame.compose_startup(screen, 80, 20)).plain.split("\n")
+    box_lines = [ln for ln in lines if ln.strip()]
+    assert box_lines and all(ln.startswith("  ") for ln in box_lines)  # centered inset
+
+
 # --- prompts -----------------------------------------------------------------
 
 
@@ -236,6 +268,36 @@ def test_autocomplete_accepts_free_text() -> None:
     for ch in "3d":
         screen.handle("text", ch)
     assert _run(screen, "enter") == "3d"
+
+
+# --- device picker -----------------------------------------------------------
+
+
+def test_device_picker_builds_aligned_columns() -> None:
+    """The picker lays devices out in columns that line up across rows of differing widths."""
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import prompt_device
+
+    devices = [
+        DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886),
+        DiscoveredDevice(port="/dev/ttyUSB0", product="FT232R USB UART", vid=0x0403),
+    ]
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None):
+            captured["items"] = items
+            captured["banner"] = banner
+            return None
+
+    asyncio.run(prompt_device(_Ui(), devices, None))
+    # The banner (wordmark) is passed through so the splash can draw it.
+    assert captured["banner"] and any("█" in row for row in captured["banner"])
+    # Each device row's port sits at the same column, proving the name column is padded.
+    rows = [it.label.plain for it in captured["items"] if isinstance(it, Choice)]
+    assert len(rows) == 2
+    assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), rows))
+    assert rows[0].index("COM5") == rows[1].index("/dev/ttyUSB0")
 
 
 # --- progress ----------------------------------------------------------------

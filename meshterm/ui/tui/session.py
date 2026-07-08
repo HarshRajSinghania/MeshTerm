@@ -130,6 +130,43 @@ class TuiSession:
         result = await self.run_screen(SelectScreen(title, items, default=default))
         return None if result is CANCEL else result
 
+    async def select_startup(
+        self,
+        title: str,
+        items: list,
+        *,
+        default: Any = None,
+        banner: Optional[Any] = None,
+        footer_hint: str = "↑↓ move · Enter select · Esc skip",
+    ) -> Any:
+        """Show a chromeless select splash (banner above a content-sized box).
+
+        Like :meth:`select`, but drawn without the header/footer status bars and centered
+        under ``banner`` — the startup device picker's presentation. Type-to-filter is off:
+        the device list is short and fixed, so stray keys never narrow it.
+        """
+        screen = SelectScreen(
+            title, items, default=default, footer_hint=footer_hint, filterable=False
+        )
+        screen.chrome = False
+        screen.banner = banner
+        result = await self.run_screen(screen)
+        return None if result is CANCEL else result
+
+    async def notify_startup(
+        self,
+        renderable: RenderableType,
+        *,
+        title: str = "",
+        banner: Optional[Any] = None,
+        footer_hint: str = "Enter continue",
+    ) -> None:
+        """Show a chromeless message splash (banner above a boxed renderable) until dismissed."""
+        screen = ScrollScreen(renderable, title=title, footer_hint=footer_hint)
+        screen.chrome = False
+        screen.banner = banner
+        await self.run_screen(screen)
+
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Show a drag-with-arrows reorder screen; return the final order of row indices."""
         result = await self.run_screen(ReorderScreen(title, labels))
@@ -290,6 +327,10 @@ class TuiSession:
         base = self._base_screen()
         if base is None:
             return ANSI("")
+        # A chromeless base (the startup splash) forgoes the header/footer bars and is
+        # centered under its banner instead of stretched across the terminal.
+        if not base.chrome:
+            return ANSI(frame.compose_startup(base, cols, rows))
         footer = self.top.footer_hint if self.top else base.footer_hint
         return ANSI(frame.compose_base(self._header(), base, footer, cols, rows))
 
