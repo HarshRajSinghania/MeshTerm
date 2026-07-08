@@ -19,6 +19,7 @@ from rich.console import RenderableType
 from rich.text import Text
 
 from .render import render_lines
+from .spinner import Spinner
 
 #: Sentinel a screen resolves with when the user presses Esc to cancel, distinct from a
 #: legitimately selected ``None`` value.
@@ -195,17 +196,15 @@ class ScrollScreen(Screen):
 
 
 class BusyScreen(Screen):
-    """A non-interactive splash body: an animated Braille spinner beside a message.
+    """A non-interactive splash body: an animated spinner beside a message.
 
     Used to keep the startup splash on screen — its wordmark and box unchanged — while a
     short async task runs (e.g. smoke-testing a chosen companion device). It set as a
     chromeless base so it redraws the same centered-under-the-wordmark splash, only swapping
     the box's contents. It resolves nothing and ignores every key; the session pops it when
-    the awaited task completes.
+    the awaited task completes. The animation itself is the reusable
+    :class:`~meshterm.ui.tui.spinner.Spinner`.
     """
-
-    #: Braille-dot spinner frames, cycled on each :meth:`tick`.
-    _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     footer_hint = "working…"
     floating = False
@@ -215,16 +214,15 @@ class BusyScreen(Screen):
         super().__init__()
         self.title = title
         self._message = message
-        self._frame = 0
+        self._spinner = Spinner()
 
     def tick(self) -> None:
         """Advance the spinner to its next frame (driven by the session's animation timer)."""
-        self._frame = (self._frame + 1) % len(self._FRAMES)
+        self._spinner.tick()
 
     def render_body(self, width: int) -> list[str]:
         """Render the current spinner frame followed by the message."""
-        line = Text()
-        line.append(self._FRAMES[self._frame], style="accent")
+        line = self._spinner.text()
         line.append("  ")
         line.append(self._message)
         return render_lines(line, width)

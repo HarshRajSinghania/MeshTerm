@@ -16,14 +16,16 @@ from __future__ import annotations
 
 from .progress import ProgressScreen
 from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen
-from .screen import CANCEL, Screen, ScrollScreen
+from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, SelectScreen, Separator
 from .session import TuiSession
+from .spinner import Spinner
 
 __all__ = [
     "TuiSession",
     "Screen",
     "ScrollScreen",
+    "BusyScreen",
     "SelectScreen",
     "Choice",
     "Separator",
@@ -31,5 +33,6 @@ __all__ = [
     "ConfirmScreen",
     "AutocompleteScreen",
     "ProgressScreen",
+    "Spinner",
     "CANCEL",
 ]

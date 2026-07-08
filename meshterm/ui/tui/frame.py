@@ -158,6 +158,8 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
     """
     banner = _banner_lines(screen.banner or [], cols)
+    banner_h = len(banner)
+    gap = 1 if banner else 0  # the blank line under the banner
 
     # Size the box to its widest real row (probe at a generous width, then measure), never
     # wider than the terminal and never narrower than the title/hint it must show.
@@ -166,10 +168,16 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     inner_w = max(measured, cell_len(screen.title), cell_len(screen.footer_hint))
     inner_w = max(10, min(inner_w, cols - 6))
 
-    # Leave room for the banner (and the blank line under it) plus the panel's own border.
-    reserved = len(banner) + (1 if banner else 0) + 2
+    # Pin the banner to a fixed vertical anchor that depends only on the terminal height and
+    # the banner's own (constant) height, so the wordmark never moves as the box below it
+    # swaps contents between splash states (device list → spinner → message). The box hangs
+    # from just under the banner and only *it* grows or shrinks; the logo stays put.
+    top = max(0, rows // 2 - banner_h - gap)
+    footnote_h = 2 if screen.footnote else 0  # a blank spacer line plus the note itself
+    # Rows left for the box below the fixed banner block: the panel border is 2 rows.
+    below = rows - top - banner_h - gap
     body_lines = screen.render_body(inner_w)
-    viewport = max(1, min(len(body_lines), rows - reserved))
+    viewport = max(1, min(len(body_lines), below - 2 - footnote_h))
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
 
     body = Text.from_ansi("\n".join(visible))
@@ -193,8 +201,7 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         note = Text.from_markup(f"[muted]{screen.footnote}[/muted]")
         footnote_lines = [""] + _center(render_lines(note, cell_len(screen.footnote)), cols)
 
-    block = banner + ([""] if banner else []) + panel_lines + footnote_lines
-    top = max(0, (rows - len(block)) // 2)
+    block = banner + ([""] * gap) + panel_lines + footnote_lines
     lines = [""] * top + block
     if len(lines) > rows:
         lines = lines[:rows]

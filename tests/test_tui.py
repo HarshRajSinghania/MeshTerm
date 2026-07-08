@@ -315,10 +315,16 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     # A copyright footnote rides along for the splash to render below the box.
     assert "Homestead" in captured["footnote"]
     # Each device row's port sits at the same column, proving the name column is padded.
-    rows = [it.label.plain for it in captured["items"] if isinstance(it, Choice)]
-    assert len(rows) == 2
-    assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), rows))
-    assert rows[0].index("COM5") == rows[1].index("/dev/ttyUSB0")
+    rows = [
+        it.label.plain if hasattr(it.label, "plain") else it.label
+        for it in captured["items"]
+        if isinstance(it, Choice)
+    ]
+    assert len(rows) == 3  # two devices plus a trailing Quit row (like the main menu)
+    assert rows[-1].strip() == "quit"
+    device_rows = rows[:2]
+    assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows))
+    assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
 
 
 class _PickerUi:
@@ -361,6 +367,63 @@ def test_device_picker_smoke_tests_and_reprompts(tmp_path) -> None:
     assert store.is_known(devices[0])
 
 
+def test_device_picker_drops_copyright_after_first_selection(tmp_path) -> None:
+    """The copyright shows on the opening splash, then never again — even on a re-pick."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import prompt_device
+
+    devices = [DiscoveredDevice(port="COM5", serial_number="SN1", product="Wio SX1262")]
+    store = DeviceStore(tmp_path / "devices.json")
+    footnotes: list = []
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            footnotes.append(("select", footnote))
+            return next(it.value for it in items if isinstance(it, Choice))
+
+        async def notify_startup(self, renderable, *, title="", banner=None, footnote=None):
+            footnotes.append(("notify", footnote))
+
+        async def busy_startup(self, message, coro, *, title="", banner=None, footnote=None):
+            footnotes.append(("busy", footnote))
+            return await coro
+
+    # First probe fails (re-pick), second passes — exercising every post-selection screen.
+    results = [None, {"adv_name": "BaseStation"}]
+
+    async def verify(_device):
+        return results.pop(0)
+
+    asyncio.run(prompt_device(_Ui(), devices, store, verify))
+    # Only the very first splash carries the copyright; the busy spinner, the failure
+    # notice, and the re-opened picker all drop it.
+    assert footnotes[0][0] == "select" and "Homestead" in footnotes[0][1]
+    assert all(footnote is None for _kind, footnote in footnotes[1:])
+
+
+def test_device_picker_quit_row_returns_none(tmp_path) -> None:
+    """Choosing the trailing Quit row leaves the picker (None) without a smoke test."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import _QUIT, prompt_device
+
+    devices = [DiscoveredDevice(port="COM5", product="Wio SX1262")]
+
+    class _QuitUi:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            # The last choice is the Quit row; picking it signals "exit".
+            quit_choice = [it for it in items if isinstance(it, Choice) and it.value is _QUIT]
+            assert quit_choice, "the picker offers a Quit row"
+            return quit_choice[0].value
+
+    async def _never(_device):
+        raise AssertionError("verify must not run when the user quits")
+
+    store = DeviceStore(tmp_path / "devices.json")
+    assert asyncio.run(prompt_device(_QuitUi(), devices, store, _never)) is None
+
+
 # --- busy splash --------------------------------------------------------------
 
 
@@ -369,6 +432,7 @@ def test_busy_screen_spins_over_its_message() -> None:
     from rich.text import Text as RichText
 
     from meshterm.ui.tui.screen import BusyScreen
+    from meshterm.ui.tui.spinner import Spinner
 
     screen = BusyScreen("Talking to Wio on COM5…")
 
@@ -378,14 +442,30 @@ def test_busy_screen_spins_over_its_message() -> None:
 
     plain = RichText.from_ansi("\n".join(screen.render_body(60))).plain
     assert "Talking to Wio on COM5" in plain
-    assert glyph() in BusyScreen._FRAMES  # a spinner glyph leads the line
+    assert glyph() in Spinner.BRAILLE  # a spinner glyph leads the line
 
     # Ticking cycles through every frame and returns to the first.
     seen = {glyph()}
-    for _ in range(len(BusyScreen._FRAMES) - 1):
+    for _ in range(len(Spinner.BRAILLE) - 1):
         screen.tick()
         seen.add(glyph())
-    assert seen == set(BusyScreen._FRAMES)
+    assert seen == set(Spinner.BRAILLE)
+
+
+def test_spinner_cycles_and_resets() -> None:
+    """The reusable Spinner advances through its frames, wraps, and resets."""
+    from meshterm.ui.tui.spinner import Spinner
+
+    spinner = Spinner("ab", style="warn")
+    assert spinner.frame == "a"
+    assert spinner.text().plain == "a" and spinner.text().style == "warn"
+    spinner.tick()
+    assert spinner.frame == "b"
+    spinner.tick()  # wraps back to the first frame
+    assert spinner.frame == "a"
+    spinner.tick()
+    spinner.reset()
+    assert spinner.frame == "a"
 
 
 # --- progress ----------------------------------------------------------------

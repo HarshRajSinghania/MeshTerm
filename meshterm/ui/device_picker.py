@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 #: connection layer.
 Verify = Callable[[DiscoveredDevice], Awaitable[Optional[dict]]]
 
+#: The Quit row's value. Selecting it — like pressing Esc — leaves the splash without a
+#: device, which the caller treats as "exit the program".
+_QUIT = object()
+
 
 def _copyright() -> str:
     """The splash's muted copyright line, dated to the current year."""
@@ -78,8 +82,9 @@ async def prompt_device(
             not a reachable MeshCore companion.
 
     Returns:
-        The chosen, confirmed :class:`DiscoveredDevice`, or ``None`` if the user skipped the
-        picker (e.g. pressed Esc to run against ``--mock`` / configure later).
+        The chosen, confirmed :class:`DiscoveredDevice`, or ``None`` if the user chose to
+        leave the picker without selecting one — by pressing Esc, choosing the Quit row, or
+        having no devices to pick — which the caller treats as a request to exit.
     """
     if not devices:
         await ui.notify_startup(
@@ -98,16 +103,25 @@ async def prompt_device(
     # Preselect the remembered "last known good" device when it is currently attached.
     default = next((d for d in devices if remembered and remembered.matches(d)), None)
 
+    # The copyright is a first-impression splash flourish: show it until the user commits to a
+    # device, then drop it for good — even if the smoke test fails and they return to re-pick.
+    footnote: Optional[str] = _copyright()
+
     while True:
         chosen = await ui.select_startup(
             "Select a companion device",
             _build_items(devices, remembered, known),
             default=default,
             banner=load_logo(),
-            footnote=_copyright(),
+            footnote=footnote,
         )
-        if chosen is None:
+        # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
+        # caller as ``None`` so it can exit the program instead of continuing device-less.
+        if chosen is None or chosen is _QUIT:
             return None
+        # The user has committed to a device; retire the copyright from every screen after
+        # this point (the smoke-test spinner, any failure notice, and the re-opened picker).
+        footnote = None
 
         name = remembered.node_name if (
             remembered and remembered.matches(chosen) and remembered.node_name
@@ -119,7 +133,7 @@ async def prompt_device(
             verify(chosen),
             title="Checking companion",
             banner=load_logo(),
-            footnote=_copyright(),
+            footnote=footnote,
         )
 
         if info is None:
@@ -131,7 +145,7 @@ async def prompt_device(
                 ),
                 title="Not a MeshCore device",
                 banner=load_logo(),
-                footnote=_copyright(),
+                footnote=footnote,
             )
             continue
 
@@ -151,7 +165,7 @@ def _build_items(
     The row for each device leads with its display name (the remembered node's name when
     known, else the hardware name); columns are padded to a shared width so they align.
     Devices already confirmed as MeshCore companions carry a bright tag; the remembered
-    default is starred.
+    default is starred. A trailing Quit row (like the menu's) lets the user exit from here.
     """
     def _name(device: DiscoveredDevice) -> str:
         if remembered is not None and remembered.matches(device) and remembered.node_name:
@@ -194,4 +208,8 @@ def _build_items(
             row.append("  ")
             row.append("· serial adapter", style="muted")
         items.append(Choice(title=row, value=device))
+    # A trailing Quit row, mirroring the main menu, so exiting is an explicit choice as well
+    # as an Esc away — the leading spaces line it up under the device-name column.
+    items.append(Separator(" "))
+    items.append(Choice(title="  quit", value=_QUIT))
     return items

@@ -183,6 +183,33 @@ def test_parse_trace_path_rejects_unknown_token() -> None:
         trace_runner.parse_trace_path("  ", contacts=[])
 
 
+async def test_adopt_device_is_reused_without_reopening(tmp_path: Path) -> None:
+    """A device adopted from the startup probe is returned by ``device()`` as-is."""
+    from rich.console import Console
+
+    from meshterm.context import AppContext
+    from meshterm.core.admin_store import AdminStore
+    from meshterm.core.config import Settings
+    from meshterm.core.device_store import DeviceStore
+
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "adopt.db")
+    ctx = AppContext(
+        console=Console(file=__import__("io").StringIO()),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+    )
+    try:
+        adopted = MockDevice()
+        await adopted.connect()
+        ctx.adopt_device(adopted)
+        # ``device()`` must hand back the very connection we adopted — never open another.
+        assert await ctx.device() is adopted
+    finally:
+        ctx.repo.close()
+
+
 async def test_mock_device_honors_forced_path() -> None:
     """A forced path drives the repeater hops; a return-to-us hop is appended."""
     device = MockDevice()

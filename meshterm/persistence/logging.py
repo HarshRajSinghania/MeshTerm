@@ -85,8 +85,10 @@ def configure_logging(
 #: straight over the full-screen TUI. Routed to the file handler instead so they stay
 #: captured for debugging. ``meshcore`` is the notable offender: it calls
 #: ``logging.basicConfig(level=INFO)`` on import (e.g. "INFO:meshcore:Serial Connection
-#: started").
-_LIBRARY_LOGGERS: tuple[str, ...] = ("meshcore",)
+#: started"). ``asyncio`` is included so its default exception handler — the one that
+#: reports stray background-task errors once prompt_toolkit's screen-dumping handler is
+#: disabled — logs to the file instead of the console.
+_LIBRARY_LOGGERS: tuple[str, ...] = ("meshcore", "asyncio")
 
 
 def _quiet_library_console(file_handler: logging.Handler) -> None:

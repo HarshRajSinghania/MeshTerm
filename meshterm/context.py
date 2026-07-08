@@ -141,6 +141,19 @@ class AppContext:
         """The application logger."""
         return get_logger()
 
+    def adopt_device(self, device: Device) -> None:
+        """Adopt an already-connected device as the session's device.
+
+        Used by the startup picker: it opens and confirms the chosen companion during its
+        smoke test, and hands that live connection here so :meth:`device` reuses it instead
+        of opening the radio a second time (many boards reset on each serial open, making a
+        reconnect slow and unreliable).
+
+        Args:
+            device: A connected :class:`Device` to serve as this session's radio.
+        """
+        self._device = device
+
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
 

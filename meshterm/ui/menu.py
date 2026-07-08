@@ -102,8 +102,8 @@ async def run_menu(ctx: AppContext) -> None:
 
     async def main() -> None:
         try:
-            await _startup(ctx)
-            await _menu_loop(ctx, session)
+            if await _startup(ctx):
+                await _menu_loop(ctx, session)
         finally:
             # Stop history + chat recording (closing their run records) and the always-on
             # event hub, even on an unexpected exit.
@@ -146,28 +146,45 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         await _run_selection(ctx, selection)
 
 
-async def _startup(ctx: AppContext) -> None:
+async def _startup(ctx: AppContext) -> bool:
     """Pick a companion device (if needed) and resume passive monitoring.
 
     Args:
         ctx: The shared application context to update with the selection.
+
+    Returns:
+        ``True`` to enter the menu, or ``False`` if the user chose to exit at the startup
+        splash (pressed Esc or picked Quit) — in which case the caller skips the menu loop.
     """
     if not (ctx.mock or ctx.explicit_selection):
-        from ..core.connection import smoke_test_meshcore
+        from ..core.connection import probe_meshcore
         from ..core.discovery import DiscoveredDevice, discover_devices
         from .device_picker import prompt_device
 
         devices = discover_devices()
         baudrate = ctx.profile.baudrate if ctx.profile else 115200
+        # The smoke test opens the radio; on success we keep that live connection and reuse
+        # it for the session rather than reopening (boards often reset on each serial open).
+        probed: dict = {}
 
         async def verify(device: DiscoveredDevice):
-            return await smoke_test_meshcore(device.port, baudrate)
+            result = await probe_meshcore(device.port, baudrate)
+            if result is None:
+                return None
+            connection, info = result
+            probed["port"] = device.port
+            probed["device"] = connection
+            return info
 
         chosen = await prompt_device(ctx.ui, devices, ctx.device_store, verify)
-        if chosen is not None:
-            ctx.selected_device = chosen
-            ctx.port_override = chosen.port
+        if chosen is None:
+            return False  # the user quit at the splash — exit without opening the menu
+        ctx.selected_device = chosen
+        ctx.port_override = chosen.port
+        if probed.get("port") == chosen.port:
+            ctx.adopt_device(probed["device"])
     await _resume_monitor(ctx)
+    return True
 
 
 async def _resume_monitor(ctx: AppContext) -> None:

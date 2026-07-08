@@ -447,6 +447,14 @@ class MeshCoreDevice(Device):
                 f"no response from a MeshCore companion on {self._port}; it may not be a "
                 "MeshCore device, or it may be powered off or in use by another program."
             )
+        # A short ``connect_timeout`` is only meant to bound the initial identity handshake
+        # (so a dead port is rejected quickly). Now that we're connected, restore the
+        # library's normal per-command timeout so the rest of the session isn't rushed.
+        if self._connect_timeout is not None:
+            commands = getattr(self._mc, "commands", None)
+            default = getattr(commands, "DEFAULT_TIMEOUT", None)
+            if commands is not None and default is not None:
+                commands.default_timeout = default
 
     async def disconnect(self) -> None:  # noqa: D102 - inherited docstring
         if self._mc is None:
@@ -1671,27 +1679,30 @@ def make_device(
     return MeshCoreDevice(port=port, baudrate=baudrate)
 
 
-async def smoke_test_meshcore(
+async def probe_meshcore(
     port: str, baudrate: int = 115200, *, timeout: float = 6.0
-) -> Optional[dict]:
-    """Briefly open ``port`` and confirm a MeshCore companion answers there.
+) -> Optional[tuple["MeshCoreDevice", dict]]:
+    """Open ``port``, confirm a MeshCore companion answers, and return the live connection.
 
-    Opens a real serial connection and issues a single identity query (the APPSTART that
-    backs :meth:`MeshCoreDevice.get_self_info`). A genuine companion replies with a
-    self-info payload; anything else — a non-MeshCore serial gadget, the wrong baud rate,
-    an unresponsive port — never answers and is cut off by ``timeout``. The connection is
-    always closed before returning, so this is a non-destructive probe used by the startup
-    picker to verify a chosen device before committing to it.
+    Opens a real serial connection and issues an identity query (the APPSTART that backs
+    :meth:`MeshCoreDevice.get_self_info`). A genuine companion replies with a self-info
+    payload; anything else — a non-MeshCore serial gadget, the wrong baud rate, an
+    unresponsive port — never answers and is rejected within ``timeout``.
+
+    On success the connection is **left open** and returned to the caller, which reuses it as
+    the session device. This is deliberate: many companion boards reset on each serial open,
+    so a probe-then-reopen cycle is slow and flaky — opening the radio exactly once is both
+    faster and far more reliable. On any failure the probe connection is closed.
 
     Args:
         port: Serial port to probe (e.g. ``COM5`` or ``/dev/ttyUSB0``).
         baudrate: Serial baud rate.
-        timeout: Seconds to wait for the connection and for the identity reply.
+        timeout: Seconds to bound the connection handshake and the identity reply.
 
     Returns:
-        The device's self-info dict on success (so the caller can also learn its mesh node
-        name from the same handshake), or ``None`` if it is not a reachable MeshCore
-        companion.
+        ``(device, self_info)`` with a connected :class:`MeshCoreDevice` on success (the
+        caller owns and must eventually close it), or ``None`` if the port is not a reachable
+        MeshCore companion.
     """
     # ``timeout`` is the handshake window handed to the client, so a non-MeshCore port is
     # rejected in ~``timeout`` seconds and the client cleans up its own connection. The outer
@@ -1699,15 +1710,21 @@ async def smoke_test_meshcore(
     # client mid-handshake (which would leak the open port). A real companion answers in well
     # under a second, so this never delays a good device.
     device = MeshCoreDevice(port=port, baudrate=baudrate, connect_timeout=timeout)
-    info: Optional[dict] = None
     try:
         await asyncio.wait_for(device.connect(), timeout + 4.0)
         info = await asyncio.wait_for(device.get_self_info(), timeout)
     except Exception:  # noqa: BLE001 - any failure just means "not confirmed"
-        info = None
-    finally:
-        try:
-            await device.disconnect()
-        except Exception:  # noqa: BLE001 - best-effort cleanup of the probe connection
-            pass
-    return dict(info) if info else None
+        await _safe_disconnect(device)
+        return None
+    if not info:
+        await _safe_disconnect(device)
+        return None
+    return device, dict(info)
+
+
+async def _safe_disconnect(device: Device) -> None:
+    """Best-effort disconnect that never raises (used to discard a failed probe)."""
+    try:
+        await device.disconnect()
+    except Exception:  # noqa: BLE001 - best-effort cleanup of the probe connection
+        pass

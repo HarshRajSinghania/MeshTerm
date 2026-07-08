@@ -217,6 +217,15 @@ class TuiSession:
             return await coro
         finally:
             ticker.cancel()
+            # Await the cancelled ticker so it is never garbage-collected while still
+            # pending: that surfaces as a screen-corrupting "Task was destroyed but it is
+            # pending!" loop error. The spinner is cosmetic, so any glitch is swallowed.
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a spinner hiccup must never break startup
+                pass
             self.pop(screen)
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
@@ -306,7 +315,13 @@ class TuiSession:
         def pre_run() -> None:
             asyncio.ensure_future(driver())
 
-        await self._app.run_async(pre_run=pre_run)
+        # Don't let prompt_toolkit install its own loop exception handler: on any stray
+        # background-task error it prints a traceback and a "Press ENTER to continue..."
+        # prompt straight over the full-screen UI. With it disabled, asyncio's default
+        # handler logs such errors to the ``asyncio`` logger instead, which is routed to the
+        # file log (see :func:`meshterm.persistence.logging.configure_logging`) and never
+        # touches the screen. Errors from ``main`` still propagate via ``driver``/``box``.
+        await self._app.run_async(pre_run=pre_run, set_exception_handler=False)
         if "exc" in box:
             raise box["exc"]
 
