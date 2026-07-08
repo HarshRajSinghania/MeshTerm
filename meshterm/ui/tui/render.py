@@ -14,6 +14,7 @@ from __future__ import annotations
 from io import StringIO
 
 from rich.console import Console, RenderableType
+from rich.text import Text
 
 from ..theme import MESH_THEME
 
@@ -90,3 +91,34 @@ def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = Fals
     if lines and lines[-1] == "":
         lines.pop()
     return lines
+
+
+def render_hanging(prefix: Text, body: Text, width: int, *, indent: int) -> list[str]:
+    """Render ``prefix + body`` at ``width``, wrapping the body with a hanging indent.
+
+    The first visual line carries ``prefix`` followed by the body; every wrapped
+    continuation line is padded by ``indent`` columns so it aligns under the body rather
+    than falling back to column zero. Used by the chat transcript so a wrapped message
+    lines up with its own first line instead of with the timestamp gutter.
+
+    Args:
+        prefix: The leading run (e.g. a pointer + timestamp) shown once, on the first line.
+        body: The wrappable message text; styling (mentions, glyphs) is preserved.
+        width: Total render width in columns.
+        indent: Columns to indent continuation lines by (typically ``prefix.cell_len``).
+
+    Returns:
+        The rendered lines, newline-free.
+    """
+    width = max(1, width)
+    console = _console(width)
+    avail = max(1, width - indent)
+    wrapped = list(body.wrap(console, avail)) or [Text("")]
+    pad = " " * indent
+    combined = Text()
+    for i, line in enumerate(wrapped):
+        if i:
+            combined.append("\n")
+        combined.append_text(prefix if i == 0 else Text(pad))
+        combined.append_text(line)
+    return render_lines(combined, width)

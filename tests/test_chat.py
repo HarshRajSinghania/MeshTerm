@@ -615,6 +615,55 @@ def test_chat_screen_shows_delivery_glyphs() -> None:
     assert "Ctrl-R" in screen.footer_hint
 
 
+def test_wrapped_body_hangs_under_the_first_line() -> None:
+    """A body too long for the width wraps with a hanging indent under its own first line."""
+    from datetime import datetime, timezone
+
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+    # A run of short words guarantees several wrap points at a narrow width.
+    text = " ".join(["word"] * 20)
+    messages = [ChatMessage(text=text, peer="d4e5f6a7", created_at=base)]
+    screen = _screen(_StubSession(), send=None, messages=messages)
+    body_lines = [_strip_ansi(l) for l in screen._body_lines(text, messages[0], 30)]
+
+    assert len(body_lines) > 1  # it actually wrapped
+    stamp = base.astimezone().strftime("%H:%M")
+    indent = body_lines[0].index(stamp) + len(stamp) + 2  # gutter: "  HH:MM  "
+    first_word = body_lines[0].index("word")
+    assert first_word == indent
+    # Continuation lines start their text at the same column as the first line's body.
+    for cont in body_lines[1:]:
+        assert cont.startswith(" " * indent)
+        assert cont[indent] != " "  # text resumes exactly under the body, not the gutter
+
+
+def test_at_mention_renders_as_name_in_sender_hue() -> None:
+    """An ``@[Name]`` token renders as a bare ``@Name`` colored in that sender's hue."""
+    from datetime import datetime, timezone
+
+    from meshterm.ui.chat import _SENDER_COLORS
+
+    base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
+    conv = Conversation(label="#public", is_channel=True, channel_idx=0)
+    message = ChatMessage(
+        text="Bob: @[Alice] you around?", is_channel=True, channel_idx=0, created_at=base
+    )
+    screen = ChatScreen(conv, [message], send=None, names={}, session=_StubSession())
+    _, body = screen._sender_and_body(message)
+    text = screen._render_mentions(body, selected=False)
+
+    assert "@Alice" in text.plain  # bracketed token collapsed to a bare mention
+    assert "@[Alice]" not in text.plain and "[Alice]" not in text.plain
+    # The "@Alice" run carries Alice's palette hue (the same the header would use).
+    hue = screen._sender_style("Alice")
+    assert hue in _SENDER_COLORS
+    at = text.plain.index("@Alice")
+    hue_spans = [
+        s for s in text.spans if s.style == hue and s.start <= at and at + len("@Alice") <= s.end
+    ]
+    assert hue_spans
+
+
 def test_direct_transcript_groups_under_sender_headers() -> None:
     """Direct chats use the same grouped layout as channels: one header per sender run."""
     from datetime import datetime, timezone

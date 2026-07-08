@@ -26,7 +26,7 @@ from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import snr_style
 from .tui.prompt import _LineEditor
-from .tui.render import render_lines
+from .tui.render import render_hanging, render_lines
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner
 
@@ -58,6 +58,11 @@ _SENDER_COLORS = (
 #: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
 #: be followed by ``": "`` — conservative enough to leave ``http://…`` and ``note:x`` alone.
 _SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
+
+#: Matches an ``@[Name]`` mention token, as the reply flow primes into the compose line (see
+#: :meth:`ChatScreen._begin_reply`). The transcript renders each as a bare ``@Name`` colored
+#: in that sender's hue instead of showing the literal brackets. Name is 1–20 non-``]`` chars.
+_MENTION = re.compile(r"@\[([^\]]{1,20})\]")
 
 
 #: Delivery-state indicators for a *resolved* outbound direct message, shown at the end of
@@ -320,7 +325,7 @@ class ChatScreen(Screen):
             selected = idx == self._selected
             if selected:
                 self._selected_line = len(lines)
-            lines += render_lines(self._body_line(body, message, selected=selected), width)
+            lines += self._body_lines(body, message, width, selected=selected)
             prev_group, prev_day = group, day
         return lines
 
@@ -342,32 +347,62 @@ class ChatScreen(Screen):
         """Build the sender header that starts a group, colored per sender."""
         return Text(sender, style=self._sender_style(sender, is_self=is_self))
 
-    def _body_line(self, body: str, message: ChatMessage, *, selected: bool = False) -> Text:
-        """Build one indented message line, each stamped with its own time.
+    def _body_lines(
+        self, body: str, message: ChatMessage, width: int, *, selected: bool = False
+    ) -> list[str]:
+        """Render one message to ANSI lines, stamped with its own time and hanging-indented.
 
         The per-message timestamp lives here (not on the group header) so every message
         shows the time it was actually sent, even when several are grouped under one
         sender — otherwise a run of same-sender messages would appear to share one time.
-        When ``selected``, the line is marked as the reply target (matching the select
-        screen's ``❯`` pointer and brand highlight).
+        A long body wraps with a hanging indent so continuation lines align under the body
+        rather than under the timestamp gutter. When ``selected``, the line is marked as the
+        reply target (matching the select screen's ``❯`` pointer and brand highlight).
         """
         stamp = message.created_at.astimezone()
-        line = Text()
-        line.append("❯ " if selected else "  ", style="brand" if selected else None)
-        line.append(f"{stamp:%H:%M}  ", style="brand" if selected else "muted")
-        line.append(body, style="brand" if selected else None)
+        prefix = Text()
+        prefix.append("❯ " if selected else "  ", style="brand" if selected else None)
+        prefix.append(f"{stamp:%H:%M}  ", style="brand" if selected else "muted")
+        body_text = self._body_text(body, message, selected=selected)
+        return render_hanging(prefix, body_text, width, indent=prefix.cell_len)
+
+    def _body_text(self, body: str, message: ChatMessage, *, selected: bool) -> Text:
+        """Build the styled body of a message: mentions colored, then any trailing glyphs."""
+        text = self._render_mentions(body, selected=selected)
         if message.outbound:
             # Direct messages track per-message delivery (spin → ✅/❌, retryable); channel
             # broadcasts have no ack, so only flag one that failed to leave the companion.
             if message.is_channel:
                 if message.acked is False:
-                    line.append("  ⚠ no ack", style="warn")
+                    text.append("  ⚠ no ack", style="warn")
             else:
-                line.append("  ")
-                line.append(self._delivery_glyph(message.acked))
+                text.append("  ")
+                text.append_text(self._delivery_glyph(message.acked))
         if message.snr is not None:
-            line.append(f"  {message.snr:+.0f} dB", style=snr_style(message.snr))
-        return line
+            text.append(f"  {message.snr:+.0f} dB", style=snr_style(message.snr))
+        return text
+
+    def _render_mentions(self, body: str, *, selected: bool) -> Text:
+        """Render body text, rewriting each ``@[Name]`` token to a ``@Name`` in its hue.
+
+        The reply flow primes the compose line with an ``@[Name]`` token (see
+        :meth:`_begin_reply`); here it reads back as a bare ``@Name`` colored in that
+        sender's stable hue, so a mention is visually tied to the person it names. Text
+        around the mentions keeps the line's base style (brand when the message is the
+        picked reply target, otherwise unstyled).
+        """
+        base = "brand" if selected else None
+        text = Text()
+        pos = 0
+        for match in _MENTION.finditer(body):
+            if match.start() > pos:
+                text.append(body[pos : match.start()], style=base)
+            name = match.group(1)
+            text.append(f"@{name}", style=self._sender_style(name))
+            pos = match.end()
+        if pos < len(body):
+            text.append(body[pos:], style=base)
+        return text
 
     def _delivery_glyph(self, acked: Optional[bool]) -> Text:
         """Map an outbound direct message's ``acked`` state to its trailing glyph.
