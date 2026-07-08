@@ -61,9 +61,11 @@ class MapTool(Tool):
 
         interactive = isinstance(ctx.ui, TuiUi) and not params.get("static")
         if interactive:
-            from ..ui.map_screen import open_map
+            from ..ui.map_screen import DEFAULT_VIEW_FRACTION, open_map
 
-            await open_map(ctx, markers)
+            await open_map(
+                ctx, markers, fraction=params.get("fraction", DEFAULT_VIEW_FRACTION)
+            )
         else:
             await self._render_static(ctx, markers, params)
 
@@ -172,7 +174,7 @@ class MapTool(Tool):
 
         from ..core.geo import Viewport
         from ..ui.map_render import render_map
-        from ..ui.map_screen import basemap_source
+        from ..ui.map_screen import DEFAULT_VIEW_FRACTION, basemap_source
 
         cell_w = int(params.get("width") or min(ctx.console.size.width - 2, 160))
         cell_h = max(12, cell_w * 4 // 13)  # keep roughly the terminal's aspect
@@ -187,7 +189,13 @@ class MapTool(Tool):
             center = BBox.around(coords).center
             vp = Viewport(center[0], center[1], int(params["zoom"]), dot_w, dot_h)
         else:
-            vp = Viewport.fit(coords, dot_w, dot_h, max_zoom=max_zoom)
+            vp = Viewport.fit(
+                coords,
+                dot_w,
+                dot_h,
+                max_zoom=max_zoom,
+                fraction=params.get("fraction", DEFAULT_VIEW_FRACTION),
+            )
 
         tiles = {}
         if params.get("basemap", True):
@@ -205,6 +213,7 @@ class MapTool(Tool):
             app: The Typer application.
         """
         from ..cli import run_tool_command
+        from ..ui.map_screen import DEFAULT_VIEW_FRACTION
 
         @app.command(name=self.name, help=self.help)
         def _map(
@@ -212,13 +221,26 @@ class MapTool(Tool):
                 None, "--width", "-w", help="Map width in character cells."
             ),
             zoom: Optional[int] = typer.Option(
-                None, "--zoom", "-z", help="Fixed zoom level (omit to fit all nodes)."
+                None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)."
+            ),
+            fraction: float = typer.Option(
+                DEFAULT_VIEW_FRACTION,
+                "--fraction",
+                "-f",
+                min=0.0,
+                max=1.0,
+                help="Fraction of nodes to frame: the densest that many, so distant "
+                "outliers don't zoom the view out. 1.0 fits every node. Ignored with --zoom.",
             ),
             basemap: bool = typer.Option(
                 True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap."
             ),
         ) -> None:
-            params: dict[str, Any] = {"static": True, "basemap": basemap}
+            if not 0.0 < fraction <= 1.0:
+                raise typer.BadParameter("--fraction must be greater than 0 and at most 1")
+            params: dict[str, Any] = {
+                "static": True, "basemap": basemap, "fraction": fraction,
+            }
             if width is not None:
                 params["width"] = width
             if zoom is not None:

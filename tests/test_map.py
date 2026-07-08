@@ -106,6 +106,39 @@ def test_viewport_fit_frames_all_points() -> None:
         assert 0 <= x < vp.dot_w and 0 <= y < vp.dot_h  # every point is on-canvas
 
 
+def test_viewport_fit_fraction_ignores_outliers() -> None:
+    """Framing half the nodes zooms to the dense core, letting far outliers fall off-canvas."""
+    # A tight downtown cluster of five nodes (~50 m across) plus one distant outlier.
+    core = [
+        (45.5000, -73.5600), (45.5003, -73.5602), (45.4998, -73.5598),
+        (45.5001, -73.5599), (45.4999, -73.5601),
+    ]
+    outlier = (46.80, -71.20)
+    pts = core + [outlier]
+
+    full = Viewport.fit(pts, 200, 120, max_zoom=16)
+    half = Viewport.fit(pts, 200, 120, max_zoom=16, fraction=0.5)
+
+    # The core-only frame is zoomed in tighter than the frame that must hold the outlier.
+    assert half.zoom > full.zoom
+    # Every clustered node stays on-canvas; the outlier is pushed off.
+    for lat, lon in core:
+        x, y = half.lonlat_to_dot(lat, lon)
+        assert 0 <= x < half.dot_w and 0 <= y < half.dot_h
+    ox, oy = half.lonlat_to_dot(*outlier)
+    assert not (0 <= ox < half.dot_w and 0 <= oy < half.dot_h)
+
+
+def test_viewport_fit_fraction_keeps_small_sets_whole() -> None:
+    """With only two nodes there is no core to isolate — both are still framed."""
+    pts = [(45.5019, -73.5674), (45.4768, -73.5990)]
+    half = Viewport.fit(pts, 200, 120, max_zoom=14, fraction=0.5)
+    full = Viewport.fit(pts, 200, 120, max_zoom=14)
+    assert (half.center_lat, half.center_lon, half.zoom) == (
+        full.center_lat, full.center_lon, full.zoom
+    )
+
+
 def test_viewport_zoom_and_pan() -> None:
     """Zooming and panning return new viewports; zoom clamps to its bounds."""
     vp = Viewport(45.5, -73.6, 10, 200, 120)

@@ -9,7 +9,8 @@ render_map`. Keys:
 * holding **Shift** (Shift+arrows, or the uppercase ``W`` / ``A`` / ``S`` / ``D``) pans by a
   single character cell for fine positioning,
 * ``=`` / ``+`` zoom in, ``-`` / ``_`` zoom out,
-* ``r`` recenters and refits to the nodes,
+* ``r`` recenters and refits to the dense core of the nodes (the same default view the map
+  opens on),
 * ``Esc`` / ``q`` leaves the map.
 
 With no network (and no cached tiles) the basemap is simply absent and nodes are plotted on a
@@ -48,6 +49,10 @@ _PAN_KEYS: dict[str, str] = {"w": "up", "a": "left", "s": "down", "d": "right"}
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
 
+#: Default fraction of nodes the map frames on open — the densest half, so a few distant
+#: outliers don't zoom the whole mesh out to a continent. See :meth:`geo.Viewport.fit`.
+DEFAULT_VIEW_FRACTION = 0.5
+
 
 class MapScreen(Screen):
     """A full-screen, keyboard-driven map of the mesh's located nodes over an OSM basemap."""
@@ -63,6 +68,7 @@ class MapScreen(Screen):
         *,
         saved_view: Optional[tuple[float, float, int]] = None,
         on_view_change: Optional[Callable[[Viewport], None]] = None,
+        view_fraction: float = DEFAULT_VIEW_FRACTION,
     ) -> None:
         """Create the map screen.
 
@@ -75,6 +81,8 @@ class MapScreen(Screen):
                 on, or ``None`` to frame the nodes instead.
             on_view_change: Called with the viewport whenever the centre or zoom changes, so
                 the caller can persist it. Deduplicated — only actual changes fire it.
+            view_fraction: Fraction of the nodes the default frame (and ``r`` reset) fits —
+                the densest that many, so outliers don't dominate. See :meth:`geo.Viewport.fit`.
         """
         super().__init__()
         self.title = "mesh map"
@@ -84,6 +92,7 @@ class MapScreen(Screen):
         self._max_tile_zoom = max_tile_zoom
         self._saved_view = saved_view
         self._on_view_change = on_view_change
+        self._view_fraction = view_fraction
         # The view last handed to ``on_view_change``; seeded with the restored view so
         # reopening unchanged doesn't rewrite it.
         self._last_saved = saved_view
@@ -125,7 +134,11 @@ class MapScreen(Screen):
         return render_map(self._viewport, tiles, self._markers)
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
-        """Restore the saved view (clamped to sane bounds) or frame the nodes."""
+        """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
+
+        With no saved view the default frames the half of the nodes nearest the median
+        centre, so distant outliers don't zoom the whole mesh out to a useless scale.
+        """
         if self._saved_view is not None:
             lat, lon, zoom = self._saved_view
             z = max(2, min(int(zoom), self._max_tile_zoom + _OVERZOOM))
@@ -135,6 +148,7 @@ class MapScreen(Screen):
             dot_w,
             dot_h,
             max_zoom=self._max_tile_zoom,
+            fraction=self._view_fraction,
         )
 
     def _persist(self) -> None:
@@ -233,6 +247,7 @@ class MapScreen(Screen):
                 vp.dot_w,
                 vp.dot_h,
                 max_zoom=self._max_tile_zoom,
+                fraction=self._view_fraction,
             )
         elif low == "q":
             self.resolve(None)
@@ -243,7 +258,12 @@ def basemap_source(ctx: "AppContext") -> BasemapSource:
     return BasemapSource(ctx.settings.config_dir / "tilecache")
 
 
-async def open_map(ctx: "AppContext", markers: list[MapMarker]) -> None:
+async def open_map(
+    ctx: "AppContext",
+    markers: list[MapMarker],
+    *,
+    fraction: float = DEFAULT_VIEW_FRACTION,
+) -> None:
     """Open the interactive full-screen map over ``markers`` and run until dismissed.
 
     Warms the tile source off the event loop (so the first paint doesn't block on the
@@ -252,6 +272,7 @@ async def open_map(ctx: "AppContext", markers: list[MapMarker]) -> None:
     Args:
         ctx: Shared application context (must be in the interactive menu).
         markers: The located mesh nodes to plot (non-empty).
+        fraction: Fraction of the nodes the default view frames (see :class:`MapScreen`).
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
@@ -273,5 +294,6 @@ async def open_map(ctx: "AppContext", markers: list[MapMarker]) -> None:
         on_view_change=lambda vp: ctx.repo.set_map_view(
             vp.center_lat, vp.center_lon, vp.zoom
         ),
+        view_fraction=fraction,
     )
     await session.run_screen(screen)

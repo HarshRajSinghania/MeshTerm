@@ -78,6 +78,35 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
 
+def _central_points(
+    points: list[tuple[float, float]], fraction: float
+) -> list[tuple[float, float]]:
+    """Return the ``fraction`` of ``points`` nearest their median centre (the dense core).
+
+    The centre is the per-axis *median* so outliers don't drag it, and points are ranked by
+    great-circle distance from it. At least two points are always kept (so the result still
+    constrains a zoom), and the whole list is returned once the kept count reaches it.
+
+    Args:
+        points: Latitude/longitude pairs (non-empty).
+        fraction: Portion to keep, ``0 < fraction <= 1``.
+
+    Returns:
+        The closest ``ceil(len(points) * fraction)`` points (min 2), or all of them.
+    """
+    n = len(points)
+    keep = max(2, math.ceil(n * fraction))
+    if keep >= n:
+        return points
+    lats = sorted(lat for lat, _ in points)
+    lons = sorted(lon for _, lon in points)
+    mid = n // 2
+    med_lat = lats[mid] if n % 2 else (lats[mid - 1] + lats[mid]) / 2
+    med_lon = lons[mid] if n % 2 else (lons[mid - 1] + lons[mid]) / 2
+    ordered = sorted(points, key=lambda p: haversine_km(p[0], p[1], med_lat, med_lon))
+    return ordered[:keep]
+
+
 def clamp_lat(lat: float) -> float:
     """Clamp latitude to the Web Mercator limit (~±85.051°) where the projection is finite."""
     return max(-85.05112878, min(85.05112878, lat))
@@ -247,6 +276,7 @@ class Viewport:
         min_zoom: int = 2,
         max_zoom: int = 16,
         default_zoom: int = 14,
+        fraction: float = 1.0,
     ) -> "Viewport":
         """Build a viewport framing ``points`` — centred on them at the tightest fitting zoom.
 
@@ -258,13 +288,19 @@ class Viewport:
             min_zoom: Lowest zoom to consider.
             max_zoom: Highest zoom to consider.
             default_zoom: Zoom used when the points don't constrain it (0 or 1 point).
+            fraction: Fraction of the points to actually frame, ``0 < fraction <= 1``. Below
+                ``1`` only the densest core — the points nearest the median centre — is framed,
+                so a handful of distant outliers can't force the whole view to zoom out. The
+                remaining nodes simply fall off the edges.
 
         Returns:
-            A :class:`Viewport` centred on the points at a zoom where they fit with margin.
-            Empty input centres on the world at ``min_zoom``.
+            A :class:`Viewport` centred on the framed points at a zoom where they fit with
+            margin. Empty input centres on the world at ``min_zoom``.
         """
         if not points:
             return cls(0.0, 0.0, min_zoom, dot_w, dot_h)
+        if fraction < 1.0:
+            points = _central_points(points, fraction)
         box = BBox.around(points)
         center_lat, center_lon = box.center
         if len(points) == 1 or (box.min_lat == box.max_lat and box.min_lon == box.max_lon):
