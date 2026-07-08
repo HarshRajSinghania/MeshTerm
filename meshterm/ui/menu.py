@@ -10,6 +10,10 @@ prompts layer as dialogs, and its output appears in a bounded, scrollable result
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import threading
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -24,6 +28,43 @@ from .surface import TuiUi
 from .theme import make_console
 from .tui import Choice, Separator, TuiSession
 from .tui.emoji_width import calibrate as calibrate_emoji_width
+
+
+#: Grace period (seconds) allowed for the whole exit sequence — the full-screen unwind,
+#: the device disconnect, and the interpreter's atexit thread joins — once the user has
+#: committed to quitting. Comfortably longer than a healthy teardown (~1 s), so it only
+#: ever fires when exit has genuinely wedged.
+_EXIT_WATCHDOG_S = 5.0
+
+
+def _arm_exit_watchdog(seconds: float = _EXIT_WATCHDOG_S) -> None:
+    """Guarantee the process terminates even if the exit path wedges.
+
+    Called once, at the start of teardown, after the app's own async resources have been
+    released. If a clean exit completes within ``seconds`` the process is already gone and
+    this daemon thread dies with it, so the happy path is untouched. It only bites when exit
+    hangs — most often on prompt_toolkit's Windows input reader, a *non-daemon* executor
+    thread that in rare teardown races stays blocked in a Win32 wait and stalls the
+    interpreter's exit-time thread joins (it also backstops any stall in the device
+    disconnect). A daemon thread can still run while the main thread is blocked in that join,
+    so it force-exits the process.
+
+    Committed database writes are durable regardless (each is committed as it happens), so a
+    hard exit here loses nothing.
+
+    Args:
+        seconds: Grace period before forcing termination.
+    """
+
+    def _bail() -> None:
+        time.sleep(seconds)
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            os._exit(0)
+
+    threading.Thread(target=_bail, name="meshterm-exit-watchdog", daemon=True).start()
 
 
 @contextmanager
@@ -110,6 +151,11 @@ async def run_menu(ctx: AppContext) -> None:
             await ctx.monitor.aclose()
             await ctx.chat.aclose()
             await ctx.events.aclose()
+            # Everything the app owns is released; the remaining exit steps (prompt_toolkit's
+            # full-screen unwind, the device disconnect in the CLI driver, the interpreter's
+            # atexit thread joins) must never be able to hang the process. See
+            # _arm_exit_watchdog.
+            _arm_exit_watchdog()
 
     with _silence_console_logging():
         await session.run(main())
