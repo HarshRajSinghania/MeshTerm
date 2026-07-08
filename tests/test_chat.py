@@ -486,6 +486,41 @@ async def test_chat_screen_enter_sends_and_appends() -> None:
     assert session.invalidations > 0
 
 
+async def test_direct_send_spins_until_the_ack_resolves(monkeypatch) -> None:
+    """A pending direct message spins while the send is in flight, then settles on ✅."""
+    from meshterm.ui.tui.spinner import Spinner
+
+    monkeypatch.setattr("meshterm.ui.chat._SPINNER_INTERVAL", 0.005)
+    session = _StubSession()
+    release = asyncio.Event()
+
+    async def send(text: str) -> ChatMessage:
+        await release.wait()  # hold the send open so we can watch the glyph spin
+        return ChatMessage(text=text, outbound=True, peer="d4e5f6a7", acked=True)
+
+    screen = _screen(session, send=send)
+    for ch in "hi":
+        screen.handle("text", ch)
+    screen.handle("enter")
+
+    # While the send is held open the trailing glyph is a live spinner frame, and it advances.
+    await asyncio.sleep(0.03)
+    first = screen._spinner.frame
+    joined = "\n".join(screen.render_body(60))
+    assert first in Spinner.BRAILLE and first in joined and "⏳" not in joined
+    await asyncio.sleep(0.03)
+    assert screen._spinner.frame != first  # the animation is actually running
+
+    # Once the ack lands, the spinner is gone and the message shows its delivered glyph.
+    release.set()
+    for _ in range(100):  # let _send_direct unwind (ticker cancel + swap) before asserting
+        await asyncio.sleep(0.005)
+        if screen._messages[-1].acked is not None:
+            break
+    assert screen._messages[-1].acked is True
+    assert "✅" in "\n".join(screen.render_body(60))
+
+
 def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
     """The compose bar shows ``used/limit`` with only the used count styled (the max is muted)."""
     from rich.text import Text
@@ -561,7 +596,9 @@ async def test_over_limit_message_is_not_sent_and_buffer_is_kept() -> None:
 
 
 def test_chat_screen_shows_delivery_glyphs() -> None:
-    """Each outbound direct message ends with its delivery emoji (⏳ / ✅ / ❌)."""
+    """Outbound direct messages end with delivery glyphs: a spinner, then ✅ / ❌."""
+    from meshterm.ui.tui.spinner import Spinner
+
     messages = [
         ChatMessage(text="delivered", outbound=True, peer="d4e5f6a7", acked=True),
         ChatMessage(text="dropped", outbound=True, peer="d4e5f6a7", acked=False),
@@ -570,7 +607,10 @@ def test_chat_screen_shows_delivery_glyphs() -> None:
     screen = _screen(_StubSession(), send=None, messages=messages)
 
     joined = "\n".join(screen.render_body(60))
-    assert "✅" in joined and "❌" in joined and "⏳" in joined
+    # A message still awaiting its ack spins (a Braille frame) rather than showing the old
+    # static hourglass; resolved ones show ✅ / ❌.
+    assert "✅" in joined and "❌" in joined
+    assert Spinner.BRAILLE[0] in joined and "⏳" not in joined
     # A failed message advertises the retry shortcut in the footer hint.
     assert "Ctrl-R" in screen.footer_hint
 

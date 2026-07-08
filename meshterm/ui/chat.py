@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -28,6 +28,7 @@ from .theme import snr_style
 from .tui.prompt import _LineEditor
 from .tui.render import render_lines
 from .tui.screen import CANCEL, Screen
+from .tui.spinner import Spinner
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -59,9 +60,14 @@ _SENDER_COLORS = (
 _SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
 
 
-#: Delivery-state indicators for an outbound direct message, shown at the end of its line:
-#: awaiting the ack, acknowledged, or transmitted-but-unacknowledged (retryable via Ctrl-R).
-_SENDING, _DELIVERED, _FAILED = "⏳", "✅", "❌"
+#: Delivery-state indicators for a *resolved* outbound direct message, shown at the end of
+#: its line: acknowledged, or transmitted-but-unacknowledged (retryable via Ctrl-R). While
+#: the ack is still pending the line shows an animated spinner instead (see
+#: :meth:`ChatScreen._delivery_glyph`).
+_DELIVERED, _FAILED = "✅", "❌"
+
+#: Seconds between spinner frames on a message that is still awaiting its ack.
+_SPINNER_INTERVAL = 0.12
 
 #: How many UTF-8 bytes a single outgoing message may carry, by conversation kind. MeshCore's
 #: LoRa payload caps a direct message at 150 bytes and an (unscoped) channel broadcast at 130;
@@ -77,13 +83,6 @@ _CHANNEL_BYTE_LIMIT = 130
 _BYTES_TIGHT, _BYTES_LOW = 20, 10
 _BYTES_YELLOW = "bold #fde047"
 _BYTES_ORANGE = "bold #ff9500"
-
-
-def _delivery_glyph(acked: Optional[bool]) -> str:
-    """Map an outbound direct message's ``acked`` state to its delivery emoji."""
-    if acked is None:
-        return _SENDING
-    return _DELIVERED if acked else _FAILED
 
 
 def _split_channel_sender(text: str) -> tuple[Optional[str], str]:
@@ -152,6 +151,10 @@ class ChatScreen(Screen):
         self._session = session
         self._editor = _LineEditor()
         self._sending = False
+        # Cycled while a direct message is in flight, so its trailing glyph spins (rather than
+        # a static hourglass) until the ack resolves. Shared across messages: only one send or
+        # retry is ever in flight at a time (both gated by ``_sending``).
+        self._spinner = Spinner()
         self._status = ""
         self._stick = True  # keep the newest message in view until the user scrolls up
         # Channel-only reply selection: index of the highlighted message (or None when the
@@ -354,16 +357,28 @@ class ChatScreen(Screen):
         line.append(f"{stamp:%H:%M}  ", style="brand" if selected else "muted")
         line.append(body, style="brand" if selected else None)
         if message.outbound:
-            # Direct messages track per-message delivery (⏳ → ✅/❌, retryable); channel
+            # Direct messages track per-message delivery (spin → ✅/❌, retryable); channel
             # broadcasts have no ack, so only flag one that failed to leave the companion.
             if message.is_channel:
                 if message.acked is False:
                     line.append("  ⚠ no ack", style="warn")
             else:
-                line.append(f"  {_delivery_glyph(message.acked)}")
+                line.append("  ")
+                line.append(self._delivery_glyph(message.acked))
         if message.snr is not None:
             line.append(f"  {message.snr:+.0f} dB", style=snr_style(message.snr))
         return line
+
+    def _delivery_glyph(self, acked: Optional[bool]) -> Text:
+        """Map an outbound direct message's ``acked`` state to its trailing glyph.
+
+        A message still awaiting its ack (``acked is None``) shows the current spinner frame,
+        animated by :meth:`_spin_while` for as long as the send is in flight; a resolved one
+        shows the delivered ✅ or the unacknowledged ❌.
+        """
+        if acked is None:
+            return self._spinner.text()
+        return Text(_DELIVERED if acked else _FAILED)
 
     def _reply_banner(self) -> Text:
         """One-line cue shown above the input when a message is picked to reply to."""
@@ -549,6 +564,35 @@ class ChatScreen(Screen):
             self._stick = True
             self._session.invalidate()
 
+    async def _spin_while(self, coro: Awaitable[Any]) -> Any:
+        """Await ``coro`` while animating the delivery spinner on the in-flight message.
+
+        A background timer advances the shared spinner and repaints every
+        :data:`_SPINNER_INTERVAL` seconds, so a pending message's trailing glyph spins until
+        the ack resolves. The timer is always cancelled (and awaited, so it can't outlive the
+        send as a stray pending task) before returning. The spinner is cosmetic, so any hiccup
+        in the animation is swallowed rather than allowed to break the send.
+        """
+        self._spinner.reset()
+
+        async def animate() -> None:
+            while True:
+                await asyncio.sleep(_SPINNER_INTERVAL)
+                self._spinner.tick()
+                self._session.invalidate()
+
+        ticker = asyncio.ensure_future(animate())
+        try:
+            return await coro
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a spinner hiccup must never break a send
+                pass
+
     async def _send_direct(self, pending: ChatMessage) -> None:
         """Await delivery of the optimistic ``pending`` bubble, swapping in the stored row.
 
@@ -558,7 +602,7 @@ class ChatScreen(Screen):
         the error inline, matching how a failed send has always surfaced.
         """
         try:
-            message = await self._send(pending.text)
+            message = await self._spin_while(self._send(pending.text))
         except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
             self._discard(pending)
             self._status = f"send failed: {exc}"
@@ -594,7 +638,7 @@ class ChatScreen(Screen):
         """Drive a retry to completion, refreshing the message's delivery state in place."""
         assert self._resend is not None
         try:
-            await self._resend(message)
+            await self._spin_while(self._resend(message))
         except Exception as exc:  # noqa: BLE001 - report inline, keep the chat alive
             message.acked = False
             self._status = f"retry failed: {exc}"
