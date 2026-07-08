@@ -14,7 +14,7 @@ from rich.text import Text
 
 from ..core.device_store import RememberedDevice
 from ..core.discovery import DiscoveredDevice
-from .tui import Choice, Separator
+from .tui import Choice
 
 if TYPE_CHECKING:
     from .surface import Ui
@@ -41,8 +41,8 @@ async def prompt_device(
         remembered: The remembered default, if any, used to mark and preselect a row.
 
     Returns:
-        The chosen :class:`DiscoveredDevice`, or ``None`` if the user cancelled or chose the
-        cancel row (e.g. to run against ``--mock`` / configure later).
+        The chosen :class:`DiscoveredDevice`, or ``None`` if the user cancelled the picker
+        (e.g. pressed Esc to run against ``--mock`` / configure later).
     """
     if not devices:
         await ui.view(
@@ -68,8 +68,5 @@ async def prompt_device(
         )
         if is_remembered:
             default = device
-
-    items.append(Separator(" "))
-    items.append(Choice(title="Skip (use --mock / configure later)", value=None))
 
     return await ui.select("Select a companion device:", items, default=default)
