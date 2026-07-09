@@ -133,7 +133,6 @@ def render_map(
     markers: list[MapMarker],
     *,
     max_labels: int = 80,
-    block: bool = False,
 ) -> list[str]:
     """Render a full map frame to truecolour ANSI lines.
 
@@ -142,8 +141,6 @@ def render_map(
         tiles: Decoded layers keyed by ``(z, x, y)``; ``None`` values are pending/absent.
         markers: Mesh nodes to overlay.
         max_labels: Cap on basemap labels placed, to keep the map readable.
-        block: Draw the base map with 2×2 block elements instead of 2×4 braille — the
-            compatibility mode for terminals that can't render the full braille block.
 
     Returns:
         One ANSI string per row, ready for the TUI frame or the console.
@@ -168,7 +165,7 @@ def render_map(
         if canvas.place_label(label.x, label.y, label.text, label.color, bold=label.bold):
             placed += 1
 
-    return canvas.to_ansi_lines(block=block)
+    return canvas.to_ansi_lines()
 
 
 def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> None:

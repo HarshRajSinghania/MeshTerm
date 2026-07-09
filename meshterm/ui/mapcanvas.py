@@ -53,33 +53,6 @@ _DOT_BITS = (
     (0x08, 0x10, 0x20, 0x80),  # right column, rows 0..3
 )
 
-#: Quadrant block-element glyphs indexed by a 4-bit mask (bit 0 top-left, 1 top-right,
-#: 2 bottom-left, 3 bottom-right). These are the *block-mode* fallback for terminals whose
-#: font can't render the full braille block: a cell's 2×4 dots collapse to a 2×2 quadrant,
-#: halving the vertical resolution but using glyphs that exist in essentially every
-#: monospace font (unlike 8-dot braille, U+2840–28FF, which fonts routinely omit).
-_QUADRANTS = (
-    " ", "▘", "▝", "▀",  # ·  ▘  ▝  ▀
-    "▖", "▌", "▞", "▛",  # ▖  ▌  ▞  ▛
-    "▗", "▚", "▐", "▜",  # ▗  ▚  ▐  ▜
-    "▄", "▙", "▟", "█",  # ▄  ▙  ▟  █
-)
-
-
-def _quadrant_glyph(bits: int) -> str:
-    """Collapse an 8-dot braille bitmask to its 2×2 quadrant block glyph.
-
-    A quadrant is filled when any braille dot inside it is lit: top rows (0–1) vs bottom rows
-    (2–3), left column vs right. Used only by block mode; braille mode emits the dots directly.
-    """
-    mask = (
-        (1 if bits & 0x03 else 0)  # top-left: left col, rows 0–1
-        | (2 if bits & 0x18 else 0)  # top-right: right col, rows 0–1
-        | (4 if bits & 0x44 else 0)  # bottom-left: left col, rows 2–3
-        | (8 if bits & 0xA0 else 0)  # bottom-right: right col, rows 2–3
-    )
-    return _QUADRANTS[mask]
-
 RGB = tuple[int, int, int]
 
 
@@ -294,15 +267,8 @@ class MapCanvas:
 
     # -- output -----------------------------------------------------------------
 
-    def to_ansi_lines(self, *, block: bool = False) -> list[str]:
-        """Render the canvas to one truecolour ANSI string per row.
-
-        Args:
-            block: Draw the base-map dots as 2×2 quadrant block elements instead of 2×4
-                braille. Overlays (labels, markers) are unaffected. This is the compatibility
-                mode for terminals whose font can't render the full braille block — block
-                elements are near-universally available, at half the vertical resolution.
-        """
+    def to_ansi_lines(self) -> list[str]:
+        """Render the canvas to one truecolour ANSI string per row."""
         reset = "\x1b[0m"
         lines: list[str] = []
         for cy in range(self.cell_h):
@@ -314,7 +280,7 @@ class MapCanvas:
                     ch, color, bold = overlay
                 elif self._bits[cy][cx]:
                     bits = self._bits[cy][cx]
-                    ch = _quadrant_glyph(bits) if block else chr(_BRAILLE_BASE + bits)
+                    ch = chr(_BRAILLE_BASE + bits)
                     color = self._color[cy][cx] or (128, 128, 128)
                     bold = False
                 else:

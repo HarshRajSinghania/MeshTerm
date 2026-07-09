@@ -393,15 +393,6 @@ def test_repository_round_trips_map_view(ctx) -> None:
     assert ctx.repo.get_map_view() == pytest.approx((40.0, -74.0, 9))
 
 
-def test_repository_round_trips_map_block(ctx) -> None:
-    """The saved map render mode persists and reads back; braille (False) by default."""
-    assert ctx.repo.get_map_block() is False
-    ctx.repo.set_map_block(True)
-    assert ctx.repo.get_map_block() is True
-    ctx.repo.set_map_block(False)
-    assert ctx.repo.get_map_block() is False
-
-
 async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     """With no located contacts and no located history the tool returns cleanly."""
     async def _no_contacts(_ctx):
@@ -535,29 +526,8 @@ def test_map_screen_restores_and_persists_view() -> None:
     assert saved[-1][2] == 13
 
 
-def test_map_screen_restores_and_persists_block_mode() -> None:
-    """The screen opens in the saved render mode and reports every ``t`` toggle."""
-    from meshterm.ui.map_render import MapMarker
-    from meshterm.ui.map_screen import MapScreen
-
-    modes: list[bool] = []
-    screen = MapScreen(
-        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14,
-        block=True,
-        on_block_change=modes.append,
-    )
-    screen.render_body(80)
-    assert screen._block is True  # restored to the saved block mode
-
-    screen.handle("text", "t")  # toggle back to braille
-    assert screen._block is False
-    assert modes == [False]
-    screen.handle("text", "t")
-    assert modes == [False, True]
-
-
-def test_map_screen_scrubs_right_edge_in_braille_only() -> None:
-    """Braille mode asks the session to scrub the right edge after a move; block mode never does."""
+def test_map_screen_scrubs_right_edge_after_move() -> None:
+    """A move asks the session to scrub the right edge once, to clear any braille smear."""
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
@@ -567,11 +537,6 @@ def test_map_screen_scrubs_right_edge_in_braille_only() -> None:
     braille.handle("text", "d")  # a move flags the edge for a scrub
     assert braille.consume_edge_scrub() == 2  # right padding + border columns
     assert braille.consume_edge_scrub() == 0  # consumed — not repeated without another move
-
-    block = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14, block=True)
-    block.render_body(80)
-    block.handle("text", "d")
-    assert block.consume_edge_scrub() == 0  # block glyphs can't smear, so nothing to scrub
 
 
 def test_map_screen_escape_dismisses() -> None:

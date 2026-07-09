@@ -544,32 +544,6 @@ class Repository:
         )
         self._conn.commit()
 
-    def get_map_block(self) -> bool:
-        """Return whether the map last used block-element mode (vs. the braille default).
-
-        Lets the interactive map reopen in whichever render mode the user last toggled to
-        with ``t``. Defaults to ``False`` (braille, the higher-resolution default) when no
-        preference has been saved or a stored value can't be parsed.
-        """
-        row = self._conn.execute(
-            "SELECT value FROM app_state WHERE key = 'map_block'"
-        ).fetchone()
-        if row is None:
-            return False
-        return row["value"] == "1"
-
-    def set_map_block(self, block: bool) -> None:
-        """Persist the map render mode so the next session reopens the way it was left.
-
-        Args:
-            block: ``True`` for 2×2 block elements, ``False`` for 2×4 braille.
-        """
-        self._conn.execute(
-            "INSERT OR REPLACE INTO app_state(key, value) VALUES ('map_block', ?)",
-            ("1" if block else "0",),
-        )
-        self._conn.commit()
-
     @staticmethod
     def _row_to_chat(row: sqlite3.Row) -> ChatMessage:
         """Rebuild a :class:`ChatMessage` from a ``messages`` row."""
