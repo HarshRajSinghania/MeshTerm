@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .render import render_lines
-from .screen import Screen, ScrollScreen
+from .screen import Screen
 
 
 def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[list[str], bool, bool]:
@@ -37,8 +37,9 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
         A tuple of (padded visible lines, more-above, more-below).
     """
     total = len(lines)
-    if isinstance(screen, ScrollScreen):
-        screen.note_viewport(viewport)
+    # Record the body height and viewport so the screen's shared scroll helpers can page by a
+    # screenful and clamp to the content (see :meth:`Screen.note_metrics`).
+    screen.note_metrics(total, viewport)
     cursor = screen.cursor_line()
 
     scroll = screen.scroll

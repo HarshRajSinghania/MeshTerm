@@ -33,10 +33,6 @@ from .tui.spinner import Spinner
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Fixed page step for PageUp/PageDown while scrolling the transcript (the screen isn't
-#: told the viewport height, so a constant keeps paging predictable).
-_PAGE = 10
-
 #: How many past messages to load into the transcript when a conversation opens.
 _HISTORY_LIMIT = 200
 
@@ -183,10 +179,10 @@ class ChatScreen(Screen):
         """Key hint, reflecting whether a message is picked for reply (channels only)."""
         if not self._is_channel:
             if any(m.outbound and m.acked is False for m in self._messages):
-                return "Enter send · Ctrl-R retry failed · ↑↓ scroll · Esc back"
-            return "Enter send · ↑↓/PgUp scroll · End latest · Esc back"
+                return "Enter send · Ctrl-R retry failed · ↑↓/PgUp scroll · ^End latest · Esc back"
+            return "Enter send · ↑↓/PgUp scroll · ^End latest · Esc back"
         if self._selected is not None:
-            return "Enter reply (@mention) · ↑↓ pick · End/Esc cancel"
+            return "Enter reply (@mention) · ↑↓ pick · ^End/Esc cancel"
         return "Enter send · ↑ pick a message to reply · Esc back"
 
     # --- live updates --------------------------------------------------------
@@ -311,6 +307,10 @@ class ChatScreen(Screen):
         view (channels only; direct threads never select).
         """
         lines: list[str] = []
+        # Record each day divider as a sticky-header candidate, so the divider governing the
+        # topmost visible message is re-pinned to the top row once it scrolls off — the same
+        # base Screen.sticky_header the conversation picker uses for its section headings.
+        self._sticky_headers = []
         prev_group: Optional[tuple[bool, str]] = None
         prev_day = None
         for idx, message in enumerate(self._messages):
@@ -324,9 +324,11 @@ class ChatScreen(Screen):
             if new_day:
                 if lines:
                     lines += render_lines(Text(""), width)
-                lines += render_lines(
+                divider = render_lines(
                     Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
                 )
+                self._sticky_headers.append((len(lines), divider[0]))
+                lines += divider
             if new_day or group != prev_group:
                 if not new_day and lines:
                     lines += render_lines(Text(""), width)  # gap between sender groups
@@ -458,7 +460,12 @@ class ChatScreen(Screen):
             self._handle_flat(action, data)
 
     def _handle_flat(self, action: str, data: str = "") -> None:
-        """Direct-chat input: send on Enter, scroll the transcript, edit, or leave on Esc."""
+        """Direct-chat input: send on Enter, scroll the transcript, edit, or leave on Esc.
+
+        Home/End and Ctrl+←/→ act on the compose line (like any text field); scrolling the
+        transcript is on the arrows, PageUp/PageDown (a screenful), Ctrl+Home/End (top / live
+        tail), and Ctrl+PageUp/PageDown (previous / next day divider).
+        """
         if action == "enter":
             self._submit()
         elif action == "retry":
@@ -466,24 +473,30 @@ class ChatScreen(Screen):
         elif action == "escape":
             self.resolve(CANCEL)
         elif action == "up":
-            self._stick = False
-            self.scroll = max(0, self.scroll - 1)
+            self._detach_and(self.scroll_lines, -1)
         elif action == "pageup":
-            self._stick = False
-            self.scroll = max(0, self.scroll - _PAGE)
+            self._detach_and(self.scroll_pages, -1)
         elif action == "down":
-            self.scroll += 1
+            self._detach_and(self.scroll_lines, 1)
         elif action == "pagedown":
-            self.scroll += _PAGE
-        elif action == "home":
-            self._stick = False
-            self.scroll = 0
-        elif action == "end":
-            self._stick = True
+            self._detach_and(self.scroll_pages, 1)
+        elif action == "ctrl_home":
+            self._detach_and(self.scroll_to_top)
+        elif action == "ctrl_pageup":
+            self._detach_and(self.scroll_to_section_start)
+        elif action == "ctrl_pagedown":
+            self._detach_and(self.scroll_to_next_section)
+        elif action == "ctrl_end":
+            self._stick = True  # snap back to the live tail / compose line
         else:
             if self._editor.edit(action, data):
                 self._status = ""  # trimming clears the "too long" notice
-                self._stick = True  # typing snaps back to the live tail
+                self._stick = True  # touching the compose line snaps back to the live tail
+
+    def _detach_and(self, move: Callable[..., None], *args: Any) -> None:
+        """Detach from the live tail and run a scroll move (the shared scroll helpers)."""
+        self._stick = False
+        move(*args)
 
     def _handle_channel(self, action: str, data: str = "") -> None:
         """Channel input: arrows pick a message to reply to; Enter sends or starts a reply.
@@ -507,16 +520,20 @@ class ChatScreen(Screen):
         elif action == "up":
             self._move_selection(-1)
         elif action == "pageup":
-            self._move_selection(-_PAGE)
+            self._move_selection(-self._page_step)
         elif action == "down":
             self._move_selection(1)
         elif action == "pagedown":
-            self._move_selection(_PAGE)
-        elif action == "home":
+            self._move_selection(self._page_step)
+        elif action == "ctrl_home":
             if self._messages:
                 self._selected = 0
                 self._stick = False
-        elif action == "end":
+        elif action == "ctrl_pageup":
+            self._select_section(-1)
+        elif action == "ctrl_pagedown":
+            self._select_section(1)
+        elif action == "ctrl_end":
             self._clear_selection()
             self._stick = True  # jump back to the live tail / compose line
         else:
@@ -547,6 +564,45 @@ class ChatScreen(Screen):
         else:
             self._selected = max(0, target)
             self._stick = False
+
+    def _select_section(self, direction: int) -> None:
+        """Jump the reply selection to the first message of the previous/next day.
+
+        The selection-space analogue of the transcript's Ctrl+PageUp/PageDown day jump: down
+        moves to the first message of the following day (dropping to the tail when there's no
+        later day); up moves to the first message of the current day, or the previous day's
+        when already atop one.
+        """
+        if not self._messages:
+            return
+        starts = self._day_start_indices()
+        current = self._selected if self._selected is not None else len(self._messages) - 1
+        if direction > 0:
+            target = next((s for s in starts if s > current), None)
+            if target is None:
+                self._clear_selection()
+                self._stick = True
+                return
+        else:
+            governing = max((s for s in starts if s <= current), default=0)
+            target = (
+                governing
+                if governing < current
+                else max((s for s in starts if s < current), default=0)
+            )
+        self._selected = target
+        self._stick = False
+
+    def _day_start_indices(self) -> list[int]:
+        """Message indices that begin a new local-day group — matching the transcript dividers."""
+        starts: list[int] = []
+        prev_day = None
+        for i, message in enumerate(self._messages):
+            day = message.created_at.astimezone().date()
+            if day != prev_day:
+                starts.append(i)
+                prev_day = day
+        return starts
 
     def _clear_selection(self) -> None:
         """Drop any reply selection (focus returns to the compose line)."""

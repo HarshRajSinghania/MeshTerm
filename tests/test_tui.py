@@ -19,7 +19,7 @@ from meshterm.ui.tui import frame
 from meshterm.ui.tui.progress import ProgressScreen
 from meshterm.ui.tui.prompt import AutocompleteScreen, ConfirmScreen, TextScreen
 from meshterm.ui.tui.render import render_lines, render_to_ansi
-from meshterm.ui.tui.screen import CANCEL, ScrollScreen
+from meshterm.ui.tui.screen import CANCEL, Screen, ScrollScreen
 from meshterm.ui.tui.select import Choice, SelectScreen, Separator
 from meshterm.ui.tui.session import TuiSession
 
@@ -153,17 +153,17 @@ def test_select_no_wrap_clamps_at_the_ends() -> None:
     assert _run(screen, "enter") == 3
 
 
-def test_select_pageup_pagedown_jump_by_a_page() -> None:
-    """PageDown/PageUp move the highlight a page at a time, clamped to the choice range."""
-    from meshterm.ui.tui.select import _PAGE
-
+def test_select_pageup_pagedown_jump_by_a_screenful() -> None:
+    """PageDown/PageUp move the highlight a screenful at a time, clamped to the choice range."""
     items = [Choice(f"c{i}", i) for i in range(30)]
     screen = SelectScreen("pick", items)  # starts on the first choice
+    screen.note_metrics(total=30, viewport=11)  # a screenful is viewport - 1 = 10 rows
     screen.handle("pagedown")
-    assert _run(screen, "enter") == _PAGE  # advanced one page down
+    assert _run(screen, "enter") == 10  # advanced one page (viewport - 1) down
     screen = SelectScreen("pick", items, default=25)
+    screen.note_metrics(total=30, viewport=11)
     screen.handle("pageup")
-    assert _run(screen, "enter") == 25 - _PAGE  # and one page back up
+    assert _run(screen, "enter") == 25 - 10  # and one page back up
 
 
 def _grouped_menu(default: object = None) -> SelectScreen:
@@ -211,7 +211,85 @@ def test_select_pinned_heading_keeps_the_last_row_reachable() -> None:
     assert below is False  # and we know we're at the bottom
 
 
+def test_screen_sticky_header_picks_the_governing_recorded_header() -> None:
+    """The base Screen.sticky_header logic is generic over any recorded headers list.
+
+    Both the select list and the chat transcript reuse it by populating ``_sticky_headers``;
+    this exercises the shared rule directly: pin the last header at or above the offset, unless
+    it *is* the top row or none sits above it.
+    """
+    screen = Screen()
+    screen._sticky_headers = [(0, "A"), (5, "B"), (12, "C")]
+    assert screen.sticky_header(0) is None    # header A is itself the top row
+    assert screen.sticky_header(3) == "A"     # scrolled past A, before B → A governs
+    assert screen.sticky_header(5) is None     # header B is now the top row
+    assert screen.sticky_header(20) == "C"    # below every header → the last one pins
+    assert Screen().sticky_header(9) is None  # no recorded headers → nothing to pin
+
+
+def test_select_ctrl_page_jumps_between_sections() -> None:
+    """Ctrl+PageDown lands on the next section's first choice; Ctrl+PageUp walks back up."""
+    screen = _grouped_menu()  # Channels (6) then Direct (8), highlight on the first choice
+    screen.handle("ctrl_pagedown")
+    assert _run(screen, "enter") == ("d", 0)  # jumped to the first Direct choice
+    screen.handle("ctrl_pageup")
+    assert _run(screen, "enter") == ("c", 0)  # already atop Direct → back to Channels' first
+    screen.handle("ctrl_pagedown")
+    assert _run(screen, "enter") == ("d", 0)  # and forward to Direct again
+
+
 # --- scroll ------------------------------------------------------------------
+
+
+def test_screen_scroll_helpers_page_and_clamp_to_metrics() -> None:
+    """The shared scroll helpers page by a screenful and clamp to the recorded body/viewport."""
+    screen = Screen()
+    screen.note_metrics(total=100, viewport=10)
+    screen.scroll_pages(1)
+    assert screen.scroll == 9  # a page is viewport - 1
+    screen.scroll_to_bottom()
+    assert screen.scroll == 90  # total - viewport
+    screen.scroll_lines(50)
+    assert screen.scroll == 90  # clamped, never past the bottom
+    screen.scroll_to_top()
+    assert screen.scroll == 0
+
+
+def test_screen_section_scroll_walks_recorded_headers() -> None:
+    """Ctrl+PageUp/PageDown move the scroll offset between recorded section boundaries."""
+    screen = Screen()
+    screen.note_metrics(total=100, viewport=10)
+    screen._sticky_headers = [(0, "A"), (20, "B"), (60, "C")]
+    screen.scroll_to_next_section()
+    assert screen.scroll == 20  # from the top → start of section B
+    screen.scroll_to_next_section()
+    assert screen.scroll == 60  # → start of C
+    screen.scroll_to_next_section()
+    assert screen.scroll == 90  # no section past C → clamp to the bottom
+    screen.scroll = 40  # mid-section B
+    screen.scroll_to_section_start()
+    assert screen.scroll == 20  # up to B's start
+    screen.scroll_to_section_start()
+    assert screen.scroll == 0  # already atop B → previous section (A at the top)
+
+
+def test_scroll_screen_ctrl_edges_and_sectionless_fallback() -> None:
+    """Ctrl+Home/End reach the edges; with no sections Ctrl+PageUp/PageDown do too."""
+    body = Text("\n".join(f"line {i}" for i in range(100)))
+    screen = ScrollScreen(body, title="log")
+    screen.render_body(40)  # sets total = 100
+    screen.note_viewport(10)
+    screen.handle("ctrl_end")
+    assert screen.scroll == 90
+    screen.handle("ctrl_home")
+    assert screen.scroll == 0
+    screen.handle("ctrl_pagedown")  # no sections recorded → falls through to the bottom
+    assert screen.scroll == 90
+    screen.handle("ctrl_pageup")
+    assert screen.scroll == 0
+
+
+# --- scroll (existing) -------------------------------------------------------
 
 
 def test_scroll_screen_paging_and_clamp() -> None:
@@ -306,6 +384,24 @@ def test_text_screen_edits_and_validates() -> None:
     for ch in "ok":
         screen.handle("text", ch)
     assert _run(screen, "enter") == "ok"
+
+
+def test_line_editor_word_motion() -> None:
+    """Ctrl+Left/Right hop by word — to the current word's start, else the previous/next."""
+    from meshterm.ui.tui.prompt import _LineEditor
+
+    editor = _LineEditor("the quick  brown fox")  # cursor at the end (len 20)
+    editor.edit("ctrl_left")
+    assert editor.cursor == 17  # start of "fox"
+    editor.edit("ctrl_left")
+    assert editor.cursor == 11  # skips the double space → start of "brown"
+    editor.edit("ctrl_left")
+    assert editor.cursor == 4  # start of "quick"
+    editor.edit("ctrl_right")
+    assert editor.cursor == 11  # forward over "quick" and the spaces → start of "brown"
+    editor.cursor = 13  # mid-"brown"
+    editor.edit("ctrl_left")
+    assert editor.cursor == 11  # to the current word's start, not the previous word
 
 
 def test_text_screen_password_masks() -> None:

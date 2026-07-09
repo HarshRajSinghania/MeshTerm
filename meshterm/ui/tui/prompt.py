@@ -57,9 +57,41 @@ class _LineEditor:
             self.cursor = 0
         elif action == "end":
             self.cursor = len(self.text)
+        elif action == "ctrl_left":
+            self.cursor = self._word_left(self.cursor)
+        elif action == "ctrl_right":
+            self.cursor = self._word_right(self.cursor)
         else:
             return False
         return True
+
+    def _word_left(self, pos: int) -> int:
+        """Index of the start of the word at/left of ``pos`` (the previous word if already there).
+
+        Skips any whitespace immediately left of the cursor, then the run of word characters, so
+        from mid-word it lands on that word's first character and from a word start it steps back
+        to the previous word — the usual Ctrl+Left behavior of a text editor.
+        """
+        i = pos
+        while i > 0 and self.text[i - 1].isspace():
+            i -= 1
+        while i > 0 and not self.text[i - 1].isspace():
+            i -= 1
+        return i
+
+    def _word_right(self, pos: int) -> int:
+        """Index of the start of the next word after ``pos`` (or the line end if none remains).
+
+        Skips the current run of word characters, then the whitespace after it, landing on the
+        first character of the following word — the usual Ctrl+Right behavior.
+        """
+        n = len(self.text)
+        i = pos
+        while i < n and not self.text[i].isspace():
+            i += 1
+        while i < n and self.text[i].isspace():
+            i += 1
+        return i
 
     def render(self, mask: bool = False, *, overflow_at: Optional[int] = None) -> Text:
         """Render the current line with a reverse-video cursor cell.

@@ -789,6 +789,117 @@ def test_channel_transcript_groups_by_sender() -> None:
     assert stamps[0] != stamps[1]  # grouped Alice messages show distinct times
 
 
+def _two_day_messages():
+    """Two days of direct messages, long enough to overflow a small viewport."""
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 7, 5, 9, 0, tzinfo=timezone.utc)
+    day1 = [ChatMessage(text=f"day1-{i}", peer="d4e5f6a7", created_at=base + timedelta(minutes=i))
+            for i in range(4)]
+    day2 = [ChatMessage(text=f"day2-{i}", peer="d4e5f6a7",
+                        created_at=base + timedelta(days=1, minutes=i)) for i in range(4)]
+    return day1 + day2
+
+
+def test_chat_sticky_header_pins_the_governing_day_divider() -> None:
+    """The day divider above the top row pins there once it scrolls off (like the picker)."""
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    screen.render_body(60)
+    (idx0, div0), (idx1, div1) = screen._sticky_headers
+    assert screen.sticky_header(0) is None            # first divider is itself the top row
+    assert screen.sticky_header(idx1 - 1) == div0     # still within day one — its divider pins
+    assert screen.sticky_header(idx1) is None         # day two's divider is now the top row
+    assert screen.sticky_header(idx1 + 1) == div1     # scrolled past it — day two's pins
+
+
+def test_chat_frame_pins_a_day_divider_when_stuck_to_the_newest() -> None:
+    """Rendered through the frame at the tail, a day divider occupies the pinned top row."""
+    from meshterm.ui.tui import frame
+
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    lines = screen.render_body(60)  # sticks to the newest message, scrolling early days off
+    visible, above, _below = frame._visible_slice(screen, lines, 6)
+    top = _strip_ansi(visible[0]).strip()
+    assert top.startswith("──") and "Jul" in top  # a day divider is pinned to the top row
+    assert above is True  # and the frame flags there's more above the pin
+
+
+def test_chat_home_end_and_word_keys_move_the_compose_cursor() -> None:
+    """In a chat, Home/End and Ctrl+←/→ act on the compose line, not the transcript scroll."""
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    for ch in "hello world":
+        screen.handle("text", ch)
+    assert screen._editor.cursor == 11
+    screen.handle("home")
+    assert screen._editor.cursor == 0  # line start, not scroll-to-top
+    screen.handle("end")
+    assert screen._editor.cursor == 11
+    screen.handle("ctrl_left")
+    assert screen._editor.cursor == 6  # start of "world"
+
+
+def test_chat_scroll_keys_detach_and_reattach_to_the_tail() -> None:
+    """PageUp/Ctrl+Home detach from the live tail; Ctrl+End snaps back to it."""
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    lines = screen.render_body(60)
+    screen.note_metrics(total=len(lines), viewport=5)
+    screen.handle("pageup")
+    assert screen._stick is False  # a screenful up detaches from the tail
+    screen.handle("ctrl_home")
+    assert screen.scroll == 0 and screen._stick is False
+    screen.handle("ctrl_end")
+    assert screen._stick is True  # re-attached to the newest message
+
+
+def test_chat_ctrl_page_scrolls_between_day_dividers() -> None:
+    """Ctrl+PageDown/PageUp move the transcript scroll between day dividers."""
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    lines = screen.render_body(60)
+    screen.note_metrics(total=len(lines), viewport=5)
+    (idx0, _), (idx1, _) = screen._sticky_headers
+    screen.scroll = 0
+    screen.handle("ctrl_pagedown")
+    assert screen.scroll == idx1 and screen._stick is False  # to the second day's divider
+    screen.handle("ctrl_pageup")
+    assert screen.scroll == idx0  # back to the first day's divider
+
+
+def _two_day_channel_messages():
+    """Channel messages spanning two local days (one sender), for section-jump tests."""
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 7, 5, 9, 0, tzinfo=timezone.utc)
+    day1 = [ChatMessage(text=f"Alice: d1-{i}", is_channel=True, channel_idx=0,
+                        created_at=base + timedelta(minutes=i)) for i in range(3)]
+    day2 = [ChatMessage(text=f"Alice: d2-{i}", is_channel=True, channel_idx=0,
+                        created_at=base + timedelta(days=1, minutes=i)) for i in range(3)]
+    return day1 + day2
+
+
+def test_chat_channel_ctrl_page_selects_across_days() -> None:
+    """In a channel, Ctrl+PageDown/PageUp move the reply selection to day boundaries."""
+    screen = _channel_screen(_two_day_channel_messages())
+    starts = screen._day_start_indices()
+    assert starts == [0, 3]
+    screen.handle("ctrl_home")
+    assert screen._selected == 0
+    screen.handle("ctrl_pagedown")
+    assert screen._selected == starts[1]  # first message of the second day
+    screen.handle("ctrl_pageup")
+    assert screen._selected == starts[0]  # back to the first day
+
+
+def test_chat_channel_home_moves_the_compose_cursor() -> None:
+    """A channel's Home key edits the compose line rather than jumping the selection."""
+    screen = _channel_screen(_two_day_channel_messages())
+    for ch in "reply":
+        screen.handle("text", ch)
+    assert screen._editor.cursor == 5
+    screen.handle("home")
+    assert screen._editor.cursor == 0
+    assert screen._selected is None  # touching the compose line clears any reply selection
+
+
 def test_channel_self_style_keyed_on_concept_not_label() -> None:
     """Our white 'self' style follows the message being outbound, not the 'you' label.
 

@@ -56,10 +56,6 @@ class Separator:
 
 Item = "Choice | Separator"
 
-#: How many rows PageUp/PageDown move the highlight. A fixed step (the screen isn't told the
-#: viewport height) that keeps paging predictable, matching the chat transcript's own paging.
-_PAGE = 10
-
 
 class SelectScreen(Screen):
     """A grouped, filterable, single-choice list.
@@ -129,6 +125,50 @@ class SelectScreen(Screen):
         rows = self._rows() if rows is None else rows
         return [it for it in rows if isinstance(it, Choice)]
 
+    def _section_starts(self) -> list[int]:
+        """Choice indices that begin a section — the first choice after each run of separators.
+
+        Drives Ctrl+PageUp/PageDown section jumps. Empty while filtering, since the filtered
+        list is flattened to bare matches with no group headings to jump between.
+        """
+        if self._filter:
+            return []
+        starts: list[int] = []
+        idx = 0
+        fresh = True  # the next choice opens a section (top of the list, or just past a heading)
+        for item in self._items:
+            if isinstance(item, Separator):
+                fresh = True
+            elif isinstance(item, Choice):
+                if fresh:
+                    starts.append(idx)
+                    fresh = False
+                idx += 1
+        return starts
+
+    def _jump_section(self, direction: int) -> None:
+        """Move the highlight to the next section (``+1``) or the current/previous one (``-1``).
+
+        Mirrors the scroll-based section jump of read-only screens, but in choice space: down
+        lands on the first choice of the following section; up lands on the first choice of the
+        section we're in, or the previous section's when already at a section start.
+        """
+        starts = self._section_starts()
+        if not starts:
+            return
+        if direction > 0:
+            nxt = next((s for s in starts if s > self._index), None)
+            if nxt is not None:
+                self._index = nxt
+        else:
+            at_or_before = [s for s in starts if s <= self._index]
+            if not at_or_before:
+                self._index = 0
+            elif at_or_before[-1] < self._index:
+                self._index = at_or_before[-1]
+            else:
+                self._index = at_or_before[-2] if len(at_or_before) >= 2 else 0
+
     # --- rendering -----------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
@@ -139,15 +179,16 @@ class SelectScreen(Screen):
         selected = choices[self._index] if choices else None
 
         lines: list[str] = []
-        # (body-line index, rendered line) for each separator, so a section heading that
-        # scrolls off can be re-pinned to the top row (see :meth:`sticky_header`).
-        self._separator_lines: list[tuple[int, str]] = []
+        # Record each section heading as a sticky-header candidate, so one that scrolls off is
+        # re-pinned to the top row by the base Screen.sticky_header. Filtering flattens the list
+        # to bare choices (see _rows), so this stays empty then and nothing is pinned.
+        self._sticky_headers = []
         if self._filter:
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
         for item in rows:
             if isinstance(item, Separator):
                 sep = render_to_ansi(Text(item.title, style="muted"), width)
-                self._separator_lines.append((len(lines), sep))
+                self._sticky_headers.append((len(lines), sep))
                 lines.append(sep)
                 continue
             is_sel = item is selected
@@ -174,25 +215,6 @@ class SelectScreen(Screen):
         """Return the body line index of the highlighted row."""
         return getattr(self, "_cursor", None)
 
-    def sticky_header(self, scroll: int) -> Optional[str]:
-        """The section heading governing the top visible row, when it has scrolled off.
-
-        Returns the rendered separator line for the group the first visible row belongs to,
-        so the "Channels"/"Direct"-style heading stays pinned as you scroll down into a long
-        section. Returns ``None`` when that heading is itself still on screen (nothing to pin)
-        or while filtering (headings are hidden then).
-        """
-        governing: Optional[str] = None
-        governing_at = -1
-        for idx, line in getattr(self, "_separator_lines", ()):
-            if idx <= scroll:
-                governing, governing_at = line, idx
-            else:
-                break
-        if governing is None or governing_at == scroll:
-            return None  # no heading above, or it's already the top visible row
-        return governing
-
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
@@ -209,13 +231,17 @@ class SelectScreen(Screen):
                     len(choices) - 1, self._index + 1
                 )
         elif action == "pageup":
-            self._index = max(0, self._index - _PAGE)
+            self._index = max(0, self._index - self._page_step)
         elif action == "pagedown":
-            self._index = min(len(choices) - 1, self._index + _PAGE) if choices else 0
-        elif action == "home":
+            self._index = min(len(choices) - 1, self._index + self._page_step) if choices else 0
+        elif action in ("home", "ctrl_home"):
             self._index = 0
-        elif action == "end":
+        elif action in ("end", "ctrl_end"):
             self._index = max(0, len(choices) - 1)
+        elif action == "ctrl_pagedown":
+            self._jump_section(1)
+        elif action == "ctrl_pageup":
+            self._jump_section(-1)
         elif action == "enter":
             if choices:
                 self.resolve(choices[self._index].value)
