@@ -68,6 +68,8 @@ class MapScreen(Screen):
         *,
         saved_view: Optional[tuple[float, float, int]] = None,
         on_view_change: Optional[Callable[[Viewport], None]] = None,
+        block: bool = False,
+        on_block_change: Optional[Callable[[bool], None]] = None,
         view_fraction: float = DEFAULT_VIEW_FRACTION,
     ) -> None:
         """Create the map screen.
@@ -81,6 +83,10 @@ class MapScreen(Screen):
                 on, or ``None`` to frame the nodes instead.
             on_view_change: Called with the viewport whenever the centre or zoom changes, so
                 the caller can persist it. Deduplicated — only actual changes fire it.
+            block: Whether to open in 2×2 block-element mode rather than the braille default
+                (the last-used mode, restored by the caller).
+            on_block_change: Called with the new mode whenever ``t`` toggles it, so the
+                caller can persist the preference.
             view_fraction: Fraction of the nodes the default frame (and ``r`` reset) fits —
                 the densest that many, so outliers don't dominate. See :meth:`geo.Viewport.fit`.
         """
@@ -92,16 +98,21 @@ class MapScreen(Screen):
         self._max_tile_zoom = max_tile_zoom
         self._saved_view = saved_view
         self._on_view_change = on_view_change
+        self._on_block_change = on_block_change
         self._view_fraction = view_fraction
         # The view last handed to ``on_view_change``; seeded with the restored view so
         # reopening unchanged doesn't rewrite it.
         self._last_saved = saved_view
         self._viewport: Optional[Viewport] = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
-        # Draw the base map with 2×2 block elements instead of 2×4 braille. Off by default
-        # (braille is higher-res); the user toggles it with ``t`` when their terminal font
-        # can't render the full braille block and stray glyphs appear. See :mod:`mapcanvas`.
-        self._block = False
+        # Draw the base map with 2×2 block elements instead of 2×4 braille. Braille is the
+        # higher-res default; the user toggles this with ``t`` when their terminal font can't
+        # render the full braille block and stray glyphs appear. See :mod:`mapcanvas`.
+        self._block = block
+        # Ask the session to scrub the panel's right edge on the next paint (see
+        # :meth:`consume_edge_scrub`). Seeded ``True`` so the first braille frame's edge is
+        # cleaned even before the first pan.
+        self._needs_scrub = True
         # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
         self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
         self._pending: set[tuple[int, int, int]] = set()
@@ -111,25 +122,32 @@ class MapScreen(Screen):
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hints plus a live tile-loading indicator."""
-        mode = "block" if self._block else "braille"
-        base = f"wasd/↑↓←→ pan (⇧ fine) · +/-/PgUp/PgDn zoom · r reset · t {mode} · Esc back"
+        base = (
+            "wasd/↑↓←→ pan (⇧ fine) · +/-/PgUp/PgDn zoom · r reset · "
+            "t toggle braille/block · Esc back"
+        )
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:
             return f"{base} · [warn]offline — no basemap[/warn]"
         return base
 
-    @property
-    def force_full_repaint(self) -> bool:  # type: ignore[override]
-        """Force a full-frame repaint each paint while braille mode is active.
+    def consume_edge_scrub(self) -> int:
+        """Right-edge columns the session should force-repaint on the next paint (0 = none).
 
-        A braille glyph the terminal font lacks gets substituted by a *double-width* fallback,
-        which shoves the row and corrupts the panel's right border. prompt_toolkit's
-        differential repaint then leaves that corruption until those cells are rewritten, so we
-        force a full repaint to scrub it on every pan/zoom. Block mode uses only
-        widely-supported glyphs, so it needs no such scrubbing.
+        A braille glyph the terminal font lacks is substituted by a *double-width* fallback,
+        which shoves the row and smears the panel's right padding and border. The map body
+        itself redraws wholesale as it pans, so those cells self-heal — but the static edge
+        does not change frame-to-frame, so prompt_toolkit's differential paint never rewrites
+        it and the smear lingers there. After a move we ask the session to force just those
+        two columns (right padding + border) to repaint, scrubbing the smear without the
+        whole-frame flicker a full repaint would cause. Block mode can't smear, so it scrubs
+        nothing.
         """
-        return not self._block
+        if self._block or not self._needs_scrub:
+            return 0
+        self._needs_scrub = False
+        return 2  # the panel's right padding cell and its right border cell
 
     def render_body(self, width: int) -> list[str]:
         """Build (or resize) the viewport, ensure its tiles, and render the frame."""
@@ -236,6 +254,8 @@ class MapScreen(Screen):
             self._viewport = vp.zoomed(-1)
         elif action == "text":
             self._handle_key(data, vp)
+        # Any handled key may have redrawn the body, so clean the right edge next paint.
+        self._needs_scrub = True
         self._persist()
 
     def _pan(self, vp: Viewport, direction: str, *, fine: bool) -> None:
@@ -272,6 +292,8 @@ class MapScreen(Screen):
             )
         elif low == "t":
             self._block = not self._block  # braille ⇄ block-element base map
+            if self._on_block_change is not None:
+                self._on_block_change(self._block)
         elif low == "q":
             self.resolve(None)
 
@@ -317,6 +339,14 @@ async def open_map(
         on_view_change=lambda vp: ctx.repo.set_map_view(
             vp.center_lat, vp.center_lon, vp.zoom
         ),
+        block=ctx.repo.get_map_block(),
+        on_block_change=ctx.repo.set_map_block,
         view_fraction=fraction,
     )
-    await session.run_screen(screen)
+    try:
+        await session.run_screen(screen)
+    finally:
+        # The map's braille may have smeared the terminal via double-width fallback glyphs
+        # that prompt_toolkit's diff can't see; force one full repaint so the menu drawn
+        # underneath starts from a clean slate rather than inheriting that garbage.
+        session.request_full_repaint()

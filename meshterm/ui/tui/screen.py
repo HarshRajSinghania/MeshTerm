@@ -51,11 +51,6 @@ class Screen:
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
     footnote: Optional[str] = None
-    #: When this is the base screen, force a full-frame repaint each paint instead of
-    #: prompt_toolkit's differential update. A screen sets this when its body can emit glyphs
-    #: the terminal renders at an unexpected width (see :class:`~meshterm.ui.map_screen.
-    #: MapScreen`), which would otherwise leave stale cells the diff never scrubs.
-    force_full_repaint: bool = False
 
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""
@@ -91,6 +86,16 @@ class Screen:
         plain scroll screens return ``None``.
         """
         return None
+
+    def consume_edge_scrub(self) -> int:
+        """Right-edge columns the session should force-repaint on the next paint (0 = none).
+
+        The default is 0 — no screen needs this. A screen whose body can emit glyphs the
+        terminal renders at an unexpected width (the map's braille) overrides this to have the
+        session redraw just the smeared edge cells, which prompt_toolkit's differential paint
+        would otherwise never rewrite (see :class:`~meshterm.ui.map_screen.MapScreen`).
+        """
+        return 0
 
     def sticky_header(self, scroll: int) -> Optional[str]:
         """An already-rendered body line to pin to the top row once ``scroll`` moves past it.

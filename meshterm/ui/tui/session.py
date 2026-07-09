@@ -112,19 +112,51 @@ class TuiSession:
         if self._app is not None:
             self._app.invalidate()
 
-    def _invalidate_last_frame(self) -> None:
-        """Drop prompt_toolkit's cached last frame so the next paint rewrites every cell.
+    def request_full_repaint(self) -> None:
+        """Force the next paint to rewrite every cell, then schedule it.
 
         prompt_toolkit repaints differentially: cells equal to the previous frame are left
         untouched. That is normally what we want, but it also means terminal-side corruption
-        (a double-width fallback glyph shoving the panel's right border) is never scrubbed
-        until those exact cells change. Clearing ``_last_screen`` forces a full redraw, so a
-        screen that opts in via :attr:`Screen.force_full_repaint` self-heals on every paint.
+        (a double-width fallback glyph the diff can't see) survives until those exact cells
+        change. Callers use this when leaving a screen that could have smeared the terminal —
+        the map — so the screen drawn underneath starts from a clean slate.
+        """
+        self._invalidate_last_frame()
+        self.invalidate()
+
+    def _invalidate_last_frame(self) -> None:
+        """Drop prompt_toolkit's cached last frame so the next paint rewrites every cell.
+
         Touches a prompt_toolkit internal, so it fails soft if the attribute ever moves.
         """
         renderer = getattr(self._app, "renderer", None)
         if renderer is not None and hasattr(renderer, "_last_screen"):
             renderer._last_screen = None
+
+    def _scrub_right_columns(self, count: int) -> None:
+        """Force prompt_toolkit to repaint the rightmost ``count`` columns on the next diff.
+
+        Overwrites those cells in pt's remembered last frame with a sentinel that can't equal
+        any real content, so the differential renderer treats them as changed and redraws
+        them — scrubbing a double-width fallback glyph that smeared over the panel's right
+        edge, without the whole-frame flicker of dropping the entire cached frame. Touches a
+        pt internal, so it fails soft if the structure ever moves.
+        """
+        renderer = getattr(self._app, "renderer", None)
+        last = getattr(renderer, "_last_screen", None)
+        if last is None:
+            return
+        try:
+            from prompt_toolkit.layout.screen import Char
+
+            buffer = last.data_buffer
+            cols, _ = self._size()
+            sentinel = Char("￿")  # a non-character; never equals real cell content
+            for x in range(max(0, cols - count), cols):
+                for row in list(buffer.keys()):
+                    buffer[row][x] = sentinel
+        except Exception:  # noqa: BLE001 - a cosmetic scrub must never break rendering
+            pass
 
     # --- async prompt helpers ------------------------------------------------
 
@@ -432,8 +464,9 @@ class TuiSession:
         base = self._base_screen()
         if base is None:
             return ANSI("")
-        if getattr(base, "force_full_repaint", False):
-            self._invalidate_last_frame()
+        scrub = base.consume_edge_scrub()
+        if scrub:
+            self._scrub_right_columns(scrub)
         # A chromeless base (the startup splash) forgoes the header/footer bars and is
         # centered under its banner instead of stretched across the terminal.
         if not base.chrome:
