@@ -74,6 +74,7 @@ class DevicesTool(Tool):
                     "target": d.target,
                     "label": d.label,
                     "vendor": d.vendor_label,
+                    "model": (known[d.stable_id].hardware_model if d.stable_id in known else ""),
                     "likely_lora": d.is_likely_lora,
                     "confidence": d.confidence,
                     "confirmed": d.stable_id in known,
@@ -99,7 +100,12 @@ class DevicesTool(Tool):
         table.add_column("", style="ok", no_wrap=True)  # active/confirmed markers
         table.add_column("Port / Address", style="brand")
         table.add_column("Device")
-        table.add_column("Vendor", style="muted")
+        # "Hardware" (not "Vendor"): for a confirmed device this holds the firmware's own model
+        # string ("Seeed Tracker T1000-E") — the only reliable source of what the box is — and
+        # for a merely-attached serial port it falls back to the USB vendor name ("Espressif").
+        # One column spans both because a maker name and a model name are the same question:
+        # "what hardware is this?". A BLE device that's never connected has neither, so it's "?".
+        table.add_column("Hardware", style="muted")
         table.add_column("MeshCore?", justify="center")
         table.add_column("Serial", style="muted")
         for d in devices:
@@ -109,11 +115,13 @@ class DevicesTool(Tool):
             device_name = d.name or d.product or d.description or "[muted]?[/muted]"
             if confirmed and confirmed.node_name:  # the mesh name learned on connect
                 device_name = f"{confirmed.node_name}  [muted]({device_name})[/muted]"
+            # Prefer the connected-time model; fall back to the USB vendor for unconnected ports.
+            hardware = (confirmed.hardware_model if confirmed else "") or d.vendor_label
             table.add_row(
                 marker,
                 d.target,
                 device_name,
-                d.vendor_label or "[muted]?[/muted]",
+                hardware or "[muted]?[/muted]",
                 _CONFIRMED_CELL if confirmed else _MAYBE_CELL[d.confidence],
                 d.serial_number or "[muted]—[/muted]",
             )

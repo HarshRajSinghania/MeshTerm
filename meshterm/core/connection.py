@@ -223,6 +223,25 @@ class Device(ABC):
         """
 
     @abstractmethod
+    async def get_device_info(self) -> dict:
+        """Return the firmware's hardware/build identity for the connected device.
+
+        This is a *different* protocol frame from :meth:`get_self_info`: where self-info
+        reports the node's identity and radio tuning, this reports what the box actually is —
+        a ``model`` string (e.g. ``"Seeed Tracker T1000-E"``, matching a MeshCore firmware
+        ``variant``), plus firmware ``ver``/``fw_build``. It is the *only* place the vendor and
+        model surface: BLE adverts carry no manufacturer data for these boards, most use a
+        randomized address with no IEEE OUI to look up, and no GATT Device Information Service
+        is exposed — so the model has to come from MeshCore's own application layer.
+
+        Best-effort: firmware predating the device-query frame answers with an empty payload
+        rather than erroring, so callers must treat a missing ``model`` as simply unknown.
+
+        Returns:
+            A dict with, when available, ``model``, ``ver``, and ``fw_build``; possibly empty.
+        """
+
+    @abstractmethod
     async def get_contacts(self) -> list[Contact]:
         """Return the device's known contacts.
 
@@ -680,6 +699,14 @@ class MeshCoreDevice(Device):
     async def get_self_info(self) -> dict:  # noqa: D102 - inherited docstring
         mc = self._require()
         result = await mc.commands.send_appstart()
+        return dict(getattr(result, "payload", {}) or {})
+
+    async def get_device_info(self) -> dict:  # noqa: D102 - inherited docstring
+        mc = self._require()
+        try:
+            result = await mc.commands.send_device_query()
+        except Exception:  # noqa: BLE001 - older firmware lacks the query; unknown, not fatal
+            return {}
         return dict(getattr(result, "payload", {}) or {})
 
     async def _contacts_payload(
@@ -1326,6 +1353,11 @@ class MockDevice(Device):
 
     async def get_self_info(self) -> dict:  # noqa: D102 - inherited docstring
         return {**self._info, "tx_power": self._tx_power}
+
+    async def get_device_info(self) -> dict:  # noqa: D102 - inherited docstring
+        # The simulator reports a stable, obviously-synthetic model so the hardware column
+        # renders identically to a real board without pretending to be one.
+        return {"model": "MeshCore Simulator", "ver": "mock", "fw_build": "mock"}
 
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
         return list(self._contacts)
@@ -1996,7 +2028,16 @@ async def _probe(
     if not info:
         await _safe_disconnect(device)
         return None
-    return device, dict(info)
+    # The connection is already open, so learn the hardware model now (its own protocol frame)
+    # and fold it into the identity dict — this is the one moment the model is obtainable, and
+    # it lets the caller remember "Seeed Tracker T1000-E" without a second connect. It's purely
+    # additive: self-info fields win on the (currently non-overlapping) keys, and a firmware
+    # that can't answer the query simply contributes nothing.
+    try:
+        device_info = await asyncio.wait_for(device.get_device_info(), timeout)
+    except Exception:  # noqa: BLE001 - model is a nicety; never fail a good probe over it
+        device_info = {}
+    return device, {**device_info, **info}
 
 
 async def _safe_disconnect(device: Device) -> None:

@@ -230,6 +230,30 @@ def test_remember_keeps_known_node_name_when_none_supplied(tmp_path: Path) -> No
     assert loaded is not None and loaded.node_name == "BaseStation"
 
 
+def test_device_store_round_trips_hardware_model(tmp_path: Path) -> None:
+    """The firmware model learned at connect time writes and reads back."""
+    store = DeviceStore(tmp_path / "devices.json")
+    dev = DiscoveredDevice(transport="ble", address="AA:BB:CC:DD:EE:FF", name="MeshCore-Waymarker")
+    store.remember(dev, node_name="Waymarker", hardware_model="Seeed Tracker T1000-E")
+
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.hardware_model == "Seeed Tracker T1000-E"  # the model the Hardware column shows
+
+
+def test_remember_keeps_known_model_when_none_supplied(tmp_path: Path) -> None:
+    """A reconnect on firmware that can't answer the query keeps the earlier model."""
+    store = DeviceStore(tmp_path / "devices.json")
+    dev = DiscoveredDevice("COM5", serial_number="SN1")
+    store.remember(dev, hardware_model="Seeed Tracker T1000-E")
+
+    store.remember(dev, node_name="Base")  # a later connect that learned no model
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.node_name == "Base"
+    assert loaded.hardware_model == "Seeed Tracker T1000-E"  # not erased
+
+
 def test_device_store_tolerates_corrupt_file(tmp_path: Path) -> None:
     """A corrupt state file is treated as 'nothing remembered'."""
     path = tmp_path / "devices.json"

@@ -118,9 +118,34 @@ def _where(device: DiscoveredDevice) -> str:
     return device.target
 
 
+def _hardware_label(
+    device: DiscoveredDevice, registry: dict[str, "RememberedDevice"]
+) -> str:
+    """The HARDWARE column text: the remembered firmware model, else the USB vendor.
+
+    A confirmed device shows what it actually is ("Seeed Tracker T1000-E", learned from the
+    device-query at connect time) — the only reliable source, since a BLE companion advertises
+    no maker. A device we've never connected has no model on file, so it falls back to the USB
+    vendor name (blank for an unconnected BLE advert, which genuinely tells us nothing yet).
+    """
+    record = registry.get(device.stable_id)
+    if record is not None and record.hardware_model:
+        return record.hardware_model
+    return device.vendor_label
+
+
 def _node_name_from(info: dict) -> str:
     """Return a device's own mesh node name from its self-info payload, or ``""``."""
     return str(info.get("adv_name") or info.get("name") or "")
+
+
+def _model_from(info: dict) -> str:
+    """Return the firmware's hardware model from the probe payload, or ``""``.
+
+    The smoke-test probe folds the device-query's ``model`` into the identity dict, so this
+    is the one chance to learn (and then remember) what the box actually is.
+    """
+    return str(info.get("model") or "")
 
 
 async def prompt_device(
@@ -223,7 +248,9 @@ async def prompt_device(
 
         # Confirmed: remember it forever. We return straight away, so there's no need to
         # fold it back into the local registry for a re-render.
-        store.remember(chosen, node_name=_node_name_from(info))
+        store.remember(
+            chosen, node_name=_node_name_from(info), hardware_model=_model_from(info)
+        )
         return chosen
 
 
@@ -251,8 +278,8 @@ def _build_items(
 
     The row for each device leads with its display name (the remembered node's name when
     known, else the hardware name), followed by its connection target, a TYPE glyph marking
-    the transport, and the hardware vendor; columns are padded to a shared width so they
-    align. Confirmed companions sort to the top (most-recent first), wear their name in white
+    the transport, and the HARDWARE column (the remembered firmware model, else the USB
+    vendor); columns are padded to a shared width so they align. Confirmed companions sort to the top (most-recent first), wear their name in white
     and a bright tag; the remembered default is starred. A trailing Quit row (like the menu's)
     lets the user exit from here.
     """
@@ -271,8 +298,8 @@ def _build_items(
     # The TYPE column holds a small transport badge (at most 3 cells); its heading is wider,
     # so the four-cell "TYPE" label sets the column width and every badge pads out to it.
     type_w = len("TYPE")
-    vendor_w = max(cell_len(d.vendor_label) for d in devices)
-    vendor_w = max(vendor_w, len("VENDOR"))
+    hardware_w = max(cell_len(_hardware_label(d, registry)) for d in devices)
+    hardware_w = max(hardware_w, len("HARDWARE"))
 
     # A muted, aligned header. The leading spaces mirror the row pointer (2) and the star
     # column (2) so the labels sit above their columns.
@@ -281,7 +308,7 @@ def _build_items(
         + _pad("DEVICE", name_w)
         + "  " + _pad(port_label, port_w)
         + "  " + _pad("TYPE", type_w)
-        + "  " + "VENDOR"
+        + "  " + "HARDWARE"
     )
 
     items: list = [header]
@@ -305,7 +332,7 @@ def _build_items(
         row.append_text(cell)
         row.append(" " * max(0, type_w - cell.cell_len))
         row.append("  ")
-        row.append(_pad(device.vendor_label, vendor_w), style="muted")
+        row.append(_pad(_hardware_label(device, registry), hardware_w), style="muted")
         # Only devices we've actually confirmed are billed as MeshCore companions; a USB
         # vendor ID (or a BLE advert) is a sort hint, not a claim. A bare serial bridge earns
         # an honest label; a MeshCore-named BLE advert is flagged as a likely companion.

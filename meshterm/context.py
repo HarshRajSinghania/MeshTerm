@@ -312,7 +312,9 @@ class AppContext:
         """
         if self.selected_device is not None:
             self.device_store.remember(
-                self.selected_device, node_name=await self._node_name()
+                self.selected_device,
+                node_name=await self._node_name(),
+                hardware_model=await self._hardware_model(),
             )
 
     async def reconnect(self) -> None:
@@ -376,6 +378,19 @@ class AppContext:
         except Exception:  # noqa: BLE001 - identity probe is best-effort, never fatal
             return ""
         return str(info.get("adv_name") or info.get("name") or "")
+
+    async def _hardware_model(self) -> str:
+        """Return the connected device's firmware model string, or ``""`` if unavailable.
+
+        Sourced from the device-query frame — the only place the model is exposed — so a
+        reconnect keeps the remembered hardware column fresh. Best-effort: a probe failure or
+        older firmware just leaves any previously-remembered model untouched.
+        """
+        try:
+            info = await self._device.get_device_info()
+        except Exception:  # noqa: BLE001 - model lookup is best-effort, never fatal
+            return ""
+        return str(info.get("model") or "")
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""

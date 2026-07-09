@@ -38,6 +38,11 @@ class RememberedDevice:
         transport: ``"serial"`` or ``"ble"`` — how this device was last reached.
         address: The Bluetooth address, for a BLE device (blank otherwise), so it can be
             reconnected directly without re-scanning.
+        hardware_model: The firmware's own model string (e.g. ``"Seeed Tracker T1000-E"``),
+            learned from the device-query at connect time. This is the only reliable source of
+            the model — a BLE companion advertises none — so it's remembered here to fill the
+            hardware column even when the device is merely attached, not connected. May be empty
+            for a serial device confirmed by an older firmware that predates the query.
     """
 
     stable_id: str
@@ -47,6 +52,7 @@ class RememberedDevice:
     node_name: str = ""
     transport: str = TRANSPORT_SERIAL
     address: str = ""
+    hardware_model: str = ""
 
     @property
     def is_ble(self) -> bool:
@@ -120,6 +126,7 @@ class DeviceStore:
                 node_name=entry.get("node_name", ""),
                 transport=entry.get("transport", TRANSPORT_SERIAL),
                 address=entry.get("address", ""),
+                hardware_model=entry.get("hardware_model", ""),
             )
         except (KeyError, TypeError):
             return None
@@ -146,7 +153,9 @@ class DeviceStore:
         registry, _ = self._read()
         return device.stable_id in registry
 
-    def remember(self, device: DiscoveredDevice, *, node_name: str = "") -> None:
+    def remember(
+        self, device: DiscoveredDevice, *, node_name: str = "", hardware_model: str = ""
+    ) -> None:
         """Record ``device`` as a confirmed connection and the new default.
 
         Upserts the device into the registry (so it is remembered forever) and marks it as
@@ -157,11 +166,16 @@ class DeviceStore:
             node_name: The device's own mesh node name, if known; preserved across
                 reconnects and shown in the picker. A blank value keeps any name already
                 on file for this device rather than erasing it.
+            hardware_model: The firmware's model string, if known; preserved the same way, so
+                a reconnect on firmware that couldn't answer the query doesn't erase a model
+                learned earlier.
         """
         registry, _ = self._read()
         existing = registry.get(device.stable_id)
         if not node_name and existing is not None:
             node_name = existing.node_name
+        if not hardware_model and existing is not None:
+            hardware_model = existing.hardware_model
         registry[device.stable_id] = RememberedDevice(
             stable_id=device.stable_id,
             port=device.port,
@@ -170,6 +184,7 @@ class DeviceStore:
             node_name=node_name,
             transport=device.transport,
             address=device.address or "",
+            hardware_model=hardware_model,
         )
         self._write(registry, device.stable_id)
 
@@ -186,6 +201,7 @@ class DeviceStore:
                     "node_name": record.node_name,
                     "transport": record.transport,
                     "address": record.address,
+                    "hardware_model": record.hardware_model,
                 }
                 for stable_id, record in registry.items()
             },
