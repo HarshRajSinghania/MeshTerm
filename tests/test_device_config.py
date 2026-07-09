@@ -158,6 +158,30 @@ def test_nodes_table_sorts_by_heard_and_packets() -> None:
     assert names(NodesSort(column="heard", ascending=False))[1:] == ["Alice", "Bob"]
 
 
+def test_nodes_table_breaks_metric_ties_by_name_ascending() -> None:
+    """Two nodes with the same metric keep an A→Z order in both sort directions (no flip)."""
+    from datetime import timedelta
+
+    from meshterm.core.models import Contact, utcnow
+    from meshterm.ui.widgets import NodesSort, _ordered_contacts
+
+    same = utcnow() - timedelta(minutes=5)
+    contacts = [
+        Contact(name="Charlie", public_key="aa" * 16, last_seen=same),
+        Contact(name="Alice", public_key="bb" * 16, last_seen=same),
+        Contact(name="Bob", public_key="cc" * 16, last_seen=utcnow() - timedelta(hours=3)),
+    ]
+
+    def order(ascending: bool) -> list[str]:
+        sort = NodesSort(column="heard", ascending=ascending)
+        return [c.name for c in _ordered_contacts(contacts, {}, sort)]
+
+    # Freshest first: the two 5-min nodes lead, ordered Alice→Charlie, then Bob (3h).
+    assert order(ascending=True) == ["Alice", "Charlie", "Bob"]
+    # Oldest first: Bob leads, but the tie still breaks Alice→Charlie — not Charlie→Alice.
+    assert order(ascending=False) == ["Bob", "Alice", "Charlie"]
+
+
 def test_nodes_screen_arrows_steer_the_sort() -> None:
     """Left/right walk the sort column (wrapping); up/down set ascending/descending."""
     from meshterm.ui.nodes_screen import NodesScreen
@@ -178,6 +202,28 @@ def test_nodes_screen_arrows_steer_the_sort() -> None:
     assert screen._sort.column == "name"
     screen.handle("left")  # name -> wraps to packets
     assert screen._sort.column == "packets"
+
+
+def test_nodes_screen_pins_column_header_when_scrolled() -> None:
+    """The Name/Heard/Pkts/Key labels stick to the top row once the rows scroll past them."""
+    import re
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.nodes_screen import NodesScreen
+    from meshterm.ui.widgets import NodesSort
+
+    contacts = [Contact(name=f"n{i}", public_key="ab" * 16) for i in range(12)]
+    screen = NodesScreen("Us", "aabbcc" + "00" * 29, contacts, 3, {}, NodesSort())
+    screen.render_body(70)
+
+    # Exactly one sticky header — the column-label row — recorded above the table's rule.
+    (idx, header), = screen._sticky_headers
+    labels = re.sub(r"\x1b\[[0-9;]*m", "", header)
+    assert "Name" in labels and "Heard" in labels and "Key" in labels
+
+    # Not pinned while the header is still on screen; pinned once scrolled below it.
+    assert screen.sticky_header(idx) is None
+    assert screen.sticky_header(idx + 5) == header
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:

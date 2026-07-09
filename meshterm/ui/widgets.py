@@ -570,9 +570,11 @@ def _ordered_contacts(
 ) -> list[Contact]:
     """Contacts sorted per ``sort`` (our own node is pinned separately, above these).
 
-    Sorts ascending by the active column's metric with a case-folded name tiebreak, then
-    reverses for a descending sort. Never-heard / never-overheard rows carry an extreme
-    metric so they gather at the ascending end.
+    The active column's metric drives the order (reversed for a descending sort); ties always
+    break by case-folded name *ascending*, so two nodes sharing a metric (e.g. the same
+    ``heard`` age) keep a stable A→Z order instead of flipping with the primary direction.
+    Never-heard / never-overheard rows carry an extreme metric so they gather at the ascending
+    end.
     """
     if sort.column == "heard":
         def metric(c: Contact) -> float:
@@ -585,9 +587,10 @@ def _ordered_contacts(
         def metric(c: Contact) -> object:
             return c.name.casefold()
 
-    ordered = sorted(contacts, key=lambda c: (metric(c), c.name.casefold()))
-    if not sort.ascending:
-        ordered.reverse()
+    # Name-ascending first, then a stable sort by the primary metric: equal-metric rows retain
+    # their A→Z order under both directions (reversing the whole list would flip the tiebreak).
+    ordered = sorted(contacts, key=lambda c: c.name.casefold())
+    ordered.sort(key=metric, reverse=not sort.ascending)
     return ordered
 
 
@@ -604,20 +607,16 @@ def _sort_header(label: str, column: str, sort: NodesSort) -> str:
     return f"[bold #22d3ee]{label} {triangle}[/]"
 
 
-def _nodes_legend(contacts: list[Contact]) -> Text:
-    """A one-line glyph legend covering the node types actually present (plus us)."""
-    present = {c.node_type for c in contacts}
-    if any(t not in _NODE_GLYPHS for t in present):
-        present.add(NODE_TYPE_CHAT)  # unknown/None types render as a plain node
+def _nodes_legend() -> Text:
+    """A one-line glyph legend covering every node type (plus us), whatever's listed."""
     legend = Text("  ")  # a small indent to sit under the table body
     legend.append(_SELF[0], style=_SELF[1])
     legend.append(" you", style="muted")
     for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
-        if node_type in present:
-            glyph, color = _NODE_GLYPHS[node_type]
-            legend.append("   ")
-            legend.append(glyph, style=color)
-            legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
+        glyph, color = _NODE_GLYPHS[node_type]
+        legend.append("   ")
+        legend.append(glyph, style=color)
+        legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
     return legend
 
 
@@ -681,8 +680,8 @@ def nodes_table(
     table.add_row(
         Text(_SELF[0], style=_SELF[1]),
         Text.assemble((self_name, "accent"), ("  (you)", "muted")),
-        Text("—", style="muted"),
-        Text("—", style="muted"),
+        Text("—", style="faint"),
+        Text("—", style="faint"),
         highlighted_hash(self_key, prefix_bytes) if self_key else unknown,
     )
     table.add_section()
@@ -694,10 +693,10 @@ def nodes_table(
             Text(glyph, style=glyph_style),
             Text(c.name, style=_recency_style(secs)),
             Text(_format_age(secs), style="muted"),
-            Text(str(pkts), style="brand") if pkts else Text("—", style="muted"),
+            Text(str(pkts), style="muted") if pkts else Text("—", style="faint"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,
         )
-    return Group(table, Text(""), _nodes_legend(contacts))
+    return Group(table, Text(""), _nodes_legend())
 
 
 def tx_opt_table(result: TxOptResult) -> Table:

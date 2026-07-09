@@ -8,6 +8,7 @@ same table statically; only the menu gets the live sorting.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from .tui.render import render_lines
@@ -17,6 +18,9 @@ from .widgets import NodesSort, nodes_table
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..core.models import Contact
+
+#: Strips SGR colour codes so the header-rule line can be recognized by its bare glyphs.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class NodesScreen(Screen):
@@ -54,7 +58,7 @@ class NodesScreen(Screen):
         self._sort = sort
 
     def render_body(self, width: int) -> list[str]:
-        """Render the table+legend at the current sort and remember its line count."""
+        """Render the table+legend at the current sort, pinning the column header on scroll."""
         table = nodes_table(
             self._self_name,
             self._self_key,
@@ -65,7 +69,25 @@ class NodesScreen(Screen):
         )
         lines = render_lines(table, width)
         self._scroll_total = max(1, len(lines))
+        # Pin the ``Name / Heard / Pkts / Key`` labels so they stay in view once the rows scroll
+        # past — the base Screen.sticky_header re-draws the recorded line as the top row. The
+        # header sits directly above the rule the table draws under it (box.SIMPLE_HEAD).
+        self._sticky_headers = self._column_header(lines)
         return lines
+
+    @staticmethod
+    def _column_header(lines: list[str]) -> list[tuple[int, str]]:
+        """Locate the column-header row (the line just above the table's header rule).
+
+        The table renders a full-width rule of ``─`` under its column labels; the first such
+        line marks the header, so the row above it carries the labels. Returns a single-entry
+        sticky-header list, or empty if no rule is found (e.g. a degenerate narrow render).
+        """
+        for idx in range(1, len(lines)):
+            bare = _ANSI_RE.sub("", lines[idx]).strip()
+            if bare and set(bare) == {"─"}:
+                return [(idx - 1, lines[idx - 1])]
+        return []
 
     def handle(self, action: str, data: str = "") -> None:
         """Re-sort with the arrows, scroll with PageUp/PageDown/Home/End, or dismiss."""

@@ -24,6 +24,9 @@ MESH_THEME = Theme(
         "warn": "bold #fbbf24",
         "err": "bold #f87171",
         "muted": "#94a3b8",
+        # A step darker than ``muted`` for placeholder dashes (a node's missing packet count /
+        # age) that should recede below the real, muted values around them.
+        "faint": "#64748b",
         "snr.good": "bold #4ade80",
         "snr.ok": "bold #fbbf24",
         "snr.bad": "bold #f87171",
