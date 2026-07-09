@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import sys
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Optional
@@ -674,17 +675,47 @@ class MeshCoreDevice(Device):
                 commands.default_timeout = default
 
     async def _create_ble(self, mesh_core):  # type: ignore[no-untyped-def]
-        """Open the BLE companion connection, translating a missing-bleak import cleanly.
+        """Open the BLE companion connection, pairing with a PIN first on Windows.
 
         ``auto_reconnect`` is deliberately left off: MeshTerm drives reconnection itself (the
         same reconnect dialog the serial path uses), so the meshcore client should surface a
         dropped link promptly via ``is_connected`` rather than silently retrying underneath us.
+
+        Before opening the link we establish an *authenticated* pairing ourselves when a PIN is
+        supplied (see :meth:`_pair_ble_windows`). This is essential on Windows: bleak's
+        ``pair()`` only performs the "Just Works" ceremony (``CONFIRM_ONLY``) and never enters a
+        passkey, so a PIN-protected companion bonds *without authentication* and then rejects
+        the GATT subscribe on its authenticated UART characteristic — a correct PIN is reported
+        as "rejected" and the device can never connect. Running the WinRT ProvidePin ceremony
+        ourselves creates the authenticated bond the characteristic requires; once bonded, the
+        OS keeps the bond and later reconnects need no PIN at all. The step is a harmless no-op
+        on other platforms, when no PIN is set, or when the device is already bonded.
 
         Args:
             mesh_core: The imported ``meshcore.MeshCore`` class.
 
         Returns:
             The connected ``MeshCore`` client, or ``None`` if the peripheral never answered.
+        """
+        await self._pair_ble_windows(force=False)
+        return await self._open_ble(mesh_core, allow_repair=True)
+
+    async def _open_ble(self, mesh_core, *, allow_repair: bool):  # type: ignore[no-untyped-def]
+        """Open the meshcore BLE client, translating auth failures and healing stale bonds.
+
+        Args:
+            mesh_core: The imported ``meshcore.MeshCore`` class.
+            allow_repair: Whether a GATT authentication failure may trigger one unpair-and-
+                re-pair-with-PIN retry (Windows only). Set ``False`` on that retry so a genuine
+                wrong-PIN can't loop.
+
+        Returns:
+            The connected ``MeshCore`` client, or ``None`` if the peripheral never answered.
+
+        Raises:
+            DeviceCommandError: If ``bleak`` is missing (with install guidance).
+            DeviceAuthenticationError: If the companion needs a pairing PIN we don't have or
+                that was rejected.
         """
         try:
             return await mesh_core.create_ble(
@@ -708,7 +739,119 @@ class MeshCoreDevice(Device):
             # propagates unchanged so genuine link-loss still flows to is_connection_lost.
             if not _is_ble_auth_error(exc):
                 raise
+            # On Windows this can also happen with the *right* PIN when a stale, unauthenticated
+            # "Just Works" bond from an older attempt is in the way: is_paired is true so the
+            # ProvidePin step above was skipped, yet the bond can't unlock the characteristic.
+            # Clear it, pair with the PIN, and retry the connect exactly once before giving up.
+            if allow_repair and await self._pair_ble_windows(force=True):
+                return await self._open_ble(mesh_core, allow_repair=False)
             raise DeviceAuthenticationError(self._ble_auth_message()) from exc
+
+    async def _pair_ble_windows(self, *, force: bool) -> bool:
+        """Establish an authenticated BLE bond via the WinRT ProvidePin ceremony (Windows only).
+
+        This is the one place a Bluetooth passkey is actually delivered to the peripheral.
+        bleak's own ``pair()`` on Windows is hardcoded to the ``CONFIRM_ONLY`` ("Just Works")
+        ceremony and never sends a PIN, so a companion that demands passkey pairing can't be
+        bonded through bleak at all — its authenticated UART characteristic keeps rejecting the
+        notify subscribe with *Insufficient Authentication*. We instead run the ``PROVIDE_PIN``
+        ceremony directly against WinRT (the same one the Windows "Add device" dialog uses),
+        handing it :attr:`_pin`, which yields the ``ENCRYPTION_AND_AUTHENTICATION`` bond the
+        characteristic needs. Windows persists the bond, so subsequent sessions reconnect with
+        no PIN required.
+
+        Best-effort and self-contained: it returns a bool rather than raising, and swallows any
+        error (winrt projection absent, device out of range, API quirk) so the caller simply
+        falls through to the normal connect — whose auth-error translation still yields the
+        right message. A no-op (returns ``False``) off Windows, when no PIN is set, or when the
+        address isn't a parseable MAC.
+
+        Args:
+            force: When ``False``, an existing bond is trusted and reused (the fast path). When
+                ``True``, any existing bond is torn down first and re-created with the PIN — used
+                to heal a stale, unauthenticated "Just Works" bond that a plain reconnect can't.
+
+        Returns:
+            ``True`` if an authenticated bond exists afterward (freshly paired or already
+            bonded), ``False`` otherwise.
+        """
+        if sys.platform != "win32" or not self._pin:
+            return False
+        address = self._ble_address_int(self._address or "")
+        if address is None:
+            return False
+        try:
+            from winrt.windows.devices.bluetooth import BluetoothLEDevice
+            from winrt.windows.devices.enumeration import (
+                DevicePairingKinds,
+                DevicePairingProtectionLevel,
+                DevicePairingResultStatus,
+            )
+        except Exception as exc:  # noqa: BLE001 - winrt projection unavailable; fall through
+            _log.debug("BLE PIN pairing unavailable (winrt import failed): %s", exc)
+            return False
+
+        try:
+            device = await BluetoothLEDevice.from_bluetooth_address_async(address)
+            if device is None:
+                return False  # out of range / not connectable right now
+            pairing = device.device_information.pairing
+            if pairing.is_paired:
+                if not force:
+                    return True  # trust the existing (authenticated) bond — fast path
+                # Tear the stale bond down, then re-fetch: the pairing object is a snapshot and
+                # won't reflect the unpair, so a fresh device_information is needed to re-pair.
+                await pairing.unpair_async()
+                device = await BluetoothLEDevice.from_bluetooth_address_async(address)
+                if device is None:
+                    return False
+                pairing = device.device_information.pairing
+            custom = pairing.custom
+            pin = self._pin
+
+            def _provide_pin(_sender, args) -> None:  # noqa: ANN001 - winrt callback
+                # The peripheral asked for a passkey; hand it the one we were given.
+                args.accept_with_pin(pin)
+
+            token = custom.add_pairing_requested(_provide_pin)
+            try:
+                result = await custom.pair_with_protection_level_async(
+                    DevicePairingKinds.PROVIDE_PIN,
+                    DevicePairingProtectionLevel.ENCRYPTION_AND_AUTHENTICATION,
+                )
+            finally:
+                custom.remove_pairing_requested(token)
+            status = int(result.status)
+            ok = status in (
+                int(DevicePairingResultStatus.PAIRED),
+                int(DevicePairingResultStatus.ALREADY_PAIRED),
+            )
+            _log.debug(
+                "BLE ProvidePin pairing for %s: status=%d ok=%s", self._address, status, ok
+            )
+            return ok
+        except Exception as exc:  # noqa: BLE001 - best-effort; caller falls through on False
+            _log.debug("BLE ProvidePin pairing attempt failed for %s: %s", self._address, exc)
+            return False
+
+    @staticmethod
+    def _ble_address_int(address: str) -> Optional[int]:
+        """Parse a ``AA:BB:CC:DD:EE:FF`` (or dash-separated) MAC into the ulong WinRT wants.
+
+        Args:
+            address: The Bluetooth address string bleak reported for the device.
+
+        Returns:
+            The 48-bit address as an int, or ``None`` if it isn't a 12-hex-digit MAC (e.g. a
+            CoreBluetooth UUID on macOS, where this pairing path doesn't apply anyway).
+        """
+        cleaned = address.replace(":", "").replace("-", "").strip()
+        if len(cleaned) != 12:
+            return None
+        try:
+            return int(cleaned, 16)
+        except ValueError:
+            return None
 
     def _ble_auth_message(self) -> str:
         """A clean, actionable error for a Bluetooth companion that requires a PIN/bond.

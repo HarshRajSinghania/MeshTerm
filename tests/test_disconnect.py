@@ -115,6 +115,20 @@ def test_ble_auth_error_walks_the_exception_chain() -> None:
         assert connection._is_ble_auth_error(exc)
 
 
+async def _disable_windows_pairing(dev: "connection.MeshCoreDevice") -> None:
+    """Stub out the WinRT ProvidePin step so ``_create_ble`` stays hermetic in tests.
+
+    On a real Windows host ``_pair_ble_windows`` would reach the OS Bluetooth stack (and the
+    physical device); pinning it to a no-op reproduces the non-Windows / no-winrt path so the
+    auth-translation logic can be exercised without hardware.
+    """
+
+    async def _never_pairs(*, force: bool) -> bool:
+        return False
+
+    dev._pair_ble_windows = _never_pairs  # type: ignore[method-assign]
+
+
 async def test_create_ble_translates_auth_error_to_pin_guidance() -> None:
     """A raw GATT auth rejection becomes a DeviceAuthenticationError that names the PIN fix."""
 
@@ -126,6 +140,7 @@ async def test_create_ble_translates_auth_error_to_pin_guidance() -> None:
     # No PIN supplied → tell the user to pass one. The subclass lets the interactive picker
     # catch "needs a PIN" specifically, while the CLI still catches it as DeviceCommandError.
     dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
+    await _disable_windows_pairing(dev)
     with pytest.raises(connection.DeviceAuthenticationError) as excinfo:
         await dev._create_ble(_FakeMeshCore)
     assert isinstance(excinfo.value, DeviceCommandError)  # so the scripted CLI catches it too
@@ -135,9 +150,83 @@ async def test_create_ble_translates_auth_error_to_pin_guidance() -> None:
     dev_pin = connection.MeshCoreDevice(
         transport="ble", address="00:11:22:33:44:55", pin="123456"
     )
+    await _disable_windows_pairing(dev_pin)
     with pytest.raises(connection.DeviceAuthenticationError) as excinfo_pin:
         await dev_pin._create_ble(_FakeMeshCore)
     assert "rejected" in str(excinfo_pin.value).lower()
+
+
+async def test_create_ble_repairs_stale_bond_and_retries_once() -> None:
+    """A first auth failure triggers one unpair-and-re-pair, then the retried connect succeeds.
+
+    Models the Windows upgrade case: a leftover unauthenticated "Just Works" bond makes the
+    first connect fail even with the right PIN, so ``_pair_ble_windows(force=True)`` clears it
+    and the second connect goes through.
+    """
+    attempts: list[int] = []
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise BleakGATTProtocolError("Insufficient Authentication")
+            return "connected-client"
+
+    dev = connection.MeshCoreDevice(
+        transport="ble", address="00:11:22:33:44:55", pin="123456"
+    )
+    repairs: list[bool] = []
+
+    async def _pair(*, force: bool) -> bool:
+        repairs.append(force)
+        return force  # the pre-connect pass (force=False) no-ops; the repair (force=True) works
+
+    dev._pair_ble_windows = _pair  # type: ignore[method-assign]
+    result = await dev._create_ble(_FakeMeshCore)
+    assert result == "connected-client"
+    assert len(attempts) == 2  # failed once, retried once
+    assert repairs == [False, True]  # pre-connect attempt, then the healing re-pair
+
+
+async def test_create_ble_gives_up_after_one_repair() -> None:
+    """A wrong PIN that never bonds fails cleanly rather than looping on the repair retry."""
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            raise BleakGATTProtocolError("Insufficient Authentication")
+
+    dev = connection.MeshCoreDevice(
+        transport="ble", address="00:11:22:33:44:55", pin="000000"
+    )
+    calls: list[bool] = []
+
+    async def _pair(*, force: bool) -> bool:
+        calls.append(force)
+        return force  # even the repair "succeeds" so we prove the retry runs exactly once
+
+    dev._pair_ble_windows = _pair  # type: ignore[method-assign]
+    with pytest.raises(connection.DeviceAuthenticationError):
+        await dev._create_ble(_FakeMeshCore)
+    # force=False (pre-connect), then force=True (repair). The repair's retry passes
+    # allow_repair=False, so there is no third pairing attempt even though it keeps failing.
+    assert calls == [False, True]
+
+
+async def test_pair_ble_windows_noops_without_pin() -> None:
+    """Pairing is skipped (no WinRT touched) when no PIN is set — the fast, hermetic path."""
+    dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
+    assert await dev._pair_ble_windows(force=False) is False
+
+
+def test_ble_address_int_parses_macs_and_rejects_others() -> None:
+    """A colon/dash MAC becomes a 48-bit int; a non-MAC (e.g. a macOS UUID) yields None."""
+    parse = connection.MeshCoreDevice._ble_address_int
+    assert parse("00:11:22:33:44:55") == 0xDAC5216B7C7C
+    assert parse("da-c5-21-6b-7c-7c") == 0xDAC5216B7C7C
+    assert parse("not-a-mac") is None
+    assert parse("550e8400-e29b-41d4-a716-446655440000") is None  # CoreBluetooth UUID
 
 
 def _make_ctx(tmp_path: Path) -> AppContext:
