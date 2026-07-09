@@ -9,6 +9,14 @@ MESH_THEME = Theme(
     {
         "brand": "bold #5eead4",
         "accent": "bold #818cf8",
+        # The highlighted-button fill (cyan block, dark text) shared by every popup dialog.
+        # It must be a *single* theme name: Rich silently drops a style string that mixes a
+        # theme name with an attribute (e.g. "reverse brand" renders as plain text), so the
+        # reverse is baked into the definition here rather than tacked on at the call site.
+        "selected": "reverse bold #5eead4",
+        # Reversed error (the text-editor cursor sitting on an over-budget character). Baked
+        # in for the same reason as ``selected`` — "reverse err" would render as plain text.
+        "err.reverse": "reverse bold #f87171",
         # Our own messages in a chat: pure white, deliberately outside the per-sender hue
         # palette (see meshterm.ui.chat._SENDER_COLORS) so "you" is always easy to spot.
         "you": "bold #ffffff",

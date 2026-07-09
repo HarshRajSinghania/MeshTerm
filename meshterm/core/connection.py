@@ -75,6 +75,98 @@ class DeviceCommandError(RuntimeError):
     """
 
 
+#: Exception class names that signal the serial link to the companion has dropped — the
+#: device was unplugged, powered off, or its port otherwise vanished — as opposed to an
+#: ordinary command-level failure. Matched by name in :func:`is_connection_lost` so the
+#: optional ``pyserial`` dependency need not be imported here (it isn't installed on the
+#: ``--mock`` path). ``SerialException`` covers pyserial's read/write failures (including the
+#: Windows ``ClearCommError``/``WriteFile`` variants); the ``OSError`` subclasses cover a
+#: link torn down at the OS layer.
+_CONNECTION_LOST_TYPES = frozenset(
+    {
+        "SerialException",
+        "PortNotOpenError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "BrokenPipeError",
+    }
+)
+
+#: Lowercase message fragments that also indicate a dropped link, for exceptions raised as a
+#: plain ``OSError``/``RuntimeError`` (whose type name alone isn't conclusive). Kept specific
+#: enough not to fire on ordinary command timeouts.
+_CONNECTION_LOST_HINTS = (
+    "device disconnected",
+    "device not configured",
+    "clearcommerror",
+    "the handle is invalid",
+    "the device does not recognize the command",
+    "readfile failed",
+    "writefile failed",
+    "port is closed",
+    "no such device",
+    "input/output error",
+)
+
+
+def is_connection_lost(exc: BaseException) -> bool:
+    """Return whether ``exc`` means the companion serial link has dropped.
+
+    Distinguishes a *lost connection* (the device was unplugged, powered off, or its serial
+    port vanished) from an ordinary command failure, so the interactive session can offer to
+    reconnect rather than merely report an error. The whole exception chain
+    (``__cause__``/``__context__``) is walked, matching by exception type name and message
+    text — see :data:`_CONNECTION_LOST_TYPES` / :data:`_CONNECTION_LOST_HINTS` — so the
+    optional ``pyserial`` dependency need not be imported here.
+
+    Args:
+        exc: The exception raised by a device operation.
+
+    Returns:
+        ``True`` if the exception (or any it was raised from) looks like a dropped link.
+    """
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in _CONNECTION_LOST_TYPES:
+            return True
+        text = str(current).lower()
+        if any(hint in text for hint in _CONNECTION_LOST_HINTS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def serial_port_present(port: str) -> bool:
+    """Return whether a serial port named ``port`` is currently enumerated by the OS.
+
+    This is the primary liveness signal for a mid-session unplug: the ``meshcore`` client
+    keeps serving cached data after the cable is pulled and never raises (verified on
+    hardware — a command still "succeeds", merely returning ``None``), so a failed command
+    can't be relied on to notice. The OS port list, by contrast, drops the device the moment
+    it is removed. Enumerating ports only reads the OS device table; it never opens the port,
+    so it is safe to poll against a companion another handle already holds open.
+
+    Args:
+        port: The serial port name the device was opened on (e.g. ``COM11`` or
+            ``/dev/ttyUSB0``).
+
+    Returns:
+        ``True`` if a port by that exact name is present (or if presence can't be
+        determined — pyserial missing or the query failed — so a mere lookup hiccup never
+        raises a false "disconnected" alarm).
+    """
+    try:
+        from serial.tools import list_ports
+    except Exception:  # noqa: BLE001 - pyserial absent (e.g. --mock env); can't tell, assume up
+        return True
+    try:
+        return any(info.device == port for info in list_ports.comports())
+    except Exception:  # noqa: BLE001 - an enumeration failure must not fake a disconnect
+        return True
+
+
 class Device(ABC):
     """Abstract companion device exposing the operations MeshTerm needs.
 

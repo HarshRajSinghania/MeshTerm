@@ -15,7 +15,7 @@ Public API:
 from __future__ import annotations
 
 from .progress import ProgressScreen
-from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen
+from .prompt import AutocompleteScreen, ConfirmScreen, ReconnectDialog, TextScreen
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, SelectScreen, Separator
 from .session import TuiSession
@@ -32,6 +32,7 @@ __all__ = [
     "TextScreen",
     "ConfirmScreen",
     "AutocompleteScreen",
+    "ReconnectDialog",
     "ProgressScreen",
     "Spinner",
     "CANCEL",

@@ -107,6 +107,17 @@ class TuiSession:
             self._stack.remove(screen)
         self.invalidate()
 
+    def reset(self) -> None:
+        """Clear the whole screen stack and repaint.
+
+        Used to unwind to a blank frame after a cancelled activity — e.g. when a mid-session
+        device disconnect abandons whatever screens the interrupted work had pushed, before
+        the reconnect dialog is shown over a clean slate. Screens hold no external resources
+        (their callers pop them in ``finally``), so dropping any stragglers here is safe.
+        """
+        self._stack.clear()
+        self.invalidate()
+
     def invalidate(self) -> None:
         """Request a repaint if the application is running."""
         if self._app is not None:
@@ -339,7 +350,7 @@ class TuiSession:
         keys: Optional[dict[str, Any]] = None,
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
         prompt_style: str = "",
-        button_style: str = "reverse brand",
+        button_style: str = "selected",
         button_idle_style: str = "muted",
         border_style: str = "accent",
     ) -> Any:

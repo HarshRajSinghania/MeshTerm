@@ -15,9 +15,27 @@ from rich.text import Text
 
 from .render import render_lines
 from .screen import Screen
+from .spinner import Spinner
 
 #: A validator returns ``True`` when the input is acceptable, or an error message to show.
 Validator = Callable[[str], "bool | str"]
+
+
+def _center(content: Text, width: int) -> Text:
+    """Center ``content`` in ``width`` with plain padding on both sides.
+
+    Used instead of ``Text(justify="center")`` for lines that hold a reverse-video button
+    chip: Rich strips a styled span's *trailing* whitespace when it sits directly against
+    justify padding, which would shave the right edge off the chip (``"  Quit"`` instead of
+    ``"  Quit  "``) and leave the label hugging the left of the fill. Padding manually keeps
+    a real segment after the chip, so its trailing cells survive and the fill stays symmetric.
+    """
+    pad = max(0, width - content.cell_len)
+    left = pad // 2
+    line = Text(" " * left)
+    line.append_text(content)
+    line.append(" " * (pad - left))
+    return line
 
 
 class _LineEditor:
@@ -108,7 +126,7 @@ class _LineEditor:
         for i, ch in enumerate(shown):
             over = overflow_at is not None and i >= overflow_at
             if i == self.cursor:
-                text.append(ch, style="reverse err" if over else "reverse")
+                text.append(ch, style="err.reverse" if over else "reverse")
             else:
                 text.append(ch, style="err" if over else None)
         if self.cursor >= len(shown):  # cursor past the last character → trailing block
@@ -200,9 +218,9 @@ class ConfirmScreen(Screen):
     def render_body(self, width: int) -> list[str]:
         """Render the Yes / No options with the current choice highlighted."""
         text = Text()
-        text.append("  Yes  ", style="reverse brand" if self._value else "muted")
+        text.append("  Yes  ", style="selected" if self._value else "muted")
         text.append("   ")
-        text.append("  No  ", style="muted" if self._value else "reverse brand")
+        text.append("  No  ", style="muted" if self._value else "selected")
         return render_lines(text, width)
 
     def handle(self, action: str, data: str = "") -> None:
@@ -237,7 +255,7 @@ class ButtonDialog(Screen):
         keys: Optional[dict[str, object]] = None,
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
         prompt_style: str = "",
-        button_style: str = "reverse brand",
+        button_style: str = "selected",
         button_idle_style: str = "muted",
         border_style: str = "accent",
     ) -> None:
@@ -294,14 +312,14 @@ class ButtonDialog(Screen):
 
     def render_body(self, width: int) -> list[str]:
         """Render the prompt centered above a centered row of buttons."""
-        row = Text(justify="center")
+        row = Text()
         for i, (label, _value) in enumerate(self._buttons):
             if i:
                 row.append("    ")
             style = self._button_style if i == self._index else self._button_idle_style
             row.append(f"  {label}  ", style=style)
-        prompt = Text(self._prompt, style=self._prompt_style, justify="center")
-        return render_lines(Group(prompt, Text(""), row), width)
+        prompt = Text(self._prompt, style=self._prompt_style)
+        return render_lines(Group(_center(prompt, width), Text(""), _center(row, width)), width)
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, commit on Enter or a shortcut key, or cancel on Esc."""
@@ -314,6 +332,80 @@ class ButtonDialog(Screen):
             self.resolve(self._buttons[self._index][1])
         elif action == "escape":
             super().handle("escape")
+
+
+class ReconnectDialog(Screen):
+    """A centered dialog shown when the companion link drops mid-session.
+
+    An animated spinner and message sit above a single ``Abort`` button. Unlike the other
+    dialogs there is nothing to *choose*: the app watches for the device to return and
+    dismisses this screen itself (resolving its future) the moment the reconnect succeeds, so
+    the user's only action is to give up and abort. Only Enter resolves ``"quit"``; Esc is
+    deliberately inert, so an idle habit of pressing Esc can't drop the session while a replug
+    may be a second away. The button uses the shared ``selected`` highlight style (the theme's
+    cyan) — the same fill as the quit-confirmation dialog — so every popup dialog reads alike.
+    The animation is the reusable :class:`~meshterm.ui.tui.spinner.Spinner`, advanced by
+    :meth:`tick` from the session's animation timer.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        title: str = "Device disconnected",
+        footer_hint: str = "Enter abort",
+        prompt_style: str = "warn",
+        border_style: str = "warn",
+    ) -> None:
+        """Build the reconnect dialog.
+
+        Args:
+            message: The line shown beside the spinner (e.g. "Waiting for your device…").
+            title: Dialog heading.
+            footer_hint: Footer key hint (only Abort is offered).
+            prompt_style: Rich style for the message (``"warn"`` for the cautionary tone).
+            border_style: Rich style for the dialog border (read by the frame compositor).
+        """
+        super().__init__()
+        self.title = title
+        self.footer_hint = footer_hint
+        self.border_style = border_style
+        self._message = message
+        self._prompt_style = prompt_style
+        self._spinner = Spinner()
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the frame sizes the box to its content (see ButtonDialog)."""
+        inner = max(
+            cell_len(self._message),
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            len("  Abort  "),
+        )
+        return inner + 12  # panel padding + border, plus horizontal breathing room
+
+    def set_message(self, message: str) -> None:
+        """Replace the line shown beside the spinner (e.g. to note a stalled retry)."""
+        self._message = message
+
+    def tick(self) -> None:
+        """Advance the spinner to its next frame (driven by the session's animation timer)."""
+        self._spinner.tick()
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the spinner and message centered above a single Abort button."""
+        line = self._spinner.text()
+        line.append("  ")
+        line.append(self._message, style=self._prompt_style)
+        row = Text()
+        row.append("  Abort  ", style="selected")
+        return render_lines(Group(_center(line, width), Text(""), _center(row, width)), width)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Abort only on Enter; ignore everything else, Esc included (the app auto-dismisses)."""
+        if action == "enter":
+            self.resolve("quit")
 
 
 class AutocompleteScreen(Screen):

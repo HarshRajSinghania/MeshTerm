@@ -61,6 +61,10 @@ class AppContext:
     selected_device: Optional[DiscoveredDevice] = None
     explicit_selection: bool = False
     _device: Optional[Device] = field(default=None, init=False, repr=False)
+    _active_port: Optional[str] = field(default=None, init=False, repr=False)
+    _resume_intent: Optional[tuple[bool, bool, bool]] = field(
+        default=None, init=False, repr=False
+    )
     _events: "Optional[EventHub]" = field(default=None, init=False, repr=False)
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
     _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
@@ -70,6 +74,23 @@ class AppContext:
     def profile_name(self) -> Optional[str]:
         """Name of the active profile, if any."""
         return self.profile.name if self.profile else None
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether a device connection is currently open."""
+        return self._device is not None
+
+    @property
+    def active_port(self) -> Optional[str]:
+        """The serial port the current connection is open on, if any (``None`` for --mock).
+
+        Set when a real connection is opened so the liveness watcher knows which OS port to
+        poll for a mid-session unplug. Falls back to an explicit ``--port`` override when a
+        connection hasn't recorded one yet.
+        """
+        if self.mock:
+            return None
+        return self._active_port or self.port_override
 
     @property
     def ui(self) -> "Ui":
@@ -153,6 +174,9 @@ class AppContext:
             device: A connected :class:`Device` to serve as this session's radio.
         """
         self._device = device
+        # Record the port so the liveness watcher knows which OS port to poll (the picker
+        # opened it directly, bypassing the resolution in ``device()`` that normally sets it).
+        self._active_port = getattr(device, "_port", None)
 
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
@@ -173,6 +197,7 @@ class AppContext:
 
         if self.mock:
             self._device = make_device(mock=True, port=None)
+            self._active_port = None
             await self._device.connect()
             return self._device
 
@@ -186,6 +211,7 @@ class AppContext:
             self.selected_device = resolution.device
         baudrate = self.profile.baudrate if self.profile else 115200
         self._device = make_device(mock=False, port=resolution.port, baudrate=baudrate)
+        self._active_port = resolution.port
         await self._device.connect()
         # Connection succeeded: this is now the last known good device. Learn its mesh node
         # name (best-effort — a probe failure must not block a good connection).
@@ -194,6 +220,60 @@ class AppContext:
                 self.selected_device, node_name=await self._node_name()
             )
         return self._device
+
+    async def reconnect(self) -> None:
+        """Drop a lost device connection and rebuild it, restoring live services.
+
+        Called after the companion link is detected as gone (see
+        :func:`~meshterm.core.connection.is_connection_lost`). Tears down the dead
+        connection and the services riding on it, opens a fresh connection to the same
+        device, then restarts whatever was running before — so passive monitoring and chat
+        recording resume transparently across a replug.
+
+        Raises:
+            Exception: If a new connection could not be opened (e.g. the device is still
+                absent); the caller can surface it and offer to retry.
+        """
+        # Remember what was live so it can be restored after the reconnect — but capture it
+        # only *once*, and hold it across retries. The teardown below stops the services, so
+        # a second attempt (after the first failed because the device wasn't back yet) would
+        # otherwise read the now-idle flags and restore nothing. The intent is cleared only
+        # after a reconnect actually succeeds.
+        if self._resume_intent is None:
+            self._resume_intent = (
+                self._events is not None and self._events.active,
+                self._monitor is not None and self._monitor.active,
+                self._chat is not None and self._chat.active,
+            )
+        resume_events, resume_monitor, resume_chat = self._resume_intent
+
+        # Release the stale hub/service subscriptions and discard the dead device. The
+        # subscriptions are in-process (to the hub), so they survive the link drop and must
+        # be torn down explicitly before a fresh connection is opened underneath them.
+        if self._monitor is not None:
+            await self._monitor.stop()
+        if self._chat is not None:
+            await self._chat.stop()
+        if self._events is not None:
+            await self._events.stop()
+        if self._device is not None:
+            try:
+                await self._device.disconnect()
+            except Exception:  # noqa: BLE001 - the link is already gone; best-effort
+                pass
+            self._device = None
+
+        # Open a fresh connection (raises if the device still can't be reached, leaving the
+        # remembered intent in place for the next attempt), then restart whatever was running
+        # before it dropped and clear the intent now that we're back.
+        await self.device()
+        if resume_events:
+            await self.events.start()
+        if resume_monitor:
+            await self.monitor.start()
+        if resume_chat:
+            await self.chat.start()
+        self._resume_intent = None
 
     async def _node_name(self) -> str:
         """Return the connected device's own mesh node name, or ``""`` if unavailable."""
@@ -212,6 +292,9 @@ class AppContext:
         if self._events is not None:
             await self._events.aclose()
         if self._device is not None:
-            await self._device.disconnect()
+            try:
+                await self._device.disconnect()
+            except Exception:  # noqa: BLE001 - a dead/lost link must not crash teardown
+                pass
             self._device = None
         self.repo.close()

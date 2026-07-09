@@ -27,7 +27,15 @@ from ..persistence.logging import get_logger
 from ..tools import all_tools
 from .surface import TuiUi
 from .theme import make_console
-from .tui import CANCEL, Choice, SelectScreen, Separator, TuiSession
+from .tui import (
+    CANCEL,
+    Choice,
+    ReconnectDialog,
+    ScrollScreen,
+    SelectScreen,
+    Separator,
+    TuiSession,
+)
 from .tui.emoji_width import calibrate as calibrate_emoji_width
 
 
@@ -36,6 +44,20 @@ from .tui.emoji_width import calibrate as calibrate_emoji_width
 #: committed to quitting. Comfortably longer than a healthy teardown (~1 s), so it only
 #: ever fires when exit has genuinely wedged.
 _EXIT_WATCHDOG_S = 5.0
+
+#: How often the liveness watcher checks that the connected companion's serial port is still
+#: present while the menu sits idle (seconds). The ``meshcore`` client serves cached data and
+#: never raises on an unplug, so this OS-level port poll — not a failed command — is what
+#: actually notices a pulled cable (see :func:`~meshterm.core.connection.serial_port_present`).
+_LIVENESS_POLL_S = 2.0
+
+#: Debounce: after the port first appears to be gone, wait this long and re-check before
+#: declaring the link lost, so a momentary enumeration gap (driver churn during a replug)
+#: can't fire a false "disconnected" prompt (seconds).
+_LIVENESS_CONFIRM_S = 0.4
+
+#: Seconds between frames of the reconnect dialog's spinner while it waits for the device.
+_RECONNECT_SPINNER_S = 0.12
 
 
 def _arm_exit_watchdog(seconds: float = _EXIT_WATCHDOG_S) -> None:
@@ -145,7 +167,7 @@ async def run_menu(ctx: AppContext) -> None:
     async def main() -> None:
         try:
             if await _startup(ctx):
-                await _menu_loop(ctx, session)
+                await _session_loop(ctx, session)
         finally:
             # Stop history + chat recording (closing their run records) and the always-on
             # event hub, even on an unexpected exit.
@@ -210,7 +232,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
                     default=1,
                     footer_hint="Esc cancel · Enter quit",
                     prompt_style="warn",
-                    button_style="brand",
+                    button_style="selected",
                     button_idle_style="muted",
                     border_style="warn",
                 )
@@ -306,10 +328,16 @@ async def _resume_monitor(ctx: AppContext) -> None:
 async def _run_selection(ctx: AppContext, name: str) -> None:
     """Gather parameters for, execute, and present a single tool from the menu.
 
+    A dropped device link is not handled here: the session-wide watcher (see
+    :func:`_session_loop`) polls independently and raises the reconnect dialog wherever the
+    session is, so on a connection-lost error we simply drop the tool's half-built output and
+    return — the watcher takes it from there within a poll interval.
+
     Args:
         ctx: The shared application context.
         name: The selected tool's name.
     """
+    from ..core.connection import is_connection_lost
     from ..tools import get_tool
 
     tool = get_tool(name)
@@ -325,6 +353,9 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
             return
         result = await tool.execute(ctx, params)
     except Exception as exc:  # noqa: BLE001 - surface errors without crashing the menu
+        if is_connection_lost(exc):
+            ctx.ui.discard()  # drop the half-built output; the watcher will prompt to reconnect
+            return
         ctx.ui.note(f"[err]✗ {tool.name} failed:[/err] {exc}")
         await ctx.ui.present(title=tool.name)
         return
@@ -334,6 +365,163 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
     for artifact in result.artifacts:
         ctx.ui.note(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
     await ctx.ui.present(title=tool.name)
+
+
+async def _session_loop(ctx: AppContext, session: TuiSession) -> None:
+    """Run the menu with a single always-on watcher that handles a disconnect anywhere.
+
+    The menu loop runs as a cancellable worker alongside one session-wide liveness watcher.
+    Whichever finishes first wins: if the user quits, the menu loop returns and the watcher is
+    stopped; if the device is unplugged — no matter which screen is up (a tool prompt, the
+    chat view, the map, or the idle menu) — the watcher fires, the in-flight work is cancelled,
+    the screen stack is unwound, and the reconnect dialog is shown. On a successful reconnect
+    the loop starts a fresh menu; on quit it returns.
+
+    Args:
+        ctx: The shared application context.
+        session: The running TUI session.
+    """
+    while True:
+        worker = asyncio.ensure_future(_menu_loop(ctx, session))
+        watcher = asyncio.ensure_future(_wait_for_disconnect(ctx))
+        done, _ = await asyncio.wait(
+            {worker, watcher}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if worker in done:
+            await _cancel_and_wait(watcher)
+            worker.result()  # user quit (or re-raise a menu-loop error)
+            return
+        # The device link dropped. Abandon whatever the menu was doing, clear any screens it
+        # left, and prompt to reconnect or quit over a clean frame.
+        await _cancel_and_wait(worker)
+        session.reset()
+        if await _handle_disconnect(ctx, session):
+            return  # user chose to quit
+        # Reconnected — loop and start a fresh menu (with a fresh watcher).
+
+
+async def _cancel_and_wait(task: "asyncio.Future") -> None:
+    """Cancel ``task`` and await its unwind, swallowing the cancellation and any error.
+
+    Used to stop the sibling menu-worker or watcher: awaiting the cancelled task lets its
+    ``finally`` blocks run (popping any screens it pushed) before we continue, and its now-moot
+    error — the link is gone — is intentionally discarded. Awaiting also consumes the result
+    of an already-finished task, so no stray "exception never retrieved" warning is logged.
+    """
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:  # noqa: BLE001 - a cancelled worker's error is moot; move on
+        pass
+
+
+async def _wait_for_disconnect(ctx: AppContext) -> None:
+    """Resolve once the connected companion's serial port disappears from the OS.
+
+    Polls the OS serial-port enumeration rather than watching for a failed command: the
+    ``meshcore`` client keeps serving cached data after an unplug and never raises (confirmed
+    on hardware), so an *active* liveness check is the only thing that reliably notices a
+    pulled cable. Never resolves for the simulator (it can't be unplugged) or before a real
+    device has actually been opened.
+
+    Args:
+        ctx: The shared application context (read for the active port and connection state).
+    """
+    from ..core.connection import serial_port_present
+
+    if ctx.mock:
+        await asyncio.Event().wait()  # the simulator is never "unplugged"; wait forever
+        return
+    while True:
+        await asyncio.sleep(_LIVENESS_POLL_S)
+        port = ctx.active_port
+        if port is None or not ctx.is_connected:
+            continue  # nothing connected to watch yet (deferred connect / no device)
+        if serial_port_present(port):
+            continue
+        await asyncio.sleep(_LIVENESS_CONFIRM_S)  # debounce a transient enumeration gap
+        if not serial_port_present(port):
+            return
+
+
+async def _handle_disconnect(ctx: AppContext, session: TuiSession) -> bool:
+    """Show a reconnect popup and watch for the device to return, auto-resuming on replug.
+
+    Presents a centered, warn-styled dialog (:class:`~meshterm.ui.tui.prompt.ReconnectDialog`)
+    with an animated spinner and a single Quit button. Two background tasks run behind it: one
+    animates the spinner, the other polls for the device's port to re-enumerate and, once it
+    does, keeps attempting :meth:`~meshterm.context.AppContext.reconnect` until one succeeds —
+    a board can re-enumerate a moment before it will answer, so a failed attempt just retries.
+    Whichever resolves first wins: a successful reconnect dismisses the dialog and resumes the
+    session; the user pressing Quit (or Enter) leaves. The spinner stays up the whole time.
+
+    Args:
+        ctx: The shared application context.
+        session: The running TUI session.
+
+    Returns:
+        ``True`` if the user chose to quit; ``False`` once the device reconnected.
+    """
+    dialog = ReconnectDialog("Waiting for your device — reconnect it to resume.")
+    dialog.future = asyncio.get_running_loop().create_future()
+    # The session stack was cleared before we were called (see _session_loop), so push a
+    # clean, empty base frame for the popup to float over. A lone floating screen with nothing
+    # beneath it is drawn as the *base* (framed chrome, no centered panel) rather than as a
+    # window — the base gives it something to center over, both horizontally and vertically.
+    base = ScrollScreen("", floating=False, footer_hint="")
+    session.push(base)
+    session.push(dialog)
+    animator = asyncio.ensure_future(_animate_dialog(session, dialog))
+    reconnector = asyncio.ensure_future(_auto_reconnect(ctx, dialog))
+    try:
+        result = await dialog.future
+    finally:
+        await _cancel_and_wait(reconnector)
+        await _cancel_and_wait(animator)
+        session.pop(dialog)
+        session.pop(base)
+    return result == "quit"
+
+
+async def _animate_dialog(session: TuiSession, dialog: ReconnectDialog) -> None:
+    """Advance the reconnect dialog's spinner and repaint on a steady cadence, until cancelled."""
+    while True:
+        await asyncio.sleep(_RECONNECT_SPINNER_S)
+        dialog.tick()
+        session.invalidate()
+
+
+async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
+    """Poll for the device to return, reconnect when it does, then dismiss ``dialog``.
+
+    Waits for the OS to re-enumerate the port the connection was opened on before each
+    attempt, so a reconnect is only tried once there's a device to reach; a failed attempt
+    (the port is back but the board isn't ready yet, or it dropped again) simply loops and
+    retries. On the first success the dialog's future is resolved with ``"reconnected"``,
+    which dismisses the popup. Runs until it succeeds or the task is cancelled (the user quit).
+
+    Args:
+        ctx: The shared application context.
+        dialog: The reconnect dialog to dismiss once the link is back.
+    """
+    from ..core.connection import serial_port_present
+
+    while True:
+        port = ctx.active_port
+        # Wait for the port to re-appear before touching the radio (skip the wait when there's
+        # no port to poll — e.g. an unknown/deferred port — and just retry on the interval).
+        if port is not None and not serial_port_present(port):
+            await asyncio.sleep(_LIVENESS_POLL_S)
+            continue
+        try:
+            await ctx.reconnect()
+        except Exception:  # noqa: BLE001 - not reachable yet; keep the popup up and retry
+            await asyncio.sleep(_LIVENESS_POLL_S)
+            continue
+        dialog.resolve("reconnected")
+        return
 
 
 # Exposed for tools that need a standalone console outside a context (rare).

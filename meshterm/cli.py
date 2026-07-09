@@ -18,7 +18,7 @@ import typer
 from .context import AppContext
 from .core.admin_store import AdminStore
 from .core.config import Settings
-from .core.connection import DeviceCommandError
+from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
 from .core.device_store import DeviceStore
 from .core.selection import DeviceSelectionError
@@ -110,6 +110,17 @@ def run_tool_command(tool: Tool, params: dict) -> None:
         # transient command failure): show the message, not a traceback.
         _state.console.print(f"[err]✗[/err] {exc}")
         raise typer.Exit(1) from exc
+    except Exception as exc:
+        # A dropped serial link (device unplugged/powered off mid-command) can't be recovered
+        # from in a one-shot scripted run the way the interactive menu offers — but it should
+        # still read as a clean message, not a traceback. Anything else propagates as before.
+        if not is_connection_lost(exc):
+            raise
+        _state.console.print(
+            "[err]✗[/err] the connection to your device was lost "
+            "(it may have been unplugged or powered off)."
+        )
+        raise typer.Exit(1) from exc
 
 
 async def _drive(coro, ctx: AppContext) -> None:
@@ -123,7 +134,10 @@ async def _drive(coro, ctx: AppContext) -> None:
         await coro
     finally:
         if ctx._device is not None:
-            await ctx._device.disconnect()
+            try:
+                await ctx._device.disconnect()
+            except Exception:  # noqa: BLE001 - a dead/lost link must not crash teardown
+                pass
             ctx._device = None
 
 
