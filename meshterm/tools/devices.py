@@ -1,10 +1,12 @@
 """The ``devices`` tool: enumerate attached serial companion devices.
 
-Discovery never opens the radio — it only lists what is attached. This is a read-only
-inventory in both the menu and the CLI; it marks devices already confirmed as MeshCore
-companions (and the active one). Selecting a companion is a startup-only concern: pass
-``--port`` on the CLI (remembered after it connects), or pick from the prompt shown when the
-menu launches (which smoke-tests the choice before confirming it).
+Discovery never opens the radio — it only lists what is attached. This is a CLI-only,
+read-only inventory (``menu_visible = False``): by the time the interactive menu is up a
+device is already selected, so the listing has no job there — it belongs on the command line
+as a startup-time "which port is my radio?" diagnostic. It marks devices already confirmed as
+MeshCore companions (and the active one). Selecting a companion is a startup-only concern:
+pass ``--port`` on the CLI (remembered after it connects), or pick from the prompt shown when
+the menu launches (which smoke-tests the choice before confirming it).
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ class DevicesTool(Tool):
     help = "List attached serial devices and flag likely LoRa hardware."
     category = "Device"
     order = 5
+    menu_visible = False  # CLI-only: a startup diagnostic with no place in a connected session
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Enumerate serial devices and render them as a table.

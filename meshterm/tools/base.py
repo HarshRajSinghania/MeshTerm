@@ -41,12 +41,16 @@ class Tool(ABC):
         help: One-line description shown in the menu and ``--help``.
         category: Grouping label used to organize the interactive menu.
         order: Sort key within a category (lower sorts first).
+        menu_visible: Whether the tool appears in the interactive menu. Set ``False`` for
+            CLI-only tools (e.g. startup-time diagnostics with no place in a connected
+            session); such tools still register a CLI subcommand as usual.
     """
 
     name: str = ""
     help: str = ""
     category: str = "General"
     order: int = 100
+    menu_visible: bool = True
 
     @abstractmethod
     async def run(self, ctx: "AppContext", params: dict[str, Any]) -> ToolResult:

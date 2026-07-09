@@ -198,6 +198,8 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         items: list = []
         current_category: str | None = None
         for tool in all_tools():
+            if not tool.menu_visible:
+                continue
             if tool.category != current_category:
                 current_category = tool.category
                 items.append(Separator(f"── {current_category} ──"))
