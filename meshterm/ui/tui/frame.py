@@ -246,7 +246,11 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     Returns:
         An ANSI string sized to the dialog's content (never larger than the terminal).
     """
-    max_w = min(cols - 6, 100)
+    # Most dialogs stretch to a generous cap; a screen may instead request a natural width
+    # (a short confirm sized to its content), still bounded to the terminal.
+    cap = min(cols - 6, 100)
+    natural = getattr(screen, "dialog_width", None)
+    max_w = cap if natural is None else max(24, min(cap, natural))
     max_h = max(3, rows - 6)
     body_lines = screen.render_body(max_w - 4)
     viewport = min(max_h, max(1, len(body_lines)))
@@ -260,7 +264,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         body,
         title=f"[accent]{screen.title}[/accent]" if screen.title else None,
         subtitle=subtitle,
-        border_style="accent",
+        border_style=getattr(screen, "border_style", "accent"),
         padding=(0, 1),
         width=max_w,
     )

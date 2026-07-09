@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
@@ -212,6 +213,105 @@ class ConfirmScreen(Screen):
             self._value = data.lower() == "y"
         elif action == "enter":
             self.resolve(self._value)
+        elif action == "escape":
+            super().handle("escape")
+
+
+class ButtonDialog(Screen):
+    """A centered dialog: a prompt above a row of side-by-side buttons.
+
+    A reusable choose-one prompt. The buttons sit in a row; ←/→ (or Tab) move the highlight,
+    Enter commits the highlighted button, and Esc cancels. Optional single-key shortcuts
+    commit a button instantly (e.g. ``y``/``n``, self-hinted by ``Yes``/``No`` labels). The
+    highlight and border colours are parametrised so a caller can theme it (a destructive
+    action in red, say). Resolves with the chosen button's value, or CANCEL on Esc.
+    """
+
+    def __init__(
+        self,
+        prompt: str,
+        buttons: list[tuple[str, object]],
+        *,
+        title: str = "",
+        default: int = 0,
+        keys: Optional[dict[str, object]] = None,
+        footer_hint: str = "←→ choose · Enter select · Esc cancel",
+        prompt_style: str = "",
+        button_style: str = "reverse brand",
+        button_idle_style: str = "muted",
+        border_style: str = "accent",
+    ) -> None:
+        """Build a button dialog.
+
+        Args:
+            prompt: The question shown above the buttons.
+            buttons: ``(label, value)`` pairs laid out left to right.
+            title: Optional dialog heading.
+            default: Index of the initially highlighted button.
+            keys: Optional map of a lowercase shortcut character to the value it commits
+                immediately (bypassing the highlight), e.g. ``{"y": True, "n": False}``.
+            footer_hint: Footer key hint (hints Enter and Esc, as the other dialogs do).
+            prompt_style: Rich style for the question (e.g. ``"warn"`` for a cautionary
+                action); empty for the default foreground.
+            button_style: Rich style for the highlighted button.
+            button_idle_style: Rich style for the un-highlighted buttons.
+            border_style: Rich style for the dialog border (read by the frame compositor).
+        """
+        super().__init__()
+        self.title = title
+        self.footer_hint = footer_hint
+        self.border_style = border_style
+        self._prompt = prompt
+        self._buttons = buttons
+        self._index = default if 0 <= default < len(buttons) else 0
+        self._keys = {k.lower(): v for k, v in (keys or {}).items()}
+        self._prompt_style = prompt_style
+        self._button_style = button_style
+        self._button_idle_style = button_idle_style
+
+    @property
+    def _button_row_width(self) -> int:
+        """Display width of the button row (``  Label  `` cells joined by 4-space gaps)."""
+        cells = sum(cell_len(label) + 4 for label, _ in self._buttons)
+        gaps = 4 * max(0, len(self._buttons) - 1)
+        return cells + gaps
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the frame sizes the box to its content, not the terminal.
+
+        The widest of the prompt, button row, title, and footer hint, plus a comfortable
+        margin and the border — so a short confirm reads as a tidy box rather than a banner
+        stretched across the screen. The compositor still caps this to the terminal.
+        """
+        inner = max(
+            cell_len(self._prompt),
+            self._button_row_width,
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+        )
+        return inner + 12  # panel padding + border, plus horizontal breathing room
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the prompt centered above a centered row of buttons."""
+        row = Text(justify="center")
+        for i, (label, _value) in enumerate(self._buttons):
+            if i:
+                row.append("    ")
+            style = self._button_style if i == self._index else self._button_idle_style
+            row.append(f"  {label}  ", style=style)
+        prompt = Text(self._prompt, style=self._prompt_style, justify="center")
+        return render_lines(Group(prompt, Text(""), row), width)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Move the highlight, commit on Enter or a shortcut key, or cancel on Esc."""
+        if action in ("left", "right", "tab") and self._buttons:
+            step = -1 if action == "left" else 1
+            self._index = (self._index + step) % len(self._buttons)
+        elif action == "text" and data.lower() in self._keys:
+            self.resolve(self._keys[data.lower()])
+        elif action == "enter" and self._buttons:
+            self.resolve(self._buttons[self._index][1])
         elif action == "escape":
             super().handle("escape")
 

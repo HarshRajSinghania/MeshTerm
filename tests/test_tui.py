@@ -17,7 +17,12 @@ from rich.text import Text
 
 from meshterm.ui.tui import frame
 from meshterm.ui.tui.progress import ProgressScreen
-from meshterm.ui.tui.prompt import AutocompleteScreen, ConfirmScreen, TextScreen
+from meshterm.ui.tui.prompt import (
+    AutocompleteScreen,
+    ButtonDialog,
+    ConfirmScreen,
+    TextScreen,
+)
 from meshterm.ui.tui.render import render_lines, render_to_ansi
 from meshterm.ui.tui.screen import CANCEL, Screen, ScrollScreen
 from meshterm.ui.tui.select import Choice, SelectScreen, Separator
@@ -424,6 +429,44 @@ def test_confirm_toggle_and_default() -> None:
     screen = ConfirmScreen("sure?", default=True)
     screen.handle("text", "n")
     assert _run(screen, "enter") is False
+
+
+def test_button_dialog_enter_commits_highlighted() -> None:
+    """Enter returns the highlighted button's value; the default sets the highlight."""
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=0)
+    assert _run(screen, "enter") is True
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=1)
+    assert _run(screen, "enter") is False
+
+
+def test_button_dialog_arrows_move_highlight() -> None:
+    """←/→ (and Tab) move the highlight between the buttons, wrapping at the ends."""
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=0)
+    screen.handle("right")  # → No
+    assert _run(screen, "enter") is False
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=0)
+    screen.handle("left")  # wraps → No
+    assert _run(screen, "enter") is False
+
+
+def test_button_dialog_shortcut_keys_commit_instantly() -> None:
+    """A mapped shortcut key commits its value straight away, bypassing the highlight."""
+    screen = ButtonDialog(
+        "quit?", [("Yes", True), ("No", False)], default=1, keys={"y": True, "n": False}
+    )
+    assert _run(screen, "text", "Y") is True  # case-insensitive, ignores the No default
+    screen = ButtonDialog(
+        "quit?", [("Yes", True), ("No", False)], default=0, keys={"y": True, "n": False}
+    )
+    assert _run(screen, "text", "n") is False
+
+
+def test_button_dialog_escape_cancels() -> None:
+    """Esc resolves with CANCEL so the caller can treat it as 'stay'."""
+    from meshterm.ui.tui.screen import CANCEL
+
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)])
+    assert _run(screen, "escape") is CANCEL
 
 
 def test_autocomplete_suggests_and_tab_completes() -> None:

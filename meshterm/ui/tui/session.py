@@ -26,7 +26,7 @@ from rich.text import Text
 
 from . import frame
 from .progress import TuiProgress
-from .prompt import AutocompleteScreen, ConfirmScreen, TextScreen, Validator
+from .prompt import AutocompleteScreen, ButtonDialog, ConfirmScreen, TextScreen, Validator
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
@@ -327,6 +327,42 @@ class TuiSession:
     async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
         """Show a yes/no prompt; return the bool or ``None`` if cancelled."""
         result = await self.run_screen(ConfirmScreen(title, default=default))
+        return None if result is CANCEL else result
+
+    async def button_dialog(
+        self,
+        prompt: str,
+        buttons: list[tuple[str, Any]],
+        *,
+        title: str = "",
+        default: int = 0,
+        keys: Optional[dict[str, Any]] = None,
+        footer_hint: str = "←→ choose · Enter select · Esc cancel",
+        prompt_style: str = "",
+        button_style: str = "reverse brand",
+        button_idle_style: str = "muted",
+        border_style: str = "accent",
+    ) -> Any:
+        """Show a centered button dialog; return the chosen value or ``None`` if cancelled.
+
+        A reusable prompt-above-buttons dialog (see :class:`~meshterm.ui.tui.prompt.
+        ButtonDialog`): the colours, prompt, buttons, and single-key shortcuts are all
+        parametrised, so a caller can theme it (e.g. a destructive action in red) or wire
+        instant y/n keys. ``keys`` maps a shortcut character to the value it commits.
+        """
+        screen = ButtonDialog(
+            prompt,
+            buttons,
+            title=title,
+            default=default,
+            keys=keys,
+            footer_hint=footer_hint,
+            prompt_style=prompt_style,
+            button_style=button_style,
+            button_idle_style=button_idle_style,
+            border_style=border_style,
+        )
+        result = await self.run_screen(screen)
         return None if result is CANCEL else result
 
     async def autocomplete(

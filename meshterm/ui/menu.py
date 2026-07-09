@@ -9,6 +9,7 @@ prompts layer as dialogs, and its output appears in a bounded, scrollable result
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -26,7 +27,7 @@ from ..persistence.logging import get_logger
 from ..tools import all_tools
 from .surface import TuiUi
 from .theme import make_console
-from .tui import Choice, Separator, TuiSession
+from .tui import CANCEL, Choice, SelectScreen, Separator, TuiSession
 from .tui.emoji_width import calibrate as calibrate_emoji_width
 
 
@@ -170,6 +171,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         session: The running TUI session.
     """
     last_selection: str | None = None
+    loop = asyncio.get_running_loop()
     while True:
         items: list = []
         current_category: str | None = None
@@ -181,35 +183,47 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         items.append(Separator(" "))
         items.append(Choice(title="quit", value="__quit__"))
 
-        # Re-highlight the tool the user just backed out of, so returning to the menu
-        # lands the cursor where they left rather than at the top.
-        selection = await session.select(
-            "What would you like to do?", items, default=last_selection
+        # Drive the menu list ourselves (rather than via session.select) so it stays on the
+        # stack while the quit dialog floats over it: the confirm is drawn as a centered box
+        # on top of the still-visible menu, not as a screen that replaces it. Re-highlight the
+        # tool the user just backed out of so returning lands the cursor where they left.
+        menu = SelectScreen(
+            "What would you like to do?",
+            items,
+            default=last_selection,
+            footer_hint="↑↓ move · type to filter · Enter select · Esc quit",
         )
-        # Both picking "quit" and pressing Esc at the top level ask to leave; confirm on a
-        # small dialog first so a stray key doesn't drop the user out of the session. Enter
-        # takes the highlighted default (Quit) and leaves; Esc — or choosing "Stay" — returns
-        # to the menu (select maps a cancel to None).
-        if selection in (None, "__quit__"):
-            leave = await session.select(
-                "Leave MeshTerm?",
-                [
-                    Choice(title="Quit and disconnect", value="quit"),
-                    Choice(title="Stay", value="stay"),
-                ],
-                default="quit",
-                wrap=False,
-                filterable=False,
-                footer_hint="↑↓ move · Enter quit · Esc stay",
-            )
-            if leave == "quit":
-                return
-            # Keep the cursor on "quit" when that is what they chose, so a follow-up
-            # attempt lands where they expect; a stray Esc leaves it where it was.
-            if selection == "__quit__":
-                last_selection = "__quit__"
-            continue
-        last_selection = selection
+        menu.future = loop.create_future()
+        session.push(menu)
+        try:
+            selection = await menu.future
+            if selection is CANCEL:  # Esc at the top level
+                selection = None
+            # Both picking "quit" and pressing Esc ask to leave; confirm on a dialog floating
+            # over the (still-pushed) menu so a stray key doesn't drop the user out. Cancel
+            # (Esc) sits left of Quit (Enter); Quit starts highlighted so Enter commits it.
+            if selection in (None, "__quit__"):
+                leave = await session.button_dialog(
+                    "Are you sure you want to quit?",
+                    [("Cancel", False), ("Quit", True)],
+                    title="Quit MeshTerm",
+                    default=1,
+                    footer_hint="Esc cancel · Enter quit",
+                    prompt_style="warn",
+                    button_style="brand",
+                    button_idle_style="muted",
+                    border_style="warn",
+                )
+                if leave:
+                    return
+                # Keep the cursor on "quit" when that is what they chose, so a follow-up
+                # attempt lands where they expect; a stray Esc leaves it where it was.
+                if selection == "__quit__":
+                    last_selection = "__quit__"
+                continue
+            last_selection = selection
+        finally:
+            session.pop(menu)
         await _run_selection(ctx, selection)
 
 
