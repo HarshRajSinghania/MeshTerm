@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Optional
 
+from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import (
@@ -21,12 +25,19 @@ from .. import __version__
 from ..core.channels import is_name_derived, is_public_channel, is_public_name
 from ..core.models import (
     LOCAL_DEVICE_LABEL,
+    NODE_TYPE_CHAT,
+    NODE_TYPE_LABELS,
+    NODE_TYPE_REPEATER,
+    NODE_TYPE_ROOM,
+    NODE_TYPE_SENSOR,
     Contact,
     HopAggregate,
     TraceResult,
     TraceStats,
     TxOptResult,
+    utcnow,
 )
+from .map_render import _NODE, _REPEATER, _SELF
 from .theme import snr_style
 
 if TYPE_CHECKING:
@@ -436,22 +447,178 @@ def stats_panel(
     return Panel(body, title="[accent]trace summary[/accent]", border_style="accent", expand=False)
 
 
-def _contact_recency_key(contact: Contact) -> tuple:
-    """Sort key ordering contacts by last-heard time (newest first), then name.
+# Node-type glyphs and their colours, consistent with the map's marker palette across the
+# whole app (see ui.map_render): our own node is the yellow ``★``, plain nodes the loud pink
+# ``●`` and repeaters the calmer violet ``▲``. The remaining types take map-safe hues that
+# stay distinct from those — a white square for rooms (the house glyph read poorly) and an
+# orange ringed dot for sensors. All are single-width BMP glyphs so columns stay aligned.
+_ROOM_COLOR = "#ffffff"
+_SENSOR_COLOR = "#fb923c"
+_NODE_GLYPHS: dict[int, tuple[str, str]] = {
+    NODE_TYPE_REPEATER: (_REPEATER[0], _REPEATER[1]),
+    NODE_TYPE_ROOM: ("■", _ROOM_COLOR),
+    NODE_TYPE_SENSOR: ("◉", _SENSOR_COLOR),
+    NODE_TYPE_CHAT: (_NODE[0], _NODE[1]),
+}
+_DEFAULT_GLYPH: tuple[str, str] = (_NODE[0], _NODE[1])
 
-    Contacts with a known ``last_seen`` sort first, most-recent advert at the top; those
-    never heard sort after them, alphabetically. The leading ``0``/``1`` keeps the two
-    groups apart so their differently-typed tie-breakers never compare.
+# A heat-map gradient for a contact's name, hottest (most recently heard) to coldest: white
+# → yellow → orange → red → grey. Each stop pairs an age anchor (log10 of seconds since heard)
+# with an RGB colour; :func:`_recency_style` interpolates continuously between them, so the
+# colour glides with recency rather than snapping between a handful of discrete shades.
+_HEAT_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
+    (math.log10(300), (255, 255, 255)),           # ≤5m — white (fresh)
+    (math.log10(3600), (250, 204, 21)),           # ~1h  — yellow
+    (math.log10(21600), (251, 146, 60)),          # ~6h  — orange
+    (math.log10(86400), (248, 113, 113)),         # ~1d  — red
+    (math.log10(604800), (148, 163, 184)),        # ~1w  — grey
+    (math.log10(2592000), (100, 116, 139)),       # ~30d+ — cold slate
+)
+_RECENCY_NEVER = "#64748b"       # never heard — the coldest slate
 
-    Args:
-        contact: The contact to rank.
 
-    Returns:
-        A tuple usable as a ``sorted`` key.
+def _age_seconds(when: Optional[datetime]) -> Optional[float]:
+    """Seconds since ``when`` (aware UTC), or ``None`` when unknown/naive."""
+    if when is None or getattr(when, "tzinfo", None) is None:
+        return None
+    return max(0.0, (utcnow() - when).total_seconds())
+
+
+def _format_age(secs: Optional[float]) -> str:
+    """A compact relative age — ``now``, ``5m``, ``3h``, ``2d``, ``4w`` — or ``never``."""
+    if secs is None:
+        return "never"
+    if secs < 60:
+        return "now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h"
+    if secs < 604800:
+        return f"{int(secs // 86400)}d"
+    return f"{int(secs // 604800)}w"
+
+
+def _recency_style(secs: Optional[float]) -> str:
+    """The heat-map name colour for a contact last heard ``secs`` ago (hotter = more recent).
+
+    Interpolates the RGB channels between the two :data:`_HEAT_STOPS` bracketing ``secs`` (in
+    log-age space), clamping to white below the first stop and cold slate above the last.
     """
-    if contact.last_seen is not None:
-        return (0, -contact.last_seen.timestamp())
-    return (1, contact.name.casefold())
+    if secs is None:
+        return _RECENCY_NEVER
+    x = math.log10(max(secs, 0.0) + 1.0)
+    if x <= _HEAT_STOPS[0][0]:
+        r, g, b = _HEAT_STOPS[0][1]
+    elif x >= _HEAT_STOPS[-1][0]:
+        r, g, b = _HEAT_STOPS[-1][1]
+    else:
+        (x0, c0), (x1, c1) = next(
+            (lo, hi) for lo, hi in zip(_HEAT_STOPS, _HEAT_STOPS[1:]) if lo[0] <= x <= hi[0]
+        )
+        f = (x - x0) / (x1 - x0)
+        r, g, b = (round(a + (bb - a) * f) for a, bb in zip(c0, c1))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _key_id(value: str) -> str:
+    """Normalise a key/prefix to the lowercased 12-hex id used to match heard nodes."""
+    return value.lower().removeprefix("0x")[:12]
+
+
+def _contact_pkts(contact: Contact, counts: dict[str, int]) -> Optional[int]:
+    """The overheard-packet tally for ``contact``, or ``None`` if never overheard."""
+    ident = contact.public_key or contact.key_prefix
+    return counts.get(_key_id(ident)) if ident else None
+
+
+# The columns the node list can be sorted by, left-to-right, and the direction each opens on
+# — name A→Z, most-recently-heard first, most packets first — chosen so a fresh sort shows
+# the "interesting" end at the top.
+_SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets")
+_SORT_OPENS_ASCENDING: dict[str, bool] = {"name": True, "heard": True, "packets": False}
+
+
+@dataclass
+class NodesSort:
+    """Which column the node list is sorted by, and in which direction.
+
+    ``column`` is one of :data:`_SORT_COLUMNS`; ``ascending`` sorts the column's underlying
+    metric low-to-high — name A→Z, *age* (so ascending = most recently heard first), packet
+    count low-to-high. The interactive screen mutates this in place as the user presses the
+    arrows.
+    """
+
+    column: str = "name"
+    ascending: bool = True
+
+    @classmethod
+    def from_name(cls, name: str) -> "NodesSort":
+        """Build a sort for ``name``, opening in that column's natural direction."""
+        column = name if name in _SORT_COLUMNS else "name"
+        return cls(column, _SORT_OPENS_ASCENDING[column])
+
+    def move(self, delta: int) -> None:
+        """Step the active column ``delta`` places (wrapping), adopting its natural direction."""
+        index = (_SORT_COLUMNS.index(self.column) + delta) % len(_SORT_COLUMNS)
+        self.column = _SORT_COLUMNS[index]
+        self.ascending = _SORT_OPENS_ASCENDING[self.column]
+
+
+def _ordered_contacts(
+    contacts: list[Contact], counts: dict[str, int], sort: NodesSort
+) -> list[Contact]:
+    """Contacts sorted per ``sort`` (our own node is pinned separately, above these).
+
+    Sorts ascending by the active column's metric with a case-folded name tiebreak, then
+    reverses for a descending sort. Never-heard / never-overheard rows carry an extreme
+    metric so they gather at the ascending end.
+    """
+    if sort.column == "heard":
+        def metric(c: Contact) -> float:
+            secs = _age_seconds(c.last_seen)
+            return secs if secs is not None else float("inf")
+    elif sort.column == "packets":
+        def metric(c: Contact) -> float:
+            return _contact_pkts(c, counts) or 0
+    else:
+        def metric(c: Contact) -> object:
+            return c.name.casefold()
+
+    ordered = sorted(contacts, key=lambda c: (metric(c), c.name.casefold()))
+    if not sort.ascending:
+        ordered.reverse()
+    return ordered
+
+
+def _sort_header(label: str, column: str, sort: NodesSort) -> str:
+    """A column header: plain-muted, or cyan with a direction triangle when it's the sort key.
+
+    The active column's name and its triangle are lit cyan together (so the interactive
+    left/right selection is obvious) — ``▲`` for ascending, ``▼`` for descending. The column
+    reserves its width (see :func:`nodes_table`) so toggling the sort doesn't shift the row.
+    """
+    if column != sort.column:
+        return label
+    triangle = "▲" if sort.ascending else "▼"
+    return f"[bold #22d3ee]{label} {triangle}[/]"
+
+
+def _nodes_legend(contacts: list[Contact]) -> Text:
+    """A one-line glyph legend covering the node types actually present (plus us)."""
+    present = {c.node_type for c in contacts}
+    if any(t not in _NODE_GLYPHS for t in present):
+        present.add(NODE_TYPE_CHAT)  # unknown/None types render as a plain node
+    legend = Text("  ")  # a small indent to sit under the table body
+    legend.append(_SELF[0], style=_SELF[1])
+    legend.append(" you", style="muted")
+    for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
+        if node_type in present:
+            glyph, color = _NODE_GLYPHS[node_type]
+            legend.append("   ")
+            legend.append(glyph, style=color)
+            legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
+    return legend
 
 
 def nodes_table(
@@ -459,39 +626,78 @@ def nodes_table(
     self_key: str,
     contacts: list[Contact],
     prefix_bytes: int,
-) -> Table:
-    """List this node and its known contacts, full keys with the path-hash prefix lit.
+    counts: dict[str, int],
+    sort: Optional[NodesSort] = None,
+) -> Group:
+    """List this node and its known contacts with recency, packets, type, key, and legend.
 
-    Our own node is the first row, its name highlighted to set it apart. Every node's key
-    is shown in full with the leading ``prefix_bytes`` bytes — the slice a forced trace
-    path addresses at the current path-hash mode — highlighted.
+    Our own node is the first row (``★``, name in accent); contacts follow in ``sort`` order.
+    A per-type glyph marks each node in the app's shared colours, the name is coloured by how
+    recently it was last heard (brighter = fresher), and the full key is shown with its
+    path-hash prefix lit — chopped with an ellipsis only when the terminal is too narrow.
 
     Args:
         self_name: This node's advertised name.
         self_key: This node's full public key (hex); blank renders as ``?``.
         contacts: Known contacts, listed after our own node.
         prefix_bytes: Path-hash width in bytes to highlight in every key.
+        counts: Overheard-packet counts keyed by lowercased 12-hex node id (from
+            monitoring); a contact with no entry shows ``—``.
+        sort: The active sort (column + direction); defaults to name-ascending. The sorted
+            column's header is lit cyan with an up/down direction triangle.
 
     Returns:
-        A Rich :class:`Table` of name and full public key.
+        A Rich :class:`Group` of the frameless table and its glyph legend.
     """
-    table = Table(title=f"Nodes ({len(contacts)} contacts)", border_style="muted")
-    table.add_column("Name")
-    table.add_column("Public key [muted](path-hash prefix highlighted)[/muted]")
+    sort = sort if sort is not None else NodesSort()
+
+    # expand=True lets the key column (the only flexible one) soak up all spare width and be
+    # the sole column Rich squeezes when narrow — the fixed columns keep their natural size.
+    table = Table(
+        title=f"[accent]Nodes[/accent]  [muted]· {len(contacts)} known[/muted]",
+        title_justify="left",
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        header_style="muted",
+        expand=True,
+        padding=(0, 2, 0, 0),
+    )
+    # Each sortable header reserves two extra columns for its " ▲" direction marker (via
+    # min_width = label + 2) so the same width holds whether or not it's the active sort —
+    # switching the sort never widens a column and shifts the rest of the row.
+    table.add_column("", no_wrap=True)  # node-type glyph
+    table.add_column(_sort_header("Name", "name", sort), no_wrap=True, min_width=6)
+    table.add_column(
+        _sort_header("Heard", "heard", sort), justify="right", no_wrap=True, min_width=7
+    )
+    table.add_column(
+        _sort_header("Pkts", "packets", sort), justify="right", no_wrap=True, min_width=6
+    )
+    # The full key, chopped to an ellipsis by Rich only when the row won't otherwise fit.
+    table.add_column("Key", no_wrap=True, overflow="ellipsis", ratio=1, min_width=10)
 
     unknown = Text("?", style="muted")
     table.add_row(
-        Text(f"{self_name}  (this node)", style="accent"),  # our node, name highlighted
+        Text(_SELF[0], style=_SELF[1]),
+        Text.assemble((self_name, "accent"), ("  (you)", "muted")),
+        Text("—", style="muted"),
+        Text("—", style="muted"),
         highlighted_hash(self_key, prefix_bytes) if self_key else unknown,
     )
     table.add_section()
-    # Most-recently-heard contacts first; those never heard fall to the end, alphabetically.
-    for c in sorted(contacts, key=_contact_recency_key):
+    for c in _ordered_contacts(contacts, counts, sort):
+        secs = _age_seconds(c.last_seen)
+        glyph, glyph_style = _NODE_GLYPHS.get(c.node_type, _DEFAULT_GLYPH)
+        pkts = _contact_pkts(c, counts)
         table.add_row(
-            Text(c.name, style="brand"),
+            Text(glyph, style=glyph_style),
+            Text(c.name, style=_recency_style(secs)),
+            Text(_format_age(secs), style="muted"),
+            Text(str(pkts), style="brand") if pkts else Text("—", style="muted"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,
         )
-    return table
+    return Group(table, Text(""), _nodes_legend(contacts))
 
 
 def tx_opt_table(result: TxOptResult) -> Table:

@@ -82,20 +82,102 @@ def test_highlighted_hash_highlights_path_hash_prefix() -> None:
     assert text.plain[highlighted[0].start : highlighted[0].end] == "aabbcc"
 
 
-def test_nodes_table_lists_us_first_with_full_keys() -> None:
-    """The nodes table puts our node first (name highlighted) with full keys."""
+def _nodes_names(counts, sort: str, prefix_bytes: int = 3):
+    """Render a nodes table for ``sort`` and return (table, name-column plain text)."""
     from meshterm.core.models import Contact
-    from meshterm.ui.widgets import nodes_table
+    from meshterm.ui.widgets import NodesSort, nodes_table
 
-    contacts = [Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6")]
-    table = nodes_table("Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes=3)
-    # Two body rows: our node, then Alice.
-    names = [cell.plain if hasattr(cell, "plain") else str(cell) for cell in table.columns[0].cells]
+    contacts = [
+        Contact(name="Bob", public_key="9f1a2b" + "00" * 29, key_prefix="9f1a2b"),
+        Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6"),
+    ]
+    group = nodes_table(
+        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts, NodesSort.from_name(sort)
+    )
+    table = group.renderables[0]  # (table, blank line, legend)
+    names = [c.plain if hasattr(c, "plain") else str(c) for c in table.columns[1].cells]
+    return table, names
+
+
+def test_nodes_table_lists_us_first_with_full_keys() -> None:
+    """The nodes table pins our node first, sorts by name, and shows full highlighted keys."""
+    counts = {"3d63c6000000": 14}  # Alice was overheard; Bob wasn't
+    table, names = _nodes_names(counts, sort="name")
+
+    # Column 1 is the name; us first, then contacts alphabetically (Alice before Bob).
     assert names[0].startswith("Homestead")
-    assert "Alice" in names[1]
-    keys = list(table.columns[1].cells)
-    assert keys[0].plain == "aabbcc" + "00" * 29  # full key, not a short prefix
-    assert any(s.style == "brand" for s in keys[0].spans)  # prefix highlighted
+    assert names[1] == "Alice"
+    assert names[2] == "Bob"
+
+    # Packet counts (column 3): Alice shows her tally, Bob shows the em dash.
+    pkts = [c.plain if hasattr(c, "plain") else str(c) for c in table.columns[3].cells]
+    assert pkts[1] == "14"
+    assert pkts[2] == "—"
+
+    # Keys (column 4) are the full key with the path-hash prefix highlighted (no truncation
+    # in the model; Rich ellipsizes only at render time when the terminal is too narrow).
+    keys = list(table.columns[4].cells)
+    assert keys[1].plain == "3d63c6" + "00" * 29
+    assert any(s.style == "brand" for s in keys[1].spans)  # prefix highlighted
+
+
+def test_nodes_table_sorts_by_heard_and_packets() -> None:
+    """Non-default sorts reorder contacts while keeping our node pinned first."""
+    from datetime import timedelta
+
+    from meshterm.core.models import Contact, utcnow
+
+    # Bob was heard more recently than Alice, but Alice has more overheard packets.
+    contacts = [
+        Contact(
+            name="Bob",
+            public_key="9f1a2b" + "00" * 29,
+            key_prefix="9f1a2b",
+            last_seen=utcnow() - timedelta(minutes=5),
+        ),
+        Contact(
+            name="Alice",
+            public_key="3d63c6" + "00" * 29,
+            key_prefix="3d63c6",
+            last_seen=utcnow() - timedelta(days=2),
+        ),
+    ]
+    counts = {"3d63c6000000": 14, "9f1a2b000000": 3}
+    from meshterm.ui.widgets import NodesSort, nodes_table
+
+    def names(sort: NodesSort):
+        group = nodes_table("Us", "aabbcc" + "00" * 29, contacts, 3, counts, sort)
+        cells = group.renderables[0].columns[1].cells
+        return [c.plain if hasattr(c, "plain") else str(c) for c in cells]
+
+    # Freshest first: Bob (5m) before Alice (2d) under the default (ascending-age) heard sort.
+    assert names(NodesSort.from_name("heard"))[1:] == ["Bob", "Alice"]
+    # Most packets first: Alice (14) before Bob (3) under the default (descending) packets sort.
+    assert names(NodesSort.from_name("packets"))[1:] == ["Alice", "Bob"]
+    # Descending flips it: oldest-heard first puts Alice (2d) above Bob (5m).
+    assert names(NodesSort(column="heard", ascending=False))[1:] == ["Alice", "Bob"]
+
+
+def test_nodes_screen_arrows_steer_the_sort() -> None:
+    """Left/right walk the sort column (wrapping); up/down set ascending/descending."""
+    from meshterm.ui.nodes_screen import NodesScreen
+    from meshterm.ui.widgets import NodesSort
+
+    screen = NodesScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, NodesSort())
+    assert (screen._sort.column, screen._sort.ascending) == ("name", True)
+
+    screen.handle("right")  # name -> heard, opening in its natural (ascending) direction
+    assert (screen._sort.column, screen._sort.ascending) == ("heard", True)
+    screen.handle("right")  # heard -> packets, which opens descending
+    assert (screen._sort.column, screen._sort.ascending) == ("packets", False)
+    screen.handle("up")  # force ascending
+    assert screen._sort.ascending is True
+    screen.handle("down")  # force descending
+    assert screen._sort.ascending is False
+    screen.handle("right")  # packets -> wraps back to name
+    assert screen._sort.column == "name"
+    screen.handle("left")  # name -> wraps to packets
+    assert screen._sort.column == "packets"
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:

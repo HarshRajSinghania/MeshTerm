@@ -50,9 +50,13 @@ class MapMarker:
         return 2 if self.is_self else (1 if self.is_repeater else 0)
 
 
-_SELF = ("★", "#ffffff")
-_REPEATER = ("▲", "#ff5d73")
-_NODE = ("●", "#22d3ee")
+# Marker palette, shared across the whole app. The basemap is blue (water), green (parks) and
+# warm amber (roads), so markers use the hues a map never contains — pink/violet — to stand
+# out against it. Ordinary nodes are the loudest (bright pink); repeaters recede a step (a
+# calmer violet); our own node stays the fixed yellow star.
+_SELF = ("★", "#facc15")
+_REPEATER = ("▲", "#a78bfa")
+_NODE = ("●", "#f472b6")
 
 
 # -- basemap styling ----------------------------------------------------------

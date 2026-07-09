@@ -15,7 +15,7 @@ class NodesTool(Tool):
     """List this node and its known contacts, each with its path-hash prefix."""
 
     name = "nodes"
-    help = "List this node and known contacts (full keys, path-hash prefix highlighted)."
+    help = "List this node and known contacts (last heard, packets, type, path-hash prefix)."
     category = "Device"
     order = 12
 
@@ -29,7 +29,8 @@ class NodesTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing the number of known contacts.
         """
-        from ..ui.widgets import nodes_table
+        from ..ui.surface import TuiUi
+        from ..ui.widgets import NodesSort, nodes_table
 
         device = await ctx.device()
         info = await device.get_self_info()
@@ -44,9 +45,22 @@ class NodesTool(Tool):
             mode = None
         prefix_bytes = (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
 
+        # Overheard-packet tallies from background monitoring, keyed by node hash; a
+        # contact we've never passively overheard simply has no entry.
+        counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
+
         self_name = str(info.get("name") or "this node")
         self_key = str(info.get("public_key") or "")
-        ctx.ui.show(nodes_table(self_name, self_key, contacts, prefix_bytes))
+        sort = NodesSort.from_name(str(params.get("sort") or "name"))
+
+        # In the menu, hand the list to the interactive screen so the arrows re-sort it live;
+        # on the scripted CLI, render the table once in the requested order.
+        if isinstance(ctx.ui, TuiUi):
+            from ..ui.nodes_screen import open_nodes
+
+            await open_nodes(ctx, self_name, self_key, contacts, prefix_bytes, counts, sort)
+        else:
+            ctx.ui.show(nodes_table(self_name, self_key, contacts, prefix_bytes, counts, sort))
 
         return ToolResult(summary={"contacts": len(contacts)})
 
@@ -59,5 +73,9 @@ class NodesTool(Tool):
         from ..cli import run_tool_command
 
         @app.command(name=self.name, help=self.help)
-        def _nodes() -> None:
-            run_tool_command(self, {})
+        def _nodes(
+            sort: str = typer.Option(
+                "name", "--sort", "-s", help="Order contacts by: name, heard, packets."
+            ),
+        ) -> None:
+            run_tool_command(self, {"sort": sort})
