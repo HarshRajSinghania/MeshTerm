@@ -98,6 +98,10 @@ class MapScreen(Screen):
         self._last_saved = saved_view
         self._viewport: Optional[Viewport] = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
+        # Draw the base map with 2×2 block elements instead of 2×4 braille. Off by default
+        # (braille is higher-res); the user toggles it with ``t`` when their terminal font
+        # can't render the full braille block and stray glyphs appear. See :mod:`mapcanvas`.
+        self._block = False
         # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
         self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
         self._pending: set[tuple[int, int, int]] = set()
@@ -107,12 +111,25 @@ class MapScreen(Screen):
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hints plus a live tile-loading indicator."""
-        base = "wasd/↑↓←→ pan (⇧ fine) · +/- zoom · r reset · Esc back"
+        mode = "block" if self._block else "braille"
+        base = f"wasd/↑↓←→ pan (⇧ fine) · +/-/PgUp/PgDn zoom · r reset · t {mode} · Esc back"
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:
             return f"{base} · [warn]offline — no basemap[/warn]"
         return base
+
+    @property
+    def force_full_repaint(self) -> bool:  # type: ignore[override]
+        """Force a full-frame repaint each paint while braille mode is active.
+
+        A braille glyph the terminal font lacks gets substituted by a *double-width* fallback,
+        which shoves the row and corrupts the panel's right border. prompt_toolkit's
+        differential repaint then leaves that corruption until those cells are rewritten, so we
+        force a full repaint to scrub it on every pan/zoom. Block mode uses only
+        widely-supported glyphs, so it needs no such scrubbing.
+        """
+        return not self._block
 
     def render_body(self, width: int) -> list[str]:
         """Build (or resize) the viewport, ensure its tiles, and render the frame."""
@@ -131,7 +148,7 @@ class MapScreen(Screen):
         self.title = self._title(self._viewport)
         self._persist()
         tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
-        return render_map(self._viewport, tiles, self._markers)
+        return render_map(self._viewport, tiles, self._markers, block=self._block)
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
@@ -213,6 +230,10 @@ class MapScreen(Screen):
             self._pan(vp, action, fine=False)
         elif action.startswith("shift_") and action[len("shift_"):] in _PAN_DIRS:
             self._pan(vp, action[len("shift_"):], fine=True)
+        elif action == "pageup":
+            self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
+        elif action == "pagedown":
+            self._viewport = vp.zoomed(-1)
         elif action == "text":
             self._handle_key(data, vp)
         self._persist()
@@ -249,6 +270,8 @@ class MapScreen(Screen):
                 max_zoom=self._max_tile_zoom,
                 fraction=self._view_fraction,
             )
+        elif low == "t":
+            self._block = not self._block  # braille ⇄ block-element base map
         elif low == "q":
             self.resolve(None)
 

@@ -104,8 +104,15 @@ class Feature:
 
     @property
     def name(self) -> Optional[str]:
-        """The feature's display name, preferring the local ``name`` then latin fallbacks."""
-        for key in ("name", "name:latin", "name:en", "name_en", "name_int"):
+        """The feature's display name, preferring a romanized form over the local script.
+
+        The terminal map draws labels in a fixed-width cell grid with whatever font the
+        user has, so a local-script name (CJK, Arabic, Thai…) tends to render as tofu or,
+        being double-width, shove the row out of alignment. OpenMapTiles ships a
+        transliterated ``name:latin`` (and often ``name:en``) beside the local ``name``, so
+        prefer those; fall back to the local ``name`` only when no latin form exists.
+        """
+        for key in ("name:latin", "name:en", "name_en", "name_int", "name"):
             val = self.tags.get(key)
             if val:
                 return str(val)

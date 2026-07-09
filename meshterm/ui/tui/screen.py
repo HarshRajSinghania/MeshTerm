@@ -51,6 +51,11 @@ class Screen:
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
     footnote: Optional[str] = None
+    #: When this is the base screen, force a full-frame repaint each paint instead of
+    #: prompt_toolkit's differential update. A screen sets this when its body can emit glyphs
+    #: the terminal renders at an unexpected width (see :class:`~meshterm.ui.map_screen.
+    #: MapScreen`), which would otherwise leave stale cells the diff never scrubs.
+    force_full_repaint: bool = False
 
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""
