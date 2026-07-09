@@ -186,8 +186,29 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         selection = await session.select(
             "What would you like to do?", items, default=last_selection
         )
+        # Both picking "quit" and pressing Esc at the top level ask to leave; confirm on a
+        # small dialog first so a stray key doesn't drop the user out of the session. Enter
+        # takes the highlighted default (Quit) and leaves; Esc — or choosing "Stay" — returns
+        # to the menu (select maps a cancel to None).
         if selection in (None, "__quit__"):
-            return
+            leave = await session.select(
+                "Leave MeshTerm?",
+                [
+                    Choice(title="Quit and disconnect", value="quit"),
+                    Choice(title="Stay", value="stay"),
+                ],
+                default="quit",
+                wrap=False,
+                filterable=False,
+                footer_hint="↑↓ move · Enter quit · Esc stay",
+            )
+            if leave == "quit":
+                return
+            # Keep the cursor on "quit" when that is what they chose, so a follow-up
+            # attempt lands where they expect; a stray Esc leaves it where it was.
+            if selection == "__quit__":
+                last_selection = "__quit__"
+            continue
         last_selection = selection
         await _run_selection(ctx, selection)
 
