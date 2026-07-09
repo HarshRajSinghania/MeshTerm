@@ -53,7 +53,9 @@ class Ui:
         """Return a progress context manager exposing ``add_task``/``advance``/``update``."""
         raise NotImplementedError
 
-    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+    async def select(
+        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+    ) -> Any:
         """Prompt the user to choose one item; return its value or ``None`` if cancelled."""
         raise NotImplementedError
 
@@ -164,7 +166,9 @@ class PlainUi(Ui):
         """Build the error raised if a rich prompt is reached on the non-interactive path."""
         return RuntimeError("interactive prompts are only available in the menu")
 
-    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+    async def select(
+        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+    ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -313,9 +317,11 @@ class TuiUi(Ui):
 
     # --- input ---------------------------------------------------------------
 
-    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+    async def select(
+        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+    ) -> Any:
         """Delegate to the session's select screen."""
-        return await self.session.select(title, items, default=default)
+        return await self.session.select(title, items, default=default, wrap=wrap)
 
     async def select_startup(
         self,

@@ -33,7 +33,7 @@ from meshterm.core.models import (
 from meshterm.persistence.repository import Repository
 from meshterm.services.chat_service import ChatService
 from meshterm.services.event_hub import EventHub
-from meshterm.tools.chat import _LiveLasts, _preview, _title
+from meshterm.tools.chat import _PREVIEW_WIDTH, _LiveLasts, _preview_text, _title
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.tui.screen import CANCEL
 
@@ -239,18 +239,29 @@ def test_preview_prefixes_own_messages_only() -> None:
     synthesized (that would double it), and a direct message's author is the row label.
     """
     chan_in = ChatMessage(text="Bob: hi", is_channel=True, channel_idx=0)  # sender inline
-    assert _preview(chan_in) == "Bob: hi"
+    assert _preview_text(chan_in).plain == "Bob: hi"
     dm_in = ChatMessage(text="hey", peer="aa", peer_name="Bob")
-    assert _preview(dm_in) == "hey"
+    assert _preview_text(dm_in).plain == "hey"
     mine = ChatMessage(text="yo", outbound=True, is_channel=True, channel_idx=0)
-    assert _preview(mine) == "you: yo"
+    assert _preview_text(mine).plain == "you: yo"
+
+
+def test_preview_colours_channel_sender_and_mentions() -> None:
+    """A channel preview lights its inline sender name and any ``@[Name]`` mention in a hue."""
+    from meshterm.ui.chat import _sender_hue
+
+    msg = ChatMessage(text="Bob: hi @[Alice]", is_channel=True, channel_idx=0)
+    preview = _preview_text(msg)
+    assert preview.plain == "Bob: hi @Alice"  # the mention's brackets are dropped for display
+    styles = {span.style for span in preview.spans}
+    assert _sender_hue("Bob") in styles and _sender_hue("Alice") in styles
 
 
 def test_preview_ellipsizes_long_text() -> None:
     """An over-long preview is clipped to the width budget with a trailing ellipsis."""
     long = ChatMessage(text="x" * 100, is_channel=True, channel_idx=0)
-    out = _preview(long, width=10)
-    assert len(out) == 10 and out.endswith("…")
+    out = _preview_text(long).plain
+    assert len(out) == _PREVIEW_WIDTH and out.endswith("…")
 
 
 def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
@@ -266,7 +277,7 @@ def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
 
 
 def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
-    """With unread the row is a Text whose ``●`` glyph (only) is styled red; else a plain str."""
+    """With unread the row's ``●`` glyph (only) is styled red; with none there is no dot."""
     from rich.text import Text
 
     conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
@@ -279,7 +290,9 @@ def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
     assert reddened and all(span.end - span.start == 1 for span in reddened)  # just the glyph
 
     read = _title(_RowCtx(repo, unread={}), conv, {})
-    assert isinstance(read, str)  # no badge -> plain string, no styling
+    assert isinstance(read, Text)  # always a Text now, so its spans can carry the row's colour
+    assert "●" not in read.plain  # nothing unread -> no badge dot
+    assert not any(span.style == "err" for span in read.spans)
 
 
 def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository) -> None:
@@ -289,15 +302,15 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
     long = Conversation(label="A much longer channel name here", is_channel=True, channel_idx=1, channel_id="c1")
     m0 = ChatMessage(text="X: hello", is_channel=True, channel_id="c0")
     m1 = ChatMessage(text="Y: hello", is_channel=True, channel_id="c1")
-    l0 = _title(ctx, short, {"chan:c0": m0})
-    l1 = _title(ctx, long, {"chan:c1": m1})
+    l0 = _title(ctx, short, {"chan:c0": m0}).plain
+    l1 = _title(ctx, long, {"chan:c1": m1}).plain
     assert l0.index("X: hello") == l1.index("Y: hello")
 
 
 def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 fixed-key public, 🔒 private."""
     ctx = _RowCtx(repo)
-    head = lambda conv: _title(ctx, conv, {}).split(" ", 1)[0]
+    head = lambda conv: _title(ctx, conv, {}).plain.split(" ", 1)[0]
     named = Conversation(
         label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
     )
@@ -312,16 +325,30 @@ def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     assert head(private) == "🔒"
 
 
-def test_title_contact_glyph_reflects_conversation_history(repo: Repository) -> None:
-    """A contact shows 💬 once we've exchanged messages, 👤 before any conversation exists."""
+def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> None:
+    """A contact's dot is filled ● once we've talked, hollow ○ before — always in her hue."""
+    from meshterm.ui.chat import _sender_hue
+
     ctx = _RowCtx(repo)
     contact = Conversation(
         label="Alice", is_channel=False, contact=Contact(name="Alice", public_key="d4" + "0" * 62)
     )
-    head = lambda lasts: _title(ctx, contact, lasts).split(" ", 1)[0]
-    assert head({}) == "👤"  # no history yet — a contact we haven't talked to
+    head = lambda lasts: _title(ctx, contact, lasts).plain.split(" ", 1)[0]
+
+    def dot_is_hued(row) -> bool:
+        return any(
+            span.style == _sender_hue("Alice") and span.start == 0 and span.end == 1
+            for span in row.spans
+        )
+
+    # No history yet — a hollow ring, but still tinted in Alice's stable chat hue.
+    fresh = _title(ctx, contact, {})
+    assert fresh.plain.startswith("○") and dot_is_hued(fresh)
+
+    # Once we've exchanged messages the same-hued dot fills in.
     last = ChatMessage(text="hi", peer=contact.peer)
-    assert head({contact.key: last}) == "💬"  # we've exchanged messages
+    talked = _title(ctx, contact, {contact.key: last})
+    assert talked.plain.startswith("●") and dot_is_hued(talked)
 
 
 # -- chat service -------------------------------------------------------------

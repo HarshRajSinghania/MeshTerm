@@ -28,7 +28,8 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
-from ..core.models import ChatMessage, Contact, Conversation
+from ..core.models import ChatMessage, Contact, Conversation, utcnow
+from ..ui.chat import _MENTION, _sender_hue, _split_channel_sender
 from ..ui.tui import Choice, Separator
 from ..ui.widgets import channel_glyph
 from .base import Tool, ToolResult, register
@@ -117,11 +118,11 @@ class ChatTool(Tool):
         lasts = ctx.repo.last_chat_messages()
         live = _LiveLasts(ctx, seed=lasts)
 
-        items: list = [Separator("── Channels ──")]
+        items: list = [Separator("── 📡 Channels ──")]
         for conversation in channels:
             items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
 
-        items.append(Separator("── Direct ──"))
+        items.append(Separator("── 👤 Direct ──"))
         if contacts:
             # List contacts by recency — those with messages first, newest exchange at the
             # top — then the never-contacted ones alphabetically (see _recency_key).
@@ -148,7 +149,7 @@ class ChatTool(Tool):
             None,
         )
         choice = await ctx.ui.select(
-            "Chat — pick a conversation", items, default=default
+            "Chat — pick a conversation", items, default=default, wrap=False
         )
         if choice in (None, "__back__"):
             return None
@@ -492,10 +493,13 @@ class _LiveLasts:
 #: Column width (display cells) the conversation label is padded/ellipsized to, so the unread
 #: badge and message preview line up in fixed lanes down the picker.
 _LABEL_WIDTH = 22
-#: Width of the unread-badge lane between the label and the preview (fits ``● 999``).
+#: Width of the unread-badge lane between the label and the age (fits ``● 999``).
 _BADGE_WIDTH = 5
+#: Width of the relative-age lane between the badge and the preview (right-aligned; fits ``now``
+#: and two-digit spans like ``59m`` / ``23h``), so every row's message text starts in one column.
+_AGE_WIDTH = 3
 #: Longest message preview shown before it is ellipsized.
-_PREVIEW_WIDTH = 42
+_PREVIEW_WIDTH = 40
 
 
 def _row_title(
@@ -521,13 +525,15 @@ def _row_title(
 def _title(
     ctx: AppContext, conversation: Conversation, lasts: "_LiveLasts"
 ) -> Union[str, Text]:
-    """Build a picker row as fixed-width columns: label, unread badge, message preview.
+    """Build a picker row as fixed-width, colour-coded lanes.
 
-    Alignment carries the readability: the label is padded to a fixed lane, the unread ``●``
-    badge sits in its own lane, and the preview lines up across every row regardless of how
-    long the names or counts are. When there is unread, the row is returned as a Rich
-    :class:`~rich.text.Text` so the ``●`` glyph alone can be tinted red; otherwise a plain
-    string suffices.
+    Alignment carries the readability — marker, label, unread badge, relative age, and preview
+    each sit in their own lane, so every row's message text starts in the same column. Colour is
+    kept light and purposeful: the name stays in the base colour, a contact's leading dot is
+    tinted in that person's chat hue, the unread ``●`` badge is red, the age is muted, and the
+    preview mutes its body while lighting sender names and ``@mentions`` in their hue — the same
+    colours the live transcript uses. The row is always a Rich :class:`~rich.text.Text` so those
+    spans survive under the select screen's row highlight.
 
     Args:
         ctx: Shared application context (for the live unread count).
@@ -535,45 +541,107 @@ def _title(
         lasts: The self-refreshing latest-message view.
 
     Returns:
-        The row title — a plain ``str``, or a ``Text`` with a red ``●`` when unread.
+        The row title as a styled :class:`~rich.text.Text`.
     """
     unread = ctx.chat.unread(conversation.key)
-    badge = f"● {unread}" if unread else ""
     last = lasts.get(conversation.key)
-    preview = _preview(last) if last is not None else ""
-    # A channel leads with its openness marker (＃ / 🌐 / 🔒); a direct chat with a person glyph
-    # — 💬 once we've exchanged messages, 👤 for a contact we haven't talked to yet. Every glyph
-    # is one double-width cell, so the label lane still lines up across rows.
-    if conversation.is_channel:
-        glyph = channel_glyph(conversation.label, conversation.secret)
+    text = Text(no_wrap=True, overflow="ellipsis")
+    _append_marker(text, conversation, last)
+    text.append(_fit(conversation.label, _LABEL_WIDTH))
+    text.append("  ")
+    # Unread badge lane (_BADGE_WIDTH cells): a red ● with the count in warn, or blank filler so
+    # the following lanes still line up on rows with nothing unread.
+    if unread:
+        text.append("●", style="err")
+        text.append(f" {unread}".ljust(_BADGE_WIDTH - 1), style="warn")
     else:
-        glyph = "💬" if last is not None else "👤"
-    line = f"{glyph} {_fit(conversation.label, _LABEL_WIDTH)}  {badge:<{_BADGE_WIDTH}}  {preview}".rstrip()
-    if not unread:
-        return line
-    text = Text(line)
-    dot = line.index("●")  # only the badge carries this glyph; colour just it red
-    text.stylize("err", dot, dot + 1)
+        text.append(" " * _BADGE_WIDTH)
+    # Relative-age lane (right-aligned) sits between the badge and the message text, so the ages
+    # stack in one tidy column and the previews all start at the same place.
+    age = _ago(last.created_at) if last is not None else ""
+    text.append("  ")
+    text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
+    text.append("  ")
+    if last is not None:
+        text.append_text(_preview_text(last))
     return text
 
 
-def _preview(last: ChatMessage, *, width: int = _PREVIEW_WIDTH) -> str:
-    """One-line preview of the latest message, ``you:``-prefixed when we sent it.
+def _append_marker(text: Text, conversation: Conversation, last: Optional[ChatMessage]) -> None:
+    """Prepend the row's leading marker (3 display cells) — a channel glyph or a contact dot.
 
-    Only our own outbound messages get an author prefix. Inbound channel messages already
-    carry the sender's node name inline in their text (the firmware embeds it), and an inbound
-    direct message's author is the row's own label — so neither needs one added here.
-
-    Args:
-        last: The most recent message in the conversation.
-        width: The column budget before the preview is ellipsized.
-
-    Returns:
-        A single-line, length-bounded preview string.
+    A channel keeps its openness marker (＃ / 🌐 / 🔒). A contact gets a small circle tinted in
+    that person's chat hue — filled (``●``) once we've exchanged messages, a hollow ring (``○``)
+    before any — so the colour identifies the person and the hollow-vs-filled shape marks whether
+    there's history, while the name itself stays in the base colour. The contact dot is padded to
+    the same width as a channel's double-cell glyph so the labels line up across both sections.
     """
-    who = "you: " if last.outbound else ""
-    body = f"{who}{last.text}".replace("\n", " ")
-    return body[: width - 1] + "…" if len(body) > width else body
+    if conversation.is_channel:
+        text.append(f"{channel_glyph(conversation.label, conversation.secret)} ")
+    else:
+        dot = "●" if last is not None else "○"
+        text.append(dot, style=_sender_hue(conversation.label))
+        text.append("  ")
+
+
+def _preview_text(last: ChatMessage) -> Text:
+    """A muted last-message preview with sender names and ``@mentions`` lit in their chat hue.
+
+    Mirrors the live transcript: our own messages get a ``you:`` prefix, an inbound channel
+    message's inline ``Name:`` sender is coloured in that sender's hue, and every ``@[Name]``
+    mention reads as a bare ``@Name`` in the mentioned person's hue — so the list and the chat
+    speak the same colour language. The result is clipped to :data:`_PREVIEW_WIDTH` cells.
+    """
+    body_raw = last.text.replace("\n", " ")
+    text = Text()
+    if last.outbound:
+        text.append("you: ", style="accent")
+        _append_body(text, body_raw)
+    elif last.is_channel:
+        name, body = _split_channel_sender(body_raw)
+        if name is not None:
+            text.append(name, style=_sender_hue(name))
+            text.append(": ", style="muted")
+            _append_body(text, body)
+        else:
+            _append_body(text, body_raw)
+    else:
+        _append_body(text, body_raw)
+    text.truncate(_PREVIEW_WIDTH, overflow="ellipsis")
+    return text
+
+
+def _append_body(text: Text, body: str) -> None:
+    """Append ``body`` to ``text``, muted, with each ``@[Name]`` mention drawn in the name's hue."""
+    pos = 0
+    for match in _MENTION.finditer(body):
+        if match.start() > pos:
+            text.append(body[pos : match.start()], style="muted")
+        name = match.group(1)
+        text.append(f"@{name}", style=_sender_hue(name))
+        pos = match.end()
+    if pos < len(body):
+        text.append(body[pos:], style="muted")
+
+
+def _ago(when: Any) -> str:
+    """A compact relative age for a message time — ``now``, ``5m``, ``3h``, ``2d``, ``4w``.
+
+    Tolerates a naive timestamp (assumed UTC) so a stray one from the wire can't crash the
+    picker on the aware/naive subtraction.
+    """
+    if getattr(when, "tzinfo", None) is None:
+        return ""
+    secs = max(0.0, (utcnow() - when).total_seconds())
+    if secs < 60:
+        return "now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h"
+    if secs < 604800:
+        return f"{int(secs // 86400)}d"
+    return f"{int(secs // 604800)}w"
 
 
 def _fit(text: str, width: int) -> str:

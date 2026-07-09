@@ -125,9 +125,13 @@ class TuiSession:
         finally:
             self.pop(screen)
 
-    async def select(self, title: str, items: list, *, default: Any = None) -> Any:
+    async def select(
+        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+    ) -> Any:
         """Show a select screen; return the chosen value or ``None`` if cancelled."""
-        result = await self.run_screen(SelectScreen(title, items, default=default))
+        result = await self.run_screen(
+            SelectScreen(title, items, default=default, wrap=wrap)
+        )
         return None if result is CANCEL else result
 
     async def select_startup(

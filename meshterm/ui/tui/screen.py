@@ -78,6 +78,15 @@ class Screen:
         """
         return None
 
+    def sticky_header(self, scroll: int) -> Optional[str]:
+        """An already-rendered body line to pin to the top row once ``scroll`` moves past it.
+
+        Lets a grouped list keep its current section heading in view after the heading itself
+        has scrolled off. Returns an ANSI line (e.g. a section separator) to pin, or ``None``
+        for no pinned header. ``scroll`` is the offset the body is about to be sliced at.
+        """
+        return None
+
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:

@@ -23,7 +23,10 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
 
     Keeps the screen's cursor line in view (for select/text screens) and clamps the scroll
     offset to the content, then pads the slice to exactly ``viewport`` rows so the panel
-    always fills its allotted height.
+    always fills its allotted height. When the screen offers a sticky header (a grouped list's
+    section heading that has scrolled off), it is pinned to the top row: that reserves one row,
+    so the cursor is kept within the remaining ``viewport - 1`` and the bottom clamp is relaxed
+    by one so the final content row can still reach the last visible line.
 
     Args:
         screen: The screen being rendered (its ``scroll`` is adjusted in place).
@@ -37,16 +40,37 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
     if isinstance(screen, ScrollScreen):
         screen.note_viewport(viewport)
     cursor = screen.cursor_line()
-    if cursor is not None:
-        if cursor < screen.scroll:
-            screen.scroll = cursor
-        elif cursor >= screen.scroll + viewport:
-            screen.scroll = cursor - viewport + 1
-    screen.scroll = max(0, min(screen.scroll, max(0, total - viewport)))
 
-    visible = lines[screen.scroll : screen.scroll + viewport]
-    more_above = screen.scroll > 0
-    more_below = screen.scroll + viewport < total
+    scroll = screen.scroll
+    if cursor is not None:
+        if cursor < scroll:
+            scroll = cursor
+        elif cursor >= scroll + viewport:
+            scroll = cursor - viewport + 1
+    scroll = max(0, min(scroll, max(0, total - viewport)))
+
+    # A pinned section heading takes the top row, leaving one fewer for content; nudge the
+    # scroll down if the cursor would fall in that reserved row, then re-check the heading
+    # (crossing a section boundary can change which one is pinned, or drop it entirely).
+    sticky = screen.sticky_header(scroll) if scroll > 0 else None
+    if sticky is not None:
+        cap = max(1, viewport - 1)
+        if cursor is not None and cursor >= scroll + cap:
+            scroll = min(cursor - cap + 1, max(0, total - cap))
+            sticky = screen.sticky_header(scroll) if scroll > 0 else None
+
+    screen.scroll = scroll
+
+    if sticky is not None:
+        cap = max(1, viewport - 1)
+        visible = [sticky] + lines[scroll : scroll + cap]
+        more_below = scroll + cap < total
+        visible = visible + [""] * (viewport - len(visible))
+        return visible, True, more_below
+
+    visible = lines[scroll : scroll + viewport]
+    more_above = scroll > 0
+    more_below = scroll + viewport < total
     visible = visible + [""] * (viewport - len(visible))
     return visible, more_above, more_below
 

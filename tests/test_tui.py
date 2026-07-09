@@ -142,6 +142,75 @@ def test_select_filter_matches_callable_title() -> None:
     assert _run(screen, "enter") == 1
 
 
+def test_select_no_wrap_clamps_at_the_ends() -> None:
+    """With wrap off, Up on the first row and Down on the last stay put (no cycling)."""
+    items = [Choice("alpha", 1), Choice("beta", 2), Choice("gamma", 3)]
+    screen = SelectScreen("pick", items, wrap=False)
+    screen.handle("up")  # already on the first choice — must not jump to the last
+    assert _run(screen, "enter") == 1
+    screen = SelectScreen("pick", items, default=3, wrap=False)  # last choice
+    screen.handle("down")  # already on the last — must not wrap to the first
+    assert _run(screen, "enter") == 3
+
+
+def test_select_pageup_pagedown_jump_by_a_page() -> None:
+    """PageDown/PageUp move the highlight a page at a time, clamped to the choice range."""
+    from meshterm.ui.tui.select import _PAGE
+
+    items = [Choice(f"c{i}", i) for i in range(30)]
+    screen = SelectScreen("pick", items)  # starts on the first choice
+    screen.handle("pagedown")
+    assert _run(screen, "enter") == _PAGE  # advanced one page down
+    screen = SelectScreen("pick", items, default=25)
+    screen.handle("pageup")
+    assert _run(screen, "enter") == 25 - _PAGE  # and one page back up
+
+
+def _grouped_menu(default: object = None) -> SelectScreen:
+    """A two-section menu long enough that each section scrolls past a small viewport."""
+    items: list = [Separator("── Channels ──")]
+    items += [Choice(f"chan{i}", ("c", i)) for i in range(6)]
+    items += [Separator("── Direct ──")]
+    items += [Choice(f"peer{i}", ("d", i)) for i in range(8)]
+    return SelectScreen("pick", items, default=default)
+
+
+def _top_plain(screen: SelectScreen, viewport: int) -> str:
+    """Slice the screen at its selection-driven scroll and return the top row's plain text."""
+    lines = screen.render_body(40)
+    visible, _above, _below = frame._visible_slice(screen, lines, viewport)
+    return Text.from_ansi(visible[0]).plain.strip()
+
+
+def test_select_pins_section_heading_when_it_scrolls_off() -> None:
+    """Selecting deep in a section keeps that section's heading pinned to the top row."""
+    # Highlighting a channel far enough down pushes the "Channels" heading off the top, so it
+    # is re-pinned rather than vanishing.
+    assert _top_plain(_grouped_menu(default=("c", 5)), viewport=6) == "── Channels ──"
+    # Deep into the Direct group, the pinned heading switches to that section's.
+    assert _top_plain(_grouped_menu(default=("d", 6)), viewport=6) == "── Direct ──"
+
+
+def test_select_does_not_pin_a_heading_that_is_still_visible() -> None:
+    """With the list scrolled to the top, the real heading shows — nothing is pinned over it."""
+    screen = _grouped_menu()  # default selection is the first choice, so scroll stays at 0
+    lines = screen.render_body(40)
+    visible, above, _below = frame._visible_slice(screen, lines, 6)
+    assert Text.from_ansi(visible[0]).plain.strip() == "── Channels ──"
+    assert above is False  # top of the list; no pinned duplicate and no "more above"
+
+
+def test_select_pinned_heading_keeps_the_last_row_reachable() -> None:
+    """Even with a heading pinned, the bottom choice stays fully visible (not clipped)."""
+    screen = _grouped_menu()
+    screen.handle("end")  # highlight the final choice
+    lines = screen.render_body(40)
+    visible, _above, below = frame._visible_slice(screen, lines, 6)
+    assert Text.from_ansi(visible[0]).plain.strip() == "── Direct ──"  # heading pinned
+    assert any("peer7" in Text.from_ansi(row).plain for row in visible)  # last row shown
+    assert below is False  # and we know we're at the bottom
+
+
 # --- scroll ------------------------------------------------------------------
 
 

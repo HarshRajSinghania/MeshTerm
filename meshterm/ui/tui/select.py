@@ -56,6 +56,10 @@ class Separator:
 
 Item = "Choice | Separator"
 
+#: How many rows PageUp/PageDown move the highlight. A fixed step (the screen isn't told the
+#: viewport height) that keeps paging predictable, matching the chat transcript's own paging.
+_PAGE = 10
+
 
 class SelectScreen(Screen):
     """A grouped, filterable, single-choice list.
@@ -72,6 +76,7 @@ class SelectScreen(Screen):
         default: Any = None,
         footer_hint: str = "↑↓ move · type to filter · Enter select · Esc back",
         filterable: bool = True,
+        wrap: bool = True,
     ) -> None:
         """Build a select screen.
 
@@ -82,11 +87,15 @@ class SelectScreen(Screen):
             footer_hint: Footer key hint.
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
                 the startup device picker) where type-to-filter would only get in the way.
+            wrap: Whether the highlight wraps around the ends (Down from the last row jumps
+                to the first, and vice versa). Off for grouped lists where wrapping across the
+                section headings reads as a jarring jump rather than continuing to scroll.
         """
         super().__init__()
         self.title = title
         self.footer_hint = footer_hint
         self._filterable = filterable
+        self._wrap = wrap
         self._items = items
         self._filter = ""
         # Index into the currently-selectable (filtered) choices.
@@ -130,11 +139,16 @@ class SelectScreen(Screen):
         selected = choices[self._index] if choices else None
 
         lines: list[str] = []
+        # (body-line index, rendered line) for each separator, so a section heading that
+        # scrolls off can be re-pinned to the top row (see :meth:`sticky_header`).
+        self._separator_lines: list[tuple[int, str]] = []
         if self._filter:
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
         for item in rows:
             if isinstance(item, Separator):
-                lines.append(render_to_ansi(Text(item.title, style="muted"), width))
+                sep = render_to_ansi(Text(item.title, style="muted"), width)
+                self._separator_lines.append((len(lines), sep))
+                lines.append(sep)
                 continue
             is_sel = item is selected
             pointer = "❯ " if is_sel else "  "
@@ -160,15 +174,44 @@ class SelectScreen(Screen):
         """Return the body line index of the highlighted row."""
         return getattr(self, "_cursor", None)
 
+    def sticky_header(self, scroll: int) -> Optional[str]:
+        """The section heading governing the top visible row, when it has scrolled off.
+
+        Returns the rendered separator line for the group the first visible row belongs to,
+        so the "Channels"/"Direct"-style heading stays pinned as you scroll down into a long
+        section. Returns ``None`` when that heading is itself still on screen (nothing to pin)
+        or while filtering (headings are hidden then).
+        """
+        governing: Optional[str] = None
+        governing_at = -1
+        for idx, line in getattr(self, "_separator_lines", ()):
+            if idx <= scroll:
+                governing, governing_at = line, idx
+            else:
+                break
+        if governing is None or governing_at == scroll:
+            return None  # no heading above, or it's already the top visible row
+        return governing
+
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, edit the filter, or commit/cancel the selection."""
         choices = self._choices()
         if action == "up":
-            self._index = (self._index - 1) % len(choices) if choices else 0
+            if choices:
+                self._index = (self._index - 1) % len(choices) if self._wrap else max(
+                    0, self._index - 1
+                )
         elif action == "down":
-            self._index = (self._index + 1) % len(choices) if choices else 0
+            if choices:
+                self._index = (self._index + 1) % len(choices) if self._wrap else min(
+                    len(choices) - 1, self._index + 1
+                )
+        elif action == "pageup":
+            self._index = max(0, self._index - _PAGE)
+        elif action == "pagedown":
+            self._index = min(len(choices) - 1, self._index + _PAGE) if choices else 0
         elif action == "home":
             self._index = 0
         elif action == "end":

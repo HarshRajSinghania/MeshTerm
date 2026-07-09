@@ -90,6 +90,16 @@ _BYTES_YELLOW = "bold #fde047"
 _BYTES_ORANGE = "bold #ff9500"
 
 
+def _sender_hue(sender: str) -> str:
+    """The stable per-sender colour a name is drawn in, keyed on the name's characters.
+
+    Shared by the live transcript (sender headers, ``@mentions``) and the conversation list
+    (a contact's colour dot, a channel preview's inline sender), so a person reads the same
+    colour everywhere. ``you`` and unknown (``·``) senders are handled by the caller.
+    """
+    return _SENDER_COLORS[sum(map(ord, sender)) % len(_SENDER_COLORS)]
+
+
 def _split_channel_sender(text: str) -> tuple[Optional[str], str]:
     """Split a channel message into ``(sender_name, body)`` when it carries a name prefix.
 
@@ -436,7 +446,7 @@ class ChatScreen(Screen):
             return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
             return "muted"
-        return _SENDER_COLORS[sum(map(ord, sender)) % len(_SENDER_COLORS)]
+        return _sender_hue(sender)
 
     # --- input ---------------------------------------------------------------
 
