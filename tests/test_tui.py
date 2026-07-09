@@ -611,7 +611,7 @@ def test_device_picker_smoke_tests_and_reprompts(tmp_path) -> None:
     # First probe fails (not MeshCore), second answers with self-info.
     results = [None, {"adv_name": "BaseStation"}]
 
-    async def verify(_device):
+    async def verify(_device, _pin=None):
         return results.pop(0)
 
     chosen = asyncio.run(prompt_device(ui, devices, store, verify))
@@ -647,7 +647,7 @@ def test_device_picker_drops_copyright_after_first_selection(tmp_path) -> None:
     # First probe fails (re-pick), second passes — exercising every post-selection screen.
     results = [None, {"adv_name": "BaseStation"}]
 
-    async def verify(_device):
+    async def verify(_device, _pin=None):
         return results.pop(0)
 
     asyncio.run(prompt_device(_Ui(), devices, store, verify))
@@ -655,6 +655,90 @@ def test_device_picker_drops_copyright_after_first_selection(tmp_path) -> None:
     # notice, and the re-opened picker all drop it.
     assert footnotes[0][0] == "select" and "Homestead" in footnotes[0][1]
     assert all(footnote is None for _kind, footnote in footnotes[1:])
+
+
+def test_device_picker_prompts_and_retries_ble_pin(tmp_path) -> None:
+    """A PIN-protected device opens the popup, re-asks on a wrong code, then connects."""
+    from meshterm.core.connection import DeviceAuthenticationError
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import prompt_device
+
+    devices = [
+        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Pinned")
+    ]
+    store = DeviceStore(tmp_path / "devices.json")
+
+    entered = iter(["000000", "654321"])  # a wrong code, then the right one
+    errors: list = []
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            return next(it.value for it in items if isinstance(it, Choice))
+
+        async def notify_startup(self, renderable, *, title="", banner=None, footnote=None):
+            raise AssertionError("a successful PIN connect shows no failure notice")
+
+        async def busy_startup(self, message, coro, *, title="", banner=None, footnote=None):
+            return await coro
+
+        async def prompt_pin_startup(
+            self, device_name, *, error="", help_text="", banner=None, footnote=None
+        ):
+            errors.append(error)
+            return next(entered)
+
+    async def verify(_device, pin=None):
+        if pin != "654321":  # the first probe (no PIN) and the wrong code both get rejected
+            raise DeviceAuthenticationError("needs a Bluetooth pairing PIN")
+        return {"adv_name": "Pinned", "model": "Seeed Tracker T1000-E"}
+
+    chosen = asyncio.run(prompt_device(_Ui(), devices, store, verify))
+    assert chosen is devices[0]
+    # Asked twice: first with no error, then with a "rejected" note after the wrong code.
+    assert errors[0] == ""
+    assert "rejected" in errors[1].lower()
+    remembered = store.load()
+    assert remembered is not None
+    assert remembered.node_name == "Pinned"
+    assert remembered.hardware_model == "Seeed Tracker T1000-E"  # learned once connected
+
+
+def test_device_picker_pin_cancel_returns_to_list(tmp_path) -> None:
+    """Esc on the PIN popup returns to the device list instead of connecting."""
+    from meshterm.core.connection import DeviceAuthenticationError
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import _QUIT, prompt_device
+
+    devices = [
+        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Pinned")
+    ]
+    store = DeviceStore(tmp_path / "devices.json")
+    picks = iter([0, "quit"])  # pick the device once, then quit the re-opened list
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            choices = [it for it in items if isinstance(it, Choice)]
+            step = next(picks)
+            if step == "quit":
+                return next(it.value for it in choices if it.value is _QUIT)
+            return choices[step].value
+
+        async def busy_startup(self, message, coro, *, title="", banner=None, footnote=None):
+            return await coro
+
+        async def prompt_pin_startup(
+            self, device_name, *, error="", help_text="", banner=None, footnote=None
+        ):
+            return None  # the user cancels the PIN entry
+
+    async def verify(_device, pin=None):
+        raise DeviceAuthenticationError("needs a Bluetooth pairing PIN")
+
+    result = asyncio.run(prompt_device(_Ui(), devices, store, verify))
+    assert result is None  # cancelling the PIN then quitting leaves the picker empty-handed
+    assert store.load() is None  # nothing was remembered
 
 
 def test_device_picker_quit_row_returns_none(tmp_path) -> None:

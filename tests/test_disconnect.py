@@ -116,24 +116,26 @@ def test_ble_auth_error_walks_the_exception_chain() -> None:
 
 
 async def test_create_ble_translates_auth_error_to_pin_guidance() -> None:
-    """A raw GATT auth rejection becomes a clean DeviceCommandError that names the PIN fix."""
+    """A raw GATT auth rejection becomes a DeviceAuthenticationError that names the PIN fix."""
 
     class _FakeMeshCore:
         @staticmethod
         async def create_ble(**kwargs):
             raise BleakGATTProtocolError("Insufficient Authentication")
 
-    # No PIN supplied → tell the user to pass one.
+    # No PIN supplied → tell the user to pass one. The subclass lets the interactive picker
+    # catch "needs a PIN" specifically, while the CLI still catches it as DeviceCommandError.
     dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
-    with pytest.raises(DeviceCommandError) as excinfo:
+    with pytest.raises(connection.DeviceAuthenticationError) as excinfo:
         await dev._create_ble(_FakeMeshCore)
+    assert isinstance(excinfo.value, DeviceCommandError)  # so the scripted CLI catches it too
     assert "--ble-pin" in str(excinfo.value)
 
     # PIN supplied but rejected → say it was wrong, not that none was given.
     dev_pin = connection.MeshCoreDevice(
         transport="ble", address="00:11:22:33:44:55", pin="123456"
     )
-    with pytest.raises(DeviceCommandError) as excinfo_pin:
+    with pytest.raises(connection.DeviceAuthenticationError) as excinfo_pin:
         await dev_pin._create_ble(_FakeMeshCore)
     assert "rejected" in str(excinfo_pin.value).lower()
 

@@ -26,7 +26,14 @@ from rich.text import Text
 
 from . import frame
 from .progress import TuiProgress
-from .prompt import AutocompleteScreen, ButtonDialog, ConfirmScreen, TextScreen, Validator
+from .prompt import (
+    AutocompleteScreen,
+    ButtonDialog,
+    ConfirmScreen,
+    PinDialog,
+    TextScreen,
+    Validator,
+)
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
@@ -308,6 +315,38 @@ class TuiSession:
             except Exception:  # noqa: BLE001 - a spinner hiccup must never break startup
                 pass
             self.pop(screen)
+
+    async def prompt_pin_startup(
+        self,
+        device_name: str,
+        *,
+        error: str = "",
+        help_text: str = "",
+        banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Ask for a companion's Bluetooth PIN on the chromeless startup splash.
+
+        Drawn like :meth:`notify_startup` / :meth:`select_startup` — a bordered box centered
+        under ``banner`` with no status bars — so the PIN request is visually part of the same
+        device-selection flow. ``error`` is shown in the box on a re-ask after a rejected code.
+
+        Args:
+            device_name: The companion's display name, shown in the prompt.
+            error: A rejected-PIN message to display (empty on the first ask).
+            help_text: A muted hint under the field.
+            banner: Wordmark rows drawn above the box (as on the other startup splashes).
+            footnote: Muted line drawn below the box.
+
+        Returns:
+            The entered PIN, or ``None`` if the user pressed Esc to cancel.
+        """
+        screen = PinDialog(device_name, error=error, help_text=help_text)
+        screen.chrome = False
+        screen.banner = banner
+        screen.footnote = footnote
+        result = await self.run_screen(screen)
+        return None if result is CANCEL else result
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Show a drag-with-arrows reorder screen; return the final order of row indices."""

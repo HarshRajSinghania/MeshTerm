@@ -193,6 +193,65 @@ class TextScreen(Screen):
                 self._error = ""
 
 
+class PinDialog(Screen):
+    """A startup popup that collects a Bluetooth pairing PIN, re-asking on a rejected code.
+
+    Shown by the device picker when a chosen companion answers the scan but refuses the GATT
+    connection until it is bonded. It presents a masked field centered in its own bordered box
+    under the wordmark — the same chromeless-splash presentation as the picker and its spinner
+    — so it reads as one more step of the startup flow rather than a context switch.
+
+    It only *collects* a PIN; verifying it means actually opening the BLE connection, which the
+    picker does. So a rejected code isn't detected here — the picker catches the authentication
+    failure and re-opens this dialog with ``error`` set, which is why the field starts empty each
+    time. Resolves with the entered PIN, or :data:`CANCEL` on Esc (the user gave up — the picker
+    returns them to the device list).
+    """
+
+    footer_hint = "Enter connect · Esc cancel"
+
+    def __init__(self, device_name: str, *, error: str = "", help_text: str = "") -> None:
+        """Build the PIN dialog.
+
+        Args:
+            device_name: The companion's display name, woven into the prompt.
+            error: A message shown in the error style — set by the picker on a re-ask after a
+                rejected PIN; empty on the first ask.
+            help_text: A muted hint under the field (e.g. where to read the code).
+        """
+        super().__init__()
+        self.title = "Bluetooth PIN required"
+        self._device = device_name
+        self._error = error
+        self._help = help_text
+        self._editor = _LineEditor("")
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the prompt, the masked field, any hint, and a rejected-PIN error."""
+        prompt = Text()
+        prompt.append(self._device, style="brand")
+        prompt.append(" needs a pairing PIN to connect.")
+        parts: list[RenderableType] = [prompt, Text(""), self._editor.render(mask=True)]
+        if self._help:
+            parts.append(Text(self._help, style="muted"))
+        if self._error:
+            parts.append(Text(self._error, style="err"))
+        return render_lines(Group(*parts), width)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Edit the field, submit a non-empty PIN on Enter, or cancel on Esc."""
+        if action == "enter":
+            pin = self._editor.text.strip()
+            if not pin:  # an empty PIN can't be right — nudge rather than pointlessly retry
+                self._error = "Enter the PIN, or press Esc to cancel."
+                return
+            self.resolve(pin)
+        elif action == "escape":
+            super().handle("escape")
+        elif self._editor.edit(action, data):
+            self._error = ""
+
+
 class ConfirmScreen(Screen):
     """A yes/no prompt. Resolves with a bool, or CANCEL on Esc."""
 

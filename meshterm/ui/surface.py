@@ -94,6 +94,18 @@ class Ui:
         """Await ``coro`` while showing a spinner on the startup splash; return its result."""
         raise NotImplementedError
 
+    async def prompt_pin_startup(
+        self,
+        device_name: str,
+        *,
+        error: str = "",
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Ask for a Bluetooth companion's pairing PIN on the startup splash; ``None`` if cancelled."""
+        raise NotImplementedError
+
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Let the user rearrange rows with the arrows; return the new order of row indices."""
         raise NotImplementedError
@@ -206,6 +218,22 @@ class PlainUi(Ui):
     ) -> Any:
         """No splash in scripted CLI mode; just await the task and return its result."""
         return await coro
+
+    async def prompt_pin_startup(
+        self,
+        device_name: str,
+        *,
+        error: str = "",
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Unsupported in scripted CLI mode — a PIN must be supplied non-interactively.
+
+        The scripted path can't pop a dialog, so a PIN-protected device is handled by the
+        clean ``DeviceAuthenticationError`` message (pass ``--ble-pin``) rather than a prompt.
+        """
+        raise self._no_prompt()
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
         """Unsupported in scripted CLI mode."""
@@ -362,6 +390,20 @@ class TuiUi(Ui):
         """Delegate to the session's animated-spinner startup splash."""
         return await self.session.busy_startup(
             message, coro, title=title, banner=banner, footnote=footnote
+        )
+
+    async def prompt_pin_startup(
+        self,
+        device_name: str,
+        *,
+        error: str = "",
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Delegate to the session's startup PIN dialog."""
+        return await self.session.prompt_pin_startup(
+            device_name, error=error, help_text=help_text, banner=banner, footnote=footnote
         )
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:

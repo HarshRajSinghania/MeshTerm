@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
@@ -284,8 +284,12 @@ async def _startup(ctx: AppContext) -> bool:
         # it for the session rather than reopening (boards often reset on each open).
         probed: dict = {}
 
-        async def verify(device: DiscoveredDevice):
-            result = await probe_device(device, baudrate=baudrate, pin=ctx.ble_pin)
+        async def verify(device: DiscoveredDevice, pin: Optional[str] = None):
+            # ``pin`` is what the picker's PIN dialog collected on a retry; fall back to any
+            # ``--ble-pin`` supplied on the CLI for the first attempt.
+            result = await probe_device(
+                device, baudrate=baudrate, pin=pin if pin is not None else ctx.ble_pin
+            )
             if result is None:
                 return None
             connection, info = result

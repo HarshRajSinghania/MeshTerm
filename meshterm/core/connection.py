@@ -78,6 +78,17 @@ class DeviceCommandError(RuntimeError):
     """
 
 
+class DeviceAuthenticationError(DeviceCommandError):
+    """A Bluetooth companion refused the connection because it needs a pairing PIN/bond.
+
+    A distinct :class:`DeviceCommandError` subclass so callers can tell "this device needs a
+    PIN" apart from an ordinary command failure and offer to collect one: the interactive
+    picker opens a PIN dialog and retries, while the scripted CLI (which catches the base
+    class) prints the message and bails, since it can't prompt. The message already names the
+    fix (``--ble-pin`` and OS pairing).
+    """
+
+
 #: Exception class names that signal the link to the companion has dropped — the device was
 #: unplugged, powered off, moved out of range, or its port/transport otherwise vanished — as
 #: opposed to an ordinary command-level failure. Matched by name in :func:`is_connection_lost`
@@ -697,7 +708,7 @@ class MeshCoreDevice(Device):
             # propagates unchanged so genuine link-loss still flows to is_connection_lost.
             if not _is_ble_auth_error(exc):
                 raise
-            raise DeviceCommandError(self._ble_auth_message()) from exc
+            raise DeviceAuthenticationError(self._ble_auth_message()) from exc
 
     def _ble_auth_message(self) -> str:
         """A clean, actionable error for a Bluetooth companion that requires a PIN/bond.

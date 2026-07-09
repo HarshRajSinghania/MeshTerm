@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from rich.cells import cell_len
 from rich.text import Text
 
-from ..core.connection import DeviceCommandError
+from ..core.connection import DeviceAuthenticationError, DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
 from ..core.discovery import DiscoveredDevice
 from .logo import load_logo
@@ -34,12 +34,13 @@ from .tui import Choice, Separator
 if TYPE_CHECKING:
     from .surface import Ui
 
-#: A smoke test: probe a chosen device and return its self-info dict if it is a MeshCore
-#: companion, else ``None``. Supplied by the caller so this UI module stays free of the
-#: connection *logic*. It may raise :class:`DeviceCommandError` for an actionable failure the
-#: user can fix (e.g. a Bluetooth device that needs a PIN); the picker shows that message
-#: verbatim instead of the generic "didn't answer".
-Verify = Callable[[DiscoveredDevice], Awaitable[Optional[dict]]]
+#: A smoke test: probe a chosen device with an optional Bluetooth PIN and return its self-info
+#: dict if it is a MeshCore companion, else ``None``. Supplied by the caller so this UI module
+#: stays free of the connection *logic*. It may raise :class:`DeviceAuthenticationError` when
+#: the device needs a PIN (the picker then collects one and retries with it), or another
+#: :class:`DeviceCommandError` for a different actionable failure (shown verbatim). The second
+#: argument is the PIN to try, or ``None`` to use whatever default the caller holds.
+Verify = Callable[[DiscoveredDevice, Optional[str]], Awaitable[Optional[dict]]]
 
 #: The Quit row's value. Selecting it — like pressing Esc — leaves the splash without a
 #: device, which the caller treats as "exit the program".
@@ -152,6 +153,95 @@ def _model_from(info: dict) -> str:
     return str(info.get("model") or "")
 
 
+async def _smoke_test(
+    ui: "Ui",
+    chosen: DiscoveredDevice,
+    name: str,
+    where: str,
+    verify: Verify,
+    footnote: Optional[str],
+) -> Optional[dict]:
+    """Smoke-test ``chosen`` behind the splash spinner, collecting a Bluetooth PIN if needed.
+
+    Runs the ``verify`` probe on the chromeless splash (its wordmark and box unchanged, only an
+    animated spinner where the device list was). If the device answers but demands a pairing
+    PIN, opens the :class:`~meshterm.ui.tui.prompt.PinDialog` popup and retries with what the
+    user enters — re-opening it with a "rejected" note on a wrong code — until the device
+    connects or the user presses Esc.
+
+    Args:
+        ui: The interactive surface used for the spinner, PIN dialog, and failure notices.
+        chosen: The device being tested.
+        name: Its display name, woven into the spinner line and the PIN prompt.
+        where: A human phrase for its transport ("over Bluetooth" / "on COM5").
+        verify: The smoke-test callback (see :data:`Verify`); called with the PIN to try.
+        footnote: The splash footnote to keep drawn under the box (``None`` after the copyright
+            is retired).
+
+    Returns:
+        The device's self-info dict once it answers, or ``None`` — after showing the relevant
+        notice — to send the user back to the device list (not a MeshCore endpoint, an
+        unrecoverable failure, or a cancelled PIN prompt).
+    """
+    pin: Optional[str] = None
+    pin_error = ""  # empty on the first ask; set once a PIN has been rejected
+    while True:
+        # BLE connect and service discovery take a few seconds, so the spinner matters most here.
+        try:
+            info = await ui.busy_startup(
+                f"Talking to {name} {where}…",
+                verify(chosen, pin),
+                title="Checking companion",
+                banner=load_logo(),
+                footnote=footnote,
+            )
+        except DeviceAuthenticationError:
+            # The device answered the scan but won't connect until it's bonded (or the last PIN
+            # was wrong). Collect one in the popup and loop to retry; Esc returns to the list.
+            entered = await ui.prompt_pin_startup(
+                name,
+                error=pin_error,
+                help_text="The 6-digit code shown on the device or in the MeshCore app.",
+                banner=load_logo(),
+                footnote=footnote,
+            )
+            if entered is None:
+                return None  # the user gave up → back to the device list
+            pin = entered
+            pin_error = "That PIN was rejected — check the code and try again."
+            continue
+        except DeviceCommandError as exc:
+            # A different actionable failure (not a PIN): show its remedy verbatim, then back to
+            # the list. Plain styled text so the message's own punctuation isn't parsed as markup.
+            notice = Text()
+            notice.append(str(exc), style="warn")
+            notice.append("\nChoose another device.")
+            await ui.notify_startup(
+                notice, title="Can't connect yet", banner=load_logo(), footnote=footnote
+            )
+            return None
+
+        if info is None:
+            reason = (
+                "It may be out of range, powered off, already connected elsewhere, or busy."
+                if chosen.is_ble
+                else "It may be a different kind of serial device, powered off, or busy."
+            )
+            await ui.notify_startup(
+                Text.from_markup(
+                    f"[warn]{name} {where} didn't answer as a MeshCore device.[/warn]\n"
+                    f"{reason}\n"
+                    "Choose another device."
+                ),
+                title="Not a MeshCore device",
+                banner=load_logo(),
+                footnote=footnote,
+            )
+            return None
+
+        return info
+
+
 async def prompt_device(
     ui: "Ui",
     devices: list[DiscoveredDevice],
@@ -221,49 +311,10 @@ async def prompt_device(
         name = _display_name(chosen, registry)
         # "over Bluetooth" reads better than an address; a serial device names its port.
         where = "over Bluetooth" if chosen.is_ble else f"on {chosen.port}"
-        # Smoke-test the choice in place: the splash keeps its wordmark and box, only the box
-        # contents swap for an animated spinner while we talk to the device. BLE connect and
-        # service discovery take a few seconds, so the spinner matters most here.
-        try:
-            info = await ui.busy_startup(
-                f"Talking to {name} {where}…",
-                verify(chosen),
-                title="Checking companion",
-                banner=load_logo(),
-                footnote=footnote,
-            )
-        except DeviceCommandError as exc:
-            # The probe reached the device but it told us how it must be reached (e.g. it needs
-            # a BLE PIN). Show that remedy verbatim — not the generic "didn't answer" below,
-            # which would leave the user with no idea a PIN was the missing piece. Built as
-            # plain styled text so the message's own punctuation is never parsed as markup.
-            notice = Text()
-            notice.append(str(exc), style="warn")
-            notice.append("\nChoose another device.")
-            await ui.notify_startup(
-                notice,
-                title="Can't connect yet",
-                banner=load_logo(),
-                footnote=footnote,
-            )
-            continue
-
+        # Smoke-test the choice in place (prompting for a PIN and retrying if it needs one).
+        # ``None`` means the smoke test failed and already showed the user why — pick again.
+        info = await _smoke_test(ui, chosen, name, where, verify, footnote)
         if info is None:
-            reason = (
-                "It may be out of range, powered off, already connected elsewhere, or busy."
-                if chosen.is_ble
-                else "It may be a different kind of serial device, powered off, or busy."
-            )
-            await ui.notify_startup(
-                Text.from_markup(
-                    f"[warn]{name} {where} didn't answer as a MeshCore device.[/warn]\n"
-                    f"{reason}\n"
-                    "Choose another device."
-                ),
-                title="Not a MeshCore device",
-                banner=load_logo(),
-                footnote=footnote,
-            )
             continue
 
         # Confirmed: remember it forever. We return straight away, so there's no need to
