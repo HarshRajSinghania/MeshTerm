@@ -13,7 +13,7 @@ from typing import Optional
 
 from .config import DeviceProfile
 from .device_store import RememberedDevice
-from .discovery import DiscoveredDevice
+from .discovery import TRANSPORT_BLE, TRANSPORT_SERIAL, DiscoveredDevice
 
 
 class DeviceSelectionError(ValueError):
@@ -29,22 +29,33 @@ class Resolution:
     """The outcome of resolving which device to use.
 
     Attributes:
-        port: The chosen serial port.
+        port: The chosen connection target — the serial port for a serial device, or the
+            Bluetooth address for a BLE device. (Named ``port`` for historical reasons; use
+            :attr:`target`.)
         device: The matching discovered device, when enumeration knows it (so the caller
             can remember it on a successful connection). ``None`` for an explicit
-            ``--port``/profile port that is not currently enumerable.
-        source: Where the choice came from (``"port"``, ``"profile"``, ``"remembered"``,
-            or ``"only"``), for logging and messaging.
+            target that is not currently enumerable.
+        source: Where the choice came from (``"port"``, ``"ble"``, ``"profile"``,
+            ``"remembered"``, or ``"only"``), for logging and messaging.
+        transport: ``"serial"`` or ``"ble"`` — which connection layer opens the device.
     """
 
     port: str
     device: Optional[DiscoveredDevice]
     source: str
+    transport: str = TRANSPORT_SERIAL
+
+    @property
+    def target(self) -> str:
+        """The connection target (serial port or BLE address); alias for :attr:`port`."""
+        return self.port
 
 
-def _find_by_port(devices: list[DiscoveredDevice], port: str) -> Optional[DiscoveredDevice]:
-    """Return the discovered device on ``port``, if enumeration found one."""
-    return next((d for d in devices if d.port == port), None)
+def _find_by_target(
+    devices: list[DiscoveredDevice], target: str
+) -> Optional[DiscoveredDevice]:
+    """Return the discovered device whose port or BLE address equals ``target``."""
+    return next((d for d in devices if d.target == target or d.port == target), None)
 
 
 def _format_device_list(devices: list[DiscoveredDevice]) -> str:
@@ -54,7 +65,10 @@ def _format_device_list(devices: list[DiscoveredDevice]) -> str:
     lines = []
     for d in devices:
         flag = " [likely LoRa]" if d.is_likely_lora else ""
-        lines.append(f"  • {d.port} — {d.product or d.description or 'serial device'}{flag}")
+        kind = "BLE" if d.is_ble else "serial"
+        lines.append(
+            f"  • {d.target} ({kind}) — {d.product or d.description or 'device'}{flag}"
+        )
     return "\n".join(lines)
 
 
@@ -63,54 +77,64 @@ def resolve_device(
     remembered: Optional[RememberedDevice],
     *,
     explicit_port: Optional[str] = None,
+    explicit_ble: Optional[str] = None,
     profile: Optional[DeviceProfile] = None,
 ) -> Resolution:
-    """Decide which serial port to use without prompting.
+    """Decide which companion to connect to without prompting.
 
     Resolution priority:
 
-    1. ``explicit_port`` (an explicit ``--port``).
-    2. ``profile.port`` (an explicitly chosen profile with a port).
-    3. The remembered "last known good" device, if it is currently attached.
-    4. The single attached device, if exactly one is present.
+    1. ``explicit_ble`` (an explicit ``--ble`` Bluetooth address).
+    2. ``explicit_port`` (an explicit ``--port``).
+    3. ``profile.port`` (an explicitly chosen profile with a port).
+    4. The remembered "last known good" device, if it is currently attached/in range.
+    5. The single attached device, if exactly one is present.
 
     Otherwise a :class:`DeviceSelectionError` is raised listing the candidates.
 
     Args:
-        devices: Currently discovered devices (see ``discover_devices``).
+        devices: Currently discovered devices (serial and/or BLE).
         remembered: The remembered default, if any.
         explicit_port: A serial port supplied on the command line.
+        explicit_ble: A Bluetooth address supplied on the command line.
         profile: A device profile supplied on the command line.
 
     Returns:
-        A :class:`Resolution` naming the chosen port.
+        A :class:`Resolution` naming the chosen target and transport.
 
     Raises:
-        DeviceSelectionError: If no port can be chosen unambiguously.
+        DeviceSelectionError: If no device can be chosen unambiguously.
     """
+    if explicit_ble:
+        return Resolution(
+            explicit_ble, _find_by_target(devices, explicit_ble), "ble", TRANSPORT_BLE
+        )
+
     if explicit_port:
-        return Resolution(explicit_port, _find_by_port(devices, explicit_port), "port")
+        match = _find_by_target(devices, explicit_port)
+        return Resolution(explicit_port, match, "port", TRANSPORT_SERIAL)
 
     if profile is not None and profile.port:
-        return Resolution(profile.port, _find_by_port(devices, profile.port), "profile")
+        match = _find_by_target(devices, profile.port)
+        return Resolution(profile.port, match, "profile", TRANSPORT_SERIAL)
 
     if remembered is not None:
         match = next((d for d in devices if remembered.matches(d)), None)
         if match is not None:
-            return Resolution(match.port, match, "remembered")
+            return Resolution(match.target, match, "remembered", match.transport)
 
     if len(devices) == 1:
-        return Resolution(devices[0].port, devices[0], "only")
+        return Resolution(devices[0].target, devices[0], "only", devices[0].transport)
 
     if not devices:
         raise DeviceSelectionError(
-            "No serial devices detected. Connect a companion device, or pass --port "
-            "explicitly, or use --mock for the simulator."
+            "No companion devices detected. Connect a companion device (USB or Bluetooth), "
+            "or pass --port / --ble explicitly, or use --mock for the simulator."
         )
 
     raise DeviceSelectionError(
-        "Multiple serial devices detected and no default to fall back on.\n"
+        "Multiple companion devices detected and no default to fall back on.\n"
         f"{_format_device_list(devices)}\n"
-        "Choose one with --port <PORT> (or run 'meshterm devices' to inspect them). "
-        "The chosen device is remembered as the default after it connects."
+        "Choose one with --port <PORT> or --ble <ADDRESS> (or run 'meshterm devices' to "
+        "inspect them). The chosen device is remembered as the default after it connects."
     )

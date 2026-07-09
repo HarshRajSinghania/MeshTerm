@@ -35,12 +35,19 @@ def default_config_dir() -> Path:
 class DeviceProfile:
     """Connection defaults for one physical companion device.
 
+    A profile addresses either a serial companion (via ``port``) or a Bluetooth one (via
+    ``transport = "ble"`` and ``address``). ``transport`` defaults to serial, so existing
+    port-only profiles are unchanged.
+
     Attributes:
         name: The profile alias (e.g. ``"yagi"``).
-        port: Serial port path (e.g. ``COM5`` or ``/dev/ttyUSB0``).
+        port: Serial port path (e.g. ``COM5`` or ``/dev/ttyUSB0``); serial profiles.
         baudrate: Serial baud rate.
         default_tx_power: TX power to assume/restore for this device, if known.
         description: Free-text note about the hardware.
+        transport: ``"serial"`` (default) or ``"ble"``.
+        address: Bluetooth address (e.g. ``AA:BB:CC:DD:EE:FF``); BLE profiles.
+        ble_pin: Optional BLE pairing PIN, if the Bluetooth companion requires one.
     """
 
     name: str
@@ -48,6 +55,14 @@ class DeviceProfile:
     baudrate: int = 115200
     default_tx_power: Optional[int] = None
     description: str = ""
+    transport: str = "serial"
+    address: Optional[str] = None
+    ble_pin: Optional[str] = None
+
+    @property
+    def is_ble(self) -> bool:
+        """Whether this profile addresses a Bluetooth LE companion."""
+        return self.transport == "ble"
 
 
 @dataclass(slots=True)
@@ -121,12 +136,19 @@ class Settings:
 
         profiles: dict[str, DeviceProfile] = {}
         for pname, pdata in (data.get("profiles") or {}).items():
+            # A profile with an ``address`` (or ``transport = "ble"``) is a Bluetooth device;
+            # otherwise it's serial. Defaulting the transport this way keeps port-only
+            # profiles working untouched while a bare ``address`` is enough to declare a BLE one.
+            transport = pdata.get("transport") or ("ble" if pdata.get("address") else "serial")
             profiles[pname] = DeviceProfile(
                 name=pname,
                 port=pdata.get("port"),
                 baudrate=pdata.get("baudrate", 115200),
                 default_tx_power=pdata.get("default_tx_power"),
                 description=pdata.get("description", ""),
+                transport=transport,
+                address=pdata.get("address"),
+                ble_pin=pdata.get("ble_pin"),
             )
 
         return cls(

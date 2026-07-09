@@ -1,12 +1,12 @@
-"""The ``devices`` tool: enumerate attached serial companion devices.
+"""The ``devices`` tool: enumerate attached serial and in-range Bluetooth companions.
 
-Discovery never opens the radio — it only lists what is attached. This is a CLI-only,
-read-only inventory (``menu_visible = False``): by the time the interactive menu is up a
-device is already selected, so the listing has no job there — it belongs on the command line
-as a startup-time "which port is my radio?" diagnostic. It marks devices already confirmed as
-MeshCore companions (and the active one). Selecting a companion is a startup-only concern:
-pass ``--port`` on the CLI (remembered after it connects), or pick from the prompt shown when
-the menu launches (which smoke-tests the choice before confirming it).
+Discovery never opens the radio — it only lists what is attached or advertising. This is a
+CLI-only, read-only inventory (``menu_visible = False``): by the time the interactive menu is
+up a device is already selected, so the listing has no job there — it belongs on the command
+line as a startup-time "which port/address is my radio?" diagnostic. It marks devices already
+confirmed as MeshCore companions (and the active one). Selecting a companion is a startup-only
+concern: pass ``--port`` or ``--ble`` on the CLI (remembered after it connects), or pick from
+the prompt shown when the menu launches (which smoke-tests the choice before confirming it).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import typer
 from rich.table import Table
 
 from ..context import AppContext
-from ..core.discovery import discover_devices
+from ..core.discovery import discover_all, discover_devices
 from .base import Tool, ToolResult, register
 
 #: "MeshCore?" table cell per discovery confidence tier, for devices we have *not* yet
@@ -36,10 +36,10 @@ _CONFIRMED_CELL = "[ok]yes[/ok]"
 
 @register
 class DevicesTool(Tool):
-    """List attached serial devices, flag likely LoRa hardware, mark the default."""
+    """List attached serial + in-range Bluetooth companions, flag likely LoRa, mark the default."""
 
     name = "devices"
-    help = "List attached serial devices and flag likely LoRa hardware."
+    help = "List attached serial and Bluetooth companion devices and flag likely LoRa hardware."
     category = "Device"
     order = 5
     menu_visible = False  # CLI-only: a startup diagnostic with no place in a connected session
@@ -54,18 +54,24 @@ class DevicesTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing how many devices were found.
         """
-        devices = discover_devices()
+        scan_ble = params.get("ble", True)
+        devices = await discover_all(ble=scan_ble) if scan_ble else discover_devices()
         known = ctx.device_store.load_all()
         remembered = ctx.device_store.load()
         active = ctx.selected_device
-        active_port = ctx.port_override or (active.port if active else None)
+        active_target = ctx.ble_override or ctx.port_override or (
+            active.target if active else None
+        )
 
         if ctx.json_output:
             import json
 
             payload = [
                 {
+                    "transport": d.transport,
                     "port": d.port,
+                    "address": d.address,
+                    "target": d.target,
                     "label": d.label,
                     "vendor": d.vendor_label,
                     "likely_lora": d.is_likely_lora,
@@ -74,7 +80,7 @@ class DevicesTool(Tool):
                     "serial_number": d.serial_number,
                     "stable_id": d.stable_id,
                     "remembered": remembered is not None and remembered.matches(d),
-                    "active": d.port == active_port,
+                    "active": d.target == active_target,
                 }
                 for d in devices
             ]
@@ -83,28 +89,29 @@ class DevicesTool(Tool):
 
         if not devices:
             ctx.ui.note(
-                "[warn]No serial devices detected.[/warn] "
-                "Connect a companion device, or use [accent]--mock[/accent] for the simulator."
+                "[warn]No companion devices detected.[/warn] "
+                "Connect one over USB or power on a Bluetooth companion nearby, or use "
+                "[accent]--mock[/accent] for the simulator."
             )
             return ToolResult(summary={"count": 0})
 
-        table = Table(title="Serial devices", border_style="muted", expand=False)
+        table = Table(title="Companion devices", border_style="muted", expand=False)
         table.add_column("", style="ok", no_wrap=True)  # active/confirmed markers
-        table.add_column("Port", style="brand")
+        table.add_column("Port / Address", style="brand")
         table.add_column("Device")
         table.add_column("Vendor", style="muted")
         table.add_column("MeshCore?", justify="center")
         table.add_column("Serial", style="muted")
         for d in devices:
             confirmed = known.get(d.stable_id)  # the remembered record, if ever confirmed
-            is_active = d.port == active_port
+            is_active = d.target == active_target
             marker = ("●" if is_active else "") + ("★" if confirmed else "")
-            device_name = d.product or d.description or "[muted]?[/muted]"
+            device_name = d.name or d.product or d.description or "[muted]?[/muted]"
             if confirmed and confirmed.node_name:  # the mesh name learned on connect
                 device_name = f"{confirmed.node_name}  [muted]({device_name})[/muted]"
             table.add_row(
                 marker,
-                d.port,
+                d.target,
                 device_name,
                 d.vendor_label or "[muted]?[/muted]",
                 _CONFIRMED_CELL if confirmed else _MAYBE_CELL[d.confidence],
@@ -113,7 +120,7 @@ class DevicesTool(Tool):
         ctx.ui.show(table)
         ctx.ui.note(
             "[muted]● active   ★ confirmed MeshCore device. "
-            "Pass --port <PORT> to select on the CLI.[/muted]"
+            "Pass --port <PORT> or --ble <ADDRESS> to select on the CLI.[/muted]"
         )
         return ToolResult(summary={"count": len(devices)})
 
@@ -126,5 +133,9 @@ class DevicesTool(Tool):
         from ..cli import run_tool_command
 
         @app.command(name=self.name, help=self.help)
-        def _devices() -> None:
-            run_tool_command(self, {})
+        def _devices(
+            ble: bool = typer.Option(
+                True, "--ble/--no-ble", help="Include a Bluetooth LE scan (adds a few seconds)."
+            ),
+        ) -> None:
+            run_tool_command(self, {"ble": ble})

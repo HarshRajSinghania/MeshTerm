@@ -30,6 +30,23 @@ class _SerialException(Exception):
     """A stand-in for ``serial.SerialException`` (matched by type name, not import)."""
 
 
+class _FakeSerialDevice:
+    """A minimal stand-in for a connected serial :class:`Device` in liveness tests.
+
+    Its :meth:`link_present` mirrors the real serial device: it reports whether the port is
+    still enumerated by the OS, reading through the (monkeypatched) module function so tests
+    can flip presence on and off.
+    """
+
+    transport = "serial"
+
+    def __init__(self, port: str = "COM_TEST") -> None:
+        self._port = port
+
+    async def link_present(self) -> bool:
+        return connection.serial_port_present(self._port)
+
+
 def test_is_connection_lost_matches_serial_exception() -> None:
     """A pyserial-style read/write failure is classified as a dropped link."""
     assert is_connection_lost(_SerialException("ClearCommError failed (Access is denied.)"))
@@ -56,6 +73,24 @@ def test_is_connection_lost_ignores_ordinary_failures() -> None:
     """A transient command timeout or a generic error is not a dropped link."""
     assert not is_connection_lost(DeviceCommandError("the companion didn't respond in time"))
     assert not is_connection_lost(ValueError("bad value"))
+
+
+# These stand-ins are named to match bleak's real classes, since the classifier matches by
+# type name (not import) — see ``_CONNECTION_LOST_TYPES``.
+class BleakError(Exception):  # noqa: N818 - mirrors bleak's own (non-Error-suffixed) name
+    """A stand-in for ``bleak.exc.BleakError`` (matched by type name, not import)."""
+
+
+class BleakDeviceNotFoundError(Exception):
+    """A stand-in for ``bleak.exc.BleakDeviceNotFoundError``."""
+
+
+def test_is_connection_lost_matches_ble_errors() -> None:
+    """A dropped Bluetooth link is classified as a lost connection, like a serial unplug."""
+    assert is_connection_lost(BleakError("gatt operation failed"))  # matched by type name
+    assert is_connection_lost(BleakDeviceNotFoundError("AA:BB:CC not found"))
+    # The meshcore BLE transport reports link loss via a callback reason string.
+    assert is_connection_lost(RuntimeError("ble_transport_lost"))
 
 
 def _make_ctx(tmp_path: Path) -> AppContext:
@@ -92,6 +127,56 @@ async def test_reconnect_rebuilds_device_and_restores_services(tmp_path: Path) -
         assert ctx.chat.active
     finally:
         await ctx.aclose()
+
+
+async def test_ble_profile_opens_bluetooth_transport(tmp_path: Path, monkeypatch) -> None:
+    """A BLE profile makes ``device()`` build a Bluetooth connection by address."""
+    from meshterm.core import connection as conn
+    from meshterm.core.config import DeviceProfile
+
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "ble.db")
+    ctx = AppContext(
+        console=Console(file=io.StringIO()),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+        profile=DeviceProfile(name="handheld", transport="ble", address="AA:BB:CC:DD:EE:FF"),
+    )
+
+    built: dict = {}
+
+    class _FakeBle:
+        transport = "ble"
+
+        def __init__(self, **kw):
+            built.update(kw)
+            self._port = None
+            self._address = kw.get("address")
+
+        async def connect(self):
+            pass
+
+        async def get_self_info(self):
+            return {"name": "Handheld"}
+
+    def fake_make_device(**kw):
+        assert kw["transport"] == "ble"
+        return _FakeBle(**kw)
+
+    monkeypatch.setattr(conn, "make_device", fake_make_device)
+    # context imported make_device by name, so patch the reference it actually calls.
+    import meshterm.context as context_mod
+
+    monkeypatch.setattr(context_mod, "make_device", fake_make_device)
+    try:
+        device = await ctx.device()
+        assert device.transport == "ble"
+        assert built["address"] == "AA:BB:CC:DD:EE:FF"
+        assert ctx.active_transport == "ble"
+        assert ctx.active_port is None  # BLE has no serial port to watch
+    finally:
+        ctx.repo.close()
 
 
 async def test_reconnect_leaves_idle_services_idle(tmp_path: Path) -> None:
@@ -187,7 +272,8 @@ async def test_wait_for_disconnect_fires_when_port_vanishes(
     ctx = _make_ctx(tmp_path)
     # Pose as a live real-hardware session on COM_TEST (the mock can't be unplugged).
     ctx.mock = False
-    ctx._device = object()  # stand-in for a connected device; is_connected -> True
+    ctx._device = _FakeSerialDevice("COM_TEST")  # connected device; is_connected -> True
+    ctx._active_transport = "serial"
     ctx._active_port = "COM_TEST"
 
     checks = {"n": 0}
@@ -211,6 +297,45 @@ async def test_wait_for_disconnect_ignores_the_simulator(tmp_path: Path) -> None
     try:
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(menu._wait_for_disconnect(ctx), timeout=0.2)
+    finally:
+        ctx.repo.close()
+
+
+class _FakeBleDevice:
+    """A minimal stand-in for a connected BLE :class:`Device` in liveness tests.
+
+    Its :meth:`link_present` reads an ``is_connected`` flag, mirroring how the real BLE
+    device reads the meshcore client's connection state.
+    """
+
+    transport = "ble"
+
+    def __init__(self) -> None:
+        self.is_connected = True
+
+    async def link_present(self) -> bool:
+        return self.is_connected
+
+
+async def test_wait_for_disconnect_fires_when_ble_link_drops(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The same watcher fires for BLE once the peripheral's connection flag flips false."""
+    ctx = _make_ctx(tmp_path)
+    ctx.mock = False
+    device = _FakeBleDevice()
+    ctx._device = device
+    ctx._active_transport = "ble"
+    ctx._active_address = "AA:BB:CC:DD:EE:FF"
+
+    async def drop_soon() -> None:
+        device.is_connected = False  # the peripheral goes out of range
+
+    monkeypatch.setattr(menu, "_LIVENESS_POLL_S", 0.0)
+    monkeypatch.setattr(menu, "_LIVENESS_CONFIRM_S", 0.0)
+    try:
+        await drop_soon()
+        await asyncio.wait_for(menu._wait_for_disconnect(ctx), timeout=2.0)
     finally:
         ctx.repo.close()
 

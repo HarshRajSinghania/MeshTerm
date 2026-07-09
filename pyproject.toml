@@ -15,6 +15,7 @@ keywords = ["meshcore", "lora", "mesh", "radio", "cli"]
 dependencies = [
     "meshcore>=2.3",     # companion-device protocol (serial/BLE/TCP)
     "pyserial>=3.5",      # serial-port enumeration for device discovery
+    "bleak>=0.22",        # Bluetooth LE scanning + companion connection
     "typer>=0.12",        # scripted CLI; subcommands mirror the menu
     "rich>=13.7",         # modern console rendering (progress, tables, panels)
     "prompt_toolkit>=3.0",  # full-screen interactive TUI (terminal, input, resize)

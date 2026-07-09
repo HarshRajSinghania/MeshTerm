@@ -1,7 +1,8 @@
 # MeshTerm
 
 A modern, extensible command-line toolkit for tuning and exploring a
-[MeshCore](https://meshcore.co.uk/) mesh through a serial-connected companion device.
+[MeshCore](https://meshcore.co.uk/) mesh through a serial- or Bluetooth-connected companion
+device.
 
 MeshTerm is interactive by default (a Rich + Questionary menu) and fully scriptable
 (every menu option is also a Typer subcommand). Every run is logged to SQLite and can be
@@ -15,7 +16,7 @@ turned into interactive HTML visualizations.
 | **Device info** | ✅ skeleton | Show the connected companion device's identity and radio config. |
 | **Node list** | ✅ working | List this node and its known contacts — full public keys with the path-hash prefix highlighted. |
 | **Device config** | ✅ working | View and change every setting (name, radio, behavior, experimental), with TOML backup/restore, channels, and gated destructive ops. |
-| **Device discovery** | ✅ working | Enumerate serial devices, pick one interactively, and remember the last good default. |
+| **Device discovery** | ✅ working | Enumerate serial *and* Bluetooth LE companions, pick one interactively, and remember the last good default. A dropped link (unplug, power-off, or BLE out-of-range) is detected live and offers to reconnect. |
 | **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
 | **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
@@ -39,6 +40,9 @@ Python 3.10+ is required (matching the `meshcore` library).
 ```bash
 # Interactive menu (default)
 meshterm
+
+# Connect over Bluetooth instead of USB (address from `meshterm devices`)
+meshterm --ble AA:BB:CC:DD:EE:FF info
 
 # Scripted: every menu option is also a subcommand
 meshterm trace --target Alice --samples 10 --profile yagi

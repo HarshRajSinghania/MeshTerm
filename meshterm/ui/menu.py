@@ -262,22 +262,34 @@ async def _startup(ctx: AppContext) -> bool:
         splash (pressed Esc or picked Quit) — in which case the caller skips the menu loop.
     """
     if not (ctx.mock or ctx.explicit_selection):
-        from ..core.connection import probe_meshcore
-        from ..core.discovery import DiscoveredDevice, discover_devices
+        from ..core.connection import probe_device
+        from ..core.discovery import DiscoveredDevice, discover_all
         from .device_picker import prompt_device
+        from .logo import load_logo
 
-        devices = discover_devices()
         baudrate = ctx.profile.baudrate if ctx.profile else 115200
+        # Enumerate serial ports (instant) and scan for BLE companions (a few seconds), behind
+        # the splash spinner so the wait reads as intentional rather than a hang.
+        from datetime import datetime
+
+        footnote = f"© {datetime.now().year} Johnputer"
+        devices = await ctx.ui.busy_startup(
+            "Scanning for companion devices…",
+            discover_all(ble=True),
+            title="Select a companion device",
+            banner=load_logo(),
+            footnote=footnote,
+        )
         # The smoke test opens the radio; on success we keep that live connection and reuse
-        # it for the session rather than reopening (boards often reset on each serial open).
+        # it for the session rather than reopening (boards often reset on each open).
         probed: dict = {}
 
         async def verify(device: DiscoveredDevice):
-            result = await probe_meshcore(device.port, baudrate)
+            result = await probe_device(device, baudrate=baudrate, pin=ctx.ble_pin)
             if result is None:
                 return None
             connection, info = result
-            probed["port"] = device.port
+            probed["device_id"] = device.stable_id
             probed["device"] = connection
             return info
 
@@ -285,8 +297,13 @@ async def _startup(ctx: AppContext) -> bool:
         if chosen is None:
             return False  # the user quit at the splash — exit without opening the menu
         ctx.selected_device = chosen
-        ctx.port_override = chosen.port
-        if probed.get("port") == chosen.port:
+        if chosen.is_ble:
+            ctx.ble_override = chosen.address
+            ctx.port_override = None
+        else:
+            ctx.port_override = chosen.port
+            ctx.ble_override = None
+        if probed.get("device_id") == chosen.stable_id:
             ctx.adopt_device(probed["device"])
     await _resume_monitor(ctx)
     return True
@@ -420,31 +437,30 @@ async def _cancel_and_wait(task: "asyncio.Future") -> None:
 
 
 async def _wait_for_disconnect(ctx: AppContext) -> None:
-    """Resolve once the connected companion's serial port disappears from the OS.
+    """Resolve once the connected companion's transport link drops.
 
-    Polls the OS serial-port enumeration rather than watching for a failed command: the
-    ``meshcore`` client keeps serving cached data after an unplug and never raises (confirmed
-    on hardware), so an *active* liveness check is the only thing that reliably notices a
-    pulled cable. Never resolves for the simulator (it can't be unplugged) or before a real
-    device has actually been opened.
+    Polls a cheap, non-invasive liveness check (:meth:`AppContext.link_alive`) rather than
+    watching for a failed command: the ``meshcore`` client keeps serving cached data after a
+    serial unplug and never raises (confirmed on hardware), so an *active* liveness check is
+    the only thing that reliably notices a pulled cable. The same check covers Bluetooth,
+    where it reads the BLE client's connection flag (which flips the moment the peripheral
+    drops or goes out of range). Never resolves for the simulator (it can't be unplugged) or
+    before a real device has actually been opened.
 
     Args:
-        ctx: The shared application context (read for the active port and connection state).
+        ctx: The shared application context (read for the connection state and liveness).
     """
-    from ..core.connection import serial_port_present
-
     if ctx.mock:
         await asyncio.Event().wait()  # the simulator is never "unplugged"; wait forever
         return
     while True:
         await asyncio.sleep(_LIVENESS_POLL_S)
-        port = ctx.active_port
-        if port is None or not ctx.is_connected:
+        if not ctx.is_connected:
             continue  # nothing connected to watch yet (deferred connect / no device)
-        if serial_port_present(port):
+        if await ctx.link_alive():
             continue
-        await asyncio.sleep(_LIVENESS_CONFIRM_S)  # debounce a transient enumeration gap
-        if not serial_port_present(port):
+        await asyncio.sleep(_LIVENESS_CONFIRM_S)  # debounce a transient enumeration/link gap
+        if not await ctx.link_alive():
             return
 
 
@@ -498,11 +514,14 @@ async def _animate_dialog(session: TuiSession, dialog: ReconnectDialog) -> None:
 async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
     """Poll for the device to return, reconnect when it does, then dismiss ``dialog``.
 
-    Waits for the OS to re-enumerate the port the connection was opened on before each
-    attempt, so a reconnect is only tried once there's a device to reach; a failed attempt
-    (the port is back but the board isn't ready yet, or it dropped again) simply loops and
-    retries. On the first success the dialog's future is resolved with ``"reconnected"``,
-    which dismisses the popup. Runs until it succeeds or the task is cancelled (the user quit).
+    For serial, waits for the OS to re-enumerate the port the connection was opened on before
+    each attempt, so a reconnect is only tried once there's a device to reach. For Bluetooth
+    there is no cheap "is it back yet" probe short of a full scan, so it simply attempts a
+    reconnect each interval — ``create_ble`` connects directly by address and fails fast when
+    the peripheral isn't in range. Either way a failed attempt (the endpoint is back but the
+    board isn't ready yet, or it dropped again) just loops and retries. On the first success
+    the dialog's future is resolved with ``"reconnected"``, dismissing the popup. Runs until
+    it succeeds or the task is cancelled (the user quit).
 
     Args:
         ctx: The shared application context.
@@ -511,12 +530,13 @@ async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
     from ..core.connection import serial_port_present
 
     while True:
-        port = ctx.active_port
-        # Wait for the port to re-appear before touching the radio (skip the wait when there's
-        # no port to poll — e.g. an unknown/deferred port — and just retry on the interval).
-        if port is not None and not serial_port_present(port):
-            await asyncio.sleep(_LIVENESS_POLL_S)
-            continue
+        # Serial: wait for the port to re-appear before touching the radio. BLE (and an
+        # unknown/deferred serial port): skip the wait and just retry the reconnect itself.
+        if ctx.active_transport == "serial":
+            port = ctx.active_port
+            if port is not None and not serial_port_present(port):
+                await asyncio.sleep(_LIVENESS_POLL_S)
+                continue
         try:
             await ctx.reconnect()
         except Exception:  # noqa: BLE001 - not reachable yet; keep the popup up and retry

@@ -49,11 +49,18 @@ def _pad(text: str, width: int) -> str:
 
 def _hardware_name(device: DiscoveredDevice) -> str:
     """The device's product name without its trailing ``(port)`` (that is its own column)."""
+    if device.is_ble:
+        return device.name or device.product or device.description or "Bluetooth device"
     name = device.product or device.description or device.vendor_label or "Serial device"
     suffix = f"({device.port})"
     if name.endswith(suffix):
         name = name[: -len(suffix)].rstrip()
     return name
+
+
+def _where(device: DiscoveredDevice) -> str:
+    """The connection target shown in the middle column: serial port or BLE address."""
+    return device.target
 
 
 def _node_name_from(info: dict) -> str:
@@ -89,8 +96,10 @@ async def prompt_device(
     if not devices:
         await ui.notify_startup(
             Text.from_markup(
-                "[warn]No serial devices detected.[/warn]\n"
-                "Plug one in, pass [accent]--port[/accent], or run with [accent]--mock[/accent]."
+                "[warn]No companion devices detected.[/warn]\n"
+                "Plug one in over USB or power on a Bluetooth companion nearby, pass "
+                "[accent]--port[/accent]/[accent]--ble[/accent], or run with "
+                "[accent]--mock[/accent]."
             ),
             title="Select a companion device",
             banner=load_logo(),
@@ -126,10 +135,13 @@ async def prompt_device(
         name = remembered.node_name if (
             remembered and remembered.matches(chosen) and remembered.node_name
         ) else _hardware_name(chosen)
+        # "over Bluetooth" reads better than an address; a serial device names its port.
+        where = "over Bluetooth" if chosen.is_ble else f"on {chosen.port}"
         # Smoke-test the choice in place: the splash keeps its wordmark and box, only the box
-        # contents swap for an animated spinner while we talk to the device.
+        # contents swap for an animated spinner while we talk to the device. BLE connect and
+        # service discovery take a few seconds, so the spinner matters most here.
         info = await ui.busy_startup(
-            f"Talking to {name} on {chosen.port}…",
+            f"Talking to {name} {where}…",
             verify(chosen),
             title="Checking companion",
             banner=load_logo(),
@@ -137,10 +149,15 @@ async def prompt_device(
         )
 
         if info is None:
+            reason = (
+                "It may be out of range, powered off, already connected elsewhere, or busy."
+                if chosen.is_ble
+                else "It may be a different kind of serial device, powered off, or busy."
+            )
             await ui.notify_startup(
                 Text.from_markup(
-                    f"[warn]{name} on {chosen.port} didn't answer as a MeshCore device.[/warn]\n"
-                    "It may be a different kind of serial device, powered off, or busy.\n"
+                    f"[warn]{name} {where} didn't answer as a MeshCore device.[/warn]\n"
+                    f"{reason}\n"
                     "Choose another device."
                 ),
                 title="Not a MeshCore device",
@@ -174,8 +191,13 @@ def _build_items(
 
     name_w = max(cell_len(_name(d)) for d in devices)
     name_w = max(name_w, len("DEVICE"))
-    port_w = max(cell_len(d.port) for d in devices)
-    port_w = max(port_w, len("PORT"))
+    # The middle column holds a serial port or a BLE address; label it for whichever kinds
+    # are present so a Bluetooth address never sits under a bare "PORT" heading.
+    port_label = "PORT"
+    if any(d.is_ble for d in devices):
+        port_label = "ADDRESS" if all(d.is_ble for d in devices) else "PORT / ADDRESS"
+    port_w = max(cell_len(_where(d)) for d in devices)
+    port_w = max(port_w, len(port_label))
     vendor_w = max(cell_len(d.vendor_label) for d in devices)
     vendor_w = max(vendor_w, len("VENDOR"))
 
@@ -184,7 +206,7 @@ def _build_items(
     header = Separator(
         "    "
         + _pad("DEVICE", name_w)
-        + "  " + _pad("PORT", port_w)
+        + "  " + _pad(port_label, port_w)
         + "  " + "VENDOR"
     )
 
@@ -196,14 +218,18 @@ def _build_items(
         row.append(" ")
         row.append(_pad(_name(device), name_w))
         row.append("  ")
-        row.append(_pad(device.port, port_w), style="muted")
+        row.append(_pad(_where(device), port_w), style="muted")
         row.append("  ")
         row.append(_pad(device.vendor_label, vendor_w), style="muted")
-        # Only devices we've actually confirmed are billed as MeshCore companions; the USB
-        # vendor ID is a sort hint, not a claim. A bare serial bridge earns an honest label.
+        # Only devices we've actually confirmed are billed as MeshCore companions; a USB
+        # vendor ID (or a BLE advert) is a sort hint, not a claim. A bare serial bridge earns
+        # an honest label; a MeshCore-named BLE advert is flagged as a likely companion.
         if device.stable_id in known:
             row.append("  ")
             row.append("· MeshCore device", style="ok")
+        elif device.is_ble:
+            row.append("  ")
+            row.append("· Bluetooth companion", style="muted")
         elif device.confidence == "bridge":
             row.append("  ")
             row.append("· serial adapter", style="muted")

@@ -42,11 +42,14 @@ class AppContext:
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
+        ble_override: Explicit Bluetooth address (from ``--ble`` or the interactive picker),
+            selecting the BLE transport. Takes precedence over ``port_override``.
+        ble_pin: Optional BLE pairing PIN for the chosen Bluetooth device.
         json_output: Whether tools should emit machine-readable output.
         selected_device: The discovered device chosen for this session, when known, so it
             can be remembered after a successful connection.
-        explicit_selection: Whether ``--port``/``--profile`` was passed explicitly (which
-            suppresses the interactive picker and auto-discovery).
+        explicit_selection: Whether ``--port``/``--ble``/``--profile`` was passed explicitly
+            (which suppresses the interactive picker and auto-discovery).
     """
 
     console: Console
@@ -57,11 +60,15 @@ class AppContext:
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
+    ble_override: Optional[str] = None
+    ble_pin: Optional[str] = None
     json_output: bool = False
     selected_device: Optional[DiscoveredDevice] = None
     explicit_selection: bool = False
     _device: Optional[Device] = field(default=None, init=False, repr=False)
     _active_port: Optional[str] = field(default=None, init=False, repr=False)
+    _active_transport: Optional[str] = field(default=None, init=False, repr=False)
+    _active_address: Optional[str] = field(default=None, init=False, repr=False)
     _resume_intent: Optional[tuple[bool, bool, bool]] = field(
         default=None, init=False, repr=False
     )
@@ -82,15 +89,47 @@ class AppContext:
 
     @property
     def active_port(self) -> Optional[str]:
-        """The serial port the current connection is open on, if any (``None`` for --mock).
+        """The serial port the current connection is open on, if any (``None`` for --mock/BLE).
 
-        Set when a real connection is opened so the liveness watcher knows which OS port to
-        poll for a mid-session unplug. Falls back to an explicit ``--port`` override when a
-        connection hasn't recorded one yet.
+        Set when a real *serial* connection is opened so the reconnect flow knows which OS
+        port to wait on. ``None`` for the simulator and for BLE connections (which have no
+        serial port). Falls back to an explicit ``--port`` override when a connection hasn't
+        recorded one yet.
+        """
+        if self.mock or self.active_transport == "ble":
+            return None
+        return self._active_port or self.port_override
+
+    @property
+    def active_transport(self) -> Optional[str]:
+        """The transport of the current/selected connection: ``"serial"``, ``"ble"``, or ``None``.
+
+        ``None`` for the simulator. For a real device it reflects the open connection when
+        one exists, otherwise the transport implied by the pending selection (an explicit
+        ``--ble`` selects BLE), defaulting to serial.
         """
         if self.mock:
             return None
-        return self._active_port or self.port_override
+        if self._active_transport is not None:
+            return self._active_transport
+        return "ble" if self.ble_override else "serial"
+
+    async def link_alive(self) -> bool:
+        """Whether the current device's transport link is still up (best-effort, non-invasive).
+
+        Delegates to the connected device's :meth:`~meshterm.core.connection.Device.link_present`
+        — OS port enumeration for serial, the BLE client's connection flag for Bluetooth — so
+        the session's liveness watcher is transport-agnostic. Returns ``False`` when nothing is
+        connected (there is no live link), and ``True`` on any check hiccup so a transient
+        lookup failure never fakes a disconnect.
+        """
+        device = self._device
+        if device is None:
+            return False
+        try:
+            return await device.link_present()
+        except Exception:  # noqa: BLE001 - a liveness-check failure must not fake a disconnect
+            return True
 
     @property
     def ui(self) -> "Ui":
@@ -174,9 +213,12 @@ class AppContext:
             device: A connected :class:`Device` to serve as this session's radio.
         """
         self._device = device
-        # Record the port so the liveness watcher knows which OS port to poll (the picker
-        # opened it directly, bypassing the resolution in ``device()`` that normally sets it).
+        # Record the transport and endpoint the picker opened directly, bypassing the
+        # resolution in ``device()`` that normally sets them — so the liveness watcher knows
+        # what to poll and ``reconnect`` can rebuild the same connection.
+        self._active_transport = getattr(device, "transport", "serial")
         self._active_port = getattr(device, "_port", None)
+        self._active_address = getattr(device, "_address", None)
 
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
@@ -197,8 +239,25 @@ class AppContext:
 
         if self.mock:
             self._device = make_device(mock=True, port=None)
+            self._active_transport = None
+            self._active_port = None
+            self._active_address = None
+            await self._device.connect()
+            return self._device
+
+        # A Bluetooth endpoint (an explicit ``--ble``, a BLE profile, a device picked at
+        # startup, or the remembered BLE default) is opened directly by address — no serial
+        # resolution, and no re-scan needed to reconnect to a known address.
+        ble_address, ble_pin = self._resolve_ble_endpoint()
+        if ble_address:
+            self._device = make_device(
+                mock=False, port=None, transport="ble", address=ble_address, pin=ble_pin
+            )
+            self._active_transport = "ble"
+            self._active_address = ble_address
             self._active_port = None
             await self._device.connect()
+            await self._remember_connected()
             return self._device
 
         resolution = resolve_device(
@@ -211,15 +270,50 @@ class AppContext:
             self.selected_device = resolution.device
         baudrate = self.profile.baudrate if self.profile else 115200
         self._device = make_device(mock=False, port=resolution.port, baudrate=baudrate)
+        self._active_transport = "serial"
         self._active_port = resolution.port
+        self._active_address = None
         await self._device.connect()
-        # Connection succeeded: this is now the last known good device. Learn its mesh node
-        # name (best-effort — a probe failure must not block a good connection).
+        await self._remember_connected()
+        return self._device
+
+    def _resolve_ble_endpoint(self) -> tuple[Optional[str], Optional[str]]:
+        """Return the ``(address, pin)`` to open over Bluetooth, or ``(None, None)`` for serial.
+
+        Resolves a BLE endpoint in priority order — an explicit ``--ble``, a BLE
+        :class:`~meshterm.core.config.DeviceProfile`, then the remembered BLE default — so a
+        Bluetooth companion is honored wherever a serial one would be. Returns ``(None, None)``
+        when the session should fall through to serial resolution.
+        """
+        if self.ble_override:
+            return self.ble_override, self.ble_pin
+        # An explicit serial selection (``--port`` or a serial profile with a port) wins over a
+        # remembered BLE default, mirroring the serial resolution priority.
+        explicit_serial = bool(self.port_override) or (
+            self.profile is not None and not self.profile.is_ble and bool(self.profile.port)
+        )
+        if self.profile is not None and self.profile.is_ble and self.profile.address:
+            return self.profile.address, self.ble_pin or self.profile.ble_pin
+        if explicit_serial:
+            return None, None
+        remembered = self.device_store.load()
+        if remembered is not None and remembered.is_ble and remembered.target:
+            self.selected_device = None  # remembered, not freshly discovered this session
+            return remembered.target, self.ble_pin
+        return None, None
+
+    async def _remember_connected(self) -> None:
+        """Record the just-connected device as the last known good default (best-effort).
+
+        Learns the device's mesh node name (a probe failure must not block a good
+        connection). Only devices discovered this session carry a
+        :class:`~meshterm.core.discovery.DiscoveredDevice` to remember; a bare ``--port`` or
+        remembered-by-address reconnect has nothing new to upsert.
+        """
         if self.selected_device is not None:
             self.device_store.remember(
                 self.selected_device, node_name=await self._node_name()
             )
-        return self._device
 
     async def reconnect(self) -> None:
         """Drop a lost device connection and rebuild it, restoring live services.

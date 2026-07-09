@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .discovery import DiscoveredDevice
+from .discovery import TRANSPORT_BLE, TRANSPORT_SERIAL, DiscoveredDevice
 from .models import utcnow
 
 
@@ -30,10 +30,14 @@ class RememberedDevice:
 
     Attributes:
         stable_id: The device's :attr:`DiscoveredDevice.stable_id` at connect time.
-        port: The serial port it was last seen on (informational; may have changed).
+        port: The serial port it was last seen on (informational; may have changed). Blank
+            for a BLE device.
         label: A friendly label for display in prompts and tables.
-        node_name: The device's own mesh node name, learned at connect time (may be empty).
         last_connected: ISO-8601 timestamp of the last successful connection.
+        node_name: The device's own mesh node name, learned at connect time (may be empty).
+        transport: ``"serial"`` or ``"ble"`` — how this device was last reached.
+        address: The Bluetooth address, for a BLE device (blank otherwise), so it can be
+            reconnected directly without re-scanning.
     """
 
     stable_id: str
@@ -41,6 +45,18 @@ class RememberedDevice:
     label: str
     last_connected: str
     node_name: str = ""
+    transport: str = TRANSPORT_SERIAL
+    address: str = ""
+
+    @property
+    def is_ble(self) -> bool:
+        """Whether this remembered device was reached over Bluetooth LE."""
+        return self.transport == TRANSPORT_BLE
+
+    @property
+    def target(self) -> str:
+        """The connection target: the BLE address for a BLE device, else the serial port."""
+        return self.address or self.port if self.is_ble else self.port
 
     def matches(self, device: DiscoveredDevice) -> bool:
         """Return whether ``device`` is the same hardware as this record."""
@@ -98,10 +114,12 @@ class DeviceStore:
         try:
             return RememberedDevice(
                 stable_id=entry["stable_id"],
-                port=entry["port"],
-                label=entry.get("label", entry["port"]),
+                port=entry.get("port", ""),
+                label=entry.get("label", entry.get("port", "")),
                 last_connected=entry.get("last_connected", ""),
                 node_name=entry.get("node_name", ""),
+                transport=entry.get("transport", TRANSPORT_SERIAL),
+                address=entry.get("address", ""),
             )
         except (KeyError, TypeError):
             return None
@@ -150,6 +168,8 @@ class DeviceStore:
             label=device.label,
             last_connected=utcnow().isoformat(),
             node_name=node_name,
+            transport=device.transport,
+            address=device.address or "",
         )
         self._write(registry, device.stable_id)
 
@@ -164,6 +184,8 @@ class DeviceStore:
                     "label": record.label,
                     "last_connected": record.last_connected,
                     "node_name": record.node_name,
+                    "transport": record.transport,
+                    "address": record.address,
                 }
                 for stable_id, record in registry.items()
             },

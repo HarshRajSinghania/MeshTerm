@@ -18,7 +18,7 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
@@ -32,6 +32,9 @@ from .models import (
     Observation,
     TraceResult,
 )
+
+if TYPE_CHECKING:
+    from .discovery import DiscoveredDevice
 
 #: Module logger; enable DEBUG on ``meshterm.core.connection`` to trace the message pump.
 _log = logging.getLogger(__name__)
@@ -75,13 +78,14 @@ class DeviceCommandError(RuntimeError):
     """
 
 
-#: Exception class names that signal the serial link to the companion has dropped — the
-#: device was unplugged, powered off, or its port otherwise vanished — as opposed to an
-#: ordinary command-level failure. Matched by name in :func:`is_connection_lost` so the
-#: optional ``pyserial`` dependency need not be imported here (it isn't installed on the
-#: ``--mock`` path). ``SerialException`` covers pyserial's read/write failures (including the
-#: Windows ``ClearCommError``/``WriteFile`` variants); the ``OSError`` subclasses cover a
-#: link torn down at the OS layer.
+#: Exception class names that signal the link to the companion has dropped — the device was
+#: unplugged, powered off, moved out of range, or its port/transport otherwise vanished — as
+#: opposed to an ordinary command-level failure. Matched by name in :func:`is_connection_lost`
+#: so the optional ``pyserial``/``bleak`` dependencies need not be imported here (neither is
+#: installed on the ``--mock`` path). ``SerialException`` covers pyserial's read/write failures
+#: (including the Windows ``ClearCommError``/``WriteFile`` variants); the ``Bleak*`` names cover
+#: a Bluetooth link that dropped or a peripheral that went out of range; the ``OSError``
+#: subclasses cover a link torn down at the OS layer.
 _CONNECTION_LOST_TYPES = frozenset(
     {
         "SerialException",
@@ -89,6 +93,11 @@ _CONNECTION_LOST_TYPES = frozenset(
         "ConnectionResetError",
         "ConnectionAbortedError",
         "BrokenPipeError",
+        "BleakError",
+        "BleakDeviceNotFoundError",
+        "BleakDBusError",
+        "BleakGATTError",
+        "BleakCharacteristicNotFoundError",
     }
 )
 
@@ -106,6 +115,12 @@ _CONNECTION_LOST_HINTS = (
     "port is closed",
     "no such device",
     "input/output error",
+    # BLE link-loss phrasings (bleak errors / meshcore BLE transport callback reasons).
+    "ble_transport_lost",
+    "ble_write_failed",
+    "ble_disconnect",
+    "not connected to a ble device",
+    "device is no longer connected",
 )
 
 
@@ -181,6 +196,22 @@ class Device(ABC):
     @abstractmethod
     async def disconnect(self) -> None:
         """Close the connection and release resources. Idempotent."""
+
+    async def link_present(self) -> bool:
+        """Return whether the underlying transport link is still up (best-effort).
+
+        A cheap, *non-invasive* liveness probe — it never transmits and never opens a new
+        handle — so the interactive session can poll it while the device is in use to notice
+        a mid-session drop (a serial cable pulled, a companion powered off, a BLE peripheral
+        out of range). Each transport implements it against the signal that actually reflects
+        its link state (OS port enumeration for serial, the BLE client's connection flag for
+        Bluetooth). It returns ``True`` whenever presence can't be determined, so a lookup
+        hiccup never fakes a disconnect.
+
+        Returns:
+            ``True`` if the link appears up (or can't be checked), ``False`` if it is gone.
+        """
+        return True
 
     @abstractmethod
     async def get_self_info(self) -> dict:
@@ -482,7 +513,12 @@ class Device(ABC):
 
 
 class MeshCoreDevice(Device):
-    """A :class:`Device` backed by the ``meshcore`` serial companion client.
+    """A :class:`Device` backed by the ``meshcore`` companion client (serial or BLE).
+
+    The same wrapper serves both transports: which one it opens is chosen by ``transport``
+    (``"serial"`` opens ``port``; ``"ble"`` opens ``address``). Everything above the
+    connection — commands, event mapping, trace parsing — is transport-agnostic, so only
+    :meth:`connect` and :meth:`link_present` differ between the two.
 
     Note:
         The trace mapping here follows the documented companion protocol (trace replies
@@ -491,22 +527,35 @@ class MeshCoreDevice(Device):
     """
 
     def __init__(
-        self, port: str, baudrate: int = 115200, connect_timeout: Optional[float] = None
+        self,
+        port: Optional[str] = None,
+        baudrate: int = 115200,
+        connect_timeout: Optional[float] = None,
+        *,
+        transport: str = "serial",
+        address: Optional[str] = None,
+        pin: Optional[str] = None,
     ) -> None:
         """Initialize the device wrapper.
 
         Args:
-            port: Serial port path (e.g. ``COM5`` or ``/dev/ttyUSB0``).
+            port: Serial port path (e.g. ``COM5`` or ``/dev/ttyUSB0``); serial transport only.
             baudrate: Serial baud rate.
             connect_timeout: Handshake timeout (seconds) for the initial connection, passed
                 to the client as its default command timeout. ``None`` uses the ``meshcore``
                 library default (~15s). The startup smoke test sets a short value so a
                 non-responsive port is rejected quickly instead of blocking on the full
                 default handshake window.
+            transport: ``"serial"`` (default) or ``"ble"``.
+            address: Bluetooth address (e.g. ``AA:BB:CC:DD:EE:FF``); BLE transport only.
+            pin: Optional BLE pairing PIN, when the peripheral requires one (BLE only).
         """
         self._port = port
         self._baudrate = baudrate
         self._connect_timeout = connect_timeout
+        self._transport = transport
+        self._address = address
+        self._pin = pin
         self._mc = None  # type: ignore[var-annotated]  # meshcore.MeshCore
         # Serializes channel reads. The meshcore library's get_channel waits for "the next
         # CHANNEL_INFO event" with no correlation to the index it asked for, and the dispatcher
@@ -514,6 +563,16 @@ class MeshCoreDevice(Device):
         # the first response and one caller silently gets the other's channel. Holding this lock
         # keeps at most one channel read outstanding, so the response is unambiguously ours.
         self._channel_read_lock = asyncio.Lock()
+
+    @property
+    def transport(self) -> str:
+        """Which transport this device connects over (``"serial"`` or ``"ble"``)."""
+        return self._transport
+
+    @property
+    def endpoint(self) -> Optional[str]:
+        """The connection endpoint: the BLE address for BLE, else the serial port."""
+        return self._address if self._transport == "ble" else self._port
 
     async def connect(self) -> None:  # noqa: D102 - inherited docstring
         if self._mc is not None:
@@ -527,26 +586,82 @@ class MeshCoreDevice(Device):
                 "--mock for the simulator."
             ) from exc
 
-        self._mc = await MeshCore.create_serial(
-            self._port, self._baudrate, default_timeout=self._connect_timeout
-        )
-        # ``create_serial`` returns ``None`` (after cleaning up its own connection) when the
-        # node never answers the identity handshake — i.e. the port isn't a MeshCore serial
-        # companion. Surface that as a clean, recoverable error rather than leaving a
-        # half-open device whose next command fails with a confusing "not connected".
-        if self._mc is None:
-            raise DeviceCommandError(
-                f"no response from a MeshCore companion on {self._port}; it may not be a "
-                "MeshCore device, or it may be powered off or in use by another program."
+        if self._transport == "ble":
+            self._mc = await self._create_ble(MeshCore)
+        else:
+            self._mc = await MeshCore.create_serial(
+                self._port, self._baudrate, default_timeout=self._connect_timeout
             )
+        # ``create_*`` returns ``None`` (after cleaning up its own connection) when the node
+        # never answers the identity handshake — i.e. the endpoint isn't a MeshCore companion.
+        # Surface that as a clean, recoverable error rather than leaving a half-open device
+        # whose next command fails with a confusing "not connected".
+        if self._mc is None:
+            raise DeviceCommandError(self._no_response_message())
         # A short ``connect_timeout`` is only meant to bound the initial identity handshake
-        # (so a dead port is rejected quickly). Now that we're connected, restore the
+        # (so a dead endpoint is rejected quickly). Now that we're connected, restore the
         # library's normal per-command timeout so the rest of the session isn't rushed.
         if self._connect_timeout is not None:
             commands = getattr(self._mc, "commands", None)
             default = getattr(commands, "DEFAULT_TIMEOUT", None)
             if commands is not None and default is not None:
                 commands.default_timeout = default
+
+    async def _create_ble(self, mesh_core):  # type: ignore[no-untyped-def]
+        """Open the BLE companion connection, translating a missing-bleak import cleanly.
+
+        ``auto_reconnect`` is deliberately left off: MeshTerm drives reconnection itself (the
+        same reconnect dialog the serial path uses), so the meshcore client should surface a
+        dropped link promptly via ``is_connected`` rather than silently retrying underneath us.
+
+        Args:
+            mesh_core: The imported ``meshcore.MeshCore`` class.
+
+        Returns:
+            The connected ``MeshCore`` client, or ``None`` if the peripheral never answered.
+        """
+        try:
+            return await mesh_core.create_ble(
+                address=self._address,
+                pin=self._pin,
+                default_timeout=self._connect_timeout,
+                auto_reconnect=False,
+            )
+        except ImportError as exc:
+            raise DeviceCommandError(
+                "Bluetooth support requires the 'bleak' package, which isn't installed. "
+                "Run `pip install -e .` (or `pip install bleak`), use a USB device, or "
+                "run with --mock."
+            ) from exc
+
+    def _no_response_message(self) -> str:
+        """A clean, recoverable error for an endpoint that didn't answer as a companion."""
+        if self._transport == "ble":
+            where = self._address or "the selected Bluetooth device"
+            return (
+                f"no response from a MeshCore companion over Bluetooth ({where}); it may be "
+                "out of range, powered off, already connected to another device, or not a "
+                "MeshCore device."
+            )
+        return (
+            f"no response from a MeshCore companion on {self._port}; it may not be a "
+            "MeshCore device, or it may be powered off or in use by another program."
+        )
+
+    async def link_present(self) -> bool:  # noqa: D102 - inherited docstring
+        if self._mc is None:
+            return True  # not connected yet / already torn down — nothing to declare lost
+        if self._transport == "ble":
+            # The meshcore client flips ``is_connected`` to False the moment bleak reports the
+            # peripheral dropped (via its disconnect callback), so this is the BLE analogue of
+            # the serial port-enumeration check — a cheap, non-transmitting liveness read.
+            try:
+                return bool(self._mc.is_connected)
+            except Exception:  # noqa: BLE001 - a status hiccup must not fake a disconnect
+                return True
+        if not self._port:
+            return True  # no port recorded (shouldn't happen once connected) — can't tell
+        return serial_port_present(self._port)
 
     async def disconnect(self) -> None:  # noqa: D102 - inherited docstring
         if self._mc is None:
@@ -1747,23 +1862,37 @@ def make_device(
     port: Optional[str],
     baudrate: int = 115200,
     mock_optimal_tx: int = 14,
+    transport: str = "serial",
+    address: Optional[str] = None,
+    pin: Optional[str] = None,
 ) -> Device:
     """Construct the appropriate :class:`Device` for the current invocation.
 
     Args:
         mock: When ``True`` return a :class:`MockDevice` simulator.
-        port: Serial port for a real device. Required unless ``mock`` is set.
-        baudrate: Serial baud rate for a real device.
+        port: Serial port for a real serial device. Required for the serial transport
+            unless ``mock`` is set.
+        baudrate: Serial baud rate for a real serial device.
         mock_optimal_tx: Peak TX power for the simulator.
+        transport: ``"serial"`` (default) or ``"ble"``.
+        address: Bluetooth address for the BLE transport. Required when ``transport="ble"``.
+        pin: Optional BLE pairing PIN (BLE only).
 
     Returns:
         A connected-on-enter :class:`Device` instance.
 
     Raises:
-        ValueError: If a real device is requested without a serial port.
+        ValueError: If a real device is requested without a usable endpoint for its transport.
     """
     if mock:
         return MockDevice(optimal_tx=mock_optimal_tx)
+    if transport == "ble":
+        if not address:
+            raise ValueError(
+                "No Bluetooth address configured. Pass --ble, pick a device at startup, "
+                "or use --mock."
+            )
+        return MeshCoreDevice(transport="ble", address=address, pin=pin)
     if not port:
         raise ValueError(
             "No serial port configured. Pass --port, set a profile, or use --mock."
@@ -1771,20 +1900,61 @@ def make_device(
     return MeshCoreDevice(port=port, baudrate=baudrate)
 
 
-async def probe_meshcore(
-    port: str, baudrate: int = 115200, *, timeout: float = 6.0
-) -> Optional[tuple["MeshCoreDevice", dict]]:
-    """Open ``port``, confirm a MeshCore companion answers, and return the live connection.
+#: Handshake window (seconds) for probing a serial companion. A genuine board answers in well
+#: under a second; a non-MeshCore port is rejected within this bound.
+_PROBE_TIMEOUT_SERIAL_S = 6.0
 
-    Opens a real serial connection and issues an identity query (the APPSTART that backs
-    :meth:`MeshCoreDevice.get_self_info`). A genuine companion replies with a self-info
-    payload; anything else — a non-MeshCore serial gadget, the wrong baud rate, an
-    unresponsive port — never answers and is rejected within ``timeout``.
+#: Handshake window (seconds) for probing a BLE companion. Longer than serial: a BLE connect
+#: involves a link-layer connection and GATT service discovery before the identity reply.
+_PROBE_TIMEOUT_BLE_S = 20.0
+
+
+async def probe_device(
+    device: "DiscoveredDevice", *, baudrate: int = 115200, pin: Optional[str] = None
+) -> Optional[tuple["MeshCoreDevice", dict]]:
+    """Open a discovered device, confirm a MeshCore companion answers, and keep it connected.
+
+    Transport-agnostic front door for the startup smoke test: it opens the right connection
+    for ``device`` (serial port or BLE address) and issues an identity query (the APPSTART
+    that backs :meth:`MeshCoreDevice.get_self_info`). A genuine companion replies with a
+    self-info payload; anything else — a non-MeshCore gadget, an unresponsive port, a BLE
+    device out of range — never answers and is rejected within the transport's timeout.
 
     On success the connection is **left open** and returned to the caller, which reuses it as
-    the session device. This is deliberate: many companion boards reset on each serial open,
-    so a probe-then-reopen cycle is slow and flaky — opening the radio exactly once is both
-    faster and far more reliable. On any failure the probe connection is closed.
+    the session device. This is deliberate: many companion boards reset on each serial open
+    (and a BLE reconnect re-runs service discovery), so a probe-then-reopen cycle is slow and
+    flaky — opening the radio exactly once is both faster and far more reliable. On any
+    failure the probe connection is closed.
+
+    Args:
+        device: The discovered device to probe (serial or BLE).
+        baudrate: Serial baud rate (serial transport only).
+        pin: Optional BLE pairing PIN (BLE transport only).
+
+    Returns:
+        ``(device, self_info)`` with a connected :class:`MeshCoreDevice` on success (the
+        caller owns and must eventually close it), or ``None`` if it is not a reachable
+        MeshCore companion.
+    """
+    if device.is_ble:
+        timeout = _PROBE_TIMEOUT_BLE_S
+        probe = MeshCoreDevice(
+            transport="ble", address=device.address, pin=pin, connect_timeout=timeout
+        )
+    else:
+        timeout = _PROBE_TIMEOUT_SERIAL_S
+        probe = MeshCoreDevice(
+            port=device.port, baudrate=baudrate, connect_timeout=timeout
+        )
+    return await _probe(probe, timeout)
+
+
+async def probe_meshcore(
+    port: str, baudrate: int = 115200, *, timeout: float = _PROBE_TIMEOUT_SERIAL_S
+) -> Optional[tuple["MeshCoreDevice", dict]]:
+    """Probe a serial ``port`` for a MeshCore companion (see :func:`probe_device`).
+
+    Thin serial-only convenience wrapper retained for callers that hold a bare port string.
 
     Args:
         port: Serial port to probe (e.g. ``COM5`` or ``/dev/ttyUSB0``).
@@ -1792,16 +1962,31 @@ async def probe_meshcore(
         timeout: Seconds to bound the connection handshake and the identity reply.
 
     Returns:
-        ``(device, self_info)`` with a connected :class:`MeshCoreDevice` on success (the
-        caller owns and must eventually close it), or ``None`` if the port is not a reachable
+        ``(device, self_info)`` on success, or ``None`` if the port is not a reachable
         MeshCore companion.
     """
-    # ``timeout`` is the handshake window handed to the client, so a non-MeshCore port is
+    return await _probe(
+        MeshCoreDevice(port=port, baudrate=baudrate, connect_timeout=timeout), timeout
+    )
+
+
+async def _probe(
+    device: "MeshCoreDevice", timeout: float
+) -> Optional[tuple["MeshCoreDevice", dict]]:
+    """Connect ``device`` and read its identity, returning it live or closing it on failure.
+
+    Args:
+        device: An unconnected :class:`MeshCoreDevice` configured for its transport.
+        timeout: Handshake window bounding both the connect and the identity read.
+
+    Returns:
+        ``(device, self_info)`` with the connection left open, or ``None`` on any failure.
+    """
+    # ``timeout`` is the handshake window handed to the client, so a non-MeshCore endpoint is
     # rejected in ~``timeout`` seconds and the client cleans up its own connection. The outer
     # ``wait_for`` is only a safety net a few seconds beyond that, so we never cancel the
-    # client mid-handshake (which would leak the open port). A real companion answers in well
-    # under a second, so this never delays a good device.
-    device = MeshCoreDevice(port=port, baudrate=baudrate, connect_timeout=timeout)
+    # client mid-handshake (which would leak the open connection). A real companion answers in
+    # well under a second (serial) or a few seconds (BLE), so this never delays a good device.
     try:
         await asyncio.wait_for(device.connect(), timeout + 4.0)
         info = await asyncio.wait_for(device.get_self_info(), timeout)

@@ -1,10 +1,11 @@
 # MeshTerm configuration.
 # Copy to ~/.meshterm/config.toml (or pass --db / --port on the CLI).
 #
-# Profiles are optional. With no profile and no --port, MeshTerm discovers attached
-# serial devices, lets you pick one (interactively) or uses the single one present, and
-# remembers the last device that connected as the default for next time. Define profiles
-# below only to give your hardware stable aliases (e.g. --profile yagi).
+# Profiles are optional. With no profile, no --port, and no --ble, MeshTerm discovers
+# attached serial devices and nearby Bluetooth companions, lets you pick one (interactively)
+# or uses the single one present, and remembers the last device that connected as the default
+# for next time. Define profiles below only to give your hardware stable aliases
+# (e.g. --profile yagi, or --profile handheld for a Bluetooth device).
 
 default_profile = "s3"
 trace_cooldown_s = 1.0
@@ -29,3 +30,11 @@ description = "Local-range repeater"
 [profiles.observer]
 port = "COM8"
 description = "XIAO observer running a bot"
+
+# A Bluetooth LE companion: give it an `address` (from `meshterm devices`) instead of a port.
+# The `transport = "ble"` line is optional — a bare `address` already implies Bluetooth.
+[profiles.handheld]
+address = "AA:BB:CC:DD:EE:FF"
+# transport = "ble"
+# ble_pin = "123456"   # only if your device requires a pairing PIN
+description = "Pocket handheld over Bluetooth"

@@ -119,6 +119,78 @@ def test_stable_id_precedence() -> None:
     assert DiscoveredDevice("COM5").stable_id == "port:COM5"
 
 
+# -- BLE transport -------------------------------------------------------------
+
+
+def _ble(address: str = "AA:BB:CC:DD:EE:FF", name: str = "MeshCore-Base") -> DiscoveredDevice:
+    """Build a BLE DiscoveredDevice as the scanner would."""
+    return DiscoveredDevice(
+        transport="ble", address=address, name=name, description=name, product=name
+    )
+
+
+def test_ble_device_identity_and_labels() -> None:
+    """A BLE device reports its address as the target, a stable ble: id, and a BLE label."""
+    dev = _ble()
+    assert dev.is_ble
+    assert dev.target == "AA:BB:CC:DD:EE:FF"  # the connection identifier is the address
+    assert dev.stable_id == "ble:aa:bb:cc:dd:ee:ff"  # stable across sessions, case-folded
+    assert dev.confidence == "board" and dev.is_likely_lora  # a MeshCore advert is confident
+    assert dev.vendor_label == "Bluetooth"
+    assert dev.label == "MeshCore-Base (BLE)"
+
+
+def test_ble_and_serial_stable_ids_never_collide() -> None:
+    """A BLE address and a serial number/port can't map to the same remembered device."""
+    assert _ble().stable_id != DiscoveredDevice("COM5", serial_number="SN1").stable_id
+
+
+async def test_discover_ble_filters_to_meshcore(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The BLE scan keeps only MeshCore-named adverts and maps them to devices."""
+    from types import SimpleNamespace
+
+    import meshterm.core.discovery as discovery
+
+    class _FakeScanner:
+        @staticmethod
+        async def discover(timeout: float, return_adv: bool):
+            return {
+                "AA:BB:CC:DD:EE:FF": (
+                    SimpleNamespace(address="AA:BB:CC:DD:EE:FF", name="MeshCore-Base"),
+                    SimpleNamespace(local_name="MeshCore-Base", rssi=-60),
+                ),
+                "11:22:33:44:55:66": (  # a random unrelated Bluetooth gadget — filtered out
+                    SimpleNamespace(address="11:22:33:44:55:66", name="AirPods"),
+                    SimpleNamespace(local_name="AirPods", rssi=-70),
+                ),
+            }
+
+    monkeypatch.setattr(discovery, "BleakScanner", _FakeScanner, raising=False)
+    # ``discover_ble_devices`` imports BleakScanner from bleak inside the function; patch there.
+    import bleak
+
+    monkeypatch.setattr(bleak, "BleakScanner", _FakeScanner, raising=False)
+
+    devices = await discovery.discover_ble_devices(timeout=0.0)
+    assert [d.name for d in devices] == ["MeshCore-Base"]
+    assert devices[0].is_ble and devices[0].address == "AA:BB:CC:DD:EE:FF"
+
+
+async def test_discover_ble_survives_no_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan failure (no adapter / Bluetooth off) yields an empty list, never raises."""
+    import bleak
+
+    import meshterm.core.discovery as discovery
+
+    class _BoomScanner:
+        @staticmethod
+        async def discover(timeout: float, return_adv: bool):
+            raise OSError("no Bluetooth adapter")
+
+    monkeypatch.setattr(bleak, "BleakScanner", _BoomScanner, raising=False)
+    assert await discovery.discover_ble_devices(timeout=0.0) == []
+
+
 # -- device store --------------------------------------------------------------
 
 
@@ -228,19 +300,60 @@ def test_resolve_single_device_auto() -> None:
     assert res.port == "COM3" and res.source == "only"
 
 
+def test_resolve_prefers_explicit_ble() -> None:
+    """An explicit --ble selects the BLE transport and wins over everything else."""
+    res = resolve_device([], None, explicit_ble="AA:BB:CC:DD:EE:FF")
+    assert res.target == "AA:BB:CC:DD:EE:FF"
+    assert res.transport == "ble" and res.source == "ble"
+
+
+def test_resolve_single_ble_device_auto() -> None:
+    """A lone in-range BLE companion is chosen automatically, transport and all."""
+    dev = _ble()
+    res = resolve_device([dev], None)
+    assert res.target == dev.address and res.transport == "ble" and res.source == "only"
+
+
+def test_resolve_uses_remembered_ble_device() -> None:
+    """A remembered BLE default reconnects by address when it's back in range."""
+    from meshterm.core.device_store import RememberedDevice
+
+    dev = _ble()
+    remembered = RememberedDevice(
+        stable_id=dev.stable_id, port="", label=dev.label, last_connected="",
+        transport="ble", address=dev.address,
+    )
+    res = resolve_device([dev], remembered)
+    assert res.transport == "ble" and res.target == dev.address and res.source == "remembered"
+
+
+def test_ble_device_store_round_trip(tmp_path: Path) -> None:
+    """A remembered BLE device persists its transport and address, matched by stable_id."""
+    store = DeviceStore(tmp_path / "devices.json")
+    dev = _ble(name="MeshCore-Roamer")
+    store.remember(dev, node_name="Roamer")
+
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.is_ble and loaded.transport == "ble"
+    assert loaded.address == dev.address and loaded.target == dev.address
+    assert loaded.node_name == "Roamer"
+    assert loaded.matches(dev)
+
+
 def test_resolve_ambiguous_raises(tmp_path: Path) -> None:
     """Multiple devices with no usable default raise a guidance error."""
     devices = [
         DiscoveredDevice("COM3", serial_number="SN1"),
         DiscoveredDevice("COM4", serial_number="SN2"),
     ]
-    with pytest.raises(DeviceSelectionError, match="Multiple serial devices"):
+    with pytest.raises(DeviceSelectionError, match="Multiple companion devices"):
         resolve_device(devices, None)
 
 
 def test_resolve_no_devices_raises() -> None:
     """No devices at all raises a clear error mentioning --mock."""
-    with pytest.raises(DeviceSelectionError, match="No serial devices"):
+    with pytest.raises(DeviceSelectionError, match="No companion devices"):
         resolve_device([], None)
 
 
