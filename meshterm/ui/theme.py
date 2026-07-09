@@ -20,6 +20,16 @@ MESH_THEME = Theme(
         # Our own messages in a chat: pure white, deliberately outside the per-sender hue
         # palette (see meshterm.ui.chat._SENDER_COLORS) so "you" is always easy to spot.
         "you": "bold #ffffff",
+        # A confirmed companion's name on the startup device picker: pure white so the
+        # devices we've actually talked to before jump out above the merely-detected ports.
+        "device.known": "bold #ffffff",
+        # The picker's Bluetooth TYPE badge: a white rune on the official Bluetooth blue
+        # (Pantone 300, #0057b8), echoing the real logo so BLE reads at a glance.
+        "bluetooth": "bold #ffffff on #0057b8",
+        # The badge's tapered edges: half-block glyphs drawn in the same blue as the
+        # foreground (over the terminal's own background), so only their inner half fills and
+        # the badge reads a touch wider than the single rune cell without a hard rectangle.
+        "bluetooth.edge": "#0057b8",
         "ok": "bold #4ade80",
         "warn": "bold #fbbf24",
         "err": "bold #f87171",

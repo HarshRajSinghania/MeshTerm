@@ -136,8 +136,17 @@ def test_ble_device_identity_and_labels() -> None:
     assert dev.target == "AA:BB:CC:DD:EE:FF"  # the connection identifier is the address
     assert dev.stable_id == "ble:aa:bb:cc:dd:ee:ff"  # stable across sessions, case-folded
     assert dev.confidence == "board" and dev.is_likely_lora  # a MeshCore advert is confident
-    assert dev.vendor_label == "Bluetooth"
+    # The VENDOR column is *just* the hardware maker: a BLE advert rarely carries one, so it
+    # stays blank rather than mislabelling the transport ("Bluetooth") as a vendor. The
+    # transport is shown in its own TYPE column on the picker instead.
+    assert dev.vendor_label == ""
     assert dev.label == "MeshCore-Base (BLE)"
+
+
+def test_ble_vendor_label_uses_manufacturer_when_present() -> None:
+    """A BLE advert that does expose a manufacturer string reports it as the vendor."""
+    dev = DiscoveredDevice(transport="ble", address="AA:BB", name="MeshCore", manufacturer="Heltec")
+    assert dev.vendor_label == "Heltec"
 
 
 def test_ble_and_serial_stable_ids_never_collide() -> None:

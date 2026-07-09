@@ -147,13 +147,17 @@ class DiscoveredDevice:
 
     @property
     def vendor_label(self) -> str:
-        """A friendly vendor/transport name for display.
+        """The hardware maker's name for the VENDOR column, or ``""`` when unknown.
 
-        ``"Bluetooth"`` for a BLE device, else a known-VID vendor name or the USB
-        manufacturer string.
+        This is deliberately *just the vendor* — the transport (USB vs Bluetooth) is a
+        separate concern shown in its own TYPE column, so a BLE advert (which rarely
+        exposes a maker) reports whatever manufacturer string it carries and otherwise
+        stays blank rather than mislabelling the transport as a vendor. A serial port maps
+        its USB vendor ID to a friendly name, falling back to the driver's manufacturer
+        string.
         """
         if self.is_ble:
-            return "Bluetooth"
+            return self.manufacturer or ""
         if self.vid in KNOWN_LORA_VIDS:
             return KNOWN_LORA_VIDS[self.vid]
         return self.manufacturer or ""

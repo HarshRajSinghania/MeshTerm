@@ -535,6 +535,53 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
 
 
+def test_device_picker_names_and_sorts_known_devices(tmp_path) -> None:
+    """A confirmed device shows its node name (in white), sorts to the top, and marks type."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import _BLE_ICON, _SERIAL_ICON, prompt_device
+
+    # A previously-confirmed serial node, an unknown serial port, and a BLE companion.
+    known = DiscoveredDevice(
+        port="COM11", serial_number="SN1", description="USB Serial Device (COM11)"
+    )
+    unknown = DiscoveredDevice(port="COM3", product="Some Adapter", vid=0x1234)
+    ble = DiscoveredDevice(
+        transport="ble", address="AA:BB:CC:DD:EE:FF", name="MeshCore-Roam", product="MeshCore-Roam"
+    )
+    devices = [unknown, known, ble]  # discovery order: known is *not* first
+
+    store = DeviceStore(tmp_path / "devices.json")
+    store.remember(known, node_name="BaseStation")
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None  # skip past the smoke test
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    asyncio.run(prompt_device(_Ui(), devices, store, _never))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    device_rows = rows[:-1]  # drop the trailing Quit row
+
+    # The confirmed device sorts to the very top and is shown by its mesh node name, not the
+    # OS's generic "USB Serial Device" description.
+    top = device_rows[0]
+    assert "BaseStation" in top.plain
+    assert "USB Serial Device" not in top.plain
+    # …and that name is painted white ("device.known") so it stands out.
+    assert any(span.style == "device.known" for span in top.spans)
+
+    # The TYPE column marks the transport: a serial glyph for the wired node, the Bluetooth
+    # rune for the companion advertised over BLE.
+    assert _SERIAL_ICON in top.plain
+    assert any(_BLE_ICON in row.plain for row in device_rows)
+
+
 class _PickerUi:
     """A fake splash UI that always selects the first device, then dismisses messages."""
 
