@@ -229,7 +229,7 @@ _TELEMETRY_CHOICES = {0: "off", 1: "always", 2: "device-only", 3: "all"}
 
 # adv_loc_policy / multi_acks are single firmware bytes; we list the values seen in the
 # wild but keep them non-strict so an unfamiliar value is still accepted.
-_ADV_LOC_CHOICES = {0: "don't share location", 1: "share location in adverts"}
+_ADV_LOC_CHOICES = {0: "off", 1: "on"}
 _MULTI_ACKS_CHOICES = {0: "off", 1: "on"}
 # path_hash_mode is a 2-bit field; the hash size carried per hop is mode + 1 bytes.
 _PATH_HASH_CHOICES = {
@@ -243,7 +243,7 @@ _PATH_HASH_CHOICES = {
 def _telemetry_spec(key: str, label: str) -> SettingSpec:
     """Build a telemetry-mode setting spec (shared shape for base/loc/env)."""
     return SettingSpec(
-        key=key, label=label, help="Telemetry reporting mode.", category="Behavior",
+        key=key, label=label, help="Telemetry reporting mode", category="Behavior",
         value_type="enum", choices=_TELEMETRY_CHOICES, minimum=0, maximum=3,
         getter=_get(key), apply=_telemetry_apply(key),
     )
@@ -299,77 +299,77 @@ RADIO_PRESETS: list[RadioPreset] = [
 DEVICE_SETTINGS: list[SettingSpec] = [
     # Identity
     SettingSpec(
-        "name", "Node name", "Advertised name of this node.", "Identity", "str",
+        "name", "Node name", "Advertised node name", "Identity", "str",
         getter=_get("name"), apply=lambda d, v, s: d.set_name(v),
     ),
     SettingSpec(
-        "adv_lat", "Latitude", "Advertised latitude (decimal degrees).", "Identity",
+        "adv_lat", "Latitude", "Advertised latitude, degrees", "Identity",
         "float", minimum=-90.0, maximum=90.0,
         getter=_get("adv_lat"), apply=_coords_apply("adv_lat"),
     ),
     SettingSpec(
-        "adv_lon", "Longitude", "Advertised longitude (decimal degrees).", "Identity",
+        "adv_lon", "Longitude", "Advertised longitude, degrees", "Identity",
         "float", minimum=-180.0, maximum=180.0,
         getter=_get("adv_lon"), apply=_coords_apply("adv_lon"),
     ),
     SettingSpec(
-        "device_pin", "Device PIN", "BLE pairing PIN.", "Identity", "int",
+        "device_pin", "Device PIN", "BLE pairing PIN", "Identity", "int",
         minimum=0, maximum=999999,
         getter=_get("device_pin"), apply=lambda d, v, s: d.set_device_pin(v),
     ),
     # Radio
     SettingSpec(
-        "radio_freq", "Frequency (MHz)", "Carrier frequency in MHz.", "Radio", "float",
+        "radio_freq", "Frequency (MHz)", "Carrier frequency in MHz", "Radio", "float",
         minimum=100.0, maximum=1000.0,
         getter=_get("radio_freq"), apply=_radio_apply("freq"),
     ),
     SettingSpec(
-        "radio_bw", "Bandwidth (kHz)", "Channel bandwidth in kHz.", "Radio", "float",
+        "radio_bw", "Bandwidth (kHz)", "Channel bandwidth in kHz", "Radio", "float",
         minimum=1.0, maximum=1000.0,
         getter=_get("radio_bw"), apply=_radio_apply("bw"),
     ),
     SettingSpec(
-        "radio_sf", "Spreading factor", "LoRa spreading factor.", "Radio", "int",
+        "radio_sf", "Spreading factor", "LoRa spreading factor", "Radio", "int",
         minimum=5, maximum=12,
         getter=_get("radio_sf"), apply=_radio_apply("sf"),
     ),
     SettingSpec(
-        "radio_cr", "Coding rate", "LoRa coding-rate denominator (5-8 = 4/5-4/8).",
+        "radio_cr", "Coding rate", "LoRa coding-rate denominator (4/5–4/8)",
         "Radio", "int", minimum=5, maximum=8,
         getter=_get("radio_cr"), apply=_radio_apply("cr"),
     ),
     SettingSpec(
-        "tx_power", "TX power (dBm)", "Transmit power.", "Radio", "int",
+        "tx_power", "TX power (dBm)", "Transmit power", "Radio", "int",
         minimum=1, maximum=22,
         getter=_get("tx_power"), apply=lambda d, v, s: d.set_tx_power(v),
     ),
     # Tuning
     SettingSpec(
-        "rx_delay", "RX delay", "Receive delay tuning parameter.", "Tuning", "int",
+        "rx_delay", "RX delay", "Receive-delay tuning", "Tuning", "int",
         minimum=0,
         getter=_get("rx_delay"), apply=_tuning_apply("rx_delay"),
     ),
     SettingSpec(
-        "airtime_factor", "Airtime factor", "Airtime budgeting factor.", "Tuning", "int",
+        "airtime_factor", "Airtime factor", "Airtime budgeting factor", "Tuning", "int",
         minimum=0,
         getter=_get("airtime_factor"), apply=_tuning_apply("airtime_factor"),
     ),
     # Behavior
     SettingSpec(
         "manual_add_contacts", "Manual add contacts",
-        "Require contacts to be added manually.", "Behavior", "bool",
+        "Require adding contacts manually", "Behavior", "bool",
         getter=_get("manual_add_contacts"),
         apply=lambda d, v, s: d.set_manual_add_contacts(v),
     ),
     SettingSpec(
         "adv_loc_policy", "Advert location policy",
-        "Whether this node shares its location in adverts.", "Behavior", "enum",
+        "Share location in adverts", "Behavior", "enum",
         choices=_ADV_LOC_CHOICES, minimum=0, strict_choices=False,
         getter=_get("adv_loc_policy"), apply=lambda d, v, s: d.set_adv_loc_policy(v),
     ),
     SettingSpec(
         "multi_acks", "Multi-acks",
-        "Send multiple acknowledgements for added delivery reliability.", "Behavior",
+        "Extra acknowledgements for reliability", "Behavior",
         "enum", choices=_MULTI_ACKS_CHOICES, minimum=0, strict_choices=False,
         getter=_get("multi_acks"), apply=lambda d, v, s: d.set_multi_acks(v),
     ),
@@ -379,7 +379,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
     # Experimental
     SettingSpec(
         "path_hash_mode", "Path-hash mode",
-        "Per-hop path-hash size; larger resists hash collisions but adds packet overhead.",
+        "Per-hop path-hash size; larger resists collisions, adds overhead",
         "Experimental", "enum", choices=_PATH_HASH_CHOICES, minimum=0, maximum=3,
         getter=_get("path_hash_mode"), apply=lambda d, v, s: d.set_path_hash_mode(v),
     ),

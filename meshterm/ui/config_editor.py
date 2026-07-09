@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from rich import box
 from rich.table import Table
 from rich.text import Text
 
@@ -109,12 +110,26 @@ def config_table(
     """
     pending = pending or {}
     show_staged = bool(pending)
-    table = Table(title="Device configuration", border_style="muted", expand=False)
-    table.add_column("Setting", style="muted")
-    table.add_column("Current")
+    # Match the nodes list: a frameless SIMPLE_HEAD table with a left-justified accent title
+    # and muted headers, so the two screens read as one family (see widgets.nodes_table).
+    table = Table(
+        title="[accent]Device configuration[/accent]",
+        title_justify="left",
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        header_style="muted",
+        expand=False,
+        padding=(0, 2, 0, 0),
+    )
+    table.add_column("Setting", style="muted", no_wrap=True)
+    table.add_column("Current", no_wrap=True)
     if show_staged:
-        table.add_column("Staged", style="warn")
+        table.add_column("Staged", style="warn", no_wrap=True)
     table.add_column("Description", style="muted")
+    # Each setting's name is indented two spaces so the rows read as sitting *under* their
+    # accent section heading, which stays flush-left.
+    indent = "  "
     for category, specs in settings_by_category():
         table.add_section()
         header = [f"[accent]── {category} ──[/accent]", ""]
@@ -123,7 +138,7 @@ def config_table(
         table.add_row(*header, "")
         for spec in specs:
             current = format_value(spec, spec.getter(snapshot))
-            row = [f"{spec.label} [muted]({spec.key})[/muted]", current]
+            row = [f"{indent}{spec.label}", current]
             if show_staged:
                 row.append(format_value(spec, pending[spec.key]) if spec.key in pending else "")
             table.add_row(*row, spec.help)
@@ -134,7 +149,7 @@ def config_table(
             "[accent]── Custom ──[/accent]", *([""] * (cols - 1))
         )
         for key, value in custom.items():
-            row = [f"custom [muted]({key})[/muted]", value]
+            row = [f"{indent}{key}", value]
             if show_staged:
                 row.append("")
             table.add_row(*row, "")
