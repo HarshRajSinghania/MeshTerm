@@ -93,6 +93,51 @@ def test_is_connection_lost_matches_ble_errors() -> None:
     assert is_connection_lost(RuntimeError("ble_transport_lost"))
 
 
+class BleakGATTProtocolError(Exception):
+    """Stand-in for bleak's GATT auth rejection (classifier matches its message, not import)."""
+
+
+def test_ble_auth_error_is_recognized_and_is_not_a_lost_link() -> None:
+    """A PIN/pairing rejection is its own actionable case — never mistaken for a dropped link."""
+    exc = BleakGATTProtocolError("(5, 'GATT Protocol Error: Insufficient Authentication')")
+    assert connection._is_ble_auth_error(exc)
+    assert not is_connection_lost(exc)  # so the session offers a PIN, not a reconnect
+
+
+def test_ble_auth_error_walks_the_exception_chain() -> None:
+    """An auth rejection wrapped by the meshcore transport is still recognized via its cause."""
+    try:
+        try:
+            raise BleakGATTProtocolError("Insufficient Encryption")
+        except Exception as cause:
+            raise RuntimeError("connect failed") from cause
+    except Exception as exc:
+        assert connection._is_ble_auth_error(exc)
+
+
+async def test_create_ble_translates_auth_error_to_pin_guidance() -> None:
+    """A raw GATT auth rejection becomes a clean DeviceCommandError that names the PIN fix."""
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            raise BleakGATTProtocolError("Insufficient Authentication")
+
+    # No PIN supplied → tell the user to pass one.
+    dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
+    with pytest.raises(DeviceCommandError) as excinfo:
+        await dev._create_ble(_FakeMeshCore)
+    assert "--ble-pin" in str(excinfo.value)
+
+    # PIN supplied but rejected → say it was wrong, not that none was given.
+    dev_pin = connection.MeshCoreDevice(
+        transport="ble", address="00:11:22:33:44:55", pin="123456"
+    )
+    with pytest.raises(DeviceCommandError) as excinfo_pin:
+        await dev_pin._create_ble(_FakeMeshCore)
+    assert "rejected" in str(excinfo_pin.value).lower()
+
+
 def _make_ctx(tmp_path: Path) -> AppContext:
     """Build a real, mock-backed application context for reconnect tests."""
     settings = Settings(config_dir=tmp_path, db_path=tmp_path / "disc.db")

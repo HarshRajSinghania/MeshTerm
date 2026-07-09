@@ -3,9 +3,10 @@
 Shown once at the start of the interactive menu when no port was given explicitly. Unlike the
 in-menu prompts, it is drawn as a chromeless splash — the MeshTerm wordmark centered above a
 content-sized box, with no header/footer status bars. It lists the discovered devices in
-aligned columns — name, connection target, a TYPE glyph (wired serial vs Bluetooth), and the
-hardware vendor — tags the ones already confirmed as MeshCore companions, marks the remembered
-"last known good" one, and preselects it as the default.
+aligned columns — name, connection target, a TYPE glyph (wired serial vs Bluetooth), and a
+HARDWARE column (the confirmed device's firmware model, else the USB vendor) — tags the ones
+already confirmed as MeshCore companions, marks the remembered "last known good" one, and
+preselects it as the default.
 
 Confirmed companions are sorted to the top, most-recently-used first, and shown by the mesh
 node name we learned when we last talked to them (in white, so they stand out from ports we've
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..core.connection import DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
 from ..core.discovery import DiscoveredDevice
 from .logo import load_logo
@@ -34,7 +36,9 @@ if TYPE_CHECKING:
 
 #: A smoke test: probe a chosen device and return its self-info dict if it is a MeshCore
 #: companion, else ``None``. Supplied by the caller so this UI module stays free of the
-#: connection layer.
+#: connection *logic*. It may raise :class:`DeviceCommandError` for an actionable failure the
+#: user can fix (e.g. a Bluetooth device that needs a PIN); the picker shows that message
+#: verbatim instead of the generic "didn't answer".
 Verify = Callable[[DiscoveredDevice], Awaitable[Optional[dict]]]
 
 #: The Quit row's value. Selecting it — like pressing Esc — leaves the splash without a
@@ -220,13 +224,29 @@ async def prompt_device(
         # Smoke-test the choice in place: the splash keeps its wordmark and box, only the box
         # contents swap for an animated spinner while we talk to the device. BLE connect and
         # service discovery take a few seconds, so the spinner matters most here.
-        info = await ui.busy_startup(
-            f"Talking to {name} {where}…",
-            verify(chosen),
-            title="Checking companion",
-            banner=load_logo(),
-            footnote=footnote,
-        )
+        try:
+            info = await ui.busy_startup(
+                f"Talking to {name} {where}…",
+                verify(chosen),
+                title="Checking companion",
+                banner=load_logo(),
+                footnote=footnote,
+            )
+        except DeviceCommandError as exc:
+            # The probe reached the device but it told us how it must be reached (e.g. it needs
+            # a BLE PIN). Show that remedy verbatim — not the generic "didn't answer" below,
+            # which would leave the user with no idea a PIN was the missing piece. Built as
+            # plain styled text so the message's own punctuation is never parsed as markup.
+            notice = Text()
+            notice.append(str(exc), style="warn")
+            notice.append("\nChoose another device.")
+            await ui.notify_startup(
+                notice,
+                title="Can't connect yet",
+                banner=load_logo(),
+                footnote=footnote,
+            )
+            continue
 
         if info is None:
             reason = (

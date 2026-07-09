@@ -153,6 +153,42 @@ def is_connection_lost(exc: BaseException) -> bool:
     return False
 
 
+#: Message fragments a BLE stack uses when a characteristic can't be accessed without a bond —
+#: i.e. the companion is PIN-protected and we're unpaired (or gave the wrong PIN). The GATT
+#: subscribe fails with one of these rather than a dropped link, so they're handled as a
+#: distinct, actionable "needs a PIN" case (see :func:`_is_ble_auth_error`) and never as
+#: connection loss. Matched by text so ``bleak`` need not be imported here.
+_BLE_AUTH_HINTS = (
+    "insufficient authentication",
+    "insufficient authorization",
+    "insufficient encryption",
+    "not paired",
+)
+
+
+def _is_ble_auth_error(exc: BaseException) -> bool:
+    """Return whether ``exc`` (or any it was raised from) is a BLE authentication rejection.
+
+    Walks the whole ``__cause__``/``__context__`` chain matching :data:`_BLE_AUTH_HINTS`, so a
+    ``BleakGATTProtocolError`` wrapped by the meshcore transport is still recognized.
+
+    Args:
+        exc: The exception raised while opening the Bluetooth connection.
+
+    Returns:
+        ``True`` if the failure is a missing/rejected pairing rather than a dropped link.
+    """
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current).lower()
+        if any(hint in text for hint in _BLE_AUTH_HINTS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def serial_port_present(port: str) -> bool:
     """Return whether a serial port named ``port`` is currently enumerated by the OS.
 
@@ -652,6 +688,37 @@ class MeshCoreDevice(Device):
                 "Run `pip install -e .` (or `pip install bleak`), use a USB device, or "
                 "run with --mock."
             ) from exc
+        except Exception as exc:  # noqa: BLE001 - translate auth failures; re-raise the rest
+            # A PIN-protected companion accepts the link-layer connection but rejects the
+            # GATT subscribe with an authentication error ("Insufficient Authentication" /
+            # "Insufficient Encryption" / "not paired"). That's not a dropped link — it's a
+            # missing bond — so surface a clean, actionable message instead of a raw traceback
+            # (which is what a bare BleakGATTProtocolError would produce). Anything else
+            # propagates unchanged so genuine link-loss still flows to is_connection_lost.
+            if not _is_ble_auth_error(exc):
+                raise
+            raise DeviceCommandError(self._ble_auth_message()) from exc
+
+    def _ble_auth_message(self) -> str:
+        """A clean, actionable error for a Bluetooth companion that requires a PIN/bond.
+
+        Distinguishes "you gave the wrong PIN" from "you gave none at all", and points at
+        both fixes: MeshTerm's ``--ble-pin`` and the one-time OS pairing that Windows needs
+        before an authenticated characteristic can be subscribed.
+        """
+        where = self._address or "the selected Bluetooth device"
+        if self._pin:
+            return (
+                f"{where} rejected the Bluetooth PIN — it needs pairing and the PIN provided "
+                "wasn't accepted. Double-check the 6-digit code shown on the device (or in the "
+                "MeshCore app) and pass it with --ble-pin, then try again. On Windows you may "
+                "also need to remove and re-pair the device in Settings > Bluetooth."
+            )
+        return (
+            f"{where} requires a Bluetooth pairing PIN. Pass it with --ble-pin <PIN> (the "
+            "6-digit code shown on the device or in the MeshCore app). On Windows you may also "
+            "need to pair the device once in Settings > Bluetooth before it will connect."
+        )
 
     def _no_response_message(self) -> str:
         """A clean, recoverable error for an endpoint that didn't answer as a companion."""
@@ -1967,6 +2034,11 @@ async def probe_device(
         ``(device, self_info)`` with a connected :class:`MeshCoreDevice` on success (the
         caller owns and must eventually close it), or ``None`` if it is not a reachable
         MeshCore companion.
+
+    Raises:
+        DeviceCommandError: On an actionable failure the user can fix — e.g. a Bluetooth
+            companion that requires a pairing PIN — so the caller can show the remedy rather
+            than an unhelpful "didn't answer".
     """
     if device.is_ble:
         timeout = _PROBE_TIMEOUT_BLE_S
@@ -2012,7 +2084,14 @@ async def _probe(
         timeout: Handshake window bounding both the connect and the identity read.
 
     Returns:
-        ``(device, self_info)`` with the connection left open, or ``None`` on any failure.
+        ``(device, self_info)`` with the connection left open, or ``None`` if the endpoint
+        simply isn't a reachable MeshCore companion.
+
+    Raises:
+        DeviceCommandError: On an *actionable* failure the user can fix — e.g. a Bluetooth
+            companion that needs a pairing PIN. This is deliberately distinct from ``None``
+            (an unremarkable "not a companion" miss) so the caller can show the real remedy
+            instead of a generic "didn't answer".
     """
     # ``timeout`` is the handshake window handed to the client, so a non-MeshCore endpoint is
     # rejected in ~``timeout`` seconds and the client cleans up its own connection. The outer
@@ -2022,7 +2101,12 @@ async def _probe(
     try:
         await asyncio.wait_for(device.connect(), timeout + 4.0)
         info = await asyncio.wait_for(device.get_self_info(), timeout)
-    except Exception:  # noqa: BLE001 - any failure just means "not confirmed"
+    except DeviceCommandError:
+        # A clean, actionable failure (the device needs a PIN, say): close the probe and let it
+        # through so the picker surfaces the remedy rather than hiding it behind "didn't answer".
+        await _safe_disconnect(device)
+        raise
+    except Exception:  # noqa: BLE001 - any other failure just means "not confirmed"
         await _safe_disconnect(device)
         return None
     if not info:
