@@ -126,47 +126,6 @@ def test_recent_traces_empty_target(repo: Repository) -> None:
     assert repo.recent_traces("NoSuchNode") == []
 
 
-# -- all_traces ------------------------------------------------------------
-
-
-def test_all_traces_spans_targets(repo: Repository) -> None:
-    """all_traces returns traces across every target."""
-    run = repo.start_run("trace", {})
-    repo.record_trace(run, _make_trace("Alice", ("r", 1.0)))
-    repo.record_trace(run, _make_trace("Bob", ("r", 2.0)))
-    repo.record_trace(run, _make_trace("Alice", ("r", 3.0)))
-
-    got = repo.all_traces()
-    assert len(got) == 3
-    targets = {t.target for t in got}
-    assert targets == {"Alice", "Bob"}
-
-
-def test_all_traces_newest_first(repo: Repository) -> None:
-    """all_traces returns traces in reverse insertion order."""
-    run = repo.start_run("trace", {})
-    repo.record_trace(run, _make_trace("A", ("h", 1.0)))
-    repo.record_trace(run, _make_trace("B", ("h", 2.0)))
-    repo.record_trace(run, _make_trace("A", ("h", 3.0)))
-
-    targets = [t.target for t in repo.all_traces()]
-    assert targets == ["A", "B", "A"]
-
-
-def test_all_traces_respects_limit(repo: Repository) -> None:
-    """The limit parameter caps the cross-target result."""
-    run = repo.start_run("trace", {})
-    for _ in range(10):
-        repo.record_trace(run, _make_trace("X", ("h", 1.0)))
-
-    assert len(repo.all_traces(limit=4)) == 4
-
-
-def test_all_traces_empty_db(repo: Repository) -> None:
-    """An empty database returns an empty list, not an error."""
-    assert repo.all_traces() == []
-
-
 # -- traced_targets --------------------------------------------------------
 
 

@@ -577,9 +577,14 @@ def _ordered_contacts(
     end.
     """
     if sort.column == "heard":
+        # One clock snapshot for the whole sort: per-row utcnow() calls would skew two
+        # identical last_seen stamps apart by microseconds and defeat the name tie-break.
+        now = utcnow()
+
         def metric(c: Contact) -> float:
-            secs = _age_seconds(c.last_seen)
-            return secs if secs is not None else float("inf")
+            if c.last_seen is None or getattr(c.last_seen, "tzinfo", None) is None:
+                return float("inf")
+            return max(0.0, (now - c.last_seen).total_seconds())
     elif sort.column == "packets":
         def metric(c: Contact) -> float:
             return _contact_pkts(c, counts) or 0

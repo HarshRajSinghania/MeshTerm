@@ -265,22 +265,6 @@ class Repository:
         ).fetchall()
         return [self._hydrate_trace(row) for row in rows]
 
-    def all_traces(self, *, limit: int = 500) -> list[TraceResult]:
-        """Return recent traces across every target, newest first, rehydrated with hops.
-
-        Used to build a whole-mesh route graph rather than a single target's history.
-
-        Args:
-            limit: Maximum number of traces to return.
-
-        Returns:
-            The matching :class:`TraceResult` objects, newest first.
-        """
-        rows = self._conn.execute(
-            "SELECT * FROM traces ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-        return [self._hydrate_trace(row) for row in rows]
-
     def _hydrate_trace(self, row: sqlite3.Row) -> TraceResult:
         """Rebuild a :class:`TraceResult` (with hops) from a ``traces`` row.
 

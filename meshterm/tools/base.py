@@ -142,7 +142,7 @@ _REGISTRY: dict[str, Tool] = {}
 #: Explicit menu ordering for tool categories. Messaging (Chat + Channels) leads because it
 #: holds the first-class, everyday features; the rest follow in a natural workflow order.
 #: Categories not listed here sort last, alphabetically, so a new category still appears.
-_CATEGORY_ORDER = ["Messaging", "Device", "Diagnostics", "Optimization", "Data"]
+_CATEGORY_ORDER = ["Messaging", "Device", "Diagnostics"]
 
 
 def _category_rank(category: str) -> int:

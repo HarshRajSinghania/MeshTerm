@@ -1,18 +1,18 @@
-"""The ``monitor`` tool: review what the always-on passive monitor has heard.
+"""The ``monitor`` tool: a bounded foreground capture of what the mesh is saying.
 
 Passive monitoring records every advert and telemetry frame the companion overhears —
 with SNR, RSSI, and any shared location — to the database, building the longitudinal
-history that the coverage map and link-quality alerting read back. It transmits nothing;
+history that the map's packet counts and the nodes list read back. It transmits nothing;
 it only listens.
 
 Recording is always on: the session-wide
 :class:`~meshterm.services.event_hub.EventHub` overhears every packet, and
 :class:`~meshterm.services.monitor_service.MonitorService` (``ctx.monitor``) writes them
-to history as one of its subscribers, from the moment the radio opens. There is nothing
-to switch, so in the menu this tool is purely the read side: the all-time heard-node
-summary (the live packet counters are shown in the main-menu header, not here). On the
-CLI it is instead a bounded foreground capture — ``meshterm monitor --seconds 60`` tails
-each overheard packet to the console and summarizes the window when it ends.
+to history as one of its subscribers, from the moment the radio opens. In the menu the
+live packet counters show in the persistent header and the accumulated data surfaces
+through Nodes and Map, so there is no separate screen here — this tool is CLI-only:
+``meshterm monitor --seconds 60`` tails each overheard packet to the console and
+summarizes the window when it ends.
 """
 
 from __future__ import annotations
@@ -32,21 +32,21 @@ from .base import Tool, ToolResult, register
 
 @register
 class MonitorTool(Tool):
-    """Review the nodes the always-on passive monitor has heard."""
+    """Capture overheard packets in the foreground for a bounded window (CLI only)."""
 
     name = "monitor"
-    title = "Heard nodes"
-    help = "Review every node the passive monitor has overheard"
+    title = "Monitor"
+    help = "Capture overheard packets live for a while and summarize them"
     category = "Diagnostics"
     order = 20
+    menu_visible = False  # recording is always on; in the menu the header/Nodes/Map show it
 
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run directly, without a logged ``runs`` row.
 
-        The heard-node review is a read of existing history, not a measurement, so it is
-        deliberately not wrapped in run-logging (unlike the base :meth:`Tool.execute`).
-        The CLI capture's observations are recorded under the monitor service's own
-        ``monitor`` run instead.
+        The capture's observations are recorded under the monitor service's own
+        ``monitor`` run, so wrapping this invocation in a second run row (as the base
+        :meth:`Tool.execute` would) would double-log the session.
 
         Args:
             ctx: Shared application context.
@@ -58,23 +58,7 @@ class MonitorTool(Tool):
         return await self.run(ctx, params)
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Show the heard-node review, or run the CLI's bounded capture.
-
-        Args:
-            ctx: Shared application context.
-            params: Empty for the menu's review; ``action="capture"`` plus ``seconds``
-                for the CLI capture.
-
-        Returns:
-            A :class:`ToolResult` describing the outcome.
-        """
-        if params.get("action") == "capture":
-            return await self._capture(ctx, params)
-        return self._view(ctx)
-
-    @staticmethod
-    async def _capture(ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Record overheard packets in the foreground for a bounded window (CLI only).
+        """Record overheard packets in the foreground for a bounded window.
 
         Connects the device, ensures history recording and the event hub are running,
         and tails each overheard packet to the console until the window ends (or the
@@ -131,49 +115,13 @@ class MonitorTool(Tool):
         nodes = [HeardNode.from_observations(node, group) for node, group in by_node.items()]
         if nodes:
             nodes.sort(key=lambda n: n.last_seen, reverse=True)
-            ctx.ui.show(_heard_table(nodes, lambda _node: None))
+            ctx.ui.show(_heard_table(nodes))
         return ToolResult(
             summary={"seconds": seconds, "packets": len(seen), "nodes": len(nodes)},
             message=(
                 f"[ok]✓[/ok] heard [brand]{len(seen)}[/brand] "
                 f"packet{'' if len(seen) == 1 else 's'} from "
                 f"[brand]{len(nodes)}[/brand] node{'' if len(nodes) == 1 else 's'}"
-            ),
-        )
-
-    @staticmethod
-    def _view(ctx: AppContext) -> ToolResult:
-        """Render the all-time heard-node summary from stored observations.
-
-        Reads only the database, so it needs no device connection and works whether or
-        not packets are currently arriving.
-
-        Args:
-            ctx: Shared application context.
-
-        Returns:
-            A :class:`ToolResult` summarizing the heard nodes.
-        """
-        heard = ctx.repo.heard_nodes()
-        if heard:
-            # Names come from the stored observations, so no device lookup is needed.
-            ctx.ui.show(_heard_table(heard, lambda _node: None))
-        else:
-            ctx.ui.note(
-                "[muted]no packets heard yet — history accumulates while MeshTerm runs[/muted]"
-            )
-
-        packets = sum(n.count for n in heard)
-        located = sum(1 for n in heard if n.has_location)
-        return ToolResult(
-            summary={
-                "nodes_heard": len(heard),
-                "observations": packets,
-                "nodes_with_location": located,
-            },
-            message=(
-                f"[ok]✓[/ok] heard [brand]{packets}[/brand] packets from "
-                f"[brand]{len(heard)}[/brand] nodes (all time)"
             ),
         )
 
@@ -185,24 +133,20 @@ class MonitorTool(Tool):
         """
         from ..cli import run_tool_command
 
-        @app.command(
-            name=self.name,
-            help="Capture overheard packets live for a while and summarize them",
-        )
+        @app.command(name=self.name, help=self.help)
         def _monitor(
             seconds: int = typer.Option(
                 0, "--seconds", "-s", help="How long to capture (0 = until Ctrl-C)"
             ),
         ) -> None:
-            run_tool_command(self, {"action": "capture", "seconds": seconds})
+            run_tool_command(self, {"seconds": seconds})
 
 
-def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001
-    """Render the heard-node summary table.
+def _heard_table(heard: list[HeardNode]) -> Table:
+    """Render the capture window's heard-node summary table.
 
     Args:
-        heard: Aggregated per-node statistics.
-        resolve: Maps a raw node hash to a friendly contact name when known.
+        heard: Aggregated per-node statistics for the window.
 
     Returns:
         A Rich :class:`Table` of node, packet count, SNR, RSSI, and location.
@@ -217,7 +161,7 @@ def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001
     table.add_column("RSSI", justify="right")
     table.add_column("LOC", justify="center")
     for node in heard:
-        label = node.name or resolve(node.node) or node.node or "?"
+        label = node.name or node.node or "?"
         median = node.median_snr
         best = node.best_snr
         median_cell = (

@@ -33,8 +33,8 @@ class TxOptimizeTool(Tool):
     name = "tx-optimize"
     title = "TX optimize"
     help = "Tune a remote node's TX power for the best signal at a target"
-    category = "Optimization"
-    order = 10
+    category = "Diagnostics"
+    order = 15  # right after Trace, its measurement sibling
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Interactively gather the path, sampling, range, and apply choices.

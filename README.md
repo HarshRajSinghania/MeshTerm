@@ -4,28 +4,23 @@ A modern, extensible command-line toolkit for tuning and exploring a
 [MeshCore](https://meshcore.co.uk/) mesh through a serial- or Bluetooth-connected companion
 device.
 
-MeshTerm is interactive by default (a Rich + Questionary menu) and fully scriptable
-(every menu option is also a Typer subcommand). Every run is logged to SQLite and can be
-turned into interactive HTML visualizations.
+MeshTerm is interactive by default (a full-screen Rich + prompt_toolkit TUI) and fully
+scriptable (every menu option is also a Typer subcommand). Every run is logged to SQLite,
+building a longitudinal history of the mesh.
 
 ## Features
 
 | Feature | Status | What it does |
 | --- | --- | --- |
-| **Trace** | ✅ skeleton | Run repeated path traces to a target and aggregate per-hop SNR. |
-| **Device info** | ✅ skeleton | Show the connected companion device's identity and radio config. |
-| **Node list** | ✅ working | List this node and its known contacts — full public keys with the path-hash prefix highlighted. |
+| **Chat** | ✅ working | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged to SQLite, unread counts show in the menu header, and `chat send/history/list` script the same from the CLI. Channels are picked here; edit them in `config`. |
+| **Channels** | ✅ working | Create, join, reorder, and share mesh channels — with QR codes and `meshcore://` links. |
+| **Map** | ✅ working | Mesh nodes on a pannable street map, repeaters highlighted, fed by everything the monitor has overheard. |
 | **Device config** | ✅ working | View and change every setting (name, radio, behavior, experimental), with TOML backup/restore, channels, and gated destructive ops. |
 | **Device discovery** | ✅ working | Enumerate serial *and* Bluetooth LE companions, pick one interactively, and remember the last good default. A dropped link (unplug, power-off, or BLE out-of-range) is detected live and offers to reconnect. |
-| **History / DB** | ✅ skeleton | Every tool execution and measurement is persisted and queryable. |
-| **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
-| **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
-| **Chat** | ✅ working | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged to SQLite, unread counts show in the menu header, and `chat send/history/list` script the same from the CLI. Channels are picked here; edit them in `config`. |
-| **Passive monitor** | ✅ working | Always-on background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you use the app; live packet counts show in the menu header, the heard-node summary is a menu item, and `meshterm monitor --seconds 60` captures a bounded window from the CLI. |
-| **Link health** | ✅ working | Compare a target's recent traces to its rolling baseline and flag SNR/reliability regressions, end-to-end and per hop. |
-| **Route map** | ✅ working | Aggregate trace history into an interactive route-stability graph — which links are stable, which the mesh flaps between, with churn metrics. |
-| **Path optimization** | 🚧 planned | Discover and score mesh paths from neighbors outward. |
-| **Visualizations** | 🟡 partial | Plotly TX-sweep chart (HTML) done; pyvis mesh graph + time-series planned. |
+| **Node list** | ✅ working | List this node and its known contacts — recency heat-map, overheard packet counts, full public keys with the path-hash prefix highlighted. |
+| **Trace** | ✅ working | A live trace screen: pick a target, watch each trace stream in hop by hop, with running per-hop medians and reliability. |
+| **TX-power optimization** | ✅ working | Sweep a remote node's transmit power live (coarse + refine + verify), watch each level land, then decide whether to apply the winner. |
+| **Passive monitor** | ✅ working | Always-on background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you use the app; live packet counts show in the menu header, the data feeds Nodes and Map, and `meshterm monitor --seconds 60` captures a bounded window from the CLI. |
 
 ## Install
 
@@ -51,9 +46,8 @@ meshterm trace --target Alice --samples 10 --profile yagi
 # contact names and/or hex key prefixes, mixed freely. Blank lets the device route.
 meshterm trace --target Alice --path "3d,f2,3d"
 meshterm trace --target Alice --path "3d,Bravo-Repeater,f2"
-meshterm tx-optimize --target Alice --samples 6 --step 3 --apply
+meshterm tx-optimize --path "Bravo-Repeater,Alice" --samples 6 --step 3 --apply
 meshterm info
-meshterm history
 
 # Messaging: live chat in the menu, or scripted from the CLI
 meshterm chat                                  # interactive: pick a conversation, chat live
@@ -81,10 +75,10 @@ cli.py        Typer app; no subcommand -> interactive menu
 context.py    AppContext (console, config, repository, device) dependency container
 core/         Domain: models, config + device profiles, connection abstraction (+ mock)
 tools/        Pluggable "menu options"; each self-registers and gets logging for free
-services/     Algorithms (trace aggregation, tx search, path exploration) — no UI
+services/     Algorithms (trace aggregation, tx search) — no UI
 persistence/  SQLite schema, repository, structured logging
-ui/           Rich theme/widgets + Questionary menu
-viz/          Plotly / pyvis renderers -> HTML & PNG
+ui/           Rich theme/widgets + the full-screen TUI (screens, dialogs, map, chat)
+viz/          Plotly renderers -> interactive HTML
 ```
 
 Adding a feature means subclassing `Tool`, decorating it with `@register`, and
