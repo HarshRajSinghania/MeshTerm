@@ -385,24 +385,39 @@ async def test_autoadd_config_round_trips() -> None:
     assert (await build_snapshot(device))["autoadd_config"] == 5
 
 
-async def test_apply_tx_delay_preserves_other_tuning_fields() -> None:
-    """Editing one tuning field resends all four without clobbering the others."""
+def test_tuning_fields_are_floats_with_firmware_ranges() -> None:
+    """RX delay and airtime factor take real (unscaled) float values, firmware-bounded.
+
+    The firmware stores both as floats (rx_delay_base 0–20 s, airtime_factor 0–9) and
+    only the *wire* carries them ×1000 — the settings must speak the real units.
+    """
+    assert parse_value(get_spec("rx_delay"), "0.5") == 0.5
+    assert parse_value(get_spec("airtime_factor"), "2.5") == 2.5
+    with pytest.raises(DeviceConfigError, match="<= 20"):
+        parse_value(get_spec("rx_delay"), "500")  # a raw wire value must be rejected
+    with pytest.raises(DeviceConfigError, match="<= 9"):
+        parse_value(get_spec("airtime_factor"), "1000")
+
+
+def test_tx_delay_factors_are_not_companion_settings() -> None:
+    """The repeater-only TX delay factors must not appear as (no-op) device settings.
+
+    Companion firmware's CMD_SET_TUNING_PARAMS reads exactly rx_delay + airtime_factor
+    and ignores trailing bytes, so offering these knobs here would silently do nothing.
+    """
+    with pytest.raises(DeviceConfigError, match="unknown setting"):
+        get_spec("tx_delay_factor")
+    with pytest.raises(DeviceConfigError, match="unknown setting"):
+        get_spec("direct_tx_delay_factor")
+
+
+async def test_apply_tuning_field_preserves_the_other() -> None:
+    """Editing one tuning field resends the pair without clobbering its sibling."""
     device = await _connected_mock()
-    await device.set_tuning(7, 2, 0, 0)
-    spec = get_spec("tx_delay_factor")
-    await spec.apply(device, 5, await build_snapshot(device))
-    tuning = await device.get_tuning()
-    assert tuning == {
-        "rx_delay": 7,
-        "airtime_factor": 2,
-        "tx_delay_factor": 5,
-        "direct_tx_delay_factor": 0,
-    }
-    # And the other direction: a direct-TX-delay edit keeps the fresh tx_delay_factor.
-    spec = get_spec("direct_tx_delay_factor")
-    await spec.apply(device, 3, await build_snapshot(device))
-    assert (await device.get_tuning())["tx_delay_factor"] == 5
-    assert (await device.get_tuning())["direct_tx_delay_factor"] == 3
+    await device.set_tuning(0.5, 2.0)
+    spec = get_spec("airtime_factor")
+    await spec.apply(device, 3.5, await build_snapshot(device))
+    assert await device.get_tuning() == {"rx_delay": 0.5, "airtime_factor": 3.5}
 
 
 # -- clock sync -------------------------------------------------------------------

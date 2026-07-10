@@ -248,23 +248,12 @@ def _coords_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[No
 
 
 def _tuning_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[None]]:
-    """Build an apply that updates one tuning field, preserving the others.
-
-    The TX delay factors cannot be read back from real hardware (see
-    :meth:`~meshterm.core.connection.Device.get_tuning`), so an unknown current value
-    falls back to ``0`` — exactly what every tuning write sent for them before they were
-    exposed as settings.
-    """
+    """Build an apply that updates one tuning field, preserving the other."""
 
     async def apply(device: Device, value: Any, snapshot: dict) -> None:
-        fields = {
-            key: snapshot.get(key)
-            for key in (
-                "rx_delay", "airtime_factor", "tx_delay_factor", "direct_tx_delay_factor"
-            )
-        }
-        fields[field_name] = value
-        await device.set_tuning(*(int(v or 0) for v in fields.values()))
+        rx = value if field_name == "rx_delay" else snapshot.get("rx_delay", 0.0)
+        af = value if field_name == "airtime_factor" else snapshot.get("airtime_factor", 0.0)
+        await device.set_tuning(float(rx or 0.0), float(af or 0.0))
 
     return apply
 
@@ -404,28 +393,20 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "Radio", "int", minimum=1, maximum=30, max_key="max_tx_power",
         getter=_get("tx_power"), apply=lambda d, v, s: d.set_tx_power(v),
     ),
-    # Tuning
+    # Tuning. Both are firmware floats moved over the wire ×1000; the ranges are the
+    # firmware's own constrain() bounds. (The repeater-side TX delay factors are *not*
+    # here: companion firmware ignores them — they are remote-CLI settings on repeaters.)
     SettingSpec(
-        "rx_delay", "RX delay", "Receive-delay tuning", "Tuning", "int",
-        minimum=0,
-        getter=_get("rx_delay"), apply=_tuning_apply("rx_delay"),
-    ),
-    SettingSpec(
-        "airtime_factor", "Airtime factor", "Airtime budgeting factor", "Tuning", "int",
-        minimum=0,
+        "airtime_factor", "Airtime factor",
+        "Airtime budget: duty cycle = 100 / (factor + 1) %, so 0 = unlimited", "Tuning",
+        "float", minimum=0.0, maximum=9.0,
         getter=_get("airtime_factor"), apply=_tuning_apply("airtime_factor"),
     ),
     SettingSpec(
-        "tx_delay_factor", "TX delay",
-        "Random delay factor before relayed transmissions (write-only on hardware)",
-        "Tuning", "int", minimum=0, maximum=255,
-        getter=_get("tx_delay_factor"), apply=_tuning_apply("tx_delay_factor"),
-    ),
-    SettingSpec(
-        "direct_tx_delay_factor", "Direct TX delay",
-        "Delay factor before direct, zero-hop transmissions (write-only on hardware)",
-        "Tuning", "int", minimum=0, maximum=255,
-        getter=_get("direct_tx_delay_factor"), apply=_tuning_apply("direct_tx_delay_factor"),
+        "rx_delay", "RX delay",
+        "Base delay before handling received packets, seconds", "Tuning",
+        "float", minimum=0.0, maximum=20.0,
+        getter=_get("rx_delay"), apply=_tuning_apply("rx_delay"),
     ),
     # Behavior
     SettingSpec(

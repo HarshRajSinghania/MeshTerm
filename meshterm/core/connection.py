@@ -430,13 +430,13 @@ class Device(ABC):
 
     @abstractmethod
     async def get_tuning(self) -> dict:
-        """Return radio tuning parameters.
+        """Return radio tuning parameters, in their real units.
 
         Returns:
-            A dict with ``rx_delay`` and ``airtime_factor`` (both ints). The TX delay
-            factors are write-only in the companion protocol (the firmware's tuning
-            response carries only these two fields), so they are absent here on real
-            hardware; the simulator includes them for a fuller editing experience.
+            A dict with ``rx_delay`` (float seconds) and ``airtime_factor`` (float).
+            The firmware stores both as floats and moves them over the wire scaled
+            ×1000; implementations undo that scaling so callers only ever see the
+            real values.
         """
 
     @abstractmethod
@@ -550,21 +550,15 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def set_tuning(
-        self,
-        rx_delay: int,
-        airtime_factor: int,
-        tx_delay_factor: int = 0,
-        direct_tx_delay_factor: int = 0,
-    ) -> None:
-        """Set radio tuning parameters.
+    async def set_tuning(self, rx_delay: float, airtime_factor: float) -> None:
+        """Set radio tuning parameters, in their real units.
 
-        The firmware takes all four fields in one command, so a caller changing one must
-        resend the others. The two TX delay factors (single bytes: the random extra delay
-        before relayed transmissions, and the delay before direct/zero-hop ones) cannot be
-        read back from real hardware — see :meth:`get_tuning` — so an unknown current
-        value defaults to ``0``, which is also what the underlying library always sent
-        before these were exposed.
+        The firmware takes both fields in one command, so a caller changing one must
+        resend the other. Values are the real ones (``rx_delay`` in seconds, 0–20;
+        ``airtime_factor`` a duty-cycle factor, 0–9); implementations apply the
+        protocol's ×1000 wire scaling. (The repeater-side TX delay factors are *not*
+        part of this command — companion firmware reads exactly these two fields and
+        ignores anything after them; those knobs are remote-CLI settings on repeaters.)
         """
 
     @abstractmethod
@@ -1574,9 +1568,11 @@ class MeshCoreDevice(Device):
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
         event = self._ok(await self._require().commands.get_tuning())
         payload = getattr(event, "payload", {}) or {}
+        # The firmware stores floats and reports them ×1000 (rx_delay_base * 1000,
+        # airtime_factor * 1000); undo that so callers see the real values.
         return {
-            "rx_delay": int(payload.get("rx_delay", 0)),
-            "airtime_factor": int(payload.get("airtime_factor", 0)),
+            "rx_delay": int(payload.get("rx_delay", 0)) / 1000.0,
+            "airtime_factor": int(payload.get("airtime_factor", 0)) / 1000.0,
         }
 
     async def get_autoadd_config(self) -> Optional[int]:  # noqa: D102 - inherited docstring
@@ -1655,27 +1651,13 @@ class MeshCoreDevice(Device):
     async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_radio(freq, bw, sf, cr))
 
-    async def set_tuning(  # noqa: D102 - inherited docstring
-        self,
-        rx_delay: int,
-        airtime_factor: int,
-        tx_delay_factor: int = 0,
-        direct_tx_delay_factor: int = 0,
-    ) -> None:
-        from meshcore import EventType
-
-        # The library's set_tuning hardcodes the two TX delay bytes to zero, so the full
-        # CMD_SET_TUNING_PARAMS (0x15) frame is built here instead: rx_delay(4 LE) +
-        # airtime_factor(4 LE) + tx_delay_factor(1) + direct_tx_delay_factor(1).
-        data = (
-            b"\x15"
-            + int(rx_delay).to_bytes(4, "little")
-            + int(airtime_factor).to_bytes(4, "little")
-            + int(tx_delay_factor).to_bytes(1, "little")
-            + int(direct_tx_delay_factor).to_bytes(1, "little")
-        )
+    async def set_tuning(self, rx_delay: float, airtime_factor: float) -> None:  # noqa: D102
+        # CMD_SET_TUNING_PARAMS carries both floats ×1000; the firmware divides them
+        # back out (prefs.rx_delay_base = rx / 1000, prefs.airtime_factor = af / 1000).
         self._ok(
-            await self._require().commands.send(data, [EventType.OK, EventType.ERROR])
+            await self._require().commands.set_tuning(
+                round(float(rx_delay) * 1000), round(float(airtime_factor) * 1000)
+            )
         )
 
     async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
@@ -1811,12 +1793,7 @@ class MockDevice(Device):
             "radio_cr": 5,
             "simulated": True,
         }
-        self._tuning: dict = {
-            "rx_delay": 0,
-            "airtime_factor": 0,
-            "tx_delay_factor": 0,
-            "direct_tx_delay_factor": 0,
-        }
+        self._tuning: dict = {"rx_delay": 0.0, "airtime_factor": 0.0}
         self._autoadd_config = 0
         self._flood_scope = ""
         # Simulated clock skew (seconds behind the host), so the sync-clock flow has a
@@ -1982,18 +1959,12 @@ class MockDevice(Device):
     async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
         self._info.update(radio_freq=freq, radio_bw=bw, radio_sf=sf, radio_cr=cr)
 
-    async def set_tuning(  # noqa: D102 - inherited docstring
-        self,
-        rx_delay: int,
-        airtime_factor: int,
-        tx_delay_factor: int = 0,
-        direct_tx_delay_factor: int = 0,
-    ) -> None:
+    async def set_tuning(self, rx_delay: float, airtime_factor: float) -> None:  # noqa: D102
+        # Round-trip through the wire's ×1000 integer scaling so the simulator loses
+        # precision exactly where real firmware would.
         self._tuning = {
-            "rx_delay": rx_delay,
-            "airtime_factor": airtime_factor,
-            "tx_delay_factor": tx_delay_factor,
-            "direct_tx_delay_factor": direct_tx_delay_factor,
+            "rx_delay": round(float(rx_delay) * 1000) / 1000.0,
+            "airtime_factor": round(float(airtime_factor) * 1000) / 1000.0,
         }
 
     async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
