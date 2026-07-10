@@ -181,6 +181,7 @@ class TextScreen(Screen):
         self,
         title: str,
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         help_text: str = "",
@@ -190,7 +191,10 @@ class TextScreen(Screen):
         """Build a text prompt.
 
         Args:
-            title: The question shown above the field.
+            title: Short heading shown in the dialog's border.
+            prompt: The question/instruction shown inside the box, above the field. Keep
+                the ``title`` short and put the detail here, so the popup reads like the
+                button dialogs (a prompt above its controls) rather than a lone field.
             default: Prefilled text.
             validate: Optional validator run on Enter; a returned string is shown as an
                 error and blocks submission.
@@ -201,15 +205,38 @@ class TextScreen(Screen):
         super().__init__()
         self.title = title
         self.footer_hint = footer_hint
+        self._prompt = prompt
         self._editor = _LineEditor(default)
         self._validate = validate
         self._help = help_text
         self._password = password
         self._error = ""
 
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the frame sizes the box to its content (see ButtonDialog).
+
+        The widest of the prompt, title, hint, footer, and the field's current text, plus a
+        comfortable field minimum — so a short prompt is a tidy box, not a banner stretched
+        across the terminal. The compositor still caps this to the width available.
+        """
+        inner = max(
+            cell_len(self._prompt),
+            cell_len(self.title),
+            cell_len(self._help),
+            cell_len(self.footer_hint),
+            cell_len(self._editor.text) + 4,  # the field plus its cursor and a little slack
+            36,  # a comfortable minimum so a short field isn't a cramped sliver
+        )
+        return inner + 8  # panel padding + border, plus horizontal breathing room
+
     def render_body(self, width: int) -> list[str]:
-        """Render the field, any help text, and the current validation error."""
-        parts: list[RenderableType] = [self._editor.render(mask=self._password)]
+        """Render the optional prompt, the field, any help text, and a validation error."""
+        parts: list[RenderableType] = []
+        if self._prompt:
+            parts.append(Text(self._prompt))
+            parts.append(Text(""))
+        parts.append(self._editor.render(mask=self._password))
         if self._help:
             parts.append(Text(self._help, style="muted"))
         if self._error:
@@ -318,6 +345,16 @@ class ConfirmScreen(Screen):
         self.title = title
         self.footer_hint = footer_hint
         self._value = default
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the box hugs the question rather than stretching wide."""
+        inner = max(
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            len("  Yes      No  "),
+        )
+        return inner + 8
 
     def render_body(self, width: int) -> list[str]:
         """Render the Yes / No options with the current choice highlighted."""
@@ -438,6 +475,79 @@ class ButtonDialog(Screen):
             super().handle("escape")
 
 
+class TypedConfirmDialog(Screen):
+    """A destructive-action gate: the user must type a confirmation word to proceed.
+
+    A centered, error-themed dialog for the actions a stray Enter must never be able to
+    trigger (factory reset, identity overwrite). It shows the warning, then a field the
+    user has to type the exact confirmation word into; Enter commits only when the field
+    matches (anything else shows a nudge and keeps the dialog up), and Esc always backs
+    out. Matching is case-insensitive so a forgotten CapsLock doesn't read as hesitation —
+    the friction is having to *type the word*, not its case. Resolves ``True`` on a match,
+    or :data:`~meshterm.ui.tui.screen.CANCEL` on Esc (never ``False``).
+    """
+
+    border_style = "err"
+    footer_hint = "Enter confirm · Esc cancel"
+
+    def __init__(self, warning: str, word: str, *, title: str = "Are you sure?") -> None:
+        """Build the typed-confirmation dialog.
+
+        Args:
+            warning: The consequence, spelled out (e.g. "This erases ALL data …").
+            word: The word the user must type to confirm (e.g. ``"RESET"``).
+            title: Dialog heading.
+        """
+        super().__init__()
+        self.title = title
+        self._warning = warning
+        self._word = word
+        self._editor = _LineEditor("")
+        self._error = ""
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the frame sizes the box to its content (see ButtonDialog)."""
+        inner = max(
+            cell_len(self._warning),
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            cell_len(self._ask),
+        )
+        return min(inner, 72) + 12  # panel padding + border, plus breathing room
+
+    @property
+    def _ask(self) -> str:
+        """The instruction line naming the word to type."""
+        return f"Type {self._word} to confirm:"
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the warning, the instruction, the typed field, and any mismatch nudge."""
+        parts: list[RenderableType] = [
+            Text(self._warning, style="err"),
+            Text(""),
+            Text(self._ask, style="muted"),
+            self._editor.render(),
+        ]
+        if self._error:
+            parts.append(Text(self._error, style="err"))
+        return render_lines(Group(*parts), width)
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Edit the field, confirm on an exact match, or cancel on Esc."""
+        if action == "enter":
+            if self._editor.text.strip().lower() == self._word.lower():
+                self.resolve(True)
+            else:
+                self._error = f"That doesn't match — type {self._word}, or press Esc to cancel."
+            return
+        if action == "escape":
+            super().handle("escape")
+            return
+        if self._editor.edit(action, data):
+            self._error = ""
+
+
 class ReconnectDialog(Screen):
     """A centered dialog shown when the companion link drops mid-session.
 
@@ -528,6 +638,7 @@ class AutocompleteScreen(Screen):
         title: str,
         choices: list[str],
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         footer_hint: str = "type · ↑↓ Tab complete · Enter accept · Esc cancel",
@@ -535,8 +646,9 @@ class AutocompleteScreen(Screen):
         """Build an autocomplete prompt.
 
         Args:
-            title: The question shown above the field.
+            title: Short heading shown in the dialog's border.
             choices: Suggestion strings to match against.
+            prompt: The instruction shown inside the box, above the field.
             default: Prefilled text.
             validate: Optional validator run on Enter.
             footer_hint: Footer key hint.
@@ -544,11 +656,25 @@ class AutocompleteScreen(Screen):
         super().__init__()
         self.title = title
         self.footer_hint = footer_hint
+        self._prompt = prompt
         self._editor = _LineEditor(default)
         self._choices = choices
         self._validate = validate
         self._error = ""
         self._sugg = 0
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so the box fits its prompt/suggestions, not the whole screen."""
+        widths = [
+            cell_len(self._prompt),
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            cell_len(self._editor.text) + 4,
+            36,
+        ]
+        widths.extend(cell_len(c) + 2 for c in self._choices[: self.MAX_SUGGESTIONS])
+        return max(widths) + 8
 
     def _suggestions(self) -> list[str]:
         """Return suggestions matching the current text, capped for display."""
@@ -560,8 +686,12 @@ class AutocompleteScreen(Screen):
         return matches[: self.MAX_SUGGESTIONS]
 
     def render_body(self, width: int) -> list[str]:
-        """Render the field, the matching suggestions, and any error."""
-        parts: list[RenderableType] = [self._editor.render()]
+        """Render the optional prompt, the field, the matching suggestions, and any error."""
+        parts: list[RenderableType] = []
+        if self._prompt:
+            parts.append(Text(self._prompt))
+            parts.append(Text(""))
+        parts.append(self._editor.render())
         suggestions = self._suggestions()
         self._sugg = max(0, min(self._sugg, len(suggestions) - 1)) if suggestions else 0
         for i, sug in enumerate(suggestions):

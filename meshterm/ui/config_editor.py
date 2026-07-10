@@ -1,92 +1,175 @@
 """Interactive device-configuration editor, rendered in the full-screen session.
 
-Drives the menu flow for the ``config`` tool: it presents the device's settings (each row
-showing its current value and any staged change), lets the user stage changes setting-by-
-setting with type-aware prompts and validation, and handles custom variables,
-backup/restore and the destructive "danger zone". (Channels have their own first-class
-manager — see the ``channels`` tool.) It returns an operation list for
-:class:`~meshterm.tools.config.ConfigTool` to execute and log; it performs no device writes
-itself (except danger-zone actions, which run immediately and show their result at once).
+Drives the menu flow for the ``config`` tool. The screen is one grouped list: every
+setting under its category heading (each row showing its current value, any staged change,
+and a one-line explanation), followed by a *Device actions* section for the operations that
+act on the box itself rather than a value — adverts, reboot, backup/restore, the identity
+key, and factory reset.
+
+Two kinds of interaction live here, deliberately kept distinct:
+
+* **Settings are staged.** Editing a row stages the new value (shown as ``current → new``
+  in the row) and nothing touches the radio until *Apply*; backing out with staged changes
+  asks before discarding them. The editor returns the staged operations for
+  :class:`~meshterm.tools.config.ConfigTool` to execute and log.
+* **Device actions run immediately** (after their own confirmation dialog — destructive
+  ones gate behind typing a confirmation word). They have no meaningful "preview", so their
+  result is shown at once.
+
+Multiple-choice values are picked in dialogs (booleans as an On/Off button pair, enums as
+a floating select), the node's location can be set by pointing at the full-screen map (see
+:class:`~meshterm.ui.map_screen.LocationPickScreen`), and a reboot hands off to the same
+reconnect dialog the app shows when a device is unplugged. (Channels have their own
+first-class manager — see the ``channels`` tool.)
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+from urllib.parse import quote
 
 from rich import box
+from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
-from ..context import AppContext
 from ..core.device_config import (
     DeviceConfigError,
     SettingSpec,
     build_snapshot,
     format_value,
+    get_spec,
     parse_value,
     settings_by_category,
 )
 from .tui import Choice, Separator
 
+if TYPE_CHECKING:
+    from ..context import AppContext
+    from ..core.connection import Device
+
 # Menu action sentinels (distinct from setting keys, which are plain strings).
+_LOCATION = "__location__"
 _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
+_ADVERT = "__advert__"
+_REBOOT = "__reboot__"
 _BACKUP = "__backup__"
 _RESTORE = "__restore__"
-_DANGER = "__danger__"
+_IDENTITY_KEY = "__identity_key__"
+_RESET = "__reset__"
 _VIEW = "__view__"
 _APPLY = "__apply__"
 _CANCEL = "__cancel__"
 # Sentinel for the "enter a value myself" option on non-strict enum prompts.
 _OTHER = "__other__"
 
+#: The setting keys folded into the single "Location" row (they stay individually
+#: addressable from the CLI; only the editor presents them as one place-on-earth value).
+_COORD_KEYS = ("adv_lat", "adv_lon")
 
-async def edit_config(ctx: AppContext) -> Optional[list[tuple]]:
-    """Run the interactive editor and return the operations to perform.
+#: How long the reboot flow waits to *observe* the link actually dropping before handing
+#: off to the session's reconnect dialog (seconds). A companion normally vanishes from the
+#: bus well within this; on timeout we hand off anyway.
+_REBOOT_DROP_TIMEOUT_S = 10.0
+
+#: Poll cadence while waiting for the rebooting companion's link to drop (seconds).
+_REBOOT_DROP_POLL_S = 0.25
+
+
+async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
+    """Run the interactive editor and return the staged operations to perform.
 
     Args:
         ctx: Shared application context (provides the connected device and UI surface).
 
     Returns:
         A list of operation tuples for the tool to execute, or ``None`` if the user
-        cancelled without choosing to apply anything.
+        cancelled (or a device action — e.g. a reboot — ended the session) without
+        anything staged to apply.
     """
+    from .tui import CANCEL, SelectScreen
+
     device = await ctx.device()
     snapshot = await build_snapshot(device)
     custom = await device.get_custom_vars()
 
+    # The editor is menu-only, so a full-screen session is always present. Keep the main
+    # menu *pushed on the stack* for the whole session (rather than popping it between
+    # prompts): every sub-prompt then floats over it as a modal popup with its own border
+    # — the quit-dialog pattern — instead of replacing the screen. See _menu_loop.
+    session = getattr(ctx.ui, "session", None)
+    if session is None:  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("the config editor is only available in the menu")
+    loop = asyncio.get_running_loop()
+
     pending: dict[str, Any] = {}  # setting key -> staged new value
-    extra_ops: list[tuple] = []  # custom/channel/backup/restore/danger ops, in order
+    extra_ops: list[tuple] = []  # staged custom-variable ops, in order
+    cursor: Any = None  # the row to re-highlight, so the menu reopens where you left it
 
     while True:
-        choice = await _main_menu(ctx, snapshot, pending, extra_ops)
+        staged = len(pending) + len(extra_ops)
+        title, items = _menu_items(snapshot, pending, staged)
+        menu = SelectScreen(
+            title, items, default=cursor, wrap=False,
+            footer_hint="↑↓ move · type to filter · Enter select · Esc close",
+        )
+        menu.future = loop.create_future()
+        session.push(menu)
+        # Dispatch the choice while the menu is still pushed, so a sub-prompt floats over
+        # it; the menu is always popped in the finally, even on an early return.
+        try:
+            choice = await menu.future
+            if choice is CANCEL:  # Esc at the menu
+                choice = _CANCEL
+            if choice not in (None, _CANCEL):
+                cursor = choice
 
-        if choice in (None, _CANCEL):
-            return None
-        if choice == _APPLY:
-            ops: list[tuple] = [("set", k, v) for k, v in pending.items()]
-            ops.extend(extra_ops)
-            return ops or None
-        if choice == _VIEW:
-            await ctx.ui.view(
-                config_table(snapshot, custom, pending), title="Device configuration"
-            )
-        elif choice == _PRESETS:
-            await _stage_preset(ctx, pending)
-        elif choice == _CUSTOM:
-            await _stage_custom_var(ctx, custom, extra_ops)
-        elif choice == _BACKUP:
-            await _stage_backup(ctx, extra_ops)
-        elif choice == _RESTORE:
-            await _stage_restore(ctx, extra_ops)
-        elif choice == _DANGER:
-            # Danger-zone actions run immediately (after confirmation), not on Apply.
-            if await _danger_zone(ctx, device, snapshot):
-                snapshot = await build_snapshot(device)  # state may have changed
-                custom = await device.get_custom_vars()
-        else:  # a setting key
-            await _stage_setting(ctx, choice, snapshot, pending)
+            if choice in (None, _CANCEL):
+                if staged and not await _confirm_discard(ctx, staged):
+                    continue  # keep editing — the same menu is rebuilt next loop
+                return None
+            if choice == _APPLY:
+                ops: list[tuple] = [("set", k, v) for k, v in pending.items()]
+                ops.extend(extra_ops)
+                return ops or None
+            if choice == _VIEW:
+                await ctx.ui.view(
+                    config_table(snapshot, custom, pending), title="Device configuration"
+                )
+            elif choice == _LOCATION:
+                await _stage_location(ctx, snapshot, pending)
+            elif choice == _PRESETS:
+                await _stage_preset(ctx, pending)
+            elif choice == _CUSTOM:
+                await _stage_custom_var(ctx, custom, extra_ops)
+            elif choice == _ADVERT:
+                await _advert_menu(ctx, device, snapshot)
+            elif choice == _REBOOT:
+                if await _reboot(ctx, device, snapshot, staged):
+                    return None  # the link is dropping; the reconnect dialog takes over
+            elif choice == _BACKUP:
+                await _backup_now(ctx, device, snapshot)
+            elif choice == _RESTORE:
+                if await _restore_now(ctx, device, snapshot):
+                    snapshot = await build_snapshot(device)
+                    custom = await device.get_custom_vars()
+            elif choice == _IDENTITY_KEY:
+                if await _identity_key_menu(ctx, device, snapshot):
+                    snapshot = await build_snapshot(device)
+            elif choice == _RESET:
+                if await _factory_reset(ctx, device, snapshot):
+                    # Everything the editor knew about the device is gone; start clean.
+                    pending.clear()
+                    extra_ops.clear()
+                    snapshot = await build_snapshot(device)
+                    custom = await device.get_custom_vars()
+            else:  # a setting key
+                await _stage_setting(ctx, choice, snapshot, pending)
+        finally:
+            session.pop(menu)
 
 
 # --- rendering ---------------------------------------------------------------
@@ -156,75 +239,188 @@ def config_table(
     return table
 
 
-async def _main_menu(
-    ctx: AppContext, snapshot: dict, pending: dict, extra_ops: list
-) -> Optional[str]:
-    """Show the top-level editor menu and return the chosen action or setting key.
+def _setting_row(spec: SettingSpec, snapshot: dict, pending: dict) -> Text:
+    """Build one setting's menu row: ``label: current [→ staged]  —  help``.
 
-    Each setting row shows its current value (and any staged new value) plus a one-line
-    explanation, so the user can see and understand what they're changing in place.
+    The staged arrow is drawn in the warn style so a dirty row stands out at a glance,
+    and the help trails muted; both spans survive the select highlight (which only tints
+    the row's base style).
+    """
+    row = Text(f"{spec.label}: ")
+    row.append(format_value(spec, spec.getter(snapshot)))
+    if spec.key in pending:
+        row.append(f" → {format_value(spec, pending[spec.key])}", style="warn")
+    row.append(f"  —  {spec.help}", style="muted")
+    return row
+
+
+def _format_coords(lat: Any, lon: Any) -> str:
+    """Render a coordinate pair for display (``"not set"`` for the 0,0 no-fix value)."""
+    try:
+        lat_f, lon_f = float(lat or 0.0), float(lon or 0.0)
+    except (TypeError, ValueError):
+        return "?"
+    if abs(lat_f) < 1e-6 and abs(lon_f) < 1e-6:
+        return "not set"
+    return f"{lat_f:.5f}, {lon_f:.5f}"
+
+
+def _location_row(snapshot: dict, pending: dict) -> Text:
+    """The single Location row standing in for the ``adv_lat``/``adv_lon`` pair."""
+    row = Text("Location: ")
+    row.append(_format_coords(snapshot.get("adv_lat"), snapshot.get("adv_lon")))
+    if any(k in pending for k in _COORD_KEYS):
+        lat = pending.get("adv_lat", snapshot.get("adv_lat"))
+        lon = pending.get("adv_lon", snapshot.get("adv_lon"))
+        row.append(f" → {_format_coords(lat, lon)}", style="warn")
+    row.append("  —  Advertised position; pick it on the map", style="muted")
+    return row
+
+
+def _menu_items(
+    snapshot: dict, pending: dict, staged: int
+) -> tuple[str, list]:
+    """Build the editor menu's title and rows for the current snapshot + staged state.
+
+    Returns the ``(title, items)`` the caller pushes as a persistent backdrop screen (so
+    sub-prompts float over it). Each setting row shows its current value (and any staged
+    new value) plus a one-line explanation, so the user can see and understand what
+    they're changing in place. The device actions that run immediately live in their own
+    section below the settings.
     """
     items: list = []
     for category, specs in settings_by_category():
         items.append(Separator(f"── {category} ──"))
         for spec in specs:
-            current = format_value(spec, spec.getter(snapshot))
-            shown = (
-                f"{current} → {format_value(spec, pending[spec.key])}"
-                if spec.key in pending
-                else current
-            )
+            if spec.key in _COORD_KEYS:
+                # Latitude/longitude collapse into one Location row (inserted in
+                # adv_lat's slot so it sits where the coordinates used to).
+                if spec.key == "adv_lat":
+                    items.append(Choice(title=_location_row(snapshot, pending), value=_LOCATION))
+                continue
+            items.append(Choice(title=_setting_row(spec, snapshot, pending), value=spec.key))
+        if category == "Radio":
             items.append(
-                Choice(title=f"{spec.label}: {shown}  —  {spec.help}", value=spec.key)
+                Choice(
+                    title=Text.assemble(
+                        "Radio presets…",
+                        ("  —  Apply a standard regional or trade-off config", "muted"),
+                    ),
+                    value=_PRESETS,
+                )
             )
-    items.append(Separator("── More ──"))
-    items.append(Choice(title="View current config (full table)", value=_VIEW))
-    items.append(Choice(title="Radio presets (standard configs)", value=_PRESETS))
-    items.append(Choice(title="Custom / experimental vars", value=_CUSTOM))
-    items.append(Choice(title="Backup to file", value=_BACKUP))
-    items.append(Choice(title="Restore from file", value=_RESTORE))
-    items.append(Choice(title="⚠ Danger zone", value=_DANGER))
-    items.append(Separator(" "))
-    staged = len(pending) + len(extra_ops)
-    items.append(Choice(title=f"✓ Apply ({staged} staged)", value=_APPLY))
-    items.append(Choice(title="Cancel (discard)", value=_CANCEL))
+        elif category == "Experimental":
+            items.append(
+                Choice(
+                    title=Text.assemble(
+                        "Custom variables…",
+                        ("  —  Set a raw firmware variable by name", "muted"),
+                    ),
+                    value=_CUSTOM,
+                )
+            )
 
-    choice = await ctx.ui.select("Edit which setting?", items)
-    return _CANCEL if choice is None else choice
+    items.append(Separator("── Device actions (run immediately) ──"))
+    items.append(_action("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT))
+    items.append(_action("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP))
+    items.append(_action("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE))
+    items.append(_action("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY))
+    items.append(_action("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT))
+    items.append(
+        Choice(
+            title=Text.assemble(
+                ("⚠ Factory reset…", "err"),
+                ("  —  Erase everything (typed confirmation)", "muted"),
+            ),
+            value=_RESET,
+        )
+    )
+
+    items.append(Separator("── Review ──"))
+    items.append(_action("🧾 View full configuration", "Every value in one table", _VIEW))
+    if staged:
+        items.append(
+            Choice(
+                title=Text.assemble(("✓ ", "ok"), f"Apply {staged} staged change(s)"),
+                value=_APPLY,
+            )
+        )
+        items.append(
+            Choice(
+                title=Text.assemble(("✗ ", "err"), "Discard staged changes & close"),
+                value=_CANCEL,
+            )
+        )
+    else:
+        items.append(Choice(title="Close", value=_CANCEL))
+
+    title = "Device configuration" + (f" — {staged} staged" if staged else "")
+    return title, items
+
+
+def _action(label: str, help_text: str, value: str) -> Choice:
+    """Build a device-action menu row: a label with a muted explanation."""
+    return Choice(title=Text.assemble(label, (f"  —  {help_text}", "muted")), value=value)
 
 
 # --- staging individual changes ----------------------------------------------
 
 
 async def _stage_setting(
-    ctx: AppContext, key: str, snapshot: dict, pending: dict[str, Any]
+    ctx: "AppContext", key: str, snapshot: dict, pending: dict[str, Any]
 ) -> None:
     """Prompt for one setting's new value and stage it."""
-    from ..core.device_config import get_spec
-
     spec = get_spec(key)
     current = pending.get(key, spec.getter(snapshot))
     value = await _prompt_value(ctx, spec, current)
-    if value is not None:
+    if value is None:
+        return
+    if value == spec.getter(snapshot):
+        pending.pop(key, None)  # set back to the device's value — nothing to change
+    else:
         pending[key] = value
 
 
-async def _prompt_value(ctx: AppContext, spec: SettingSpec, current: Any) -> Any:
-    """Prompt for a typed value for ``spec``, returning ``None`` on cancel."""
+def _range_hint(spec: SettingSpec) -> str:
+    """A muted "allowed values" hint for a numeric prompt, from the spec's bounds."""
+    if spec.minimum is not None and spec.maximum is not None:
+        return f"Allowed: {spec.minimum:g} – {spec.maximum:g}"
+    if spec.minimum is not None:
+        return f"Allowed: ≥ {spec.minimum:g}"
+    if spec.maximum is not None:
+        return f"Allowed: ≤ {spec.maximum:g}"
+    return ""
+
+
+async def _prompt_value(ctx: "AppContext", spec: SettingSpec, current: Any) -> Any:
+    """Prompt for a typed value for ``spec`` (in the fitting dialog), ``None`` on cancel."""
     if spec.value_type == "bool":
-        return await ctx.ui.confirm(f"{spec.label}?", default=bool(current))
+        # A straight two-state choice reads best as a button pair; the current state is
+        # the highlighted default so Enter changes nothing by accident.
+        return await ctx.ui.dialog(
+            spec.help,
+            [("Off", False), ("On", True)],
+            title=spec.label,
+            default=1 if current else 0,
+            keys={"0": False, "1": True, "n": False, "y": True},
+        )
 
     if spec.value_type == "enum" and spec.choices is not None:
         items: list = [
-            Choice(title=f"{k} — {label}", value=k) for k, label in spec.choices.items()
+            Choice(
+                title=f"{k} — {label}" + ("  (current)" if k == current else ""),
+                value=k,
+            )
+            for k, label in spec.choices.items()
         ]
         # Non-strict enums list the common values for convenience but still accept any
         # in-range integer, so offer an escape hatch to type one in.
         if not spec.strict_choices:
             items.append(Choice(title="Other (enter a value)…", value=_OTHER))
         selected = await ctx.ui.select(
-            f"{spec.label} — {spec.help}",
+            spec.label,
             items,
+            prompt=spec.help,
             default=current if current in spec.choices else None,
         )
         if selected is None:
@@ -241,14 +437,93 @@ async def _prompt_value(ctx: AppContext, spec: SettingSpec, current: Any) -> Any
             return str(exc)
 
     raw = await ctx.ui.text(
-        f"{spec.label} — {spec.help}",
+        spec.label,
+        prompt=spec.help,
         default="" if current is None else str(current),
         validate=validate,
+        help_text=_range_hint(spec),
     )
     return None if raw is None else parse_value(spec, raw)
 
 
-async def _stage_preset(ctx: AppContext, pending: dict[str, Any]) -> None:
+async def _stage_location(
+    ctx: "AppContext", snapshot: dict, pending: dict[str, Any]
+) -> None:
+    """Set the advertised location: on the map, typed as a pair, or cleared.
+
+    Staged like any other setting — the coordinates only reach the device on Apply.
+    """
+    lat = pending.get("adv_lat", snapshot.get("adv_lat"))
+    lon = pending.get("adv_lon", snapshot.get("adv_lon"))
+    choice = await ctx.ui.dialog(
+        f"Advertised location: {_format_coords(lat, lon)}",
+        [("Pick on map", "map"), ("Type coordinates", "type"), ("Clear", "clear")],
+        title="📍 Location",
+    )
+    if choice is None:
+        return
+
+    if choice == "map":
+        from .map_screen import pick_location
+
+        initial = None
+        try:
+            if abs(float(lat or 0.0)) >= 1e-6 or abs(float(lon or 0.0)) >= 1e-6:
+                initial = (float(lat), float(lon))
+        except (TypeError, ValueError):
+            initial = None
+        picked = await pick_location(ctx, initial=initial)
+        if picked is None:
+            return
+        # Six decimals ≈ 0.1 m — beyond the map's own precision, plenty for an advert.
+        pending["adv_lat"] = round(picked[0], 6)
+        pending["adv_lon"] = round(picked[1], 6)
+    elif choice == "type":
+        raw = await ctx.ui.text(
+            "Set location",
+            prompt="Enter latitude, longitude in decimal degrees.",
+            default=f"{lat}, {lon}" if _format_coords(lat, lon) != "not set" else "",
+            validate=_valid_coords,
+            help_text="e.g. 45.50000, -73.60000",
+        )
+        if not raw:
+            return
+        parsed = _parse_coords(raw)
+        pending["adv_lat"], pending["adv_lon"] = parsed
+    elif choice == "clear":
+        # 0, 0 is MeshCore's "no fix" value: the node stops advertising a position.
+        pending["adv_lat"], pending["adv_lon"] = 0.0, 0.0
+
+    # Staging the device's own values back is a no-op; drop them so the row reads clean.
+    for key in _COORD_KEYS:
+        if key in pending and pending[key] == snapshot.get(key):
+            del pending[key]
+
+
+def _parse_coords(text: str) -> tuple[float, float]:
+    """Parse a ``lat, lon`` pair (comma or space separated), range-checked via the specs.
+
+    Raises:
+        DeviceConfigError: If the text is not two in-range decimal degrees.
+    """
+    parts = [p for p in text.replace(",", " ").split() if p]
+    if len(parts) != 2:
+        raise DeviceConfigError("enter two numbers: latitude, longitude")
+    lat = parse_value(get_spec("adv_lat"), parts[0])
+    lon = parse_value(get_spec("adv_lon"), parts[1])
+    return float(lat), float(lon)
+
+
+def _valid_coords(text: str) -> bool | str:
+    """Validate a typed coordinate pair, returning the parse error as the message."""
+    try:
+        _parse_coords(text)
+        return True
+    except DeviceConfigError as exc:
+        return str(exc)
+
+
+async def _stage_preset(ctx: "AppContext", pending: dict[str, Any]) -> None:
     """Pick a standard radio preset and stage all of its fields for review/apply."""
     from ..core.device_config import RADIO_PRESETS
 
@@ -261,7 +536,11 @@ async def _stage_preset(ctx: AppContext, pending: dict[str, Any]) -> None:
     ]
     items.append(Separator(" "))
     items.append(Choice(title="Back", value=None))
-    idx = await ctx.ui.select("Apply which radio preset?", items)
+    idx = await ctx.ui.select(
+        "Radio presets",
+        items,
+        prompt="Stage a standard set of radio parameters:",
+    )
     if idx is None:
         return
     preset = RADIO_PRESETS[idx]
@@ -269,101 +548,322 @@ async def _stage_preset(ctx: AppContext, pending: dict[str, Any]) -> None:
 
 
 async def _stage_custom_var(
-    ctx: AppContext, custom: dict[str, str], extra_ops: list[tuple]
+    ctx: "AppContext", custom: dict[str, str], extra_ops: list[tuple]
 ) -> None:
-    """Prompt for a custom/experimental variable and stage a set operation."""
-    key = await ctx.ui.text("Custom variable name:")
-    if not key:
+    """Prompt for a custom/experimental variable and stage a set operation.
+
+    Known variable names are offered as suggestions so an existing one can be recalled
+    without retyping it; any new name is accepted as free text.
+    """
+    if custom:
+        key = await ctx.ui.autocomplete(
+            "Custom variable",
+            sorted(custom),
+            prompt="Name of the firmware variable to set:",
+        )
+    else:
+        key = await ctx.ui.text(
+            "Custom variable", prompt="Name of the firmware variable to set:"
+        )
+    if not key or not key.strip():
         return
-    value = await ctx.ui.text(f"Value for {key}:", default=custom.get(key, ""))
+    key = key.strip()
+    value = await ctx.ui.text(
+        "Custom variable", prompt=f"Value for {key}:", default=custom.get(key, "")
+    )
     if value is None:
         return
-    extra_ops.append(("set_custom", key.strip(), value))
+    extra_ops.append(("set_custom", key, value))
 
 
-async def _stage_backup(ctx: AppContext, extra_ops: list[tuple]) -> None:
-    """Prompt for a backup destination path and stage the operation."""
-    path = await ctx.ui.path("Write backup to:", default="meshterm-config.toml")
-    if path:
-        extra_ops.append(("backup", Path(path)))
+# --- device actions (run immediately) -----------------------------------------
 
 
-async def _stage_restore(ctx: AppContext, extra_ops: list[tuple]) -> None:
-    """Prompt for a backup file and whether to preview, then stage the operation."""
-    path = await ctx.ui.path("Restore from:")
-    if not path:
-        return
-    dry_run = await ctx.ui.confirm("Preview changes only (dry run)?", default=True)
-    if dry_run is None:
-        return
-    extra_ops.append(("restore", Path(path), bool(dry_run)))
+async def _run_now(
+    ctx: "AppContext", device: "Device", snapshot: dict, ops: list[tuple], title: str
+) -> int:
+    """Execute ``ops`` on the device right away and show the result window.
 
-
-async def _danger_zone(ctx: AppContext, device: Any, snapshot: dict) -> bool:
-    """Sub-menu for destructive operations, run immediately after confirmation.
-
-    Unlike ordinary settings (which are staged and applied together), danger-zone actions
-    have no meaningful "preview" and are executed the moment they're confirmed; their
-    output is shown at once in a result window.
+    The immediate-action counterpart of the staged Apply path: same executor
+    (:func:`~meshterm.tools.config.apply_ops`), so the notes and behavior match, but the
+    output is presented at once instead of waiting for the tool to finish.
 
     Returns:
-        ``True`` if the action may have changed device state the editor should re-read
-        (e.g. a factory reset or key import), so the caller can refresh its snapshot.
+        The number of changes applied.
     """
     from ..tools.config import apply_ops
 
-    action = await ctx.ui.select(
-        "⚠ Danger zone (runs immediately on confirmation):",
+    changes, artifacts = await apply_ops(ctx, device, snapshot, ops)
+    for artifact in artifacts:
+        ctx.ui.note(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
+    await ctx.ui.present(title=title)
+    return changes
+
+
+async def _advert_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
+    """Send an advert (zero-hop or flood) or show this node's shareable contact card."""
+    choice = await ctx.ui.select(
+        "📡 Send advert",
         [
-            Choice("Send advert", value="advert"),
-            Choice("Reboot device", value="reboot"),
-            Choice("Export private key", value="export_key"),
-            Choice("Import private key", value="import_key"),
-            Choice("Factory reset (erase all)", value="factory_reset"),
+            Choice(title="Zero-hop  —  Announce directly to neighbours in range", value="zero"),
+            Choice(title="Flood  —  Repeaters rebroadcast it across the mesh", value="flood"),
+            Choice(title="Share QR / URI  —  Show this node's contact card", value="share"),
             Separator(" "),
-            Choice("Back", value=None),
+            Choice(title="Back", value=None),
         ],
+        prompt="Announce this node to the mesh:",
+    )
+    if choice is None:
+        return
+    if choice == "share":
+        await _show_contact_card(ctx, snapshot)
+        return
+    await _run_now(ctx, device, snapshot, [("advert", choice == "flood")], "advert")
+
+
+def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:
+    """Build the MeshCore ``meshcore://contact/add`` share URL for this node.
+
+    The companion-app format (see the MeshCore ``qr_codes`` doc): the advertised name,
+    the full 32-byte public key as hex, and the node type (1 = companion, 2 = repeater,
+    3 = room server, 4 = sensor).
+
+    Args:
+        name: The node's advertised name.
+        public_key: The node's public key as a hex string.
+        node_type: The MeshCore advert type byte.
+
+    Returns:
+        A ``meshcore://contact/add?name=…&public_key=…&type=…`` URL.
+    """
+    return (
+        f"meshcore://contact/add?name={quote(name, safe='')}"
+        f"&public_key={public_key.lower()}&type={int(node_type)}"
     )
 
-    op: Optional[tuple] = None
-    if action in (None, "Back"):
+
+async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
+    """Show this node's contact card as a scannable QR code plus the raw URI."""
+    from .qr import qr_text
+
+    public_key = str(snapshot.get("public_key") or "")
+    if not public_key:
+        ctx.ui.note("[err]the device did not report a public key — nothing to share[/err]")
+        await ctx.ui.present(title="share contact")
+        return
+    name = str(snapshot.get("name") or "this node")
+    url = contact_share_url(name, public_key, int(snapshot.get("adv_type") or 1))
+    body = Group(
+        Text("Scan to add this node as a contact:", style="muted"),
+        Text(""),
+        qr_text(url),
+        Text(""),
+        Text(url, style="accent"),
+    )
+    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc back")
+
+
+async def _reboot(
+    ctx: "AppContext", device: "Device", snapshot: dict, staged: int
+) -> bool:
+    """Confirm and reboot the device, handing off to the session's reconnect dialog.
+
+    The confirmation dialog warns when staged changes would be lost (a reboot ends the
+    editor, discarding them). After the command is sent, we wait to actually observe the
+    link dropping — flagging :attr:`~meshterm.context.AppContext.reboot_in_progress` so
+    the session-wide disconnect watcher labels the ensuing dialog as a reboot, waits for
+    the companion to come back, and reconnects — exactly the unplugged-device flow.
+
+    Returns:
+        ``True`` if the reboot was sent and the editor should close; ``False`` if the
+        user backed out (or the simulator, which has no link to drop, absorbed it).
+    """
+    warning = "Reboot the device now?"
+    if staged:
+        warning = (
+            f"Reboot the device now? Your {staged} staged change(s) have not been "
+            "applied and will be discarded."
+        )
+    choice = await ctx.ui.dialog(
+        warning,
+        [("Cancel", None), ("Reboot", "reboot")],
+        title="🔄 Reboot device",
+        default=1,
+        danger=True,
+    )
+    if choice != "reboot":
         return False
-    if action in ("advert", "export_key"):
-        op = (action,)
-    elif action == "import_key":
-        key_hex = await ctx.ui.text("Private key (hex):", validate=_is_hex)
-        if key_hex and await _confirm_typed(ctx, "IMPORT"):
-            op = ("import_key", key_hex.strip())
-    elif action == "reboot":
-        if await ctx.ui.confirm("Reboot the device now?", default=False):
-            op = ("reboot",)
-    elif action == "factory_reset":
-        if await _confirm_typed(
-            ctx,
-            "RESET",
-            warning="This erases ALL data on the device and cannot be undone.",
-        ):
-            op = ("factory_reset",)
 
-    if op is None:
+    if ctx.active_transport is None:
+        # The simulator has no link to drop and comes back instantly; just send it.
+        await device.reboot()
+        ctx.ui.note("[warn]device rebooting[/warn]")
+        await ctx.ui.present(title="reboot")
         return False
-    await apply_ops(ctx, device, snapshot, [op])
-    await ctx.ui.present(title="danger zone")  # show the immediate result now
-    return action in ("factory_reset", "import_key")
+
+    # Flag the drop as expected *before* sending, so however quickly the watcher fires,
+    # the reconnect dialog already knows to present it as a reboot.
+    ctx.reboot_in_progress = True
+    try:
+        await device.reboot()
+    except Exception:
+        ctx.reboot_in_progress = False
+        raise
+    # Hold here until the link is actually observed down (or a generous timeout), so the
+    # editor doesn't flash back to the menu for the second or two before the watcher
+    # notices. The watcher may cancel us mid-wait when it fires — that's the handoff.
+    deadline = asyncio.get_running_loop().time() + _REBOOT_DROP_TIMEOUT_S
+    while asyncio.get_running_loop().time() < deadline:
+        if not await ctx.link_alive():
+            break
+        await asyncio.sleep(_REBOOT_DROP_POLL_S)
+    return True
 
 
-async def _confirm_typed(ctx: AppContext, word: str, *, warning: str = "") -> bool:
-    """Require the user to type ``word`` exactly to confirm a destructive action."""
-    typed = await ctx.ui.text(
-        f"Type {word!r} to confirm:", help_text=warning, validate=None
+async def _backup_now(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
+    """Prompt for a destination and write the TOML backup immediately."""
+    path = await ctx.ui.path(
+        "Back up config",
+        prompt="Write every setting to this TOML file:",
+        default="meshterm-config.toml",
     )
-    if typed == word:
-        return True
-    await ctx.ui.view(
-        Text.from_markup("[muted]confirmation did not match; skipped.[/muted]"),
-        title="cancelled",
+    if path:
+        await _run_now(ctx, device, snapshot, [("backup", Path(path))], "backup")
+
+
+async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+    """Restore from a TOML backup: pick the file, preview if wanted, then apply.
+
+    Returns:
+        ``True`` if the device was changed (so the caller refreshes its snapshot).
+    """
+    raw = await ctx.ui.path(
+        "Restore config", prompt="Read settings from this TOML backup file:"
     )
-    return False
+    if not raw:
+        return False
+    path = Path(raw)
+    if not path.exists():
+        ctx.ui.note(f"[err]no such file:[/err] {path}")
+        await ctx.ui.present(title="restore")
+        return False
+
+    choice = await ctx.ui.dialog(
+        "Apply the backup now, or preview the changes first?",
+        [("Cancel", None), ("Preview", "preview"), ("Apply", "apply")],
+        title="📂 Restore from backup",
+        default=1,
+    )
+    if choice == "preview":
+        await _run_now(ctx, device, snapshot, [("restore", path, True)], "restore preview")
+        choice = await ctx.ui.dialog(
+            "Apply these changes to the device?",
+            [("Cancel", None), ("Apply", "apply")],
+            title="📂 Restore from backup",
+            default=1,
+        )
+    if choice != "apply":
+        return False
+    changed = await _run_now(ctx, device, snapshot, [("restore", path, False)], "restore")
+    return changed > 0
+
+
+async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+    """Export or import the device's private identity key.
+
+    Returns:
+        ``True`` if the identity changed (a key was imported), so the caller re-reads
+        its snapshot.
+    """
+    choice = await ctx.ui.select(
+        "🔐 Identity key",
+        [
+            Choice(title="Show private key  —  Display it on screen (sensitive)", value="show"),
+            Choice(title="Export to a file…  —  Write it to disk (keep it secret)", value="file"),
+            Choice(title="Import a key…  —  Replace this device's identity", value="import"),
+            Separator(" "),
+            Choice(title="Back", value=None),
+        ],
+        prompt="Manage this node's private identity key:",
+    )
+    if choice is None:
+        return False
+
+    if choice == "show":
+        ok = await ctx.ui.dialog(
+            "The private key IS the node's identity — anyone who sees it can impersonate "
+            "this node. Show it on screen?",
+            [("Cancel", None), ("Show key", "show")],
+            title="🔐 Show private key",
+            default=1,
+            danger=True,
+        )
+        if ok == "show":
+            await _run_now(ctx, device, snapshot, [("export_key",)], "private key")
+        return False
+
+    if choice == "file":
+        path = await ctx.ui.path(
+            "Export identity key",
+            prompt="Write the private key to this file (keep it secret):",
+            default="meshterm-identity.key",
+        )
+        if path:
+            await _run_now(ctx, device, snapshot, [("export_key", Path(path))], "private key")
+        return False
+
+    # Import: collect the key, then gate behind the typed confirmation.
+    key_hex = await ctx.ui.text(
+        "Import identity key",
+        prompt="Paste the private key as hex:",
+        validate=_is_hex,
+    )
+    if not key_hex:
+        return False
+    confirmed = await ctx.ui.typed_confirm(
+        "Importing a key permanently overwrites this device's identity. Contacts and "
+        "messages keyed to the old identity will no longer match it.",
+        "IMPORT",
+        title="🔐 Import private key",
+    )
+    if not confirmed:
+        return False
+    await _run_now(ctx, device, snapshot, [("import_key", key_hex.strip())], "import key")
+    return True
+
+
+async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+    """Factory-reset the device behind a typed confirmation.
+
+    Returns:
+        ``True`` if the reset ran (so the caller drops everything it staged and re-reads
+        the device).
+    """
+    confirmed = await ctx.ui.typed_confirm(
+        "This erases EVERYTHING on the device — identity, contacts, channels, and every "
+        "setting — and cannot be undone.",
+        "RESET",
+        title="⚠ Factory reset",
+    )
+    if not confirmed:
+        return False
+    await _run_now(ctx, device, snapshot, [("factory_reset",)], "factory reset")
+    return True
+
+
+# --- confirmations -------------------------------------------------------------
+
+
+async def _confirm_discard(ctx: "AppContext", staged: int) -> bool:
+    """Ask before dropping staged changes on the way out; ``True`` means discard."""
+    choice = await ctx.ui.dialog(
+        f"Discard {staged} staged change(s) without applying them?",
+        [("Keep editing", "keep"), ("Discard", "discard")],
+        title="Unsaved changes",
+        default=1,
+        danger=True,
+    )
+    return choice == "discard"
 
 
 # --- validators --------------------------------------------------------------

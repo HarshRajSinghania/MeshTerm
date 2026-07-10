@@ -16,7 +16,13 @@ from __future__ import annotations
 
 from .overlay import BusyOverlay
 from .progress import ProgressScreen
-from .prompt import AutocompleteScreen, ConfirmScreen, ReconnectDialog, TextScreen
+from .prompt import (
+    AutocompleteScreen,
+    ConfirmScreen,
+    ReconnectDialog,
+    TextScreen,
+    TypedConfirmDialog,
+)
 from .ring import RingSpinner
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, SelectScreen, Separator
@@ -35,6 +41,7 @@ __all__ = [
     "ConfirmScreen",
     "AutocompleteScreen",
     "ReconnectDialog",
+    "TypedConfirmDialog",
     "ProgressScreen",
     "Spinner",
     "RingSpinner",

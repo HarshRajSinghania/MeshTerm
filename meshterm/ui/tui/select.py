@@ -11,9 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Union
 
+from rich.cells import cell_len
 from rich.text import Text
 
-from .render import render_to_ansi
+from .render import render_lines, render_to_ansi
 from .screen import Screen
 
 
@@ -69,6 +70,7 @@ class SelectScreen(Screen):
         title: str,
         items: list,
         *,
+        prompt: str = "",
         default: Any = None,
         footer_hint: str = "↑↓ move · type to filter · Enter select · Esc back",
         filterable: bool = True,
@@ -77,8 +79,10 @@ class SelectScreen(Screen):
         """Build a select screen.
 
         Args:
-            title: Heading shown above the list.
+            title: Short heading shown in the border.
             items: A list of :class:`Choice` and :class:`Separator` in display order.
+            prompt: An optional instruction shown inside the box, above the list — so a
+                floating select reads like the other dialogs (a prompt above its controls).
             default: A choice value to pre-highlight, if present.
             footer_hint: Footer key hint.
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
@@ -90,6 +94,7 @@ class SelectScreen(Screen):
         super().__init__()
         self.title = title
         self.footer_hint = footer_hint
+        self._prompt = prompt
         self._filterable = filterable
         self._wrap = wrap
         self._items = items
@@ -171,14 +176,37 @@ class SelectScreen(Screen):
 
     # --- rendering -----------------------------------------------------------
 
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so a floating select hugs its widest row, not the terminal.
+
+        The widest of the prompt, title, footer, and every row (with room for the pointer),
+        so a short menu is a tidy popup rather than a full-width banner. The compositor still
+        caps this to the space available, and this is only read for a *floating* select — the
+        full-screen base menu is laid out by ``compose_base`` and ignores it.
+        """
+        widths = [cell_len(self.title), cell_len(self.footer_hint), cell_len(self._prompt)]
+        for item in self._items:
+            label = item.title if isinstance(item, Separator) else _plain(item.label)
+            widths.append(cell_len(label) + 2)  # + the "❯ " / "  " pointer column
+        return max(widths, default=20) + 8
+
     def render_body(self, width: int) -> list[str]:
-        """Render each row to a single ANSI line, the highlighted choice marked."""
+        """Render the optional prompt then each row as one ANSI line, the choice marked."""
         rows = self._rows()
         choices = self._choices(rows)
         self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
         selected = choices[self._index] if choices else None
 
         lines: list[str] = []
+        # A prompt (when set) sits above the list, offsetting every row below it; the cursor
+        # line and sticky-header indices below are shifted by exactly this many lines.
+        prefix = 0
+        if self._prompt:
+            plines = render_lines(Text(self._prompt), width)
+            lines.extend(plines)
+            lines.append("")
+            prefix = len(plines) + 1
         # Record each section heading as a sticky-header candidate, so one that scrolls off is
         # re-pinned to the top row by the base Screen.sticky_header. Filtering flattens the list
         # to bare choices (see _rows), so this stays empty then and nothing is pinned.
@@ -207,8 +235,10 @@ class SelectScreen(Screen):
             lines.append(render_to_ansi(text, width))
         if not choices:
             lines.append(render_to_ansi(Text("(no matches)", style="muted"), width))
-        # Remember where the highlighted row landed so the session can keep it in view.
-        self._cursor = _cursor_line(rows, selected, bool(self._filter))
+        # Remember where the highlighted row landed so the session can keep it in view,
+        # shifted past any prompt lines drawn above the list.
+        base_cursor = _cursor_line(rows, selected, bool(self._filter))
+        self._cursor = None if base_cursor is None else base_cursor + prefix
         return lines
 
     def cursor_line(self) -> Optional[int]:

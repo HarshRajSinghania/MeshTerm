@@ -2,8 +2,10 @@
 
 Interactively it launches a full editor (see :mod:`meshterm.ui.config_editor`); on the
 CLI it exposes generic key/value subcommands plus backup/restore, channels, custom vars,
-and a gated set of destructive operations. Both paths funnel into :meth:`ConfigTool.run`,
-which executes a list of operation tuples so every change is logged through the run record.
+and a ``--yes``-gated set of destructive operations. Both paths funnel through
+:func:`apply_ops`: the editor stages value changes for :meth:`ConfigTool.run` to execute
+and log, and runs its device actions (adverts, reboot, key management, factory reset)
+through the same executor immediately.
 """
 
 from __future__ import annotations
@@ -132,11 +134,15 @@ class ConfigTool(Tool):
             secret_bytes = bytes.fromhex(secret) if secret else None
             run_tool_command(self, {"ops": [("set_channel", index, name, secret_bytes)]})
 
-        @config_app.command("advert", help="Broadcast an advertisement.")
+        @config_app.command("advert", help="Broadcast an advertisement (zero-hop by default).")
         def _advert_cmd(
             flood: bool = typer.Option(False, "--flood", help="Flood across the mesh."),
         ) -> None:
             run_tool_command(self, {"ops": [("advert", flood)]})
+
+        @config_app.command("share", help="Show this node's contact card as a QR code / URI.")
+        def _share_cmd() -> None:
+            run_tool_command(self, {"ops": [("share",)]})
 
         @config_app.command("export-key", help="Export the private key (sensitive).")
         def _export_key_cmd(
@@ -180,7 +186,8 @@ async def apply_ops(
 
     This is the single executor for every config operation, used both by
     :meth:`ConfigTool.run` (for staged, applied changes) and by the interactive editor's
-    danger zone (which runs its action immediately rather than staging it).
+    device actions (adverts, reboot, backup/restore, key management, factory reset —
+    which run immediately rather than staging).
 
     Args:
         ctx: Shared application context (for console output).
@@ -219,8 +226,12 @@ async def apply_ops(
         elif kind == "restore":
             changes += await _restore(ctx, device, snapshot, op[1], op[2])
         elif kind == "advert":
-            await device.send_advert(len(op) > 1 and bool(op[1]))
-            ctx.ui.note("[ok]✓[/ok] advertisement sent")
+            flood = len(op) > 1 and bool(op[1])
+            await device.send_advert(flood)
+            kind_label = "flood" if flood else "zero-hop"
+            ctx.ui.note(f"[ok]✓[/ok] {kind_label} advertisement sent")
+        elif kind == "share":
+            _share_contact(ctx, snapshot)
         elif kind == "reboot":
             await device.reboot()
             ctx.ui.note("[warn]device rebooting[/warn]")
@@ -263,6 +274,23 @@ async def _show(ctx: AppContext, device: Device, snapshot: dict) -> None:
 
     custom = await device.get_custom_vars()
     ctx.ui.show(config_table(snapshot, custom))
+
+
+def _share_contact(ctx: AppContext, snapshot: dict) -> None:
+    """Render this node's contact card — a scannable QR code plus the raw URI."""
+    from rich.console import Group
+    from rich.text import Text
+
+    from ..ui.config_editor import contact_share_url
+    from ..ui.qr import qr_text
+
+    public_key = str(snapshot.get("public_key") or "")
+    if not public_key:
+        ctx.ui.note("[err]the device did not report a public key — nothing to share[/err]")
+        return
+    name = str(snapshot.get("name") or "this node")
+    url = contact_share_url(name, public_key, int(snapshot.get("adv_type") or 1))
+    ctx.ui.show(Group(qr_text(url), Text(""), Text(url, style="accent")))
 
 
 async def _backup(device: Device, snapshot: dict, path: Path) -> Path:

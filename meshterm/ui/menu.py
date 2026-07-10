@@ -584,7 +584,17 @@ async def _handle_disconnect(ctx: AppContext, session: TuiSession) -> bool:
     Returns:
         ``True`` if the user chose to quit; ``False`` once the device reconnected.
     """
-    dialog = ReconnectDialog("Waiting for your device — reconnect it to resume.")
+    # A drop the config editor announced (it just sent a reboot command) is expected, so
+    # the dialog says what is actually happening instead of implying an unplug. The flag
+    # is consumed here so a later, genuine disconnect goes back to the generic wording.
+    if ctx.reboot_in_progress:
+        ctx.reboot_in_progress = False
+        dialog = ReconnectDialog(
+            "Rebooting — waiting for the device to come back…",
+            title="Device rebooting",
+        )
+    else:
+        dialog = ReconnectDialog("Waiting for your device — reconnect it to resume.")
     dialog.future = asyncio.get_running_loop().create_future()
     # The session stack was cleared before we were called (see _session_loop), so push a
     # clean, empty base frame for the popup to float over. A lone floating screen with nothing

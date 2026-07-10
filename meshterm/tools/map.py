@@ -87,82 +87,8 @@ class MapTool(Tool):
     # -- marker gathering -------------------------------------------------------
 
     async def _gather(self, ctx: AppContext) -> list["MapMarker"]:
-        """Collect every located node to plot: the device's contacts, plus our own node.
-
-        The companion's **contact list** is the authoritative source for a node's name,
-        type (repeater vs. leaf), and advertised position — the passive-monitor
-        observations only carry a location for the rare node that broadcasts one in an
-        advert. So contacts drive the markers, and each contact is enriched with signal
-        detail from the observations when we've overheard it directly.
-        """
-        from ..ui.map_render import MapMarker
-
-        observed = {n.node: n for n in ctx.repo.heard_nodes() if n.node}
-        markers: list[MapMarker] = []
-        seen: set[str] = set()
-
-        for contact in await self._contacts(ctx):
-            if not contact.has_location:
-                continue
-            key = contact.key_prefix or (contact.public_key or "")[:12]
-            if key:
-                seen.add(key)
-            markers.append(
-                MapMarker(
-                    label=contact.name or key or "?",
-                    lat=float(contact.lat),
-                    lon=float(contact.lon),
-                    is_repeater=contact.is_repeater,
-                    detail=_signal_detail(observed.get(key)),
-                )
-            )
-
-        # A node we overheard advertising a location but that isn't in our contacts.
-        for node in observed.values():
-            if not node.has_location or node.node in seen:
-                continue
-            markers.append(
-                MapMarker(
-                    label=node.name or node.node or "?",
-                    lat=float(node.lat),
-                    lon=float(node.lon),
-                    is_repeater=node.is_repeater,
-                    detail=_signal_detail(node),
-                )
-            )
-
-        self_marker = await self._self_marker(ctx)
-        if self_marker is not None:
-            markers.append(self_marker)
-        return markers
-
-    @staticmethod
-    async def _contacts(ctx: AppContext) -> list:
-        """Fetch the device's contacts, best-effort (an unreachable radio yields none)."""
-        try:
-            return await (await ctx.device()).get_contacts()
-        except Exception:  # noqa: BLE001 - the map still works from observations alone
-            return []
-
-    @staticmethod
-    async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
-        """Build a marker for our own node from the device, if its location is known."""
-        from ..ui.map_render import MapMarker
-
-        try:
-            info = await (await ctx.device()).get_self_info()
-        except Exception:  # noqa: BLE001 - the map is useful without our own position
-            return None
-        lat, lon = _as_float(info.get("adv_lat")), _as_float(info.get("adv_lon"))
-        if lat is None or lon is None or (abs(lat) < 1e-6 and abs(lon) < 1e-6):
-            return None  # a device with no fix reports 0/0
-        return MapMarker(
-            label=str(info.get("name") or "this node"),
-            lat=lat,
-            lon=lon,
-            is_repeater=info.get("adv_type") == NODE_TYPE_REPEATER,
-            is_self=True,
-        )
+        """Collect every located node to plot (see :func:`gather_markers`)."""
+        return await gather_markers(ctx)
 
     # -- static (CLI) render ----------------------------------------------------
 
@@ -246,6 +172,88 @@ class MapTool(Tool):
             if zoom is not None:
                 params["zoom"] = zoom
             run_tool_command(self, params)
+
+
+async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
+    """Collect every located node to plot: the device's contacts, plus our own node.
+
+    The companion's **contact list** is the authoritative source for a node's name,
+    type (repeater vs. leaf), and advertised position — the passive-monitor
+    observations only carry a location for the rare node that broadcasts one in an
+    advert. So contacts drive the markers, and each contact is enriched with signal
+    detail from the observations when we've overheard it directly.
+
+    Shared by the ``map`` tool and the config editor's pick-a-location map, so both
+    show the same mesh.
+    """
+    from ..ui.map_render import MapMarker
+
+    observed = {n.node: n for n in ctx.repo.heard_nodes() if n.node}
+    markers: list[MapMarker] = []
+    seen: set[str] = set()
+
+    for contact in await _contacts(ctx):
+        if not contact.has_location:
+            continue
+        key = contact.key_prefix or (contact.public_key or "")[:12]
+        if key:
+            seen.add(key)
+        markers.append(
+            MapMarker(
+                label=contact.name or key or "?",
+                lat=float(contact.lat),
+                lon=float(contact.lon),
+                is_repeater=contact.is_repeater,
+                detail=_signal_detail(observed.get(key)),
+            )
+        )
+
+    # A node we overheard advertising a location but that isn't in our contacts.
+    for node in observed.values():
+        if not node.has_location or node.node in seen:
+            continue
+        markers.append(
+            MapMarker(
+                label=node.name or node.node or "?",
+                lat=float(node.lat),
+                lon=float(node.lon),
+                is_repeater=node.is_repeater,
+                detail=_signal_detail(node),
+            )
+        )
+
+    self_marker = await _self_marker(ctx)
+    if self_marker is not None:
+        markers.append(self_marker)
+    return markers
+
+
+async def _contacts(ctx: AppContext) -> list:
+    """Fetch the device's contacts, best-effort (an unreachable radio yields none)."""
+    try:
+        return await (await ctx.device()).get_contacts()
+    except Exception:  # noqa: BLE001 - the map still works from observations alone
+        return []
+
+
+async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
+    """Build a marker for our own node from the device, if its location is known."""
+    from ..ui.map_render import MapMarker
+
+    try:
+        info = await (await ctx.device()).get_self_info()
+    except Exception:  # noqa: BLE001 - the map is useful without our own position
+        return None
+    lat, lon = _as_float(info.get("adv_lat")), _as_float(info.get("adv_lon"))
+    if lat is None or lon is None or (abs(lat) < 1e-6 and abs(lon) < 1e-6):
+        return None  # a device with no fix reports 0/0
+    return MapMarker(
+        label=str(info.get("name") or "this node"),
+        lat=lat,
+        lon=lon,
+        is_repeater=info.get("adv_type") == NODE_TYPE_REPEATER,
+        is_self=True,
+    )
 
 
 def _legend(markers: list["MapMarker"]) -> Table:

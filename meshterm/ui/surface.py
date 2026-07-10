@@ -64,9 +64,18 @@ class Ui:
         raise NotImplementedError
 
     async def select(
-        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+        self,
+        title: str,
+        items: list,
+        *,
+        prompt: str = "",
+        default: Any = None,
+        wrap: bool = True,
     ) -> Any:
-        """Prompt the user to choose one item; return its value or ``None`` if cancelled."""
+        """Prompt the user to choose one item; return its value or ``None`` if cancelled.
+
+        ``prompt`` draws an instruction inside the popup, above the list.
+        """
         raise NotImplementedError
 
     async def select_startup(
@@ -124,16 +133,47 @@ class Ui:
         self,
         title: str,
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
     ) -> Optional[str]:
-        """Prompt for a line of text; return it or ``None`` if cancelled."""
+        """Prompt for a line of text; return it or ``None`` if cancelled.
+
+        Keep ``title`` short (it heads the popup's border) and put the question/instruction
+        in ``prompt`` (drawn above the field), so a text popup reads like the button dialogs.
+        """
         raise NotImplementedError
 
     async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
         """Prompt yes/no; return the answer or ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def dialog(
+        self,
+        prompt: str,
+        buttons: list[tuple[str, Any]],
+        *,
+        title: str = "",
+        default: int = 0,
+        keys: Optional[dict[str, Any]] = None,
+        danger: bool = False,
+    ) -> Any:
+        """Show a centered button dialog; return the chosen value or ``None`` on Esc.
+
+        The general choose-one popup (a prompt above a row of buttons). ``danger`` themes
+        the prompt and border in the cautionary style for destructive or disruptive
+        choices. Buttons follow the platform-dialog convention: the safe way out sits on
+        the left and the committing action on the right, which is also the sensible
+        ``default`` so Enter commits it while Esc always backs out.
+        """
+        raise NotImplementedError
+
+    async def typed_confirm(
+        self, warning: str, word: str, *, title: str = "Are you sure?"
+    ) -> bool:
+        """Gate a destructive action behind typing ``word``; return whether it was typed."""
         raise NotImplementedError
 
     async def autocomplete(
@@ -141,13 +181,14 @@ class Ui:
         title: str,
         choices: list[str],
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
     ) -> Optional[str]:
         """Prompt for free text with suggestions; return it or ``None`` if cancelled."""
         raise NotImplementedError
 
-    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
         """Prompt for a filesystem path; return it or ``None`` if cancelled."""
         raise NotImplementedError
 
@@ -194,7 +235,13 @@ class PlainUi(Ui):
         return RuntimeError("interactive prompts are only available in the menu")
 
     async def select(
-        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+        self,
+        title: str,
+        items: list,
+        *,
+        prompt: str = "",
+        default: Any = None,
+        wrap: bool = True,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -258,6 +305,7 @@ class PlainUi(Ui):
         self,
         title: str,
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         help_text: str = "",
@@ -266,14 +314,18 @@ class PlainUi(Ui):
         """Prompt on the terminal (line editor / getpass), re-asking until valid.
 
         A few tools (e.g. a remote-admin password) can legitimately prompt from a scripted
-        run when no flag was supplied, so this stays functional on the CLI.
+        run when no flag was supplied, so this stays functional on the CLI. An in-body
+        ``prompt`` (used by the interactive popups) is printed once as a lead-in line here.
 
         Returns:
             The entered string, or ``None`` on EOF / interrupt.
         """
         import getpass
 
-        prompt = f"{title} " if not default else f"{title} [{default}] "
+        if prompt:
+            self.console.print(prompt)
+        head = f"{title} " if not default else f"{title} [{default}] "
+        prompt = head
         while True:
             try:
                 raw = getpass.getpass(prompt) if password else input(prompt)
@@ -291,18 +343,38 @@ class PlainUi(Ui):
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
+    async def dialog(
+        self,
+        prompt: str,
+        buttons: list[tuple[str, Any]],
+        *,
+        title: str = "",
+        default: int = 0,
+        keys: Optional[dict[str, Any]] = None,
+        danger: bool = False,
+    ) -> Any:
+        """Unsupported in scripted CLI mode."""
+        raise self._no_prompt()
+
+    async def typed_confirm(
+        self, warning: str, word: str, *, title: str = "Are you sure?"
+    ) -> bool:
+        """Unsupported in scripted CLI mode (destructive CLI commands gate on ``--yes``)."""
+        raise self._no_prompt()
+
     async def autocomplete(
         self,
         title: str,
         choices: list[str],
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
     ) -> Optional[str]:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
-    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -365,10 +437,18 @@ class TuiUi(Ui):
     # --- input ---------------------------------------------------------------
 
     async def select(
-        self, title: str, items: list, *, default: Any = None, wrap: bool = True
+        self,
+        title: str,
+        items: list,
+        *,
+        prompt: str = "",
+        default: Any = None,
+        wrap: bool = True,
     ) -> Any:
         """Delegate to the session's select screen."""
-        return await self.session.select(title, items, default=default, wrap=wrap)
+        return await self.session.select(
+            title, items, prompt=prompt, default=default, wrap=wrap
+        )
 
     async def select_startup(
         self,
@@ -433,6 +513,7 @@ class TuiUi(Ui):
         self,
         title: str,
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         help_text: str = "",
@@ -441,6 +522,7 @@ class TuiUi(Ui):
         """Delegate to the session's text screen."""
         return await self.session.text(
             title,
+            prompt=prompt,
             default=default,
             validate=validate,
             help_text=help_text,
@@ -451,19 +533,49 @@ class TuiUi(Ui):
         """Delegate to the session's confirm screen."""
         return await self.session.confirm(title, default=default)
 
+    async def dialog(
+        self,
+        prompt: str,
+        buttons: list[tuple[str, Any]],
+        *,
+        title: str = "",
+        default: int = 0,
+        keys: Optional[dict[str, Any]] = None,
+        danger: bool = False,
+    ) -> Any:
+        """Delegate to the session's button dialog, themed cautionary when ``danger``."""
+        return await self.session.button_dialog(
+            prompt,
+            buttons,
+            title=title,
+            default=default,
+            keys=keys,
+            prompt_style="warn" if danger else "",
+            border_style="warn" if danger else "accent",
+        )
+
+    async def typed_confirm(
+        self, warning: str, word: str, *, title: str = "Are you sure?"
+    ) -> bool:
+        """Delegate to the session's typed-confirmation dialog."""
+        return await self.session.typed_confirm(warning, word, title=title)
+
     async def autocomplete(
         self,
         title: str,
         choices: list[str],
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
     ) -> Optional[str]:
         """Delegate to the session's autocomplete screen."""
         return await self.session.autocomplete(
-            title, choices, default=default, validate=validate
+            title, choices, prompt=prompt, default=default, validate=validate
         )
 
-    async def path(self, title: str, *, default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
         """Prompt for a path as free text (with the current value prefilled)."""
-        return await self.session.text(title, default=default, help_text="filesystem path")
+        return await self.session.text(
+            title, prompt=prompt, default=default, help_text="filesystem path"
+        )

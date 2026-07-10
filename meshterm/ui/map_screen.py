@@ -281,6 +281,165 @@ class MapScreen(Screen):
             self.resolve(None)
 
 
+class LocationPickScreen(MapScreen):
+    """The map, repurposed as a coordinate picker: pan the crosshair, Enter to choose.
+
+    Used by the config editor to set the node's advertised location by *pointing at the
+    map* instead of typing degrees. It is a :class:`MapScreen` with three changes: a
+    crosshair marker rides the view centre (labelled with the live coordinates, so the
+    user always sees exactly what they're about to pick), Enter resolves with the centre's
+    ``(lat, lon)`` instead of doing nothing, and ``r`` recentres on the *initial* location
+    rather than refitting the node cloud. The surrounding mesh nodes are still drawn, so
+    placing yourself relative to a known repeater is easy. Esc cancels (resolves CANCEL,
+    surfaced as ``None`` by the caller).
+    """
+
+    def __init__(
+        self,
+        session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
+        markers: list[MapMarker],
+        source: BasemapSource,
+        max_tile_zoom: int,
+        *,
+        initial: Optional[tuple[float, float]] = None,
+        zoom: int = 13,
+    ) -> None:
+        """Create the picker.
+
+        Args:
+            session: The running TUI session (for size + repaint scheduling).
+            markers: Located mesh nodes to draw for context (may be empty).
+            source: The vector-tile source (already resolved/warmed).
+            max_tile_zoom: The source's max zoom, captured off the event loop at open time.
+            initial: The location to open centred on (the node's current position), or
+                ``None`` to frame the mesh instead (falling back to a world view when no
+                nodes are located either).
+            zoom: The zoom to open at when ``initial`` is given.
+        """
+        saved = (initial[0], initial[1], zoom) if initial is not None else None
+        super().__init__(session, markers, source, max_tile_zoom, saved_view=saved)
+        self._initial = initial
+        self._pick_zoom = zoom
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """Key hints for picking, plus the live tile-loading indicator."""
+        base = "wasd/↑↓←→ pan (⇧ fine) · +/- zoom · Enter set location · Esc cancel"
+        if self._pending:
+            return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
+        if not self._source.available:
+            return f"{base} · [warn]offline — no basemap[/warn]"
+        return base
+
+    def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
+        """Open on the initial location, else frame the nodes, else a world view."""
+        if self._saved_view is None and not self._markers:
+            return Viewport(20.0, 0.0, 2, dot_w, dot_h)  # nothing to frame — the world
+        return super()._initial_viewport(dot_w, dot_h)
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the map with the crosshair marker pinned to the view centre.
+
+        The crosshair is a transient marker appended for just this frame (never stored in
+        :attr:`_markers`), drawn in the "self" style so it reads as *your* position-to-be
+        and labelled with the live coordinates it would commit.
+        """
+        if self._viewport is None:
+            # First paint: let the base class establish the viewport so the crosshair can
+            # ride the centre from the very first frame (the extra render is one-off).
+            super().render_body(width)
+        real = self._markers
+        vp = self._viewport
+        if vp is not None:
+            cross = MapMarker(
+                label=f"⌖ {vp.center_lat:.5f}, {vp.center_lon:.5f}",
+                lat=vp.center_lat,
+                lon=vp.center_lon,
+                is_self=True,
+            )
+            self._markers = real + [cross]
+        try:
+            return super().render_body(width)
+        finally:
+            self._markers = real
+
+    def _title(self, vp: Viewport) -> str:
+        """A live status title: the coordinates under the crosshair and the scale."""
+        base = super()._title(vp)
+        scale = base.rsplit("·", 1)[-1].strip()
+        return f"set location · {vp.center_lat:.5f}, {vp.center_lon:.5f} · z{vp.zoom} · {scale}"
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Commit the centre on Enter; ``r`` returns to the initial spot; else the map keys."""
+        if action == "enter":
+            vp = self._viewport
+            if vp is not None:
+                self.resolve((vp.center_lat, vp.center_lon))
+            return
+        if action == "text" and data.lower() == "r" and self._viewport is not None:
+            # Reset returns to the *starting* view — the initial location when one was
+            # given, else the node frame — rather than refitting a cloud that now includes
+            # nowhere in particular. With neither, fall back to the world view.
+            vp = self._viewport
+            if self._initial is not None:
+                lat, lon = self._initial
+                self._viewport = Viewport(
+                    clamp_lat(lat), lon, self._pick_zoom, vp.dot_w, vp.dot_h
+                )
+            elif not self._markers:
+                self._viewport = Viewport(20.0, 0.0, 2, vp.dot_w, vp.dot_h)
+            else:
+                super().handle(action, data)
+                return
+            self._needs_scrub = True
+            return
+        super().handle(action, data)
+
+
+async def pick_location(
+    ctx: "AppContext", *, initial: Optional[tuple[float, float]] = None
+) -> Optional[tuple[float, float]]:
+    """Open the full-screen map as a coordinate picker; return ``(lat, lon)`` or ``None``.
+
+    Gathers the mesh's located nodes for context (best-effort — an unreachable radio just
+    means a barer map), warms the tile source off the event loop, then runs a
+    :class:`LocationPickScreen` until the user commits a spot with Enter or backs out
+    with Esc.
+
+    Args:
+        ctx: Shared application context (must be in the interactive menu).
+        initial: The location to open centred on (e.g. the node's current coordinates),
+            or ``None`` to frame the mesh.
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    import asyncio
+
+    from ..tools.map import gather_markers
+    from .surface import TuiUi
+    from .tui.screen import CANCEL
+
+    if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("the interactive map is only available in the menu")
+    session = ctx.ui.session
+    try:
+        markers = await gather_markers(ctx)
+    except Exception:  # noqa: BLE001 - context markers are a nicety, never a requirement
+        markers = []
+    source = basemap_source(ctx)
+    max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
+    screen = LocationPickScreen(
+        session, markers, source, max_zoom, initial=initial
+    )
+    try:
+        result = await session.run_screen(screen)
+    finally:
+        # Same clean-slate repaint as open_map: the braille may have smeared the terminal.
+        session.request_full_repaint()
+    return None if result is CANCEL or result is None else result
+
+
 def basemap_source(ctx: "AppContext") -> BasemapSource:
     """Build the vector-tile source backed by the app's on-disk tile cache."""
     return BasemapSource(ctx.settings.config_dir / "tilecache")

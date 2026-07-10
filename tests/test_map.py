@@ -398,7 +398,7 @@ async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     async def _no_contacts(_ctx):
         return []
 
-    monkeypatch.setattr(MapTool, "_contacts", staticmethod(_no_contacts))
+    monkeypatch.setattr("meshterm.tools.map._contacts", _no_contacts)
     result = await MapTool().run(ctx, {"static": True, "basemap": False})
     assert result.summary == {"located": 0}
 

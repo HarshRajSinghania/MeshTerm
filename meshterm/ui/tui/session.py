@@ -34,6 +34,7 @@ from .prompt import (
     ConfirmScreen,
     PinDialog,
     TextScreen,
+    TypedConfirmDialog,
     Validator,
 )
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
@@ -219,6 +220,7 @@ class TuiSession:
         title: str,
         items: list,
         *,
+        prompt: str = "",
         default: Any = None,
         wrap: bool = True,
         filterable: bool = True,
@@ -226,15 +228,16 @@ class TuiSession:
     ) -> Any:
         """Show a select screen; return the chosen value or ``None`` if cancelled.
 
-        ``filterable`` and ``footer_hint`` are forwarded to the screen for short, fixed
-        lists (a yes-or-no style choice) that want no type-to-filter and a tailored hint.
+        ``prompt`` draws an instruction inside the box above the list; ``filterable`` and
+        ``footer_hint`` are forwarded for short, fixed lists (a yes-or-no style choice) that
+        want no type-to-filter and a tailored hint.
         """
-        screen = (
-            SelectScreen(title, items, default=default, wrap=wrap, filterable=filterable, footer_hint=footer_hint)
-            if footer_hint is not None
-            else SelectScreen(title, items, default=default, wrap=wrap, filterable=filterable)
+        kwargs: dict[str, Any] = dict(
+            prompt=prompt, default=default, wrap=wrap, filterable=filterable
         )
-        result = await self.run_screen(screen)
+        if footer_hint is not None:
+            kwargs["footer_hint"] = footer_hint
+        result = await self.run_screen(SelectScreen(title, items, **kwargs))
         return None if result is CANCEL else result
 
     async def select_startup(
@@ -376,6 +379,7 @@ class TuiSession:
         self,
         title: str,
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
         help_text: str = "",
@@ -385,6 +389,7 @@ class TuiSession:
         result = await self.run_screen(
             TextScreen(
                 title,
+                prompt=prompt,
                 default=default,
                 validate=validate,
                 help_text=help_text,
@@ -434,17 +439,32 @@ class TuiSession:
         result = await self.run_screen(screen)
         return None if result is CANCEL else result
 
+    async def typed_confirm(
+        self, warning: str, word: str, *, title: str = "Are you sure?"
+    ) -> bool:
+        """Gate a destructive action behind typing ``word``; return whether it was typed.
+
+        Shows the error-themed :class:`~meshterm.ui.tui.prompt.TypedConfirmDialog` and
+        collapses its result to a plain bool: ``True`` only when the user typed the word,
+        ``False`` when they backed out with Esc.
+        """
+        result = await self.run_screen(TypedConfirmDialog(warning, word, title=title))
+        return result is True
+
     async def autocomplete(
         self,
         title: str,
         choices: list[str],
         *,
+        prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
     ) -> Optional[str]:
         """Show a free-text prompt with suggestions; return text or ``None`` if cancelled."""
         result = await self.run_screen(
-            AutocompleteScreen(title, choices, default=default, validate=validate)
+            AutocompleteScreen(
+                title, choices, prompt=prompt, default=default, validate=validate
+            )
         )
         return None if result is CANCEL else result
 

@@ -70,6 +70,11 @@ class AppContext:
     _active_transport: Optional[str] = field(default=None, init=False, repr=False)
     _active_address: Optional[str] = field(default=None, init=False, repr=False)
     unpair_on_exit: bool = field(default=False, init=False, repr=False)
+    #: Set by the config editor just before it sends a reboot command, so the session's
+    #: disconnect watcher can label the ensuing (expected) link drop as a reboot in
+    #: progress rather than a surprise unplug. Cleared by the reconnect dialog that
+    #: consumes it (see :func:`meshterm.ui.menu._handle_disconnect`).
+    reboot_in_progress: bool = field(default=False, init=False, repr=False)
     _resume_intent: Optional[tuple[bool, bool, bool]] = field(
         default=None, init=False, repr=False
     )
