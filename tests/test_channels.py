@@ -333,6 +333,93 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
         await chat.stop()
 
 
+# -- message statistics in the manager ----------------------------------------
+
+
+def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> None:
+    """Per-channel stats count all messages, the trailing-week slice, and the last time."""
+    from datetime import timedelta
+
+    from meshterm.core.models import ChatMessage, utcnow
+
+    stale = utcnow() - timedelta(days=30)  # outside the 7-day activity window
+    fresh = utcnow() - timedelta(minutes=5)
+    for text, when in (("old a", stale), ("old b", stale), ("new", fresh)):
+        ctx.repo.record_chat_message(
+            ChatMessage(text=text, is_channel=True, channel_id="ops", created_at=when)
+        )
+    ctx.repo.record_chat_message(  # a direct message must not leak into channel stats
+        ChatMessage(text="dm", is_channel=False, peer="abc123", created_at=fresh)
+    )
+    ctx.repo.record_chat_message(  # a legacy row without an identity has nothing to count under
+        ChatMessage(text="legacy", is_channel=True, channel_id=None, created_at=fresh)
+    )
+
+    stats = ctx.repo.channel_stats()
+    assert set(stats) == {"ops"}
+    ops = stats["ops"]
+    assert ops.total == 3
+    assert ops.recent == 1  # only the fresh message falls inside the window
+    assert ops.last_at is not None
+    assert abs((ops.last_at - fresh).total_seconds()) < 1
+
+
+def test_activity_meter_lights_bars_by_weekly_traffic() -> None:
+    """The meter lights 0–3 bars as the week's message count passes each threshold."""
+    from meshterm.ui.channels import _activity_meter
+
+    assert _activity_meter(0).plain == "···"
+    assert _activity_meter(1).plain == "▂··"
+    assert _activity_meter(15).plain == "▂▄·"
+    assert _activity_meter(500).plain == "▂▄▆"
+
+
+async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> None:
+    """A list row shows the channel's type, unread badge, counts, age, and activity meter."""
+    from meshterm.core.models import ChatMessage
+    from meshterm.ui.channels import _LiveStats, _menu_items
+    from meshterm.ui.tui import Choice
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slots = await _read_slots(device)
+    slot = slots[0]
+    for text in ("one", "two"):
+        ctx.repo.record_chat_message(
+            ChatMessage(text=text, is_channel=True, channel_id=slot.identity)
+        )
+    ctx.chat._unread[slot.conversation.key] = 2  # as the service would after two arrivals
+
+    title, items = _menu_items(ctx, slots, 8, _LiveStats(ctx))
+    assert title == "Channels — 1/8 slots"
+    row = next(it for it in items if isinstance(it, Choice) and it.value == 0)
+    plain = row.label.plain  # the title is a live callable; .label resolves it
+    assert "Ops" in plain and "private" in plain and slot.hash in plain
+    assert "● 2" in plain  # the unread badge
+    assert "now" in plain  # the just-recorded message's age
+    assert "▂··" in plain  # two messages this week light the first bar
+    assert plain.rstrip().endswith("▂··")  # the meter is the final lane
+
+
+async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> None:
+    """The detail screen's vital-signs line covers slot, totals, unread, and recency."""
+    from meshterm.core.models import ChatMessage
+    from meshterm.ui.channels import _detail_summary, _LiveStats
+
+    device = await ctx.device()
+    await device.set_channel(3, "Ops", bytes(range(16)))
+    slot = next(s for s in await _read_slots(device) if s.idx == 3)
+
+    assert _detail_summary(ctx, slot, _LiveStats(ctx)) == "Slot 3 · no messages recorded yet"
+
+    ctx.repo.record_chat_message(
+        ChatMessage(text="hi", is_channel=True, channel_id=slot.identity)
+    )
+    ctx.chat._unread[slot.conversation.key] = 1
+    summary = _detail_summary(ctx, slot, _LiveStats(ctx))
+    assert summary == "Slot 3 · 1 message · 1 unread · last message just now"
+
+
 # -- the tool against the simulator -------------------------------------------
 
 

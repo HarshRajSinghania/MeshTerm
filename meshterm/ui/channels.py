@@ -8,15 +8,29 @@ derived from the name), joining by pasting a key, or importing a scanned ``meshc
 link. Every change is written to the device immediately (like a phone app), so the list you
 see always reflects the radio.
 
+The list is laid out like the config editor: fixed, column-aligned lanes under one header
+line — name, openness, hash fingerprint, unread badge, total messages, last-message age,
+and a small activity meter over the trailing week — so a glance shows not just *which*
+channels exist but which ones are alive. The message statistics come from
+:meth:`~meshterm.persistence.repository.Repository.channel_stats` (read through a small
+TTL cache) and the unread counts from the live chat service, and each row is a callable
+title re-resolved on repaint, so a message arriving while the list sits open updates its
+row in place — the same trick the conversation picker uses. The menus also follow the
+config editor's persistent-backdrop pattern: the list stays pushed while every sub-prompt
+floats over it as a modal popup, rather than replacing the screen.
+
 The module sits in the UI layer but, like the config editor and chat screen, is allowed to
 depend on the context and services; it owns no persistence of its own.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
+from rich.cells import cell_len
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
@@ -38,11 +52,12 @@ from ..core.channels import (
 from ..core.connection import Device
 from ..core.models import Conversation
 from .qr import qr_text
-from .tui import Choice, Separator
-from .widgets import channel_glyph
+from .tui import CANCEL, Choice, SelectScreen, Separator
+from .widgets import _age_seconds, _format_age, channel_glyph
 
 if TYPE_CHECKING:
     from ..context import AppContext
+    from ..persistence.repository import ChannelStats
 
 # Top-menu action sentinels (distinct from a plain slot index, which selects that channel).
 _CREATE = "__create__"
@@ -129,38 +144,90 @@ async def manage_channels(ctx: "AppContext") -> int:
     # used/total display below. A device that can't report any slots falls back to the
     # standard count so the manager stays usable instead of showing zero capacity.
     capacity = await device.channel_capacity() or MAX_CHANNELS
+    stats = _LiveStats(ctx)
     changes = 0
     highlight: Optional[object] = None
 
     while True:
         slots = await _read_slots(device)
-        choice = await _main_menu(ctx, slots, capacity, default=highlight)
-        if choice in (None, _BACK):
+        title, items = _menu_items(ctx, slots, capacity, stats)
+
+        async def handle(choice: object) -> bool:
+            """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
+            nonlocal changes, highlight
+            if choice in (None, _BACK):
+                return False
+            highlight = choice
+            before = changes
+            if choice == _CREATE:
+                changes += await _create_private(ctx, device, slots, capacity)
+            elif choice == _PUBLIC:
+                changes += await _add_public(ctx, device, slots, capacity)
+            elif choice == _JOIN:
+                changes += await _join_with_key(ctx, device, slots, capacity)
+            elif choice == _IMPORT:
+                changes += await _import_link(ctx, device, slots, capacity)
+            elif choice == _REORDER:
+                changes += await _reorder_channels(ctx, device, slots)
+            else:  # an existing slot index
+                slot = next((s for s in slots if s.idx == choice), None)
+                if slot is not None:
+                    changes += await _channel_detail(ctx, device, slot, stats)
+            if changes > before:
+                # A slot's occupant changed (created, re-keyed, cleared, or moved). Inbound
+                # messages carry only a slot index, which the chat service maps to a channel
+                # identity through a cache keyed by slot; refresh it now so a message on a
+                # reused/re-keyed slot is filed under the channel that's actually there and
+                # not the one that used to be — otherwise its transcript surfaces in the
+                # wrong chat.
+                await _refresh_chat_channels(ctx)
+            return True
+
+        if not await _menu_round(ctx, title, items, default=highlight, handle=handle):
             return changes
-        highlight = choice
-        before = changes
-        if choice == _CREATE:
-            changes += await _create_private(ctx, device, slots, capacity)
-        elif choice == _PUBLIC:
-            changes += await _add_public(ctx, device, slots, capacity)
-        elif choice == _JOIN:
-            changes += await _join_with_key(ctx, device, slots, capacity)
-        elif choice == _IMPORT:
-            changes += await _import_link(ctx, device, slots, capacity)
-        elif choice == _REORDER:
-            changes += await _reorder_channels(ctx, device, slots)
-        else:  # an existing slot index
-            slot = next((s for s in slots if s.idx == choice), None)
-            if slot is not None:
-                changes += await _channel_detail(ctx, device, slot)
-        if changes > before:
-            # A slot's occupant changed (created, re-keyed, cleared, or moved). Inbound
-            # messages carry only a slot index, which the chat service maps to a channel
-            # identity through a cache keyed by slot; refresh it now so a message on a
-            # reused/re-keyed slot is filed under the channel that's actually there and not
-            # the one that used to be — otherwise its transcript surfaces in the wrong chat.
-            await _refresh_chat_channels(ctx)
     # unreachable
+
+
+async def _menu_round(
+    ctx: "AppContext",
+    title: str,
+    items: list,
+    *,
+    handle: Callable[[object], Awaitable],
+    default: object = None,
+    prompt: str = "",
+) -> object:
+    """Show one round of a channels menu and dispatch the choice over it.
+
+    In the full-screen session the menu stays *pushed* while ``handle`` runs, so every
+    sub-prompt floats over the list as a modal popup with its own border — the config
+    editor's persistent-backdrop pattern (see
+    :func:`~meshterm.ui.config_editor.edit_config`) — instead of replacing the screen. A
+    surface without a session (the plain CLI surface, scripted tests) simply selects and
+    then dispatches; ``prompt`` is a session-only nicety and is dropped there.
+
+    Args:
+        ctx: Shared application context.
+        title: The menu's border heading.
+        items: The menu's :class:`Choice`/:class:`Separator` rows.
+        handle: Async dispatcher awaited with the chosen value (``None`` for Esc).
+        default: A choice value to re-highlight, so the menu reopens where it was left.
+        prompt: An optional summary line drawn inside the box above the rows.
+
+    Returns:
+        Whatever ``handle`` returns.
+    """
+    session = getattr(ctx.ui, "session", None)
+    if session is None:
+        return await handle(await ctx.ui.select(title, items, default=default))
+    menu = SelectScreen(title, items, prompt=prompt, default=default, wrap=False)
+    menu.future = asyncio.get_running_loop().create_future()
+    session.push(menu)
+    try:
+        choice = await menu.future
+        return await handle(None if choice is CANCEL else choice)
+    finally:
+        session.pop(menu)
 
 
 async def _refresh_chat_channels(ctx: "AppContext") -> None:
@@ -215,23 +282,182 @@ def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
 
 
 def _slot_label(slot: ChannelSlot) -> str:
-    """Format a channel for a menu row: name, public/private, and hash (no slot index)."""
+    """Format a channel for a compact row (the reorder screen): name, openness, hash."""
     glyph = channel_glyph(slot.name, slot.secret)  # ＃ / 🌐 / 🔒
     word = "private" if glyph == "🔒" else "public"
     return f"{slot.name:<18.18} {glyph} {word:<7}  hash {slot.hash}"
 
 
+# --- message statistics --------------------------------------------------------
+
+
+class _LiveStats:
+    """A self-refreshing view of every channel's stored-message statistics.
+
+    The conversation picker's ``_LiveLasts`` pattern applied to
+    :meth:`~meshterm.persistence.repository.Repository.channel_stats`: the list rows read
+    through this on every repaint (their titles are callables), so a message arriving while
+    the manager sits open updates that channel's counts, age, and activity meter in place —
+    but the repository is re-queried at most once per ``ttl`` seconds rather than once per
+    row per repaint, so a full slot table stays cheap at the session's ~1 Hz repaint.
+    """
+
+    def __init__(self, ctx: "AppContext", *, ttl: float = 1.0) -> None:
+        """Bind to a context; the first read populates the cache."""
+        self._ctx = ctx
+        self._ttl = ttl
+        self._cache: Optional[dict[str, "ChannelStats"]] = None
+        self._at = 0.0
+
+    def get(self, channel_id: str) -> Optional["ChannelStats"]:
+        """Return the stats for one channel identity, refreshing once the TTL lapses."""
+        now = time.monotonic()
+        if self._cache is None or now - self._at >= self._ttl:
+            try:
+                self._cache = self._ctx.repo.channel_stats()
+            except Exception:  # noqa: BLE001 - keep the last good snapshot on a read error
+                self._cache = self._cache or {}
+            self._at = now
+        return self._cache.get(channel_id)
+
+
+#: Widest the name lane grows (longer names are ellipsized so the lanes stay put).
+_NAME_WIDTH_MAX = 18
+#: Width of the openness lane (fits ``private``).
+_TYPE_WIDTH = 7
+#: Width of the hash lane (sized to its ``HASH`` header; the value itself is two chars).
+_HASH_WIDTH = 4
+#: Width of the unread-badge lane (fits ``● 999``), matching the conversation picker's.
+_BADGE_WIDTH = 5
+#: Width of the right-aligned total-messages lane.
+_COUNT_WIDTH = 5
+#: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
+_AGE_WIDTH = 5
+#: Weekly message counts at which the activity meter lights its first, second, and third
+#: bar — roughly "someone spoke", "a message most days", and "steady daily traffic".
+_ACTIVITY_THRESHOLDS = (1, 15, 70)
+#: The meter's bars, lit left-to-right as the thresholds are passed.
+_ACTIVITY_BARS = "▂▄▆"
+
+
+def _activity_meter(recent: int) -> Text:
+    """The channel's three-bar activity meter over the trailing week.
+
+    Each bar lights (in the ok green) as ``recent`` passes the matching
+    :data:`_ACTIVITY_THRESHOLDS` step; unlit positions render as muted dots so the meter
+    keeps its width and a silent channel still reads as a deliberate ``···``.
+    """
+    lit = sum(recent >= threshold for threshold in _ACTIVITY_THRESHOLDS)
+    meter = Text()
+    if lit:
+        meter.append(_ACTIVITY_BARS[:lit], style="ok")
+    if lit < len(_ACTIVITY_THRESHOLDS):
+        meter.append("·" * (len(_ACTIVITY_THRESHOLDS) - lit), style="muted")
+    return meter
+
+
+def _fit(text: str, width: int) -> str:
+    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that would overflow."""
+    if len(text) > width:
+        return text[: width - 1] + "…"
+    return text.ljust(width)
+
+
 # --- menus -------------------------------------------------------------------
 
 
-async def _main_menu(
-    ctx: "AppContext", slots: list[ChannelSlot], capacity: int, *, default: object = None
-) -> object:
-    """Show the channel list and the add-a-channel actions; return the chosen value."""
-    items: list = [Separator(f"── Channels ({len(slots)}/{capacity}) ──", style="accent")]
+def _lanes_header(name_w: int) -> str:
+    """Column headers over the channel list's fixed lanes (see :func:`_slot_text`).
+
+    The leading spaces cover the select screen's pointer column (2 cells) plus the glyph
+    lane (3 cells), so each header lands exactly over its column. ``UNREAD`` borrows its
+    lane's trailing gap — the badge lane itself is one cell too narrow for the word — which
+    still leaves a space before the message count.
+    """
+    return (
+        "     "
+        + "CHANNEL".ljust(name_w + 2)
+        + "TYPE".ljust(_TYPE_WIDTH + 2)
+        + "HASH".ljust(_HASH_WIDTH + 2)
+        + "UNREAD".ljust(_BADGE_WIDTH + 2)
+        + f"{'MSGS':>{_COUNT_WIDTH}}"
+        + "  "
+        + f"{'LAST':>{_AGE_WIDTH}}"
+        + "  ACTIVITY"
+    )
+
+
+def _slot_row(
+    ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats, name_w: int
+) -> Callable[[], Text]:
+    """Return a list-row title *callable* the select screen re-renders on each repaint.
+
+    The unread badge, counts, age, and activity meter are all read live (see
+    :class:`_LiveStats`), so a message arriving while the list sits open updates the row on
+    the next repaint — exactly the conversation picker's behavior.
+    """
+    return lambda: _slot_text(ctx, slot, stats, name_w)
+
+
+def _slot_text(
+    ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats, name_w: int
+) -> Text:
+    """Build one channel's list row as fixed-width, colour-coded lanes.
+
+    Alignment carries the readability — glyph, name, openness, hash, unread badge, total
+    messages, last-message age, and the activity meter each sit in their own lane under the
+    :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
+    focus in the base colour, the descriptive lanes are muted, the unread ``●`` badge is
+    red with its count in warn (the conversation picker's language), and the activity bars
+    light in the ok green. The row is always a Rich :class:`~rich.text.Text` so those spans
+    survive under the select screen's row highlight.
+    """
+    st = stats.get(slot.identity)
+    unread = ctx.chat.unread(slot.conversation.key)
+    text = Text(no_wrap=True, overflow="ellipsis")
+    text.append(f"{channel_glyph(slot.name, slot.secret)} ")  # ＃ / 🌐 / 🔒 (2 cells) + gap
+    text.append(_fit(slot.name, name_w))
+    text.append("  ")
+    text.append(("public" if slot.is_public else "private").ljust(_TYPE_WIDTH), style="muted")
+    text.append("  ")
+    text.append(slot.hash.ljust(_HASH_WIDTH), style="muted")
+    text.append("  ")
+    if unread:
+        text.append("●", style="err")
+        text.append(f" {unread}".ljust(_BADGE_WIDTH - 1), style="warn")
+    else:
+        text.append(" " * _BADGE_WIDTH)
+    text.append("  ")
+    total = st.total if st is not None else 0
+    if total:
+        # Clamped so a pathological backlog can't push the row out of its lanes.
+        text.append(f"{min(total, 99999):>{_COUNT_WIDTH}}")
+    else:
+        text.append(f"{'·':>{_COUNT_WIDTH}}", style="muted")
+    text.append("  ")
+    age = _format_age(_age_seconds(st.last_at)) if st is not None and st.last_at else ""
+    text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
+    text.append("  ")
+    text.append_text(_activity_meter(st.recent if st is not None else 0))
+    return text
+
+
+def _menu_items(
+    ctx: "AppContext", slots: list[ChannelSlot], capacity: int, stats: _LiveStats
+) -> tuple[str, list]:
+    """Build the channel manager's title and rows for the current slot table.
+
+    Returns the ``(title, items)`` for one :func:`_menu_round`: the channel rows in their
+    aligned lanes under a column-header line (the config editor's presentation), then the
+    Organize and Add-a-channel action sections. The slot usage lives in the title, so the
+    header line is free to be pure column labels.
+    """
+    items: list = []
     if slots:
+        name_w = min(_NAME_WIDTH_MAX, max(len("CHANNEL"), *(len(s.name) for s in slots)))
+        items.append(Separator(_lanes_header(name_w)))
         for slot in slots:
-            items.append(Choice(title=_slot_label(slot), value=slot.idx))
+            items.append(Choice(title=_slot_row(ctx, slot, stats, name_w), value=slot.idx))
     else:
         items.append(Separator("  (no channels configured yet)"))
 
@@ -247,40 +473,100 @@ async def _main_menu(
     items.append(Separator(" "))
     items.append(Choice(title="Back", value=_BACK))
 
-    choice = await ctx.ui.select("Channels", items, default=default)
-    return _BACK if choice is None else choice
+    return f"Channels — {len(slots)}/{capacity} slots", items
 
 
-async def _channel_detail(ctx: "AppContext", device: Device, slot: ChannelSlot) -> int:
-    """Show one channel's actions (QR, key, chat, rename, clear); return changes made."""
+def _detail_summary(ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats) -> str:
+    """One line of vital signs for the detail screen: slot, totals, unread, last activity."""
+    st = stats.get(slot.identity)
+    unread = ctx.chat.unread(slot.conversation.key)
+    if st is None or not st.total:
+        return f"Slot {slot.idx} · no messages recorded yet"
+    parts = [f"Slot {slot.idx}", f"{st.total} message{'' if st.total == 1 else 's'}"]
+    if unread:
+        parts.append(f"{unread} unread")
+    if st.last_at is not None:
+        age = _format_age(_age_seconds(st.last_at))
+        parts.append("last message just now" if age == "now" else f"last message {age} ago")
+    return " · ".join(parts)
+
+
+def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
+    """Build the channel-detail rows: label and description in two aligned lanes.
+
+    The Device actions presentation (menu-style lanes, no header line — these are commands,
+    not tabular data), padded in display cells so the double-width emoji can't skew the
+    description column. Open-in-chat carries the channel's live unread badge, and the one
+    destructive row keeps an err-tinted label so it reads as such.
+    """
+    unread = ctx.chat.unread(slot.conversation.key)
+    chat_label = Text("💬 Open in chat")
+    if unread:
+        chat_label.append("  ●", style="err")
+        chat_label.append(f" {unread}", style="warn")
+    rows: list[tuple[Text, str, object]] = [
+        (Text("📱 Show QR code"), "Share this channel as a scannable code", _QR),
+        (Text("🔑 Show key"), "The name, key, hash, and share link", _KEY),
+        (chat_label, "Read and send messages on this channel", _CHAT),
+        (Text("✎ Rename / change key"), "Edit the name or paste a different key", _EDIT),
+        (Text("🗑 Clear this slot", style="err"), "Remove the channel from this device", _CLEAR),
+    ]
+    width = max(cell_len(label.plain) for label, _, _ in rows)
+    items: list = []
+    for label, help_text, value in rows:
+        row = Text()
+        row.append_text(label)
+        row.append(" " * (width - cell_len(label.plain) + 2))
+        row.append(help_text, style="muted")
+        items.append(Choice(title=row, value=value))
+    items.append(Separator(" "))
+    items.append(Choice(title="Back", value=_BACK))
+    return items
+
+
+async def _channel_detail(
+    ctx: "AppContext", device: Device, slot: ChannelSlot, stats: _LiveStats
+) -> int:
+    """Show one channel's actions (QR, key, chat, rename, clear); return changes made.
+
+    The screen leads with the channel's vital signs (see :func:`_detail_summary`) above the
+    action rows, and — like the main list — stays pushed while each action's prompts float
+    over it. A rename/re-key or clear closes the detail (the slot's occupant changed, so
+    the caller re-reads the device); the read-only actions loop back here.
+    """
     kind = "public" if slot.is_public else "private"
-    while True:
-        choice = await ctx.ui.select(
-            f"{slot.name}  ({kind}, hash {slot.hash})",
-            [
-                Choice(title="📱 Show QR code (share)", value=_QR),
-                Choice(title="🔑 Show key", value=_KEY),
-                Choice(title="💬 Open in chat", value=_CHAT),
-                Choice(title="✎ Rename / change key", value=_EDIT),
-                Choice(title="🗑 Clear this slot", value=_CLEAR),
-                Separator(" "),
-                Choice(title="Back", value=_BACK),
-            ],
-        )
+    title = f"{slot.name}  ({kind}, hash {slot.hash})"
+    cursor: object = None
+
+    async def handle(choice: object) -> Optional[int]:
+        """Run one action; an int closes the detail with that many changes, ``None`` stays."""
+        nonlocal cursor
         if choice in (None, _BACK):
             return 0
+        cursor = choice
         if choice == _QR:
             await _show_share(ctx, slot.name, slot.secret)
         elif choice == _KEY:
             await _show_key(ctx, slot)
         elif choice == _CHAT:
             await _open_chat(ctx, slot)
-        elif choice == _EDIT:
-            if await _edit(ctx, device, slot):
-                return 1
-        elif choice == _CLEAR:
-            if await _clear(ctx, device, slot):
-                return 1
+        elif choice == _EDIT and await _edit(ctx, device, slot):
+            return 1
+        elif choice == _CLEAR and await _clear(ctx, device, slot):
+            return 1
+        return None
+
+    while True:
+        result = await _menu_round(
+            ctx,
+            title,
+            _detail_items(ctx, slot),
+            default=cursor,
+            prompt=_detail_summary(ctx, slot, stats),
+            handle=handle,
+        )
+        if result is not None:
+            return result
 
 
 # --- create / join flows -----------------------------------------------------

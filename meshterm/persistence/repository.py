@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +23,29 @@ from ..core.models import (
     utcnow,
 )
 from . import db
+
+
+#: The trailing window (days) a channel's recent-activity tally is computed over. One week
+#: smooths out the day-to-day lulls of a hobbyist mesh while still going quiet within days
+#: of a channel actually dying down, which is the granularity the activity meter shows.
+ACTIVITY_WINDOW_DAYS = 7
+
+
+@dataclass(slots=True)
+class ChannelStats:
+    """Aggregated message history for one channel conversation.
+
+    Attributes:
+        total: Messages ever stored for the channel, sent and received alike.
+        recent: Messages within the trailing :data:`ACTIVITY_WINDOW_DAYS` window — the
+            basis of the channel manager's activity meter.
+        last_at: When the channel's most recent message was stored, or ``None`` if the
+            stored timestamp can't be parsed.
+    """
+
+    total: int
+    recent: int
+    last_at: Optional[datetime]
 
 
 @dataclass(slots=True)
@@ -482,6 +505,46 @@ class Repository:
             "       ELSE 'dm:' || peer END)"
         ).fetchall()
         return {msg.key: msg for msg in (self._row_to_chat(r) for r in rows)}
+
+    def channel_stats(self) -> dict[str, ChannelStats]:
+        """Aggregate stored channel messages into per-channel statistics.
+
+        Backs the channel manager's list lanes: each configured channel's row shows its
+        total message count, an activity meter over the trailing
+        :data:`ACTIVITY_WINDOW_DAYS`, and the age of its last message. One SQL pass groups
+        every channel message by the channel's intrinsic identity, so the cost stays flat
+        no matter how many channels the device carries.
+
+        Timestamps are compared as strings: every ``created_at`` is written by
+        ``utcnow().isoformat()`` (a fixed-width UTC ISO-8601 form), so lexicographic order
+        *is* chronological order and the recent-window cutoff needs no per-row parsing.
+        Messages predating identity-keyed history (a ``NULL`` ``channel_id``; see
+        :meth:`backfill_channel_ids`) have no channel to be counted under and are skipped.
+
+        Returns:
+            A mapping of channel identity to its :class:`ChannelStats`. Channels with no
+            stored messages simply have no entry.
+        """
+        cutoff = (utcnow() - timedelta(days=ACTIVITY_WINDOW_DAYS)).isoformat()
+        rows = self._conn.execute(
+            "SELECT channel_id, COUNT(*) AS total, MAX(created_at) AS last_at, "
+            "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS recent "
+            "FROM messages WHERE is_channel = 1 AND channel_id IS NOT NULL "
+            "GROUP BY channel_id",
+            (cutoff,),
+        ).fetchall()
+        stats: dict[str, ChannelStats] = {}
+        for row in rows:
+            try:
+                last_at = datetime.fromisoformat(row["last_at"])
+            except (TypeError, ValueError):
+                last_at = None  # a malformed stray must not hide the channel's counts
+            stats[row["channel_id"]] = ChannelStats(
+                total=int(row["total"]),
+                recent=int(row["recent"] or 0),
+                last_at=last_at,
+            )
+        return stats
 
     def backfill_channel_ids(self, mapping: dict[int, str]) -> int:
         """Give legacy channel messages an identity, keyed by the slot they were stored on.
