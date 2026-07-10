@@ -31,7 +31,8 @@ class TxOptimizeTool(Tool):
     """Tune a remote node's TX power for the strongest, most reliable signal at a target."""
 
     name = "tx-optimize"
-    help = "Tune a remote node's TX power for the best signal at a target along a path."
+    title = "TX optimize"
+    help = "Tune a remote node's TX power for the best signal at a target"
     category = "Optimization"
     order = 10
 
@@ -250,17 +251,17 @@ class TxOptimizeTool(Tool):
         def _tx_optimize(
             path: str = typer.Option(
                 ..., "--path", "-p",
-                help="Forced path ending at the target (e.g. 'Repeater,Target' or '3d,f2').",
+                help="Forced path ending at the target (e.g. 'Repeater,Target' or '3d,f2')",
             ),
-            samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level."),
-            step: int = typer.Option(3, "--step", help="Coarse sweep step."),
-            tx_min: Optional[int] = typer.Option(None, "--min", help="Lowest TX power."),
-            tx_max: Optional[int] = typer.Option(None, "--max", help="Highest TX power."),
+            samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level"),
+            step: int = typer.Option(3, "--step", help="Coarse sweep step"),
+            tx_min: Optional[int] = typer.Option(None, "--min", help="Lowest TX power"),
+            tx_max: Optional[int] = typer.Option(None, "--max", help="Highest TX power"),
             password: Optional[str] = typer.Option(
-                None, "--password", help="Admin password (else remembered/prompted)."
+                None, "--password", help="Admin password (else remembered/prompted)"
             ),
-            apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner."),
-            viz: bool = typer.Option(True, "--viz/--no-viz", help="Generate HTML chart."),
+            apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner"),
+            viz: bool = typer.Option(True, "--viz/--no-viz", help="Generate HTML chart"),
         ) -> None:
             tool_params: dict[str, Any] = {
                 "path": path, "samples": samples, "step": step,

@@ -14,6 +14,7 @@ from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
+from ..theme import title_style
 from .render import render_lines
 from .screen import Screen
 
@@ -95,11 +96,12 @@ def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
         subtitle = f"[muted]{arrow} more[/muted]"
+    border = "accent" if active else "muted"
     return Panel(
         body,
-        title=f"[accent]{screen.title}[/accent]" if screen.title else None,
+        title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
         subtitle=subtitle,
-        border_style="accent" if active else "muted",
+        border_style=border,
         padding=(0, 1),
     )
 
@@ -212,7 +214,7 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         subtitle = f"[muted]{arrow} · {screen.footer_hint}[/muted]"
     panel = Panel(
         body,
-        title=f"[accent]{screen.title}[/accent]" if screen.title else None,
+        title=f"[{title_style('accent')}]{screen.title}[/]" if screen.title else None,
         subtitle=subtitle,
         border_style="accent",
         padding=(0, 1),
@@ -260,11 +262,12 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
         subtitle = f"[muted]{arrow} · {screen.footer_hint}[/muted]"
+    border = getattr(screen, "border_style", "accent")
     panel = Panel(
         body,
-        title=f"[accent]{screen.title}[/accent]" if screen.title else None,
+        title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
         subtitle=subtitle,
-        border_style=getattr(screen, "border_style", "accent"),
+        border_style=border,
         padding=(0, 1),
         width=max_w,
     )

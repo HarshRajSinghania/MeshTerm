@@ -43,7 +43,8 @@ class ChatTool(Tool):
     """Send and receive channel and direct messages, with a live interactive chat."""
 
     name = "chat"
-    help = "Channel and direct messaging — live chat, with stored history."
+    title = "Chat"
+    help = "Channel and direct messaging — live chat, with stored history"
     category = "Messaging"
     order = 10
 
@@ -118,11 +119,11 @@ class ChatTool(Tool):
         lasts = ctx.repo.last_chat_messages()
         live = _LiveLasts(ctx, seed=lasts)
 
-        items: list = [Separator("── 📡 Channels ──")]
+        items: list = [Separator("── 📡 CHANNELS ──")]
         for conversation in channels:
             items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
 
-        items.append(Separator("── 👤 Direct ──"))
+        items.append(Separator("── 👤 DIRECT ──"))
         if contacts:
             # List contacts by recency — those with messages first, newest exchange at the
             # top — then the never-contacted ones alphabetically (see _recency_key).
@@ -271,7 +272,7 @@ class ChatTool(Tool):
             unsubscribe()
         return ToolResult(
             summary={"messages": seen},
-            message=f"[muted]stopped — saw {seen} message(s)[/muted]",
+            message=f"[muted]stopped — saw {seen} message{'' if seen == 1 else 's'}[/muted]",
         )
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
@@ -282,9 +283,9 @@ class ChatTool(Tool):
         lasts = ctx.repo.last_chat_messages()
 
         table = Table(title="Conversations", border_style="muted", expand=False)
-        table.add_column("Conversation")
-        table.add_column("Unread", justify="right")
-        table.add_column("Last message")
+        table.add_column("CONVERSATION")
+        table.add_column("UNREAD", justify="right")
+        table.add_column("LAST MESSAGE")
         rows = [*channels] + [
             Conversation(label=c.name, is_channel=False, contact=c) for c in contacts
         ]
@@ -309,11 +310,11 @@ class ChatTool(Tool):
 
         chat_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode="rich")
 
-        @chat_app.command("send", help="Send a message to a contact or channel.")
+        @chat_app.command("send", help="Send a message to a contact or channel")
         def _send_cmd(
-            text: str = typer.Argument(..., help="The message body."),
-            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix."),
-            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index."),
+            text: str = typer.Argument(..., help="The message body"),
+            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix"),
+            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index"),
         ) -> None:
             if (to is None) == (channel is None):
                 raise typer.BadParameter("Pass exactly one of --to / --channel.")
@@ -321,11 +322,11 @@ class ChatTool(Tool):
                 self, {"cli_action": "send", "to": to, "channel": channel, "text": text}
             )
 
-        @chat_app.command("history", help="Show a conversation's stored history.")
+        @chat_app.command("history", help="Show a conversation's stored history")
         def _history_cmd(
-            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix."),
-            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index."),
-            limit: int = typer.Option(_HISTORY_LIMIT, "--limit", help="Max messages to show."),
+            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix"),
+            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index"),
+            limit: int = typer.Option(_HISTORY_LIMIT, "--limit", help="Max messages to show"),
         ) -> None:
             if (to is None) == (channel is None):
                 raise typer.BadParameter("Pass exactly one of --to / --channel.")
@@ -334,17 +335,17 @@ class ChatTool(Tool):
                 {"cli_action": "history", "to": to, "channel": channel, "limit": limit},
             )
 
-        @chat_app.command("list", help="List channels, contacts, and recent messages.")
+        @chat_app.command("list", help="List channels, contacts, and recent messages")
         def _list_cmd() -> None:
             run_tool_command(self, {"cli_action": "list"})
 
-        @chat_app.command("listen", help="Tail inbound messages live in the console.")
+        @chat_app.command("listen", help="Tail inbound messages live in the console")
         def _listen_cmd(
             seconds: int = typer.Option(
-                0, "--seconds", "-s", help="How long to listen (0 = until Ctrl-C)."
+                0, "--seconds", "-s", help="How long to listen (0 = until Ctrl-C)"
             ),
             debug: bool = typer.Option(
-                False, "--debug", help="Log the message-pull activity (diagnostic)."
+                False, "--debug", help="Log the message-pull activity (diagnostic)"
             ),
         ) -> None:
             if debug:
@@ -662,9 +663,9 @@ def _history_table(label: str, messages: list[ChatMessage]) -> Table:
         A Rich :class:`Table` of time, sender, and text.
     """
     table = Table(title=f"History — {label}", border_style="muted", expand=False)
-    table.add_column("Time")
-    table.add_column("From")
-    table.add_column("Message")
+    table.add_column("TIME")
+    table.add_column("FROM")
+    table.add_column("MESSAGE")
     for message in messages:
         stamp = message.created_at.astimezone().strftime("%m-%d %H:%M")
         if message.outbound:

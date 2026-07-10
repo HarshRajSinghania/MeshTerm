@@ -34,6 +34,15 @@ MESH_THEME = Theme(
         "warn": "bold #fbbf24",
         "err": "bold #f87171",
         "muted": "#94a3b8",
+        # Panel/dialog titles: the same hue as the border they sit in, one shade brighter,
+        # so the title reads as part of its frame while still standing out from it. One
+        # entry per border style the frame compositor is given (see theme.title_style).
+        "title.accent": "bold #a5b4fc",
+        "title.muted": "bold #cbd5e1",
+        "title.warn": "bold #fcd34d",
+        "title.err": "bold #fca5a5",
+        "title.ok": "bold #86efac",
+        "title.brand": "bold #99f6e4",
         # A step darker than ``muted`` for placeholder dashes (a node's missing packet count /
         # age) that should recede below the real, muted values around them.
         "faint": "#64748b",
@@ -64,6 +73,21 @@ def make_console() -> Console:
             except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
                 pass
     return Console(theme=MESH_THEME)
+
+
+def title_style(border_style: str) -> str:
+    """Return the title style matching a panel's border: the same hue, brighter.
+
+    Args:
+        border_style: The theme name the panel's border is drawn in (``"accent"``,
+            ``"warn"``, ...).
+
+    Returns:
+        The matching ``title.*`` theme name, or ``border_style`` itself when no brighter
+        variant is defined (so an unknown border still gets a consistently-tinted title).
+    """
+    name = f"title.{border_style}"
+    return name if name in MESH_THEME.styles else border_style
 
 
 def snr_style(snr: float | None) -> str:

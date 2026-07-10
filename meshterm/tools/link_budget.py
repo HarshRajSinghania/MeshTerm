@@ -28,7 +28,8 @@ class LinkBudgetTool(Tool):
     """Compute time-on-air, sensitivity, range, and duty-cycle headroom for a radio config."""
 
     name = "link-budget"
-    help = "Predict airtime, range, and duty-cycle headroom for a radio config (no radio needed)."
+    title = "Link budget"
+    help = "Predict airtime, range, and duty-cycle headroom for a radio config"
     category = "Optimization"
     order = 20
 
@@ -202,26 +203,26 @@ class LinkBudgetTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _link_budget(
-            freq: Optional[float] = typer.Option(None, "--freq", help="Frequency (MHz)."),
-            bw: Optional[float] = typer.Option(None, "--bw", help="Bandwidth (kHz)."),
-            sf: Optional[int] = typer.Option(None, "--sf", help="Spreading factor (6-12)."),
-            cr: Optional[int] = typer.Option(None, "--cr", help="Coding-rate denom (5-8)."),
-            payload: int = typer.Option(32, "--payload", help="Payload size (bytes)."),
-            tx: float = typer.Option(22.0, "--tx", help="TX power (dBm)."),
-            tx_gain: float = typer.Option(2.0, "--tx-gain", help="TX antenna gain (dBi)."),
-            rx_gain: float = typer.Option(2.0, "--rx-gain", help="RX antenna gain (dBi)."),
+            freq: Optional[float] = typer.Option(None, "--freq", help="Frequency (MHz)"),
+            bw: Optional[float] = typer.Option(None, "--bw", help="Bandwidth (kHz)"),
+            sf: Optional[int] = typer.Option(None, "--sf", help="Spreading factor (6-12)"),
+            cr: Optional[int] = typer.Option(None, "--cr", help="Coding-rate denom (5-8)"),
+            payload: int = typer.Option(32, "--payload", help="Payload size (bytes)"),
+            tx: float = typer.Option(22.0, "--tx", help="TX power (dBm)"),
+            tx_gain: float = typer.Option(2.0, "--tx-gain", help="TX antenna gain (dBi)"),
+            rx_gain: float = typer.Option(2.0, "--rx-gain", help="RX antenna gain (dBi)"),
             env: str = typer.Option(
-                "suburban", "--env", help="Path-loss model: free-space/rural/suburban/urban."
+                "suburban", "--env", help="Path-loss model: free-space/rural/suburban/urban"
             ),
             exponent: Optional[float] = typer.Option(
-                None, "--exponent", help="Override the path-loss exponent (2 = free space)."
+                None, "--exponent", help="Override the path-loss exponent (2 = free space)"
             ),
-            duty: float = typer.Option(1.0, "--duty", help="Duty-cycle limit (%)."),
+            duty: float = typer.Option(1.0, "--duty", help="Duty-cycle limit (%)"),
             dwell: Optional[float] = typer.Option(
-                None, "--dwell", help="Max dwell time per TX (ms), e.g. 400 for US915."
+                None, "--dwell", help="Max dwell time per TX (ms), e.g. 400 for US915"
             ),
             path_loss: Optional[float] = typer.Option(
-                None, "--path-loss", help="A known path loss (dB) to report link margin at."
+                None, "--path-loss", help="A known path loss (dB) to report link margin at"
             ),
         ) -> None:
             tool_params: dict[str, Any] = {
@@ -255,7 +256,7 @@ def _radio_panel(config: RadioConfig) -> Panel:
         ("symbol time   ", "muted"), (f"{config.symbol_time_ms():.2f} ms\n", ""),
         ("low data rate ", "muted"), (ldr, ""),
     )
-    return Panel(body, title="[accent]radio config[/accent]", border_style="muted", expand=False)
+    return Panel(body, title="[accent]RADIO CONFIG[/accent]", border_style="muted", expand=False)
 
 
 def _budget_panel(budget: link_budget.LinkBudget) -> Panel:
@@ -268,8 +269,8 @@ def _budget_panel(budget: link_budget.LinkBudget) -> Panel:
         A Rich :class:`Panel` with airtime, sensitivity, range, and duty figures.
     """
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
-    table.add_column("metric", style="muted")
-    table.add_column("value", justify="right")
+    table.add_column("METRIC", style="muted")
+    table.add_column("VALUE", justify="right")
 
     toa = budget.toa
     table.add_row("payload", f"{toa.payload_bytes} bytes")
@@ -299,7 +300,7 @@ def _budget_panel(budget: link_budget.LinkBudget) -> Panel:
         )
         table.add_row("  dwell-time", cell)
 
-    return Panel(table, title="[accent]link budget[/accent]", border_style="accent", expand=False)
+    return Panel(table, title="[accent]LINK BUDGET[/accent]", border_style="accent", expand=False)
 
 
 def _is_pos_int(value: str) -> bool | str:

@@ -37,8 +37,11 @@ class Tool(ABC):
     """Base class for all MeshTerm features.
 
     Class Attributes:
-        name: CLI/menu identifier (kebab-case), unique across tools.
-        help: One-line description shown in the menu and ``--help``.
+        name: CLI identifier (kebab-case), unique across tools.
+        title: Display name shown as the interactive menu item and on the tool's result
+            window. Capitalized, and kept identical to the screen the item opens so the
+            menu never promises one name and delivers another. Falls back to ``name``.
+        help: One-line description shown in the menu and ``--help`` (no trailing period).
         category: Grouping label used to organize the interactive menu.
         order: Sort key within a category (lower sorts first).
         menu_visible: Whether the tool appears in the interactive menu. Set ``False`` for
@@ -47,6 +50,7 @@ class Tool(ABC):
     """
 
     name: str = ""
+    title: str = ""
     help: str = ""
     category: str = "General"
     order: int = 100

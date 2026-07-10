@@ -15,7 +15,8 @@ class NodesTool(Tool):
     """List this node and its known contacts, each with its path-hash prefix."""
 
     name = "nodes"
-    help = "List this node and known contacts (last heard, packets, type, path-hash prefix)."
+    title = "Nodes"
+    help = "List this node and known contacts (last heard, packets, type, key)"
     category = "Device"
     order = 12
 
@@ -75,7 +76,7 @@ class NodesTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _nodes(
             sort: str = typer.Option(
-                "name", "--sort", "-s", help="Order contacts by: name, heard, packets."
+                "name", "--sort", "-s", help="Order contacts by: name, heard, packets"
             ),
         ) -> None:
             run_tool_command(self, {"sort": sort})

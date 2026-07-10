@@ -27,7 +27,8 @@ class TraceTool(Tool):
     """Trace the path to a target N times and summarize per-hop SNR."""
 
     name = "trace"
-    help = "Run repeated path traces to a target and aggregate SNR."
+    title = "Trace"
+    help = "Run repeated path traces to a target and aggregate SNR"
     category = "Diagnostics"
     order = 10
 
@@ -177,15 +178,15 @@ class TraceTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _trace(
-            target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix."),
+            target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix"),
             samples: int = typer.Option(
-                3, "--samples", "-n", help=f"Number of traces (max {MAX_TRACES})."
+                3, "--samples", "-n", help=f"Number of traces (max {MAX_TRACES})"
             ),
             path: Optional[str] = typer.Option(
                 None,
                 "--path",
                 "-p",
-                help="Force a route: comma-separated contact names/hex prefixes (e.g. 3d,f2,3d).",
+                help="Force a route: comma-separated contact names/hex prefixes (e.g. 3d,f2,3d)",
             ),
         ) -> None:
             tool_params: dict[str, Any] = {"target": target, "samples": samples}

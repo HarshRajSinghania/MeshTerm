@@ -32,7 +32,7 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
     rich_markup_mode="rich",
-    help="MeshTerm — a modern toolkit for tuning and exploring your MeshCore mesh.",
+    help="MeshTerm — a modern toolkit for tuning and exploring your MeshCore mesh",
 )
 
 # The context built by the callback and consumed by subcommands within one process.
@@ -42,18 +42,18 @@ _state: Optional[AppContext] = None
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
-    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Device profile."),
-    port: Optional[str] = typer.Option(None, "--port", help="Serial port override."),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Device profile"),
+    port: Optional[str] = typer.Option(None, "--port", help="Serial port override"),
     ble: Optional[str] = typer.Option(
-        None, "--ble", help="Bluetooth address of a companion device (selects the BLE transport)."
+        None, "--ble", help="Bluetooth address of a companion device (selects the BLE transport)"
     ),
     ble_pin: Optional[str] = typer.Option(
-        None, "--ble-pin", help="BLE pairing PIN, if the Bluetooth companion requires one."
+        None, "--ble-pin", help="BLE pairing PIN, if the Bluetooth companion requires one"
     ),
-    mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator."),
-    db_path: Optional[Path] = typer.Option(None, "--db", help="SQLite database path."),
-    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress console logging."),
+    mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator"),
+    db_path: Optional[Path] = typer.Option(None, "--db", help="SQLite database path"),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress console logging"),
 ) -> None:
     """Build the application context and dispatch to the menu or a subcommand.
 

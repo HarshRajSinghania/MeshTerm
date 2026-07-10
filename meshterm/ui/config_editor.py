@@ -114,7 +114,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
         title, items = _menu_items(snapshot, pending, staged)
         menu = SelectScreen(
             title, items, default=cursor, wrap=False,
-            footer_hint="↑↓ move · type to filter · Enter select · Esc close",
+            footer_hint="↑↓ move · type to filter · Enter select · Esc back",
         )
         menu.future = loop.create_future()
         session.push(menu)
@@ -205,17 +205,17 @@ def config_table(
         expand=False,
         padding=(0, 2, 0, 0),
     )
-    table.add_column("Setting", style="muted", no_wrap=True)
-    table.add_column("Current", no_wrap=True)
+    table.add_column("SETTING", style="muted", no_wrap=True)
+    table.add_column("CURRENT", no_wrap=True)
     if show_staged:
-        table.add_column("Staged", style="warn", no_wrap=True)
-    table.add_column("Description", style="muted")
+        table.add_column("STAGED", style="warn", no_wrap=True)
+    table.add_column("DESCRIPTION", style="muted")
     # Each setting's name is indented two spaces so the rows read as sitting *under* their
     # accent section heading, which stays flush-left.
     indent = "  "
     for category, specs in settings_by_category():
         table.add_section()
-        header = [f"[accent]── {category} ──[/accent]", ""]
+        header = [f"[accent]── {category.upper()} ──[/accent]", ""]
         if show_staged:
             header.append("")
         table.add_row(*header, "")
@@ -229,7 +229,7 @@ def config_table(
         table.add_section()
         cols = 4 if show_staged else 3
         table.add_row(
-            "[accent]── Custom ──[/accent]", *([""] * (cols - 1))
+            "[accent]── CUSTOM ──[/accent]", *([""] * (cols - 1))
         )
         for key, value in custom.items():
             row = [f"{indent}{key}", value]
@@ -290,7 +290,7 @@ def _menu_items(
     """
     items: list = []
     for category, specs in settings_by_category():
-        items.append(Separator(f"── {category} ──"))
+        items.append(Separator(f"── {category.upper()} ──"))
         for spec in specs:
             if spec.key in _COORD_KEYS:
                 # Latitude/longitude collapse into one Location row (inserted in
@@ -320,7 +320,7 @@ def _menu_items(
                 )
             )
 
-    items.append(Separator("── Device actions (run immediately) ──"))
+    items.append(Separator("── DEVICE ACTIONS (RUN IMMEDIATELY) ──"))
     items.append(_action("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT))
     items.append(_action("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP))
     items.append(_action("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE))
@@ -336,23 +336,28 @@ def _menu_items(
         )
     )
 
-    items.append(Separator("── Review ──"))
+    items.append(Separator("── REVIEW ──"))
     items.append(_action("🧾 View full configuration", "Every value in one table", _VIEW))
     if staged:
         items.append(
             Choice(
-                title=Text.assemble(("✓ ", "ok"), f"Apply {staged} staged change(s)"),
+                title=Text.assemble(("✓ ", "ok"), f"Apply {_changes(staged)}"),
                 value=_APPLY,
             )
         )
+
+    # The backtracking row sits alone below a blank line, like every other screen's Back
+    # (the main menu's Quit included); with changes staged it spells out the consequence.
+    items.append(Separator(" "))
+    if staged:
         items.append(
             Choice(
-                title=Text.assemble(("✗ ", "err"), "Discard staged changes & close"),
+                title=Text.assemble(("✗ ", "err"), "Back — discard staged changes"),
                 value=_CANCEL,
             )
         )
     else:
-        items.append(Choice(title="Close", value=_CANCEL))
+        items.append(Choice(title="Back", value=_CANCEL))
 
     title = "Device configuration" + (f" — {staged} staged" if staged else "")
     return title, items
@@ -361,6 +366,11 @@ def _menu_items(
 def _action(label: str, help_text: str, value: str) -> Choice:
     """Build a device-action menu row: a label with a muted explanation."""
     return Choice(title=Text.assemble(label, (f"  —  {help_text}", "muted")), value=value)
+
+
+def _changes(count: int) -> str:
+    """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
+    return f"{count} staged change{'' if count == 1 else 's'}"
 
 
 # --- staging individual changes ----------------------------------------------
@@ -481,7 +491,7 @@ async def _stage_location(
     elif choice == "type":
         raw = await ctx.ui.text(
             "Set location",
-            prompt="Enter latitude, longitude in decimal degrees.",
+            prompt="Enter latitude, longitude in decimal degrees",
             default=f"{lat}, {lon}" if _format_coords(lat, lon) != "not set" else "",
             validate=_valid_coords,
             help_text="e.g. 45.50000, -73.60000",
@@ -618,7 +628,7 @@ async def _advert_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> N
     if choice == "share":
         await _show_contact_card(ctx, snapshot)
         return
-    await _run_now(ctx, device, snapshot, [("advert", choice == "flood")], "advert")
+    await _run_now(ctx, device, snapshot, [("advert", choice == "flood")], "Advert")
 
 
 def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:
@@ -649,7 +659,7 @@ async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
     public_key = str(snapshot.get("public_key") or "")
     if not public_key:
         ctx.ui.note("[err]the device did not report a public key — nothing to share[/err]")
-        await ctx.ui.present(title="share contact")
+        await ctx.ui.present(title="Share contact")
         return
     name = str(snapshot.get("name") or "this node")
     url = contact_share_url(name, public_key, int(snapshot.get("adv_type") or 1))
@@ -681,7 +691,7 @@ async def _reboot(
     warning = "Reboot the device now?"
     if staged:
         warning = (
-            f"Reboot the device now? Your {staged} staged change(s) have not been "
+            f"Reboot the device now? Your {_changes(staged)} have not been "
             "applied and will be discarded."
         )
     choice = await ctx.ui.dialog(
@@ -698,7 +708,7 @@ async def _reboot(
         # The simulator has no link to drop and comes back instantly; just send it.
         await device.reboot()
         ctx.ui.note("[warn]device rebooting[/warn]")
-        await ctx.ui.present(title="reboot")
+        await ctx.ui.present(title="Reboot")
         return False
 
     # Flag the drop as expected *before* sending, so however quickly the watcher fires,
@@ -728,7 +738,7 @@ async def _backup_now(ctx: "AppContext", device: "Device", snapshot: dict) -> No
         default="meshterm-config.toml",
     )
     if path:
-        await _run_now(ctx, device, snapshot, [("backup", Path(path))], "backup")
+        await _run_now(ctx, device, snapshot, [("backup", Path(path))], "Backup")
 
 
 async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
@@ -745,7 +755,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
     path = Path(raw)
     if not path.exists():
         ctx.ui.note(f"[err]no such file:[/err] {path}")
-        await ctx.ui.present(title="restore")
+        await ctx.ui.present(title="Restore")
         return False
 
     choice = await ctx.ui.dialog(
@@ -755,7 +765,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
         default=1,
     )
     if choice == "preview":
-        await _run_now(ctx, device, snapshot, [("restore", path, True)], "restore preview")
+        await _run_now(ctx, device, snapshot, [("restore", path, True)], "Restore preview")
         choice = await ctx.ui.dialog(
             "Apply these changes to the device?",
             [("Cancel", None), ("Apply", "apply")],
@@ -764,7 +774,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
         )
     if choice != "apply":
         return False
-    changed = await _run_now(ctx, device, snapshot, [("restore", path, False)], "restore")
+    changed = await _run_now(ctx, device, snapshot, [("restore", path, False)], "Restore")
     return changed > 0
 
 
@@ -799,7 +809,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
             danger=True,
         )
         if ok == "show":
-            await _run_now(ctx, device, snapshot, [("export_key",)], "private key")
+            await _run_now(ctx, device, snapshot, [("export_key",)], "Private key")
         return False
 
     if choice == "file":
@@ -809,7 +819,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
             default="meshterm-identity.key",
         )
         if path:
-            await _run_now(ctx, device, snapshot, [("export_key", Path(path))], "private key")
+            await _run_now(ctx, device, snapshot, [("export_key", Path(path))], "Private key")
         return False
 
     # Import: collect the key, then gate behind the typed confirmation.
@@ -828,7 +838,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
     )
     if not confirmed:
         return False
-    await _run_now(ctx, device, snapshot, [("import_key", key_hex.strip())], "import key")
+    await _run_now(ctx, device, snapshot, [("import_key", key_hex.strip())], "Import key")
     return True
 
 
@@ -847,7 +857,7 @@ async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) ->
     )
     if not confirmed:
         return False
-    await _run_now(ctx, device, snapshot, [("factory_reset",)], "factory reset")
+    await _run_now(ctx, device, snapshot, [("factory_reset",)], "Factory reset")
     return True
 
 
@@ -857,7 +867,7 @@ async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) ->
 async def _confirm_discard(ctx: "AppContext", staged: int) -> bool:
     """Ask before dropping staged changes on the way out; ``True`` means discard."""
     choice = await ctx.ui.dialog(
-        f"Discard {staged} staged change(s) without applying them?",
+        f"Discard {_changes(staged)} without applying them?",
         [("Keep editing", "keep"), ("Discard", "discard")],
         title="Unsaved changes",
         default=1,

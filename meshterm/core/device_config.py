@@ -286,11 +286,11 @@ class RadioPreset:
 # across regions; the region presets differ only in the default channel frequency. The
 # trade-off presets keep the EU frequency but trade airtime for range or speed.
 RADIO_PRESETS: list[RadioPreset] = [
-    RadioPreset("EU / UK 868", "MeshCore default for the 868 MHz band.", 869.525, 250.0, 11, 5),
-    RadioPreset("US 915", "MeshCore default for the US 915 MHz band.", 910.525, 250.0, 11, 5),
-    RadioPreset("AU / NZ 915", "MeshCore default for the AU/NZ 915 MHz band.", 915.525, 250.0, 11, 5),
-    RadioPreset("Long range (slow)", "Narrow bandwidth + high SF: max range, low data rate.", 869.525, 125.0, 12, 8),
-    RadioPreset("Fast (short range)", "Wide bandwidth + low SF: short range, low airtime.", 869.525, 500.0, 7, 5),
+    RadioPreset("EU / UK 868", "MeshCore default for the 868 MHz band", 869.525, 250.0, 11, 5),
+    RadioPreset("US 915", "MeshCore default for the US 915 MHz band", 910.525, 250.0, 11, 5),
+    RadioPreset("AU / NZ 915", "MeshCore default for the AU/NZ 915 MHz band", 915.525, 250.0, 11, 5),
+    RadioPreset("Long range (slow)", "Narrow bandwidth + high SF: max range, low data rate", 869.525, 125.0, 12, 8),
+    RadioPreset("Fast (short range)", "Wide bandwidth + low SF: short range, low airtime", 869.525, 500.0, 7, 5),
 ]
 
 

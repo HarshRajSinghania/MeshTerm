@@ -35,7 +35,8 @@ class LinkHealthTool(Tool):
     """Detect link-quality regressions for a target against its rolling baseline."""
 
     name = "link-health"
-    help = "Flag links whose SNR or reliability dropped below their historical baseline."
+    title = "Link health"
+    help = "Flag links whose SNR or reliability dropped below their baseline"
     category = "Diagnostics"
     order = 30
 
@@ -175,23 +176,23 @@ class LinkHealthTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _link_health(
-            target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix."),
+            target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix"),
             samples: int = typer.Option(
-                0, "--samples", "-n", help="Fresh traces to take before analyzing."
+                0, "--samples", "-n", help="Fresh traces to take before analyzing"
             ),
             path: Optional[str] = typer.Option(
-                None, "--path", "-p", help="Force a path for the fresh traces."
+                None, "--path", "-p", help="Force a path for the fresh traces"
             ),
             recent: int = typer.Option(
-                link_quality.DEFAULT_RECENT_COUNT, "--recent", help="Newest traces as 'recent'."
+                link_quality.DEFAULT_RECENT_COUNT, "--recent", help="Newest traces as 'recent'"
             ),
             snr_drop: float = typer.Option(
-                link_quality.DEFAULT_SNR_DROP_DB, "--snr-drop", help="SNR drop (dB) to flag."
+                link_quality.DEFAULT_SNR_DROP_DB, "--snr-drop", help="SNR drop (dB) to flag"
             ),
             success_drop: float = typer.Option(
                 link_quality.DEFAULT_SUCCESS_DROP,
                 "--success-drop",
-                help="Success-rate drop (fraction) to flag.",
+                help="Success-rate drop (fraction) to flag",
             ),
         ) -> None:
             tool_params: dict[str, Any] = {
@@ -221,14 +222,14 @@ def _report_panel(report: HealthReport) -> Panel:
     )
     if not report.changes:
         return Panel(
-            header, title="[accent]link health[/accent]", border_style=style, expand=False
+            header, title="[accent]LINK HEALTH[/accent]", border_style=style, expand=False
         )
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
-    table.add_column("metric", style="muted")
-    table.add_column("subject")
-    table.add_column("baseline", justify="right")
-    table.add_column("recent", justify="right")
+    table.add_column("METRIC", style="muted")
+    table.add_column("SUBJECT")
+    table.add_column("BASELINE", justify="right")
+    table.add_column("RECENT", justify="right")
     table.add_column("Δ", justify="right")
     # Worst regressions first, then the still-healthy metrics for context.
     for change in sorted(report.changes, key=lambda c: (not c.regressed, c.delta)):
@@ -237,7 +238,7 @@ def _report_panel(report: HealthReport) -> Panel:
     from rich.console import Group
 
     body = Group(header, Text(), table)
-    return Panel(body, title="[accent]link health[/accent]", border_style=style, expand=False)
+    return Panel(body, title="[accent]LINK HEALTH[/accent]", border_style=style, expand=False)
 
 
 def _change_row(change: MetricChange) -> tuple[str, Text, str, str, Text]:

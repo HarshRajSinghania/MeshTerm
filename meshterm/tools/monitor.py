@@ -32,7 +32,8 @@ class MonitorTool(Tool):
     """Toggle the passive background monitor and review the nodes it has heard."""
 
     name = "monitor"
-    help = "Toggle passive background monitoring on/off and review heard nodes."
+    title = "Passive monitor"
+    help = "Toggle passive background monitoring and review heard nodes"
     category = "Diagnostics"
     order = 20
 
@@ -157,10 +158,10 @@ class MonitorTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _monitor(
             on: bool = typer.Option(
-                False, "--on", help="Enable background monitoring for future sessions."
+                False, "--on", help="Enable background monitoring for future sessions"
             ),
             off: bool = typer.Option(
-                False, "--off", help="Disable background monitoring."
+                False, "--off", help="Disable background monitoring"
             ),
         ) -> None:
             from ..cli import _state
@@ -200,12 +201,12 @@ def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001
     from ..ui.theme import snr_style
 
     table = Table(title=f"Heard nodes ({len(heard)})", border_style="muted", expand=False)
-    table.add_column("Node")
-    table.add_column("Pkts", justify="right")
-    table.add_column("Median SNR", justify="right")
-    table.add_column("Best SNR", justify="right")
+    table.add_column("NODE")
+    table.add_column("PKTS", justify="right")
+    table.add_column("MEDIAN SNR", justify="right")
+    table.add_column("BEST SNR", justify="right")
     table.add_column("RSSI", justify="right")
-    table.add_column("Loc", justify="center")
+    table.add_column("LOC", justify="center")
     for node in heard:
         label = node.name or resolve(node.node) or node.node or "?"
         median = node.median_snr

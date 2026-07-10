@@ -201,7 +201,7 @@ async def _smoke_test(
             entered = await ui.prompt_pin_startup(
                 name,
                 error=pin_error,
-                help_text="The 6-digit code shown on the device or in the MeshCore app.",
+                help_text="The 6-digit code shown on the device or in the MeshCore app",
                 banner=load_logo(),
                 footnote=footnote,
             )
@@ -420,5 +420,5 @@ def _build_items(
     # A trailing Quit row, mirroring the main menu, so exiting is an explicit choice as well
     # as an Esc away — the leading spaces line it up under the device-name column.
     items.append(Separator(" "))
-    items.append(Choice(title="  quit", value=_QUIT))
+    items.append(Choice(title="  Quit", value=_QUIT))
     return items

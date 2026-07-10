@@ -18,7 +18,8 @@ class InfoTool(Tool):
     """
 
     name = "info"
-    help = "Show device identity and radio config."
+    title = "Device info"
+    help = "Show device identity and radio config"
     category = "Device"
     order = 10
 

@@ -32,7 +32,8 @@ class RouteMapTool(Tool):
     """Aggregate trace history into a route-stability graph and churn metrics."""
 
     name = "route-map"
-    help = "Map how stable mesh routing is over time and render an interactive graph."
+    title = "Route map"
+    help = "Map how stable mesh routing is over time, as an interactive graph"
     category = "Optimization"
     order = 30
 
@@ -161,15 +162,15 @@ class RouteMapTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _route_map(
             target: Optional[str] = typer.Option(
-                None, "--target", "-t", help="Target to map (omit for the whole mesh)."
+                None, "--target", "-t", help="Target to map (omit for the whole mesh)"
             ),
             samples: int = typer.Option(
-                0, "--samples", "-n", help="Fresh traces to take first (requires --target)."
+                0, "--samples", "-n", help="Fresh traces to take first (requires --target)"
             ),
             path: Optional[str] = typer.Option(
-                None, "--path", "-p", help="Force a path for the fresh traces."
+                None, "--path", "-p", help="Force a path for the fresh traces"
             ),
-            viz: bool = typer.Option(True, "--viz/--no-viz", help="Render the HTML graph."),
+            viz: bool = typer.Option(True, "--viz/--no-viz", help="Render the HTML graph"),
         ) -> None:
             tool_params: dict[str, Any] = {"samples": samples, "viz": viz}
             if target:
@@ -199,13 +200,13 @@ def _graph_panel(graph: RouteGraph) -> Panel:
     )
     if not graph.links:
         return Panel(
-            header, title="[accent]route stability[/accent]", border_style="muted", expand=False
+            header, title="[accent]ROUTE STABILITY[/accent]", border_style="muted", expand=False
         )
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
-    table.add_column("link")
-    table.add_column("uses", justify="right")
-    table.add_column("median SNR", justify="right")
+    table.add_column("LINK")
+    table.add_column("USES", justify="right")
+    table.add_column("MEDIAN SNR", justify="right")
     for link in graph.links[:10]:
         table.add_row(
             f"{link.origin} → {link.destination}",
@@ -215,9 +216,9 @@ def _graph_panel(graph: RouteGraph) -> Panel:
 
     from rich.console import Group
 
-    body = Group(header, Text("\nbusiest links", style="muted"), table)
+    body = Group(header, Text("\nBUSIEST LINKS", style="muted"), table)
     return Panel(
-        body, title="[accent]route stability[/accent]", border_style="accent", expand=False
+        body, title="[accent]ROUTE STABILITY[/accent]", border_style="accent", expand=False
     )
 
 

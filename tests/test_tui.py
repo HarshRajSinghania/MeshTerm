@@ -570,7 +570,7 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
         if isinstance(it, Choice)
     ]
     assert len(rows) == 3  # two devices plus a trailing Quit row (like the main menu)
-    assert rows[-1].strip() == "quit"
+    assert rows[-1].strip() == "Quit"
     device_rows = rows[:2]
     assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows))
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")

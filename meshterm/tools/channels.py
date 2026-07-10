@@ -35,7 +35,8 @@ class ChannelsTool(Tool):
     """Create, join, share, and manage the device's mesh channels."""
 
     name = "channels"
-    help = "Create, join, and share mesh channels (with QR codes)."
+    title = "Channels"
+    help = "Create, join, and share mesh channels (with QR codes)"
     category = "Messaging"
     order = 20
 
@@ -57,7 +58,7 @@ class ChannelsTool(Tool):
 
         changes = await manage_channels(ctx)
         message = (
-            f"[ok]✓[/ok] applied [brand]{changes}[/brand] channel change(s)"
+            f"[ok]✓[/ok] applied [brand]{changes}[/brand] channel change{'' if changes == 1 else 's'}"
             if changes
             else None
         )
@@ -89,10 +90,10 @@ class ChannelsTool(Tool):
             ctx.ui.note("[muted]no channels configured[/muted]")
             return ToolResult(summary={"channels": 0})
         table = Table(title="Channels", border_style="muted", expand=False)
-        table.add_column("Slot", justify="right")
-        table.add_column("Name")
-        table.add_column("Type")
-        table.add_column("Hash")
+        table.add_column("SLOT", justify="right")
+        table.add_column("NAME")
+        table.add_column("TYPE")
+        table.add_column("HASH")
         for slot in slots:
             table.add_row(
                 str(slot.idx),
@@ -175,42 +176,42 @@ class ChannelsTool(Tool):
             help=self.help, no_args_is_help=True, rich_markup_mode="rich"
         )
 
-        @channels_app.command("list", help="List the configured channel slots.")
+        @channels_app.command("list", help="List the configured channel slots")
         def _list_cmd() -> None:
             run_tool_command(self, {"cli_action": "list"})
 
-        @channels_app.command("add", help="Add a channel (# name = public; else private).")
+        @channels_app.command("add", help="Add a channel (# name = public; else private)")
         def _add_cmd(
-            index: int = typer.Argument(..., help="Channel slot index."),
-            name: str = typer.Argument(..., help="Channel name (leading # = public)."),
+            index: int = typer.Argument(..., help="Channel slot index"),
+            name: str = typer.Argument(..., help="Channel name (leading # = public)"),
             secret: Optional[str] = typer.Option(
-                None, "--secret", help="32-hex-char key (private only; random if omitted)."
+                None, "--secret", help="32-hex-char key (private only; random if omitted)"
             ),
         ) -> None:
             run_tool_command(
                 self, {"cli_action": "add", "index": index, "name": name, "secret": secret}
             )
 
-        @channels_app.command("join", help="Join a channel with its name and key.")
+        @channels_app.command("join", help="Join a channel with its name and key")
         def _join_cmd(
-            index: int = typer.Argument(..., help="Channel slot index."),
-            name: str = typer.Argument(..., help="Channel name."),
-            secret: str = typer.Argument(..., help="32-hex-char (16-byte) key."),
+            index: int = typer.Argument(..., help="Channel slot index"),
+            name: str = typer.Argument(..., help="Channel name"),
+            secret: str = typer.Argument(..., help="32-hex-char (16-byte) key"),
         ) -> None:
             run_tool_command(
                 self, {"cli_action": "join", "index": index, "name": name, "secret": secret}
             )
 
-        @channels_app.command("import", help="Import a meshcore:// channel link.")
+        @channels_app.command("import", help="Import a meshcore:// channel link")
         def _import_cmd(
-            index: int = typer.Argument(..., help="Channel slot index."),
-            url: str = typer.Argument(..., help="A meshcore://channel/add link."),
+            index: int = typer.Argument(..., help="Channel slot index"),
+            url: str = typer.Argument(..., help="A meshcore://channel/add link"),
         ) -> None:
             run_tool_command(self, {"cli_action": "import", "index": index, "url": url})
 
-        @channels_app.command("share", help="Print a channel's share link and QR code.")
+        @channels_app.command("share", help="Print a channel's share link and QR code")
         def _share_cmd(
-            index: int = typer.Argument(..., help="Channel slot index."),
+            index: int = typer.Argument(..., help="Channel slot index"),
         ) -> None:
             run_tool_command(self, {"cli_action": "share", "index": index})
 

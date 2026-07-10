@@ -39,7 +39,8 @@ class DevicesTool(Tool):
     """List attached serial + in-range Bluetooth companions, flag likely LoRa, mark the default."""
 
     name = "devices"
-    help = "List attached serial and Bluetooth companion devices and flag likely LoRa hardware."
+    title = "Devices"
+    help = "List attached serial and Bluetooth devices, flagging likely companions"
     category = "Device"
     order = 5
     menu_visible = False  # CLI-only: a startup diagnostic with no place in a connected session
@@ -98,16 +99,16 @@ class DevicesTool(Tool):
 
         table = Table(title="Companion devices", border_style="muted", expand=False)
         table.add_column("", style="ok", no_wrap=True)  # active/confirmed markers
-        table.add_column("Port / Address", style="brand")
-        table.add_column("Device")
+        table.add_column("PORT / ADDRESS", style="brand")
+        table.add_column("DEVICE")
         # "Hardware" (not "Vendor"): for a confirmed device this holds the firmware's own model
         # string ("Seeed Tracker T1000-E") — the only reliable source of what the box is — and
         # for a merely-attached serial port it falls back to the USB vendor name ("Espressif").
         # One column spans both because a maker name and a model name are the same question:
         # "what hardware is this?". A BLE device that's never connected has neither, so it's "?".
-        table.add_column("Hardware", style="muted")
-        table.add_column("MeshCore?", justify="center")
-        table.add_column("Serial", style="muted")
+        table.add_column("HARDWARE", style="muted")
+        table.add_column("MESHCORE?", justify="center")
+        table.add_column("SERIAL", style="muted")
         for d in devices:
             confirmed = known.get(d.stable_id)  # the remembered record, if ever confirmed
             is_active = d.target == active_target
@@ -143,7 +144,7 @@ class DevicesTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _devices(
             ble: bool = typer.Option(
-                True, "--ble/--no-ble", help="Include a Bluetooth LE scan (adds a few seconds)."
+                True, "--ble/--no-ble", help="Include a Bluetooth LE scan (adds a few seconds)"
             ),
         ) -> None:
             run_tool_command(self, {"ble": ble})

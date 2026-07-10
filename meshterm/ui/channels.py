@@ -228,7 +228,7 @@ async def _main_menu(
     ctx: "AppContext", slots: list[ChannelSlot], capacity: int, *, default: object = None
 ) -> object:
     """Show the channel list and the add-a-channel actions; return the chosen value."""
-    items: list = [Separator(f"── Channels ({len(slots)}/{capacity}) ──")]
+    items: list = [Separator(f"── CHANNELS ({len(slots)}/{capacity}) ──")]
     if slots:
         for slot in slots:
             items.append(Choice(title=_slot_label(slot), value=slot.idx))
@@ -236,10 +236,10 @@ async def _main_menu(
         items.append(Separator("  (no channels configured yet)"))
 
     if len(slots) > 1:
-        items.append(Separator("── Channel list ──"))
+        items.append(Separator("── ORGANIZE ──"))
         items.append(Choice(title="↕ Reorder channels", value=_REORDER))
 
-    items.append(Separator("── Add a channel ──"))
+    items.append(Separator("── ADD A CHANNEL ──"))
     items.append(Choice(title="＋ New private channel (random key)", value=_CREATE))
     items.append(Choice(title="＃ Public channel (key from its name)", value=_PUBLIC))
     items.append(Choice(title="🔑 Join a channel with its key", value=_JOIN))
@@ -312,7 +312,7 @@ async def _add_public(
         return 0
     raw = await ctx.ui.text(
         "Public channel name:",
-        help_text="A leading # is added automatically; the key is derived from the name.",
+        help_text="A leading # is added automatically; the key is derived from the name",
         validate=_nonblank,
     )
     if not raw:

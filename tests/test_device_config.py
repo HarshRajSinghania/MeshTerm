@@ -205,7 +205,7 @@ def test_nodes_screen_arrows_steer_the_sort() -> None:
 
 
 def test_nodes_screen_pins_column_header_when_scrolled() -> None:
-    """The Name/Heard/Pkts/Key labels stick to the top row once the rows scroll past them."""
+    """The NAME/HEARD/PKTS/KEY labels stick to the top row once the rows scroll past them."""
     import re
 
     from meshterm.core.models import Contact
@@ -219,7 +219,7 @@ def test_nodes_screen_pins_column_header_when_scrolled() -> None:
     # Exactly one sticky header — the column-label row — recorded above the table's rule.
     (idx, header), = screen._sticky_headers
     labels = re.sub(r"\x1b\[[0-9;]*m", "", header)
-    assert "Name" in labels and "Heard" in labels and "Key" in labels
+    assert "NAME" in labels and "HEARD" in labels and "KEY" in labels
 
     # Not pinned while the header is still on screen; pinned once scrolled below it.
     assert screen.sticky_header(idx) is None

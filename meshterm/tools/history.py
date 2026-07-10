@@ -18,7 +18,8 @@ class HistoryTool(Tool):
     """List recent runs recorded in the database (no device needed)."""
 
     name = "history"
-    help = "Show recent tool executions and their outcomes."
+    title = "History"
+    help = "Show recent tool executions and their outcomes"
     category = "Data"
     order = 10
 
@@ -37,10 +38,10 @@ class HistoryTool(Tool):
 
         table = Table(title=f"Recent runs (last {limit})", border_style="muted")
         table.add_column("#", justify="right", style="muted")
-        table.add_column("Tool", style="brand")
-        table.add_column("Profile", style="muted")
-        table.add_column("Status")
-        table.add_column("Started")
+        table.add_column("TOOL", style="brand")
+        table.add_column("PROFILE", style="muted")
+        table.add_column("STATUS")
+        table.add_column("STARTED")
         for r in runs:
             style = _STATUS_STYLE.get(r.status, "muted")
             table.add_row(
@@ -63,6 +64,6 @@ class HistoryTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _history(
-            limit: int = typer.Option(20, "--limit", "-n", help="Number of runs to show."),
+            limit: int = typer.Option(20, "--limit", "-n", help="Number of runs to show"),
         ) -> None:
             run_tool_command(self, {"limit": limit})

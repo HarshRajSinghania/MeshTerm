@@ -106,7 +106,7 @@ def banner(
         f"[brand]MeshTerm[/brand] [muted]v{__version__}[/muted]\n"
         f"[muted]device:[/muted] {target}"
     )
-    return Panel(body, border_style="accent", expand=False, title="[accent]mesh[/accent]")
+    return Panel(body, border_style="accent", expand=False, title="[accent]MESH[/accent]")
 
 
 def make_progress(console: Console) -> Progress:
@@ -192,8 +192,8 @@ def traces_table(
     # successful one so node hashes render at the width they were addressed.
     hash_bytes = next((t.path_hash_bytes for t in traces if t.success), None)
     table = Table(title=f"Trace → {target}", border_style="muted", expand=False)
-    table.add_column("Hop", justify="right", style="muted")
-    table.add_column("From → To")
+    table.add_column("HOP", justify="right", style="muted")
+    table.add_column("FROM → TO")
     for i in range(1, len(traces) + 1):
         table.add_column(f"#{i}", justify="right")
 
@@ -382,9 +382,9 @@ def _hop_medians_table(
         A compact Rich :class:`Table` of hop, link, and median SNR.
     """
     table = Table(box=None, padding=(0, 1, 0, 0), expand=False)
-    table.add_column("hop", justify="right", style="muted")
-    table.add_column("from → to")
-    table.add_column("median SNR", justify="right")
+    table.add_column("HOP", justify="right", style="muted")
+    table.add_column("FROM → TO")
+    table.add_column("MEDIAN SNR", justify="right")
     for agg in hop_snrs:
         table.add_row(
             str(agg.index),
@@ -433,18 +433,18 @@ def stats_panel(
     )
     sections: list[Text | Table] = []
     if route is not None:
-        sections.append(Text("route", style="muted"))
+        sections.append(Text("ROUTE", style="muted"))
         sections.append(_route_text(route, device_label, resolve, device_hash))
         sections.append(Text())  # blank line before the stats block
     sections.append(summary)
     if stats.hop_snrs:
-        sections.append(Text("\nper-hop medians", style="muted"))
+        sections.append(Text("\nPER-HOP MEDIANS", style="muted"))
         hash_bytes = route.path_hash_bytes if route is not None else None
         sections.append(
             _hop_medians_table(stats.hop_snrs, device_label, resolve, hash_bytes, device_hash)
         )
     body: Text | Group = sections[0] if len(sections) == 1 else Group(*sections)
-    return Panel(body, title="[accent]trace summary[/accent]", border_style="accent", expand=False)
+    return Panel(body, title="[accent]TRACE SUMMARY[/accent]", border_style="accent", expand=False)
 
 
 # Node-type glyphs and their colours, consistent with the map's marker palette across the
@@ -666,15 +666,15 @@ def nodes_table(
     # min_width = label + 2) so the same width holds whether or not it's the active sort —
     # switching the sort never widens a column and shifts the rest of the row.
     table.add_column("", no_wrap=True)  # node-type glyph
-    table.add_column(_sort_header("Name", "name", sort), no_wrap=True, min_width=6)
+    table.add_column(_sort_header("NAME", "name", sort), no_wrap=True, min_width=6)
     table.add_column(
-        _sort_header("Heard", "heard", sort), justify="right", no_wrap=True, min_width=7
+        _sort_header("HEARD", "heard", sort), justify="right", no_wrap=True, min_width=7
     )
     table.add_column(
-        _sort_header("Pkts", "packets", sort), justify="right", no_wrap=True, min_width=6
+        _sort_header("PKTS", "packets", sort), justify="right", no_wrap=True, min_width=6
     )
     # The full key, chopped to an ellipsis by Rich only when the row won't otherwise fit.
-    table.add_column("Key", no_wrap=True, overflow="ellipsis", ratio=1, min_width=10)
+    table.add_column("KEY", no_wrap=True, overflow="ellipsis", ratio=1, min_width=10)
 
     unknown = Text("?", style="muted")
     table.add_row(
@@ -714,9 +714,9 @@ def tx_opt_table(result: TxOptResult) -> Table:
         expand=False,
     )
     table.add_column("TX", justify="right")
-    table.add_column("target SNR", justify="right")
-    table.add_column("success", justify="right")
-    table.add_column("traces", justify="right")
+    table.add_column("TARGET SNR", justify="right")
+    table.add_column("SUCCESS", justify="right")
+    table.add_column("TRACES", justify="right")
     for lv in result.sorted_by_tx():
         is_best = lv.tx_power == result.best_tx
         marker = "[ok]★[/ok] " if is_best else "  "
@@ -760,4 +760,4 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
         (f"{result.original_tx if result.original_tx is not None else '?'}\n", ""),
         ("status        ", "muted"), Text.from_markup(applied),
     )
-    return Panel(body, title="[accent]tx optimization[/accent]", border_style="accent", expand=False)
+    return Panel(body, title="[accent]TX OPTIMIZATION[/accent]", border_style="accent", expand=False)

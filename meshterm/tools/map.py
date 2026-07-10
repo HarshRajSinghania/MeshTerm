@@ -34,7 +34,8 @@ class MapTool(Tool):
     """Show the mesh's location-sharing nodes on a braille OpenStreetMap map."""
 
     name = "map"
-    help = "Show mesh nodes on a street map (pannable; repeaters highlighted)."
+    title = "Map"
+    help = "Show mesh nodes on a street map (pannable; repeaters highlighted)"
     category = "Messaging"
     order = 30
 
@@ -144,10 +145,10 @@ class MapTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _map(
             width: Optional[int] = typer.Option(
-                None, "--width", "-w", help="Map width in character cells."
+                None, "--width", "-w", help="Map width in character cells"
             ),
             zoom: Optional[int] = typer.Option(
-                None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)."
+                None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)"
             ),
             fraction: float = typer.Option(
                 DEFAULT_VIEW_FRACTION,
@@ -156,10 +157,10 @@ class MapTool(Tool):
                 min=0.0,
                 max=1.0,
                 help="Fraction of nodes to frame: the densest that many, so distant "
-                "outliers don't zoom the view out. 1.0 fits every node. Ignored with --zoom.",
+                "outliers don't zoom the view out. 1.0 fits every node. Ignored with --zoom",
             ),
             basemap: bool = typer.Option(
-                True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap."
+                True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap"
             ),
         ) -> None:
             if not 0.0 < fraction <= 1.0:
@@ -262,10 +263,10 @@ def _legend(markers: list["MapMarker"]) -> Table:
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
     table.add_column("")
-    table.add_column("node")
-    table.add_column("type")
-    table.add_column("coords", justify="right")
-    table.add_column("seen")
+    table.add_column("NODE")
+    table.add_column("TYPE")
+    table.add_column("COORDS", justify="right")
+    table.add_column("SEEN")
     ordered = sorted(markers, key=lambda m: -m._rank())
     for m in ordered:
         glyph, color = _SELF if m.is_self else (_REPEATER if m.is_repeater else _NODE)

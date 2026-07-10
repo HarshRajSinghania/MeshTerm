@@ -257,10 +257,11 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
                 continue
             if tool.category != current_category:
                 current_category = tool.category
-                items.append(Separator(f"── {current_category} ──"))
-            items.append(Choice(title=f"{tool.name}  —  {tool.help}", value=tool.name))
+                items.append(Separator(f"── {current_category.upper()} ──"))
+            label = tool.title or tool.name
+            items.append(Choice(title=f"{label}  —  {tool.help}", value=tool.name))
         items.append(Separator(" "))
-        items.append(Choice(title="quit", value="__quit__"))
+        items.append(Choice(title="Quit", value="__quit__"))
 
         # Drive the menu list ourselves (rather than via session.select) so it stays on the
         # stack while the quit dialog floats over it: the confirm is drawn as a centered box
@@ -462,6 +463,7 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
         await ctx.ui.present(title=name)
         return
 
+    title = tool.title or tool.name
     try:
         # Opening a tool can sit on a blank frame while the companion answers (the menu has
         # been popped, its first prompt not yet pushed) — very noticeable over Bluetooth, but
@@ -477,15 +479,15 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
         if is_connection_lost(exc):
             ctx.ui.discard()  # drop the half-built output; the watcher will prompt to reconnect
             return
-        ctx.ui.note(f"[err]✗ {tool.name} failed:[/err] {exc}")
-        await ctx.ui.present(title=tool.name)
+        ctx.ui.note(f"[err]✗ {title} failed:[/err] {exc}")
+        await ctx.ui.present(title=title)
         return
 
     if result.message:
         ctx.ui.note(result.message)
     for artifact in result.artifacts:
         ctx.ui.note(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
-    await ctx.ui.present(title=tool.name)
+    await ctx.ui.present(title=title)
 
 
 async def _session_loop(ctx: AppContext, session: TuiSession) -> None:

@@ -34,7 +34,8 @@ class ConfigTool(Tool):
     """View and edit the connected device's full configuration."""
 
     name = "config"
-    help = "View and change device configuration (name, radio, experimental, ...)."
+    title = "Device configuration"
+    help = "View and change device settings — identity, radio, tuning, …"
     category = "Device"
     order = 8
 
@@ -69,7 +70,10 @@ class ConfigTool(Tool):
         snapshot = await build_snapshot(device)
         changes, artifacts = await apply_ops(ctx, device, snapshot, ops)
 
-        message = f"[ok]✓[/ok] applied [brand]{changes}[/brand] change(s)" if changes else None
+        plural = "" if changes == 1 else "s"
+        message = (
+            f"[ok]✓[/ok] applied [brand]{changes}[/brand] change{plural}" if changes else None
+        )
         return ToolResult(summary={"changes": changes}, message=message, artifacts=artifacts)
 
     # -- CLI --------------------------------------------------------------------
@@ -92,83 +96,83 @@ class ConfigTool(Tool):
             if ctx.invoked_subcommand is None:
                 run_tool_command(self, {"ops": [("show",)]})
 
-        @config_app.command("show", help="Show all current settings.")
+        @config_app.command("show", help="Show all current settings")
         def _show_cmd() -> None:
             run_tool_command(self, {"ops": [("show",)]})
 
-        @config_app.command("get", help="Print one setting's value.")
-        def _get_cmd(key: str = typer.Argument(..., help="Setting key.")) -> None:
+        @config_app.command("get", help="Print one setting's value")
+        def _get_cmd(key: str = typer.Argument(..., help="Setting key")) -> None:
             run_tool_command(self, {"ops": [("get", key)]})
 
-        @config_app.command("set", help="Set one setting to a value.")
+        @config_app.command("set", help="Set one setting to a value")
         def _set_cmd(
-            key: str = typer.Argument(..., help="Setting key."),
-            value: str = typer.Argument(..., help="New value."),
+            key: str = typer.Argument(..., help="Setting key"),
+            value: str = typer.Argument(..., help="New value"),
         ) -> None:
             run_tool_command(self, {"ops": [("set", key, value)]})
 
-        @config_app.command("backup", help="Write all settings to a TOML file.")
-        def _backup_cmd(path: Path = typer.Argument(..., help="Destination file.")) -> None:
+        @config_app.command("backup", help="Write all settings to a TOML file")
+        def _backup_cmd(path: Path = typer.Argument(..., help="Destination file")) -> None:
             run_tool_command(self, {"ops": [("backup", path)]})
 
-        @config_app.command("restore", help="Apply settings from a TOML backup.")
+        @config_app.command("restore", help="Apply settings from a TOML backup")
         def _restore_cmd(
-            path: Path = typer.Argument(..., help="Backup file."),
-            dry_run: bool = typer.Option(False, "--dry-run", help="Preview without applying."),
+            path: Path = typer.Argument(..., help="Backup file"),
+            dry_run: bool = typer.Option(False, "--dry-run", help="Preview without applying"),
         ) -> None:
             run_tool_command(self, {"ops": [("restore", path, dry_run)]})
 
-        @config_app.command("custom", help="Set an experimental custom variable.")
+        @config_app.command("custom", help="Set an experimental custom variable")
         def _custom_cmd(
-            key: str = typer.Argument(..., help="Variable name."),
-            value: str = typer.Argument(..., help="Variable value."),
+            key: str = typer.Argument(..., help="Variable name"),
+            value: str = typer.Argument(..., help="Variable value"),
         ) -> None:
             run_tool_command(self, {"ops": [("set_custom", key, value)]})
 
-        @config_app.command("channel", help="Configure a channel slot.")
+        @config_app.command("channel", help="Configure a channel slot")
         def _channel_cmd(
-            index: int = typer.Argument(..., help="Channel slot index."),
-            name: str = typer.Argument(..., help="Channel name (# derives the secret)."),
-            secret: Optional[str] = typer.Option(None, "--secret", help="16-byte hex secret."),
+            index: int = typer.Argument(..., help="Channel slot index"),
+            name: str = typer.Argument(..., help="Channel name (# derives the secret)"),
+            secret: Optional[str] = typer.Option(None, "--secret", help="16-byte hex secret"),
         ) -> None:
             secret_bytes = bytes.fromhex(secret) if secret else None
             run_tool_command(self, {"ops": [("set_channel", index, name, secret_bytes)]})
 
-        @config_app.command("advert", help="Broadcast an advertisement (zero-hop by default).")
+        @config_app.command("advert", help="Broadcast an advertisement (zero-hop by default)")
         def _advert_cmd(
-            flood: bool = typer.Option(False, "--flood", help="Flood across the mesh."),
+            flood: bool = typer.Option(False, "--flood", help="Flood across the mesh"),
         ) -> None:
             run_tool_command(self, {"ops": [("advert", flood)]})
 
-        @config_app.command("share", help="Show this node's contact card as a QR code / URI.")
+        @config_app.command("share", help="Show this node's contact card as a QR code / URI")
         def _share_cmd() -> None:
             run_tool_command(self, {"ops": [("share",)]})
 
-        @config_app.command("export-key", help="Export the private key (sensitive).")
+        @config_app.command("export-key", help="Export the private key (sensitive)")
         def _export_key_cmd(
-            out: Optional[Path] = typer.Option(None, "--out", help="Write to file instead of stdout."),
+            out: Optional[Path] = typer.Option(None, "--out", help="Write to file instead of stdout"),
         ) -> None:
             ops = [("export_key", out)] if out else [("export_key",)]
             run_tool_command(self, {"ops": ops})
 
-        @config_app.command("import-key", help="Import a private key (overwrites identity).")
+        @config_app.command("import-key", help="Import a private key (overwrites identity)")
         def _import_key_cmd(
-            key_hex: str = typer.Argument(..., help="Private key as hex."),
-            yes: bool = typer.Option(False, "--yes", help="Confirm this destructive action."),
+            key_hex: str = typer.Argument(..., help="Private key as hex"),
+            yes: bool = typer.Option(False, "--yes", help="Confirm this destructive action"),
         ) -> None:
             _require_yes(yes, "import-key overwrites the device identity")
             run_tool_command(self, {"ops": [("import_key", key_hex)]})
 
-        @config_app.command("reboot", help="Reboot the device.")
+        @config_app.command("reboot", help="Reboot the device")
         def _reboot_cmd(
-            yes: bool = typer.Option(False, "--yes", help="Confirm reboot."),
+            yes: bool = typer.Option(False, "--yes", help="Confirm reboot"),
         ) -> None:
             _require_yes(yes, "reboot restarts the device")
             run_tool_command(self, {"ops": [("reboot",)]})
 
-        @config_app.command("factory-reset", help="Erase all data and reset to defaults.")
+        @config_app.command("factory-reset", help="Erase all data and reset to defaults")
         def _factory_reset_cmd(
-            yes: bool = typer.Option(False, "--yes", help="Confirm this destructive action."),
+            yes: bool = typer.Option(False, "--yes", help="Confirm this destructive action"),
         ) -> None:
             _require_yes(yes, "factory-reset erases ALL data on the device")
             run_tool_command(self, {"ops": [("factory_reset",)]})
@@ -317,9 +321,9 @@ async def _restore(
 
     if dry_run:
         table = Table(title="Restore preview", border_style="warn", expand=False)
-        table.add_column("Operation")
-        table.add_column("Target")
-        table.add_column("Value")
+        table.add_column("OPERATION")
+        table.add_column("TARGET")
+        table.add_column("VALUE")
         for op in ops:
             table.add_row(op[0], str(op[1]), str(op[2] if len(op) > 2 else ""))
         ctx.ui.show(table)
