@@ -12,7 +12,8 @@ and pop it — the push/await/pop model behind every prompt.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable, Optional
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Callable, Optional
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -25,6 +26,7 @@ from rich.console import RenderableType
 from rich.text import Text
 
 from . import frame
+from .overlay import BusyOverlay
 from .progress import TuiProgress
 from .prompt import (
     AutocompleteScreen,
@@ -91,6 +93,10 @@ class TuiSession:
         self._app: Optional[Application] = None
         self._input = input
         self._output = output
+        # The top-most floating "working" overlay (a ring spinner), or None when idle. It is
+        # deliberately *not* on the screen stack: it hovers above every layer and is shown/
+        # hidden by busy_overlay, independent of whatever screens are pushed.
+        self._overlay: Optional[BusyOverlay] = None
 
     # --- stack ---------------------------------------------------------------
 
@@ -112,6 +118,7 @@ class TuiSession:
             self._stack.pop()
         elif screen in self._stack:
             self._stack.remove(screen)
+        self._expose_overlay()
         self.invalidate()
 
     def reset(self) -> None:
@@ -123,7 +130,19 @@ class TuiSession:
         (their callers pop them in ``finally``), so dropping any stragglers here is safe.
         """
         self._stack.clear()
+        self._expose_overlay()
         self.invalidate()
+
+    def _expose_overlay(self) -> None:
+        """Restart the busy overlay's fade whenever a stack change re-exposes it.
+
+        A prompt pushed over an active overlay hides the ring; popping back to an empty stack
+        re-exposes it. Restart the intro then so the black hold and fade-in replay fresh each
+        time the ring is shown, rather than snapping back at full brightness (see
+        :meth:`~meshterm.ui.tui.overlay.BusyOverlay.restart`).
+        """
+        if self._overlay is not None and not self._stack:
+            self._overlay.restart()
 
     def invalidate(self) -> None:
         """Request a repaint if the application is running."""
@@ -444,6 +463,68 @@ class TuiSession:
         """Return a progress context manager backed by a pushed :class:`ProgressScreen`."""
         return TuiProgress(self, title)
 
+    @asynccontextmanager
+    async def busy_overlay(
+        self,
+        message: str = "",
+        *,
+        interval: float = 0.06,
+    ) -> AsyncIterator[BusyOverlay]:
+        """Float an animated ring spinner on top of everything for the duration of a block.
+
+        Wrap a slow, screen-affecting operation — most usefully a device menu navigation,
+        which can otherwise sit on a blank frame while the companion answers — in::
+
+            async with session.busy_overlay("Talking to your companion…"):
+                await slow_work()
+
+        A background timer advances the ring, fades it in, and repaints while the block runs;
+        the overlay is always cleared and the timer cancelled on exit, even on error. The ring
+        fades in from black rather than popping in (see :attr:`BusyOverlay.brightness`), so a
+        quick operation only paints a near-black ring and it never appears suddenly. It is
+        drawn only in the gaps between screens (see :meth:`_overlay_visible`), so it announces
+        the wait without covering a prompt the user is interacting with.
+
+        Args:
+            message: An optional caption drawn beneath the ring.
+            interval: Seconds between animation frames (also the fade's repaint cadence).
+
+        Yields:
+            The live :class:`BusyOverlay`, in case the caller wants to update its caption.
+        """
+        # A nested busy_overlay keeps the outer one (the outermost wait owns the screen); its
+        # own body still runs, it just doesn't install a second ring.
+        if self._overlay is not None:
+            yield self._overlay
+            return
+        overlay = BusyOverlay(message)
+        self._overlay = overlay
+        if self._overlay_visible():
+            self.invalidate()  # start the fade-in promptly, before the first tick
+
+        async def animate() -> None:
+            while True:
+                await asyncio.sleep(interval)
+                overlay.tick()
+                # Only repaint when the ring is actually on screen, so an overlay waiting
+                # behind a live prompt doesn't churn that prompt's repaints for nothing.
+                if self._overlay_visible():
+                    self.invalidate()
+
+        ticker = asyncio.ensure_future(animate())
+        try:
+            yield overlay
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a cosmetic overlay must never break a flow
+                pass
+            self._overlay = None
+            self.invalidate()
+
     # --- application lifecycle ------------------------------------------------
 
     async def run(self, main: Any) -> None:
@@ -488,6 +569,15 @@ class TuiSession:
         float_window = Window(
             FormattedTextControl(self._render_float), always_hide_cursor=True
         )
+        # The busy overlay is the last float, so it draws on top of the dialog float — the
+        # top of the z-order. It is a content-sized window (dont_extend_*) with no anchors, so
+        # the FloatContainer centres just its ring box over the screen rather than blanking it.
+        overlay_window = Window(
+            FormattedTextControl(self._render_overlay),
+            always_hide_cursor=True,
+            dont_extend_width=True,
+            dont_extend_height=True,
+        )
         root = FloatContainer(
             content=base_window,
             floats=[
@@ -495,7 +585,12 @@ class TuiSession:
                     ConditionalContainer(
                         float_window, filter=Condition(self._has_float)
                     )
-                )
+                ),
+                Float(
+                    ConditionalContainer(
+                        overlay_window, filter=Condition(self._overlay_visible)
+                    )
+                ),
             ],
         )
         return Application(
@@ -566,6 +661,23 @@ class TuiSession:
             return ANSI("")
         cols, rows = self._size()
         return ANSI(frame.compose_dialog(self.top, cols, rows))
+
+    def _overlay_visible(self) -> bool:
+        """Whether the busy overlay should be painted this frame.
+
+        Gated on an empty screen stack so the ring only appears in the "black screen" gaps a
+        device operation opens between screens (a menu navigation before the tool's first
+        prompt, say) and never buries a dialog the user is meant to be reading. It also stays
+        unpainted through the overlay's initial hold (:attr:`BusyOverlay.brightness` is 0), so
+        an operation that finishes within the hold shows nothing and never flashes.
+        """
+        return self._overlay is not None and not self._stack and self._overlay.brightness > 0
+
+    def _render_overlay(self) -> ANSI:
+        """Render the busy overlay's ring (only when :meth:`_overlay_visible`)."""
+        if self._overlay is None:
+            return ANSI("")
+        return ANSI(self._overlay.render())
 
     # --- input ---------------------------------------------------------------
 

@@ -14,8 +14,10 @@ Public API:
 
 from __future__ import annotations
 
+from .overlay import BusyOverlay
 from .progress import ProgressScreen
 from .prompt import AutocompleteScreen, ConfirmScreen, ReconnectDialog, TextScreen
+from .ring import RingSpinner
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, SelectScreen, Separator
 from .session import TuiSession
@@ -35,5 +37,7 @@ __all__ = [
     "ReconnectDialog",
     "ProgressScreen",
     "Spinner",
+    "RingSpinner",
+    "BusyOverlay",
     "CANCEL",
 ]

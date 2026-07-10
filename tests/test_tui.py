@@ -951,3 +951,123 @@ def test_session_stack_and_float_selection() -> None:
     session.pop(dialog)
     assert session.top is base
     assert not session._has_float()
+
+
+# --- ring spinner + busy overlay ---------------------------------------------
+
+
+def test_ring_spinner_draws_a_symmetric_styled_circle() -> None:
+    """The ring renders a hollow circle: a rim in the rim colour and a bright comet arc."""
+    from meshterm.ui.tui.ring import RingSpinner
+
+    ring = RingSpinner()
+    text = ring.render()
+    styles = {span.style for span in text.spans}
+    assert RingSpinner.RIM_STYLE in styles  # the resting rim
+    assert any(c in styles for c in RingSpinner.COMET_RAMP)  # the bright comet arc
+    # It really is a hollow ring: the middle row has a blank interior between its two sides.
+    middle = text.plain.split("\n")[ring.height // 2]
+    assert middle.strip() and "  " in middle.strip()
+
+
+def test_ring_spinner_is_left_right_symmetric() -> None:
+    """The quarter-plus-mirror construction makes every row a left-right mirror of itself."""
+    from meshterm.ui.tui.ring import RingSpinner
+
+    rows = RingSpinner().render().plain.split("\n")
+    # Blank out the moving comet by comparing dot presence, not colour: mirror the lit cells.
+    for row in rows:
+        lit = [ch != " " for ch in row]
+        assert lit == lit[::-1]
+
+
+def test_ring_spinner_comet_rotates_on_tick() -> None:
+    """Ticking moves the bright comet to a different set of cells (the dots chase round)."""
+    from meshterm.ui.tui.ring import RingSpinner
+
+    ring = RingSpinner()
+    ramp = set(RingSpinner.COMET_RAMP)
+
+    def bright_cells(t) -> set[int]:
+        return {i for span in t.spans if span.style in ramp for i in range(span.start, span.end)}
+
+    first = bright_cells(ring.render())
+    for _ in range(3):
+        ring.tick()
+    assert bright_cells(ring.render()) != first  # the comet advanced
+
+
+def test_busy_overlay_render_stacks_ring_over_caption() -> None:
+    """A captioned overlay renders the ring rows plus a final caption line."""
+    from meshterm.ui.tui.overlay import BusyOverlay
+
+    overlay = BusyOverlay("Talking to your companion…", fade=0.0)  # full brightness at once
+    ansi = overlay.render()
+    assert "Talking to your companion" in ansi
+    assert ansi.count("\n") == overlay.spinner.height  # ring rows + one caption line
+
+
+def test_busy_overlay_holds_black_then_fades_in() -> None:
+    """Brightness is 0 through the hold, then climbs to full colour over the fade window."""
+    from meshterm.ui.tui.overlay import BusyOverlay
+
+    overlay = BusyOverlay(hold=0.1, fade=0.2)
+    assert overlay.brightness == 0.0  # nothing paints during the hold
+    overlay.started_at -= 0.1  # to the very end of the hold
+    assert overlay.brightness < 0.2  # only now beginning to glow up from black
+    overlay.started_at -= 0.2  # past the full fade window
+    assert overlay.brightness == 1.0  # fully lit
+
+
+def test_dim_color_scales_hex_toward_black() -> None:
+    """The fade dimmer scales the hex channels and preserves attribute words like ``bold``."""
+    from meshterm.ui.tui.ring import dim_color
+
+    assert dim_color("#38bdf8", 1.0) == "#38bdf8"  # untouched at full brightness
+    assert dim_color("#ffffff", 0.0) == "#000000"  # black at zero
+    assert dim_color("bold #ffffff", 0.5) == "bold #808080"  # keeps 'bold', halves the colour
+
+
+def test_overlay_fade_restarts_when_re_exposed_after_a_prompt() -> None:
+    """Popping back to an empty stack replays the black-hold + fade, not a full-bright snap."""
+    from meshterm.ui.tui.overlay import BusyOverlay
+
+    session = TuiSession()
+    overlay = BusyOverlay()
+    session._overlay = overlay
+    overlay.started_at -= 10  # pretend the intro already finished
+    assert overlay.brightness == 1.0
+
+    screen = ScrollScreen(Text("prompt"))
+    session.push(screen)  # a prompt covers the ring
+    session.pop(screen)  # dismissed → ring re-exposed on the now-empty stack
+    assert overlay.brightness == 0.0  # the fade restarted from black
+
+
+async def test_session_busy_overlay_shows_between_screens_and_clears() -> None:
+    """The overlay floats while a block runs on an empty stack, and is dropped afterwards."""
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+        seen = {}
+
+        async def main() -> None:
+            async with session.busy_overlay("working…"):
+                await asyncio.sleep(0.05)  # still within the initial hold
+                seen["hidden_during_hold"] = not session._overlay_visible()
+                await asyncio.sleep(0.3)  # past the 200ms hold: the ring has faded in
+                seen["active"] = session._overlay is not None
+                seen["visible_empty_stack"] = session._overlay_visible()
+                seen["rendered"] = bool(session._render_overlay().value.strip())
+                # With a screen on the stack the ring stays hidden so it can't bury a prompt.
+                session.push(ScrollScreen(Text("prompt"), title="p"))
+                seen["hidden_over_screen"] = not session._overlay_visible()
+                session.pop()
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert seen["hidden_during_hold"] is True
+    assert seen["active"] is True
+    assert seen["visible_empty_stack"] is True
+    assert seen["rendered"] is True
+    assert seen["hidden_over_screen"] is True
+    assert session._overlay is None  # cleared on exit

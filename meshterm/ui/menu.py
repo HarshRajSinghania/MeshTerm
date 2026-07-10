@@ -15,8 +15,8 @@ import os
 import sys
 import threading
 import time
-from contextlib import contextmanager
-from typing import Iterator, Optional
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncIterator, Iterator, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
@@ -379,7 +379,11 @@ async def _startup(ctx: AppContext) -> bool:
             ctx.ble_override = None
         if probed.get("device_id") == chosen.stable_id:
             ctx.adopt_device(probed["device"])
-    await _resume_monitor(ctx)
+    # Between the device splash and the first menu paint, resuming background listening opens
+    # the radio — a slow, silent step that would otherwise leave the screen blank for a beat.
+    # Float the ring spinner across that gap on any real link (see _busy_over_link).
+    async with _busy_over_link(ctx):
+        await _resume_monitor(ctx)
     return True
 
 
@@ -418,6 +422,25 @@ async def _resume_monitor(ctx: AppContext) -> None:
         pass
 
 
+@asynccontextmanager
+async def _busy_over_link(ctx: AppContext) -> AsyncIterator[None]:
+    """Float the ring-spinner overlay for the wrapped block, on any real device link.
+
+    Bluetooth is the worst offender, but serial navigation has a perceptible lag too, so the
+    overlay is installed for either transport. Only the mock simulator (which has no link and
+    answers instantly, so ``active_transport`` is ``None``) opts out. The overlay's own reveal
+    delay still suppresses a flash on genuinely quick operations, so this never flickers.
+
+    Args:
+        ctx: The shared application context (read for the active transport and UI surface).
+    """
+    if ctx.active_transport is not None:
+        async with ctx.ui.busy_overlay():
+            yield
+    else:
+        yield
+
+
 async def _run_selection(ctx: AppContext, name: str) -> None:
     """Gather parameters for, execute, and present a single tool from the menu.
 
@@ -440,11 +463,16 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
         return
 
     try:
-        params = await tool.prompt_params(ctx)
-        if params is None:  # user cancelled a prompt
-            ctx.ui.discard()
-            return
-        result = await tool.execute(ctx, params)
+        # Opening a tool can sit on a blank frame while the companion answers (the menu has
+        # been popped, its first prompt not yet pushed) — very noticeable over Bluetooth, but
+        # perceptible on serial too. Float the ring spinner through that gap so the wait reads
+        # as work, not a hang. The overlay only paints between screens, so prompts show through.
+        async with _busy_over_link(ctx):
+            params = await tool.prompt_params(ctx)
+            if params is None:  # user cancelled a prompt
+                ctx.ui.discard()
+                return
+            result = await tool.execute(ctx, params)
     except Exception as exc:  # noqa: BLE001 - surface errors without crashing the menu
         if is_connection_lost(exc):
             ctx.ui.discard()  # drop the half-built output; the watcher will prompt to reconnect
