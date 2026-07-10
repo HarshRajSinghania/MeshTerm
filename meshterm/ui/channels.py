@@ -10,8 +10,8 @@ see always reflects the radio.
 
 The list is laid out like the config editor: fixed, column-aligned lanes under one header
 line — name, openness, hash fingerprint, unread badge, total messages, last-message age,
-and a small activity meter over the trailing week — so a glance shows not just *which*
-channels exist but which ones are alive. The message statistics come from
+and a braille sparkline of the trailing week's traffic — so a glance shows not just
+*which* channels exist but which ones are alive. The message statistics come from
 :meth:`~meshterm.persistence.repository.Repository.channel_stats` (read through a small
 TTL cache) and the unread counts from the live chat service, and each row is a callable
 title re-resolved on repaint, so a message arriving while the list sits open updates its
@@ -51,6 +51,7 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.models import Conversation
+from ..persistence.repository import ACTIVITY_BUCKETS
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph
@@ -297,7 +298,7 @@ class _LiveStats:
     The conversation picker's ``_LiveLasts`` pattern applied to
     :meth:`~meshterm.persistence.repository.Repository.channel_stats`: the list rows read
     through this on every repaint (their titles are callables), so a message arriving while
-    the manager sits open updates that channel's counts, age, and activity meter in place —
+    the manager sits open updates that channel's counts, age, and sparkline in place —
     but the repository is re-queried at most once per ``ttl`` seconds rather than once per
     row per repaint, so a full slot table stays cheap at the session's ~1 Hz repaint.
     """
@@ -333,27 +334,40 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
-#: Weekly message counts at which the activity meter lights its first, second, and third
-#: bar — roughly "someone spoke", "a message most days", and "steady daily traffic".
-_ACTIVITY_THRESHOLDS = (1, 15, 70)
-#: The meter's bars, lit left-to-right as the thresholds are passed.
-_ACTIVITY_BARS = "▂▄▆"
+#: Width of the activity sparkline in braille characters. Each braille cell packs two
+#: dot columns, so eight characters draw all :data:`ACTIVITY_BUCKETS` window buckets.
+_SPARK_WIDTH = ACTIVITY_BUCKETS // 2
+#: Braille dot masks for a bar filled bottom-up to height 0–4 in a cell's left column
+#: (dots 7, 3, 2, 1 — the Unicode braille block numbers its rows top-down) and right
+#: column (dots 8, 6, 5, 4). OR one of each, add to U+2800, and that's the character.
+_BRAILLE_LEFT = (0x00, 0x40, 0x44, 0x46, 0x47)
+_BRAILLE_RIGHT = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
 
 
-def _activity_meter(recent: int) -> Text:
-    """The channel's three-bar activity meter over the trailing week.
+def _activity_sparkline(histogram: "tuple[int, ...]") -> Text:
+    """The channel's braille activity sparkline over the trailing week.
 
-    Each bar lights (in the ok green) as ``recent`` passes the matching
-    :data:`_ACTIVITY_THRESHOLDS` step; unlit positions render as muted dots so the meter
-    keeps its width and a silent channel still reads as a deliberate ``···``.
+    Each of the histogram's :data:`ACTIVITY_BUCKETS` buckets becomes one dot column,
+    packed two per braille character, its bar rising bottom-up through the cell's four
+    dot rows. Heights are scaled to the row's own busiest bucket — the sparkline shows a
+    channel's *rhythm*, not a cross-channel volume comparison (the MSGS lane does that) —
+    and any non-empty bucket keeps at least one dot so a lone message never vanishes.
+    Time runs left (window start) to right (now), in the ok green; a window with no
+    traffic at all renders as the same deliberate muted dots as before.
     """
-    lit = sum(recent >= threshold for threshold in _ACTIVITY_THRESHOLDS)
-    meter = Text()
-    if lit:
-        meter.append(_ACTIVITY_BARS[:lit], style="ok")
-    if lit < len(_ACTIVITY_THRESHOLDS):
-        meter.append("·" * (len(_ACTIVITY_THRESHOLDS) - lit), style="muted")
-    return meter
+    histogram = (tuple(histogram) + (0,) * ACTIVITY_BUCKETS)[:ACTIVITY_BUCKETS]
+    peak = max(histogram)
+    if not peak:
+        return Text("·" * _SPARK_WIDTH, style="muted")
+
+    def height(count: int) -> int:
+        return 0 if not count else max(1, -(-count * 4 // peak))  # ceil, floored at 1
+
+    cells = "".join(
+        chr(0x2800 | _BRAILLE_LEFT[height(left)] | _BRAILLE_RIGHT[height(right)])
+        for left, right in zip(histogram[0::2], histogram[1::2])
+    )
+    return Text(cells, style="ok")
 
 
 def _fit(text: str, width: int) -> str:
@@ -392,7 +406,7 @@ def _slot_row(
 ) -> Callable[[], Text]:
     """Return a list-row title *callable* the select screen re-renders on each repaint.
 
-    The unread badge, counts, age, and activity meter are all read live (see
+    The unread badge, counts, age, and activity sparkline are all read live (see
     :class:`_LiveStats`), so a message arriving while the list sits open updates the row on
     the next repaint — exactly the conversation picker's behavior.
     """
@@ -405,11 +419,11 @@ def _slot_text(
     """Build one channel's list row as fixed-width, colour-coded lanes.
 
     Alignment carries the readability — glyph, name, openness, hash, unread badge, total
-    messages, last-message age, and the activity meter each sit in their own lane under the
-    :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
+    messages, last-message age, and the activity sparkline each sit in their own lane under
+    the :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
     focus in the base colour, the descriptive lanes are muted, the unread ``●`` badge is
-    red with its count in warn (the conversation picker's language), and the activity bars
-    light in the ok green. The row is always a Rich :class:`~rich.text.Text` so those spans
+    red with its count in warn (the conversation picker's language), and the sparkline
+    draws in the ok green. The row is always a Rich :class:`~rich.text.Text` so those spans
     survive under the select screen's row highlight.
     """
     st = stats.get(slot.identity)
@@ -438,7 +452,7 @@ def _slot_text(
     age = _format_age(_age_seconds(st.last_at)) if st is not None and st.last_at else ""
     text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
     text.append("  ")
-    text.append_text(_activity_meter(st.recent if st is not None else 0))
+    text.append_text(_activity_sparkline(st.histogram if st is not None else ()))
     return text
 
 

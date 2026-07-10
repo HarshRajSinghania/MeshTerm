@@ -25,10 +25,15 @@ from ..core.models import (
 from . import db
 
 
-#: The trailing window (days) a channel's recent-activity tally is computed over. One week
+#: The trailing window (days) a channel's recent-activity view is computed over. One week
 #: smooths out the day-to-day lulls of a hobbyist mesh while still going quiet within days
-#: of a channel actually dying down, which is the granularity the activity meter shows.
+#: of a channel actually dying down, which is the granularity the activity sparkline shows.
 ACTIVITY_WINDOW_DAYS = 7
+
+#: How many equal time buckets the activity window is split into — one per column of the
+#: channel manager's braille sparkline (two columns per braille cell, so 16 buckets fill
+#: its eight characters). At a one-week window each bucket spans ~10.5 hours.
+ACTIVITY_BUCKETS = 16
 
 
 @dataclass(slots=True)
@@ -37,15 +42,18 @@ class ChannelStats:
 
     Attributes:
         total: Messages ever stored for the channel, sent and received alike.
-        recent: Messages within the trailing :data:`ACTIVITY_WINDOW_DAYS` window — the
-            basis of the channel manager's activity meter.
+        recent: Messages within the trailing :data:`ACTIVITY_WINDOW_DAYS` window.
         last_at: When the channel's most recent message was stored, or ``None`` if the
             stored timestamp can't be parsed.
+        histogram: The window's messages split into :data:`ACTIVITY_BUCKETS` equal time
+            buckets, oldest first (so the newest traffic sits at the right edge of the
+            sparkline drawn from it). ``recent`` is always its sum.
     """
 
     total: int
     recent: int
     last_at: Optional[datetime]
+    histogram: tuple[int, ...]
 
 
 @dataclass(slots=True)
@@ -510,14 +518,16 @@ class Repository:
         """Aggregate stored channel messages into per-channel statistics.
 
         Backs the channel manager's list lanes: each configured channel's row shows its
-        total message count, an activity meter over the trailing
-        :data:`ACTIVITY_WINDOW_DAYS`, and the age of its last message. One SQL pass groups
-        every channel message by the channel's intrinsic identity, so the cost stays flat
-        no matter how many channels the device carries.
+        total message count, the age of its last message, and an activity sparkline over
+        the trailing :data:`ACTIVITY_WINDOW_DAYS` — whose :data:`ACTIVITY_BUCKETS`-column
+        histogram is built here. Two passes, each grouped/filtered in SQL so the cost
+        tracks message volume, not channel count: an aggregate for the all-time totals,
+        then the window's individual timestamps, bucketed in Python (the window holds at
+        most a week of chatter, so the row set stays small).
 
         Timestamps are compared as strings: every ``created_at`` is written by
         ``utcnow().isoformat()`` (a fixed-width UTC ISO-8601 form), so lexicographic order
-        *is* chronological order and the recent-window cutoff needs no per-row parsing.
+        *is* chronological order and the window cutoff needs no per-row parsing.
         Messages predating identity-keyed history (a ``NULL`` ``channel_id``; see
         :meth:`backfill_channel_ids`) have no channel to be counted under and are skipped.
 
@@ -525,24 +535,41 @@ class Repository:
             A mapping of channel identity to its :class:`ChannelStats`. Channels with no
             stored messages simply have no entry.
         """
-        cutoff = (utcnow() - timedelta(days=ACTIVITY_WINDOW_DAYS)).isoformat()
+        cutoff = utcnow() - timedelta(days=ACTIVITY_WINDOW_DAYS)
+        bucket_span = timedelta(days=ACTIVITY_WINDOW_DAYS) / ACTIVITY_BUCKETS
         rows = self._conn.execute(
-            "SELECT channel_id, COUNT(*) AS total, MAX(created_at) AS last_at, "
-            "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS recent "
+            "SELECT channel_id, COUNT(*) AS total, MAX(created_at) AS last_at "
             "FROM messages WHERE is_channel = 1 AND channel_id IS NOT NULL "
-            "GROUP BY channel_id",
-            (cutoff,),
+            "GROUP BY channel_id"
         ).fetchall()
+
+        histograms: dict[str, list[int]] = {}
+        recent_rows = self._conn.execute(
+            "SELECT channel_id, created_at FROM messages "
+            "WHERE is_channel = 1 AND channel_id IS NOT NULL AND created_at >= ?",
+            (cutoff.isoformat(),),
+        ).fetchall()
+        for row in recent_rows:
+            try:
+                created_at = datetime.fromisoformat(row["created_at"])
+                idx = min(ACTIVITY_BUCKETS - 1, int((created_at - cutoff) / bucket_span))
+            except (TypeError, ValueError):
+                continue  # a malformed/naive stray simply doesn't land in a bucket
+            histogram = histograms.setdefault(row["channel_id"], [0] * ACTIVITY_BUCKETS)
+            histogram[max(0, idx)] += 1
+
         stats: dict[str, ChannelStats] = {}
         for row in rows:
             try:
                 last_at = datetime.fromisoformat(row["last_at"])
             except (TypeError, ValueError):
                 last_at = None  # a malformed stray must not hide the channel's counts
+            histogram = tuple(histograms.get(row["channel_id"], [0] * ACTIVITY_BUCKETS))
             stats[row["channel_id"]] = ChannelStats(
                 total=int(row["total"]),
-                recent=int(row["recent"] or 0),
+                recent=sum(histogram),
                 last_at=last_at,
+                histogram=histogram,
             )
         return stats
 
