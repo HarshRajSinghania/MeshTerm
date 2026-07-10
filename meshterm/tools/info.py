@@ -28,7 +28,7 @@ class InfoTool(Tool):
     title = "Device info"
     help = "Show device status, identity, and radio config"
     category = "Device"
-    order = 10
+    order = 11  # after Send advert (10), which slots in behind Device actions
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Query the device and render its live status plus its full configuration.

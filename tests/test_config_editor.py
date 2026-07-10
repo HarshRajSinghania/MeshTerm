@@ -26,6 +26,7 @@ from meshterm.ui.config_editor import (
     contact_share_url,
     device_actions,
     edit_config,
+    send_advert,
 )
 from meshterm.ui.tui.prompt import TypedConfirmDialog
 from meshterm.ui.tui.screen import CANCEL
@@ -466,6 +467,40 @@ async def test_actions_advert_share_shows_the_contact_card(ctx: AppContext) -> N
     ])
     await device_actions(ctx)
     assert any(v.startswith("Share ") for v in ui.views)
+
+
+async def test_send_advert_standalone_sends_without_the_actions_screen(ctx: AppContext) -> None:
+    """The promoted main-menu flow sends an advert directly — no Device actions hop."""
+    device = await ctx.device()
+    sent: list[bool] = []
+
+    async def _record(flood: bool = False) -> None:
+        sent.append(flood)
+
+    device.send_advert = _record  # type: ignore[method-assign]
+    ui = _install(ctx, [("select", "flood")])
+    await send_advert(ctx)
+    assert sent == [True]
+    assert any("flood" in n for n in ui.notes)
+
+
+async def test_send_advert_standalone_shares_the_contact_card(ctx: AppContext) -> None:
+    """The standalone flow's share option opens the same QR/URI contact-card view."""
+    ui = _install(ctx, [("select", "share")])
+    await send_advert(ctx)
+    assert any(v.startswith("Share ") for v in ui.views)
+
+
+async def test_send_advert_standalone_backs_out_cleanly(ctx: AppContext) -> None:
+    """Backing out of the advert select sends nothing and returns to the menu."""
+    device = await ctx.device()
+
+    async def _boom(flood: bool = False) -> None:  # pragma: no cover - must not run
+        raise AssertionError("no advert should be sent on Back")
+
+    device.send_advert = _boom  # type: ignore[method-assign]
+    _install(ctx, [("select", None)])
+    await send_advert(ctx)
 
 
 async def test_actions_factory_reset_gates_on_typed_confirmation(ctx: AppContext) -> None:

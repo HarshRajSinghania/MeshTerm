@@ -8,6 +8,10 @@ moment it is confirmed, so the two concerns get their own menu entries and scree
 Menu-only: every action already has a first-class scripted equivalent under the ``config``
 CLI group (``config backup``, ``config restore``, ``config reboot``, ...), so no duplicate
 subcommand is registered here.
+
+The advert action is additionally promoted to its own main-menu entry (the sibling
+``advert`` tool — see :mod:`meshterm.tools.advert`): it is the everyday operation in this
+bucket, so it earns a top-level row while remaining available here with the rest.
 """
 
 from __future__ import annotations

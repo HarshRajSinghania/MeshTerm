@@ -14,7 +14,10 @@ Two sibling screens live here, deliberately kept distinct:
   confirmation dialog — destructive ones gate behind typing a confirmation word); they
   have no meaningful "preview", so their result is shown at once. They share the settings
   snapshot and :func:`~meshterm.tools.config.apply_ops` executor with the editor, which is
-  why both screens live in this module.
+  why both screens live in this module. The everyday advert action is *also* promoted to
+  its own main-menu entry (the ``advert`` tool, via :func:`send_advert`), so it is one
+  keystroke away instead of two screens deep; the row here stays so the actions screen
+  remains the complete inventory of immediate operations.
 
 Multiple-choice values are picked in dialogs (booleans as an On/Off button pair, enums as
 a floating select), the node's location can be set by pointing at the full-screen map (see
@@ -693,6 +696,24 @@ async def _run_now(
         ctx.ui.note(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
     await ctx.ui.present(title=title)
     return changes
+
+
+async def send_advert(ctx: "AppContext") -> None:
+    """Run the Send advert flow standalone, behind the main menu's ``advert`` tool.
+
+    The same flow the Device actions screen opens (see :func:`_advert_menu`), promoted to
+    a top-level menu entry because announcing the node is the everyday action in that
+    bucket. Only ``SELF_INFO`` is read here: the advert command itself never consults the
+    snapshot, and the contact card needs just the name, public key, and advert type — so
+    opening this skips the tuning/path-hash reads of a full
+    :func:`~meshterm.core.device_config.build_snapshot` and stays snappy over Bluetooth.
+
+    Args:
+        ctx: Shared application context (provides the connected device and UI surface).
+    """
+    device = await ctx.device()
+    snapshot = dict(await device.get_self_info())
+    await _advert_menu(ctx, device, snapshot)
 
 
 async def _advert_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
