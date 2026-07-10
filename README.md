@@ -21,7 +21,7 @@ turned into interactive HTML visualizations.
 | **TX-power optimization** | ✅ working | Sweep transmit power (coarse + refine), converge on the best signal, optionally apply, render an interactive chart. |
 | **Link budget** | ✅ working | Predict time-on-air, receiver sensitivity, range, and duty-cycle/dwell headroom for a radio config — offline, no radio needed. |
 | **Chat** | ✅ working | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged to SQLite, unread counts show in the menu header, and `chat send/history/list` script the same from the CLI. Channels are picked here; edit them in `config`. |
-| **Passive monitor** | ✅ working | Toggle a non-blocking background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you keep using the app; on/off is remembered between sessions and live packet counts show in the menu. |
+| **Passive monitor** | ✅ working | Always-on background logger that records every overheard advert/telemetry (SNR, RSSI, location) to a longitudinal history while you use the app; live packet counts show in the menu header, the heard-node summary is a menu item, and `meshterm monitor --seconds 60` captures a bounded window from the CLI. |
 | **Link health** | ✅ working | Compare a target's recent traces to its rolling baseline and flag SNR/reliability regressions, end-to-end and per hop. |
 | **Route map** | ✅ working | Aggregate trace history into an interactive route-stability graph — which links are stable, which the mesh flaps between, with churn metrics. |
 | **Path optimization** | 🚧 planned | Discover and score mesh paths from neighbors outward. |

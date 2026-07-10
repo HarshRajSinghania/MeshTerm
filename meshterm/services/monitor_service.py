@@ -5,13 +5,14 @@ database, building the longitudinal history the coverage map and link-quality al
 read back. It is not a listener in its own right: the always-on
 :class:`~meshterm.services.event_hub.EventHub` (``ctx.events``) does the listening, and
 this service is simply one of its subscribers — the one that writes observations to the
-database. Listening is therefore unconditional; the on/off preference this service owns
-controls only whether what's heard is *persisted to history*.
+database. Recording is always on: there is no user-facing switch. The subscription is
+registered at session start without touching the device, so observations flow the moment
+the hub is pumping — including when the hub itself opens lazily (``connect_on_start``
+off, or no device selected yet).
 
 The service is session-scoped state on the :class:`~meshterm.context.AppContext`
-(``ctx.monitor``). It owns the on/off preference (persisted via
-:class:`~meshterm.core.monitor_store.MonitorStore`), the hub subscription that records
-observations, and the counters shown live in the menu.
+(``ctx.monitor``). It owns the hub subscription that records observations and the
+counters shown live in the menu header.
 """
 
 from __future__ import annotations
@@ -23,27 +24,22 @@ from ..core.events import EventKind, MeshEvent
 
 if TYPE_CHECKING:
     from ..context import AppContext
-    from ..core.monitor_store import MonitorStore
 
 
 class MonitorService:
     """Records overheard packets to history as a subscriber of the always-on event hub.
 
     Attributes are private; interact through the properties and the async lifecycle
-    methods (:meth:`enable`, :meth:`disable`, :meth:`toggle`, :meth:`start`, :meth:`stop`,
-    :meth:`aclose`).
+    methods (:meth:`start`, :meth:`stop`, :meth:`aclose`).
     """
 
-    def __init__(self, ctx: "AppContext", store: "MonitorStore") -> None:
-        """Initialize the service and load the persisted on/off preference.
+    def __init__(self, ctx: "AppContext") -> None:
+        """Initialize the (idle) service.
 
         Args:
             ctx: The shared application context (device, repository, logger).
-            store: Persistence for the on/off preference.
         """
         self._ctx = ctx
-        self._store = store
-        self._enabled = store.load_enabled()
         self._unsubscribe: Optional[Unsubscribe] = None  # hub subscription, when recording
         self._run_id: Optional[int] = None
         self._session_count = 0
@@ -52,12 +48,6 @@ class MonitorService:
         # "total" is this plus what we capture this session (this process is the only
         # writer during an interactive session), avoiding a DB count on every repaint.
         self._start_total = ctx.repo.observation_count()
-        self._error: Optional[str] = None
-
-    @property
-    def enabled(self) -> bool:
-        """Whether monitoring is the desired state (persisted across sessions)."""
-        return self._enabled
 
     @property
     def active(self) -> bool:
@@ -69,11 +59,6 @@ class MonitorService:
         """Observations captured since this process started."""
         return self._session_count
 
-    @property
-    def last_error(self) -> Optional[str]:
-        """The reason the last :meth:`start` attempt failed, if any."""
-        return self._error
-
     def total_count(self) -> int:
         """Return the total observations logged, all time (including this session)."""
         return self._start_total + self._session_count
@@ -81,41 +66,31 @@ class MonitorService:
     def status_text(self) -> str:
         """Return a compact one-line status for the live menu header.
 
+        Monitoring has no off state, so this reports activity rather than a switch:
+        capture counts while the hub is pumping, or a waiting note until a device link
+        gives it something to hear.
+
         Returns:
-            A glyph-prefixed summary: capture counts when active, a waiting note when
-            enabled but not yet capturing, or an off marker.
+            A glyph-prefixed summary line.
         """
-        if self.active:
+        if self._ctx.events.active:
             return (
-                f"● monitor ON · {self._session_count} this session "
+                f"● heard {self._session_count} this session "
                 f"· {self.total_count()} total"
             )
-        if self._enabled:
-            return "● monitor ON (waiting for a device)"
-        return "○ monitor OFF"
+        return f"○ heard {self.total_count()} all-time · waiting for a device"
 
     async def start(self) -> None:
         """Begin recording overheard observations to history. Idempotent.
 
-        A no-op if already recording. Ensures the always-on event hub is running (which
-        opens the device connection and may raise if no device can be selected), then
-        subscribes to its observation stream and opens a ``monitor`` run for the recorded
-        observations to link to.
-
-        Raises:
-            Exception: Propagates any device/hub error after remembering it; the on/off
-                preference is left unchanged so the caller can surface the problem.
+        Registers the recording subscription on the event hub without touching the
+        device, so it is safe (and cheap) to call before any connection exists;
+        observations flow as soon as the hub is pumping. The backing ``monitor`` run row
+        is opened lazily on the first observation, so a session that hears nothing
+        leaves no empty run in history.
         """
         if self.active:
             return
-        try:
-            await self._ctx.events.start()
-        except Exception as exc:  # noqa: BLE001 - remember why, then re-raise
-            self._error = str(exc)
-            raise
-        run_id = self._ctx.repo.start_run(
-            "monitor", {"mode": "background"}, self._ctx.profile_name
-        )
         self._run_start_count = self._session_count
 
         def on_event(event: MeshEvent) -> None:
@@ -126,14 +101,16 @@ class MonitorService:
                 return
             self._session_count += 1
             try:
-                self._ctx.repo.record_observation(run_id, obs)
+                if self._run_id is None:
+                    self._run_id = self._ctx.repo.start_run(
+                        "monitor", {"mode": "background"}, self._ctx.profile_name
+                    )
+                self._ctx.repo.record_observation(self._run_id, obs)
             except Exception as exc:  # noqa: BLE001 - never let logging break capture
                 self._ctx.log.debug("monitor: failed to record observation: %s", exc)
 
         self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
-        self._run_id = run_id
-        self._error = None
-        self._ctx.log.info("passive monitor recording (run %s)", run_id)
+        self._ctx.log.info("passive monitor recording")
 
     async def stop(self) -> None:
         """Stop recording to history and close the run record. Idempotent.
@@ -154,38 +131,6 @@ class MonitorService:
             self._ctx.log.info("passive monitor stopped (run %s, %s pkts)", self._run_id, captured)
             self._run_id = None
 
-    async def enable(self) -> None:
-        """Turn monitoring on, persist the preference, and start capturing.
-
-        Raises:
-            Exception: If capture could not start (e.g. no device); the preference is
-                still persisted as *on* so it resumes once a device is available.
-        """
-        self._enabled = True
-        self._store.save_enabled(True)
-        await self.start()
-
-    async def disable(self) -> None:
-        """Turn monitoring off, persist the preference, and stop capturing."""
-        self._enabled = False
-        self._store.save_enabled(False)
-        await self.stop()
-
-    async def toggle(self) -> bool:
-        """Flip the on/off state, starting or stopping capture accordingly.
-
-        Returns:
-            The new enabled state (``True`` if now on).
-
-        Raises:
-            Exception: Propagates a failure to start capture when turning on.
-        """
-        if self._enabled:
-            await self.disable()
-        else:
-            await self.enable()
-        return self._enabled
-
     async def aclose(self) -> None:
-        """Stop capture at session end without changing the persisted preference."""
+        """Stop capture at session end."""
         await self.stop()

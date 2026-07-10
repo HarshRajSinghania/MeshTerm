@@ -11,8 +11,6 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
-import pytest
-
 from meshterm.core.connection import (
     _MOCK_MONITOR_INTERVAL_S as _MOCK_INTERVAL,
 )
@@ -23,7 +21,6 @@ from meshterm.core.connection import (
     observation_from_event,
 )
 from meshterm.core.models import HeardNode, Observation, utcnow
-from meshterm.core.monitor_store import MonitorStore
 from meshterm.persistence.repository import Repository
 from meshterm.services.monitor_service import MonitorService
 
@@ -258,36 +255,24 @@ def test_observation_count_totals_every_run(tmp_path: Path) -> None:
     repo.close()
 
 
-def test_monitor_store_defaults_off_and_persists(tmp_path: Path) -> None:
-    """The preference defaults to off and round-trips through a fresh store instance."""
-    path = tmp_path / "monitor.json"
-    assert MonitorStore(path).load_enabled() is False  # nothing saved yet → off
-    MonitorStore(path).save_enabled(True)
-    assert MonitorStore(path).load_enabled() is True  # remembered across instances
-    MonitorStore(path).save_enabled(False)
-    assert MonitorStore(path).load_enabled() is False
-
-
-async def test_monitor_service_captures_in_background(tmp_path: Path) -> None:
-    """Enabling starts a live subscription that logs observations without blocking."""
+async def test_monitor_service_records_while_hub_pumps(tmp_path: Path) -> None:
+    """start() subscribes before the hub opens, then logs observations once it pumps."""
     repo = Repository(tmp_path / "svc.db")
     ctx = _StubContext(repo, MockDevice())
-    store = MonitorStore(tmp_path / "monitor.json")
-    service = MonitorService(ctx, store)
+    service = MonitorService(ctx)
 
-    assert not service.enabled and not service.active
-    await service.enable()
-    assert service.enabled and service.active
-    assert store.load_enabled() is True  # preference persisted for next session
+    assert not service.active
+    await service.start()  # device-free: no connection has been opened yet
+    assert service.active
+    await ctx.events.start()  # the hub opens; recording catches the initial burst
 
     await asyncio.sleep(_MOCK_INTERVAL * 3)  # let packets stream in while we "do other work"
     assert service.session_count > 0
     # Started from an empty database, so total equals what this session captured.
     assert service.total_count() == service.session_count
 
-    await service.disable()
-    assert not service.enabled and not service.active
-    assert store.load_enabled() is False
+    await service.stop()
+    assert not service.active
     assert repo.observation_count() == service.session_count  # everything was logged
 
     frozen = service.session_count
@@ -301,19 +286,22 @@ async def test_monitor_service_captures_in_background(tmp_path: Path) -> None:
     repo.close()
 
 
-async def test_monitor_service_enable_without_device_keeps_preference(tmp_path: Path) -> None:
-    """If capture can't start, the on preference is still remembered so it can resume."""
+async def test_monitor_service_start_without_device_is_safe(tmp_path: Path) -> None:
+    """Recording can start before any device exists, and a silent session leaves no run."""
 
     class _NoDevice(_StubContext):
         async def device(self) -> MockDevice:
             raise ValueError("no companion device selected")
 
     repo = Repository(tmp_path / "nodev.db")
-    service = MonitorService(_NoDevice(repo, MockDevice()), MonitorStore(tmp_path / "m.json"))
+    service = MonitorService(_NoDevice(repo, MockDevice()))
 
-    with pytest.raises(ValueError):
-        await service.enable()
-    assert service.enabled is True  # preference stays on to resume later
-    assert service.active is False
-    assert service.last_error == "no companion device selected"
+    await service.start()  # never touches the device, so this cannot fail
+    assert service.active
+    assert service.session_count == 0
+
+    await service.stop()
+    assert not service.active
+    assert repo.observation_count() == 0
+    assert repo.list_runs() == []  # the run row is opened lazily, so none was created
     repo.close()

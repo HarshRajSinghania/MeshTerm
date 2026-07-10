@@ -97,8 +97,8 @@ def _silence_console_logging() -> Iterator[None]:
 
     The full-screen session owns the terminal via prompt_toolkit; any handler that
     writes log lines to the same console (the :class:`RichHandler` installed by
-    :func:`configure_logging`) corrupts the frame — most visibly when toggling the
-    monitor, which connects the device and emits INFO records on demand. File logging is
+    :func:`configure_logging`) corrupts the frame — most visibly when the monitor
+    connects the device at startup and emits INFO records. File logging is
     untouched, so the JSON-lines record stays complete; the handlers are restored on exit.
     """
     logger = get_logger()
@@ -132,11 +132,11 @@ def _header(ctx: AppContext) -> Text:
         target = "[muted]no device[/muted]"
     unread = ctx.chat.unread_total()
     chat_segment = f"  ·  [accent]✉ {unread} unread[/accent]" if unread else ""
-    # Colour only the leading status glyph (● / ○) — green when the monitor is on
-    # (enabled), red when off — leaving the rest of the text muted as before.
+    # Colour only the leading status glyph (● / ○) — green while packets are being
+    # heard and recorded, muted while the hub still waits for a device link.
     status = ctx.monitor.status_text()
     glyph, rest = status[:1], status[1:]
-    glyph_style = "ok" if ctx.monitor.enabled else "err"
+    glyph_style = "ok" if ctx.events.active else "muted"
     # The frame crops this to a single line (see frame.compose_base), so a narrow terminal
     # shows what fits and chops the rest rather than wrapping onto a second row.
     return Text.from_markup(
@@ -395,36 +395,32 @@ async def _startup(ctx: AppContext) -> bool:
 
 
 async def _resume_monitor(ctx: AppContext) -> None:
-    """Start always-on background listening, and resume history recording if enabled.
+    """Start always-on background listening and history recording.
 
-    A MeshCore client always listens while it runs, so by default the event hub is
-    started unconditionally at launch; if the passive-monitor preference is on, history
-    recording is resumed on top of it. The ``connect_on_start`` setting can defer that
-    eager connect — when it is off, the hub is left idle here and opens lazily instead
-    (when recording is turned on, or a tool first needs the radio). A failure to start
-    (typically no companion device selected) is non-fatal: the preference stays on, so
-    recording resumes automatically once a device is available. The header reflects the
-    resulting state, so nothing needs to be printed here.
+    Recording has no switch: the monitor registers its hub subscription up front — a
+    device-free, in-process step that cannot fail — so every overheard packet is logged
+    from the moment the radio opens. The hub itself (a MeshCore client must always be
+    listening) is started eagerly here unless the ``connect_on_start`` setting defers
+    it, in which case it opens lazily when a tool first needs the radio and recording
+    picks up then. A failure to start the hub (typically no companion device selected)
+    is non-fatal; the header reflects the resulting state, so nothing needs to be
+    printed here.
 
     Args:
         ctx: The shared application context.
     """
-    if ctx.settings.connect_on_start:
-        try:
-            await ctx.events.start()
-        except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
-            pass
-        # Record inbound messages from launch so the inbox and unread badge stay current
-        # even before the chat screen is opened. Deferred (like the hub) when connect on
-        # start is off; the chat screen starts it lazily then.
-        try:
-            await ctx.chat.start()
-        except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
-            pass
-    if not ctx.monitor.enabled:
+    await ctx.monitor.start()
+    if not ctx.settings.connect_on_start:
         return
     try:
-        await ctx.monitor.start()
+        await ctx.events.start()
+    except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
+        pass
+    # Record inbound messages from launch so the inbox and unread badge stay current
+    # even before the chat screen is opened. Deferred (like the hub) when connect on
+    # start is off; the chat screen starts it lazily then.
+    try:
+        await ctx.chat.start()
     except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
         pass
 

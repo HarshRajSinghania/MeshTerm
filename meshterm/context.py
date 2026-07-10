@@ -187,16 +187,12 @@ class AppContext:
         """Return the session's passive-monitor service, creating it on first use.
 
         The service is built lazily so the (cheap) database read for the "total"
-        observation count and the on/off preference load happen only once, when
-        monitoring is first referenced.
+        observation count happens only once, when monitoring is first referenced.
         """
         if self._monitor is None:
-            from .core.monitor_store import MonitorStore
             from .services.monitor_service import MonitorService
 
-            self._monitor = MonitorService(
-                self, MonitorStore(self.settings.config_dir / "monitor.json")
-            )
+            self._monitor = MonitorService(self)
         return self._monitor
 
     @property

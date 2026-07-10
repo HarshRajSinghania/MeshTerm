@@ -1,76 +1,56 @@
-"""The ``monitor`` tool: control the passive background logger and review its history.
+"""The ``monitor`` tool: review what the always-on passive monitor has heard.
 
 Passive monitoring records every advert and telemetry frame the companion overhears —
 with SNR, RSSI, and any shared location — to the database, building the longitudinal
 history that the coverage map and link-quality alerting read back. It transmits nothing;
 it only listens.
 
-Listening itself is always on: the session-wide
+Recording is always on: the session-wide
 :class:`~meshterm.services.event_hub.EventHub` overhears every packet, and
-:class:`~meshterm.services.monitor_service.MonitorService` (``ctx.monitor``) records
-them to history as one of its subscribers. This tool is the control panel for that
-recording: toggling it on/off (a preference remembered between sessions) and reviewing the
-heard-node history. The live packet counters are shown in the main-menu header, not here.
+:class:`~meshterm.services.monitor_service.MonitorService` (``ctx.monitor``) writes them
+to history as one of its subscribers, from the moment the radio opens. There is nothing
+to switch, so in the menu this tool is purely the read side: the all-time heard-node
+summary (the live packet counters are shown in the main-menu header, not here). On the
+CLI it is instead a bounded foreground capture — ``meshterm monitor --seconds 60`` tails
+each overheard packet to the console and summarizes the window when it ends.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import asyncio
+from typing import Any
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.models import HeardNode
-from ..ui.tui import Choice, Separator
+from ..core.events import EventKind, MeshEvent
+from ..core.models import HeardNode, Observation
 from .base import Tool, ToolResult, register
 
 
 @register
 class MonitorTool(Tool):
-    """Toggle the passive background monitor and review the nodes it has heard."""
+    """Review the nodes the always-on passive monitor has heard."""
 
     name = "monitor"
-    title = "Passive monitor"
-    help = "Toggle passive background monitoring and review heard nodes"
+    title = "Heard nodes"
+    help = "Review every node the passive monitor has overheard"
     category = "Diagnostics"
     order = 20
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Show the monitor status and offer to toggle it or review heard nodes.
-
-        Args:
-            ctx: Shared application context.
-
-        Returns:
-            A parameter dict naming the chosen ``action``, or ``None`` if cancelled.
-        """
-        monitor = ctx.monitor
-        toggle_label = "Turn monitoring OFF" if monitor.enabled else "Turn monitoring ON"
-        choice = await ctx.ui.select(
-            f"Passive monitor — {monitor.status_text()}",
-            [
-                Choice(toggle_label, value="toggle"),
-                Choice("View heard nodes (all time)", value="view"),
-                Separator(" "),
-                Choice("Back", value="__back__"),
-            ],
-        )
-        if choice in (None, "__back__"):
-            return None
-        return {"action": choice}
-
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Run the control-panel action directly, without a logged ``runs`` row.
+        """Run directly, without a logged ``runs`` row.
 
-        The monitor entry is a control panel, not a measurement, so it is deliberately
-        not wrapped in run-logging (unlike the base :meth:`Tool.execute`). The background
-        capture session records its own ``monitor`` run instead.
+        The heard-node review is a read of existing history, not a measurement, so it is
+        deliberately not wrapped in run-logging (unlike the base :meth:`Tool.execute`).
+        The CLI capture's observations are recorded under the monitor service's own
+        ``monitor`` run instead.
 
         Args:
             ctx: Shared application context.
-            params: The chosen ``action``.
+            params: Parameters for this invocation.
 
         Returns:
             The :class:`ToolResult` from :meth:`run`.
@@ -78,47 +58,95 @@ class MonitorTool(Tool):
         return await self.run(ctx, params)
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Dispatch the selected control-panel action.
+        """Show the heard-node review, or run the CLI's bounded capture.
 
         Args:
             ctx: Shared application context.
-            params: ``action`` — ``"toggle"`` or ``"view"``.
+            params: Empty for the menu's review; ``action="capture"`` plus ``seconds``
+                for the CLI capture.
 
         Returns:
             A :class:`ToolResult` describing the outcome.
         """
-        if params.get("action") == "view":
-            return self._view(ctx)
-        return await self._toggle(ctx)
+        if params.get("action") == "capture":
+            return await self._capture(ctx, params)
+        return self._view(ctx)
 
     @staticmethod
-    async def _toggle(ctx: AppContext) -> ToolResult:
-        """Flip background monitoring on or off, surfacing any start failure.
+    async def _capture(ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Record overheard packets in the foreground for a bounded window (CLI only).
+
+        Connects the device, ensures history recording and the event hub are running,
+        and tails each overheard packet to the console until the window ends (or the
+        user interrupts). Observations are persisted by the monitor service exactly as
+        in an interactive session; this adds a live console view and a window-scoped
+        heard-node summary on top.
 
         Args:
             ctx: Shared application context.
+            params: ``seconds`` — how long to capture (``0``/``None`` = until Ctrl-C).
 
         Returns:
-            A :class:`ToolResult` reporting the new state.
+            A :class:`ToolResult` with the window's packet and node counts.
         """
-        try:
-            now_on = await ctx.monitor.toggle()
-        except Exception as exc:  # noqa: BLE001 - report cleanly, keep the menu alive
-            return ToolResult(
-                summary={"enabled": ctx.monitor.enabled, "active": ctx.monitor.active,
-                         "error": str(exc)},
-                message=f"[warn]monitoring enabled but capture couldn't start:[/warn] {exc}",
+        seconds = int(params.get("seconds") or 0)
+        await ctx.device()  # surface connection problems before announcing the capture
+        await ctx.monitor.start()  # register history recording before the hub pumps
+        await ctx.events.start()
+        ctx.console.print(
+            "[muted]monitoring"
+            f"{f' for {seconds}s' if seconds else ' — press Ctrl-C to stop'}…[/muted]"
+        )
+        seen: list[Observation] = []
+
+        def on_observation(event: MeshEvent) -> None:
+            obs = event.observation
+            if obs is None:
+                return
+            seen.append(obs)
+            stamp = obs.observed_at.astimezone().strftime("%H:%M:%S")
+            who = obs.name or obs.node or "?"
+            snr = f" [muted]{obs.snr:+.1f} dB[/muted]" if obs.snr is not None else ""
+            rssi = f" [muted]{obs.rssi:.0f} dBm[/muted]" if obs.rssi is not None else ""
+            loc = " [ok]●[/ok]" if obs.lat is not None else ""
+            ctx.console.print(
+                f"[muted]{stamp}[/muted] [accent]{who}[/accent]{snr}{rssi}{loc}"
             )
-        # No confirmation message: the new state is already shown live in the header's
-        # monitor indicator, so a result window here would just be redundant noise.
-        return ToolResult(summary={"enabled": now_on, "active": ctx.monitor.active})
+
+        unsubscribe = ctx.events.subscribe(on_observation, EventKind.OBSERVATION)
+        try:
+            if seconds:
+                await asyncio.sleep(seconds)
+            else:
+                await asyncio.Event().wait()  # until Ctrl-C / cancellation
+        except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - interactive
+            pass
+        finally:
+            unsubscribe()
+            await ctx.monitor.stop()  # close the run row so the capture is a full record
+
+        by_node: dict[str, list[Observation]] = {}
+        for obs in seen:
+            by_node.setdefault(obs.node, []).append(obs)
+        nodes = [HeardNode.from_observations(node, group) for node, group in by_node.items()]
+        if nodes:
+            nodes.sort(key=lambda n: n.last_seen, reverse=True)
+            ctx.ui.show(_heard_table(nodes, lambda _node: None))
+        return ToolResult(
+            summary={"seconds": seconds, "packets": len(seen), "nodes": len(nodes)},
+            message=(
+                f"[ok]✓[/ok] heard [brand]{len(seen)}[/brand] "
+                f"packet{'' if len(seen) == 1 else 's'} from "
+                f"[brand]{len(nodes)}[/brand] node{'' if len(nodes) == 1 else 's'}"
+            ),
+        )
 
     @staticmethod
     def _view(ctx: AppContext) -> ToolResult:
         """Render the all-time heard-node summary from stored observations.
 
         Reads only the database, so it needs no device connection and works whether or
-        not monitoring is currently active.
+        not packets are currently arriving.
 
         Args:
             ctx: Shared application context.
@@ -131,7 +159,9 @@ class MonitorTool(Tool):
             # Names come from the stored observations, so no device lookup is needed.
             ctx.ui.show(_heard_table(heard, lambda _node: None))
         else:
-            ctx.ui.note("[muted]no packets heard yet — turn monitoring on[/muted]")
+            ctx.ui.note(
+                "[muted]no packets heard yet — history accumulates while MeshTerm runs[/muted]"
+            )
 
         packets = sum(n.count for n in heard)
         located = sum(1 for n in heard if n.has_location)
@@ -148,44 +178,23 @@ class MonitorTool(Tool):
         )
 
     def register_cli(self, app: typer.Typer) -> None:
-        """Register the ``monitor`` subcommand.
+        """Register the ``monitor`` subcommand (the bounded foreground capture).
 
         Args:
             app: The Typer application.
         """
-        from ..core.monitor_store import MonitorStore
+        from ..cli import run_tool_command
 
-        @app.command(name=self.name, help=self.help)
+        @app.command(
+            name=self.name,
+            help="Capture overheard packets live for a while and summarize them",
+        )
         def _monitor(
-            on: bool = typer.Option(
-                False, "--on", help="Enable background monitoring for future sessions"
-            ),
-            off: bool = typer.Option(
-                False, "--off", help="Disable background monitoring"
+            seconds: int = typer.Option(
+                0, "--seconds", "-s", help="How long to capture (0 = until Ctrl-C)"
             ),
         ) -> None:
-            from ..cli import _state
-
-            if on and off:
-                raise typer.BadParameter("Pass only one of --on / --off.")
-            assert _state is not None  # set by the callback before any subcommand runs
-            ctx = _state
-            store = MonitorStore(ctx.settings.config_dir / "monitor.json")
-
-            if on or off:
-                store.save_enabled(on)
-                state = "[ok]on[/ok]" if on else "[muted]off[/muted]"
-                ctx.console.print(
-                    f"[ok]✓[/ok] background monitoring set {state} for future "
-                    "interactive sessions"
-                )
-                return
-            # No flags: report the current preference and history size.
-            enabled = "[ok]on[/ok]" if store.load_enabled() else "[muted]off[/muted]"
-            ctx.console.print(
-                f"background monitoring is {enabled} · "
-                f"[brand]{ctx.repo.observation_count()}[/brand] observations logged all-time"
-            )
+            run_tool_command(self, {"action": "capture", "seconds": seconds})
 
 
 def _heard_table(heard: list[HeardNode], resolve) -> Table:  # noqa: ANN001

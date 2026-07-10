@@ -302,7 +302,7 @@ async def test_reconnect_rebuilds_device_and_restores_services(tmp_path: Path) -
     ctx = _make_ctx(tmp_path)
     try:
         await ctx.events.start()
-        await ctx.monitor.enable()  # start recording (also starts the hub)
+        await ctx.monitor.start()  # start recording on the already-running hub
         await ctx.chat.start()
         original = await ctx.device()
         assert ctx.events.active and ctx.monitor.active and ctx.chat.active
@@ -400,7 +400,7 @@ async def test_reconnect_restores_services_after_failed_attempts(
     ctx = _make_ctx(tmp_path)
     try:
         await ctx.events.start()
-        await ctx.monitor.enable()
+        await ctx.monitor.start()
         await ctx.chat.start()
         await ctx.device()
         assert ctx.events.active and ctx.monitor.active and ctx.chat.active
