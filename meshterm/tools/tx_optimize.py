@@ -3,8 +3,13 @@
 You force a path (just like ``trace``) ending at the **target** node where SNR is
 measured. The node one hop *before* the target — one you hold admin rights on — is the
 node whose transmit power gets swept and tuned. Admin passwords are remembered between
-runs, progress streams live like a trace, and the winning power is written back to the
-node when the sweep finishes.
+runs.
+
+In the interactive menu one prompt picks the path and the live sweep screen
+(:mod:`meshterm.ui.tx_screen`) takes it from there: levels land in a bar chart as they
+are measured, and the apply decision is made *after* the sweep, over the evidence. On the
+CLI it stays a scriptable one-shot with the full flag set (range, step, samples,
+``--apply``, the HTML chart), and progress streams like a trace.
 """
 
 from __future__ import annotations
@@ -37,65 +42,121 @@ class TxOptimizeTool(Tool):
     order = 15  # right after Trace, its measurement sibling
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Interactively gather the path, sampling, range, and apply choices.
+        """Pick the path for the live sweep (everything else defaults, tuned in-screen).
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            A parameter dict, or ``None`` if the user cancelled.
+            ``{"live": True, "path": spec}``, or ``None`` if the user cancelled.
         """
         device = await ctx.device()
         contacts = await device.get_contacts()
         choices = [c.name for c in contacts]
 
-        path_prompt = (
-            "Path to the target (comma-separated contacts/hex, ending at the target;\n"
-            "the node just before the target is the one we'll tune):"
+        prompt = (
+            "Comma-separated contacts/hex, ending at the target — "
+            "the node just before it is tuned"
         )
         validate_path = lambda v: _validate_link_path(v, contacts)  # noqa: E731
         if choices:
-            path_spec = await ctx.ui.autocomplete(path_prompt, choices, validate=validate_path)
+            path_spec = await ctx.ui.autocomplete(
+                "Path to the target", choices, prompt=prompt, validate=validate_path
+            )
         else:
-            path_spec = await ctx.ui.text(path_prompt, validate=validate_path)
+            path_spec = await ctx.ui.text(
+                "Path to the target", prompt=prompt, validate=validate_path
+            )
         if not path_spec:
             return None
+        return {"live": True, "path": path_spec.strip()}
 
-        samples = await ctx.ui.text(
-            f"Traces per TX level? (1-{MAX_SAMPLES})", default="3", validate=_is_valid_sample_count
-        )
-        if samples is None:
-            return None
-        tx_min = await ctx.ui.text(
-            "Lowest TX power to try:", default=str(ctx.settings.tx_opt_min), validate=_is_int
-        )
-        if tx_min is None:
-            return None
-        tx_max = await ctx.ui.text(
-            "Highest TX power to try:", default=str(ctx.settings.tx_opt_max), validate=_is_int
-        )
-        if tx_max is None:
-            return None
-        step = await ctx.ui.text("Coarse step:", default="3", validate=_is_valid_sample_count)
-        if step is None:
-            return None
-        apply = await ctx.ui.confirm(
-            "Set the winning TX power on the node afterward?", default=True
-        )
-        if apply is None:
-            return None
+    async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Run — without the outer run row on the live path.
 
-        return {
-            "path": path_spec.strip(),
-            "samples": int(samples),
-            "tx_min": int(tx_min),
-            "tx_max": int(tx_max),
-            "step": int(step),
-            "apply": bool(apply),
-            "viz": True,
-        }
+        The live screen opens its own ``runs`` row for the sweep (matching what a
+        scripted invocation records), so wrapping the screen session in another row
+        would double-log it. Scripted runs keep the base class's logging.
+
+        Args:
+            ctx: Shared application context.
+            params: Parameters for this invocation.
+
+        Returns:
+            The :class:`ToolResult` from :meth:`run`.
+        """
+        if params.get("live"):
+            return await self.run(ctx, params)
+        return await super().execute(ctx, params)
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Open the live sweep (menu) or run the scripted optimization (CLI).
+
+        Args:
+            ctx: Shared application context.
+            params: ``live`` + ``path`` from the menu prompt; or ``path``, ``samples``,
+                ``tx_min``, ``tx_max``, ``step``, ``apply``, optional ``password``/
+                ``viz``, and the injected ``_run_id`` from the CLI.
+
+        Returns:
+            A :class:`ToolResult` with the optimum and any chart path.
+        """
+        if params.get("live"):
+            return await self._run_live(ctx, str(params["path"]))
+        return await self._run_cli(ctx, params)
+
+    # -- interactive (menu) ---------------------------------------------------------
+
+    async def _run_live(self, ctx: AppContext, path_spec: str) -> ToolResult:
+        """Resolve the link, log in, and hand off to the live sweep screen.
+
+        Args:
+            ctx: Shared application context.
+            path_spec: The user's comma-separated path entry (names and/or hex).
+
+        Returns:
+            A :class:`ToolResult` echoing the sweep's recorded summary.
+        """
+        from ..ui.tx_screen import open_tx_optimize
+
+        device = await ctx.device()
+        contacts = await device.get_contacts()
+        path = trace_runner.parse_trace_path(path_spec, contacts)
+        admin_node, target_label = _resolve_link(path, contacts)
+        await self._login(ctx, admin_node, {})
+
+        summary = await open_tx_optimize(
+            ctx, admin_node=admin_node, target_label=target_label, path=path
+        )
+        return ToolResult(summary=summary)
+
+    async def _login(
+        self, ctx: AppContext, admin_node: Contact, params: dict[str, Any]
+    ) -> None:
+        """Authenticate against the admin node, remembering a working password.
+
+        Args:
+            ctx: Shared application context.
+            admin_node: The node we're about to tune.
+            params: Tool params (may carry an explicit ``password`` on the CLI).
+
+        Raises:
+            DeviceCommandError: If the login is rejected (the stored password, now
+                known bad, is forgotten so the next run asks fresh).
+        """
+        device = await ctx.device()
+        password = await self._resolve_password(ctx, admin_node, params)
+        if not await device.admin_login(admin_node, password):
+            ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
+            raise DeviceCommandError(
+                f"admin login to {admin_node.name!r} failed (wrong password?). "
+                "The saved password was cleared; re-run to enter a new one."
+            )
+        ctx.admin_store.remember(admin_node, password)
+
+    # -- scripted (CLI) ---------------------------------------------------------------
+
+    async def _run_cli(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Resolve the link, log in, sweep TX power, render results, and apply the winner.
 
         Args:
@@ -119,15 +180,8 @@ class TxOptimizeTool(Tool):
         if int(params.get("samples", 3)) > MAX_SAMPLES:
             ctx.ui.note(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
 
-        password = await self._resolve_password(ctx, admin_node, params)
         ctx.ui.note(f"[muted]logging in to[/muted] [brand]{admin_node.name}[/brand] [muted]…[/muted]")
-        if not await device.admin_login(admin_node, password):
-            ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
-            raise DeviceCommandError(
-                f"admin login to {admin_node.name!r} failed (wrong password?). "
-                "The saved password was cleared; re-run to enter a new one."
-            )
-        ctx.admin_store.remember(admin_node, password)
+        await self._login(ctx, admin_node, params)
 
         ctx.ui.note(
             f"[muted]tuning[/muted] [brand]{admin_node.name}[/brand] "
@@ -347,42 +401,6 @@ def _validate_link_path(value: str, contacts: list[Contact]) -> bool | str:
     if len([h for h in path.split(",") if h]) < 2:
         return "Need at least two hops: the node to tune, then the target."
     return True
-
-
-def _is_valid_sample_count(value: str) -> bool | str:
-    """Validate a positive count in ``1..MAX_SAMPLES`` for a questionary text answer.
-
-    Args:
-        value: Raw input.
-
-    Returns:
-        ``True`` if valid, otherwise an error message string.
-    """
-    try:
-        count = int(value)
-    except ValueError:
-        return "Enter a whole number."
-    if count < 1:
-        return "Enter a number greater than zero."
-    if count > MAX_SAMPLES:
-        return f"Maximum {MAX_SAMPLES}."
-    return True
-
-
-def _is_int(value: str) -> bool | str:
-    """Validate that a questionary answer is a whole number.
-
-    Args:
-        value: Raw input.
-
-    Returns:
-        ``True`` if valid, otherwise an error message string.
-    """
-    try:
-        int(value)
-        return True
-    except ValueError:
-        return "Enter a whole number."
 
 
 def _fmt_snr(snr: Optional[float]) -> str:

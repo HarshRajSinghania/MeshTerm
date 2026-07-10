@@ -32,6 +32,11 @@ from . import trace_runner
 
 LevelCallback = Callable[[int, int, TxLevelResult], None]
 PersistLevel = Callable[[TxLevelResult], None]
+PhaseCallback = Callable[[str], None]
+
+#: The search phases, in order, as reported to ``on_phase``: the coarse grid sweep, the
+#: integer fill-in around the coarse winner, and the extra-samples re-measure of the leader.
+PHASES = ("coarse", "refine", "verify")
 
 #: On a near-tie in target SNR (within this many dB of the best), the lower TX power wins.
 DEFAULT_SNR_TOLERANCE_DB = 1.0
@@ -142,6 +147,7 @@ async def optimize_tx_power(
     cooldown_s: float = 1.0,
     snr_tolerance: float = DEFAULT_SNR_TOLERANCE_DB,
     on_level: Optional[LevelCallback] = None,
+    on_phase: Optional[PhaseCallback] = None,
     persist_level: Optional[PersistLevel] = None,
     persist_trace: Optional[Callable] = None,
 ) -> TxOptResult:
@@ -168,6 +174,8 @@ async def optimize_tx_power(
         cooldown_s: Delay between individual traces (duty-cycle safety).
         snr_tolerance: dB band for the lower-power tie-break (see :func:`select_best`).
         on_level: Optional progress callback ``(completed, total, level_result)``.
+        on_phase: Optional callback announcing each search phase as it begins (one of
+            :data:`PHASES`), so a live view can say *what kind* of measuring is happening.
         persist_level: Optional callback to store each level's aggregated result.
         persist_trace: Optional callback to store each individual trace.
 
@@ -221,12 +229,16 @@ async def optimize_tx_power(
         return level
 
     try:
+        if on_phase is not None:
+            on_phase("coarse")
         for tx in coarse:
             await measure_level(tx)
 
         best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
 
         if refine:
+            if on_phase is not None:
+                on_phase("refine")
             lo = max(tx_min, best.tx_power - coarse_step + 1)
             hi = min(tx_max, best.tx_power + coarse_step - 1)
             for tx in range(lo, hi + 1):
@@ -237,6 +249,8 @@ async def optimize_tx_power(
         if verify:
             # Re-measure the leader with extra samples; if it was an outlier the larger
             # sample will pull it back and a steadier neighbor can take over.
+            if on_phase is not None:
+                on_phase("verify")
             await measure_level(best.tx_power)
             best = select_best(list(levels.values()), snr_tolerance=snr_tolerance)
 

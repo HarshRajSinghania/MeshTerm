@@ -342,6 +342,29 @@ async def test_tx_optimizer_no_apply_restores_original(tmp_path: Path) -> None:
     assert await device.get_remote_tx_power(admin) == 15  # restored, not the winner
 
 
+async def test_tx_optimizer_reports_phases_in_order() -> None:
+    """on_phase announces each enabled search stage, in coarse → refine → verify order."""
+    from meshterm.services import tx_optimizer
+
+    device, admin, target, path = await _setup_link()
+    phases: list[str] = []
+
+    await tx_optimizer.optimize_tx_power(
+        device, target.name, admin, path,
+        samples_per_level=2, coarse_step=6, apply=False, cooldown_s=0,
+        on_phase=phases.append,
+    )
+    assert phases == list(tx_optimizer.PHASES)
+
+    phases.clear()
+    await tx_optimizer.optimize_tx_power(
+        device, target.name, admin, path,
+        samples_per_level=2, coarse_step=6, refine=False, verify=False,
+        apply=False, cooldown_s=0, on_phase=phases.append,
+    )
+    assert phases == ["coarse"]  # disabled stages are never announced
+
+
 def test_select_best_prefers_reliability_then_lowest_power() -> None:
     """A 100%-reliable level beats a flakier higher-SNR one; ties go to lower TX."""
     from meshterm.core.models import TraceStats, TxLevelResult
