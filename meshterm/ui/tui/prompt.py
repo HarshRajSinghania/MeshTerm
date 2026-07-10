@@ -45,10 +45,17 @@ class _LineEditor:
     cursor position; rendering shows the cursor as a reverse-video cell.
     """
 
-    def __init__(self, initial: str = "") -> None:
-        """Start the editor with ``initial`` text and the cursor at its end."""
+    def __init__(self, initial: str = "", *, max_length: Optional[int] = None) -> None:
+        """Start the editor with ``initial`` text and the cursor at its end.
+
+        Args:
+            initial: The starting buffer contents.
+            max_length: Optional hard cap on the number of characters; further insertions are
+                dropped (or a paste truncated to fit). ``None`` leaves the length unbounded.
+        """
         self.text = initial
         self.cursor = len(initial)
+        self._max_length = max_length
 
     def edit(self, action: str, data: str = "") -> bool:
         """Apply an editing action, returning ``True`` if it changed the buffer/cursor.
@@ -61,6 +68,11 @@ class _LineEditor:
             ``True`` if the action was an editing action handled here.
         """
         if action == "text" and data.isprintable():
+            if self._max_length is not None:
+                room = self._max_length - len(self.text)
+                if room <= 0:
+                    return False  # at capacity — swallow the key without changing the buffer
+                data = data[:room]  # a multi-char paste fills only the remaining slots
             self.text = self.text[: self.cursor] + data + self.text[self.cursor :]
             self.cursor += len(data)
         elif action == "backspace" and self.cursor > 0:
@@ -112,7 +124,9 @@ class _LineEditor:
             i += 1
         return i
 
-    def render(self, mask: bool = False, *, overflow_at: Optional[int] = None) -> Text:
+    def render(
+        self, mask: bool = False, *, overflow_at: Optional[int] = None, slots: Optional[int] = None
+    ) -> Text:
         """Render the current line with a reverse-video cursor cell.
 
         Args:
@@ -120,7 +134,12 @@ class _LineEditor:
             overflow_at: Character index at which the text spills past a byte budget; that
                 character and everything after it are shown in the error style so the user
                 can see exactly what to trim. ``None`` (the default) styles the line plainly.
+            slots: When set, render exactly this many fixed positions (a masked PIN field):
+                typed positions show a bullet, still-blank ones a muted centre dot. Takes
+                precedence over ``mask``/``overflow_at``.
         """
+        if slots is not None:
+            return self._render_slots(slots)
         shown = "•" * len(self.text) if mask else self.text
         text = Text("› ", style="accent")
         for i, ch in enumerate(shown):
@@ -131,6 +150,27 @@ class _LineEditor:
                 text.append(ch, style="err" if over else None)
         if self.cursor >= len(shown):  # cursor past the last character → trailing block
             text.append(" ", style="reverse")
+        return text
+
+    def _render_slots(self, slots: int) -> Text:
+        """Render a fixed-width masked field: filled bullets and centred dots for blanks.
+
+        Used for PIN entry — each of ``slots`` positions shows a bullet (``•``) once typed and
+        a muted centre dot (``·``) while still blank, spaced apart so the field reads as a row
+        of PIN boxes rather than a growing line. The cursor position is drawn reverse-video.
+        """
+        filled = len(self.text)
+        text = Text("› ", style="accent")
+        for i in range(slots):
+            if i:
+                text.append(" ")
+            glyph = "•" if i < filled else "·"
+            if i == self.cursor:
+                text.append(glyph, style="reverse")  # the active slot
+            elif i < filled:
+                text.append(glyph)  # an entered digit
+            else:
+                text.append(glyph, style="muted")  # a blank still to fill
         return text
 
 
@@ -210,6 +250,10 @@ class PinDialog(Screen):
 
     footer_hint = "Enter connect · Esc cancel"
 
+    #: MeshCore pairing PINs are a fixed six digits, so the field is capped at six characters
+    #: and drawn as six slots (typed digits as bullets, blanks as centre dots).
+    PIN_LENGTH = 6
+
     def __init__(self, device_name: str, *, error: str = "", help_text: str = "") -> None:
         """Build the PIN dialog.
 
@@ -224,14 +268,15 @@ class PinDialog(Screen):
         self._device = device_name
         self._error = error
         self._help = help_text
-        self._editor = _LineEditor("")
+        self._editor = _LineEditor("", max_length=self.PIN_LENGTH)
 
     def render_body(self, width: int) -> list[str]:
-        """Render the prompt, the masked field, any hint, and a rejected-PIN error."""
+        """Render the prompt, the six-slot PIN field, any hint, and a rejected-PIN error."""
         prompt = Text()
         prompt.append(self._device, style="brand")
         prompt.append(" needs a pairing PIN to connect.")
-        parts: list[RenderableType] = [prompt, Text(""), self._editor.render(mask=True)]
+        field = self._editor.render(slots=self.PIN_LENGTH)
+        parts: list[RenderableType] = [prompt, Text(""), field]
         if self._help:
             parts.append(Text(self._help, style="muted"))
         if self._error:

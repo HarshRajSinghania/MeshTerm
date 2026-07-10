@@ -419,6 +419,47 @@ def test_text_screen_password_masks() -> None:
     assert "•" in rendered
 
 
+def test_line_editor_caps_length_and_truncates_paste() -> None:
+    """A max_length editor swallows keys past the cap and truncates an over-long paste."""
+    from meshterm.ui.tui.prompt import _LineEditor
+
+    editor = _LineEditor("", max_length=6)
+    for ch in "123456":
+        assert editor.edit("text", ch) is True
+    assert editor.edit("text", "9") is False  # at capacity — key swallowed, buffer unchanged
+    assert editor.text == "123456"
+
+    pasted = _LineEditor("", max_length=6)
+    pasted.edit("text", "12345678")  # one over-long insert
+    assert pasted.text == "123456"  # filled only the six available slots
+
+
+def test_pin_dialog_shows_six_slots_with_dots_for_blanks() -> None:
+    """The PIN field is six fixed slots: bullets for typed digits, centre dots for blanks."""
+    from meshterm.ui.tui.prompt import PinDialog
+
+    dialog = PinDialog("MeshCore-Homestead")
+    # Empty: six blank centre dots, no bullets yet.
+    field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
+    assert field.count("·") == 6
+    assert "•" not in field
+
+    # After three digits: three bullets, three remaining centre dots.
+    for ch in "701":
+        dialog.handle("text", ch)
+    field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
+    assert field.count("•") == 3
+    assert field.count("·") == 3
+
+    # A full six-digit PIN fills every slot; typing more is capped at six.
+    for ch in "307999":
+        dialog.handle("text", ch)
+    assert dialog._editor.text == "123456"
+    field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
+    assert field.count("•") == 6
+    assert "·" not in field
+
+
 def test_confirm_toggle_and_default() -> None:
     """The confirm toggles with arrows/letters and returns the chosen bool."""
     screen = ConfirmScreen("sure?", default=True)
