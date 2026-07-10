@@ -6,8 +6,10 @@ implementations back it:
 * :class:`PlainUi` (scripted CLI): prints immediately and uses a Rich progress bar, so CLI
   behavior is byte-for-byte what it was before the TUI existed.
 * :class:`TuiUi` (interactive menu): collects a tool's output and presents it in a bounded,
-  scrollable result window, and routes every prompt/progress through the full-screen
-  :class:`~meshterm.ui.tui.session.TuiSession`.
+  scrollable result window — or, when the whole result is just a line or two of text
+  ("✓ flood advertisement sent"), as a small centered popup with an OK button instead of
+  a full window (see :func:`_collapse_to_message`) — and routes every prompt/progress
+  through the full-screen :class:`~meshterm.ui.tui.session.TuiSession`.
 
 The interactive prompt methods are only ever reached from a tool's ``prompt_params`` (menu
 only), so :class:`PlainUi` leaves them unsupported.
@@ -25,6 +27,44 @@ from .tui.session import TuiSession
 
 #: A validator returns ``True`` when input is acceptable, or an error message to show.
 Validator = Callable[[str], "bool | str"]
+
+#: Buffered output no taller than this many lines qualifies for the message dialog —
+#: the OK popup :meth:`TuiUi.present` shows instead of a full result window. Kept small:
+#: a dialog is an acknowledgement, not a reading surface.
+_DIALOG_MAX_LINES = 3
+
+#: ... and no line may be wider than this many cells, so the popup stays a tidy box on a
+#: typical terminal and never has to wrap. Anything wider (a long path, a verbose error)
+#: falls back to the scrollable result window, which wraps properly.
+_DIALOG_MAX_CELLS = 76
+
+
+def _collapse_to_message(buffered: list[RenderableType]) -> Optional[Text]:
+    """Collapse small, text-only buffered output into one dialog message.
+
+    This is the gate for :meth:`TuiUi.present`'s popup upgrade: output qualifies only
+    when everything buffered is plain note text (:class:`Text` — a table or panel from
+    ``show()`` disqualifies the lot) totalling at most :data:`_DIALOG_MAX_LINES` lines,
+    none wider than :data:`_DIALOG_MAX_CELLS` cells. Styling (the ``[ok]``/``[err]``
+    markup on outcome notes) is preserved in the joined message.
+
+    Args:
+        buffered: The renderables collected since the last present.
+
+    Returns:
+        The lines joined into one :class:`Text`, or ``None`` when the output belongs in
+        the scrollable result window instead.
+    """
+    if not buffered or not all(isinstance(item, Text) for item in buffered):
+        return None
+    lines: list[Text] = []
+    for item in buffered:
+        lines.extend(item.split("\n") or [item])
+    if len(lines) > _DIALOG_MAX_LINES:
+        return None
+    if any(line.cell_len > _DIALOG_MAX_CELLS for line in lines):
+        return None
+    return Text("\n").join(lines)
 
 
 class Ui:
@@ -402,18 +442,28 @@ class TuiUi(Ui):
         self._buffer.append(Text.from_markup(markup))
 
     async def present(self, *, title: str = "") -> None:
-        """Show everything buffered since the last present in a scrollable window.
+        """Show everything buffered since the last present; window or popup to fit.
 
-        Clears the buffer afterward. Does nothing if nothing was buffered (e.g. a tool
-        that only produced a file artifact and an empty message).
+        A short, text-only outcome (a line or two of notes — "✓ flood advertisement
+        sent") floats as a centered OK dialog over the current screen, so a one-line
+        result never commandeers the whole frame; anything bigger, or anything holding
+        a table/panel, opens the bounded scrollable result window as before (see
+        :func:`_collapse_to_message` for the exact gate). Clears the buffer afterward.
+        Does nothing if nothing was buffered (e.g. a tool that only produced a file
+        artifact and an empty message).
 
         Args:
-            title: Heading for the result window.
+            title: Heading for the result window or popup.
         """
         if not self._buffer:
             return
-        body = self._buffer[0] if len(self._buffer) == 1 else Group(*self._buffer)
+        buffered = self._buffer
         self._buffer = []
+        message = _collapse_to_message(buffered)
+        if message is not None:
+            await self.session.message_dialog(message, title=title)
+            return
+        body = buffered[0] if len(buffered) == 1 else Group(*buffered)
         await self.session.scroll(body, title=title)
 
     def discard(self) -> None:

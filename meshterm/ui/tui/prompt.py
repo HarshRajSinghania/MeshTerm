@@ -388,7 +388,7 @@ class ButtonDialog(Screen):
 
     def __init__(
         self,
-        prompt: str,
+        prompt: "str | Text",
         buttons: list[tuple[str, object]],
         *,
         title: str = "",
@@ -403,7 +403,10 @@ class ButtonDialog(Screen):
         """Build a button dialog.
 
         Args:
-            prompt: The question shown above the buttons.
+            prompt: The question shown above the buttons. A plain string is styled with
+                ``prompt_style``; a pre-styled (possibly multi-line) :class:`Text` is
+                rendered as-is, so a caller can float richly-marked output — e.g. the
+                message dialog's "[ok]✓[/ok] …" outcome lines — without losing colour.
             buttons: ``(label, value)`` pairs laid out left to right.
             title: Optional dialog heading.
             default: Index of the initially highlighted button.
@@ -428,6 +431,18 @@ class ButtonDialog(Screen):
         self._button_style = button_style
         self._button_idle_style = button_idle_style
 
+    def _prompt_lines(self) -> list[Text]:
+        """The prompt as one styled :class:`Text` per line.
+
+        A plain-string prompt becomes a single line in ``prompt_style``; a :class:`Text`
+        prompt keeps its own spans and is split on newlines so each line can be centered
+        independently (centering the block as a whole would skew every line to the
+        longest one's margin).
+        """
+        if isinstance(self._prompt, Text):
+            return list(self._prompt.split("\n")) or [Text("")]
+        return [Text(self._prompt, style=self._prompt_style)]
+
     @property
     def _button_row_width(self) -> int:
         """Display width of the button row (``  Label  `` cells joined by 4-space gaps)."""
@@ -439,12 +454,13 @@ class ButtonDialog(Screen):
     def dialog_width(self) -> int:
         """Natural outer width so the frame sizes the box to its content, not the terminal.
 
-        The widest of the prompt, button row, title, and footer hint, plus a comfortable
-        margin and the border — so a short confirm reads as a tidy box rather than a banner
-        stretched across the screen. The compositor still caps this to the terminal.
+        The widest of the prompt lines, button row, title, and footer hint, plus a
+        comfortable margin and the border — so a short confirm reads as a tidy box rather
+        than a banner stretched across the screen. The compositor still caps this to the
+        terminal.
         """
         inner = max(
-            cell_len(self._prompt),
+            max(line.cell_len for line in self._prompt_lines()),
             self._button_row_width,
             cell_len(self.title),
             cell_len(self.footer_hint),
@@ -452,15 +468,15 @@ class ButtonDialog(Screen):
         return inner + 12  # panel padding + border, plus horizontal breathing room
 
     def render_body(self, width: int) -> list[str]:
-        """Render the prompt centered above a centered row of buttons."""
+        """Render the prompt line(s) centered above a centered row of buttons."""
         row = Text()
         for i, (label, _value) in enumerate(self._buttons):
             if i:
                 row.append("    ")
             style = self._button_style if i == self._index else self._button_idle_style
             row.append(f"  {label}  ", style=style)
-        prompt = Text(self._prompt, style=self._prompt_style)
-        return render_lines(Group(_center(prompt, width), Text(""), _center(row, width)), width)
+        parts = [_center(line, width) for line in self._prompt_lines()]
+        return render_lines(Group(*parts, Text(""), _center(row, width)), width)
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, commit on Enter or a shortcut key, or cancel on Esc."""

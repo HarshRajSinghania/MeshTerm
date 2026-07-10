@@ -512,6 +512,25 @@ def test_button_dialog_escape_cancels() -> None:
     assert _run(screen, "escape") is CANCEL
 
 
+def test_button_dialog_renders_a_styled_text_prompt_line_per_line() -> None:
+    """A pre-styled multi-line Text prompt renders each line, keeping its content."""
+    message = Text.from_markup("[ok]✓[/ok] clock set\n[ok]●[/ok] wrote backup.toml")
+    screen = ButtonDialog(message, [("OK", "ok")])
+    body = "\n".join(screen.render_body(60))
+    plain = Text.from_ansi(body).plain
+    assert "✓ clock set" in plain
+    assert "● wrote backup.toml" in plain
+    assert "OK" in plain
+
+
+def test_button_dialog_sizes_to_the_widest_prompt_line() -> None:
+    """dialog_width follows the longest line of a multi-line Text prompt."""
+    wide = "a really quite long outcome line for sizing"
+    message = Text(f"short\n{wide}")
+    screen = ButtonDialog(message, [("OK", "ok")])
+    assert screen.dialog_width == len(wide) + 12  # matches the margin the dialog adds
+
+
 def test_autocomplete_suggests_and_tab_completes() -> None:
     """Suggestions match case-insensitively; Tab fills the highlighted one; Enter commits."""
     screen = AutocompleteScreen("target?", ["Alice", "Bob", "alfred"])

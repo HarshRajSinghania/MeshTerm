@@ -69,6 +69,29 @@ _KEY_ACTIONS: dict[Any, str] = {
 }
 
 
+def _message_border(message: "Text | str") -> str:
+    """Pick a message dialog's border style from the strongest tone in the text.
+
+    Outcome notes carry their severity as theme spans (``[err]``, ``[warn]``, ``[ok]``),
+    so the dialog frame can echo it: an error message gets the ``err`` border, a warning
+    (e.g. "device rebooting") the cautionary one, and anything else — successes included —
+    the standard accent. A plain string carries no spans and always reads as neutral.
+
+    Args:
+        message: The dialog's message, styled or plain.
+
+    Returns:
+        The Rich style name for the dialog border.
+    """
+    if isinstance(message, Text):
+        styles = {str(span.style) for span in message.spans}
+        if "err" in styles:
+            return "err"
+        if "warn" in styles:
+            return "warn"
+    return "accent"
+
+
 class TuiSession:
     """A running full-screen TUI: screen stack, frame, input loop, and async prompts."""
 
@@ -405,7 +428,7 @@ class TuiSession:
 
     async def button_dialog(
         self,
-        prompt: str,
+        prompt: "str | Text",
         buttons: list[tuple[str, Any]],
         *,
         title: str = "",
@@ -423,6 +446,7 @@ class TuiSession:
         ButtonDialog`): the colours, prompt, buttons, and single-key shortcuts are all
         parametrised, so a caller can theme it (e.g. a destructive action in red) or wire
         instant y/n keys. ``keys`` maps a shortcut character to the value it commits.
+        The prompt may be a pre-styled :class:`Text` (see the ButtonDialog docs).
         """
         screen = ButtonDialog(
             prompt,
@@ -467,6 +491,41 @@ class TuiSession:
             )
         )
         return None if result is CANCEL else result
+
+    async def message_dialog(self, message: "Text | str", *, title: str = "") -> None:
+        """Show a short outcome in a centered popup with a single OK button.
+
+        The lightweight acknowledgement counterpart of :meth:`scroll`: a one-line result
+        ("✓ flood advertisement sent") doesn't warrant a full result window, so it floats
+        as a small dialog over whatever screen is beneath — Enter (OK) or Esc dismisses
+        it. The border takes the message's strongest tone (see :func:`_message_border`),
+        so an error pops red while a success stays in the standard accent.
+
+        When the screen stack is empty — a tool run straight from the main menu, which is
+        popped while the tool executes — a blank base frame is pushed first, because a
+        lone floating screen is otherwise drawn *as* the base (full-frame, no popup); the
+        same trick the reconnect dialog uses.
+
+        Args:
+            message: The outcome to show — a pre-styled :class:`Text` (note markup
+                survives into the dialog) or a plain string.
+            title: Optional dialog heading (typically the tool or action name).
+        """
+        backdrop: Optional[ScrollScreen] = None
+        if not self._stack:
+            backdrop = ScrollScreen("", floating=False, footer_hint="")
+            self.push(backdrop)
+        try:
+            await self.button_dialog(
+                message,
+                [("OK", "ok")],
+                title=title,
+                footer_hint="Enter OK",
+                border_style=_message_border(message),
+            )
+        finally:
+            if backdrop is not None:
+                self.pop(backdrop)
 
     async def scroll(
         self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
