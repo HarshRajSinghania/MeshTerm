@@ -217,8 +217,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # Pin the banner to a fixed vertical anchor that depends only on the terminal height and
     # the banner's own (constant) height, so the wordmark never moves as the box below it
     # swaps contents between splash states (device list → spinner → message). The box hangs
-    # from just under the banner and only *it* grows or shrinks; the logo stays put.
-    top = max(0, rows // 2 - banner_h - gap)
+    # from just under the banner and only *it* grows or shrinks; the logo stays put. The
+    # anchor sits at 2/5 of the terminal rather than the midline so the block reads centered
+    # once the device list has populated (the box only ever grows downward); the brief small
+    # states sit slightly high, the conventional optical placement for dialogs.
+    top = max(0, rows * 2 // 5 - banner_h - gap)
     footnote_h = 2 if screen.footnote else 0  # a blank spacer line plus the note itself
     # Rows left for the box below the fixed banner block: the panel border is 2 rows.
     below = rows - top - banner_h - gap
