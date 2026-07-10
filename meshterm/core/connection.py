@@ -791,6 +791,7 @@ class MeshCoreDevice(Device):
             _log.debug("BLE PIN pairing unavailable (winrt import failed): %s", exc)
             return False
 
+        device = None
         try:
             device = await BluetoothLEDevice.from_bluetooth_address_async(address)
             if device is None:
@@ -802,6 +803,7 @@ class MeshCoreDevice(Device):
                 # Tear the stale bond down, then re-fetch: the pairing object is a snapshot and
                 # won't reflect the unpair, so a fresh device_information is needed to re-pair.
                 await pairing.unpair_async()
+                MeshCoreDevice._close_ble_device(device)  # release the pre-unpair handle
                 device = await BluetoothLEDevice.from_bluetooth_address_async(address)
                 if device is None:
                     return False
@@ -833,6 +835,8 @@ class MeshCoreDevice(Device):
         except Exception as exc:  # noqa: BLE001 - best-effort; caller falls through on False
             _log.debug("BLE ProvidePin pairing attempt failed for %s: %s", self._address, exc)
             return False
+        finally:
+            MeshCoreDevice._close_ble_device(device)
 
     @staticmethod
     def _ble_address_int(address: str) -> Optional[int]:
@@ -852,6 +856,125 @@ class MeshCoreDevice(Device):
             return int(cleaned, 16)
         except ValueError:
             return None
+
+    @staticmethod
+    def _close_ble_device(device) -> None:  # noqa: ANN001 - winrt BluetoothLEDevice
+        """Release a WinRT ``BluetoothLEDevice`` handle, dropping the OS's link to the peripheral.
+
+        Every ``BluetoothLEDevice.from_bluetooth_address_async`` hands back an ``IClosable`` that
+        pins the operating system's ACL connection to the radio open for as long as the object is
+        alive. Unpairing removes the *bond* but never tears down that *link* — the link only goes
+        away when the last handle to it closes. If we leak the handle, Windows reports the device
+        as still "connected" (just unpaired), the peripheral never sees a clean disconnect, and it
+        refuses to re-pair until it is power-cycled. So every helper that opens one of these must
+        close it, even on the error paths.
+
+        Best-effort and silent: a missing ``close`` projection or a double-close is not worth
+        surfacing during teardown.
+        """
+        try:
+            if device is not None:
+                device.close()
+        except Exception as exc:  # noqa: BLE001 - releasing a handle must never raise
+            _log.debug("BLE device handle close failed: %s", exc)
+
+    @staticmethod
+    async def is_ble_paired(address: str) -> bool:
+        """Whether Windows currently holds a bond for the BLE peripheral at ``address``.
+
+        The read-only companion to :meth:`_pair_ble_windows` / :meth:`unpair_ble`: it asks
+        WinRT whether an OS-level pairing exists, so the UI can decide whether an "unpair"
+        affordance is meaningful (a device bonded with a PIN) or moot (an open companion that
+        never bonded, or a serial link). It reflects the *OS bond*, not MeshTerm's remembered
+        record — the two are independent — and holds true across sessions even when this run
+        supplied no PIN, because Windows persists the bond.
+
+        Best-effort and self-contained: returns ``False`` (rather than raising) off Windows,
+        when the winrt projection is unavailable, when the address isn't a parseable MAC, or on
+        any WinRT hiccup — so a caller can treat it as a plain "is there anything to unpair?".
+
+        Args:
+            address: The Bluetooth MAC (``AA:BB:CC:DD:EE:FF`` or dash-separated) to query.
+
+        Returns:
+            ``True`` only when Windows reports a live bond for the device.
+        """
+        if sys.platform != "win32":
+            return False
+        addr = MeshCoreDevice._ble_address_int(address or "")
+        if addr is None:
+            return False
+        try:
+            from winrt.windows.devices.bluetooth import BluetoothLEDevice
+        except Exception as exc:  # noqa: BLE001 - winrt projection unavailable; nothing to unpair
+            _log.debug("BLE pairing query unavailable (winrt import failed): %s", exc)
+            return False
+        device = None
+        try:
+            device = await BluetoothLEDevice.from_bluetooth_address_async(addr)
+            if device is None:
+                return False
+            return bool(device.device_information.pairing.is_paired)
+        except Exception as exc:  # noqa: BLE001 - a status hiccup is not a bond
+            _log.debug("BLE pairing query failed for %s: %s", address, exc)
+            return False
+        finally:
+            MeshCoreDevice._close_ble_device(device)
+
+    @staticmethod
+    async def unpair_ble(address: str) -> bool:
+        """Drop the Windows OS-level bond for the BLE peripheral at ``address`` (Windows only).
+
+        The inverse of :meth:`_pair_ble_windows`: it removes the persisted
+        ``ENCRYPTION_AND_AUTHENTICATION`` bond so the next connection has to re-run the PIN
+        ceremony from scratch — the "forget this pairing" primitive behind the quit dialog's
+        *Unpair & quit*. It touches only the OS bond, never MeshTerm's remembered-device record,
+        which is deliberately left intact (the device keeps its friendly name and stays in the
+        picker; it just asks for its PIN again next time).
+
+        Call it only *after* the companion link is torn down — you can't cleanly drop a bond that
+        an open connection is still using. Best-effort and self-contained: returns a bool rather
+        than raising, and no-ops (returns ``False``) off Windows, when winrt is unavailable, when
+        the address isn't a MAC, or when there is no bond to remove.
+
+        Args:
+            address: The Bluetooth MAC (``AA:BB:CC:DD:EE:FF`` or dash-separated) to unpair.
+
+        Returns:
+            ``True`` if a bond was removed, ``False`` if there was nothing to unpair or the
+            attempt failed.
+        """
+        if sys.platform != "win32":
+            return False
+        addr = MeshCoreDevice._ble_address_int(address or "")
+        if addr is None:
+            return False
+        try:
+            from winrt.windows.devices.bluetooth import BluetoothLEDevice
+            from winrt.windows.devices.enumeration import DeviceUnpairingResultStatus
+        except Exception as exc:  # noqa: BLE001 - winrt projection unavailable; fall through
+            _log.debug("BLE unpair unavailable (winrt import failed): %s", exc)
+            return False
+        device = None
+        try:
+            device = await BluetoothLEDevice.from_bluetooth_address_async(addr)
+            if device is None:
+                return False
+            pairing = device.device_information.pairing
+            if not pairing.is_paired:
+                return False  # nothing bonded — treat as a no-op success-of-intent
+            result = await pairing.unpair_async()
+            status = int(result.status)
+            ok = status == int(DeviceUnpairingResultStatus.UNPAIRED)
+            _log.debug("BLE unpair for %s: status=%d ok=%s", address, status, ok)
+            return ok
+        except Exception as exc:  # noqa: BLE001 - best-effort teardown; never crash exit
+            _log.debug("BLE unpair attempt failed for %s: %s", address, exc)
+            return False
+        finally:
+            # Closing the handle is what actually drops the OS's link to the peripheral; without
+            # it the device stays "connected" after the unpair and won't re-pair until rebooted.
+            MeshCoreDevice._close_ble_device(device)
 
     def _ble_auth_message(self) -> str:
         """A clean, actionable error for a Bluetooth companion that requires a PIN/bond.

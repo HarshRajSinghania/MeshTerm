@@ -229,6 +229,61 @@ def test_ble_address_int_parses_macs_and_rejects_others() -> None:
     assert parse("550e8400-e29b-41d4-a716-446655440000") is None  # CoreBluetooth UUID
 
 
+async def test_ble_pairing_helpers_noop_for_non_mac_address() -> None:
+    """The bond query and unpair short-circuit (never touching WinRT) for a non-MAC address."""
+    # A non-MAC address fails the parse before any winrt import, so these stay hermetic on any
+    # platform — no real Bluetooth stack is consulted.
+    assert await connection.MeshCoreDevice.is_ble_paired("not-a-mac") is False
+    assert await connection.MeshCoreDevice.unpair_ble("not-a-mac") is False
+    assert await connection.MeshCoreDevice.is_ble_paired("") is False
+
+
+async def test_can_unpair_only_for_bonded_ble(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The quit dialog offers unpair only on a BLE link that Windows actually holds a bond for."""
+
+    async def _is_paired(address: str) -> bool:
+        return address == "00:11:22:33:44:55"
+
+    monkeypatch.setattr(
+        connection.MeshCoreDevice, "is_ble_paired", staticmethod(_is_paired)
+    )
+    # Serial: never offered, whatever the address.
+    serial_ctx = SimpleNamespace(active_transport="serial", active_address=None)
+    assert await menu._can_unpair(serial_ctx) is False
+    # BLE but no address to act on: not offered.
+    ble_no_addr = SimpleNamespace(active_transport="ble", active_address=None)
+    assert await menu._can_unpair(ble_no_addr) is False
+    # BLE with a live bond: offered.
+    bonded = SimpleNamespace(active_transport="ble", active_address="00:11:22:33:44:55")
+    assert await menu._can_unpair(bonded) is True
+    # BLE but open (no bond, e.g. the PIN-less companion): not offered.
+    open_ble = SimpleNamespace(active_transport="ble", active_address="AA:BB:CC:DD:EE:FF")
+    assert await menu._can_unpair(open_ble) is False
+
+
+async def test_unpair_on_exit_disconnects_before_unpairing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Teardown drops the live link first, then forgets the OS bond (order matters)."""
+    order: list[str] = []
+
+    class _Dev:
+        async def disconnect(self) -> None:
+            order.append("disconnect")
+
+    async def _unpair(address: str) -> bool:
+        order.append(f"unpair:{address}")
+        return True
+
+    monkeypatch.setattr(connection.MeshCoreDevice, "unpair_ble", staticmethod(_unpair))
+    ctx = SimpleNamespace(active_address="00:11:22:33:44:55", _device=_Dev())
+    await menu._unpair_on_exit(ctx)
+    # Disconnect precedes unpair (a bond can't be dropped while in use), and the device handle
+    # is released. The device_store is never touched — the remembered record survives.
+    assert order == ["disconnect", "unpair:00:11:22:33:44:55"]
+    assert ctx._device is None
+
+
 def _make_ctx(tmp_path: Path) -> AppContext:
     """Build a real, mock-backed application context for reconnect tests."""
     settings = Settings(config_dir=tmp_path, db_path=tmp_path / "disc.db")

@@ -69,6 +69,7 @@ class AppContext:
     _active_port: Optional[str] = field(default=None, init=False, repr=False)
     _active_transport: Optional[str] = field(default=None, init=False, repr=False)
     _active_address: Optional[str] = field(default=None, init=False, repr=False)
+    unpair_on_exit: bool = field(default=False, init=False, repr=False)
     _resume_intent: Optional[tuple[bool, bool, bool]] = field(
         default=None, init=False, repr=False
     )
@@ -99,6 +100,18 @@ class AppContext:
         if self.mock or self.active_transport == "ble":
             return None
         return self._active_port or self.port_override
+
+    @property
+    def active_address(self) -> Optional[str]:
+        """The Bluetooth address of the current BLE connection, if any (``None`` otherwise).
+
+        Set when a real *BLE* connection is opened, so post-session teardown (e.g. the quit
+        dialog's unpair step) can address the peripheral even after the device handle is torn
+        down. ``None`` for the simulator and for serial connections, which have no BLE address.
+        """
+        if self.mock or self.active_transport != "ble":
+            return None
+        return self._active_address or self.ble_override
 
     @property
     def active_transport(self) -> Optional[str]:

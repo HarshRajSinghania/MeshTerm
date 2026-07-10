@@ -174,6 +174,11 @@ async def run_menu(ctx: AppContext) -> None:
             await ctx.monitor.aclose()
             await ctx.chat.aclose()
             await ctx.events.aclose()
+            # If the user chose "Unpair & quit", drop the OS bond now — after the services are
+            # down and the link is torn down, since a bond can't be cleanly removed while it is
+            # in use. Best-effort: a failure must not block the exit.
+            if ctx.unpair_on_exit:
+                await _unpair_on_exit(ctx)
             # Everything the app owns is released; the remaining exit steps (prompt_toolkit's
             # full-screen unwind, the device disconnect in the CLI driver, the interpreter's
             # atexit thread joins) must never be able to hang the process. See
@@ -183,6 +188,56 @@ async def run_menu(ctx: AppContext) -> None:
     with _silence_console_logging():
         await session.run(main())
     ctx.console.print("[muted]bye 73![/muted]")
+
+
+async def _can_unpair(ctx: AppContext) -> bool:
+    """Whether the quit dialog should offer to drop the current device's OS pairing.
+
+    True only when this session is on a Bluetooth link whose peripheral Windows actually holds
+    a bond for — so the affordance appears for a PIN-paired companion but never for a serial
+    port, an open (PIN-less) BLE companion, or a platform where we can't unpair. The bond query
+    reflects the OS pairing (independent of MeshTerm's remembered record), so it correctly lights
+    up even for a device bonded in an earlier session and reconnected here without a PIN.
+
+    Args:
+        ctx: The shared application context.
+
+    Returns:
+        ``True`` if an unpair-and-quit button is warranted.
+    """
+    if ctx.active_transport != "ble":
+        return False
+    address = ctx.active_address
+    if not address:
+        return False
+    from ..core.connection import MeshCoreDevice
+
+    return await MeshCoreDevice.is_ble_paired(address)
+
+
+async def _unpair_on_exit(ctx: AppContext) -> None:
+    """Tear down the live connection and drop the device's OS bond, on the way out.
+
+    Ordered deliberately: the companion link is disconnected first (a bond can't be cleanly
+    removed while an open connection is using it), then the Windows pairing is forgotten so the
+    next launch re-runs the PIN ceremony. MeshTerm's remembered-device record is left untouched —
+    unpairing forgets the *credential*, not the device's identity. Best-effort throughout: any
+    failure is swallowed so it can never wedge the exit.
+
+    Args:
+        ctx: The shared application context (its device is disconnected as a side effect).
+    """
+    address = ctx.active_address
+    if ctx._device is not None:
+        try:
+            await ctx._device.disconnect()
+        except Exception:  # noqa: BLE001 - a dead/lost link must not block unpair or exit
+            pass
+        ctx._device = None
+    if address:
+        from ..core.connection import MeshCoreDevice
+
+        await MeshCoreDevice.unpair_ble(address)
 
 
 async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
@@ -227,21 +282,36 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
             # over the (still-pushed) menu so a stray key doesn't drop the user out. Cancel
             # (Esc) sits left of Quit (Enter); Quit starts highlighted so Enter commits it.
             if selection in (None, "__quit__"):
-                leave = await session.button_dialog(
+                # Offer to drop the OS pairing on the way out, but only when there is a live
+                # Bluetooth bond to drop — never on serial, an open (PIN-less) companion, or a
+                # platform we can't unpair. The extra button sits between Cancel and Quit and is
+                # never the default, so it takes a deliberate choice, not a stray Enter.
+                unpairable = await _can_unpair(ctx)
+                buttons = [("Cancel", "cancel")]
+                if unpairable:
+                    buttons.append(("Unpair & quit", "unpair"))
+                buttons.append(("Quit", "quit"))
+                choice = await session.button_dialog(
                     "Are you sure you want to quit?",
-                    [("Cancel", False), ("Quit", True)],
+                    buttons,
                     title="Quit MeshTerm",
-                    default=1,
+                    default=len(buttons) - 1,  # highlight Quit
                     footer_hint="Esc cancel · Enter quit",
                     prompt_style="warn",
                     button_style="selected",
                     button_idle_style="muted",
                     border_style="warn",
                 )
-                if leave:
+                if choice == "unpair":
+                    # Forget the OS bond as we leave; the disconnect must happen first, so the
+                    # actual unpair is deferred to teardown (see run_menu). The remembered-device
+                    # record is intentionally kept — the device just asks for its PIN again.
+                    ctx.unpair_on_exit = True
                     return
-                # Keep the cursor on "quit" when that is what they chose, so a follow-up
-                # attempt lands where they expect; a stray Esc leaves it where it was.
+                if choice == "quit":
+                    return
+                # Cancel (button or Esc → None). Keep the cursor on "quit" when that is what
+                # they chose, so a follow-up attempt lands where they expect.
                 if selection == "__quit__":
                     last_selection = "__quit__"
                 continue
