@@ -24,6 +24,7 @@ from meshterm.ui.config_editor import (
     _parse_coords,
     _valid_coords,
     contact_share_url,
+    device_actions,
     edit_config,
 )
 from meshterm.ui.tui.prompt import TypedConfirmDialog
@@ -434,7 +435,7 @@ async def test_editor_location_clear_stages_the_no_fix_pair(ctx: AppContext) -> 
     assert ("set", "adv_lon", 0.0) in ops
 
 
-async def test_editor_advert_zero_hop_and_flood_run_immediately(ctx: AppContext) -> None:
+async def test_actions_advert_zero_hop_and_flood_run_immediately(ctx: AppContext) -> None:
     """The advert dialog sends immediately: zero-hop by default, flood when chosen."""
     device = await ctx.device()
     sent: list[bool] = []
@@ -450,25 +451,25 @@ async def test_editor_advert_zero_hop_and_flood_run_immediately(ctx: AppContext)
         ("select", "flood"),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert sent == [False, True]
     assert any("zero-hop" in n for n in ui.notes)
     assert any("flood" in n for n in ui.notes)
 
 
-async def test_editor_advert_share_shows_the_contact_card(ctx: AppContext) -> None:
+async def test_actions_advert_share_shows_the_contact_card(ctx: AppContext) -> None:
     """The share option opens the QR/URI view built from the node's own identity."""
     ui = _install(ctx, [
         ("select", "__advert__"),
         ("select", "share"),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert any(v.startswith("Share ") for v in ui.views)
 
 
-async def test_editor_factory_reset_gates_on_typed_confirmation(ctx: AppContext) -> None:
-    """Factory reset only runs behind the typed dialog, and drops staged changes."""
+async def test_actions_factory_reset_gates_on_typed_confirmation(ctx: AppContext) -> None:
+    """Factory reset only runs behind the typed dialog."""
     device = await ctx.device()
     await device.set_custom_var("mode", "test")
 
@@ -478,23 +479,20 @@ async def test_editor_factory_reset_gates_on_typed_confirmation(ctx: AppContext)
         ("typed_confirm", False),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert await device.get_custom_vars() == {"mode": "test"}
 
-    # Confirmed: the reset runs and previously staged changes are cleared with it.
+    # Confirmed: the reset runs and the device comes back empty.
     _install(ctx, [
-        ("select", "name"),
-        ("text", "Doomed"),
+        ("select", "__reset__"),
         ("typed_confirm", True),
-        ("select", "__cancel__"),  # clean close: the staged change died with the reset
+        ("select", "__cancel__"),
     ])
-    ui = ctx.ui
-    ui.script.insert(2, ("select", "__reset__"))  # reset after staging the name
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert await device.get_custom_vars() == {}
 
 
-async def test_editor_import_key_gates_on_typed_confirmation(ctx: AppContext) -> None:
+async def test_actions_import_key_gates_on_typed_confirmation(ctx: AppContext) -> None:
     """Importing an identity key requires the typed IMPORT confirmation."""
     device = await ctx.device()
     new_key = "ab" * 32
@@ -505,31 +503,31 @@ async def test_editor_import_key_gates_on_typed_confirmation(ctx: AppContext) ->
         ("typed_confirm", True),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert await device.export_private_key() == new_key
 
 
-async def test_editor_reboot_on_simulator_stays_in_the_editor(ctx: AppContext) -> None:
+async def test_actions_reboot_on_simulator_stays_on_the_screen(ctx: AppContext) -> None:
     """The simulator has no link to drop, so a confirmed reboot just notes and returns."""
     ui = _install(ctx, [
         ("select", "__reboot__"),
         ("dialog", "reboot"),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert ctx.reboot_in_progress is False
     assert any("rebooting" in n for n in ui.notes)
 
 
-async def test_editor_backup_writes_immediately(ctx: AppContext, tmp_path: Path) -> None:
-    """Backup is a device action: the TOML lands on disk before the editor closes."""
+async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path) -> None:
+    """Backup runs at once: the TOML lands on disk before the screen closes."""
     target = tmp_path / "out" / "backup.toml"
     ui = _install(ctx, [
         ("select", "__backup__"),
         ("path", str(target)),
         ("select", "__cancel__"),
     ])
-    assert await edit_config(ctx) is None
+    await device_actions(ctx)
     assert target.exists()
     assert any("wrote" in n for n in ui.notes)
 

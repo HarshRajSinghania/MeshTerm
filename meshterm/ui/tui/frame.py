@@ -14,7 +14,7 @@ from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
-from ..theme import title_style
+from ..theme import hint_style, title_style
 from .render import render_lines
 from .screen import Screen
 
@@ -92,11 +92,11 @@ def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
     body_lines = screen.render_body(inner_w)
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
+    border = "accent" if active else "muted"
     subtitle = None
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[muted]{arrow} more[/muted]"
-    border = "accent" if active else "muted"
+        subtitle = f"[{hint_style(border)}]{arrow} more[/]"
     return Panel(
         body,
         title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
@@ -208,10 +208,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
 
     body = Text.from_ansi("\n".join(visible))
-    subtitle = f"[muted]{screen.footer_hint}[/muted]"
+    hint = hint_style("accent")
+    subtitle = f"[{hint}]{screen.footer_hint}[/]"
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[muted]{arrow} · {screen.footer_hint}[/muted]"
+        subtitle = f"[{hint}]{arrow} · {screen.footer_hint}[/]"
     panel = Panel(
         body,
         title=f"[{title_style('accent')}]{screen.title}[/]" if screen.title else None,
@@ -253,22 +254,27 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     cap = min(cols - 6, 100)
     natural = getattr(screen, "dialog_width", None)
     max_w = cap if natural is None else max(24, min(cap, natural))
-    max_h = max(3, rows - 6)
+    # Rows the box may spend between its borders — on body lines and breathing room alike.
+    budget = max(3, rows - 6)
     body_lines = screen.render_body(max_w - 4)
-    viewport = min(max_h, max(1, len(body_lines)))
+    # Breathing room: a blank row above and below the body whenever it doesn't cost visible
+    # content; on a terminal too short for both, the content wins and the dialog sits flush.
+    vpad = 1 if len(body_lines) + 2 <= budget else 0
+    viewport = min(budget - 2 * vpad, max(1, len(body_lines)))
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
-    subtitle = f"[muted]{screen.footer_hint}[/muted]"
+    border = getattr(screen, "border_style", "accent")
+    hint = hint_style(border)
+    subtitle = f"[{hint}]{screen.footer_hint}[/]"
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[muted]{arrow} · {screen.footer_hint}[/muted]"
-    border = getattr(screen, "border_style", "accent")
+        subtitle = f"[{hint}]{arrow} · {screen.footer_hint}[/]"
     panel = Panel(
         body,
         title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
         subtitle=subtitle,
         border_style=border,
-        padding=(0, 1),
+        padding=(vpad, 1),
         width=max_w,
     )
     return render_to_ansi_dialog(panel, max_w)

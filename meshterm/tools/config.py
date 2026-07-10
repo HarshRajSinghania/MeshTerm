@@ -2,10 +2,11 @@
 
 Interactively it launches a full editor (see :mod:`meshterm.ui.config_editor`); on the
 CLI it exposes generic key/value subcommands plus backup/restore, channels, custom vars,
-and a ``--yes``-gated set of destructive operations. Both paths funnel through
+and a ``--yes``-gated set of destructive operations. Everything funnels through
 :func:`apply_ops`: the editor stages value changes for :meth:`ConfigTool.run` to execute
-and log, and runs its device actions (adverts, reboot, key management, factory reset)
-through the same executor immediately.
+and log, and the Device actions screen (the sibling ``device-actions`` tool) runs its
+immediate operations (adverts, reboot, key management, factory reset) through the same
+executor.
 """
 
 from __future__ import annotations

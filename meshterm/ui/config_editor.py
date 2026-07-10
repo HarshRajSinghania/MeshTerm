@@ -1,20 +1,20 @@
-"""Interactive device-configuration editor, rendered in the full-screen session.
+"""Interactive device-configuration screens, rendered in the full-screen session.
 
-Drives the menu flow for the ``config`` tool. The screen is one grouped list: every
-setting under its category heading (each row showing its current value, any staged change,
-and a one-line explanation), followed by a *Device actions* section for the operations that
-act on the box itself rather than a value — adverts, reboot, backup/restore, the identity
-key, and factory reset.
+Two sibling screens live here, deliberately kept distinct:
 
-Two kinds of interaction live here, deliberately kept distinct:
-
-* **Settings are staged.** Editing a row stages the new value (shown as ``current → new``
-  in the row) and nothing touches the radio until *Apply*; backing out with staged changes
-  asks before discarding them. The editor returns the staged operations for
-  :class:`~meshterm.tools.config.ConfigTool` to execute and log.
-* **Device actions run immediately** (after their own confirmation dialog — destructive
-  ones gate behind typing a confirmation word). They have no meaningful "preview", so their
-  result is shown at once.
+* **Device configuration** (:func:`edit_config`, behind the ``config`` tool) — one grouped,
+  column-aligned list of every setting under its category heading, each row showing its
+  current value, any staged change, and a one-line explanation. Editing a row *stages* the
+  new value (shown as ``current → new``) and nothing touches the radio until *Apply*;
+  backing out with staged changes asks before discarding them. The editor returns the
+  staged operations for :class:`~meshterm.tools.config.ConfigTool` to execute and log.
+* **Device actions** (:func:`device_actions`, behind the ``device-actions`` tool) — the
+  operations that act on the box itself rather than a value: adverts, backup/restore, the
+  identity key, reboot, and factory reset. These *run immediately* (after their own
+  confirmation dialog — destructive ones gate behind typing a confirmation word); they
+  have no meaningful "preview", so their result is shown at once. They share the settings
+  snapshot and :func:`~meshterm.tools.config.apply_ops` executor with the editor, which is
+  why both screens live in this module.
 
 Multiple-choice values are picked in dialogs (booleans as an On/Off button pair, enums as
 a floating select), the node's location can be set by pointing at the full-screen map (see
@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import quote
 
 from rich import box
+from rich.cells import cell_len
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
@@ -87,8 +88,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
 
     Returns:
         A list of operation tuples for the tool to execute, or ``None`` if the user
-        cancelled (or a device action — e.g. a reboot — ended the session) without
-        anything staged to apply.
+        cancelled without anything staged to apply.
     """
     from .tui import CANCEL, SelectScreen
 
@@ -145,27 +145,6 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                 await _stage_preset(ctx, pending)
             elif choice == _CUSTOM:
                 await _stage_custom_var(ctx, custom, extra_ops)
-            elif choice == _ADVERT:
-                await _advert_menu(ctx, device, snapshot)
-            elif choice == _REBOOT:
-                if await _reboot(ctx, device, snapshot, staged):
-                    return None  # the link is dropping; the reconnect dialog takes over
-            elif choice == _BACKUP:
-                await _backup_now(ctx, device, snapshot)
-            elif choice == _RESTORE:
-                if await _restore_now(ctx, device, snapshot):
-                    snapshot = await build_snapshot(device)
-                    custom = await device.get_custom_vars()
-            elif choice == _IDENTITY_KEY:
-                if await _identity_key_menu(ctx, device, snapshot):
-                    snapshot = await build_snapshot(device)
-            elif choice == _RESET:
-                if await _factory_reset(ctx, device, snapshot):
-                    # Everything the editor knew about the device is gone; start clean.
-                    pending.clear()
-                    extra_ops.clear()
-                    snapshot = await build_snapshot(device)
-                    custom = await device.get_custom_vars()
             else:  # a setting key
                 await _stage_setting(ctx, choice, snapshot, pending)
         finally:
@@ -239,19 +218,16 @@ def config_table(
     return table
 
 
-def _setting_row(spec: SettingSpec, snapshot: dict, pending: dict) -> Text:
-    """Build one setting's menu row: ``label: current [→ staged]  —  help``.
+def _setting_value(spec: SettingSpec, snapshot: dict, pending: dict) -> Text:
+    """One setting's VALUE lane: ``current [→ staged]``.
 
-    The staged arrow is drawn in the warn style so a dirty row stands out at a glance,
-    and the help trails muted; both spans survive the select highlight (which only tints
-    the row's base style).
+    The staged arrow is drawn in the warn style so a dirty row stands out at a glance;
+    the span survives the select highlight (which only tints the row's base style).
     """
-    row = Text(f"{spec.label}: ")
-    row.append(format_value(spec, spec.getter(snapshot)))
+    value = Text(format_value(spec, spec.getter(snapshot)))
     if spec.key in pending:
-        row.append(f" → {format_value(spec, pending[spec.key])}", style="warn")
-    row.append(f"  —  {spec.help}", style="muted")
-    return row
+        value.append(f" → {format_value(spec, pending[spec.key])}", style="warn")
+    return value
 
 
 def _format_coords(lat: Any, lon: Any) -> str:
@@ -265,15 +241,28 @@ def _format_coords(lat: Any, lon: Any) -> str:
     return f"{lat_f:.5f}, {lon_f:.5f}"
 
 
-def _location_row(snapshot: dict, pending: dict) -> Text:
-    """The single Location row standing in for the ``adv_lat``/``adv_lon`` pair."""
-    row = Text("Location: ")
-    row.append(_format_coords(snapshot.get("adv_lat"), snapshot.get("adv_lon")))
+def _location_value(snapshot: dict, pending: dict) -> Text:
+    """The Location row's VALUE lane, standing in for the ``adv_lat``/``adv_lon`` pair."""
+    value = Text(_format_coords(snapshot.get("adv_lat"), snapshot.get("adv_lon")))
     if any(k in pending for k in _COORD_KEYS):
         lat = pending.get("adv_lat", snapshot.get("adv_lat"))
         lon = pending.get("adv_lon", snapshot.get("adv_lon"))
-        row.append(f" → {_format_coords(lat, lon)}", style="warn")
-    row.append("  —  Advertised position; pick it on the map", style="muted")
+        value.append(f" → {_format_coords(lat, lon)}", style="warn")
+    return value
+
+
+def _lane_row(label: str, value: Text, help_text: str, label_w: int, value_w: int) -> Text:
+    """Lay one row out in the SETTING / VALUE / DESCRIPTION lanes.
+
+    Padding is computed in display cells so a wide glyph in a value can't skew the lanes,
+    and the description stays muted under the select highlight (which only tints the
+    row's base style).
+    """
+    row = Text(label)
+    row.append(" " * (label_w - cell_len(label) + 2))
+    row.append_text(value)
+    row.append(" " * (value_w - cell_len(value.plain) + 2))
+    row.append(help_text, style="muted")
     return row
 
 
@@ -283,61 +272,71 @@ def _menu_items(
     """Build the editor menu's title and rows for the current snapshot + staged state.
 
     Returns the ``(title, items)`` the caller pushes as a persistent backdrop screen (so
-    sub-prompts float over it). Each setting row shows its current value (and any staged
-    new value) plus a one-line explanation, so the user can see and understand what
-    they're changing in place. The device actions that run immediately live in their own
-    section below the settings.
+    sub-prompts float over it). The rows sit in three aligned columns — setting, current
+    value (and any staged new value), description — under one header line, so the list
+    reads like the full-configuration table it stages changes for.
     """
-    items: list = []
+    # First pass: collect every row's lanes per category, so the columns can be sized to
+    # their content (including any staged ``→ new`` arrows) before a single row is built.
+    sections: list[tuple[str, list[tuple[str, Text, str, Any]]]] = []
     for category, specs in settings_by_category():
-        items.append(Separator(f"── {category.upper()} ──"))
+        rows: list[tuple[str, Text, str, Any]] = []
         for spec in specs:
             if spec.key in _COORD_KEYS:
                 # Latitude/longitude collapse into one Location row (inserted in
                 # adv_lat's slot so it sits where the coordinates used to).
                 if spec.key == "adv_lat":
-                    items.append(Choice(title=_location_row(snapshot, pending), value=_LOCATION))
+                    rows.append((
+                        "Location",
+                        _location_value(snapshot, pending),
+                        "Advertised position; pick it on the map",
+                        _LOCATION,
+                    ))
                 continue
-            items.append(Choice(title=_setting_row(spec, snapshot, pending), value=spec.key))
+            rows.append((spec.label, _setting_value(spec, snapshot, pending), spec.help, spec.key))
         if category == "Radio":
-            items.append(
-                Choice(
-                    title=Text.assemble(
-                        "Radio presets…",
-                        ("  —  Apply a standard regional or trade-off config", "muted"),
-                    ),
-                    value=_PRESETS,
-                )
-            )
+            rows.append((
+                "Radio presets…", Text(),
+                "Apply a standard regional or trade-off config", _PRESETS,
+            ))
         elif category == "Experimental":
+            rows.append((
+                "Custom variables…", Text(),
+                "Set a raw firmware variable by name", _CUSTOM,
+            ))
+        sections.append((category, rows))
+
+    label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
+    value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
+
+    # The header leads with two spaces to clear the select screen's pointer column, so
+    # each heading lands exactly over its lane.
+    items: list = [
+        Separator(
+            "  " + "SETTING".ljust(label_w + 2) + "VALUE".ljust(value_w + 2) + "DESCRIPTION"
+        )
+    ]
+    for category, rows in sections:
+        items.append(Separator(f"── {category.upper()} ──"))
+        for label, value, help_text, key in rows:
             items.append(
-                Choice(
-                    title=Text.assemble(
-                        "Custom variables…",
-                        ("  —  Set a raw firmware variable by name", "muted"),
-                    ),
-                    value=_CUSTOM,
-                )
+                Choice(title=_lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
-    items.append(Separator("── DEVICE ACTIONS (RUN IMMEDIATELY) ──"))
-    items.append(_action("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT))
-    items.append(_action("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP))
-    items.append(_action("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE))
-    items.append(_action("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY))
-    items.append(_action("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT))
+    items.append(Separator("── REVIEW ──"))
     items.append(
         Choice(
             title=Text.assemble(
-                ("⚠ Factory reset…", "err"),
-                ("  —  Erase everything (typed confirmation)", "muted"),
+                "🧾 View full configuration", ("  —  Every value in one table", "muted")
             ),
-            value=_RESET,
+            value=_VIEW,
         )
     )
 
-    items.append(Separator("── REVIEW ──"))
-    items.append(_action("🧾 View full configuration", "Every value in one table", _VIEW))
+    # The backtracking rows sit together below one blank line, like every other screen's
+    # Back (the main menu's Quit included); with changes staged, Apply joins the group and
+    # Back spells out the consequence of leaving.
+    items.append(Separator(" "))
     if staged:
         items.append(
             Choice(
@@ -345,11 +344,6 @@ def _menu_items(
                 value=_APPLY,
             )
         )
-
-    # The backtracking row sits alone below a blank line, like every other screen's Back
-    # (the main menu's Quit included); with changes staged it spells out the consequence.
-    items.append(Separator(" "))
-    if staged:
         items.append(
             Choice(
                 title=Text.assemble(("✗ ", "err"), "Back — discard staged changes"),
@@ -361,11 +355,6 @@ def _menu_items(
 
     title = "Device configuration" + (f" — {staged} staged" if staged else "")
     return title, items
-
-
-def _action(label: str, help_text: str, value: str) -> Choice:
-    """Build a device-action menu row: a label with a muted explanation."""
-    return Choice(title=Text.assemble(label, (f"  —  {help_text}", "muted")), value=value)
 
 
 def _changes(count: int) -> str:
@@ -589,6 +578,89 @@ async def _stage_custom_var(
 # --- device actions (run immediately) -----------------------------------------
 
 
+async def device_actions(ctx: "AppContext") -> None:
+    """Run the Device actions screen: immediate operations on the companion itself.
+
+    The action counterpart of :func:`edit_config`, behind the ``device-actions`` tool.
+    Nothing here is staged — each action runs as soon as its own confirmation is given
+    (destructive ones gate behind typing a confirmation word) and presents its result at
+    once. The menu stays open between actions so several can be run in a row; Esc (or
+    Back) returns to the main menu, and a reboot closes the screen and hands off to the
+    session's reconnect dialog.
+
+    Args:
+        ctx: Shared application context (provides the connected device and UI surface).
+    """
+    from .tui import CANCEL, SelectScreen
+
+    device = await ctx.device()
+    snapshot = await build_snapshot(device)
+
+    # Same persistent-backdrop pattern as the editor: the menu stays pushed while each
+    # action's prompts float over it as modal popups (see edit_config).
+    session = getattr(ctx.ui, "session", None)
+    if session is None:  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("device actions are only available in the menu")
+    loop = asyncio.get_running_loop()
+    cursor: Any = None  # the row to re-highlight, so the menu reopens where you left it
+
+    while True:
+        menu = SelectScreen("Device actions", _action_items(), default=cursor, wrap=False)
+        menu.future = loop.create_future()
+        session.push(menu)
+        try:
+            choice = await menu.future
+            if choice is CANCEL or choice in (None, _CANCEL):
+                return
+            cursor = choice
+            if choice == _ADVERT:
+                await _advert_menu(ctx, device, snapshot)
+            elif choice == _BACKUP:
+                await _backup_now(ctx, device, snapshot)
+            elif choice == _RESTORE:
+                if await _restore_now(ctx, device, snapshot):
+                    snapshot = await build_snapshot(device)
+            elif choice == _IDENTITY_KEY:
+                if await _identity_key_menu(ctx, device, snapshot):
+                    snapshot = await build_snapshot(device)
+            elif choice == _REBOOT:
+                if await _reboot(ctx, device, snapshot):
+                    return  # the link is dropping; the reconnect dialog takes over
+            elif choice == _RESET:
+                if await _factory_reset(ctx, device, snapshot):
+                    snapshot = await build_snapshot(device)
+        finally:
+            session.pop(menu)
+
+
+def _action_items() -> list:
+    """Build the Device actions rows: label and description in two aligned columns.
+
+    Menu-style lanes (no header line — these are commands, not tabular data), padded in
+    display cells so the double-width emoji can't skew the description column. Factory
+    reset keeps its err-tinted label so the one irreversible row reads as such.
+    """
+    actions: list[tuple[str, str, str, str]] = [
+        ("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT, ""),
+        ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP, ""),
+        ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE, ""),
+        ("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY, ""),
+        ("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT, ""),
+        ("⚠ Factory reset…", "Erase everything (typed confirmation)", _RESET, "err"),
+    ]
+    width = max(cell_len(label) for label, _, _, _ in actions)
+    items: list = []
+    for label, help_text, value, style in actions:
+        row = Text()
+        row.append(label, style=style or None)
+        row.append(" " * (width - cell_len(label) + 2))
+        row.append(help_text, style="muted")
+        items.append(Choice(title=row, value=value))
+    items.append(Separator(" "))
+    items.append(Choice(title="Back", value=_CANCEL))
+    return items
+
+
 async def _run_now(
     ctx: "AppContext", device: "Device", snapshot: dict, ops: list[tuple], title: str
 ) -> int:
@@ -673,29 +745,20 @@ async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
     await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc back")
 
 
-async def _reboot(
-    ctx: "AppContext", device: "Device", snapshot: dict, staged: int
-) -> bool:
+async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
     """Confirm and reboot the device, handing off to the session's reconnect dialog.
 
-    The confirmation dialog warns when staged changes would be lost (a reboot ends the
-    editor, discarding them). After the command is sent, we wait to actually observe the
-    link dropping — flagging :attr:`~meshterm.context.AppContext.reboot_in_progress` so
-    the session-wide disconnect watcher labels the ensuing dialog as a reboot, waits for
-    the companion to come back, and reconnects — exactly the unplugged-device flow.
+    After the command is sent, we wait to actually observe the link dropping — flagging
+    :attr:`~meshterm.context.AppContext.reboot_in_progress` so the session-wide
+    disconnect watcher labels the ensuing dialog as a reboot, waits for the companion to
+    come back, and reconnects — exactly the unplugged-device flow.
 
     Returns:
-        ``True`` if the reboot was sent and the editor should close; ``False`` if the
-        user backed out (or the simulator, which has no link to drop, absorbed it).
+        ``True`` if the reboot was sent and the actions screen should close; ``False``
+        if the user backed out (or the simulator, which has no link to drop, absorbed it).
     """
-    warning = "Reboot the device now?"
-    if staged:
-        warning = (
-            f"Reboot the device now? Your {_changes(staged)} have not been "
-            "applied and will be discarded."
-        )
     choice = await ctx.ui.dialog(
-        warning,
+        "Reboot the device now?",
         [("Cancel", None), ("Reboot", "reboot")],
         title="🔄 Reboot device",
         default=1,
@@ -720,8 +783,8 @@ async def _reboot(
         ctx.reboot_in_progress = False
         raise
     # Hold here until the link is actually observed down (or a generous timeout), so the
-    # editor doesn't flash back to the menu for the second or two before the watcher
-    # notices. The watcher may cancel us mid-wait when it fires — that's the handoff.
+    # actions screen doesn't flash back to the menu for the second or two before the
+    # watcher notices. The watcher may cancel us mid-wait when it fires — that's the handoff.
     deadline = asyncio.get_running_loop().time() + _REBOOT_DROP_TIMEOUT_S
     while asyncio.get_running_loop().time() < deadline:
         if not await ctx.link_alive():

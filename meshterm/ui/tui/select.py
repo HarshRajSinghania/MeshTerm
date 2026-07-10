@@ -113,8 +113,9 @@ class SelectScreen(Screen):
     def _rows(self) -> list:
         """Return the items to display given the active filter.
 
-        Without a filter, groups and headings show as authored. With a filter, headings
-        are dropped and only matching choices are shown, flattened.
+        Without a filter, groups and headings show as authored. With a filter, only the
+        matching choices are shown — but every separator stays, so the list keeps its
+        section landmarks (and column headers) while it narrows.
         """
         if not self._filter:
             return self._items
@@ -122,7 +123,7 @@ class SelectScreen(Screen):
         return [
             it
             for it in self._items
-            if isinstance(it, Choice) and needle in _plain(it.label).lower()
+            if isinstance(it, Separator) or needle in _plain(it.label).lower()
         ]
 
     def _choices(self, rows: Optional[list] = None) -> list:
@@ -133,15 +134,14 @@ class SelectScreen(Screen):
     def _section_starts(self) -> list[int]:
         """Choice indices that begin a section — the first choice after each run of separators.
 
-        Drives Ctrl+PageUp/PageDown section jumps. Empty while filtering, since the filtered
-        list is flattened to bare matches with no group headings to jump between.
+        Drives Ctrl+PageUp/PageDown section jumps. Computed over the *displayed* rows, so
+        the jumps keep working while a filter narrows the list (the headings stay — see
+        :meth:`_rows` — and empty sections simply yield no stop).
         """
-        if self._filter:
-            return []
         starts: list[int] = []
         idx = 0
         fresh = True  # the next choice opens a section (top of the list, or just past a heading)
-        for item in self._items:
+        for item in self._rows():
             if isinstance(item, Separator):
                 fresh = True
             elif isinstance(item, Choice):
@@ -208,8 +208,8 @@ class SelectScreen(Screen):
             lines.append("")
             prefix = len(plines) + 1
         # Record each section heading as a sticky-header candidate, so one that scrolls off is
-        # re-pinned to the top row by the base Screen.sticky_header. Filtering flattens the list
-        # to bare choices (see _rows), so this stays empty then and nothing is pinned.
+        # re-pinned to the top row by the base Screen.sticky_header. Separators survive
+        # filtering (see _rows), so the pinning keeps working while the list narrows.
         self._sticky_headers = []
         if self._filter:
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))

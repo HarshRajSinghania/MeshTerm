@@ -18,6 +18,7 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncIterator, Iterator, Optional
 
+from rich.cells import cell_len
 from rich.logging import RichHandler
 from rich.text import Text
 
@@ -250,16 +251,21 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     last_selection: str | None = None
     loop = asyncio.get_running_loop()
     while True:
+        # Two aligned columns — tool name, then its muted description — with no header
+        # line: these are commands, not tabular data, so the alignment alone carries it.
+        tools = [tool for tool in all_tools() if tool.menu_visible]
+        name_w = max((cell_len(tool.title or tool.name) for tool in tools), default=0)
         items: list = []
         current_category: str | None = None
-        for tool in all_tools():
-            if not tool.menu_visible:
-                continue
+        for tool in tools:
             if tool.category != current_category:
                 current_category = tool.category
                 items.append(Separator(f"── {current_category.upper()} ──"))
             label = tool.title or tool.name
-            items.append(Choice(title=f"{label}  —  {tool.help}", value=tool.name))
+            row = Text(label)
+            row.append(" " * (name_w - cell_len(label) + 2))
+            row.append(tool.help, style="muted")
+            items.append(Choice(title=row, value=tool.name))
         items.append(Separator(" "))
         items.append(Choice(title="Quit", value="__quit__"))
 

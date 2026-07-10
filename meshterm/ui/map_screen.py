@@ -85,7 +85,7 @@ class MapScreen(Screen):
                 the densest that many, so outliers don't dominate. See :meth:`geo.Viewport.fit`.
         """
         super().__init__()
-        self.title = "mesh map"
+        self.title = "Map"
         self._session = session
         self._markers = markers
         self._source = source
@@ -194,7 +194,7 @@ class MapScreen(Screen):
         )
         scale = f"{m_per_dot * vp.dot_w:.0f} m across" if m_per_dot * vp.dot_w < 1000 else \
             f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
-        return f"mesh map · z{vp.zoom} · {len(self._markers)} nodes · {scale}"
+        return f"Map · z{vp.zoom} · {len(self._markers)} nodes · {scale}"
 
     # --- tiles ---------------------------------------------------------------
 

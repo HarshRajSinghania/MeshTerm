@@ -97,15 +97,17 @@ def test_select_default_and_arrow_wrap() -> None:
     assert _run(screen, "enter") == 1
 
 
-def test_select_filter_narrows_and_hides_separators() -> None:
-    """Typing filters to matching choices only; separators drop out while filtering."""
+def test_select_filter_narrows_but_keeps_separators() -> None:
+    """Typing filters to matching choices while the section headings stay in place."""
     screen = _menu()
-    screen.handle("text", "a")  # matches alpha, beta(?), gamma -> those containing 'a'
+    screen.handle("text", "a")  # matches alpha, beta, gamma — all contain 'a'
     rows = screen._rows()
-    assert all(isinstance(r, Choice) for r in rows)
-    assert {r.title for r in rows} == {"alpha", "beta", "gamma"}
-    screen.handle("text", "l")  # now 'al' -> only alpha
-    assert [r.title for r in screen._rows()] == ["alpha"]
+    assert [r.title for r in rows if isinstance(r, Separator)] == ["── group ──"]
+    assert {r.title for r in rows if isinstance(r, Choice)} == {"alpha", "beta", "gamma"}
+    screen.handle("text", "l")  # now 'al' -> only alpha (the heading still shows)
+    rows = screen._rows()
+    assert [r.title for r in rows if isinstance(r, Choice)] == ["alpha"]
+    assert [r.title for r in rows if isinstance(r, Separator)] == ["── group ──"]
     assert _run(screen, "enter") == 1
 
 

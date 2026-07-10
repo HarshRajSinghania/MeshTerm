@@ -43,6 +43,15 @@ MESH_THEME = Theme(
         "title.err": "bold #fca5a5",
         "title.ok": "bold #86efac",
         "title.brand": "bold #99f6e4",
+        # Panel/dialog footer hints: the border's hue one shade *darker* (and not bold), the
+        # mirror image of the ``title.*`` brightening — the hint reads as part of the frame
+        # while receding behind it. One entry per border style (see theme.hint_style).
+        "hint.accent": "#6366f1",
+        "hint.muted": "#64748b",
+        "hint.warn": "#f59e0b",
+        "hint.err": "#ef4444",
+        "hint.ok": "#22c55e",
+        "hint.brand": "#2dd4bf",
         # A step darker than ``muted`` for placeholder dashes (a node's missing packet count /
         # age) that should recede below the real, muted values around them.
         "faint": "#64748b",
@@ -88,6 +97,25 @@ def title_style(border_style: str) -> str:
     """
     name = f"title.{border_style}"
     return name if name in MESH_THEME.styles else border_style
+
+
+def hint_style(border_style: str) -> str:
+    """Return the footer-hint style matching a panel's border: the same hue, muted.
+
+    The bottom-border counterpart of :func:`title_style` — where the title brightens the
+    border's hue, the hint darkens it, so both read as part of the frame with the right
+    emphasis.
+
+    Args:
+        border_style: The theme name the panel's border is drawn in (``"accent"``,
+            ``"warn"``, ...).
+
+    Returns:
+        The matching ``hint.*`` theme name, or ``"muted"`` when no variant is defined (so
+        an unknown border keeps the old neutral hint rather than a loud one).
+    """
+    name = f"hint.{border_style}"
+    return name if name in MESH_THEME.styles else "muted"
 
 
 def snr_style(snr: float | None) -> str:

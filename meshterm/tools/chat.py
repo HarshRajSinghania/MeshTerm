@@ -119,7 +119,7 @@ class ChatTool(Tool):
         lasts = ctx.repo.last_chat_messages()
         live = _LiveLasts(ctx, seed=lasts)
 
-        items: list = [Separator("── 📡 CHANNELS ──")]
+        items: list = [Separator(_picker_header()), Separator("── 📡 CHANNELS ──")]
         for conversation in channels:
             items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
 
@@ -501,6 +501,23 @@ _BADGE_WIDTH = 5
 _AGE_WIDTH = 3
 #: Longest message preview shown before it is ellipsized.
 _PREVIEW_WIDTH = 40
+
+
+def _picker_header() -> str:
+    """Column headers over the picker's fixed lanes (see :func:`_title` for the layout).
+
+    Leading spaces cover the select screen's pointer column (2 cells, drawn on choice rows
+    but not separators) plus the marker lane (3 cells), so each header lands exactly over
+    its column. UNREAD borrows its lane's trailing gap — the badge lane itself is one cell
+    too narrow for the word — which still leaves a space before the age column.
+    """
+    return (
+        "     "
+        + "CONVERSATION".ljust(_LABEL_WIDTH + 2)
+        + "UNREAD".ljust(_BADGE_WIDTH + 2)
+        + f"{'AGE':>{_AGE_WIDTH}}"
+        + "  LAST MESSAGE"
+    )
 
 
 def _row_title(
