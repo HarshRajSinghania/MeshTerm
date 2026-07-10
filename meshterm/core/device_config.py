@@ -47,6 +47,12 @@ class SettingSpec:
             :attr:`choices`. When ``False`` the choices are offered as a convenience menu
             but any in-range integer is still accepted — used for firmware fields whose
             full value domain we don't enumerate exhaustively.
+        max_key: Snapshot key holding this setting's *device-reported* inclusive maximum
+            (e.g. ``max_tx_power`` bounding ``tx_power``). Checked by :func:`parse_value`
+            when it is given a snapshot, tightening the static :attr:`maximum` to what
+            the connected hardware actually supports.
+        max_length: For ``str`` values, the longest accepted string (protocol field
+            widths, e.g. the flood scope's 31-byte name slot).
         getter: Extracts the current value from a snapshot dict.
         apply: Coroutine applying a parsed value to a device, given the snapshot.
     """
@@ -62,6 +68,8 @@ class SettingSpec:
     minimum: Optional[float] = None
     maximum: Optional[float] = None
     strict_choices: bool = True
+    max_key: Optional[str] = None
+    max_length: Optional[int] = None
 
 
 # --- value parsing / formatting ----------------------------------------------
@@ -70,12 +78,15 @@ _TRUE = {"1", "true", "yes", "on", "y"}
 _FALSE = {"0", "false", "no", "off", "n"}
 
 
-def parse_value(spec: SettingSpec, raw: Any) -> Any:
+def parse_value(spec: SettingSpec, raw: Any, snapshot: Optional[dict] = None) -> Any:
     """Parse and validate a raw value (typically a CLI/TOML string) for ``spec``.
 
     Args:
         spec: The target setting.
         raw: The raw value to coerce (string or already-typed scalar).
+        snapshot: Optional device snapshot; when given and the spec names a
+            :attr:`~SettingSpec.max_key`, the device-reported maximum found there
+            tightens the static bound (e.g. TX power capped at this board's max).
 
     Returns:
         The typed, range-checked value ready for :meth:`SettingSpec.apply`.
@@ -85,6 +96,11 @@ def parse_value(spec: SettingSpec, raw: Any) -> Any:
     """
     text = str(raw).strip()
     if spec.value_type == "str":
+        if spec.max_length is not None and len(text) > spec.max_length:
+            raise DeviceConfigError(
+                f"{spec.key}: must be at most {spec.max_length} characters, "
+                f"got {len(text)}"
+            )
         return text
     if spec.value_type == "bool":
         low = text.lower()
@@ -114,9 +130,33 @@ def parse_value(spec: SettingSpec, raw: Any) -> Any:
         raise DeviceConfigError(f"{spec.key}: must be one of {allowed}, got {value}")
     if spec.minimum is not None and value < spec.minimum:
         raise DeviceConfigError(f"{spec.key}: must be >= {spec.minimum}, got {value}")
-    if spec.maximum is not None and value > spec.maximum:
-        raise DeviceConfigError(f"{spec.key}: must be <= {spec.maximum}, got {value}")
+    maximum = effective_maximum(spec, snapshot)
+    if maximum is not None and value > maximum:
+        raise DeviceConfigError(f"{spec.key}: must be <= {maximum:g}, got {value}")
     return value
+
+
+def effective_maximum(spec: SettingSpec, snapshot: Optional[dict]) -> Optional[float]:
+    """The inclusive maximum for ``spec``: the device-reported one when known, else static.
+
+    Args:
+        spec: The setting.
+        snapshot: The device snapshot the reported maximum is read from (may be ``None``).
+
+    Returns:
+        The tighter of the spec's static bound and the snapshot's ``max_key`` value, or
+        ``None`` when neither exists.
+    """
+    maximum = spec.maximum
+    if snapshot is not None and spec.max_key is not None:
+        reported = snapshot.get(spec.max_key)
+        if reported is not None:
+            try:
+                reported_f = float(reported)
+            except (TypeError, ValueError):
+                return maximum
+            maximum = reported_f if maximum is None else min(maximum, reported_f)
+    return maximum
 
 
 def format_value(spec: SettingSpec, value: Any) -> str:
@@ -131,6 +171,8 @@ def format_value(spec: SettingSpec, value: Any) -> str:
     """
     if value is None:
         return "?"
+    if spec.value_type == "str" and value == "":
+        return "(not set)"
     if spec.value_type == "bool":
         return "true" if value else "false"
     if spec.value_type == "enum" and spec.choices is not None and value in spec.choices:
@@ -152,8 +194,8 @@ async def build_snapshot(device: Device) -> dict:
         device: A connected device.
 
     Returns:
-        A dict keyed like ``SELF_INFO`` plus ``rx_delay``, ``airtime_factor`` and
-        ``path_hash_mode``.
+        A dict keyed like ``SELF_INFO`` plus ``rx_delay``, ``airtime_factor``,
+        ``path_hash_mode``, ``autoadd_config`` and ``flood_scope``.
     """
     snapshot = dict(await device.get_self_info())
     try:
@@ -162,6 +204,14 @@ async def build_snapshot(device: Device) -> dict:
         pass
     try:
         snapshot["path_hash_mode"] = await device.get_path_hash_mode()
+    except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+        pass
+    try:
+        snapshot["autoadd_config"] = await device.get_autoadd_config()
+    except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+        pass
+    try:
+        snapshot["flood_scope"] = await device.get_default_flood_scope()
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
     return snapshot
@@ -198,12 +248,23 @@ def _coords_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[No
 
 
 def _tuning_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[None]]:
-    """Build an apply that updates one tuning field, preserving the other."""
+    """Build an apply that updates one tuning field, preserving the others.
+
+    The TX delay factors cannot be read back from real hardware (see
+    :meth:`~meshterm.core.connection.Device.get_tuning`), so an unknown current value
+    falls back to ``0`` — exactly what every tuning write sent for them before they were
+    exposed as settings.
+    """
 
     async def apply(device: Device, value: Any, snapshot: dict) -> None:
-        rx = value if field_name == "rx_delay" else snapshot.get("rx_delay", 0)
-        af = value if field_name == "airtime_factor" else snapshot.get("airtime_factor", 0)
-        await device.set_tuning(int(rx or 0), int(af or 0))
+        fields = {
+            key: snapshot.get(key)
+            for key in (
+                "rx_delay", "airtime_factor", "tx_delay_factor", "direct_tx_delay_factor"
+            )
+        }
+        fields[field_name] = value
+        await device.set_tuning(*(int(v or 0) for v in fields.values()))
 
     return apply
 
@@ -339,8 +400,8 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         getter=_get("radio_cr"), apply=_radio_apply("cr"),
     ),
     SettingSpec(
-        "tx_power", "TX power (dBm)", "Transmit power", "Radio", "int",
-        minimum=1, maximum=22,
+        "tx_power", "TX power (dBm)", "Transmit power, up to this board's reported max",
+        "Radio", "int", minimum=1, maximum=30, max_key="max_tx_power",
         getter=_get("tx_power"), apply=lambda d, v, s: d.set_tx_power(v),
     ),
     # Tuning
@@ -354,12 +415,36 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         minimum=0,
         getter=_get("airtime_factor"), apply=_tuning_apply("airtime_factor"),
     ),
+    SettingSpec(
+        "tx_delay_factor", "TX delay",
+        "Random delay factor before relayed transmissions (write-only on hardware)",
+        "Tuning", "int", minimum=0, maximum=255,
+        getter=_get("tx_delay_factor"), apply=_tuning_apply("tx_delay_factor"),
+    ),
+    SettingSpec(
+        "direct_tx_delay_factor", "Direct TX delay",
+        "Delay factor before direct, zero-hop transmissions (write-only on hardware)",
+        "Tuning", "int", minimum=0, maximum=255,
+        getter=_get("direct_tx_delay_factor"), apply=_tuning_apply("direct_tx_delay_factor"),
+    ),
     # Behavior
     SettingSpec(
         "manual_add_contacts", "Manual add contacts",
         "Require adding contacts manually", "Behavior", "bool",
         getter=_get("manual_add_contacts"),
         apply=lambda d, v, s: d.set_manual_add_contacts(v),
+    ),
+    SettingSpec(
+        "autoadd_config", "Contact auto-add",
+        "Bitmask of advert types auto-added as contacts (0 = none)", "Behavior", "int",
+        minimum=0, maximum=255,
+        getter=_get("autoadd_config"), apply=lambda d, v, s: d.set_autoadd_config(v),
+    ),
+    SettingSpec(
+        "flood_scope", "Flood scope",
+        "Limit flood routing to one #scope; empty reaches the whole mesh", "Behavior",
+        "str", max_length=30,
+        getter=_get("flood_scope"), apply=lambda d, v, s: d.set_default_flood_scope(v),
     ),
     SettingSpec(
         "adv_loc_policy", "Advert location policy",

@@ -40,6 +40,7 @@ from ..core.device_config import (
     DeviceConfigError,
     SettingSpec,
     build_snapshot,
+    effective_maximum,
     format_value,
     get_spec,
     parse_value,
@@ -56,6 +57,7 @@ _LOCATION = "__location__"
 _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
 _ADVERT = "__advert__"
+_SYNC_CLOCK = "__sync_clock__"
 _REBOOT = "__reboot__"
 _BACKUP = "__backup__"
 _RESTORE = "__restore__"
@@ -371,7 +373,7 @@ async def _stage_setting(
     """Prompt for one setting's new value and stage it."""
     spec = get_spec(key)
     current = pending.get(key, spec.getter(snapshot))
-    value = await _prompt_value(ctx, spec, current)
+    value = await _prompt_value(ctx, spec, current, snapshot)
     if value is None:
         return
     if value == spec.getter(snapshot):
@@ -380,18 +382,26 @@ async def _stage_setting(
         pending[key] = value
 
 
-def _range_hint(spec: SettingSpec) -> str:
-    """A muted "allowed values" hint for a numeric prompt, from the spec's bounds."""
-    if spec.minimum is not None and spec.maximum is not None:
-        return f"Allowed: {spec.minimum:g} – {spec.maximum:g}"
+def _range_hint(spec: SettingSpec, snapshot: dict) -> str:
+    """A muted "allowed values" hint for a numeric prompt.
+
+    Uses the *effective* maximum — the device-reported bound (e.g. this board's max TX
+    power) when the spec names one, else the static bound — so the hint promises exactly
+    what validation will accept.
+    """
+    maximum = effective_maximum(spec, snapshot)
+    if spec.minimum is not None and maximum is not None:
+        return f"Allowed: {spec.minimum:g} – {maximum:g}"
     if spec.minimum is not None:
         return f"Allowed: ≥ {spec.minimum:g}"
-    if spec.maximum is not None:
-        return f"Allowed: ≤ {spec.maximum:g}"
+    if maximum is not None:
+        return f"Allowed: ≤ {maximum:g}"
     return ""
 
 
-async def _prompt_value(ctx: "AppContext", spec: SettingSpec, current: Any) -> Any:
+async def _prompt_value(
+    ctx: "AppContext", spec: SettingSpec, current: Any, snapshot: dict
+) -> Any:
     """Prompt for a typed value for ``spec`` (in the fitting dialog), ``None`` on cancel."""
     if spec.value_type == "bool":
         # A straight two-state choice reads best as a button pair; the current state is
@@ -430,7 +440,7 @@ async def _prompt_value(ctx: "AppContext", spec: SettingSpec, current: Any) -> A
 
     def validate(text: str) -> bool | str:
         try:
-            parse_value(spec, text)
+            parse_value(spec, text, snapshot)
             return True
         except DeviceConfigError as exc:
             return str(exc)
@@ -440,9 +450,9 @@ async def _prompt_value(ctx: "AppContext", spec: SettingSpec, current: Any) -> A
         prompt=spec.help,
         default="" if current is None else str(current),
         validate=validate,
-        help_text=_range_hint(spec),
+        help_text=_range_hint(spec, snapshot),
     )
-    return None if raw is None else parse_value(spec, raw)
+    return None if raw is None else parse_value(spec, raw, snapshot)
 
 
 async def _stage_location(
@@ -615,6 +625,8 @@ async def device_actions(ctx: "AppContext") -> None:
             cursor = choice
             if choice == _ADVERT:
                 await _advert_menu(ctx, device, snapshot)
+            elif choice == _SYNC_CLOCK:
+                await _sync_clock(ctx, device, snapshot)
             elif choice == _BACKUP:
                 await _backup_now(ctx, device, snapshot)
             elif choice == _RESTORE:
@@ -642,6 +654,7 @@ def _action_items() -> list:
     """
     actions: list[tuple[str, str, str, str]] = [
         ("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT, ""),
+        ("🕒 Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK, ""),
         ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP, ""),
         ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE, ""),
         ("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY, ""),
@@ -791,6 +804,56 @@ async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
             break
         await asyncio.sleep(_REBOOT_DROP_POLL_S)
     return True
+
+
+async def _sync_clock(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
+    """Show the device clock's drift against this computer and offer to correct it.
+
+    A companion that boots with a bad RTC stamps every message wrongly, so the dialog
+    leads with the measured drift (or admits the clock is unreadable) before the Sync
+    button writes the host's time.
+    """
+    import time
+
+    device_time: Optional[int] = None
+    try:
+        device_time = await device.get_time()
+    except Exception:  # noqa: BLE001 - old firmware; offer the blind sync instead
+        pass
+    if device_time:
+        drift = device_time - int(time.time())
+        stamp = _clock_text(device_time)
+        prompt = (
+            f"The device clock reads {stamp} — "
+            f"{_drift_text(drift)}. Set it from this computer?"
+        )
+    else:
+        prompt = (
+            "The device did not report its clock. Set it from this computer anyway?"
+        )
+    choice = await ctx.ui.dialog(
+        prompt,
+        [("Cancel", None), ("Sync", "sync")],
+        title="🕒 Sync clock",
+        default=1,
+    )
+    if choice == "sync":
+        await _run_now(ctx, device, snapshot, [("sync_clock",)], "Sync clock")
+
+
+def _clock_text(epoch: int) -> str:
+    """A device timestamp rendered in this computer's local time."""
+    from datetime import datetime
+
+    return datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _drift_text(drift: int) -> str:
+    """Describe a clock drift in seconds: ``"12 s behind"``, ``"3 s ahead"``, ``"in sync"``."""
+    if abs(drift) < 2:
+        return "in sync with this computer"
+    direction = "ahead of" if drift > 0 else "behind"
+    return f"{abs(drift)} s {direction} this computer"
 
 
 async def _backup_now(ctx: "AppContext", device: "Device", snapshot: dict) -> None:

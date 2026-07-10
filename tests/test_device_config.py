@@ -16,6 +16,7 @@ from meshterm.core.device_config import (
     RADIO_PRESETS,
     DeviceConfigError,
     build_snapshot,
+    effective_maximum,
     format_value,
     get_spec,
     parse_value,
@@ -328,6 +329,133 @@ async def test_plan_restore_emits_only_differences(tmp_path: Path) -> None:
     assert ("set_custom", "exp", "1") in ops
     # Unchanged values (e.g. radio_sf 11 == 11) are not re-applied.
     assert "radio_sf" not in [op[1] for op in ops if op[0] == "set"]
+
+
+# -- the device-reported TX power ceiling ---------------------------------------
+
+
+def test_tx_power_capped_by_device_reported_maximum() -> None:
+    """With a snapshot, the board's max_tx_power tightens the static bound."""
+    spec = get_spec("tx_power")
+    snapshot = {"max_tx_power": 22}
+    assert parse_value(spec, "22", snapshot) == 22
+    with pytest.raises(DeviceConfigError, match="<= 22"):
+        parse_value(spec, "23", snapshot)
+    # Without a snapshot only the static ceiling applies.
+    assert parse_value(spec, "27") == 27
+    assert effective_maximum(spec, snapshot) == 22
+    assert effective_maximum(spec, None) == 30
+
+
+def test_effective_maximum_never_loosens_the_static_bound() -> None:
+    """A device reporting a max above the static ceiling doesn't raise it."""
+    spec = get_spec("tx_power")
+    assert effective_maximum(spec, {"max_tx_power": 99}) == 30
+    assert effective_maximum(spec, {"max_tx_power": "bogus"}) == 30  # unparseable -> static
+
+
+# -- flood scope / auto-add / TX delays ------------------------------------------
+
+
+def test_flood_scope_length_limited_and_formats_empty() -> None:
+    """The scope name respects its 31-byte protocol slot; empty renders readably."""
+    spec = get_spec("flood_scope")
+    assert parse_value(spec, "alpha") == "alpha"
+    with pytest.raises(DeviceConfigError, match="at most 30"):
+        parse_value(spec, "x" * 31)
+    assert format_value(spec, "") == "(not set)"
+    assert format_value(spec, "#alpha") == "#alpha"
+
+
+async def test_flood_scope_round_trips_with_hashtag_normalization() -> None:
+    """Applying a bare scope name stores it with its leading #; empty clears it."""
+    device = await _connected_mock()
+    spec = get_spec("flood_scope")
+    await spec.apply(device, "alpha", await build_snapshot(device))
+    assert (await build_snapshot(device))["flood_scope"] == "#alpha"
+    await spec.apply(device, "", await build_snapshot(device))
+    assert (await build_snapshot(device))["flood_scope"] == ""
+
+
+async def test_autoadd_config_round_trips() -> None:
+    """The auto-add bitmask reaches the device and reads back into the snapshot."""
+    device = await _connected_mock()
+    spec = get_spec("autoadd_config")
+    await spec.apply(device, parse_value(spec, "5"), await build_snapshot(device))
+    assert (await build_snapshot(device))["autoadd_config"] == 5
+
+
+async def test_apply_tx_delay_preserves_other_tuning_fields() -> None:
+    """Editing one tuning field resends all four without clobbering the others."""
+    device = await _connected_mock()
+    await device.set_tuning(7, 2, 0, 0)
+    spec = get_spec("tx_delay_factor")
+    await spec.apply(device, 5, await build_snapshot(device))
+    tuning = await device.get_tuning()
+    assert tuning == {
+        "rx_delay": 7,
+        "airtime_factor": 2,
+        "tx_delay_factor": 5,
+        "direct_tx_delay_factor": 0,
+    }
+    # And the other direction: a direct-TX-delay edit keeps the fresh tx_delay_factor.
+    spec = get_spec("direct_tx_delay_factor")
+    await spec.apply(device, 3, await build_snapshot(device))
+    assert (await device.get_tuning())["tx_delay_factor"] == 5
+    assert (await device.get_tuning())["direct_tx_delay_factor"] == 3
+
+
+# -- clock sync -------------------------------------------------------------------
+
+
+async def test_mock_clock_drifts_until_set_time_corrects_it() -> None:
+    """The simulator's clock reads behind the host until set_time re-anchors it."""
+    import time as _time
+
+    device = await _connected_mock()
+    before = await device.get_time()
+    assert before is not None and before < int(_time.time())  # seeded drift
+    now = int(_time.time())
+    await device.set_time(now)
+    after = await device.get_time()
+    assert after is not None and abs(after - now) <= 1
+
+
+# -- the Device info status panel -------------------------------------------------
+
+
+async def test_status_panel_reports_role_battery_clock_and_stats() -> None:
+    """The info tool's status panel surfaces the read-only device state in one place."""
+    import io
+
+    from rich.console import Console
+
+    from meshterm.tools.info import _status_panel
+    from meshterm.ui.theme import MESH_THEME
+
+    device = await _connected_mock()
+    panel = await _status_panel(device, await build_snapshot(device))
+    console = Console(theme=MESH_THEME, file=io.StringIO(), width=100)
+    console.print(panel)
+    out = console.file.getvalue()
+
+    assert "companion" in out  # adv_type 1 rendered as the node role
+    assert "MeshCore Simulator" in out
+    assert "4.10 V" in out
+    assert "1d 2h 3m" in out  # 93784 s of simulated uptime
+    assert "s behind" in out  # the mock's seeded clock drift
+    assert "-110 dBm noise floor" in out
+    assert "210 sent" in out and "1234 received" in out
+
+
+def test_uptime_renders_compact_units() -> None:
+    """Uptime shows seconds only under a minute, then d/h/m parts as needed."""
+    from meshterm.tools.info import _uptime
+
+    assert _uptime(45) == "45 s"
+    assert _uptime(3660) == "1h 1m"
+    assert _uptime(93784) == "1d 2h 3m"
+    assert _uptime(86400) == "1d 0m"
 
 
 # -- safety gating -------------------------------------------------------------

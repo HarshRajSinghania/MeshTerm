@@ -433,7 +433,51 @@ class Device(ABC):
         """Return radio tuning parameters.
 
         Returns:
-            A dict with ``rx_delay`` and ``airtime_factor`` (both ints).
+            A dict with ``rx_delay`` and ``airtime_factor`` (both ints). The TX delay
+            factors are write-only in the companion protocol (the firmware's tuning
+            response carries only these two fields), so they are absent here on real
+            hardware; the simulator includes them for a fuller editing experience.
+        """
+
+    @abstractmethod
+    async def get_autoadd_config(self) -> Optional[int]:
+        """Return the contact auto-add bitmask, or ``None`` if the firmware predates it.
+
+        The finer-grained sibling of :meth:`set_manual_add_contacts`: a bitmask of which
+        advert types the firmware adds to contacts automatically.
+        """
+
+    @abstractmethod
+    async def get_default_flood_scope(self) -> Optional[str]:
+        """Return the persisted default flood scope's name (``""`` when unset).
+
+        Returns:
+            The ``#scope`` name limiting flood routing, an empty string when no scope is
+            configured, or ``None`` if the firmware predates flood scopes.
+        """
+
+    @abstractmethod
+    async def get_time(self) -> Optional[int]:
+        """Return the device clock as a UNIX epoch timestamp, or ``None`` if unknown."""
+
+    @abstractmethod
+    async def get_battery(self) -> dict:
+        """Return battery (and, when reported, storage) status.
+
+        Returns:
+            A dict with ``level`` (millivolts) and, on firmware that reports storage,
+            ``used_kb``/``total_kb``. Empty when the read is unsupported.
+        """
+
+    @abstractmethod
+    async def get_stats(self) -> dict:
+        """Return the firmware's core/radio/packet statistics, merged into one dict.
+
+        Each of the three stats frames is fetched best-effort — firmware predating one
+        simply contributes nothing — so callers get whatever subset exists: ``battery_mv``,
+        ``uptime_secs``, ``errors``, ``queue_len`` (core); ``noise_floor``, ``last_rssi``,
+        ``last_snr``, ``tx_air_secs``, ``rx_air_secs`` (radio); ``recv``, ``sent``,
+        ``flood_tx``, ``direct_tx``, ``flood_rx``, ``direct_rx``, ``recv_errors`` (packets).
         """
 
     @abstractmethod
@@ -506,8 +550,22 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def set_tuning(self, rx_delay: int, airtime_factor: int) -> None:
-        """Set radio tuning parameters (RX delay and airtime budgeting factor)."""
+    async def set_tuning(
+        self,
+        rx_delay: int,
+        airtime_factor: int,
+        tx_delay_factor: int = 0,
+        direct_tx_delay_factor: int = 0,
+    ) -> None:
+        """Set radio tuning parameters.
+
+        The firmware takes all four fields in one command, so a caller changing one must
+        resend the others. The two TX delay factors (single bytes: the random extra delay
+        before relayed transmissions, and the delay before direct/zero-hop ones) cannot be
+        read back from real hardware — see :meth:`get_tuning` — so an unknown current
+        value defaults to ``0``, which is also what the underlying library always sent
+        before these were exposed.
+        """
 
     @abstractmethod
     async def set_manual_add_contacts(self, enabled: bool) -> None:
@@ -524,6 +582,18 @@ class Device(ABC):
     @abstractmethod
     async def set_telemetry_modes(self, base: int, loc: int, env: int) -> None:
         """Set the three telemetry mode fields together (each ``0``-``3``)."""
+
+    @abstractmethod
+    async def set_autoadd_config(self, flags: int) -> None:
+        """Set the contact auto-add bitmask (see :meth:`get_autoadd_config`)."""
+
+    @abstractmethod
+    async def set_default_flood_scope(self, scope: str) -> None:
+        """Persist the default flood scope by name (empty string clears it).
+
+        A missing leading ``#`` is added by the transport layer, matching how scope names
+        are hashed into their 16-byte keys.
+        """
 
     @abstractmethod
     async def set_path_hash_mode(self, mode: int) -> None:
@@ -1509,6 +1579,45 @@ class MeshCoreDevice(Device):
             "airtime_factor": int(payload.get("airtime_factor", 0)),
         }
 
+    async def get_autoadd_config(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+        event = self._ok(await self._require().commands.get_autoadd_config())
+        payload = getattr(event, "payload", {}) or {}
+        config = payload.get("config")
+        return None if config is None else int(config)
+
+    async def get_default_flood_scope(self) -> Optional[str]:  # noqa: D102
+        event = self._ok(await self._require().commands.get_default_flood_scope())
+        payload = getattr(event, "payload", {}) or {}
+        name = payload.get("scope_name")
+        return None if name is None else str(name)
+
+    async def get_time(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+        event = self._ok(await self._require().commands.get_time())
+        payload = getattr(event, "payload", {}) or {}
+        value = payload.get("time")
+        return None if value is None else int(value)
+
+    async def get_battery(self) -> dict:  # noqa: D102 - inherited docstring
+        event = self._ok(await self._require().commands.get_bat())
+        return dict(getattr(event, "payload", {}) or {})
+
+    async def get_stats(self) -> dict:  # noqa: D102 - inherited docstring
+        mc = self._require()
+        stats: dict = {}
+        # Each frame independently best-effort: firmware predating one stats type answers
+        # with an error, which must not cost us the frames it does support.
+        for read in (
+            mc.commands.get_stats_core,
+            mc.commands.get_stats_radio,
+            mc.commands.get_stats_packets,
+        ):
+            try:
+                event = self._ok(await read())
+            except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+                continue
+            stats.update(getattr(event, "payload", {}) or {})
+        return stats
+
     async def get_path_hash_mode(self) -> int:  # noqa: D102 - inherited docstring
         return int(await self._require().commands.get_path_hash_mode())
 
@@ -1546,8 +1655,38 @@ class MeshCoreDevice(Device):
     async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_radio(freq, bw, sf, cr))
 
-    async def set_tuning(self, rx_delay: int, airtime_factor: int) -> None:  # noqa: D102
-        self._ok(await self._require().commands.set_tuning(rx_delay, airtime_factor))
+    async def set_tuning(  # noqa: D102 - inherited docstring
+        self,
+        rx_delay: int,
+        airtime_factor: int,
+        tx_delay_factor: int = 0,
+        direct_tx_delay_factor: int = 0,
+    ) -> None:
+        from meshcore import EventType
+
+        # The library's set_tuning hardcodes the two TX delay bytes to zero, so the full
+        # CMD_SET_TUNING_PARAMS (0x15) frame is built here instead: rx_delay(4 LE) +
+        # airtime_factor(4 LE) + tx_delay_factor(1) + direct_tx_delay_factor(1).
+        data = (
+            b"\x15"
+            + int(rx_delay).to_bytes(4, "little")
+            + int(airtime_factor).to_bytes(4, "little")
+            + int(tx_delay_factor).to_bytes(1, "little")
+            + int(direct_tx_delay_factor).to_bytes(1, "little")
+        )
+        self._ok(
+            await self._require().commands.send(data, [EventType.OK, EventType.ERROR])
+        )
+
+    async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
+        self._ok(await self._require().commands.set_autoadd_config(int(flags)))
+
+    async def set_default_flood_scope(self, scope: str) -> None:  # noqa: D102
+        # The library treats "", "0", "None" and "*" as "clear the scope"; normalize to
+        # None for the empty case so only a real name gets the ``#`` treatment.
+        self._ok(
+            await self._require().commands.set_default_flood_scope(scope.strip() or None)
+        )
 
     async def set_manual_add_contacts(self, enabled: bool) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_manual_add_contacts(enabled))
@@ -1672,7 +1811,17 @@ class MockDevice(Device):
             "radio_cr": 5,
             "simulated": True,
         }
-        self._tuning: dict = {"rx_delay": 0, "airtime_factor": 0}
+        self._tuning: dict = {
+            "rx_delay": 0,
+            "airtime_factor": 0,
+            "tx_delay_factor": 0,
+            "direct_tx_delay_factor": 0,
+        }
+        self._autoadd_config = 0
+        self._flood_scope = ""
+        # Simulated clock skew (seconds behind the host), so the sync-clock flow has a
+        # visible drift to correct until set_time is called.
+        self._clock_offset: Optional[int] = -125
         self._path_hash_mode = 0
         self._custom_vars: dict[str, str] = {}
         self._channels: dict[int, dict] = {}
@@ -1773,6 +1922,42 @@ class MockDevice(Device):
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
         return dict(self._tuning)
 
+    async def get_autoadd_config(self) -> Optional[int]:  # noqa: D102
+        return self._autoadd_config
+
+    async def get_default_flood_scope(self) -> Optional[str]:  # noqa: D102
+        return self._flood_scope
+
+    async def get_time(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+        import time as _time
+
+        if self._clock_offset is None:
+            return self._info.get("clock")
+        return int(_time.time()) + self._clock_offset
+
+    async def get_battery(self) -> dict:  # noqa: D102 - inherited docstring
+        return {"level": 4100, "used_kb": 128, "total_kb": 1024}
+
+    async def get_stats(self) -> dict:  # noqa: D102 - inherited docstring
+        return {
+            "battery_mv": 4100,
+            "uptime_secs": 93784,  # 1d 2h 3m 4s
+            "errors": 0,
+            "queue_len": 0,
+            "noise_floor": -110,
+            "last_rssi": -62,
+            "last_snr": 9.5,
+            "tx_air_secs": 42,
+            "rx_air_secs": 360,
+            "recv": 1234,
+            "sent": 210,
+            "flood_tx": 40,
+            "direct_tx": 170,
+            "flood_rx": 900,
+            "direct_rx": 334,
+            "recv_errors": 3,
+        }
+
     async def get_path_hash_mode(self) -> int:  # noqa: D102 - inherited docstring
         return self._path_hash_mode
 
@@ -1797,8 +1982,30 @@ class MockDevice(Device):
     async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
         self._info.update(radio_freq=freq, radio_bw=bw, radio_sf=sf, radio_cr=cr)
 
-    async def set_tuning(self, rx_delay: int, airtime_factor: int) -> None:  # noqa: D102
-        self._tuning = {"rx_delay": rx_delay, "airtime_factor": airtime_factor}
+    async def set_tuning(  # noqa: D102 - inherited docstring
+        self,
+        rx_delay: int,
+        airtime_factor: int,
+        tx_delay_factor: int = 0,
+        direct_tx_delay_factor: int = 0,
+    ) -> None:
+        self._tuning = {
+            "rx_delay": rx_delay,
+            "airtime_factor": airtime_factor,
+            "tx_delay_factor": tx_delay_factor,
+            "direct_tx_delay_factor": direct_tx_delay_factor,
+        }
+
+    async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
+        self._autoadd_config = int(flags)
+
+    async def set_default_flood_scope(self, scope: str) -> None:  # noqa: D102
+        # Mirror the transport layer: empty clears, a bare name gains its leading #.
+        scope = scope.strip()
+        if not scope:
+            self._flood_scope = ""
+        else:
+            self._flood_scope = scope if scope.startswith("#") else f"#{scope}"
 
     async def set_manual_add_contacts(self, enabled: bool) -> None:  # noqa: D102
         self._info["manual_add_contacts"] = enabled
@@ -1828,7 +2035,11 @@ class MockDevice(Device):
         }
 
     async def set_time(self, epoch: int) -> None:  # noqa: D102 - inherited docstring
+        import time as _time
+
         self._info["clock"] = epoch
+        # The simulated clock now runs from the set point (drift corrected).
+        self._clock_offset = epoch - int(_time.time())
 
     async def send_advert(self, flood: bool = False) -> None:  # noqa: D102
         await asyncio.sleep(0)

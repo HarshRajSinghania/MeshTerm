@@ -164,6 +164,10 @@ class ConfigTool(Tool):
             _require_yes(yes, "import-key overwrites the device identity")
             run_tool_command(self, {"ops": [("import_key", key_hex)]})
 
+        @config_app.command("sync-clock", help="Set the device clock from this computer")
+        def _sync_clock_cmd() -> None:
+            run_tool_command(self, {"ops": [("sync_clock",)]})
+
         @config_app.command("reboot", help="Reboot the device")
         def _reboot_cmd(
             yes: bool = typer.Option(False, "--yes", help="Confirm reboot"),
@@ -237,6 +241,15 @@ async def apply_ops(
             ctx.ui.note(f"[ok]✓[/ok] {kind_label} advertisement sent")
         elif kind == "share":
             _share_contact(ctx, snapshot)
+        elif kind == "sync_clock":
+            import time as _time
+            from datetime import datetime
+
+            epoch = int(_time.time())
+            await device.set_time(epoch)
+            stamp = datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            ctx.ui.note(f"[ok]✓[/ok] device clock set to [brand]{stamp}[/brand]")
+            changes += 1
         elif kind == "reboot":
             await device.reboot()
             ctx.ui.note("[warn]device rebooting[/warn]")
@@ -266,7 +279,7 @@ async def _apply_setting(
         ``1`` (a change was applied).
     """
     spec = get_spec(key)
-    value = parse_value(spec, raw)
+    value = parse_value(spec, raw, snapshot)
     await spec.apply(device, value, snapshot)
     snapshot[key] = value
     ctx.ui.note(f"[ok]✓[/ok] [brand]{key}[/brand] = {format_value(spec, value)}")

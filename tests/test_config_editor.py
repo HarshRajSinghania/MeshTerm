@@ -519,6 +519,53 @@ async def test_actions_reboot_on_simulator_stays_on_the_screen(ctx: AppContext) 
     assert any("rebooting" in n for n in ui.notes)
 
 
+async def test_actions_sync_clock_corrects_the_device_time(ctx: AppContext) -> None:
+    """Sync clock shows the drift, and confirming writes the host time to the device."""
+    import time
+
+    device = await ctx.device()
+    assert (await device.get_time()) < int(time.time())  # the mock boots with drift
+    ui = _install(ctx, [
+        ("select", "__sync_clock__"),
+        ("dialog", "sync"),
+        ("select", "__cancel__"),
+    ])
+    await device_actions(ctx)
+    assert abs((await device.get_time()) - int(time.time())) <= 2
+    assert any("clock set to" in n for n in ui.notes)
+
+
+async def test_actions_sync_clock_cancel_leaves_the_clock_alone(ctx: AppContext) -> None:
+    """Backing out of the sync dialog changes nothing."""
+    device = await ctx.device()
+    before = await device.get_time()
+    _install(ctx, [
+        ("select", "__sync_clock__"),
+        ("dialog", None),
+        ("select", "__cancel__"),
+    ])
+    await device_actions(ctx)
+    assert abs((await device.get_time()) - before) <= 2  # still ticking on the old drift
+
+
+async def test_editor_stages_flood_scope(ctx: AppContext) -> None:
+    """The flood scope is a first-class staged setting, hashtag-normalized on apply."""
+    from meshterm.core.device_config import build_snapshot
+    from meshterm.tools.config import apply_ops
+
+    _install(ctx, [
+        ("select", "flood_scope"),
+        ("text", "alpha"),
+        ("select", "__apply__"),
+    ])
+    ops = await edit_config(ctx)
+    assert ops == [("set", "flood_scope", "alpha")]
+
+    device = await ctx.device()
+    await apply_ops(ctx, device, await build_snapshot(device), ops)
+    assert await device.get_default_flood_scope() == "#alpha"
+
+
 async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path) -> None:
     """Backup runs at once: the TOML lands on disk before the screen closes."""
     target = tmp_path / "out" / "backup.toml"

@@ -129,7 +129,7 @@ def plan_restore(
     ops: list[tuple] = []
     for key, raw in backup.settings.items():
         spec = get_spec(key)  # raises on unknown key
-        value = parse_value(spec, raw)
+        value = parse_value(spec, raw, snapshot)
         if value != spec.getter(snapshot):
             ops.append(("set", key, value))
 
