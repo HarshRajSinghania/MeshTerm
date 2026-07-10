@@ -292,10 +292,12 @@ class SelectScreen(Screen):
 class ReorderScreen(Screen):
     """A list whose rows the user rearranges in place with the arrow keys.
 
-    Move the cursor with ↑/↓; press Enter to *grab* the highlighted row, then ↑/↓ carry it
-    up and down the list; press Enter again to *drop* it. The screen stays open until Esc,
-    at which point it resolves with the final order as a list of the original row indices
-    (so ``[2, 0, 1]`` means "the row that started third is now first").
+    Move the cursor with ↑/↓; press Space to *grab* the highlighted row, then ↑/↓ carry it
+    up and down the list; press Space again to *drop* it. Enter commits (OK), resolving
+    with the final order as a list of the original row indices (so ``[2, 0, 1]`` means
+    "the row that started third is now first"); Esc cancels, resolving :data:`CANCEL` so
+    the caller keeps the original order — matching the Enter-accepts/Esc-cancels contract
+    of the other dialogs.
     """
 
     def __init__(self, title: str, labels: list[str]) -> None:
@@ -317,8 +319,8 @@ class ReorderScreen(Screen):
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hint, phrased for whether a row is currently grabbed."""
         if self._grabbed:
-            return "↑↓ move row · Enter drop · Esc done"
-        return "↑↓ choose · Enter grab · Esc done"
+            return "↑↓ move row · Space drop · Enter OK · Esc cancel"
+        return "↑↓ choose · Space grab · Enter OK · Esc cancel"
 
     def render_body(self, width: int) -> list[str]:
         """Render each row, marking the cursor (and, when grabbed, the moving row)."""
@@ -343,7 +345,7 @@ class ReorderScreen(Screen):
         return getattr(self, "_cursor", None)
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the cursor, carry a grabbed row, toggle grab, or finish on Esc."""
+        """Move the cursor, carry a grabbed row, toggle grab, commit on Enter, or cancel on Esc."""
         n = len(self._order)
         if action == "up":
             if self._grabbed and self._index > 0:
@@ -359,10 +361,14 @@ class ReorderScreen(Screen):
                 self._index += 1
             elif not self._grabbed and n:
                 self._index = (self._index + 1) % n
-        elif action == "enter":
+        elif action == "space" or (action == "text" and data == " "):
+            # The session delivers the spacebar as printable text; accept the normalized
+            # "space" action too for symmetry with the scroll screens.
             self._grabbed = not self._grabbed
-        elif action == "escape":
+        elif action == "enter":
             self.resolve(list(self._order))
+        elif action == "escape":
+            super().handle("escape")
 
 
 def _cursor_line(rows: list, selected: Optional[Choice], filtered: bool) -> Optional[int]:

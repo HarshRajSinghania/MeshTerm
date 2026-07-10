@@ -394,7 +394,11 @@ class TuiSession:
         return None if result is CANCEL else result
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
-        """Show a drag-with-arrows reorder screen; return the final order of row indices."""
+        """Show a drag-with-arrows reorder screen; return the final order of row indices.
+
+        Enter commits the rearrangement; Esc cancels, which comes back as the original
+        (identity) order so the caller treats it as "no change".
+        """
         result = await self.run_screen(ReorderScreen(title, labels))
         return list(range(len(labels))) if result is CANCEL else result
 

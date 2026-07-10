@@ -28,7 +28,7 @@ from meshterm.ui.tui.prompt import (
 )
 from meshterm.ui.tui.render import render_lines, render_to_ansi
 from meshterm.ui.tui.screen import CANCEL, Screen, ScrollScreen
-from meshterm.ui.tui.select import Choice, SelectScreen, Separator
+from meshterm.ui.tui.select import Choice, ReorderScreen, SelectScreen, Separator
 from meshterm.ui.tui.session import TuiSession
 
 _UNSET = object()
@@ -322,6 +322,46 @@ def test_scroll_screen_escape_resolves_none() -> None:
     """A result window dismisses to ``None`` on Esc or Enter."""
     assert _run(ScrollScreen(Text("x")), "escape") is None
     assert _run(ScrollScreen(Text("x")), "enter") is None
+
+
+# --- reorder -----------------------------------------------------------------
+
+
+def test_reorder_space_grabs_enter_commits() -> None:
+    """Space grabs/drops a row (spacebar arrives as printable text) and Enter is OK."""
+    screen = ReorderScreen("order", ["a", "b", "c"])
+    screen.handle("text", " ")  # grab "a"
+    assert screen._grabbed and "Space drop" in screen.footer_hint
+    screen.handle("down")  # carry it past "b"
+    screen.handle("space")  # drop (the normalized action form also works)
+    assert not screen._grabbed and "Space grab" in screen.footer_hint
+    assert _run(screen, "enter") == [1, 0, 2]
+
+
+def test_reorder_enter_commits_a_still_grabbed_row_in_place() -> None:
+    """OK while a row is grabbed commits it where it currently sits."""
+    screen = ReorderScreen("order", ["a", "b", "c"])
+    screen.handle("down")  # cursor to "b"
+    screen.handle("text", " ")  # grab
+    screen.handle("down")  # carry to the end
+    assert _run(screen, "enter") == [0, 2, 1]
+
+
+def test_reorder_escape_cancels_discarding_moves() -> None:
+    """Esc resolves the sentinel even after rearranging, so the caller keeps the old order."""
+    screen = ReorderScreen("order", ["a", "b", "c"])
+    screen.handle("text", " ")
+    screen.handle("down")
+    assert _run(screen, "escape") is CANCEL
+
+
+def test_reorder_ignores_other_typed_characters() -> None:
+    """Printable keys other than the spacebar neither grab a row nor resolve the screen."""
+    screen = ReorderScreen("order", ["a", "b"])
+    screen.future = _Fut()
+    screen.handle("text", "x")
+    assert not screen._grabbed
+    assert not screen.future.done()
 
 
 # --- frame -------------------------------------------------------------------
