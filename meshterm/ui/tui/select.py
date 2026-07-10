@@ -292,13 +292,19 @@ class SelectScreen(Screen):
 class ReorderScreen(Screen):
     """A list whose rows the user rearranges in place with the arrow keys.
 
-    Move the cursor with ↑/↓; press Space to *grab* the highlighted row, then ↑/↓ carry it
-    up and down the list; press Space again to *drop* it. Enter commits (OK), resolving
-    with the final order as a list of the original row indices (so ``[2, 0, 1]`` means
-    "the row that started third is now first"); Esc cancels, resolving :data:`CANCEL` so
-    the caller keeps the original order — matching the Enter-accepts/Esc-cancels contract
-    of the other dialogs.
+    Move the cursor with ↑/↓; press Space (or Enter) on a row to *grab* it, then ↑/↓ carry
+    it up and down the list; press Space (or Enter) again to *drop* it. Below the list sit
+    the action rows, following the config editor's pattern: once the order has actually
+    changed, an ok-tinted *Apply* joins an err-tinted *Back — discard*; while it is
+    untouched there is only a plain *Back*. Enter on Apply commits, resolving with the
+    final order as a list of the original row indices (so ``[2, 0, 1]`` means "the row
+    that started third is now first"); Enter on Back — like Esc anywhere — resolves
+    :data:`CANCEL` so the caller keeps the original order.
     """
+
+    #: Action-row sentinels (kept distinct from list positions, which are ints).
+    _APPLY = "apply"
+    _BACK = "back"
 
     def __init__(self, title: str, labels: list[str]) -> None:
         """Build a reorder screen.
@@ -319,11 +325,28 @@ class ReorderScreen(Screen):
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hint, phrased for whether a row is currently grabbed."""
         if self._grabbed:
-            return "↑↓ move row · Space drop · Enter OK · Esc cancel"
-        return "↑↓ choose · Space grab · Enter OK · Esc cancel"
+            return "↑↓ move row · Space drop · Esc cancel"
+        return "↑↓ move · Space grab · Enter select · Esc cancel"
+
+    def _dirty(self) -> bool:
+        """Whether the rows have actually left their original order."""
+        return self._order != list(range(len(self._order)))
+
+    def _actions(self) -> list[tuple[str, Text]]:
+        """The action rows below the list, matching the config editor's exit group:
+        Apply joins Back only once there is a change to apply, and Back then spells
+        out the consequence of leaving.
+        """
+        if self._dirty():
+            return [
+                (self._APPLY, Text.assemble(("✓ ", "ok"), "Apply new order")),
+                (self._BACK, Text.assemble(("✗ ", "err"), "Back — discard changes")),
+            ]
+        return [(self._BACK, Text("Back"))]
 
     def render_body(self, width: int) -> list[str]:
-        """Render each row, marking the cursor (and, when grabbed, the moving row)."""
+        """Render the rows, a blank spacer, then the action group, marking the cursor."""
+        n = len(self._order)
         lines: list[str] = []
         for pos, orig in enumerate(self._order):
             is_cursor = pos == self._index
@@ -337,7 +360,19 @@ class ReorderScreen(Screen):
                         overflow="ellipsis")
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
-        self._cursor = self._index
+        lines.append("")
+        for i, (_key, label) in enumerate(self._actions()):
+            if n + i == self._index:
+                # The cursor row goes full-brand like the list rows above it,
+                # trading the ✓/✗ tint for the highlight.
+                text = Text("❯ " + label.plain, style="brand", no_wrap=True)
+            else:
+                text = Text("  ", no_wrap=True)
+                text.append_text(label)
+            text.truncate(width, overflow="ellipsis")
+            lines.append(render_to_ansi(text, width))
+        # The spacer line offsets every action row by one on screen.
+        self._cursor = self._index if self._index < n else self._index + 1
         return lines
 
     def cursor_line(self) -> Optional[int]:
@@ -345,28 +380,36 @@ class ReorderScreen(Screen):
         return getattr(self, "_cursor", None)
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the cursor, carry a grabbed row, toggle grab, commit on Enter, or cancel on Esc."""
+        """Move the cursor, carry a grabbed row, grab/drop, run an action, or cancel on Esc."""
         n = len(self._order)
+        total = n + len(self._actions())
         if action == "up":
             if self._grabbed and self._index > 0:
                 self._order[self._index - 1], self._order[self._index] = (
                     self._order[self._index], self._order[self._index - 1])
                 self._index -= 1
-            elif not self._grabbed and n:
-                self._index = (self._index - 1) % n
+            elif not self._grabbed and total:
+                self._index = (self._index - 1) % total
         elif action == "down":
             if self._grabbed and self._index < n - 1:
                 self._order[self._index + 1], self._order[self._index] = (
                     self._order[self._index], self._order[self._index + 1])
                 self._index += 1
-            elif not self._grabbed and n:
-                self._index = (self._index + 1) % n
+            elif not self._grabbed and total:
+                self._index = (self._index + 1) % total
         elif action == "space" or (action == "text" and data == " "):
             # The session delivers the spacebar as printable text; accept the normalized
-            # "space" action too for symmetry with the scroll screens.
-            self._grabbed = not self._grabbed
+            # "space" action too for symmetry with the scroll screens. Grabbing only
+            # means anything on a list row.
+            if self._index < n:
+                self._grabbed = not self._grabbed
         elif action == "enter":
-            self.resolve(list(self._order))
+            if self._index < n:
+                self._grabbed = not self._grabbed  # Enter grabs/drops, like Space
+            elif self._actions()[self._index - n][0] == self._APPLY:
+                self.resolve(list(self._order))
+            else:
+                super().handle("escape")  # Back resolves CANCEL, same as Esc
         elif action == "escape":
             super().handle("escape")
 

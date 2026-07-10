@@ -327,32 +327,67 @@ def test_scroll_screen_escape_resolves_none() -> None:
 # --- reorder -----------------------------------------------------------------
 
 
-def test_reorder_space_grabs_enter_commits() -> None:
-    """Space grabs/drops a row (spacebar arrives as printable text) and Enter is OK."""
+def test_reorder_apply_row_commits_new_order() -> None:
+    """Space grabs/drops (spacebar arrives as printable text); Enter on Apply commits."""
     screen = ReorderScreen("order", ["a", "b", "c"])
     screen.handle("text", " ")  # grab "a"
     assert screen._grabbed and "Space drop" in screen.footer_hint
     screen.handle("down")  # carry it past "b"
     screen.handle("space")  # drop (the normalized action form also works)
     assert not screen._grabbed and "Space grab" in screen.footer_hint
+    screen.handle("down")  # cursor from position 1 past "c"…
+    screen.handle("down")  # …onto the Apply row
     assert _run(screen, "enter") == [1, 0, 2]
 
 
-def test_reorder_enter_commits_a_still_grabbed_row_in_place() -> None:
-    """OK while a row is grabbed commits it where it currently sits."""
+def test_reorder_enter_grabs_and_drops_a_list_row() -> None:
+    """Enter on a list row grabs/drops just like Space, so either key drives a move."""
     screen = ReorderScreen("order", ["a", "b", "c"])
     screen.handle("down")  # cursor to "b"
-    screen.handle("text", " ")  # grab
+    screen.handle("enter")  # grab
+    assert screen._grabbed
     screen.handle("down")  # carry to the end
-    assert _run(screen, "enter") == [0, 2, 1]
+    screen.handle("enter")  # drop
+    assert not screen._grabbed
+    assert screen._order == [0, 2, 1]
 
 
-def test_reorder_escape_cancels_discarding_moves() -> None:
-    """Esc resolves the sentinel even after rearranging, so the caller keeps the old order."""
+def test_reorder_actions_follow_the_dirty_state() -> None:
+    """Untouched order offers a lone Back; a change swaps in Apply plus discard-Back."""
+    screen = ReorderScreen("order", ["a", "b", "c"])
+    assert [key for key, _ in screen._actions()] == ["back"]
+    screen.handle("space")
+    screen.handle("down")  # dirty now
+    assert [key for key, _ in screen._actions()] == ["apply", "back"]
+    screen.handle("up")  # moved back home — clean again
+    assert [key for key, _ in screen._actions()] == ["back"]
+
+
+def test_reorder_back_row_and_escape_cancel_discarding_moves() -> None:
+    """Enter on Back — like Esc — resolves the sentinel, so the caller keeps the old order."""
     screen = ReorderScreen("order", ["a", "b", "c"])
     screen.handle("text", " ")
     screen.handle("down")
     assert _run(screen, "escape") is CANCEL
+
+    screen = ReorderScreen("order", ["a", "b", "c"])
+    screen.handle("space")
+    screen.handle("down")
+    screen.handle("space")  # drop at position 1; the order is dirty
+    for _ in range(3):  # cursor 1 → 2 → Apply → Back
+        screen.handle("down")
+    assert _run(screen, "enter") is CANCEL
+
+
+def test_reorder_cursor_wraps_through_the_action_rows() -> None:
+    """↑ from the first row lands on the last action row; ↓ from there wraps back to the top."""
+    screen = ReorderScreen("order", ["a", "b"])
+    screen.handle("up")  # wrap: onto the lone Back row
+    assert screen._index == 2
+    screen.handle("space")  # grabbing means nothing on an action row
+    assert not screen._grabbed
+    screen.handle("down")  # wrap forward to the first list row
+    assert screen._index == 0
 
 
 def test_reorder_ignores_other_typed_characters() -> None:
