@@ -10,7 +10,7 @@ see always reflects the radio.
 
 The list is laid out like the config editor: fixed, column-aligned lanes under one header
 line — name, openness, hash fingerprint, unread badge, total messages, last-message age,
-and a braille sparkline of the trailing week's traffic — so a glance shows not just
+and a braille sparkline of the trailing two hours' traffic — so a glance shows not just
 *which* channels exist but which ones are alive. The message statistics come from
 :meth:`~meshterm.persistence.repository.Repository.channel_stats` (read through a small
 TTL cache) and the unread counts from the live chat service, and each row is a callable
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from bisect import bisect_right
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
@@ -337,40 +338,45 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
-#: Width of the activity sparkline in braille characters. Each braille cell packs two
-#: dot columns, so eight characters draw all :data:`ACTIVITY_BUCKETS` window buckets.
-_SPARK_WIDTH = ACTIVITY_BUCKETS // 2
 #: Braille dot masks for a bar filled bottom-up to height 0–4 in a cell's left column
 #: (dots 7, 3, 2, 1 — the Unicode braille block numbers its rows top-down) and right
 #: column (dots 8, 6, 5, 4). OR one of each, add to U+2800, and that's the character.
 _BRAILLE_LEFT = (0x00, 0x40, 0x44, 0x46, 0x47)
 _BRAILLE_RIGHT = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
+#: Message counts a bucket must reach for each extra dot of bar height (Fibonacci-ish, so
+#: each dot roughly means "a conversation tier up"): 1 message lights one dot, 3 light two,
+#: 8 light three, and 21 or more max the column out.
+_ACTIVITY_LEVELS = (1, 3, 8, 21)
+#: A braille cell with just its two bottom dots (7 and 8) lit — the resting baseline a
+#: silent pair of buckets draws, so a quiet channel still shows a flatline, not a gap.
+_SPARK_BASELINE = chr(0x2800 | 0x40 | 0x80)
 
 
 def _activity_sparkline(histogram: "tuple[int, ...]") -> Text:
-    """The channel's braille activity sparkline over the trailing week.
+    """The channel's braille activity sparkline over the trailing two hours.
 
-    Each of the histogram's :data:`ACTIVITY_BUCKETS` buckets becomes one dot column,
-    packed two per braille character, its bar rising bottom-up through the cell's four
-    dot rows. Heights are scaled to the row's own busiest bucket — the sparkline shows a
-    channel's *rhythm*, not a cross-channel volume comparison (the MSGS lane does that) —
-    and any non-empty bucket keeps at least one dot so a lone message never vanishes.
-    Time runs left (window start) to right (now), in the ok green; a window with no
-    traffic at all renders as the same deliberate muted dots as before.
+    Each of the histogram's :data:`ACTIVITY_BUCKETS` five-minute buckets becomes one dot
+    column, packed two per braille character, its bar rising bottom-up through the cell's
+    four dot rows. Heights are absolute, stepped at :data:`_ACTIVITY_LEVELS`, so the same
+    traffic draws the same bar on every row and a lone message never vanishes. Time runs
+    *newest first*: "now" is the leftmost column (matching the histogram's order) and a
+    burst of traffic slides right as it ages. Cells with traffic draw in the ok green; a
+    silent cell drops to a faint two-bottom-dot baseline, so a quiet stretch reads as a
+    flatline under the green spikes rather than a hole in the row.
     """
     histogram = (tuple(histogram) + (0,) * ACTIVITY_BUCKETS)[:ACTIVITY_BUCKETS]
-    peak = max(histogram)
-    if not peak:
-        return Text("·" * _SPARK_WIDTH, style="muted")
 
     def height(count: int) -> int:
-        return 0 if not count else max(1, -(-count * 4 // peak))  # ceil, floored at 1
+        return bisect_right(_ACTIVITY_LEVELS, count)
 
-    cells = "".join(
-        chr(0x2800 | _BRAILLE_LEFT[height(left)] | _BRAILLE_RIGHT[height(right)])
-        for left, right in zip(histogram[0::2], histogram[1::2])
-    )
-    return Text(cells, style="ok")
+    text = Text()
+    for left, right in zip(histogram[0::2], histogram[1::2]):
+        lh, rh = height(left), height(right)
+        if lh or rh:
+            text.append(chr(0x2800 | _BRAILLE_LEFT[lh] | _BRAILLE_RIGHT[rh]), style="ok")
+        else:
+            text.append(_SPARK_BASELINE, style="faint")
+    return text
 
 
 def _fit(text: str, width: int) -> str:
@@ -426,7 +432,8 @@ def _slot_text(
     the :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
     focus in the base colour, the descriptive lanes are muted, the unread ``●`` badge is
     red with its count in warn (the conversation picker's language), and the sparkline
-    draws in the ok green. The row is always a Rich :class:`~rich.text.Text` so those spans
+    draws in the ok green over a faint flatline. The row is always a Rich
+    :class:`~rich.text.Text` so those spans
     survive under the select screen's row highlight.
     """
     st = stats.get(slot.identity)
@@ -480,7 +487,10 @@ def _menu_items(
 
     if len(slots) > 1:
         items.append(Separator("── Organize ──", style="accent"))
-        items.append(Choice(title="↕ Reorder channels", value=_REORDER))
+        # Two spaces after the arrow: ↕ (East-Asian-ambiguous width) renders one cell where
+        # the sibling rows' glyphs (＋ ＃ 🔑 🔗) render two, so the extra space keeps this
+        # label's text column-aligned with theirs.
+        items.append(Choice(title="↕  Reorder channels", value=_REORDER))
 
     items.append(Separator("── Add a channel ──", style="accent"))
     items.append(Choice(title="＋ New private channel (random key)", value=_CREATE))

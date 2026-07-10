@@ -337,13 +337,13 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
 
 
 def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> None:
-    """Per-channel stats count all messages, the trailing-week slice, and the last time."""
+    """Per-channel stats count all messages, the trailing-2h slice, and the last time."""
     from datetime import timedelta
 
     from meshterm.core.models import ChatMessage, utcnow
 
-    stale = utcnow() - timedelta(days=30)  # outside the 7-day activity window
-    fresh = utcnow() - timedelta(minutes=5)
+    stale = utcnow() - timedelta(days=30)  # outside the two-hour activity window
+    fresh = utcnow() - timedelta(minutes=2)
     for text, when in (("old a", stale), ("old b", stale), ("new", fresh)):
         ctx.repo.record_chat_message(
             ChatMessage(text=text, is_channel=True, channel_id="ops", created_at=when)
@@ -362,27 +362,31 @@ def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> 
     assert ops.recent == 1  # only the fresh message falls inside the window
     assert ops.last_at is not None
     assert abs((ops.last_at - fresh).total_seconds()) < 1
-    # The histogram spans the window oldest-first: the 5-minute-old message lands in the
-    # newest (rightmost) bucket and the 30-day-old ones land nowhere.
-    assert len(ops.histogram) == 16
-    assert ops.histogram[-1] == 1 and sum(ops.histogram) == 1
+    # The histogram spans the window newest-first: the 2-minute-old message lands in the
+    # "now" (first) bucket and the 30-day-old ones land nowhere.
+    assert len(ops.histogram) == 24
+    assert ops.histogram[0] == 1 and sum(ops.histogram) == 1
 
 
-def test_activity_sparkline_packs_16_buckets_into_braille() -> None:
-    """The sparkline draws two histogram buckets per braille cell, scaled to the peak."""
+def test_activity_sparkline_packs_24_buckets_into_braille() -> None:
+    """The sparkline draws two buckets per cell at absolute, thresholded heights."""
     from meshterm.ui.channels import _activity_sparkline
 
-    assert _activity_sparkline((0,) * 16).plain == "········"  # silent window
-    assert _activity_sparkline(()).plain == "········"  # a channel with no stats at all
-    assert _activity_sparkline((4,) * 16).plain == "⣿" * 8  # flat-out: every dot lit
-    # A lone message in the newest bucket: full-height bar (it *is* the peak) in the final
-    # cell's right column; every other column stays empty.
-    lone = _activity_sparkline((0,) * 15 + (1,)).plain
-    assert lone == "⠀" * 7 + "⢸"
-    # Heights scale to the row's own peak, keeping any non-empty bucket at least one dot:
-    # counts 1/8 of the peak still show, half-peak reaches half height.
-    ramp = _activity_sparkline((8, 0) * 7 + (1, 4)).plain
-    assert ramp[-1] == chr(0x2800 | 0x40 | 0xA0)  # left col 1 dot, right col 2 dots
+    assert _activity_sparkline((0,) * 24).plain == "⣀" * 12  # silent window: a flatline
+    assert _activity_sparkline(()).plain == "⣀" * 12  # a channel with no stats at all
+    assert _activity_sparkline((21,) * 24).plain == "⣿" * 12  # flat-out: every dot lit
+    # A lone message in the newest bucket: one dot in the *first* cell's left column (time
+    # runs newest→oldest), the rest of the window on the faint baseline.
+    lone = _activity_sparkline((1,) + (0,) * 23)
+    assert lone.plain == "⡀" + "⣀" * 11
+    styles = [span.style for span in lone.spans]
+    assert styles[0] == "ok" and set(styles[1:]) == {"faint"}
+    # Heights step at the absolute thresholds 1 / 3 / 8 / 21 messages per bucket.
+    steps = _activity_sparkline((1, 2, 3, 7, 8, 20, 21, 999) + (0,) * 16).plain
+    assert steps[:4] == "".join(
+        chr(0x2800 | left | right)
+        for left, right in ((0x40, 0x80), (0x44, 0xA0), (0x46, 0xB0), (0x47, 0xB8))
+    )
 
 
 async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> None:
@@ -408,9 +412,10 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert "Ops" in plain and "private" in plain and slot.hash in plain
     assert "● 2" in plain  # the unread badge
     assert "now" in plain  # the just-recorded message's age
-    # Both just-recorded messages sit in the sparkline's newest bucket: a full-height bar
-    # in the final braille cell's right column, with the rest of the window empty.
-    assert plain.rstrip().endswith("⠀" * 7 + "⢸")  # the sparkline is the final lane
+    # Both just-recorded messages sit in the sparkline's newest bucket — the *first* cell's
+    # left column (one dot: two messages is still tier one) — with the rest of the window
+    # on the faint flatline baseline.
+    assert plain.rstrip().endswith("⡀" + "⣀" * 11)  # the sparkline is the final lane
 
 
 async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> None:

@@ -25,15 +25,15 @@ from ..core.models import (
 from . import db
 
 
-#: The trailing window (days) a channel's recent-activity view is computed over. One week
-#: smooths out the day-to-day lulls of a hobbyist mesh while still going quiet within days
-#: of a channel actually dying down, which is the granularity the activity sparkline shows.
-ACTIVITY_WINDOW_DAYS = 7
+#: The trailing window a channel's recent-activity view is computed over. Two hours is
+#: "what's happening right now" territory: the activity sparkline reads as a live pulse of
+#: the mesh rather than a long-term traffic log (the MSGS lane covers all-time volume).
+ACTIVITY_WINDOW = timedelta(hours=2)
 
 #: How many equal time buckets the activity window is split into — one per column of the
-#: channel manager's braille sparkline (two columns per braille cell, so 16 buckets fill
-#: its eight characters). At a one-week window each bucket spans ~10.5 hours.
-ACTIVITY_BUCKETS = 16
+#: channel manager's braille sparkline (two columns per braille cell, so 24 buckets fill
+#: its twelve characters). At a two-hour window each bucket spans five minutes.
+ACTIVITY_BUCKETS = 24
 
 
 @dataclass(slots=True)
@@ -42,12 +42,13 @@ class ChannelStats:
 
     Attributes:
         total: Messages ever stored for the channel, sent and received alike.
-        recent: Messages within the trailing :data:`ACTIVITY_WINDOW_DAYS` window.
+        recent: Messages within the trailing :data:`ACTIVITY_WINDOW` window.
         last_at: When the channel's most recent message was stored, or ``None`` if the
             stored timestamp can't be parsed.
         histogram: The window's messages split into :data:`ACTIVITY_BUCKETS` equal time
-            buckets, oldest first (so the newest traffic sits at the right edge of the
-            sparkline drawn from it). ``recent`` is always its sum.
+            buckets, *newest first* — bucket 0 is the current five minutes, so the
+            sparkline drawn from it reads now→past left-to-right and traffic slides right
+            as it ages. ``recent`` is always its sum.
     """
 
     total: int
@@ -519,11 +520,11 @@ class Repository:
 
         Backs the channel manager's list lanes: each configured channel's row shows its
         total message count, the age of its last message, and an activity sparkline over
-        the trailing :data:`ACTIVITY_WINDOW_DAYS` — whose :data:`ACTIVITY_BUCKETS`-column
+        the trailing :data:`ACTIVITY_WINDOW` — whose :data:`ACTIVITY_BUCKETS`-column
         histogram is built here. Two passes, each grouped/filtered in SQL so the cost
         tracks message volume, not channel count: an aggregate for the all-time totals,
         then the window's individual timestamps, bucketed in Python (the window holds at
-        most a week of chatter, so the row set stays small).
+        most two hours of chatter, so the row set stays small).
 
         Timestamps are compared as strings: every ``created_at`` is written by
         ``utcnow().isoformat()`` (a fixed-width UTC ISO-8601 form), so lexicographic order
@@ -535,8 +536,9 @@ class Repository:
             A mapping of channel identity to its :class:`ChannelStats`. Channels with no
             stored messages simply have no entry.
         """
-        cutoff = utcnow() - timedelta(days=ACTIVITY_WINDOW_DAYS)
-        bucket_span = timedelta(days=ACTIVITY_WINDOW_DAYS) / ACTIVITY_BUCKETS
+        now = utcnow()
+        cutoff = now - ACTIVITY_WINDOW
+        bucket_span = ACTIVITY_WINDOW / ACTIVITY_BUCKETS
         rows = self._conn.execute(
             "SELECT channel_id, COUNT(*) AS total, MAX(created_at) AS last_at "
             "FROM messages WHERE is_channel = 1 AND channel_id IS NOT NULL "
@@ -552,7 +554,9 @@ class Repository:
         for row in recent_rows:
             try:
                 created_at = datetime.fromisoformat(row["created_at"])
-                idx = min(ACTIVITY_BUCKETS - 1, int((created_at - cutoff) / bucket_span))
+                # Bucket by *age* so the histogram comes out newest-first (bucket 0 holds
+                # the current five minutes) — the order the sparkline draws it in.
+                idx = min(ACTIVITY_BUCKETS - 1, int((now - created_at) / bucket_span))
             except (TypeError, ValueError):
                 continue  # a malformed/naive stray simply doesn't land in a bucket
             histogram = histograms.setdefault(row["channel_id"], [0] * ACTIVITY_BUCKETS)
