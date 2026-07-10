@@ -292,19 +292,24 @@ class SelectScreen(Screen):
 class ReorderScreen(Screen):
     """A list whose rows the user rearranges in place with the arrow keys.
 
-    Move the cursor with ↑/↓; press Space (or Enter) on a row to *grab* it, then ↑/↓ carry
-    it up and down the list; press Space (or Enter) again to *drop* it. Below the list sit
-    the action rows, following the config editor's pattern: once the order has actually
-    changed, an ok-tinted *Apply* joins an err-tinted *Back — discard*; while it is
-    untouched there is only a plain *Back*. Enter on Apply commits, resolving with the
-    final order as a list of the original row indices (so ``[2, 0, 1]`` means "the row
-    that started third is now first"); Enter on Back — like Esc anywhere — resolves
-    :data:`CANCEL` so the caller keeps the original order.
+    Move the cursor with ↑/↓; press Enter on a row to *grab* it, then ↑/↓ carry it up and
+    down the list; press Enter again to *drop* it. Below the list sit the action rows,
+    following the config editor's pattern: once the order has actually changed, an
+    ok-tinted *Apply* joins an err-tinted *Back — discard*; while it is untouched there is
+    only a plain *Back*. Enter on Apply commits, resolving with the final order as a list
+    of the original row indices (so ``[2, 0, 1]`` means "the row that started third is now
+    first"); Enter on Back — like Esc anywhere — resolves :data:`CANCEL` so the caller
+    keeps the original order.
     """
 
     #: Action-row sentinels (kept distinct from list positions, which are ints).
     _APPLY = "apply"
     _BACK = "back"
+
+    #: Footer hints for both grab states — dialog_width sizes to the longer one, so the
+    #: box never resizes when a grab starts.
+    _HINT_IDLE = "↑↓ move · Enter grab / select · Esc cancel"
+    _HINT_GRABBED = "↑↓ move row · Enter drop · Esc cancel"
 
     def __init__(self, title: str, labels: list[str]) -> None:
         """Build a reorder screen.
@@ -324,13 +329,32 @@ class ReorderScreen(Screen):
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hint, phrased for whether a row is currently grabbed."""
-        if self._grabbed:
-            return "↑↓ move row · Space drop · Esc cancel"
-        return "↑↓ move · Space grab · Enter select · Esc cancel"
+        return self._HINT_GRABBED if self._grabbed else self._HINT_IDLE
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width so a floating reorder hugs its widest row (see SelectScreen).
+
+        Sized for the fullest the box can get — both footer hints and the dirty-state
+        action rows — so it never widens mid-interaction when a grab starts or Apply
+        appears. The compositor still caps this to the terminal.
+        """
+        widths = [cell_len(self.title), cell_len(self._HINT_IDLE), cell_len(self._HINT_GRABBED)]
+        rows = self._labels + [label.plain for _key, label in self._dirty_actions()]
+        widths += [cell_len(row) + 2 for row in rows]  # + the "❯ " / "  " pointer column
+        return max(widths, default=20) + 8
 
     def _dirty(self) -> bool:
         """Whether the rows have actually left their original order."""
         return self._order != list(range(len(self._order)))
+
+    @staticmethod
+    def _dirty_actions() -> list[tuple[str, Text]]:
+        """The full exit group shown once the order has changed (also sizes dialog_width)."""
+        return [
+            (ReorderScreen._APPLY, Text.assemble(("✓ ", "ok"), "Apply new order")),
+            (ReorderScreen._BACK, Text.assemble(("✗ ", "err"), "Back — discard changes")),
+        ]
 
     def _actions(self) -> list[tuple[str, Text]]:
         """The action rows below the list, matching the config editor's exit group:
@@ -338,10 +362,7 @@ class ReorderScreen(Screen):
         out the consequence of leaving.
         """
         if self._dirty():
-            return [
-                (self._APPLY, Text.assemble(("✓ ", "ok"), "Apply new order")),
-                (self._BACK, Text.assemble(("✗ ", "err"), "Back — discard changes")),
-            ]
+            return self._dirty_actions()
         return [(self._BACK, Text("Back"))]
 
     def render_body(self, width: int) -> list[str]:
@@ -397,15 +418,9 @@ class ReorderScreen(Screen):
                 self._index += 1
             elif not self._grabbed and total:
                 self._index = (self._index + 1) % total
-        elif action == "space" or (action == "text" and data == " "):
-            # The session delivers the spacebar as printable text; accept the normalized
-            # "space" action too for symmetry with the scroll screens. Grabbing only
-            # means anything on a list row.
-            if self._index < n:
-                self._grabbed = not self._grabbed
         elif action == "enter":
             if self._index < n:
-                self._grabbed = not self._grabbed  # Enter grabs/drops, like Space
+                self._grabbed = not self._grabbed  # Enter grabs a row, Enter again drops it
             elif self._actions()[self._index - n][0] == self._APPLY:
                 self.resolve(list(self._order))
             else:

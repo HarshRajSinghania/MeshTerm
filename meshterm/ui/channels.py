@@ -283,10 +283,13 @@ def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
 
 
 def _slot_label(slot: ChannelSlot) -> str:
-    """Format a channel for a compact row (the reorder screen): name, openness, hash."""
-    glyph = channel_glyph(slot.name, slot.secret)  # ＃ / 🌐 / 🔒
-    word = "private" if glyph == "🔒" else "public"
-    return f"{slot.name:<18.18} {glyph} {word:<7}  hash {slot.hash}"
+    """Format a channel for a compact row (the reorder screen): just its glyph and name.
+
+    The reorder screen is about *position*, not vitals — the openness, hash, and message
+    lanes of the manager list would only widen the popup — so each row is the channel
+    exactly as the manager's first lane shows it: glyph, gap, name.
+    """
+    return f"{channel_glyph(slot.name, slot.secret)} {slot.name}"
 
 
 # --- message statistics --------------------------------------------------------
