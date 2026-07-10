@@ -12,10 +12,13 @@ import asyncio
 
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Group
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from meshterm.ui.tui import frame
+from meshterm.ui.tui import frame, glow
+from meshterm.ui.tui.glow import apply_corner_glow
 from meshterm.ui.tui.progress import ProgressScreen
 from meshterm.ui.tui.prompt import (
     AutocompleteScreen,
@@ -372,6 +375,78 @@ def test_compose_startup_box_is_horizontally_centered() -> None:
     lines = Text.from_ansi(frame.compose_startup(screen, 80, 20)).plain.split("\n")
     box_lines = [ln for ln in lines if ln.strip()]
     assert box_lines and all(ln.startswith("  ") for ln in box_lines)  # centered inset
+
+
+# --- glow --------------------------------------------------------------------
+
+
+def _cell_color(line: str, idx: int) -> tuple[int, int, int]:
+    """Resolve the foreground RGB of the character at ``idx`` in an ANSI line."""
+    from meshterm.ui.tui.render import _console
+
+    style = Text.from_ansi(line).get_style_at_offset(_console(80), idx)
+    assert style.color is not None
+    triplet = style.color.get_truecolor()
+    return (triplet.red, triplet.green, triplet.blue)
+
+
+_ACCENT = (129, 140, 248)  # the theme's accent border, #818cf8
+
+
+def _find(plain: str, glyphs: frozenset[str]) -> int:
+    """Index of the first box glyph from ``glyphs`` (the render console may substitute
+    rounded corners with square ones on legacy Windows, so tests match the whole family)."""
+    return next(i for i, ch in enumerate(plain) if ch in glyphs)
+
+
+def test_corner_glow_brightens_top_left_and_fades_along_top_edge() -> None:
+    """The ╭ corner is lifted toward white and the glow decays rightward to the base color."""
+    lines = apply_corner_glow(render_lines(Panel(Text("x"), border_style="accent", width=60), 60))
+    plain = Text.from_ansi(lines[0]).plain
+    corner = sum(_cell_color(lines[0], _find(plain, glow._TOP_LEFT)))
+    middle = sum(_cell_color(lines[0], len(plain) // 2))
+    far = sum(_cell_color(lines[0], _find(plain, glow._TOP_RIGHT) - 1))
+    assert far == sum(_ACCENT)  # the glow has fully melted into the border color
+    assert corner > middle > far  # brightest at the corner, fading rightward
+
+
+def test_corner_glow_fades_down_left_edge_only() -> None:
+    """The left border fades downward; the right edge and bottom corner stay untouched."""
+    body = Text("\n".join("row" for _ in range(8)))
+    lines = apply_corner_glow(render_lines(Panel(body, border_style="accent", width=30), 30))
+    upper = sum(_cell_color(lines[1], 0))
+    lower = sum(_cell_color(lines[7], 0))
+    assert upper > lower >= sum(_ACCENT)  # vertical fade toward the base color
+    right = Text.from_ansi(lines[1]).plain.rindex("│")
+    assert _cell_color(lines[1], right) == _ACCENT  # right edge keeps the plain border
+    bottom = Text.from_ansi(lines[-1]).plain
+    assert _cell_color(lines[-1], _find(bottom, glow._BOTTOM_LEFT)) == _ACCENT  # weight is 0 here
+
+
+def test_corner_glow_leaves_titles_and_text_alone() -> None:
+    """Only border glyphs are recoloured: the title keeps its style, the text its content."""
+    panel = Panel(Text("body"), title="Hello", border_style="accent", width=40)
+    raw = render_lines(panel, 40)
+    lines = apply_corner_glow(raw)
+    assert [Text.from_ansi(ln).plain for ln in lines] == [Text.from_ansi(ln).plain for ln in raw]
+    idx = Text.from_ansi(raw[0]).plain.index("H")
+    assert _cell_color(lines[0], idx) == _cell_color(raw[0], idx)  # title untouched
+
+
+def test_corner_glow_lights_nested_panels_from_their_own_corners() -> None:
+    """A tool panel nested inside a screen body glows too, blended from its own border color."""
+    inner = Panel(Text("body"), border_style="muted", width=20)
+    screen = ScrollScreen(Group(Text("above"), inner), title="outer")
+    lines = frame.compose_base(Text("h"), screen, "hint", 60, 20).split("\n")
+    row, plain = next(
+        (i, p)
+        for i, p in ((i, Text.from_ansi(ln).plain) for i, ln in enumerate(lines))
+        # The inner box's top edge: a corner glyph on a row already inside the outer border.
+        if any(ch in glow._TOP_LEFT for ch in p) and p.lstrip()[0] in glow._VERTICAL
+    )
+    muted = (148, 163, 184)  # #94a3b8
+    corner = _cell_color(lines[row], _find(plain, glow._TOP_LEFT))
+    assert corner != muted and all(c > b for c, b in zip(corner, muted))  # lifted toward white
 
 
 # --- prompts -----------------------------------------------------------------

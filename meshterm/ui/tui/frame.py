@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from ..theme import hint_style, title_style
+from .glow import apply_corner_glow
 from .render import render_lines
 from .screen import Screen
 
@@ -151,7 +152,8 @@ def compose_base(
     viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
     panel = _panel(base, cols - 4, viewport, active=True)
     footer = Text.from_markup(f"[muted]{footer_hint}[/muted]")
-    lines = header_lines + render_lines(Group(panel, footer), cols)
+    # The glow pass lights the outer frame *and* any tool panels nested in the body.
+    lines = header_lines + apply_corner_glow(render_lines(Group(panel, footer), cols))
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
     if len(lines) > rows:
         lines = lines[:rows]
@@ -245,7 +247,8 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=inner_w + 4,
     )
-    panel_lines = _center(render_lines(panel, inner_w + 4), cols)
+    # Glow before centering, while the box still starts at column 0 of its own lines.
+    panel_lines = _center(apply_corner_glow(render_lines(panel, inner_w + 4)), cols)
 
     # A small muted line (e.g. a copyright notice) sits a blank row below the box.
     footnote_lines: list[str] = []
@@ -299,11 +302,4 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=max_w,
     )
-    return render_to_ansi_dialog(panel, max_w)
-
-
-def render_to_ansi_dialog(panel: Panel, width: int) -> str:
-    """Render a dialog panel to ANSI at a fixed width (thin wrapper for clarity)."""
-    from .render import render_to_ansi
-
-    return render_to_ansi(panel, width)
+    return "\n".join(apply_corner_glow(render_lines(panel, max_w)))
