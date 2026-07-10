@@ -119,11 +119,14 @@ class ChatTool(Tool):
         lasts = ctx.repo.last_chat_messages()
         live = _LiveLasts(ctx, seed=lasts)
 
-        items: list = [Separator(_picker_header()), Separator("── 📡 CHANNELS ──")]
+        items: list = [
+            Separator(_picker_header()),
+            Separator("── 📡 Channels ──", style="accent"),
+        ]
         for conversation in channels:
             items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
 
-        items.append(Separator("── 👤 DIRECT ──"))
+        items.append(Separator("── 👤 Direct ──", style="accent"))
         if contacts:
             # List contacts by recency — those with messages first, newest exchange at the
             # top — then the never-contacted ones alphabetically (see _recency_key).

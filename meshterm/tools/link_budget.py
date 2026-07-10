@@ -256,7 +256,7 @@ def _radio_panel(config: RadioConfig) -> Panel:
         ("symbol time   ", "muted"), (f"{config.symbol_time_ms():.2f} ms\n", ""),
         ("low data rate ", "muted"), (ldr, ""),
     )
-    return Panel(body, title="[accent]RADIO CONFIG[/accent]", border_style="muted", expand=False)
+    return Panel(body, title="[accent]Radio config[/accent]", border_style="muted", expand=False)
 
 
 def _budget_panel(budget: link_budget.LinkBudget) -> Panel:
@@ -300,7 +300,7 @@ def _budget_panel(budget: link_budget.LinkBudget) -> Panel:
         )
         table.add_row("  dwell-time", cell)
 
-    return Panel(table, title="[accent]LINK BUDGET[/accent]", border_style="accent", expand=False)
+    return Panel(table, title="[accent]Link budget[/accent]", border_style="accent", expand=False)
 
 
 def _is_pos_int(value: str) -> bool | str:

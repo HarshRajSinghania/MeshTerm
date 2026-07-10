@@ -260,7 +260,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         for tool in tools:
             if tool.category != current_category:
                 current_category = tool.category
-                items.append(Separator(f"── {current_category.upper()} ──"))
+                items.append(Separator(f"── {current_category} ──", style="accent"))
             label = tool.title or tool.name
             row = Text(label)
             row.append(" " * (name_w - cell_len(label) + 2))

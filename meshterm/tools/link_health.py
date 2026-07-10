@@ -222,7 +222,7 @@ def _report_panel(report: HealthReport) -> Panel:
     )
     if not report.changes:
         return Panel(
-            header, title="[accent]LINK HEALTH[/accent]", border_style=style, expand=False
+            header, title="[accent]Link health[/accent]", border_style=style, expand=False
         )
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
@@ -238,7 +238,7 @@ def _report_panel(report: HealthReport) -> Panel:
     from rich.console import Group
 
     body = Group(header, Text(), table)
-    return Panel(body, title="[accent]LINK HEALTH[/accent]", border_style=style, expand=False)
+    return Panel(body, title="[accent]Link health[/accent]", border_style=style, expand=False)
 
 
 def _change_row(change: MetricChange) -> tuple[str, Text, str, str, Text]:

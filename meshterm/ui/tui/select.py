@@ -46,13 +46,17 @@ def _plain(label: Union[str, Text]) -> str:
 
 @dataclass
 class Separator:
-    """A non-selectable group heading.
+    """A non-selectable row between choices.
 
     Attributes:
-        title: The heading text (rendered muted).
+        title: The row's text.
+        style: Theme style the row is drawn in. Section headings pass ``"accent"`` so
+            they read as highlighted landmarks; the default ``"muted"`` fits the
+            structural rows (blank spacers, column-header lines, inline notes).
     """
 
     title: str
+    style: str = "muted"
 
 
 Item = "Choice | Separator"
@@ -215,7 +219,7 @@ class SelectScreen(Screen):
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
         for item in rows:
             if isinstance(item, Separator):
-                sep = render_to_ansi(Text(item.title, style="muted"), width)
+                sep = render_to_ansi(Text(item.title, style=item.style), width)
                 self._sticky_headers.append((len(lines), sep))
                 lines.append(sep)
                 continue

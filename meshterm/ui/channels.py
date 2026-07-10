@@ -228,7 +228,7 @@ async def _main_menu(
     ctx: "AppContext", slots: list[ChannelSlot], capacity: int, *, default: object = None
 ) -> object:
     """Show the channel list and the add-a-channel actions; return the chosen value."""
-    items: list = [Separator(f"── CHANNELS ({len(slots)}/{capacity}) ──")]
+    items: list = [Separator(f"── Channels ({len(slots)}/{capacity}) ──", style="accent")]
     if slots:
         for slot in slots:
             items.append(Choice(title=_slot_label(slot), value=slot.idx))
@@ -236,10 +236,10 @@ async def _main_menu(
         items.append(Separator("  (no channels configured yet)"))
 
     if len(slots) > 1:
-        items.append(Separator("── ORGANIZE ──"))
+        items.append(Separator("── Organize ──", style="accent"))
         items.append(Choice(title="↕ Reorder channels", value=_REORDER))
 
-    items.append(Separator("── ADD A CHANNEL ──"))
+    items.append(Separator("── Add a channel ──", style="accent"))
     items.append(Choice(title="＋ New private channel (random key)", value=_CREATE))
     items.append(Choice(title="＃ Public channel (key from its name)", value=_PUBLIC))
     items.append(Choice(title="🔑 Join a channel with its key", value=_JOIN))

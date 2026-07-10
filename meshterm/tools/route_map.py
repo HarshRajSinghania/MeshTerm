@@ -200,7 +200,7 @@ def _graph_panel(graph: RouteGraph) -> Panel:
     )
     if not graph.links:
         return Panel(
-            header, title="[accent]ROUTE STABILITY[/accent]", border_style="muted", expand=False
+            header, title="[accent]Route stability[/accent]", border_style="muted", expand=False
         )
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
@@ -216,9 +216,9 @@ def _graph_panel(graph: RouteGraph) -> Panel:
 
     from rich.console import Group
 
-    body = Group(header, Text("\nBUSIEST LINKS", style="muted"), table)
+    body = Group(header, Text("\nBusiest links", style="accent"), table)
     return Panel(
-        body, title="[accent]ROUTE STABILITY[/accent]", border_style="accent", expand=False
+        body, title="[accent]Route stability[/accent]", border_style="accent", expand=False
     )
 
 

@@ -194,7 +194,7 @@ def config_table(
     indent = "  "
     for category, specs in settings_by_category():
         table.add_section()
-        header = [f"[accent]── {category.upper()} ──[/accent]", ""]
+        header = [f"[accent]── {category} ──[/accent]", ""]
         if show_staged:
             header.append("")
         table.add_row(*header, "")
@@ -208,7 +208,7 @@ def config_table(
         table.add_section()
         cols = 4 if show_staged else 3
         table.add_row(
-            "[accent]── CUSTOM ──[/accent]", *([""] * (cols - 1))
+            "[accent]── Custom ──[/accent]", *([""] * (cols - 1))
         )
         for key, value in custom.items():
             row = [f"{indent}{key}", value]
@@ -317,13 +317,13 @@ def _menu_items(
         )
     ]
     for category, rows in sections:
-        items.append(Separator(f"── {category.upper()} ──"))
+        items.append(Separator(f"── {category} ──", style="accent"))
         for label, value, help_text, key in rows:
             items.append(
                 Choice(title=_lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
-    items.append(Separator("── REVIEW ──"))
+    items.append(Separator("── Review ──", style="accent"))
     items.append(
         Choice(
             title=Text.assemble(

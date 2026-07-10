@@ -106,7 +106,7 @@ def banner(
         f"[brand]MeshTerm[/brand] [muted]v{__version__}[/muted]\n"
         f"[muted]device:[/muted] {target}"
     )
-    return Panel(body, border_style="accent", expand=False, title="[accent]MESH[/accent]")
+    return Panel(body, border_style="accent", expand=False, title="[accent]Mesh[/accent]")
 
 
 def make_progress(console: Console) -> Progress:
@@ -433,18 +433,18 @@ def stats_panel(
     )
     sections: list[Text | Table] = []
     if route is not None:
-        sections.append(Text("ROUTE", style="muted"))
+        sections.append(Text("Route", style="accent"))
         sections.append(_route_text(route, device_label, resolve, device_hash))
         sections.append(Text())  # blank line before the stats block
     sections.append(summary)
     if stats.hop_snrs:
-        sections.append(Text("\nPER-HOP MEDIANS", style="muted"))
+        sections.append(Text("\nPer-hop medians", style="accent"))
         hash_bytes = route.path_hash_bytes if route is not None else None
         sections.append(
             _hop_medians_table(stats.hop_snrs, device_label, resolve, hash_bytes, device_hash)
         )
     body: Text | Group = sections[0] if len(sections) == 1 else Group(*sections)
-    return Panel(body, title="[accent]TRACE SUMMARY[/accent]", border_style="accent", expand=False)
+    return Panel(body, title="[accent]Trace summary[/accent]", border_style="accent", expand=False)
 
 
 # Node-type glyphs and their colours, consistent with the map's marker palette across the
@@ -760,4 +760,4 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
         (f"{result.original_tx if result.original_tx is not None else '?'}\n", ""),
         ("status        ", "muted"), Text.from_markup(applied),
     )
-    return Panel(body, title="[accent]TX OPTIMIZATION[/accent]", border_style="accent", expand=False)
+    return Panel(body, title="[accent]TX optimization[/accent]", border_style="accent", expand=False)
