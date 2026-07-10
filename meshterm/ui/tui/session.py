@@ -271,7 +271,7 @@ class TuiSession:
         default: Any = None,
         banner: Optional[Any] = None,
         footnote: Optional[str] = None,
-        footer_hint: str = "↑↓ move · Enter select · Esc skip",
+        footer_hint: str = "↑↓ move · Enter select · Esc quit",
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 

@@ -77,6 +77,25 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
     return visible, more_above, more_below
 
 
+def _breathing_room(body_len: int, budget: int) -> int:
+    """Rows of blank vertical padding a content-sized box should draw inside its borders.
+
+    Every popup box (:func:`compose_dialog` floats and the :func:`compose_startup` splash
+    boxes alike) aerates its layout with a blank row above and below the body whenever that
+    doesn't cost visible content; on a terminal too short for both, the content wins and the
+    box sits flush. Full-screen panels (:func:`compose_base`) deliberately skip this — they
+    hold dense content and would only waste rows.
+
+    Args:
+        body_len: The body's full height in rows.
+        budget: Rows the box may spend between its borders — on body and padding alike.
+
+    Returns:
+        The vertical padding (1 or 0) to pass to the panel.
+    """
+    return 1 if body_len + 2 <= budget else 0
+
+
 def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
     """Render a screen's body into a titled, scroll-aware panel.
 
@@ -204,7 +223,9 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # Rows left for the box below the fixed banner block: the panel border is 2 rows.
     below = rows - top - banner_h - gap
     body_lines = screen.render_body(inner_w)
-    viewport = max(1, min(len(body_lines), below - 2 - footnote_h))
+    budget = below - 2 - footnote_h
+    vpad = _breathing_room(len(body_lines), budget)
+    viewport = max(1, min(len(body_lines), budget - 2 * vpad))
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
 
     body = Text.from_ansi("\n".join(visible))
@@ -218,7 +239,7 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         title=f"[{title_style('accent')}]{screen.title}[/]" if screen.title else None,
         subtitle=subtitle,
         border_style="accent",
-        padding=(0, 1),
+        padding=(vpad, 1),
         width=inner_w + 4,
     )
     panel_lines = _center(render_lines(panel, inner_w + 4), cols)
@@ -257,9 +278,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     # Rows the box may spend between its borders — on body lines and breathing room alike.
     budget = max(3, rows - 6)
     body_lines = screen.render_body(max_w - 4)
-    # Breathing room: a blank row above and below the body whenever it doesn't cost visible
-    # content; on a terminal too short for both, the content wins and the dialog sits flush.
-    vpad = 1 if len(body_lines) + 2 <= budget else 0
+    vpad = _breathing_room(len(body_lines), budget)
     viewport = min(budget - 2 * vpad, max(1, len(body_lines)))
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
