@@ -275,8 +275,53 @@ class ChatService:
         except Exception as exc:  # noqa: BLE001 - never let logging break the subscription
             self._ctx.log.debug("chat: failed to record message: %s", exc)
 
+    async def _deliver_direct(self, contact: Contact, text: str):
+        """Transmit a direct message, softly retrying until it is acknowledged.
+
+        A single logical send makes one initial transmission plus up to
+        ``settings.direct_message_soft_retries`` soft retries (two by default, three tries in
+        all): the message is re-sent only when an attempt goes unacknowledged, and each device
+        call already blocks for a full delivery-ack window (see
+        :meth:`~meshterm.core.connection.Device.send_direct_message`) before returning, so the
+        retries are naturally spaced by that window rather than hammering the radio. The loop
+        stops the moment an ack arrives; if none ever does, the last (``None``) result stands
+        and the message is recorded unacknowledged — leaving Ctrl-R in the chat screen as the
+        user-driven retry on top of these automatic ones.
+
+        Args:
+            contact: The recipient.
+            text: The message body.
+
+        Returns:
+            The delivery :class:`~meshterm.core.models.Ack` from the first attempt that landed,
+            or ``None`` if every attempt went unacknowledged.
+
+        Raises:
+            Exception: Propagates a hard send failure (the companion rejecting the send); such
+                a rejection is not retried, since it is not a lost-in-the-mesh timeout.
+        """
+        device = await self._ctx.device()
+        attempts = max(0, self._ctx.settings.direct_message_soft_retries) + 1
+        ack = None
+        for attempt in range(1, attempts + 1):
+            ack = await device.send_direct_message(contact, text)
+            if ack is not None:
+                return ack
+            if attempt < attempts:
+                self._ctx.log.debug(
+                    "chat: DM to %s unacked on try %d/%d; soft-retrying",
+                    contact.name,
+                    attempt,
+                    attempts,
+                )
+        return ack
+
     async def send_direct(self, contact: Contact, text: str) -> ChatMessage:
         """Send a direct message to a contact and record it in history.
+
+        Delivery is attempted with up to ``settings.direct_message_soft_retries`` automatic
+        soft retries (see :meth:`_deliver_direct`) before the message is recorded as
+        unacknowledged.
 
         Args:
             contact: The recipient.
@@ -284,10 +329,9 @@ class ChatService:
 
         Returns:
             The recorded outbound :class:`ChatMessage` (its ``acked`` reflects whether a
-            delivery acknowledgement arrived).
+            delivery acknowledgement arrived within the soft-retry budget).
         """
-        device = await self._ctx.device()
-        ack = await device.send_direct_message(contact, text)
+        ack = await self._deliver_direct(contact, text)
         chat = ChatMessage(
             text=text,
             outbound=True,
@@ -306,7 +350,9 @@ class ChatService:
         Used to retry a message that was transmitted but never acknowledged (its ``acked``
         is ``False``). The same stored row is reused — its delivery state is updated rather
         than a duplicate transcript entry created — so the message simply flips to delivered
-        (or stays unacknowledged for another retry).
+        (or stays unacknowledged for another retry). Like an initial send, each manual retry
+        makes up to ``settings.direct_message_soft_retries`` soft retries of its own (see
+        :meth:`_deliver_direct`).
 
         Args:
             contact: The recipient.
@@ -316,8 +362,7 @@ class ChatService:
         Returns:
             The same ``message``, with :attr:`~ChatMessage.acked` refreshed.
         """
-        device = await self._ctx.device()
-        ack = await device.send_direct_message(contact, message.text)
+        ack = await self._deliver_direct(contact, message.text)
         message.acked = ack is not None
         if message.row_id is not None:
             self._ctx.repo.update_chat_ack(message.row_id, message.acked)

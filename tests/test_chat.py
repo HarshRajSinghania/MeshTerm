@@ -21,6 +21,7 @@ def _strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
+from meshterm.core.config import Settings
 from meshterm.core.connection import MockDevice
 from meshterm.core.events import MeshEvent
 from meshterm.core.models import (
@@ -56,6 +57,7 @@ class _StubContext:
         self.repo = repo
         self.log = logging.getLogger("test.chat")
         self.profile_name = None
+        self.settings = Settings()
         self.events = EventHub(self)
 
     async def device(self) -> MockDevice:
@@ -1062,6 +1064,70 @@ async def test_service_resend_updates_ack_in_place(repo: Repository) -> None:
         await device.disconnect()
 
 
+class _ScriptedDevice:
+    """A device stub whose direct-message acks follow a fixed script.
+
+    Each :meth:`send_direct_message` pops the next value from ``acks`` — an :class:`Ack`
+    stand-in (any non-``None`` object counts as delivered) or ``None`` for an unacknowledged
+    transmission — and appends the sent text to :attr:`sent`, so a test can assert exactly how
+    many soft retries fired. Once the script is exhausted every further send goes unacked.
+    """
+
+    def __init__(self, acks: list) -> None:
+        self._acks = list(acks)
+        self.sent: list[str] = []
+
+    async def connect(self) -> None:  # satisfies _StubContext.device()
+        return None
+
+    async def send_direct_message(self, contact: Contact, text: str):
+        self.sent.append(text)
+        return self._acks.pop(0) if self._acks else None
+
+
+def _contact() -> Contact:
+    return Contact(name="Alice", public_key="d4e5" + "0" * 60, key_prefix="d4e5f6a7")
+
+
+async def test_send_direct_soft_retries_until_acked(repo: Repository) -> None:
+    """A DM unacked on the first tries is re-sent, and is recorded delivered once one lands."""
+    device = _ScriptedDevice([None, None, object()])  # ack only on the third try
+    ctx = _StubContext(device, repo)
+    ctx.settings.direct_message_soft_retries = 2  # 1 send + 2 retries = 3 tries
+    chat = ChatService(ctx)
+
+    sent = await chat.send_direct(_contact(), "hey")
+
+    assert sent.acked is True
+    assert device.sent == ["hey", "hey", "hey"]  # exactly three transmissions
+
+
+async def test_send_direct_soft_retries_capped_by_setting(repo: Repository) -> None:
+    """The retry budget stops the resends: an always-unacked DM is tried retries+1 times."""
+    device = _ScriptedDevice([])  # never acknowledges
+    ctx = _StubContext(device, repo)
+    ctx.settings.direct_message_soft_retries = 2
+    chat = ChatService(ctx)
+
+    sent = await chat.send_direct(_contact(), "hey")
+
+    assert sent.acked is False
+    assert len(device.sent) == 3  # capped: no more than one send plus two soft retries
+
+
+async def test_send_direct_zero_retries_is_one_shot(repo: Repository) -> None:
+    """With soft retries disabled a DM is transmitted exactly once, acked or not."""
+    device = _ScriptedDevice([])  # never acknowledges
+    ctx = _StubContext(device, repo)
+    ctx.settings.direct_message_soft_retries = 0
+    chat = ChatService(ctx)
+
+    sent = await chat.send_direct(_contact(), "hey")
+
+    assert sent.acked is False
+    assert device.sent == ["hey"]  # one shot, no soft retry
+
+
 # -- end-to-end through the real session --------------------------------------
 
 
@@ -1073,7 +1139,6 @@ async def test_open_chat_sends_through_real_session(tmp_path: Path) -> None:
 
     from meshterm.context import AppContext
     from meshterm.core.admin_store import AdminStore
-    from meshterm.core.config import Settings
     from meshterm.core.device_store import DeviceStore
     from meshterm.ui.chat import open_chat
     from meshterm.ui.surface import TuiUi

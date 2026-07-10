@@ -9,6 +9,10 @@
 
 default_profile = "s3"
 trace_cooldown_s = 1.0
+# Automatic re-sends of a direct message that goes unacknowledged, before it's marked failed.
+# 0, 1, or 2 (clamped): 0 = one shot, 2 (default) = up to three tries. Ctrl-R in chat is a
+# further manual retry on top of this.
+direct_message_soft_retries = 2
 # db_path = "C:/Users/you/meshterm/meshterm.db"
 # output_dir = "C:/Users/you/meshterm/output"
 

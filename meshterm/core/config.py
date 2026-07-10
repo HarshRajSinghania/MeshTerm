@@ -19,6 +19,14 @@ else:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib
 
 
+#: Hard ceiling on a direct message's *soft retries* — the automatic re-sends that follow the
+#: initial transmission when it goes unacknowledged. Capped at 2, so a message gets at most one
+#: send plus two soft retries (three tries total) and is never re-broadcast more than twice on
+#: the shared mesh before being called a failure. :data:`Settings.direct_message_soft_retries`
+#: is clamped to ``0..DIRECT_MESSAGE_MAX_SOFT_RETRIES``.
+DIRECT_MESSAGE_MAX_SOFT_RETRIES = 2
+
+
 def default_config_dir() -> Path:
     """Return the directory MeshTerm uses for config and data.
 
@@ -78,6 +86,16 @@ class Settings:
         trace_cooldown_s: Minimum delay between transmit bursts (duty-cycle safety).
         tx_opt_min: Lowest TX power explored by the remote-admin optimizer (dBm).
         tx_opt_max: Highest TX power explored by the remote-admin optimizer (dBm).
+        direct_message_soft_retries: How many times a direct message is automatically
+            re-sent after its initial transmission goes unacknowledged, before it is reported
+            as failed. Each soft retry waits a full delivery-ack window (see
+            :meth:`Device.send_direct_message`) before firing, so a message only resends after
+            genuinely going unanswered rather than hammering the radio. Capped at 0, 1, or 2 —
+            clamped to ``0..DIRECT_MESSAGE_MAX_SOFT_RETRIES`` on load — so the send is tried at
+            most three times total. ``0`` disables soft retries (one shot); the default of
+            ``2`` matches the mesh convention of a few tries before giving up. The manual
+            Ctrl-R resend in the chat screen is a further, user-driven retry layered on top of
+            these automatic ones, not a substitute for them.
         connect_on_start: Whether the interactive session opens the companion connection
             (and starts always-on background listening) immediately at launch. When
             ``False`` the connection is opened lazily — only once monitoring is turned on
@@ -92,6 +110,7 @@ class Settings:
     trace_cooldown_s: float = 1.0
     tx_opt_min: int = 12
     tx_opt_max: int = 28
+    direct_message_soft_retries: int = 2
     connect_on_start: bool = True
 
     def __post_init__(self) -> None:
@@ -160,5 +179,12 @@ class Settings:
             trace_cooldown_s=float(data.get("trace_cooldown_s", 1.0)),
             tx_opt_min=int(data.get("tx_opt_min", 12)),
             tx_opt_max=int(data.get("tx_opt_max", 28)),
+            direct_message_soft_retries=max(
+                0,
+                min(
+                    DIRECT_MESSAGE_MAX_SOFT_RETRIES,
+                    int(data.get("direct_message_soft_retries", DIRECT_MESSAGE_MAX_SOFT_RETRIES)),
+                ),
+            ),
             connect_on_start=bool(data.get("connect_on_start", True)),
         )
