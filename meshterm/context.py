@@ -15,6 +15,7 @@ from rich.console import Console
 from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.config import DeviceProfile, Settings
+from .core.courier_store import CourierStore
 from .core.remote_store import RemoteStore
 from .core.watch_store import WatchStore
 from .core.connection import Device, make_device
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from .services.advert_scheduler import AdvertScheduler
     from .services.chat_service import ChatService
     from .services.event_hub import EventHub
+    from .services.courier import CourierService
     from .services.monitor_service import MonitorService
     from .services.watchtower import WatchtowerService
     from .ui.surface import Ui
@@ -50,6 +52,8 @@ class AppContext:
             history (defaults to ``<config_dir>/remote.json`` when not injected).
         watch_store: Store for the Watchtower — watched nodes, rules, and the alert
             log (defaults to ``<config_dir>/watchtower.json`` when not injected).
+        courier_store: Store for the Courier's outbox — queued, delivered, and
+            given-up messages (defaults to ``<config_dir>/courier.json``).
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -71,6 +75,7 @@ class AppContext:
     advert_store: Optional[AdvertStore] = None
     remote_store: Optional[RemoteStore] = None
     watch_store: Optional[WatchStore] = None
+    courier_store: Optional[CourierStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -97,6 +102,7 @@ class AppContext:
     _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
     _adverts: "Optional[AdvertScheduler]" = field(default=None, init=False, repr=False)
     _watchtower: "Optional[WatchtowerService]" = field(default=None, init=False, repr=False)
+    _courier: "Optional[CourierService]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -107,6 +113,8 @@ class AppContext:
             self.remote_store = RemoteStore(self.settings.config_dir / "remote.json")
         if self.watch_store is None:
             self.watch_store = WatchStore(self.settings.config_dir / "watchtower.json")
+        if self.courier_store is None:
+            self.courier_store = CourierStore(self.settings.config_dir / "courier.json")
 
     @property
     def profile_name(self) -> Optional[str]:
@@ -262,6 +270,20 @@ class AppContext:
 
             self._watchtower = WatchtowerService(self)
         return self._watchtower
+
+    @property
+    def courier(self) -> "CourierService":
+        """Return the session's store-and-forward courier, creating it on first use.
+
+        Created idle here; the interactive session starts it alongside the other
+        always-on services. Scripted CLI runs never start the loop, so queueing a
+        message from a script transmits nothing until an interactive session runs.
+        """
+        if self._courier is None:
+            from .services.courier import CourierService
+
+            self._courier = CourierService(self)
+        return self._courier
 
     @property
     def log(self):  # type: ignore[no-untyped-def]
@@ -476,6 +498,8 @@ class AppContext:
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
+        if self._courier is not None:
+            await self._courier.aclose()
         if self._watchtower is not None:
             await self._watchtower.aclose()
         if self._adverts is not None:

@@ -510,6 +510,9 @@ async def _resume_monitor(ctx: AppContext) -> None:
     await ctx.adverts.start()
     # The Watchtower only listens (rules over hub events), so it too is safe from launch.
     await ctx.watchtower.start()
+    # The courier drains the outbox on its own paced schedule; each pass checks for a
+    # connected device and skips quietly without one, exactly like the advert scheduler.
+    await ctx.courier.start()
     if not ctx.settings.connect_on_start:
         return
     try:

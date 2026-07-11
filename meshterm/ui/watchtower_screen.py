@@ -34,6 +34,7 @@ _KIND_STYLES = {
     "snr": "warn",
     "new-node": "brand",
     "recovered": "ok",
+    "courier": "accent",  # outbox outcomes (see services.courier) share the log
 }
 
 #: How many alerts the screen lists (the store keeps more; the tail rarely matters).
