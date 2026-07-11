@@ -7,14 +7,21 @@ from types import SimpleNamespace
 from meshterm.ui.menu import _HEADER_ACTIVITY_LEVELS, _header
 
 
-def _ctx(histogram=(), unread=0, active=True) -> SimpleNamespace:
+def _ctx(histogram=(), unread=0, active=True, alerts=0) -> SimpleNamespace:
     """A minimal stand-in exposing only what the header reads (simulator path)."""
     return SimpleNamespace(
         mock=True,
         chat=SimpleNamespace(unread_total=lambda: unread),
         events=SimpleNamespace(active=active),
         monitor=SimpleNamespace(activity_histogram=lambda: tuple(histogram)),
+        watchtower=SimpleNamespace(unacked_count=lambda: alerts),
     )
+
+
+def test_header_shows_the_watchtower_badge() -> None:
+    """Unacknowledged alerts appear as the triangle badge; none means no badge."""
+    assert "▲ 2" in _header(_ctx(alerts=2), {}, 80).plain
+    assert "▲" not in _header(_ctx(alerts=0), {}, 80).plain
 
 
 def test_header_sparkline_fills_the_row_exactly() -> None:

@@ -16,6 +16,7 @@ from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.config import DeviceProfile, Settings
 from .core.remote_store import RemoteStore
+from .core.watch_store import WatchStore
 from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
 from .core.discovery import DiscoveredDevice, discover_devices
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from .services.chat_service import ChatService
     from .services.event_hub import EventHub
     from .services.monitor_service import MonitorService
+    from .services.watchtower import WatchtowerService
     from .ui.surface import Ui
 
 
@@ -46,6 +48,8 @@ class AppContext:
             ``<config_dir>/adverts.json`` when not injected).
         remote_store: Store for remote-node admin state — cached settings and CLI
             history (defaults to ``<config_dir>/remote.json`` when not injected).
+        watch_store: Store for the Watchtower — watched nodes, rules, and the alert
+            log (defaults to ``<config_dir>/watchtower.json`` when not injected).
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -66,6 +70,7 @@ class AppContext:
     admin_store: AdminStore
     advert_store: Optional[AdvertStore] = None
     remote_store: Optional[RemoteStore] = None
+    watch_store: Optional[WatchStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -91,6 +96,7 @@ class AppContext:
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
     _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
     _adverts: "Optional[AdvertScheduler]" = field(default=None, init=False, repr=False)
+    _watchtower: "Optional[WatchtowerService]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -99,6 +105,8 @@ class AppContext:
             self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")
         if self.remote_store is None:
             self.remote_store = RemoteStore(self.settings.config_dir / "remote.json")
+        if self.watch_store is None:
+            self.watch_store = WatchStore(self.settings.config_dir / "watchtower.json")
 
     @property
     def profile_name(self) -> Optional[str]:
@@ -240,6 +248,20 @@ class AppContext:
 
             self._adverts = AdvertScheduler(self)
         return self._adverts
+
+    @property
+    def watchtower(self) -> "WatchtowerService":
+        """Return the session's Watchtower sentinel, creating it on first use.
+
+        Created idle here; the interactive session starts it alongside the other
+        always-on services. It only ever listens (rules over hub events), so scripted
+        CLI runs simply never start it.
+        """
+        if self._watchtower is None:
+            from .services.watchtower import WatchtowerService
+
+            self._watchtower = WatchtowerService(self)
+        return self._watchtower
 
     @property
     def log(self):  # type: ignore[no-untyped-def]
@@ -454,6 +476,8 @@ class AppContext:
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
+        if self._watchtower is not None:
+            await self._watchtower.aclose()
         if self._adverts is not None:
             await self._adverts.aclose()
         if self._monitor is not None:

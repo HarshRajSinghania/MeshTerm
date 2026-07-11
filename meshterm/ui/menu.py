@@ -160,6 +160,12 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         header.append("  ·  ")
         header.append("●", style="err")
         header.append(f" {unread}", style="warn")
+    alerts = ctx.watchtower.unacked_count()
+    if alerts:
+        # The Watchtower's badge: a triangle so it never reads as unread mail.
+        header.append("  ·  ")
+        header.append("▲", style="err")
+        header.append(f" {alerts}", style="warn")
     header.append("  ·  ")
     header.append("●" if ctx.events.active else "○", style="ok" if ctx.events.active else "muted")
     header.append(" ")
@@ -502,6 +508,8 @@ async def _resume_monitor(ctx: AppContext) -> None:
     # each pass checks for a connected device and skips quietly without one, so starting
     # it here never opens the radio (and it simply waits out a deferred connect).
     await ctx.adverts.start()
+    # The Watchtower only listens (rules over hub events), so it too is safe from launch.
+    await ctx.watchtower.start()
     if not ctx.settings.connect_on_start:
         return
     try:
