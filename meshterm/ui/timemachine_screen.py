@@ -13,9 +13,11 @@ charts and stats over a switchable window (``w`` cycles 24 h → 7 d → 30 d �
   arrivals of the window (nodes heard for the first time ever), and the all-time
   totals.
 
-Unlike the dashboard's live chart (newest at the left, sliding), these are *histories*
-and read chronologically: oldest at the left, now at the right. Everything is stored
-data — no device is needed and nothing transmits.
+Charts read chronologically — oldest at the left, now at the right, the app-wide
+timeline direction — and draw through :mod:`~meshterm.ui.braillechart`, so the grey
+baseline always marks zero: the SNR band's readings hang below it or rise above it
+by their actual sign. Everything is stored data — no device is needed and nothing
+transmits.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .dashboard_screen import _COL_LEFT, _COL_RIGHT, braille_bars
+from .braillechart import chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -51,8 +53,13 @@ MESH = ("mesh",)
 #: Character cells the charts keep clear for their side gutters.
 _GUTTER = 4
 
-#: How many braille rows tall the charts draw.
+#: How many braille rows tall the volume/rhythm charts draw.
 _CHART_ROWS = 2
+
+#: How many braille rows tall the SNR band draws — one more than the volume charts,
+#: because zero-anchoring (readings hang below the grey zero line by their actual
+#: depth) spends some dots on honesty and the extra row buys the swing back.
+_SNR_ROWS = 3
 
 
 def bucketize(stamps: list[datetime], start: datetime, end: datetime, buckets: int) -> list[int]:
@@ -77,58 +84,9 @@ def bucket_medians(
     return [median(values) if values else None for values in grouped]
 
 
-def band_rows(
-    values: list[Optional[float]], *, rows: int = _CHART_ROWS
-) -> tuple[list[Text], float, float]:
-    """Render sparse readings as a braille band scaled between their own extremes.
-
-    The volume charts scale zero-to-peak (:func:`braille_bars`); readings like SNR need
-    a *band* — the chart floor is the window's minimum, not zero, so a swing from
-    −12 dB to −4 dB still fills the height. Two values share each cell (braille's full
-    horizontal resolution), every present value lights at least one dot, empty columns
-    keep the faint one-dot floor, and each cell is coloured by its readings' quality
-    (the shared SNR palette).
-
-    Args:
-        values: Per-bucket readings, oldest first; ``None`` marks an empty bucket.
-        rows: How many braille rows tall the band is.
-
-    Returns:
-        ``(lines, lo, hi)``: the rendered rows plus the scale's extremes (both 0.0
-        when no reading is present at all).
-    """
-    present = [v for v in values if v is not None]
-    lo, hi = (min(present), max(present)) if present else (0.0, 0.0)
-    spread = max(1e-9, hi - lo)
-    total = rows * 4
-    heights = [
-        0 if v is None else max(1, 1 + round((v - lo) / spread * (total - 1)))
-        for v in values
-    ]
-    padded = heights + [0] * (len(heights) % 2)
-    value_pairs = list(values) + [None] * (len(values) % 2)
-    lines: list[Text] = []
-    for row in range(rows):
-        floor = (rows - 1 - row) * 4
-        line = Text()
-        for i in range(0, len(padded), 2):
-            lf = min(4, max(0, padded[i] - floor))
-            rf = min(4, max(0, padded[i + 1] - floor))
-            cell = [v for v in value_pairs[i : i + 2] if v is not None]
-            if lf or rf:
-                mask = _COL_LEFT[lf] | _COL_RIGHT[rf]
-                if row == rows - 1:
-                    mask |= (0x40 if lf == 0 else 0) | (0x80 if rf == 0 else 0)
-                line.append(
-                    chr(0x2800 | mask),
-                    style=snr_style(sum(cell) / len(cell)) if cell else "brand",
-                )
-            elif row == rows - 1:
-                line.append(chr(0x2800 | 0x40 | 0x80), style="faint")
-            else:
-                line.append(chr(0x2800))
-        lines.append(line)
-    return lines, lo, hi
+def _snr_cell_style(values: list[float]) -> str:
+    """Colour one SNR-band cell by its readings' quality (the shared SNR palette)."""
+    return snr_style(sum(values) / len(values))
 
 
 def _chart_block(
@@ -252,11 +210,11 @@ def _node_sections(
     out: list[RenderableType] = []
     stamps = [o.observed_at for o in observations]
     out.append(
-        _heading("Volume", f"{len(observations)} receptions · oldest left")
+        _heading("Volume", f"{len(observations)} receptions · now at the right")
     )
     out.extend(
         _chart_block(
-            braille_bars(bucketize(stamps, start, now, buckets)),
+            timeline_rows(bucketize(stamps, start, now, buckets), rows=_CHART_ROWS),
             _when_label(start), "now", chars,
         )
     )
@@ -265,10 +223,15 @@ def _node_sections(
         (o.observed_at, float(o.snr)) for o in observations if o.snr is not None
     ]
     if snr_pairs:
-        rows, lo, hi = band_rows(bucket_medians(snr_pairs, start, now, buckets))
+        medians = bucket_medians(snr_pairs, start, now, buckets)
+        lo, hi = chart_span(medians)
+        rows = timeline_rows(medians, rows=_SNR_ROWS, style=_snr_cell_style)
         out.append(Text())
         out.append(
-            _heading("SNR", f"median per slice · scale {lo:+.1f} → {hi:+.1f} dB")
+            _heading(
+                "SNR",
+                f"median per slice · grey line = 0 · scale {lo:+.1f} → {hi:+.1f} dB",
+            )
         )
         out.extend(_chart_block(rows, _when_label(start), "now", chars))
 
@@ -277,7 +240,7 @@ def _node_sections(
         hours[stamp.astimezone().hour] += 1
     out.append(Text())
     out.append(_heading("Rhythm", "receptions by local hour of day"))
-    out.extend(_chart_block(braille_bars(hours), "0 h", "23 h", 12))
+    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), "0 h", "23 h", 12))
 
     out.append(Text())
     out.append(_heading("Record", "this window"))
@@ -335,17 +298,21 @@ def _mesh_sections(
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
     out.append(
-        _heading("Packets per day", f"UTC days · peak {max(packets)} · oldest left")
+        _heading("Packets per day", f"UTC days · peak {max(packets)} · today at the right")
     )
     out.extend(
-        _chart_block(braille_bars(packets), shown[0][0], shown[-1][0], chars)
+        _chart_block(
+            timeline_rows(packets, rows=_CHART_ROWS), shown[0][0], shown[-1][0], chars
+        )
     )
 
     nodes = [d[2] for d in shown]
     out.append(Text())
     out.append(_heading("Nodes per day", f"distinct nodes heard · peak {max(nodes)}"))
     out.extend(
-        _chart_block(braille_bars(nodes), shown[0][0], shown[-1][0], chars)
+        _chart_block(
+            timeline_rows(nodes, rows=_CHART_ROWS), shown[0][0], shown[-1][0], chars
+        )
     )
 
     arrivals = ctx.repo.first_seen(since=since)

@@ -1,7 +1,8 @@
-"""Dashboard tests: the braille bar chart, the live screen's state, and its data feeds.
+"""Dashboard tests: the live screen's state, its chart plumbing, and its data feeds.
 
 The screen is driven headless against fake sessions and canned observations, the same
-approach as the live trace/TX screen tests.
+approach as the live trace/TX screen tests. (The braille chart renderer itself is
+covered in ``test_braillechart``.)
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from meshterm.core.events import MeshEvent
 from meshterm.core.models import Ack, Message, Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
-from meshterm.ui.dashboard_screen import DashboardScreen, braille_bars
+from meshterm.ui.dashboard_screen import DashboardScreen
 
 
 class _FakeSession:
@@ -52,51 +53,6 @@ def _stripped(lines: list[str]) -> list[str]:
     return [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
 
 
-# --- braille_bars --------------------------------------------------------------------
-
-
-def test_braille_bars_scales_the_peak_to_full_height() -> None:
-    """The window's peak fills the chart; values pair up two dot columns per cell."""
-    rows = braille_bars([12, 12, 0, 0], rows=3)
-    assert len(rows) == 3
-    assert all(len(r.plain) == 2 for r in rows)
-    # The peak pair fills both dot columns of its cell on the top row; the silent
-    # pair is blank there and keeps the faint two-dot floor on the bottom row.
-    assert rows[0].plain[0] == chr(0x2800 | 0x47 | 0xB8)
-    assert rows[0].plain[1] == chr(0x2800)
-    assert rows[2].plain[1] == chr(0x2800 | 0x40 | 0x80)
-
-
-def test_braille_bars_gives_each_dot_column_its_own_height() -> None:
-    """Two values sharing a cell rise independently — braille's full resolution."""
-    rows = braille_bars([12, 6], rows=3)
-    assert rows[0].plain[0] == chr(0x2800 | 0x47)          # left full, right below
-    assert rows[1].plain[0] == chr(0x2800 | 0x47 | 0xA0)   # right's head: 2 dots
-    assert rows[2].plain[0] == chr(0x2800 | 0x47 | 0xB8)   # both full at the base
-
-
-def test_braille_bars_never_hides_a_lone_packet() -> None:
-    """A tiny non-zero value still lights (in the lit style, not the faint floor's)."""
-    rows = braille_bars([1, 0, 1000, 1000], rows=3)
-    first_span = rows[2].spans[0]
-    assert first_span.start == 0 and first_span.style == "ok"
-
-
-def test_braille_bars_all_silent_is_a_flatline() -> None:
-    """With nothing heard the chart is a floor line, not a divide-by-zero."""
-    rows = braille_bars([0, 0, 0, 0, 0, 0], rows=2)
-    assert rows[1].plain == chr(0x2800 | 0x40 | 0x80) * 3
-
-
-def test_braille_bars_pads_an_odd_tail_column() -> None:
-    """An odd value count still renders whole cells (the tail column stays silent)."""
-    rows = braille_bars([4], rows=1)
-    assert len(rows[0].plain) == 1
-    # The lone value fills its left dot column; the padded right column keeps the
-    # floor dot so the baseline stays continuous.
-    assert rows[0].plain[0] == chr(0x2800 | 0x47 | 0x80)
-
-
 # --- the screen ----------------------------------------------------------------------
 
 
@@ -115,15 +71,22 @@ def test_dashboard_renders_all_four_sections() -> None:
     assert "advert" in body and "Alice" in body and "YUL" in body
 
 
-def test_dashboard_activity_chart_reads_newest_left_with_mirrored_scale() -> None:
-    """'now' anchors the left edge and the peak count marks both gutters."""
+def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> None:
+    """'now' anchors the right edge and the peak count marks both gutters."""
     screen = _screen(histogram=[9] + [0] * (ACTIVITY_BUCKETS - 1))
     lines = _stripped(screen.render_body(80))
     top = next(line for line in lines if "┤" in line)
     assert top.strip().startswith("9 ┤")
     assert top.rstrip().endswith("├ 9")
     caption = next(line for line in lines if "now" in line)
-    assert caption.index("now") < caption.index("−")  # newest left, oldest right
+    assert caption.index("−") < caption.index("now")  # oldest left, newest right
+    # The lone newest-minute burst draws against the chart's right gutter, and the
+    # left half of the chart is bare flatline.
+    chart = [line for line in lines if "┤" in line or "│" in line]
+    bottom = chart[-1]
+    left_half = bottom[3 : 3 + (len(bottom) - 6) // 2]
+    assert all(ch in (chr(0x2800), chr(0x2800 | 0x40 | 0x80), " ") for ch in left_half)
+    assert any(0x2800 <= ord(ch) <= 0x28FF and ord(ch) & 0x3F for ch in chart[0])
 
 
 def test_dashboard_activity_chart_fills_the_width() -> None:

@@ -6,10 +6,11 @@ stacks four reads of the mesh, coarsest first:
 * **Activity** — a tall braille bar chart of *every* packet the hub hears (adverts,
   telemetry, RX-logged packets, messages, acks), one dot column per minute — braille's
   full horizontal resolution, two minutes per character — stretched across whatever
-  width the terminal offers, newest at the left with the count scale mirrored on both
-  edges. The header indicator's big sibling, drawn from the same
-  :meth:`~meshterm.services.monitor_service.MonitorService` buckets. A pulse line
-  beneath it reads the rate, who's been heard, and the busiest node of the window.
+  width the terminal offers, newest at the right (the app-wide timeline direction)
+  with the count scale mirrored on both edges. The header indicator's big sibling,
+  drawn from the same :meth:`~meshterm.services.monitor_service.MonitorService`
+  buckets. A pulse line beneath it reads the rate, who's been heard, and the busiest
+  node of the window.
 * **Traffic** — the session's tallies by packet class, each with a proportional bar,
   from the monitor's kind counters.
 * **RF health** — the trailing window's reception quality: median SNR (on the trace
@@ -37,6 +38,7 @@ from rich.text import Text
 from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
+from .braillechart import timeline_rows
 from .theme import snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
@@ -59,11 +61,6 @@ _FEED_NAME_WIDTH = 18
 
 #: How many braille rows tall the activity chart draws (each row is four dot rows).
 _CHART_ROWS = 3
-
-#: Braille dot masks for one cell-column filled bottom-up to height 0–4 (left column:
-#: dots 7, 3, 2, 1 top-down; right column: dots 8, 6, 5, 4).
-_COL_LEFT = (0x00, 0x40, 0x44, 0x46, 0x47)
-_COL_RIGHT = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
 
 #: Display style per packet class, shared by the traffic panel and the feed.
 _KIND_STYLES = {
@@ -111,55 +108,6 @@ def _axis_labels(peak: int, rows: int) -> list[str]:
         else:
             labels.append("")
     return labels
-
-
-def braille_bars(values: list[int], *, rows: int = _CHART_ROWS) -> list[Text]:
-    """Render ``values`` as a braille bar chart, one *dot column* per value.
-
-    Braille offers two dot columns per character cell — the font's full horizontal
-    resolution — so consecutive values pair up into one cell, each rising to its own
-    height. Bars are scaled so the window's peak fills all ``rows × 4`` dot rows, and
-    any non-zero value lights at least one dot, so a lone packet never vanishes. A
-    silent dot column keeps a faint one-dot floor on the bottom row — the flatline
-    convention of the app's sparklines — so the chart floor is always visible.
-
-    Args:
-        values: The bucket counts, drawn left to right (two per character cell; an
-            odd count is padded with one silent column).
-        rows: How many braille rows tall the chart is.
-
-    Returns:
-        ``rows`` :class:`Text` lines, top row first, ``ceil(len(values) / 2)``
-        characters wide.
-    """
-    peak = max(values, default=0)
-    total_dots = rows * 4
-    heights = [
-        (0 if peak == 0 or v <= 0 else max(1, round(v / peak * total_dots)))
-        for v in values
-    ]
-    if len(heights) % 2:
-        heights.append(0)
-    lines: list[Text] = []
-    for row in range(rows):
-        floor = (rows - 1 - row) * 4  # dot rows below this braille row
-        line = Text()
-        for left, right in zip(heights[0::2], heights[1::2]):
-            lf = min(4, max(0, left - floor))
-            rf = min(4, max(0, right - floor))
-            if lf or rf:
-                mask = _COL_LEFT[lf] | _COL_RIGHT[rf]
-                if row == rows - 1:
-                    # Keep the floor continuous under a half-silent cell: the silent
-                    # dot column still shows its bottom baseline dot.
-                    mask |= (0x40 if lf == 0 else 0) | (0x80 if rf == 0 else 0)
-                line.append(chr(0x2800 | mask), style="ok")
-            elif row == rows - 1:
-                line.append(chr(0x2800 | 0x40 | 0x80), style="faint")  # the flatline
-            else:
-                line.append(chr(0x2800))  # blank braille keeps the grid monospace
-        lines.append(line)
-    return lines
 
 
 class DashboardScreen(Screen):
@@ -274,12 +222,13 @@ class DashboardScreen(Screen):
     # -- activity --
 
     def _activity_section(self, width: int) -> list[RenderableType]:
-        """The all-packet chart — newest minute at the left — plus the pulse line.
+        """The all-packet chart — newest minute at the right — plus the pulse line.
 
         One dot column per minute, two per character cell, stretched across every
         cell the terminal offers between the two scale gutters; a wider terminal
-        simply shows more history. The scale is mirrored on both edges so the counts
-        are readable from either end of a wide chart.
+        simply shows more history. Time runs oldest→now left to right (every
+        MeshTerm timeline's direction), and the scale is mirrored on both edges so
+        the counts are readable from either end of a wide chart.
         """
         histogram = list(self._activity())  # newest first, one count per minute
         # Size the label lane from the whole histogram's peak (not just the visible
@@ -293,7 +242,7 @@ class DashboardScreen(Screen):
         heading = Text("Activity", style="accent")
         heading.append("  ·  every packet heard · one minute per dot column",
                        style="muted")
-        chart_rows = braille_bars(shown)
+        chart_rows = timeline_rows(list(reversed(shown)), rows=_CHART_ROWS)
         marks = _axis_labels(peak, len(chart_rows))
         out: list[RenderableType] = [heading]
         for mark, row in zip(marks, chart_rows):
@@ -307,9 +256,9 @@ class DashboardScreen(Screen):
         out.append(axis)
         span = "−" + _span_label(minutes)
         caption = Text(" " * (label_w + 2))
-        caption.append("now", style="faint")
-        caption.append(" " * max(1, chars - len("now") - len(span)))
         caption.append(span, style="faint")
+        caption.append(" " * max(1, chars - len(span) - len("now")))
+        caption.append("now", style="faint")
         out.append(caption)
         out.append(Text())
         out.append(self._pulse_line(shown, width))

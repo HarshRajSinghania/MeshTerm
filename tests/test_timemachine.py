@@ -17,7 +17,7 @@ from meshterm.ui.timemachine_screen import (
     TimeMachineScreen,
     _mesh_sections,
     _node_sections,
-    band_rows,
+    _snr_cell_style,
     bucket_medians,
     bucketize,
 )
@@ -119,16 +119,21 @@ def test_bucketize_and_medians_split_the_span() -> None:
     assert medians == [5.0, -4.0]
 
 
-def test_band_rows_scales_between_extremes() -> None:
-    """The band floor is the minimum reading, not zero, and gaps stay faint."""
-    rows, lo, hi = band_rows([-12.0, None, -4.0, -8.0], rows=2)
-    assert (lo, hi) == (-12.0, -4.0)
+def test_snr_band_hangs_negative_readings_below_zero() -> None:
+    """All-negative SNR medians hang from a grey zero ceiling, coloured by quality."""
+    from meshterm.ui.braillechart import chart_span, timeline_rows
+
+    medians = [-12.0, None, -4.0, -8.0]
+    assert chart_span(medians) == (-12.0, 0.0)  # zero is always on the scale
+    rows = timeline_rows(medians, rows=2, style=_snr_cell_style)
     assert len(rows) == 2 and len(rows[0].plain) == 2
-    bottom = rows[1].plain
-    # The minimum lights exactly one dot; the maximum fills its column.
-    assert bottom[0] != chr(0x2800)
-    top = rows[0].plain
-    assert top[1] != chr(0x2800)  # -4.0 (the max) reaches the top row
+    # The worst reading (−12) hangs the full height; −8 dips its tail into the
+    # bottom row (right column only) while the shallower −4 stays out of it.
+    assert rows[1].plain[0] != chr(0x2800)  # the −12 column reaches the bottom row
+    assert rows[1].plain[1] == chr(0x2808)  # −8's tail, no −4 (left-column) dots
+    # Cells take the shared SNR palette, driven by their own readings.
+    assert rows[0].spans[0].style == _snr_cell_style([-12.0])
+    assert rows[0].spans[1].style == _snr_cell_style([-4.0, -8.0])
 
 
 # --- the pages --------------------------------------------------------------------------
