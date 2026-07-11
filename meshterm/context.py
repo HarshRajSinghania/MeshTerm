@@ -264,8 +264,23 @@ class AppContext:
         # resolution, and no re-scan needed to reconnect to a known address.
         ble_address, ble_pin = self._resolve_ble_endpoint()
         if ble_address:
+            # When this session's scan discovered the device, hand its live BLEDevice to the
+            # connection so bleak opens it directly instead of re-discovering the address (a
+            # fresh internal scan that intermittently misses a slow-advertising companion).
+            # A remembered/explicit address has no scan result and connects by address alone.
+            selected = self.selected_device
+            ble_device = (
+                selected.ble_device
+                if selected is not None and selected.is_ble and selected.address == ble_address
+                else None
+            )
             self._device = make_device(
-                mock=False, port=None, transport="ble", address=ble_address, pin=ble_pin
+                mock=False,
+                port=None,
+                transport="ble",
+                address=ble_address,
+                pin=ble_pin,
+                ble_device=ble_device,
             )
             self._active_transport = "ble"
             self._active_address = ble_address

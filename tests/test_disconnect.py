@@ -214,6 +214,71 @@ async def test_create_ble_gives_up_after_one_repair() -> None:
     assert calls == [False, True]
 
 
+async def test_create_ble_retries_a_transient_link_failure(monkeypatch) -> None:
+    """A transport-level ConnectionError is retried once, and the scanned BLEDevice rides along.
+
+    Models the common Windows flake: the first link open misses the (slow-advertising)
+    peripheral and the meshcore client raises a bare ``ConnectionError``; users learned to
+    work around it by re-selecting the device — a manual retry — so the connect retries
+    itself before surfacing the failure.
+    """
+    scanned_device = object()  # the BLEDevice the discovery scan produced
+    attempts: list[dict] = []
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                raise ConnectionError("Failed to connect to device")
+            return "connected-client"
+
+    monkeypatch.setattr(connection, "_BLE_CONNECT_RETRY_DELAY_S", 0.0)
+    dev = connection.MeshCoreDevice(
+        transport="ble", address="AA:BB:CC:DD:EE:FF", ble_device=scanned_device
+    )
+    await _disable_windows_pairing(dev)
+    assert await dev._create_ble(_FakeMeshCore) == "connected-client"
+    assert len(attempts) == 2  # failed once, retried once
+    # Every attempt connects through the already-discovered BLEDevice, never a bare address.
+    assert all(kw["device"] is scanned_device for kw in attempts)
+
+
+async def test_create_ble_gives_up_after_the_retry(monkeypatch) -> None:
+    """A link that never opens surfaces its ConnectionError after the bounded retries."""
+    attempts: list[int] = []
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            attempts.append(1)
+            raise ConnectionError("Failed to connect to device")
+
+    monkeypatch.setattr(connection, "_BLE_CONNECT_RETRY_DELAY_S", 0.0)
+    dev = connection.MeshCoreDevice(transport="ble", address="AA:BB:CC:DD:EE:FF")
+    await _disable_windows_pairing(dev)
+    with pytest.raises(ConnectionError):
+        await dev._create_ble(_FakeMeshCore)
+    assert len(attempts) == connection._BLE_CONNECT_ATTEMPTS
+
+
+async def test_create_ble_never_retries_an_auth_rejection() -> None:
+    """A PIN/bond rejection is translated on the first attempt — never looped by the retry."""
+    attempts: list[int] = []
+
+    class _FakeMeshCore:
+        @staticmethod
+        async def create_ble(**kwargs):
+            attempts.append(1)
+            raise BleakGATTProtocolError("Insufficient Authentication")
+
+    dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
+    await _disable_windows_pairing(dev)
+    with pytest.raises(connection.DeviceAuthenticationError):
+        await dev._create_ble(_FakeMeshCore)
+    assert len(attempts) == 1
+
+
 async def test_pair_ble_windows_noops_without_pin() -> None:
     """Pairing is skipped (no WinRT touched) when no PIN is set — the fast, hermetic path."""
     dev = connection.MeshCoreDevice(transport="ble", address="00:11:22:33:44:55")
@@ -710,3 +775,70 @@ async def test_session_loop_resumes_a_fresh_menu_after_reconnect(monkeypatch) ->
     await asyncio.wait_for(menu._session_loop(object(), session), timeout=2)
     assert state["handle"] == 1  # one disconnect handled
     assert state["menu"] == 2  # a fresh menu ran after reconnect
+
+
+class _WedgedMeshCore:
+    """A fake meshcore client whose graceful ``disconnect()`` never returns.
+
+    Reproduces the library's dispatcher-stop deadlock (``queue.join()`` with events still
+    queued after the processor task exited), which used to hang MeshTerm's exit until the
+    watchdog force-killed the process. Records whether the forced path ran.
+    """
+
+    def __init__(self) -> None:
+        self.force_stopped = False
+        self.connection_manager = SimpleNamespace(connection=self)
+        self.raw_closed = False
+
+    async def disconnect(self) -> None:
+        # Called both as the graceful teardown (via the manager-less attribute lookup on
+        # the client) and as the raw transport close. The graceful call wedges; the raw
+        # close is distinguished by the force-stop having run first.
+        if not self.force_stopped:
+            await asyncio.Event().wait()  # the dispatcher deadlock: never returns
+        self.raw_closed = True
+
+    def stop(self) -> None:
+        self.force_stopped = True
+
+
+async def test_disconnect_bounds_a_wedged_client_teardown(monkeypatch) -> None:
+    """A deadlocked graceful teardown is abandoned and the transport force-closed instead."""
+    monkeypatch.setattr(connection, "_DISCONNECT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(connection, "_FORCE_DISCONNECT_TIMEOUT_S", 0.5)
+
+    dev = connection.MeshCoreDevice(port="COM_TEST")
+    wedged = _WedgedMeshCore()
+    dev._mc = wedged
+
+    await asyncio.wait_for(dev.disconnect(), timeout=2.0)  # must not hang
+
+    assert wedged.force_stopped  # the dispatcher task was cancelled synchronously
+    assert wedged.raw_closed  # the port/link was still released
+    assert dev._mc is None  # idempotent: a second disconnect is a no-op
+
+
+async def test_disconnect_graceful_path_needs_no_force(monkeypatch) -> None:
+    """A healthy teardown completes gracefully; the forced path is never entered."""
+
+    class _HealthyMeshCore:
+        def __init__(self) -> None:
+            self.disconnected = False
+            self.force_stopped = False
+            self.connection_manager = SimpleNamespace(connection=self)
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+        def stop(self) -> None:
+            self.force_stopped = True
+
+    dev = connection.MeshCoreDevice(port="COM_TEST")
+    healthy = _HealthyMeshCore()
+    dev._mc = healthy
+
+    await dev.disconnect()
+
+    assert healthy.disconnected
+    assert not healthy.force_stopped
+    assert dev._mc is None

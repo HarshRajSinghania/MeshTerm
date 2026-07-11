@@ -80,6 +80,13 @@ class DiscoveredDevice:
         transport: ``"serial"`` or ``"ble"`` — which connection layer opens this device.
         address: Bluetooth address for a BLE device (e.g. ``AA:BB:CC:DD:EE:FF``).
         name: Advertised BLE local name (e.g. ``"MeshCore-Basestation"``); BLE only.
+        ble_device: The live ``bleak.BLEDevice`` the scan produced; BLE only, and only for
+            devices discovered *this session* (a remembered device reloads as a bare
+            address). Handed to the connection layer so it can open the peripheral
+            directly — connecting by address alone makes bleak re-discover the device with
+            a fresh internal scan, which on Windows intermittently misses a
+            slow-advertising companion. Typed ``object`` so ``bleak`` stays optional; never
+            persisted.
     """
 
     port: str = ""
@@ -93,6 +100,7 @@ class DiscoveredDevice:
     transport: str = TRANSPORT_SERIAL
     address: Optional[str] = None
     name: Optional[str] = None
+    ble_device: Optional[object] = None
 
     @property
     def is_ble(self) -> bool:
@@ -254,6 +262,7 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
                 name=name,
                 description=name,
                 product=name,
+                ble_device=dev,
             )
         )
     devices.sort(key=lambda d: (d.name or "").casefold())

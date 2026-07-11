@@ -62,6 +62,29 @@ _MESSAGE_POLL_INTERVAL_S = 3.0
 #: drain loop (seconds).
 _MESSAGE_GET_TIMEOUT_S = 5.0
 
+#: How long a graceful ``meshcore`` client teardown may take before it is abandoned and the
+#: transport is force-closed instead (seconds). A healthy disconnect completes in well under a
+#: second; the bound exists because the library's dispatcher shutdown can deadlock — its
+#: ``queue.join()`` never returns when two or more events (a routine serial RX burst) are
+#: queued at the moment of stop, since the processor task exits after draining only one. Kept
+#: comfortably under the interactive session's 5-second exit watchdog so even the forced path
+#: finishes as a *clean* exit rather than an ``os._exit`` reap.
+_DISCONNECT_TIMEOUT_S = 2.0
+
+#: Bound on the forced transport close that follows an abandoned graceful teardown (seconds).
+#: ``_DISCONNECT_TIMEOUT_S + _FORCE_DISCONNECT_TIMEOUT_S`` stays under the exit watchdog.
+_FORCE_DISCONNECT_TIMEOUT_S = 1.5
+
+#: Total attempts at opening the BLE link before its failure is surfaced. Opening a BLE
+#: connection on Windows is intermittently flaky (a slow-advertising peripheral is missed by
+#: bleak's internal lookup, or the link-layer connect races the just-finished discovery scan);
+#: a single retry recovers the common case without meaningfully delaying a genuinely absent
+#: device. This retries only the *link open* — never a rejected PIN and never a mesh transmit.
+_BLE_CONNECT_ATTEMPTS = 2
+
+#: Pause between BLE link-open attempts (seconds), giving the OS radio a beat to settle.
+_BLE_CONNECT_RETRY_DELAY_S = 1.0
+
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
 
@@ -691,6 +714,7 @@ class MeshCoreDevice(Device):
         transport: str = "serial",
         address: Optional[str] = None,
         pin: Optional[str] = None,
+        ble_device: Optional[object] = None,
     ) -> None:
         """Initialize the device wrapper.
 
@@ -705,6 +729,12 @@ class MeshCoreDevice(Device):
             transport: ``"serial"`` (default) or ``"ble"``.
             address: Bluetooth address (e.g. ``AA:BB:CC:DD:EE:FF``); BLE transport only.
             pin: Optional BLE pairing PIN, when the peripheral requires one (BLE only).
+            ble_device: The ``bleak.BLEDevice`` the discovery scan already found at
+                ``address``, when available (BLE only). Passing it lets the connect open the
+                peripheral directly instead of re-discovering it by address — on Windows a
+                bare-address connect runs a fresh internal scan that intermittently misses a
+                slow-advertising companion, which is the main source of flaky BLE startups.
+                Typed ``object`` so ``bleak`` need not be imported on non-BLE paths.
         """
         self._port = port
         self._baudrate = baudrate
@@ -712,6 +742,7 @@ class MeshCoreDevice(Device):
         self._transport = transport
         self._address = address
         self._pin = pin
+        self._ble_device = ble_device
         self._mc = None  # type: ignore[var-annotated]  # meshcore.MeshCore
         # Serializes channel reads. The meshcore library's get_channel waits for "the next
         # CHANNEL_INFO event" with no correlation to the index it asked for, and the dispatcher
@@ -807,12 +838,7 @@ class MeshCoreDevice(Device):
                 that was rejected.
         """
         try:
-            return await mesh_core.create_ble(
-                address=self._address,
-                pin=self._pin,
-                default_timeout=self._connect_timeout,
-                auto_reconnect=False,
-            )
+            return await self._create_ble_with_retry(mesh_core)
         except ImportError as exc:
             raise DeviceCommandError(
                 "Bluetooth support requires the 'bleak' package, which isn't installed. "
@@ -835,6 +861,57 @@ class MeshCoreDevice(Device):
             if allow_repair and await self._pair_ble_windows(force=True):
                 return await self._open_ble(mesh_core, allow_repair=False)
             raise DeviceAuthenticationError(self._ble_auth_message()) from exc
+
+    async def _create_ble_with_retry(self, mesh_core):  # type: ignore[no-untyped-def]
+        """Call ``create_ble``, retrying the transport-level failures that are transient.
+
+        The meshcore client raises a bare ``ConnectionError`` when the *link itself* could
+        not be opened — the peripheral wasn't found during bleak's internal lookup, or the
+        link-layer connect timed out. On Windows both are routinely transient: a companion
+        advertising on a slow interval is easily missed by a single scan window, and a
+        connect attempted right after the discovery scan can race the radio. Users learned
+        to work around it by re-selecting the device, which is nothing but a manual retry —
+        so retry here, briefly, before surfacing the failure. The already-discovered
+        ``BLEDevice`` (when the picker's scan produced one) is passed through so the client
+        connects to it directly instead of re-discovering the address.
+
+        Only ``ConnectionError`` is retried: a PIN/bond rejection or any other GATT failure
+        propagates unchanged on the first attempt so the auth handling in :meth:`_open_ble`
+        (and a genuine wrong-PIN) is never looped.
+
+        Args:
+            mesh_core: The imported ``meshcore.MeshCore`` class.
+
+        Returns:
+            The connected ``MeshCore`` client, or ``None`` if the transport connected but
+            the peripheral never answered the identity handshake.
+
+        Raises:
+            ConnectionError: If every attempt failed to open the link.
+        """
+        last_exc: Optional[ConnectionError] = None
+        for attempt in range(_BLE_CONNECT_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_BLE_CONNECT_RETRY_DELAY_S)
+            try:
+                return await mesh_core.create_ble(
+                    address=self._address,
+                    device=self._ble_device,
+                    pin=self._pin,
+                    default_timeout=self._connect_timeout,
+                    auto_reconnect=False,
+                )
+            except ConnectionError as exc:
+                _log.debug(
+                    "BLE link to %s failed to open (attempt %d/%d): %s",
+                    self._address,
+                    attempt + 1,
+                    _BLE_CONNECT_ATTEMPTS,
+                    exc,
+                )
+                last_exc = exc
+        assert last_exc is not None  # the loop always runs; only ConnectionError falls through
+        raise last_exc
 
     async def _pair_ble_windows(self, *, force: bool) -> bool:
         """Establish an authenticated BLE bond via the WinRT ProvidePin ceremony (Windows only).
@@ -1115,13 +1192,46 @@ class MeshCoreDevice(Device):
             return True  # no port recorded (shouldn't happen once connected) — can't tell
         return serial_port_present(self._port)
 
-    async def disconnect(self) -> None:  # noqa: D102 - inherited docstring
+    async def disconnect(self) -> None:
+        """Close the connection and release resources. Idempotent, and bounded in time.
+
+        The graceful ``meshcore`` teardown is given :data:`_DISCONNECT_TIMEOUT_S` to finish.
+        That bound matters: the library's dispatcher stop awaits ``queue.join()``, but its
+        processor task exits after handling at most one event once stopped — so with two or
+        more events queued at that instant (a routine advert/RX-log burst on a live mesh)
+        the join deadlocks and a quit would hang until the exit watchdog force-kills the
+        process. When the graceful path doesn't return in time it is cancelled and the
+        teardown is forced instead: the dispatcher task is cancelled synchronously and the
+        raw transport is closed directly (also bounded), so the port/link is still released.
+        """
         if self._mc is None:
             return
-        disconnect = getattr(self._mc, "disconnect", None)
-        if disconnect is not None:
-            await disconnect()
-        self._mc = None
+        mc, self._mc = self._mc, None
+        disconnect = getattr(mc, "disconnect", None)
+        if disconnect is None:
+            return
+        try:
+            await asyncio.wait_for(disconnect(), timeout=_DISCONNECT_TIMEOUT_S)
+            return
+        except asyncio.TimeoutError:
+            _log.debug("graceful disconnect timed out; forcing transport teardown")
+        except Exception as exc:  # noqa: BLE001 - teardown must not raise; fall to forced path
+            _log.debug("graceful disconnect failed (%s); forcing transport teardown", exc)
+        # Forced teardown: cancel the (possibly wedged) dispatcher task without awaiting the
+        # deadlocked join, then close the underlying transport so the serial port / BLE link
+        # is actually released. Every step is best-effort — nothing here may block the exit.
+        try:
+            stop = getattr(mc, "stop", None)
+            if stop is not None:
+                stop()
+        except Exception as exc:  # noqa: BLE001 - best-effort force-stop
+            _log.debug("dispatcher force-stop failed: %s", exc)
+        try:
+            raw = getattr(getattr(mc, "connection_manager", None), "connection", None)
+            if raw is not None:
+                await asyncio.wait_for(raw.disconnect(), timeout=_FORCE_DISCONNECT_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - the link may already be gone
+            _log.debug("forced transport close failed: %s", exc)
 
     def _require(self):  # type: ignore[no-untyped-def]
         """Return the live client or raise if not connected."""
@@ -2650,6 +2760,7 @@ def make_device(
     transport: str = "serial",
     address: Optional[str] = None,
     pin: Optional[str] = None,
+    ble_device: Optional[object] = None,
 ) -> Device:
     """Construct the appropriate :class:`Device` for the current invocation.
 
@@ -2662,6 +2773,9 @@ def make_device(
         transport: ``"serial"`` (default) or ``"ble"``.
         address: Bluetooth address for the BLE transport. Required when ``transport="ble"``.
         pin: Optional BLE pairing PIN (BLE only).
+        ble_device: The scanned ``bleak.BLEDevice`` for ``address``, when this session's
+            discovery produced one (BLE only) — lets the connect skip re-discovering the
+            peripheral by address (see :class:`MeshCoreDevice`).
 
     Returns:
         A connected-on-enter :class:`Device` instance.
@@ -2677,7 +2791,7 @@ def make_device(
                 "No Bluetooth address configured. Pass --ble, pick a device at startup, "
                 "or use --mock."
             )
-        return MeshCoreDevice(transport="ble", address=address, pin=pin)
+        return MeshCoreDevice(transport="ble", address=address, pin=pin, ble_device=ble_device)
     if not port:
         raise ValueError(
             "No serial port configured. Pass --port, set a profile, or use --mock."
@@ -2729,7 +2843,13 @@ async def probe_device(
     if device.is_ble:
         timeout = _PROBE_TIMEOUT_BLE_S
         probe = MeshCoreDevice(
-            transport="ble", address=device.address, pin=pin, connect_timeout=timeout
+            transport="ble",
+            address=device.address,
+            pin=pin,
+            connect_timeout=timeout,
+            # The scan that discovered the device already holds its BLEDevice; connecting
+            # through it skips the by-address re-discovery that makes BLE startups flaky.
+            ble_device=device.ble_device,
         )
     else:
         timeout = _PROBE_TIMEOUT_SERIAL_S

@@ -183,6 +183,10 @@ async def test_discover_ble_filters_to_meshcore(monkeypatch: pytest.MonkeyPatch)
     devices = await discovery.discover_ble_devices(timeout=0.0)
     assert [d.name for d in devices] == ["MeshCore-Base"]
     assert devices[0].is_ble and devices[0].address == "AA:BB:CC:DD:EE:FF"
+    # The scan's live BLEDevice rides along so the connect can open the peripheral directly
+    # instead of re-discovering the address (the flaky path on Windows).
+    assert devices[0].ble_device is not None
+    assert devices[0].ble_device.address == "AA:BB:CC:DD:EE:FF"
 
 
 async def test_discover_ble_survives_no_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
