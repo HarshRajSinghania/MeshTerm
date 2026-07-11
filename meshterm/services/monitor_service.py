@@ -17,13 +17,20 @@ counters shown live in the menu header.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Optional
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
+from ..persistence.repository import ACTIVITY_BUCKETS
 
 if TYPE_CHECKING:
     from ..context import AppContext
+
+#: Seconds per bucket of the all-packet activity histogram — five minutes, one braille
+#: dot column of the header's indicator, matching the channel sparkline's geometry
+#: (:data:`~meshterm.persistence.repository.ACTIVITY_BUCKETS` buckets = two hours).
+ACTIVITY_BUCKET_S = 300
 
 
 class MonitorService:
@@ -41,9 +48,15 @@ class MonitorService:
         """
         self._ctx = ctx
         self._unsubscribe: Optional[Unsubscribe] = None  # hub subscription, when recording
+        self._count_unsubscribe: Optional[Unsubscribe] = None  # the all-packet counter's
         self._run_id: Optional[int] = None
         self._session_count = 0
         self._run_start_count = 0
+        # All-packet activity, bucketed by wall-clock five-minute slot (epoch // span →
+        # count). Every hub event counts — observations, messages, acks — because the
+        # header's indicator answers "is the mesh alive?", not "any mail?". Pruned as it
+        # rolls, so it never holds more than the two-hour window plus one closing bucket.
+        self._activity: dict[int, int] = {}
         # Total observations already in the database when the session began; the live
         # "total" is this plus what we capture this session (this process is the only
         # writer during an interactive session), avoiding a DB count on every repaint.
@@ -63,22 +76,27 @@ class MonitorService:
         """Return the total observations logged, all time (including this session)."""
         return self._start_total + self._session_count
 
-    def status_text(self) -> str:
-        """Return a compact one-line status for the live menu header.
+    def activity_histogram(self) -> tuple[int, ...]:
+        """All-packet counts per five-minute bucket over the trailing two hours.
 
-        Monitoring has no off state, so this reports activity rather than a switch:
-        capture counts while the hub is pumping, or a waiting note until a device link
-        gives it something to hear.
+        Newest first — index 0 is the current five minutes — the order the header's
+        braille indicator draws. Counts everything the hub fans out this session; time
+        before launch simply reads as silence.
 
         Returns:
-            A glyph-prefixed summary line.
+            :data:`~meshterm.persistence.repository.ACTIVITY_BUCKETS` bucket counts.
         """
-        if self._ctx.events.active:
-            return (
-                f"● heard {self._session_count} this session "
-                f"· {self.total_count()} total"
-            )
-        return f"○ heard {self.total_count()} all-time · waiting for a device"
+        bucket = int(time.time() // ACTIVITY_BUCKET_S)
+        return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
+
+    def _count_packet(self, _event: MeshEvent) -> None:
+        """Land one packet in the current activity bucket (and prune scrolled-off ones)."""
+        bucket = int(time.time() // ACTIVITY_BUCKET_S)
+        self._activity[bucket] = self._activity.get(bucket, 0) + 1
+        if len(self._activity) > ACTIVITY_BUCKETS + 1:
+            cutoff = bucket - ACTIVITY_BUCKETS
+            for stale in [b for b in self._activity if b < cutoff]:
+                del self._activity[stale]
 
     async def start(self) -> None:
         """Begin recording overheard observations to history. Idempotent.
@@ -110,6 +128,9 @@ class MonitorService:
                 self._ctx.log.debug("monitor: failed to record observation: %s", exc)
 
         self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
+        # A second, kind-unfiltered subscription feeds the header's activity indicator:
+        # every packet the hub hears lands in a five-minute bucket, in memory only.
+        self._count_unsubscribe = self._ctx.events.subscribe(self._count_packet)
         self._ctx.log.info("passive monitor recording")
 
     async def stop(self) -> None:
@@ -125,6 +146,9 @@ class MonitorService:
             self._unsubscribe()
         finally:
             self._unsubscribe = None
+        if self._count_unsubscribe is not None:
+            self._count_unsubscribe()
+            self._count_unsubscribe = None
         if self._run_id is not None:
             captured = self._session_count - self._run_start_count
             self._ctx.repo.finish_run(self._run_id, "ok", {"observations": captured})

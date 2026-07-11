@@ -25,8 +25,10 @@ from rich.text import Text
 from .. import __version__
 from ..context import AppContext
 from ..persistence.logging import get_logger
+from ..persistence.repository import ACTIVITY_BUCKETS
 from ..tools import all_tools
 from .surface import TuiUi
+from .widgets import activity_sparkline
 from .theme import make_console
 from .tui import (
     CANCEL,
@@ -112,39 +114,101 @@ def _silence_console_logging() -> Iterator[None]:
             logger.addHandler(handler)
 
 
-def _header(ctx: AppContext) -> Text:
-    """Build the persistent one-line header (target + live monitor status).
+#: Packet counts a five-minute bucket must reach for each extra dot of the header
+#: indicator's bar height. Higher-shouldered than the channel sparkline's thresholds
+#: because this counts *every* packet the hub hears (adverts, telemetry, messages,
+#: acks), not one conversation: 1 packet lights a dot, 5 light two, 21 light three,
+#: and 89 or more max the column out.
+_HEADER_ACTIVITY_LEVELS = (1, 5, 21, 89)
+
+
+def _header(ctx: AppContext, cache: dict) -> Text:
+    """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
+
+    Left to right: the app mark, the connected node's own name with where it's reached
+    (``(COM5)`` / ``(BLE)``), an unread-message badge (channels and direct alike, shown
+    only when something is waiting), and a two-hour braille activity indicator counting
+    every packet the hub hears — the same drawing as the channel manager's sparklines,
+    with a leading ●/○ live-light for whether the hub is pumping yet.
 
     Args:
-        ctx: The shared application context, read for the target and monitor counters.
+        ctx: The shared application context, read live on every repaint.
+        cache: Scratch owned by the session (see :func:`_device_label`) so the
+            device-name lookup doesn't re-read the registry file per repaint.
 
     Returns:
-        A Rich :class:`Text` shown at the top of every screen; re-read on each repaint so
-        the passive-monitor counters tick live.
+        A Rich :class:`Text` shown at the top of every screen. The frame crops it to a
+        single line (see ``frame.compose_base``), so a narrow terminal chops the tail
+        rather than wrapping.
     """
+    header = Text()
+    header.append("MeshTerm", style="brand")
+    header.append(f" v{__version__}", style="muted")
+    header.append("  ·  ")
     if ctx.mock:
-        target = "[warn]simulator[/warn]"
-    elif ctx.profile_name:
-        target = ctx.profile_name
-    elif ctx.selected_device is not None:
-        target = ctx.selected_device.label
+        header.append("simulator", style="warn")
     else:
-        target = "[muted]no device[/muted]"
+        name, where = _device_label(ctx, cache)
+        header.append(name or "no device", style=None if name else "muted")
+        if where:
+            header.append(f" ({where})", style="muted")
     unread = ctx.chat.unread_total()
-    chat_segment = f"  ·  [accent]✉ {unread} unread[/accent]" if unread else ""
-    # Colour only the leading status glyph (● / ○) — green while packets are being
-    # heard and recorded, muted while the hub still waits for a device link.
-    status = ctx.monitor.status_text()
-    glyph, rest = status[:1], status[1:]
-    glyph_style = "ok" if ctx.events.active else "muted"
-    # The frame crops this to a single line (see frame.compose_base), so a narrow terminal
-    # shows what fits and chops the rest rather than wrapping onto a second row.
-    return Text.from_markup(
-        f"[brand]MeshTerm[/brand] [muted]v{__version__}[/muted]  ·  "
-        f"[muted]device:[/muted] {target}  ·  "
-        f"[{glyph_style}]{glyph}[/{glyph_style}][muted]{rest}[/muted]"
-        f"{chat_segment}"
+    if unread:
+        header.append("  ·  ")
+        header.append(f"✉ {unread}", style="accent")
+    header.append("  ·  ")
+    header.append("●" if ctx.events.active else "○", style="ok" if ctx.events.active else "muted")
+    header.append(" ")
+    header.append_text(
+        activity_sparkline(ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, ACTIVITY_BUCKETS)
     )
+    return header
+
+
+def _device_label(ctx: AppContext, cache: dict) -> tuple[str, str]:
+    """The header's device segment: ``(node name, where)``, cached per connection.
+
+    The name prefers the device's own mesh node name (remembered at connect time in the
+    device registry), then the profile alias, then the discovered hardware name — the
+    same ladder the startup picker's NAME column walks. ``where`` is the serial port, or
+    ``"BLE"`` for a Bluetooth companion. The registry lives in a file, so the lookup is
+    cached under the connection's identity and re-read only when that changes.
+
+    Args:
+        ctx: The shared application context.
+        cache: A dict owned by the caller; holds one ``(key, value)`` pair.
+
+    Returns:
+        The ``(name, where)`` pair; either may be empty when genuinely unknown.
+    """
+    sel = ctx.selected_device
+    key = (
+        sel.stable_id if sel is not None else None,
+        ctx.profile_name,
+        ctx.active_transport,
+        ctx.active_port,
+        ctx.active_address,
+    )
+    if cache.get("key") == key:
+        return cache["value"]
+
+    from .device_picker import _hardware_name
+
+    record = (
+        ctx.device_store.load_all().get(sel.stable_id) if sel is not None
+        else ctx.device_store.load()  # remembered reconnect: nothing discovered this session
+    )
+    name = (record.node_name if record is not None else "") or ctx.profile_name or ""
+    if not name and sel is not None:
+        name = _hardware_name(sel)
+    if not name and record is not None:
+        name = record.label
+    if ctx.active_transport == "ble":
+        where = "BLE"
+    else:
+        where = ctx.active_port or (sel.port if sel is not None else "") or ""
+    cache["key"], cache["value"] = key, (name, where)
+    return name, where
 
 
 async def run_menu(ctx: AppContext) -> None:
@@ -162,7 +226,8 @@ async def run_menu(ctx: AppContext) -> None:
     # every chat bubble — aligned regardless of the terminal's emoji widths.
     calibrate_emoji_width()
 
-    session = TuiSession(header=lambda: _header(ctx))
+    header_cache: dict = {}
+    session = TuiSession(header=lambda: _header(ctx, header_cache))
     ctx.ui = TuiUi(session)
 
     async def main() -> None:

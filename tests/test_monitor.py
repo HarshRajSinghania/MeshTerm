@@ -291,6 +291,34 @@ async def test_monitor_service_records_while_hub_pumps(tmp_path: Path) -> None:
     repo.close()
 
 
+async def test_monitor_service_counts_every_packet_kind(tmp_path: Path) -> None:
+    """The activity histogram counts observations, messages, and acks alike, newest first."""
+    from meshterm.core.events import MeshEvent
+    from meshterm.core.models import Ack, Message
+    from meshterm.persistence.repository import ACTIVITY_BUCKETS
+
+    repo = Repository(tmp_path / "act.db")
+    ctx = _StubContext(repo, MockDevice())
+    service = MonitorService(ctx)
+    await service.start()
+
+    assert service.activity_histogram() == (0,) * ACTIVITY_BUCKETS
+    hub = ctx.events
+    hub.publish(MeshEvent.observation_event(Observation(node="n1", name="n1")))
+    hub.publish(MeshEvent.message_event(Message(text="hi", sender="n1")))
+    hub.publish(MeshEvent.ack_event(Ack(code="01")))
+
+    histogram = service.activity_histogram()
+    assert len(histogram) == ACTIVITY_BUCKETS
+    # All three land in the freshest bucket or, over a slot rollover, the freshest two.
+    assert sum(histogram[:2]) == 3 and sum(histogram) == 3
+
+    await service.stop()
+    hub.publish(MeshEvent.ack_event(Ack(code=2)))
+    assert sum(service.activity_histogram()) == 3  # the counter stopped with the service
+    repo.close()
+
+
 async def test_monitor_service_start_without_device_is_safe(tmp_path: Path) -> None:
     """Recording can start before any device exists, and a silent session leaves no run."""
 

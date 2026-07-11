@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from bisect import bisect_right
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
@@ -55,7 +54,7 @@ from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_BUCKETS
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
-from .widgets import _age_seconds, _format_age, channel_glyph
+from .widgets import _age_seconds, _format_age, activity_sparkline, channel_glyph
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -338,45 +337,20 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
-#: Braille dot masks for a bar filled bottom-up to height 0–4 in a cell's left column
-#: (dots 7, 3, 2, 1 — the Unicode braille block numbers its rows top-down) and right
-#: column (dots 8, 6, 5, 4). OR one of each, add to U+2800, and that's the character.
-_BRAILLE_LEFT = (0x00, 0x40, 0x44, 0x46, 0x47)
-_BRAILLE_RIGHT = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
 #: Message counts a bucket must reach for each extra dot of bar height (Fibonacci-ish, so
 #: each dot roughly means "a conversation tier up"): 1 message lights one dot, 3 light two,
 #: 8 light three, and 21 or more max the column out.
 _ACTIVITY_LEVELS = (1, 3, 8, 21)
-#: A braille cell with just its two bottom dots (7 and 8) lit — the resting baseline a
-#: silent pair of buckets draws, so a quiet channel still shows a flatline, not a gap.
-_SPARK_BASELINE = chr(0x2800 | 0x40 | 0x80)
 
 
 def _activity_sparkline(histogram: "tuple[int, ...]") -> Text:
     """The channel's braille activity sparkline over the trailing two hours.
 
-    Each of the histogram's :data:`ACTIVITY_BUCKETS` five-minute buckets becomes one dot
-    column, packed two per braille character, its bar rising bottom-up through the cell's
-    four dot rows. Heights are absolute, stepped at :data:`_ACTIVITY_LEVELS`, so the same
-    traffic draws the same bar on every row and a lone message never vanishes. Time runs
-    *newest first*: "now" is the leftmost column (matching the histogram's order) and a
-    burst of traffic slides right as it ages. Cells with traffic draw in the ok green; a
-    silent cell drops to a faint two-bottom-dot baseline, so a quiet stretch reads as a
-    flatline under the green spikes rather than a hole in the row.
+    The shared :func:`~meshterm.ui.widgets.activity_sparkline`, drawn at this list's
+    message-count thresholds over the repository histogram's :data:`ACTIVITY_BUCKETS`
+    five-minute buckets.
     """
-    histogram = (tuple(histogram) + (0,) * ACTIVITY_BUCKETS)[:ACTIVITY_BUCKETS]
-
-    def height(count: int) -> int:
-        return bisect_right(_ACTIVITY_LEVELS, count)
-
-    text = Text()
-    for left, right in zip(histogram[0::2], histogram[1::2]):
-        lh, rh = height(left), height(right)
-        if lh or rh:
-            text.append(chr(0x2800 | _BRAILLE_LEFT[lh] | _BRAILLE_RIGHT[rh]), style="ok")
-        else:
-            text.append(_SPARK_BASELINE, style="faint")
-    return text
+    return activity_sparkline(histogram, _ACTIVITY_LEVELS, ACTIVITY_BUCKETS)
 
 
 def _fit(text: str, width: int) -> str:
