@@ -551,15 +551,21 @@ async def test_direct_send_spins_until_the_ack_resolves(monkeypatch) -> None:
 
 
 def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
-    """The compose bar shows ``used/limit`` with only the used count styled (the max is muted)."""
+    """The inline budget shows ``used/limit`` with only the used count styled (the max is muted)."""
     from rich.text import Text
 
     screen = _screen(_StubSession(), send=None)
     for ch in "hello":
         screen.handle("text", ch)
-    counter = screen._byte_counter(80, screen._used_bytes(), screen._byte_limit())
+    counter = screen._byte_counter(screen._byte_limit())
     assert isinstance(counter, Text)
     assert counter.plain.strip() == "5/150"  # 5 bytes used of the 150-byte direct-message cap
+    # The budget rides the input line itself, right after the compose text, so it can
+    # never be the one row a full transcript pushes off the bottom of the viewport.
+    import re
+
+    body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(80)))
+    assert re.search(r"› hello.*5/150", body)
     # Only the "5" carries a color; the "/150" tail stays muted (it never changes).
     used_at = counter.plain.index("5")
     slash_at = counter.plain.index("/")

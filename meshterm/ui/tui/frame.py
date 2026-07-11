@@ -66,8 +66,15 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
 
     if sticky is not None:
         cap = max(1, viewport - 1)
-        visible = [sticky] + lines[scroll : scroll + cap]
-        more_below = scroll + cap < total
+        start = scroll
+        if scroll >= total - viewport and total > cap:
+            # Scrolled fully to the bottom: the pinned header's reserved row must not
+            # cost the *last* body line (a chat's input row would vanish exactly when
+            # the transcript fills the screen). Slide the window down one instead —
+            # the dropped row is at the top, right under the pin, where it's stale.
+            start = min(scroll + 1, total - cap)
+        visible = [sticky] + lines[start : start + cap]
+        more_below = start + cap < total
         visible = visible + [""] * (viewport - len(visible))
         return visible, True, more_below
 

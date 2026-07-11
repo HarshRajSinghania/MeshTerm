@@ -200,11 +200,15 @@ class ChatScreen(Screen):
             lines = self._render_grouped(width)
 
         limit = self._byte_limit()
-        used = self._used_bytes()
+        # The byte budget rides the input line itself (no row of its own): it trails
+        # the cursor and wraps along with a long compose, so it is exactly as visible
+        # as the input — never the one line a full transcript pushes off the bottom.
+        input_line = self._editor.render(overflow_at=self._overflow_at(limit))
+        input_line.append("  ")
+        input_line.append_text(self._byte_counter(limit))
         footer_parts: list[RenderableType] = [
             Text("─" * width, style="muted"),
-            self._editor.render(overflow_at=self._overflow_at(limit)),
-            self._byte_counter(width, used, limit),
+            input_line,
         ]
         if self._is_channel and self._selected is not None:
             footer_parts.append(self._reply_banner())
@@ -245,18 +249,17 @@ class ChatScreen(Screen):
                 return i
         return None
 
-    def _byte_counter(self, width: int, used: int, limit: int) -> Text:
-        """Right-aligned ``used/limit`` budget; only ``used`` is colored by how much is left.
+    def _byte_counter(self, limit: int) -> Text:
+        """The inline ``used/limit`` budget; only ``used`` is colored by how much is left.
 
         Green with room to spare, yellow within :data:`_BYTES_TIGHT` bytes, orange within
         :data:`_BYTES_LOW`, and red once the limit is met or exceeded — so the number reads as
         a fuel gauge while the ``/limit`` suffix stays muted (it never changes).
         """
-        tail = f"/{limit}"
-        pad = max(0, width - len(str(used)) - len(tail))
-        counter = Text(" " * pad)
+        used = self._used_bytes()
+        counter = Text()
         counter.append(str(used), style=self._byte_style(limit - used))
-        counter.append(tail, style="muted")
+        counter.append(f"/{limit}", style="muted")
         return counter
 
     @staticmethod
