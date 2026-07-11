@@ -5,9 +5,12 @@ table output). Where the old flow started tracing the instant a target was picke
 screen now opens *armed but idle*: the target's last-known route shows, the path is
 whatever you make it, and nothing transmits until you say so. Three verbs drive it:
 
-* **Enter** runs a burst. While it flies, a floating *tracing* dialog (spinner, live
-  reply count, Abort) sits over the screen — replies keep streaming into the log behind
-  it, and Esc in the dialog cancels the burst without leaving the screen.
+* **Enter** runs a *single* trace. While it flies, a floating *tracing* dialog (spinner,
+  Abort) sits over the screen — the reply streams into the log behind it, and Esc in the
+  dialog cancels the trace without leaving the screen. One transmission per keypress is
+  deliberate: repeaters penalize chatty nodes (flood detection can blacklist us), so
+  sampling is left human-paced — press Enter again and the screen keeps aggregating
+  every trace of the session into its medians.
 * **p** opens the path composer (:mod:`~meshterm.ui.path_composer`): build the outbound
   route hop by hop, each step suggested from the links observed in *received* traffic —
   traces, firmware-learned contact routes, and RX-logged packet paths — strongest first,
@@ -18,16 +21,17 @@ whatever you make it, and nothing transmits until you say so. Three verbs drive 
   composed: the trace protocol replies back along the reversed path automatically.
 * **x** explores scenarios: ranked candidate routes to the target straight from the
   topology evidence (the device's own learned route, the direct shot, and the strongest
-  observed alternatives). Adopt one directly — or probe them all, a small measured burst
-  per candidate, persisted as ``path_candidates`` rows and ranked reliability-first, with
-  the winner offered for adoption. Evidence proposes, measurement decides, you dispose.
+  observed alternatives). Adopt one directly — or probe them all, one measured trace per
+  candidate (the same single-transmission rule), persisted as ``path_candidates`` rows
+  and ranked reliability-first, with the winner offered for adoption. Evidence proposes,
+  measurement decides, you dispose.
 
 Layout, top to bottom: the walked route (live when a reply has landed, else the planned
 composed path, else the target's last stored trace), the run's robust aggregates, per-hop
 median SNR with quality bars, and the individual traces newest-first.
 
-Every burst is persisted exactly like a scripted run: one ``runs`` row per burst, each
-trace recorded under it, so the stored history reads the same no matter which front end
+Every trace is persisted exactly like a scripted run: one ``runs`` row per trace,
+recorded under it, so the stored history reads the same no matter which front end
 produced it.
 """
 
@@ -52,16 +56,8 @@ from .widgets import NodeResolver, _link_text, _route_text
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Seconds between spinner frames while a burst or probe is in flight.
+#: Seconds between spinner frames while a trace or probe is in flight.
 _SPINNER_INTERVAL = 0.12
-
-#: The sample counts the ``s`` key cycles through — small odd numbers, so the median is
-#: always a real reading and the radio's duty cycle stays polite.
-_SAMPLE_CYCLE = (1, 3, 5, 9)
-
-#: Traces per candidate during a scenario probe, capped below the burst size so probing
-#: several paths stays within the airtime budget of a single ordinary burst.
-_PROBE_SAMPLES_CAP = 3
 
 #: How wide the per-hop SNR quality bars draw, in cells.
 _BAR_WIDTH = 16
@@ -71,10 +67,11 @@ _BAR_WIDTH = 16
 _BAR_SNR_MIN = -15.0
 _BAR_SNR_MAX = 10.0
 
-#: A burst runner: ``(samples, path_spec, on_trace)`` → runs the traces, streaming each
-#: result to ``on_trace`` as it lands. Provided by :func:`open_trace`, which closes over
-#: the device, repository, and settings so the screen stays free of persistence concerns.
-BurstRunner = Callable[[int, str, Callable[[TraceResult], None]], Awaitable[None]]
+#: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
+#: the result to ``on_trace`` when it lands. Provided by :func:`open_trace`, which closes
+#: over the device, repository, and settings so the screen stays free of persistence
+#: concerns.
+TraceOnce = Callable[[str, Callable[[TraceResult], None]], Awaitable[None]]
 
 #: A path picker flow: takes the current spec, runs its own dialogs over the screen, and
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
@@ -105,7 +102,7 @@ def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
 class TracingDialog(Screen):
     """The floating in-flight dialog: a spinner chip, live progress, and Abort.
 
-    Pushed over the trace screen while a burst (or scenario probe) transmits, so the
+    Pushed over the trace screen while a trace (or scenario probe) transmits, so the
     activity — and the way out — is unmissable while replies keep streaming into the
     screen behind it. Enter, Esc, or Space aborts via the injected callback; the owner
     pops the dialog when the work finishes, so it never resolves a value of its own.
@@ -180,11 +177,12 @@ class TracingDialog(Screen):
 class TraceScreen(Screen):
     """A full-screen live trace session for one target — armed, but idle until told.
 
-    Keys: Enter runs a burst (a floating dialog with Abort rides on top while it flies),
-    ``p`` composes the forced path hop by hop from observed topology, ``x`` explores and
-    probes ranked path scenarios, ``s`` cycles the burst's sample count, the usual scroll
-    keys move the view, and Esc backs out (cancelling any in-flight burst;
-    already-recorded traces are kept).
+    Keys: Enter runs one trace (a floating dialog with Abort rides on top while it
+    flies — one transmission per keypress, because repeaters can blacklist nodes that
+    burst traffic), ``p`` composes the forced path hop by hop from observed topology,
+    ``x`` explores and probes ranked path scenarios, the usual scroll keys move the
+    view, and Esc backs out (cancelling any in-flight trace; already-recorded traces
+    are kept).
     """
 
     floating = False
@@ -197,11 +195,10 @@ class TraceScreen(Screen):
         device_hash: Optional[str],
         resolve: NodeResolver,
         session: Any,
-        burst: BurstRunner,
+        trace: TraceOnce,
         compose_path: PathFlow,
         explore: PathFlow,
         previous: Optional[TraceResult] = None,
-        samples: int = 3,
     ) -> None:
         """Create the screen (nothing transmits until the user presses Enter).
 
@@ -211,14 +208,14 @@ class TraceScreen(Screen):
             device_hash: Our own public key, so the endpoints carry a hash like every hop.
             resolve: Maps a hop's raw hash to a friendly contact name when known.
             session: The running TUI session (for repaints and the floating dialog).
-            burst: Runs one burst of traces, streaming results (see :data:`BurstRunner`).
+            trace: Runs exactly one trace, handing back the result (see
+                :data:`TraceOnce`).
             compose_path: Opens the hop-by-hop path composer over this screen, seeded
                 with the current spec; resolves to the new spec or ``None`` if cancelled.
             explore: Opens the scenario browser/probe flow over this screen; resolves to
                 an adopted spec or ``None`` to keep the current one.
             previous: The target's most recent stored trace, if any — its route seeds the
                 route line so the screen opens knowing the path history last saw.
-            samples: Traces per burst to start with.
         """
         super().__init__()
         self.title = f"trace · {target}"
@@ -227,17 +224,15 @@ class TraceScreen(Screen):
         self._device_hash = device_hash
         self._resolve = resolve
         self._session = session
-        self._burst = burst
+        self._trace_once = trace
         self._compose_path = compose_path
         self._explore = explore
         self._previous = previous
-        self._samples = samples if samples in _SAMPLE_CYCLE else 3
         self._path_spec = ""
         self._traces: list[TraceResult] = []
         self._running = False
         self._dialog_open = False
         self._status = ""
-        self._burst_done = 0
         self._spinner = Spinner()
         self._worker: Optional[asyncio.Task] = None
         self._flight: Optional[TracingDialog] = None
@@ -246,42 +241,37 @@ class TraceScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """The footer keys, tracking whether a burst is in flight."""
+        """The footer keys, tracking whether a trace is in flight."""
         if self._running:
             return "tracing… · ↑↓ PgUp/PgDn scroll · Esc back"
-        return (
-            "Enter trace · p compose path · x explore paths · s samples · "
-            "↑↓ scroll · Esc back"
-        )
+        return "Enter trace · p compose path · x explore paths · ↑↓ scroll · Esc back"
 
-    def start_burst(self) -> None:
-        """Kick off one burst of traces in the background (no-op while one is running)."""
+    def start_trace(self) -> None:
+        """Kick off one trace in the background (no-op while one is already flying)."""
         if self._running:
             return
         self._running = True
         self._status = ""
-        self._burst_done = 0
         self._spinner.reset()
-        self._worker = asyncio.ensure_future(self._run_burst())
+        self._worker = asyncio.ensure_future(self._run_trace())
         self._session.invalidate()
 
-    async def _run_burst(self) -> None:
-        """Drive one burst to completion under the floating tracing dialog.
+    async def _run_trace(self) -> None:
+        """Drive one trace to completion under the floating tracing dialog.
 
-        The dialog is pushed for the duration and popped however the burst ends —
+        The dialog is pushed for the duration and popped however the trace ends —
         completion, failure, or abort — and its Abort wires straight to :meth:`cancel`,
-        so the burst's cancellation path is the same whether Esc lands on the dialog or
-        the screen.
+        so the cancellation path is the same whether Esc lands on the dialog or the
+        screen.
         """
         dialog = TracingDialog(
             f"tracing · {self._target}", spinner=self._spinner, on_abort=self.cancel
         )
-        dialog.status = self._flight_status(0)
         self._flight = dialog
         self._session.push(dialog)
         ticker = asyncio.ensure_future(self._animate())
         try:
-            await self._burst(self._samples, self._path_spec, self._on_trace)
+            await self._trace_once(self._path_spec, self._on_trace)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - report inline, keep the screen alive
@@ -292,17 +282,12 @@ class TraceScreen(Screen):
                 await ticker
             except asyncio.CancelledError:
                 pass
-            except Exception:  # noqa: BLE001 - a spinner hiccup must never break a burst
+            except Exception:  # noqa: BLE001 - a spinner hiccup must never break a trace
                 pass
             self._session.pop(dialog)
             self._flight = None
             self._running = False
             self._session.invalidate()
-
-    def _flight_status(self, done: int) -> str:
-        """The dialog's progress line after ``done`` replies of the burst have landed."""
-        current = min(done + 1, self._samples)
-        return f"trace {current}/{self._samples} · {self._target}"
 
     async def _animate(self) -> None:
         """Advance the in-flight spinner and repaint on a steady cadence, until cancelled."""
@@ -312,29 +297,23 @@ class TraceScreen(Screen):
             self._session.invalidate()
 
     def _on_trace(self, result: TraceResult) -> None:
-        """Append one landed trace, advance the dialog, and repaint."""
+        """Append the landed trace, echo it on the dialog, and repaint."""
         self._traces.append(result)
-        self._burst_done += 1
         if self._flight is not None:
             self._flight.last = result
-            self._flight.status = self._flight_status(self._burst_done)
         self._session.invalidate()
 
     def cancel(self) -> None:
-        """Cancel any in-flight burst (already-recorded traces are kept)."""
+        """Cancel any in-flight trace (already-recorded traces are kept)."""
         if self._worker is not None and not self._worker.done():
             self._worker.cancel()
 
     # --- input -------------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
-        """Run bursts, compose/explore paths, tweak samples, scroll, or dismiss."""
+        """Run a trace, compose/explore paths, scroll, or dismiss."""
         if action == "enter":
-            self.start_burst()
-        elif action == "text" and data.lower() == "s":
-            if not self._running:
-                idx = _SAMPLE_CYCLE.index(self._samples)
-                self._samples = _SAMPLE_CYCLE[(idx + 1) % len(_SAMPLE_CYCLE)]
+            self.start_trace()
         elif action == "text" and data.lower() == "p":
             self._open_flow(self._compose_path)
         elif action == "text" and data.lower() == "x":
@@ -356,7 +335,7 @@ class TraceScreen(Screen):
             self.resolve(None)
 
     def _open_flow(self, flow: PathFlow) -> None:
-        """Float a path-picking flow over the screen (one at a time, not mid-burst).
+        """Float a path-picking flow over the screen (one at a time, not mid-trace).
 
         Both the composer and the scenario explorer resolve the same way: a new spec to
         adopt (``""`` returns routing to the device), or ``None`` to leave the current
@@ -451,7 +430,7 @@ class TraceScreen(Screen):
         return text
 
     def _summary(self, stats: TraceStats) -> Text:
-        """The run's aggregates plus the current burst configuration, label-aligned."""
+        """The session's aggregates plus the current path, label-aligned."""
         snr = stats.median_min_snr
         snr_text = (
             Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("—")
@@ -462,9 +441,7 @@ class TraceScreen(Screen):
             ("success rate    ", "muted"), (rate if stats.samples else "—", ""), ("\n", ""),
             ("median min SNR  ", "muted"), snr_text, ("\n", ""),
             ("median RTT      ", "muted"), (rtt, ""), ("\n", ""),
-            ("burst           ", "muted"),
-            (f"{self._samples} trace{'s' if self._samples != 1 else ''}", ""),
-            ("  ·  path ", "muted"),
+            ("path            ", "muted"),
         )
         if self._path_spec:
             summary.append(self._path_spec, style="brand")
@@ -544,7 +521,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     """Open the live trace screen for ``target`` and run it until dismissed.
 
     Wires the screen to the radio, the database, and the observed-topology services:
-    each burst opens its own ``runs`` row and records every trace under it (same shape a
+    each trace opens its own ``runs`` row and is recorded under it (same shape a
     scripted ``meshterm trace`` writes); the composer and scenario flows build a fresh
     :class:`~meshterm.services.topology.MeshTopology` from stored evidence on each open,
     so suggestions always reflect the latest received traffic. Nothing transmits until
@@ -810,11 +787,13 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         return text
 
     def outcome_title(rank: int, outcome: ProbeOutcome) -> Text:
-        """One probed candidate as a ranked select row: measured, not guessed."""
+        """One probed candidate as a ranked select row: one measured trace, not a guess."""
         stats = outcome.stats
-        rate_style = "ok" if stats.success_rate >= 1.0 else ("warn" if stats.successes else "err")
         text = Text(f"#{rank}  ", style="muted")
-        text.append(f"{stats.success_rate:.0%}", style=rate_style)
+        if stats.successes:
+            text.append("✓ replied", style="ok")
+        else:
+            text.append("✗ no reply", style="err")
         snr = stats.median_min_snr
         if snr is not None:
             text.append("  min ", style="muted")
@@ -827,30 +806,30 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         return text
 
     async def run_probe(
-        candidates: list[ProbeCandidate], samples: int
+        candidates: list[ProbeCandidate],
     ) -> Optional[list[ProbeOutcome]]:
-        """Measure every candidate under an abortable dialog; ``None`` when aborted.
+        """Measure every candidate — one trace each — under an abortable dialog.
 
         One ``runs`` row spans the sweep; each trace and each candidate aggregate is
         recorded under it, so an aborted probe still keeps everything it measured.
+        Each candidate gets exactly one transmission (the screen-wide rule: repeaters
+        can blacklist nodes that burst traffic); ``None`` when aborted.
         """
         run_id = ctx.repo.start_run(
             "trace",
             {
                 "target": target,
                 "mode": "probe",
-                "samples": samples,
                 "paths": [c.spec for c in candidates],
             },
             ctx.profile_name,
         )
         spinner = Spinner()
         dialog = TracingDialog(f"probing · {target_label}", spinner=spinner, on_abort=lambda: None)
-        dialog.status = f"path 1/{len(candidates)} · trace 1/{samples}"
+        dialog.status = f"path 1/{len(candidates)} · one trace each"
 
         def on_result(index: int, done: int, result: TraceResult) -> None:
-            current = min(done + 1, samples)
-            dialog.status = f"path {index + 1}/{len(candidates)} · trace {current}/{samples}"
+            dialog.status = f"path {index + 1}/{len(candidates)} · one trace each"
             dialog.last = result
             session.invalidate()
 
@@ -859,7 +838,6 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
                 device,
                 target,
                 candidates,
-                samples=samples,
                 cooldown_s=ctx.settings.trace_cooldown_s,
                 on_result=on_result,
                 persist_trace=lambda t: ctx.repo.record_trace(run_id, t),
@@ -957,7 +935,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         items.append(Separator(" "))
         items.append(
             Choice(
-                title=Text.assemble(("⚡ ", "warn"), "Probe all — trace each path and rank"),
+                title=Text.assemble(("⚡ ", "warn"), "Probe all — trace each path once and rank"),
                 value=("probe", None),
             )
         )
@@ -983,7 +961,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             spec = scenario.spec(target_hash, width_bytes)
             if all(c.spec != spec for c in candidates):
                 candidates.append(ProbeCandidate(label=scenario.label, spec=spec))
-        outcomes = await run_probe(candidates, _PROBE_SAMPLES_CAP)
+        outcomes = await run_probe(candidates)
         if not outcomes:
             return None
         result_items: list = [
@@ -1005,38 +983,35 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             return None
         return adopted.candidate.spec
 
-    async def burst(samples: int, path_spec: str, on_trace: Callable[[TraceResult], None]) -> None:
-        """Run one persisted burst, streaming each landed trace to the screen."""
+    async def trace_once(path_spec: str, on_trace: Callable[[TraceResult], None]) -> None:
+        """Run one persisted trace: one transmission, its own ``runs`` row.
+
+        A single transmission per keypress is deliberate — repeaters penalize (and
+        can blacklist) nodes that burst traffic — so repeat sampling is left to the
+        human, and the screen aggregates whatever lands.
+        """
         path = trace_runner.parse_trace_path(path_spec, contacts) if path_spec.strip() else None
-        params: dict[str, Any] = {"target": target, "samples": samples}
+        params: dict[str, Any] = {"target": target}
         if path:
             params["path"] = path
         run_id = ctx.repo.start_run("trace", params, ctx.profile_name)
         try:
-            results = await trace_runner.run_traces(
-                device,
-                target,
-                samples=samples,
-                path=path,
-                cooldown_s=ctx.settings.trace_cooldown_s,
-                on_result=lambda _done, _total, result: on_trace(result),
-                persist=lambda t: ctx.repo.record_trace(run_id, t),
-            )
+            result = await device.run_trace(target, path=path)
         except BaseException as exc:
-            # A cancelled or failed burst still closes its run row, so no ``running``
-            # orphan is left behind; the traces already recorded stay.
+            # A cancelled or failed trace still closes its run row, so no ``running``
+            # orphan is left behind.
             ctx.repo.finish_run(run_id, "error", {"error": str(exc) or type(exc).__name__})
             raise
-        stats = TraceStats.from_traces(target, results)
+        ctx.repo.record_trace(run_id, result)
+        on_trace(result)
         ctx.repo.finish_run(
             run_id,
             "ok",
             {
-                "target": stats.target,
-                "samples": stats.samples,
-                "success_rate": round(stats.success_rate, 3),
-                "median_min_snr": stats.median_min_snr,
-                "median_rtt_ms": stats.median_rtt_ms,
+                "target": target,
+                "success": result.success,
+                "min_snr": result.min_snr,
+                "rtt_ms": result.round_trip_ms,
             },
         )
 
@@ -1046,7 +1021,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         device_hash=device_hash,
         resolve=resolve,
         session=session,
-        burst=burst,
+        trace=trace_once,
         compose_path=compose,
         explore=explore,
         previous=ctx.repo.latest_trace(target),

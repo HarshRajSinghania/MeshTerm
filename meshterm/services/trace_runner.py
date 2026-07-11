@@ -1,8 +1,11 @@
-"""Repeated-trace execution with robust aggregation and duty-cycle pacing.
+"""Repeated-trace execution with duty-cycle pacing, plus trace parsing helpers.
 
-This is the measurement primitive both the trace tool and the TX/path optimizers build
-on: run a trace N times, optionally reporting progress, and aggregate into robust
-statistics while persisting every individual trace.
+:func:`run_traces` is the measurement primitive the TX optimizer and the path probe
+build on: run a trace N times with pacing, optionally reporting progress, persisting
+every individual trace. The ``trace`` tool itself deliberately does *not* loop — it
+transmits exactly one trace per invocation, because repeaters penalize (and can
+blacklist) nodes that burst traffic — but it shares this module's path parsing and
+node-name resolution.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ import asyncio
 from typing import Awaitable, Callable, Optional
 
 from ..core.connection import Device
-from ..core.models import Contact, TraceResult, TraceStats
+from ..core.models import Contact, TraceResult
 
 ProgressCallback = Callable[[int, int, TraceResult], None]
 
@@ -186,39 +189,3 @@ async def run_traces(
         if i < samples - 1 and cooldown_s > 0:
             await asyncio.sleep(cooldown_s)
     return results
-
-
-async def measure(
-    device: Device,
-    target: str,
-    *,
-    samples: int = 5,
-    path: Optional[str] = None,
-    cooldown_s: float = 1.0,
-    on_result: Optional[ProgressCallback] = None,
-    persist: Optional[Callable[[TraceResult], Awaitable[None] | None]] = None,
-) -> TraceStats:
-    """Run traces and return their robust aggregate statistics.
-
-    Args:
-        device: The connected device to trace through.
-        target: Destination node name or key prefix.
-        samples: Number of traces to run.
-        path: Optional explicit path to force.
-        cooldown_s: Delay between traces.
-        on_result: Optional per-trace progress callback.
-        persist: Optional per-trace persistence callback.
-
-    Returns:
-        A :class:`TraceStats` summarizing the run.
-    """
-    results = await run_traces(
-        device,
-        target,
-        samples=samples,
-        path=path,
-        cooldown_s=cooldown_s,
-        on_result=on_result,
-        persist=persist,
-    )
-    return TraceStats.from_traces(target, results)

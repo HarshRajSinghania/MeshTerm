@@ -348,14 +348,23 @@ class Repository:
             timestamp=datetime.fromisoformat(row["created_at"]),
         )
 
-    def traced_targets(self) -> list[str]:
-        """Return the distinct trace destinations recorded, most-traced first.
+    def traced_targets(self, *, limit: int = 5) -> list[str]:
+        """Return recent trace destinations, most recently traced first.
+
+        This feeds the target picker's *Recently traced* section, so the list is
+        deliberately short and recency-ordered: an all-time tally only ever grows,
+        burying current work under stale names (``--mock`` targets included).
+
+        Args:
+            limit: Maximum number of distinct targets to return.
 
         Returns:
-            Target names ordered by descending trace count.
+            Distinct target names, most recently traced first.
         """
         rows = self._conn.execute(
-            "SELECT target, COUNT(*) AS n FROM traces GROUP BY target ORDER BY n DESC"
+            "SELECT target, MAX(id) AS latest FROM traces "
+            "GROUP BY target ORDER BY latest DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [row["target"] for row in rows]
 

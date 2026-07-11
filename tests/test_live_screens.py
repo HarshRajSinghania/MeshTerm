@@ -1,6 +1,6 @@
 """Unit tests for the live Trace and TX-optimize screens.
 
-These drive the two full-screen tools' pure logic — burst/sweep state machines, key
+These drive the two full-screen tools' pure logic — trace/sweep state machines, key
 handling, and rendering — against fake sessions and injected runners, so they run fast
 and headless (the same approach as ``test_tui``).
 """
@@ -72,13 +72,12 @@ def test_snr_bar_clamps_out_of_range_readings() -> None:
 
 
 def _trace_screen(
-    burst=None, compose_path=None, explore=None, previous=None
+    trace=None, compose_path=None, explore=None, previous=None
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
-    async def default_burst(samples, path_spec, on_trace):  # noqa: ANN001
-        for _ in range(samples):
-            on_trace(_trace(5.0, 2.0))
+    async def default_trace(path_spec, on_trace):  # noqa: ANN001
+        on_trace(_trace(5.0, 2.0))
 
     async def default_flow(current):  # noqa: ANN001
         return current
@@ -89,7 +88,7 @@ def _trace_screen(
         device_hash="aabb" + "00" * 30,
         resolve=lambda label: label,
         session=session,
-        burst=burst or default_burst,
+        trace=trace or default_trace,
         compose_path=compose_path or default_flow,
         explore=explore or default_flow,
         previous=previous,
@@ -97,16 +96,21 @@ def _trace_screen(
     return screen, session
 
 
-async def test_trace_screen_burst_streams_results_into_the_log() -> None:
-    """A burst appends each landed trace; the log and aggregates render them."""
+async def test_trace_screen_one_trace_per_enter_accumulates() -> None:
+    """Each Enter transmits exactly one trace; the session aggregates what landed.
+
+    Single-transmission is the screen's blacklist-avoidance rule: repeat sampling is
+    the human's call, so three keypresses mean three traces and a three-sample median.
+    """
     screen, _ = _trace_screen()
-    screen.start_burst()
-    await asyncio.sleep(0)  # let the worker run
-    await screen._worker
+    for _ in range(3):
+        screen.start_trace()
+        await screen._worker
     body = _plain(screen.render_body(100))
     assert "success rate" in body and "3/3" in body
     assert "#3" in body  # newest-first numbering
     assert "Per-hop medians" in body
+    assert "burst" not in body.lower()  # no burst configuration is offered anywhere
 
 
 async def test_trace_screen_seeds_route_from_previous_trace() -> None:
@@ -122,18 +126,18 @@ async def test_trace_screen_seeds_route_from_previous_trace() -> None:
     assert "(previous" not in body
 
 
-async def test_trace_screen_only_one_burst_at_a_time() -> None:
-    """Enter during a burst is a no-op; the running flag gates re-entry."""
+async def test_trace_screen_only_one_trace_at_a_time() -> None:
+    """Enter during an in-flight trace is a no-op; the running flag gates re-entry."""
     started = 0
     release = asyncio.Event()
 
-    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+    async def trace(path_spec, on_trace):  # noqa: ANN001
         nonlocal started
         started += 1
         await release.wait()
 
-    screen, _ = _trace_screen(burst=burst)
-    screen.start_burst()
+    screen, _ = _trace_screen(trace=trace)
+    screen.start_trace()
     assert screen._running
     screen.handle("enter")  # ignored while running
     release.set()
@@ -142,31 +146,20 @@ async def test_trace_screen_only_one_burst_at_a_time() -> None:
     assert not screen._running
 
 
-async def test_trace_screen_burst_failure_reads_inline() -> None:
-    """A failed burst reports its error in the log area instead of crashing the screen."""
+async def test_trace_screen_failure_reads_inline() -> None:
+    """A failed trace reports its error in the log area instead of crashing the screen."""
 
-    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+    async def trace(path_spec, on_trace):  # noqa: ANN001
         raise RuntimeError("no route")
 
-    screen, _ = _trace_screen(burst=burst)
-    screen.start_burst()
+    screen, _ = _trace_screen(trace=trace)
+    screen.start_trace()
     await screen._worker
     assert "trace failed: no route" in _plain(screen.render_body(100))
 
 
-async def test_trace_screen_samples_cycle_only_when_idle() -> None:
-    """`s` cycles the burst size through the odd sample counts, but never mid-burst."""
-    screen, _ = _trace_screen()
-    assert screen._samples == 3
-    screen.handle("text", "s")
-    assert screen._samples == 5
-    screen._running = True
-    screen.handle("text", "s")
-    assert screen._samples == 5  # locked while a burst is in flight
-
-
 async def test_trace_screen_composer_updates_the_spec() -> None:
-    """`p` opens the injected composer flow; its result becomes the next burst's path."""
+    """`p` opens the injected composer flow; its result becomes the next trace's path."""
     asked: list[str] = []
 
     async def compose(current: str):  # noqa: ANN001
@@ -204,30 +197,30 @@ async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
 
 
 async def test_trace_screen_opens_idle_until_enter() -> None:
-    """Selecting a target must never transmit by itself: no burst until Enter."""
+    """Selecting a target must never transmit by itself: nothing flies until Enter."""
     screen, session = _trace_screen()
     assert not screen._running and screen._worker is None
     assert "press Enter to trace" in _plain(screen.render_body(100))
     screen.handle("enter")
     assert screen._running
     await screen._worker
-    assert session.stack == []  # the tracing dialog was popped with the burst
+    assert session.stack == []  # the tracing dialog was popped with the trace
 
 
-async def test_trace_screen_burst_floats_the_tracing_dialog() -> None:
-    """A burst pushes the abortable dialog for its duration and pops it however it ends."""
+async def test_trace_screen_floats_the_tracing_dialog() -> None:
+    """A trace pushes the abortable dialog for its duration and pops it however it ends."""
     release = asyncio.Event()
 
-    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+    async def trace(path_spec, on_trace):  # noqa: ANN001
         on_trace(_trace(5.0))
         await release.wait()
 
-    screen, session = _trace_screen(burst=burst)
-    screen.start_burst()
+    screen, session = _trace_screen(trace=trace)
+    screen.start_trace()
     await asyncio.sleep(0)
     assert len(session.stack) == 1
     dialog = session.stack[0]
-    assert "2/3" in dialog.status  # one reply landed; the second is in flight
+    assert dialog.last is not None  # the landed reply echoes on the dialog
     body = _plain(dialog.render_body(60))
     assert "Abort" in body
     release.set()
@@ -235,15 +228,15 @@ async def test_trace_screen_burst_floats_the_tracing_dialog() -> None:
     assert session.stack == []
 
 
-async def test_tracing_dialog_abort_cancels_the_burst() -> None:
-    """Enter/Esc on the tracing dialog cancels the in-flight burst via the screen."""
+async def test_tracing_dialog_abort_cancels_the_trace() -> None:
+    """Enter/Esc on the tracing dialog cancels the in-flight trace via the screen."""
     release = asyncio.Event()
 
-    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+    async def trace(path_spec, on_trace):  # noqa: ANN001
         await release.wait()
 
-    screen, session = _trace_screen(burst=burst)
-    screen.start_burst()
+    screen, session = _trace_screen(trace=trace)
+    screen.start_trace()
     await asyncio.sleep(0)
     session.stack[0].handle("escape")
     with pytest.raises(asyncio.CancelledError):
@@ -252,15 +245,15 @@ async def test_tracing_dialog_abort_cancels_the_burst() -> None:
     assert not screen._running
 
 
-async def test_trace_screen_escape_cancels_the_inflight_burst() -> None:
-    """Esc resolves the screen and cancels a burst that is still measuring."""
+async def test_trace_screen_escape_cancels_the_inflight_trace() -> None:
+    """Esc resolves the screen and cancels a trace that is still measuring."""
     release = asyncio.Event()
 
-    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+    async def trace(path_spec, on_trace):  # noqa: ANN001
         await release.wait()
 
-    screen, _ = _trace_screen(burst=burst)
-    screen.start_burst()
+    screen, _ = _trace_screen(trace=trace)
+    screen.start_trace()
     screen.future = asyncio.get_running_loop().create_future()
     screen.handle("escape")
     assert screen.future.result() is None

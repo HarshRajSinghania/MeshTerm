@@ -1,10 +1,11 @@
 """Multi-path probing: measure candidate routes to a target and rank what actually works.
 
 The topology graph (:mod:`~meshterm.services.topology`) proposes routes from *received*
-evidence; this module puts them to the test. Each candidate outbound path is traced a few
-times, every trace is persisted exactly like a normal burst, the per-candidate aggregate
-is recorded as a ``path_candidates`` row, and the outcomes come back ranked the way the
-TX optimizer ranks its levels: reliability first, bottleneck SNR as the tie-breaker, then
+evidence; this module puts them to the test. Each candidate outbound path is traced once
+(by default — repeaters penalize, and can blacklist, nodes that burst traffic), every
+trace is persisted exactly like a normal trace run, the per-candidate aggregate is
+recorded as a ``path_candidates`` row, and the outcomes come back ranked the way the TX
+optimizer ranks its levels: reliability first, bottleneck SNR as the tie-breaker, then
 round-trip time. The caller (the live trace screen) shows the ranking and offers to adopt
 the winner — measurement proposes, the user disposes.
 """
@@ -42,7 +43,7 @@ class ProbeOutcome:
 
     Attributes:
         candidate: The route that was measured.
-        stats: The aggregated trace statistics over its burst.
+        stats: The aggregated trace statistics over its traces.
     """
 
     candidate: ProbeCandidate
@@ -66,7 +67,7 @@ async def probe_paths(
     target: str,
     candidates: list[ProbeCandidate],
     *,
-    samples: int = 3,
+    samples: int = 1,
     cooldown_s: float = 1.0,
     on_result: Optional[ProbeProgress] = None,
     persist_trace: Optional[Callable[[TraceResult], Awaitable[None] | None]] = None,
@@ -74,17 +75,19 @@ async def probe_paths(
 ) -> list[ProbeOutcome]:
     """Trace every candidate path and return the outcomes ranked best-first.
 
-    Runs the candidates sequentially (one radio, duty cycle applies), a small burst
-    each. Persistence is delegated through callbacks so this stays pure measurement:
-    the caller owns the run row and decides where traces and candidate aggregates go.
-    Cancelling the surrounding task stops mid-candidate; everything persisted so far
-    stays persisted.
+    Runs the candidates sequentially (one radio, duty cycle applies), a single trace
+    each by default. Persistence is delegated through callbacks so this stays pure
+    measurement: the caller owns the run row and decides where traces and candidate
+    aggregates go. Cancelling the surrounding task stops mid-candidate; everything
+    persisted so far stays persisted.
 
     Args:
         device: The connected device to trace through.
         target: The destination (for :class:`TraceStats` labelling).
         candidates: The routes to measure, in the order to try them.
-        samples: Traces per candidate.
+        samples: Traces per candidate. The default of one is deliberate — repeaters
+            can blacklist nodes that burst traffic; raise it only when the airtime
+            budget clearly allows.
         cooldown_s: Pause between traces (and between candidates).
         on_result: Optional callback ``(candidate_index, done_in_candidate, result)``
             invoked as each trace lands, e.g. to advance the probe dialog.

@@ -251,6 +251,33 @@ async def test_probe_paths_ranks_reliability_first() -> None:
     assert outcomes[0].stats.success_rate == 1.0
 
 
+async def test_probe_paths_defaults_to_one_trace_per_candidate() -> None:
+    """By default each candidate is measured with a single transmission.
+
+    This is the blacklist-avoidance rule: repeaters penalize nodes that burst traffic,
+    so probing N paths must cost exactly N traces unless the caller opts into more.
+    """
+    from meshterm.core.models import Hop, TraceResult
+
+    transmitted: list[str] = []
+
+    class _Device:
+        async def run_trace(self, target, *, path=None, timeout=10.0):  # noqa: ANN001
+            transmitted.append(path)
+            return TraceResult(
+                target=target, success=True,
+                hops=[Hop(index=0, node="3d", snr=2.0)], round_trip_ms=300.0,
+            )
+
+    outcomes = await probe_paths(
+        _Device(), "Far",
+        [ProbeCandidate(label="a", spec="3d"), ProbeCandidate(label="b", spec="f2")],
+        cooldown_s=0.0,
+    )
+    assert transmitted == ["3d", "f2"]  # one trace per candidate, in order
+    assert all(o.stats.samples == 1 for o in outcomes)
+
+
 # --- path composer ---------------------------------------------------------------------
 
 

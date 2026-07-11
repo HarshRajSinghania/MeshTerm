@@ -62,6 +62,23 @@ def test_parse_trace_path_rejects_mixed_widths() -> None:
         trace_runner.parse_trace_path("3d,a1b2c3", contacts=[])
 
 
+def test_recent_targets_folds_hex_to_names_and_dedupes() -> None:
+    """Stored targets collapse to contact names so a node shows once in the picker.
+
+    The same node traced as "alice" one day and by its key prefix another must appear
+    a single time under its contact name; a hex-looking *name* stays a name, and
+    unknown prefixes pass through untouched.
+    """
+    from meshterm.tools.trace import _recent_targets
+
+    contacts = [
+        Contact(name="Alice", public_key="d4e5f6a7" + "00" * 28, key_prefix="d4e5f6a7"),
+        Contact(name="cafe", public_key="12ab34cd" + "00" * 28, key_prefix="12ab34cd"),
+    ]
+    stored = ["d4e5f6", "alice", "Alice", "cafe", "beefbeef", "d4e5f6a7"]
+    assert _recent_targets(stored, contacts) == ["Alice", "cafe", "beefbeef"]
+
+
 def test_path_hash_flags_power_of_two_only() -> None:
     """Trace flags encode the hash width as 1 << s, so only 1/2/4/8 bytes map."""
     assert trace_runner.path_hash_flags(1) == 0
@@ -270,7 +287,8 @@ async def test_mock_device_trace_is_unimodal_in_tx() -> None:
 
     async def avg_snr(tx: int) -> float:
         await device.set_tx_power(tx)
-        stats = await trace_runner.measure(device, "Alice", samples=15, cooldown_s=0)
+        results = await trace_runner.run_traces(device, "Alice", samples=15, cooldown_s=0)
+        stats = TraceStats.from_traces("Alice", results)
         return stats.median_min_snr or -99.0
 
     low, peak, high = await avg_snr(2), await avg_snr(14), await avg_snr(22)

@@ -1,17 +1,20 @@
 """The ``trace`` tool: path traces to a target, live in the menu, one-shot on the CLI.
 
+Every invocation transmits exactly *one* trace — repeaters penalize (and can blacklist)
+nodes that burst traffic, so repeat sampling is always a human decision, never a loop.
+
 In the interactive menu this opens the live trace screen
 (:mod:`meshterm.ui.trace_screen`): pick a target from a recency-ordered list and the
-screen opens armed but idle — Enter runs a burst under an abortable tracing dialog, ``p``
-composes a forced path hop by hop from the topology observed in received traffic (and,
-standing on a repeater with stored admin credentials, can fetch that repeater's live
-neighbour table for suggestions our own radio never heard), and ``x`` explores ranked
-path scenarios (with an optional probe that measures each candidate and offers the
-winner). On the CLI it stays a scriptable one-shot: run N traces, print the per-trace
-table and the aggregate summary, exit.
+screen opens armed but idle — Enter runs one trace under an abortable tracing dialog
+(press again to sample more; the screen aggregates the session), ``p`` composes a forced
+path hop by hop from the topology observed in received traffic (and, standing on a
+repeater with stored admin credentials, can fetch that repeater's live neighbour table
+for suggestions our own radio never heard), and ``x`` explores ranked path scenarios
+(with an optional probe that measures each candidate once and offers the winner). On the
+CLI it stays a scriptable one-shot: run one trace, print the route and per-hop SNR, exit.
 
-Both front ends persist identically: one ``runs`` row per burst with every trace recorded
-under it, so stored history reads the same no matter where it came from.
+Both front ends persist identically: one ``runs`` row per trace, recorded under it, so
+stored history reads the same no matter where it came from.
 """
 
 from __future__ import annotations
@@ -22,16 +25,16 @@ import typer
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.models import LOCAL_DEVICE_LABEL, Contact
+from ..core.models import LOCAL_DEVICE_LABEL, Contact, TraceStats
 from ..services import trace_runner
-from ..ui.widgets import stats_panel, traces_table
+from ..ui.widgets import stats_panel
 from .base import Tool, ToolResult, register
 
-#: Upper bound on traces per scripted run — the per-trace table renders one column each,
-#: so this keeps the output readable and the radio's duty cycle in check.
-MAX_TRACES = 9
-
 _BACK = "__back__"
+
+#: The characters a stored trace target must consist of to be treated as a hex key
+#: prefix when folding it back to a contact name in the target picker.
+_HEX_DIGITS = frozenset("0123456789abcdef")
 
 
 @register
@@ -61,7 +64,7 @@ class TraceTool(Tool):
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run — without the outer run row on the live path.
 
-        The live screen opens one ``runs`` row *per burst* (matching what a scripted
+        The live screen opens one ``runs`` row *per trace* (matching what a scripted
         invocation records), so wrapping the whole screen session in another row would
         double-log it. Scripted runs keep the base class's logging.
 
@@ -77,16 +80,15 @@ class TraceTool(Tool):
         return await super().execute(ctx, params)
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Open the live screen (menu) or run a persisted one-shot burst (CLI).
+        """Open the live screen (menu) or run one persisted trace (CLI).
 
         Args:
             ctx: Shared application context.
             params: ``live`` + ``target`` from the menu picker; or ``target`` (str),
-                ``samples`` (int), optional ``path``, and the injected ``_run_id`` from
-                the CLI.
+                optional ``path``, and the injected ``_run_id`` from the CLI.
 
         Returns:
-            A :class:`ToolResult` with the aggregated statistics.
+            A :class:`ToolResult` with the trace's outcome.
         """
         if params.get("live"):
             return await self._run_live(ctx, str(params["target"]))
@@ -138,7 +140,7 @@ class TraceTool(Tool):
 
         device = await ctx.device()
         contacts = await device.get_contacts()
-        recent = ctx.repo.traced_targets()
+        recent = _recent_targets(ctx.repo.traced_targets(), contacts)
 
         if not contacts and not recent:
             entered = await ctx.ui.text("Target node (name or key prefix):")
@@ -182,20 +184,19 @@ class TraceTool(Tool):
     # -- scripted (CLI) -------------------------------------------------------------
 
     async def _run_cli(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Run the traces, persist each one, and print the summary tables.
+        """Run one trace, persist it, and print the route and per-hop summary.
+
+        One transmission per invocation is a hard rule — repeaters penalize (and can
+        blacklist) nodes that burst traffic — so sampling means invoking again.
 
         Args:
             ctx: Shared application context.
-            params: ``target`` (str), ``samples`` (int), optional ``path``, and the
-                injected ``_run_id``.
+            params: ``target`` (str), optional ``path``, and the injected ``_run_id``.
 
         Returns:
-            A :class:`ToolResult` with the aggregated statistics.
+            A :class:`ToolResult` with the trace's outcome.
         """
         target = params["target"]
-        samples = max(1, min(MAX_TRACES, int(params.get("samples", 3))))
-        if int(params.get("samples", 3)) > MAX_TRACES:
-            ctx.ui.note(f"[warn]capping at {MAX_TRACES} traces[/warn]")
         run_id = params["_run_id"]
         device = await ctx.device()
 
@@ -223,56 +224,40 @@ class TraceTool(Tool):
         else:
             ctx.ui.note("[muted]path: auto (device-routed)[/muted]")
 
-        traces: list = []
         with ctx.ui.progress("trace") as progress:
-            task = progress.add_task(f"tracing {target}", total=samples)
+            task = progress.add_task(f"tracing {target}", total=1)
+            result = await device.run_trace(target, path=path)
+            ctx.repo.record_trace(run_id, result)
+            progress.advance(task)
 
-            def on_result(done: int, total: int, result) -> None:  # noqa: ANN001
-                traces.append(result)
-                progress.advance(task)
-
-            stats = await trace_runner.measure(
-                device,
-                target,
-                samples=samples,
-                path=path,
-                cooldown_s=ctx.settings.trace_cooldown_s,
-                on_result=on_result,
-                persist=lambda t: ctx.repo.record_trace(run_id, t),
-            )
-
-        # Use the first reply we got as the representative route shown in the summary
-        # (forced path, or the route the device resolved when auto-routing).
-        current = next((t for t in traces if t.success), None)
-        if traces:
-            ctx.ui.show(traces_table(traces, device_label, resolve, device_hash))
+        # The stats panel renders route + per-hop readings for the single trace (its
+        # medians collapse to the readings themselves).
+        stats = TraceStats.from_traces(target, [result])
         ctx.ui.show(
-            stats_panel(stats, device_label, resolve, route=current, device_hash=device_hash)
+            stats_panel(
+                stats,
+                device_label,
+                resolve,
+                route=result if result.success else None,
+                device_hash=device_hash,
+            )
         )
 
         summary: dict[str, Any] = {
-            "target": stats.target,
-            "samples": stats.samples,
-            "success_rate": round(stats.success_rate, 3),
-            "median_min_snr": stats.median_min_snr,
-            "median_rtt_ms": stats.median_rtt_ms,
-            "median_hop_snrs": [
-                {
-                    "hop": agg.index,
-                    "from": agg.origin or device_label,
-                    "to": agg.destination or device_label,
-                    "median_snr": agg.median_snr,
-                }
-                for agg in stats.hop_snrs
-            ],
+            "target": target,
+            "success": result.success,
+            "hops": result.hop_count if result.success else None,
+            "min_snr": result.min_snr,
+            "rtt_ms": result.round_trip_ms,
         }
         if path:
             summary["path"] = path
         via = f" via [brand]{path}[/brand]" if path else ""
-        return ToolResult(
-            summary=summary,
-            message=f"[ok]✓[/ok] traced [brand]{target}[/brand] x{samples}{via}",
-        )
+        if result.success:
+            message = f"[ok]✓[/ok] traced [brand]{target}[/brand]{via}"
+        else:
+            message = f"[err]✗[/err] no reply from [brand]{target}[/brand]{via}"
+        return ToolResult(summary=summary, message=message)
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``trace`` subcommand.
@@ -282,12 +267,9 @@ class TraceTool(Tool):
         """
         from ..cli import run_tool_command
 
-        @app.command(name=self.name, help="Run repeated path traces to a target and aggregate SNR")
+        @app.command(name=self.name, help="Run a single path trace to a target and show per-hop SNR")
         def _trace(
             target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix"),
-            samples: int = typer.Option(
-                3, "--samples", "-n", help=f"Number of traces (max {MAX_TRACES})"
-            ),
             path: Optional[str] = typer.Option(
                 None,
                 "--path",
@@ -295,10 +277,52 @@ class TraceTool(Tool):
                 help="Force a route: comma-separated contact names/hex prefixes (e.g. 3d,f2,3d)",
             ),
         ) -> None:
-            tool_params: dict[str, Any] = {"target": target, "samples": samples}
+            tool_params: dict[str, Any] = {"target": target}
             if path:
                 tool_params["path"] = path
             run_tool_command(self, tool_params)
+
+
+def _recent_targets(stored: list[str], contacts: list[Contact]) -> list[str]:
+    """Clean the stored recent-target names for the picker's *Recently traced* section.
+
+    Targets are recorded exactly as the user addressed them, so the same node can
+    appear once as a contact name and again as a raw hex prefix typed some other day.
+    Each stored target is folded back to its contact's current name when it matches one
+    (by name, case-insensitively, or as a prefix of a contact's public key), then
+    deduplicated with order preserved — so every node shows once, under the name the
+    rest of the picker uses.
+
+    Args:
+        stored: Recent trace destinations, most recent first, as recorded.
+        contacts: The device's current contacts to fold names against.
+
+    Returns:
+        The display names, most recently traced first, one per node.
+    """
+    by_fold = {c.name.casefold(): c.name for c in contacts}
+
+    def fold(target: str) -> str:
+        named = by_fold.get(target.casefold())
+        if named is not None:
+            return named
+        needle = target.lower().removeprefix("0x")
+        # Only fold plausible key prefixes (≥2 bytes of hex) — a short hex-looking
+        # *name* like "ace" must not be mistaken for an address.
+        if len(needle) >= 4 and all(ch in _HEX_DIGITS for ch in needle):
+            for c in contacts:
+                if (c.public_key or "").lower().startswith(needle):
+                    return c.name
+        return target
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for target in stored:
+        name = fold(target)
+        if name.casefold() not in seen:
+            seen.add(name.casefold())
+            names.append(name)
+    return names
 
 
 def _by_recency(contacts: list[Contact]) -> list[Contact]:

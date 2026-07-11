@@ -39,8 +39,9 @@ meshterm
 # Connect over Bluetooth instead of USB (address from `meshterm devices`)
 meshterm --ble AA:BB:CC:DD:EE:FF info
 
-# Scripted: every menu option is also a subcommand
-meshterm trace --target Alice --samples 10 --profile yagi
+# Scripted: every menu option is also a subcommand. A trace transmits exactly once —
+# repeaters can blacklist nodes that burst traffic — so run it again to sample more.
+meshterm trace --target Alice --profile yagi
 
 # Force a route through specific repeaters (MeshCore-app style): comma-separated
 # contact names and/or hex key prefixes, mixed freely. Blank lets the device route.

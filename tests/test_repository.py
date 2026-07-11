@@ -129,17 +129,22 @@ def test_recent_traces_empty_target(repo: Repository) -> None:
 # -- traced_targets --------------------------------------------------------
 
 
-def test_traced_targets_ordered_by_count(repo: Repository) -> None:
-    """Targets are returned most-traced first."""
-    run = repo.start_run("trace", {})
-    for _ in range(5):
-        repo.record_trace(run, _make_trace("Alice", ("r", 1.0)))
-    for _ in range(2):
-        repo.record_trace(run, _make_trace("Bob", ("r", 1.0)))
-    for _ in range(8):
-        repo.record_trace(run, _make_trace("Carol", ("r", 1.0)))
+def test_traced_targets_recency_ordered_and_capped(repo: Repository) -> None:
+    """Targets come back most recently traced first, deduplicated, and capped.
 
-    assert repo.traced_targets() == ["Carol", "Alice", "Bob"]
+    The all-time trace count must not matter: a heavily-traced old target (Alice here)
+    ranks by its *latest* trace, so stale favourites and leftover mock names age out of
+    the picker's short "Recently traced" list instead of squatting on top forever.
+    """
+    run = repo.start_run("trace", {})
+    for _ in range(8):
+        repo.record_trace(run, _make_trace("Alice", ("r", 1.0)))
+    for name in ["Bob", "Carol", "Dave", "Erin", "Frank"]:
+        repo.record_trace(run, _make_trace(name, ("r", 1.0)))
+    repo.record_trace(run, _make_trace("Bob", ("r", 1.0)))  # Bob traced again just now
+
+    assert repo.traced_targets() == ["Bob", "Frank", "Erin", "Dave", "Carol"]
+    assert repo.traced_targets(limit=2) == ["Bob", "Frank"]
 
 
 def test_traced_targets_empty_db(repo: Repository) -> None:
