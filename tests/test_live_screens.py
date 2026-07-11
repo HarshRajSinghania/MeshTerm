@@ -72,7 +72,7 @@ def test_snr_bar_clamps_out_of_range_readings() -> None:
 
 
 def _trace_screen(
-    trace=None, compose_path=None, explore=None, previous=None
+    trace=None, compose_path=None, explore=None, pick_width=None, previous=None
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
@@ -91,6 +91,8 @@ def _trace_screen(
         trace=trace or default_trace,
         compose_path=compose_path or default_flow,
         explore=explore or default_flow,
+        pick_width=pick_width or default_flow,
+        width_bytes=lambda: 2,
         previous=previous,
     )
     return screen, session
@@ -196,6 +198,61 @@ async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
     screen.handle("text", "x")
     await asyncio.sleep(0)
     assert screen._path_spec == "3d63,f2c2"  # None leaves the spec untouched
+
+
+async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
+    """↑↓ move over the action rows; Enter commits the one under the cursor."""
+    opened: list[str] = []
+
+    async def width_flow(current):  # noqa: ANN001
+        opened.append(f"width:{current}")
+        return "3d63,f2c2,3d63"
+
+    screen, _ = _trace_screen(pick_width=width_flow)
+    body = _plain(screen.render_body(100))
+    assert "Trace — one transmission" in body
+    assert "Path width — 2 bytes per hop" in body
+    assert "Compose path" in body and "Explore paths" in body
+    screen.handle("down")  # Trace → Path width
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert opened == ["width:"]
+    assert screen._path_spec == "3d63,f2c2,3d63"
+
+
+async def test_trace_screen_w_hotkey_opens_the_width_dialog() -> None:
+    """`w` floats the width flow directly; a cancelled flow leaves the spec alone."""
+    opened: list[str] = []
+
+    async def width_flow(current):  # noqa: ANN001
+        opened.append(current)
+        return None  # cancelled: the spec must stay untouched
+
+    screen, _ = _trace_screen(pick_width=width_flow)
+    screen._path_spec = "3d,f2,3d"
+    screen.handle("text", "w")
+    await asyncio.sleep(0)
+    assert opened == ["3d,f2,3d"]
+    assert screen._path_spec == "3d,f2,3d"
+    assert screen._index == 0  # the cursor stays on Trace: plain Enter still traces
+
+
+def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
+    """A palindromic (symmetric) spec dims its second half; a hand-composed one doesn't."""
+    screen, _ = _trace_screen()
+
+    def faint_cells(text) -> int:  # noqa: ANN001
+        return sum(
+            span.end - span.start for span in text.spans if "faint" in str(span.style)
+        )
+
+    screen._path_spec = "3d,f2,3d"  # symmetric boomerang: the mirror is dimmed
+    symmetric = screen._planned_route()
+    assert symmetric.plain == "Us → 3d → f2 → 3d → Us"
+    screen._path_spec = "3d,f2,27"  # asymmetric walk: every hop is the user's
+    custom = screen._planned_route()
+    assert custom.plain == "Us → 3d → f2 → 27 → Us"
+    assert faint_cells(symmetric) > faint_cells(custom)
 
 
 async def test_trace_screen_opens_idle_until_enter() -> None:

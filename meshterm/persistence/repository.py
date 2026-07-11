@@ -37,6 +37,29 @@ ACTIVITY_WINDOW = timedelta(hours=2)
 ACTIVITY_BUCKETS = 24
 
 
+def _hops_hash_bytes(hops: list[Hop]) -> Optional[int]:
+    """Recover a stored trace's per-hop path-hash width from its hop hashes.
+
+    The ``traces`` table predates :attr:`~meshterm.core.models.TraceResult.
+    path_hash_bytes`, so the width isn't a column — but it doesn't need to be: a trace
+    reply names every hop at exactly the command's width, so the (uniform) length of
+    the stored hashes *is* the width. Without it, rehydrated traces would render node
+    hashes — and our own device's full public key — at absurd lengths.
+
+    Args:
+        hops: The rehydrated hops (the final hash-less hop, our own device, is skipped).
+
+    Returns:
+        The width in bytes, or ``None`` when there are no hashes or they disagree
+        (which stored trace replies never do; ``None`` falls back to full-width display).
+    """
+    widths = {len(h.node) for h in hops if h.node}
+    if len(widths) != 1:
+        return None
+    width = widths.pop()
+    return width // 2 if width and width % 2 == 0 else None
+
+
 @dataclass(slots=True)
 class ChannelStats:
     """Aggregated message history for one channel conversation.
@@ -303,6 +326,7 @@ class Repository:
             hops=hops,
             round_trip_ms=row["round_trip_ms"],
             tx_power=row["tx_power"],
+            path_hash_bytes=_hops_hash_bytes(hops),
             timestamp=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -345,6 +369,7 @@ class Repository:
             hops=hops,
             round_trip_ms=row["round_trip_ms"],
             tx_power=row["tx_power"],
+            path_hash_bytes=_hops_hash_bytes(hops),
             timestamp=datetime.fromisoformat(row["created_at"]),
         )
 

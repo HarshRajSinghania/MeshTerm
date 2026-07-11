@@ -72,14 +72,15 @@ def _is_hex(value: str) -> bool:
 
 
 def render_forced_spec(hops: tuple[str, ...], target_hash: str, width_bytes: int) -> str:
-    """Render a forced-path spec: outbound hops, the target, then the return leg.
+    """Render a symmetric forced-path spec: outbound hops, the target, the mirror back.
 
     The MeshCore trace protocol has no separate "return path" field — the whole
     boomerang (out to the target, back to us) is one path the repeaters walk in
     order, so the spec must spell out the return hops explicitly, not just the
-    outbound ones. The return leg is always the outbound hops in reverse (the
-    trace protocol doesn't support asymmetric routing), so it's appended here
-    rather than asked of the caller.
+    outbound ones. This renders the *symmetric* round trip — the return leg is the
+    outbound hops in reverse, appended here rather than asked of the caller. A
+    hand-composed route that comes home a different way is rendered verbatim by
+    :func:`render_custom_spec` instead.
 
     Args:
         hops: Intermediate repeaters, in order from us outward, excluding both
@@ -95,6 +96,31 @@ def render_forced_spec(hops: tuple[str, ...], target_hash: str, width_bytes: int
     outbound = [h[: width * 2] for h in (*hops, target_hash)]
     outbound.extend(h[: width * 2] for h in reversed(hops))
     return ",".join(outbound)
+
+
+def render_custom_spec(hops: tuple[str, ...], width_bytes: int) -> str:
+    """Render a hand-composed (asymmetric) path spec exactly as given.
+
+    The counterpart of :func:`render_forced_spec` for a route the user spelled out in
+    full — out to the target and back home by whatever way they chose. Nothing is
+    appended or mirrored: the hops *are* the path, and the trace protocol happily
+    walks any sequence that ends within earshot of us. Only the shared width rules
+    apply.
+
+    Args:
+        hops: Every hop of the route in walk order, the target among them, excluding
+            our own device at both ends (the reply lands on us off the final hop).
+        width_bytes: Preferred per-hop path-hash width in bytes (1, 2, 4, or 8);
+            shrunk via :func:`collapse_width` when a hop's known hash is narrower.
+
+    Returns:
+        A comma-separated hex spec, e.g. ``"3d,f2,27"`` — or ``""`` with no hops
+        (there is no meaningful zero-hop custom route).
+    """
+    if not hops:
+        return ""
+    width = collapse_width(*hops, ceiling=width_bytes)
+    return ",".join(h[: width * 2] for h in hops)
 
 
 def collapse_width(*hashes: str, ceiling: int) -> int:

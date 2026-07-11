@@ -72,6 +72,21 @@ def test_failed_trace_round_trips(repo: Repository) -> None:
     assert got.hops == []
     assert got.round_trip_ms is None
     assert got.tx_power is None
+    assert got.path_hash_bytes is None  # no hashes to derive a width from
+
+
+def test_hydrated_traces_recover_the_path_hash_width(repo: Repository) -> None:
+    """The stored hop hashes carry the trace's width, so rehydration recovers it.
+
+    Without this, a previous trace's route line renders every hash — including our
+    own device's full 64-char public key — at absurd lengths.
+    """
+    run = repo.start_run("trace", {})
+    trace = _make_trace("Alice", ("3d63", 3.5), ("f2c2", -2.0), (None, 1.0))
+    repo.record_trace(run, trace)
+
+    assert repo.latest_trace("Alice").path_hash_bytes == 2
+    assert repo.recent_traces("Alice")[0].path_hash_bytes == 2
 
 
 # -- recent_traces ---------------------------------------------------------
