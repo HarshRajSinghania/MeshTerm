@@ -15,6 +15,7 @@ from rich.console import Console
 from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.config import DeviceProfile, Settings
+from .core.remote_store import RemoteStore
 from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
 from .core.discovery import DiscoveredDevice, discover_devices
@@ -43,6 +44,8 @@ class AppContext:
         admin_store: Store for remembered remote-node admin passwords.
         advert_store: Store for per-device background-advert schedules (defaults to
             ``<config_dir>/adverts.json`` when not injected).
+        remote_store: Store for remote-node admin state — cached settings and CLI
+            history (defaults to ``<config_dir>/remote.json`` when not injected).
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -62,6 +65,7 @@ class AppContext:
     device_store: DeviceStore
     admin_store: AdminStore
     advert_store: Optional[AdvertStore] = None
+    remote_store: Optional[RemoteStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -90,9 +94,11 @@ class AppContext:
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Derive the advert store's default location when one was not injected."""
+        """Derive the JSON stores' default locations when they were not injected."""
         if self.advert_store is None:
             self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")
+        if self.remote_store is None:
+            self.remote_store = RemoteStore(self.settings.config_dir / "remote.json")
 
     @property
     def profile_name(self) -> Optional[str]:

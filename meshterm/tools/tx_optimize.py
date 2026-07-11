@@ -23,7 +23,7 @@ import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
-from ..core.models import NODE_TYPE_REPEATER, NODE_TYPE_ROOM, Contact
+from ..core.models import Contact
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
 from ..viz.tx_plot import render_tx_optimization
@@ -57,9 +57,16 @@ class TxOptimizeTool(Tool):
         Returns:
             ``{"live": True, "admin": name, "target": name}``, or ``None`` on cancel.
         """
+        from ..ui.admin_picker import pick_admin_node
+
         device = await ctx.device()
         contacts = await device.get_contacts()
-        admin = await _pick_admin(ctx, contacts)
+        admin = await pick_admin_node(
+            ctx,
+            contacts,
+            title="TX optimize — node to tune",
+            prompt="Whose transmit power gets tuned (you need its admin password):",
+        )
         if admin is None:
             return None
         target = await _pick_target(ctx, contacts, admin)
@@ -393,72 +400,6 @@ def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Optional[Contac
         if prefix and (prefix.startswith(needle) or needle.startswith(prefix)):
             return c
     return None
-
-
-async def _pick_admin(ctx: AppContext, contacts: list[Contact]) -> Optional[Contact]:
-    """Pick the node to tune: credentialed repeaters lead, the rest follow by recency.
-
-    Repeaters (and room servers) with a remembered admin password sit in their own
-    section wearing a key glyph — those are the nodes previously tuned or administered,
-    the likeliest picks. Any contact with a public key can be chosen, since holding a
-    password is a fact about the *user*, not the node.
-
-    Args:
-        ctx: Shared application context (for the UI surface and the admin store).
-        contacts: The device's known contacts.
-
-    Returns:
-        The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
-    """
-    from ..ui.tui import Choice, Separator
-    from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
-
-    candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
-    if not candidates:
-        ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
-        await ctx.ui.present(title="TX optimize")
-        return None
-
-    def row(contact: Contact) -> Any:
-        glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
-        from rich.text import Text
-
-        label = Text(glyph, style=style)
-        label.append(f" {contact.name}")
-        return Choice(title=label, value=contact.name)
-
-    def recency(contact: Contact) -> float:
-        return -(contact.last_seen.timestamp() if contact.last_seen else 0.0)
-
-    remembered = [c for c in candidates if ctx.admin_store.get(c) is not None]
-    infrastructure = [
-        c for c in candidates
-        if c not in remembered and c.node_type in (NODE_TYPE_REPEATER, NODE_TYPE_ROOM)
-    ]
-    others = [c for c in candidates if c not in remembered and c not in infrastructure]
-
-    items: list = []
-    if remembered:
-        items.append(Separator("── 🔑 Remembered admins ──", style="accent"))
-        items.extend(row(c) for c in sorted(remembered, key=recency))
-    if infrastructure:
-        items.append(Separator("── Repeaters & rooms ──", style="accent"))
-        items.extend(row(c) for c in sorted(infrastructure, key=recency))
-    if others:
-        items.append(Separator("── Other contacts ──", style="accent"))
-        items.extend(row(c) for c in sorted(others, key=recency))
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=None))
-
-    choice = await ctx.ui.select(
-        "TX optimize — node to tune",
-        items,
-        prompt="Whose transmit power gets tuned (you need its admin password):",
-        wrap=False,
-    )
-    if choice is None:
-        return None
-    return next((c for c in candidates if c.name == choice), None)
 
 
 async def _pick_target(

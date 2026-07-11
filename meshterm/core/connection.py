@@ -350,6 +350,30 @@ class Device(ABC):
         """
 
     @abstractmethod
+    async def send_remote_command(
+        self, node: Contact, command: str, *, timeout: float = 8.0
+    ) -> Optional[str]:
+        """Send one CLI command to a logged-in remote node and await its text reply.
+
+        The generic remote-administration primitive: repeaters and room servers are
+        configured through their text CLI (``get``/``set``/``advert``/…) carried as
+        admin messages, and every higher-level remote operation is a spelling of this.
+        Requires an authenticated session (:meth:`admin_login` first) — firmware
+        silently ignores commands from strangers, which surfaces as a ``None`` reply.
+
+        Args:
+            node: The remote contact (must already be logged in).
+            command: The CLI command text, e.g. ``"set txdelay 5"``.
+            timeout: Seconds to wait for the node's reply.
+
+        Returns:
+            The reply text, or ``None`` if the node did not answer in time.
+
+        Raises:
+            DeviceCommandError: If the companion rejected the send outright.
+        """
+
+    @abstractmethod
     async def get_remote_tx_power(self, node: Contact) -> Optional[int]:
         """Read a remote (admin) node's current transmit power.
 
@@ -1391,6 +1415,11 @@ class MeshCoreDevice(Device):
         payload = getattr(reply, "payload", {}) or {}
         return str(payload.get("text", payload.get("msg", "")))
 
+    async def send_remote_command(  # noqa: D102 - inherited docstring
+        self, node: Contact, command: str, *, timeout: float = 8.0
+    ) -> Optional[str]:
+        return await self._send_admin_cmd(node, command, timeout=timeout)
+
     async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
         reply = await self._send_admin_cmd(node, "get tx")
         return _parse_tx_reply(reply)
@@ -1969,6 +1998,9 @@ class MockDevice(Device):
         self._admin_sessions: set[str] = set()
         self._remote_tx: dict[str, int] = {}
         self._default_remote_tx = 20
+        # Each simulated repeater's CLI-visible configuration, populated with the
+        # defaults below on first touch (keyed by full public key, like the TX map).
+        self._remote_cfg: dict[str, dict[str, str]] = {}
         # Simulated neighbour tables, keyed by the repeater's key prefix: what each
         # repeater "hears directly" as ``(neighbour_prefix, snr_db, secs_ago)``. The
         # ``e5f6a7b8`` entry is deliberately absent from the contact list, so the
@@ -2069,6 +2101,58 @@ class MockDevice(Device):
             return False
         self._admin_sessions.add(self._mock_key(node))
         return True
+
+    #: The simulated repeater CLI's configuration defaults (see send_remote_command).
+    _REMOTE_CFG_DEFAULTS = {
+        "freq": "910.525", "bw": "62.5", "sf": "7", "cr": "5",
+        "lat": "0", "lon": "0",
+        "repeat": "on", "txdelay": "0", "direct.txdelay": "0", "rxdelay": "0",
+        "af": "1", "allow.read.only": "off",
+        "advert.interval": "240", "flood.advert.interval": "12", "flood.max": "64",
+    }
+
+    async def send_remote_command(  # noqa: D102 - inherited docstring
+        self, node: Contact, command: str, *, timeout: float = 8.0
+    ) -> Optional[str]:
+        await asyncio.sleep(0)
+        key = self._mock_key(node)
+        if key not in self._admin_sessions:
+            return None  # firmware ignores strangers — reads as a timeout, like hardware
+        cfg = self._remote_cfg.setdefault(
+            key, {"name": node.name, **self._REMOTE_CFG_DEFAULTS}
+        )
+        parts = command.strip().split()
+        verb = parts[0].lower() if parts else ""
+        if verb == "ver":
+            return "MeshCore v1.15.0 (simulator)"
+        if verb == "clock":
+            return "OK - clock synced" if parts[1:] == ["sync"] else "12:00 - 1/1/2026 UTC"
+        if verb == "advert":
+            return "OK - Advert sent"
+        if verb in ("reboot", "password", "time", "start"):
+            return "OK"
+        if verb == "neighbors":
+            table = self._neighbour_tables.get(node.key_prefix or "", [])
+            return "\n".join(f"{p} {snr:+.1f}dB {ago}s" for p, snr, ago in table) or "none"
+        if verb == "get" and len(parts) == 2:
+            param = parts[1].lower()
+            if param == "tx":
+                return str(self._remote_tx.get(key, self._default_remote_tx))
+            if param == "guest.password":
+                return f"ERR: unknown config: {param}"  # write-only, like hardware
+            value = cfg.get(param)
+            return f"> {value}" if value is not None else f"ERR: unknown config: {param}"
+        if verb == "set" and len(parts) >= 3:
+            param = parts[1].lower()
+            value = " ".join(parts[2:])
+            if param == "tx":
+                self._remote_tx[key] = int(float(value))
+                return "OK"
+            if param in cfg or param == "guest.password":
+                cfg[param] = value
+                return "OK"
+            return f"ERR: unknown config: {param}"
+        return f"ERR: unknown command: {command.strip()}"
 
     async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
         key = self._mock_key(node)
