@@ -66,7 +66,6 @@ _BACKUP = "__backup__"
 _RESTORE = "__restore__"
 _IDENTITY_KEY = "__identity_key__"
 _RESET = "__reset__"
-_VIEW = "__view__"
 _APPLY = "__apply__"
 _CANCEL = "__cancel__"
 # Sentinel for the "enter a value myself" option on non-strict enum prompts.
@@ -140,11 +139,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                 ops: list[tuple] = [("set", k, v) for k, v in pending.items()]
                 ops.extend(extra_ops)
                 return ops or None
-            if choice == _VIEW:
-                await ctx.ui.view(
-                    config_table(snapshot, custom, pending), title="Device configuration"
-                )
-            elif choice == _LOCATION:
+            if choice == _LOCATION:
                 await _stage_location(ctx, snapshot, pending)
             elif choice == _PRESETS:
                 await _stage_preset(ctx, pending)
@@ -327,16 +322,6 @@ def _menu_items(
             items.append(
                 Choice(title=_lane_row(label, value, help_text, label_w, value_w), value=key)
             )
-
-    items.append(Separator("── Review ──", style="accent"))
-    items.append(
-        Choice(
-            title=Text.assemble(
-                "🧾 View full configuration", ("  —  Every value in one table", "muted")
-            ),
-            value=_VIEW,
-        )
-    )
 
     # The backtracking rows sit together below one blank line, like every other screen's
     # Back (the main menu's Quit included); with changes staged, Apply joins the group and
