@@ -492,12 +492,14 @@ def _mc_with(contacts: dict, path_hash_mode: int = 2):
 
 
 async def test_three_byte_route_appends_destination_hash() -> None:
-    """A learned multi-hop route walks the repeaters then ends at the target (#1).
+    """A learned multi-hop route walks the repeaters, the target, then back (#1).
 
     Two things matter for a non-power-of-two region (3-byte hashes): each 3-byte
     routing hash collapses to its leading 2 bytes (the widest representable trace
-    width), and the destination's own hash is appended as the final hop — a trace
-    only replies when its destination is the last hop.
+    width), and the destination's own hash is appended as the final outbound hop —
+    a trace only replies when its destination is the last outbound hop. The trace
+    protocol has no separate return-path field, so the same repeaters are mirrored
+    back afterwards — otherwise nothing relays the reply home.
     """
     from meshterm.core.connection import MeshCoreDevice
 
@@ -518,8 +520,9 @@ async def test_three_byte_route_appends_destination_hash() -> None:
     resolved = await device._trace_path_to_contact(mc, "Repeater")
     assert resolved is not None
     path_bytes, flags = resolved
-    # Two repeater hops collapsed to 2 bytes, then the target's own 2-byte hash.
-    assert path_bytes == bytes.fromhex("1122" "4455" "aabb")
+    # Two repeater hops collapsed to 2 bytes, the target's own 2-byte hash, then
+    # the same two repeaters mirrored back to us.
+    assert path_bytes == bytes.fromhex("1122" "4455" "aabb" "4455" "1122")
     assert flags == trace_runner.path_hash_flags(2)  # 2-byte width
 
 

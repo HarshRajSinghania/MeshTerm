@@ -43,8 +43,10 @@ whatever you make it, and nothing transmits until you say so. An action list dri
   screen keeps aggregating every trace of the session into its medians.
 * **Back** leaves the screen, exactly like Esc.
 
-Layout, top to bottom: the walked route (live when a reply has landed, else the planned
-composed path, else the most recent stored trace), the run's robust aggregates, the
+Layout, top to bottom: the walked route (live when a reply has landed, else the route
+the next Trace will walk — composed by hand, or auto-resolved from the device's learned
+route or the stored history and labelled with that provenance — else the most recent
+stored trace), the run's robust aggregates, the
 action list, per-hop median SNR with quality bars, and the individual traces
 newest-first. The body scrolls with PgUp/PgDn/Home/End (↑/↓ belong to the action
 cursor, which only pins the view while it is actually being moved).
@@ -68,6 +70,7 @@ from rich.text import Text
 
 from ..core.models import PATH_TRACE_TARGET, TraceResult, TraceStats
 from ..services import trace_runner
+from ..services.topology import render_forced_spec
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
@@ -235,6 +238,8 @@ class TraceScreen(Screen):
         explore: Optional[PathFlow] = None,
         pace_s: float = 1.0,
         previous: Optional[TraceResult] = None,
+        auto_spec: Callable[[], str] = lambda: "",
+        auto_source: str = "",
     ) -> None:
         """Create the screen (nothing transmits until the user commits Trace).
 
@@ -265,6 +270,13 @@ class TraceScreen(Screen):
                 sampling session never reads as a burst to the repeaters.
             previous: The most recent stored trace, if any — its route seeds the route
                 line so the screen opens knowing the path history last saw.
+            auto_spec: Renders the spec an *auto* trace (no composed path) actually
+                walks right now — the session resolves it from the device's learned
+                route or the stored history at the current width. ``""`` means a
+                path-less trace (unaddressable target, or a path walk).
+            auto_source: Short provenance of the auto route (e.g. ``device route``,
+                ``last trace · Jul 09 14:32``) for the route line and summary, so
+                the screen never claims a route the radio wasn't given.
         """
         super().__init__()
         self.title = f"trace · {target}" if mode == "target" else "trace path"
@@ -284,6 +296,8 @@ class TraceScreen(Screen):
         self._sample_count = sample_count
         self._pace_s = pace_s
         self._previous = previous
+        self._auto_spec = auto_spec
+        self._auto_source = auto_source
         self._path_spec = ""
         self._traces: list[TraceResult] = []
         self._running = False
@@ -579,17 +593,32 @@ class TraceScreen(Screen):
             line.append("unknown — press Enter to trace", style="muted")
         return line
 
-    def _planned_route(self) -> Optional[Text]:
-        """The composed path as a route preview, or ``None`` without one.
+    def _effective_spec(self) -> tuple[str, bool]:
+        """The wire spec the next Trace walks, and whether auto resolution supplied it.
 
-        ``_path_spec`` is the literal wire spec — the whole walk, since the trace
-        protocol has no separate return-path field. In target mode the spec is the
-        symmetric boomerang (outbound hops, the target, those hops mirrored): its
-        second half is dimmed, reading as "this part isn't yours to compose". A path
-        walk was hand-composed hop by hop, so every hop renders in full colour and
-        only the automatic landing back on us stays faint.
+        A composed/adopted spec wins verbatim; with none, target mode asks the
+        session's auto resolver what it would force right now (the device's learned
+        route, or the stored history) — the same call :func:`_open_session`'s
+        ``trace_once`` makes, so the route on screen is the route on the air.
         """
-        tokens = [h.strip() for h in self._path_spec.split(",") if h.strip()]
+        if self._path_spec:
+            return self._path_spec, False
+        spec = self._auto_spec() if self._mode == "target" else ""
+        return spec, bool(spec)
+
+    def _planned_route(self) -> Optional[Text]:
+        """The route the next Trace walks as a preview, or ``None`` without one.
+
+        Renders the literal wire spec — the whole walk, since the trace protocol
+        has no separate return-path field. In target mode the spec is the symmetric
+        boomerang (outbound hops, the target, those hops mirrored): its second half
+        is dimmed, reading as "this part isn't yours to compose". A path walk was
+        hand-composed hop by hop, so every hop renders in full colour and only the
+        automatic landing back on us stays faint. An auto-resolved spec carries a
+        faint provenance line naming where the route came from.
+        """
+        spec, auto = self._effective_spec()
+        tokens = [h.strip() for h in spec.split(",") if h.strip()]
         if not tokens:
             return None
         if self._mode == "target" and len(tokens) % 2 and tokens == tokens[::-1]:
@@ -606,6 +635,10 @@ class TraceScreen(Screen):
             text.append_text(self._planned_hop_text(hop, dim=True))
         text.append(" → ", style="faint")
         text.append(self._device_label, style="faint")
+        if auto and self._auto_source:
+            # On its own line (like the previous-trace stamp) so a long route
+            # never squeezes the provenance off the right edge.
+            text.append(f"\n(auto · {self._auto_source})", style="faint")
         return text
 
     def _planned_hop_text(self, hop: str, *, dim: bool) -> Text:
@@ -636,7 +669,8 @@ class TraceScreen(Screen):
         """
         if current is not None:
             return sum(1 for h in current.hops if h.node)
-        tokens = [h for h in self._path_spec.split(",") if h.strip()]
+        spec, _ = self._effective_spec()
+        tokens = [h for h in spec.split(",") if h.strip()]
         if tokens:
             return len(tokens)
         if self._previous is not None and self._previous.hops:
@@ -661,8 +695,10 @@ class TraceScreen(Screen):
             summary.append(self._path_spec, style="brand")
         elif self._mode == "path":
             summary.append("none — compose a path first", style="muted")
+        elif self._effective_spec()[1] and self._auto_source:
+            summary.append(f"auto · {self._auto_source}", style="muted")
         else:
-            summary.append("auto (device-routed)", style="muted")
+            summary.append("auto — path-less (unknown target)", style="muted")
         hops = self._displayed_hop_count(current)
         if hops is not None:
             summary.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
@@ -736,6 +772,38 @@ def _collapse_trace_width(mode: int) -> int:
     """
     size = max(mode + 1, 1)
     return max(s for s in (1, 2, 4, 8) if s <= size)
+
+
+def _previous_outbound(
+    previous: Optional[TraceResult], target_hash: str
+) -> Optional[tuple[str, ...]]:
+    """Extract the outbound repeaters from the last successful walk to a target.
+
+    A target-mode trace walks the symmetric boomerang, so its stored hop hashes
+    (the final hash-less hop is us) read ``[out…, target, out reversed…]`` — an
+    odd-length palindrome whose middle entry is the target. When the stored walk
+    has that shape, its first half is a route the mesh has already proven, ready
+    to force again.
+
+    Args:
+        previous: The most recent successful stored trace, if any.
+        target_hash: The target's full hex hash, to confirm the walk really
+            turned at this target (hop hashes are prefixes of it).
+
+    Returns:
+        The outbound repeater hashes in order from us outward (empty = the
+        target answered directly), or ``None`` when there is no stored walk or
+        it isn't a recognizable boomerang.
+    """
+    if previous is None or not previous.success:
+        return None
+    tokens = [h.node.lower() for h in previous.hops if h.node]
+    if not tokens or len(tokens) % 2 == 0 or tokens != tokens[::-1]:
+        return None
+    mid = len(tokens) // 2
+    if not target_hash.lower().startswith(tokens[mid]):
+        return None
+    return tuple(tokens[:mid])
 
 
 async def open_trace(ctx: "AppContext", target: str) -> int:
@@ -878,6 +946,42 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             packet_paths=ctx.repo.packet_paths(),
             neighbour_links=ctx.repo.neighbour_links(),
         )
+
+    previous = ctx.repo.latest_trace(record_target)
+
+    # What an *auto* trace (no composed path) forces on the air, and where that
+    # route came from. A trace only replies when its destination is the path's
+    # final outbound hop and nothing reflects it home, so auto must always spell
+    # out a full boomerang — but the device rarely has one to offer: firmware
+    # only learns a contact's ``out_path`` from two-way addressed traffic
+    # (verified on hardware: every repeater contact reported ``out_path_len``
+    # -1, flood), so a device-routed trace to anything further than a direct
+    # neighbour would go out with no repeaters and die. Precedence: the device's
+    # learned route when it genuinely has one, else the outbound leg of the last
+    # successful stored walk (the route the screen shows), else the bare
+    # destination — a direct attempt, honest about being one.
+    device_route: Optional[tuple[str, ...]] = None
+    if target_contact is not None and target_contact.route_hops is not None:
+        topo0 = fresh_topology()
+        device_route = tuple(topo0.canonical(h) or h for h in target_contact.route_hops)
+    auto_hops: Optional[tuple[str, ...]] = None
+    auto_source = ""
+    if target_hash is not None:
+        if device_route is not None:
+            auto_hops, auto_source = device_route, "device route"
+        else:
+            auto_hops = _previous_outbound(previous, target_hash)
+            if auto_hops is not None and previous is not None:
+                stamp = previous.timestamp.astimezone().strftime("%b %d %H:%M")
+                auto_source = f"last trace · {stamp}"
+            else:
+                auto_hops, auto_source = (), "direct — no known route"
+
+    def auto_spec() -> str:
+        """The spec auto forces at the session's current width (``""`` = path-less)."""
+        if target_hash is None or auto_hops is None:
+            return ""
+        return render_forced_spec(auto_hops, target_hash, width_bytes)
 
     async def unaddressable() -> None:
         """Explain why target-mode path features need a resolvable target."""
@@ -1294,11 +1398,6 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             return None
         topo = fresh_topology()
         target_id = topo.canonical(target_hash) or target_hash[:12]
-        device_route: Optional[tuple[str, ...]] = None
-        if target_contact is not None and target_contact.route_hops is not None:
-            device_route = tuple(
-                topo.canonical(h) or h for h in target_contact.route_hops
-            )
         scenarios = topo.scenarios(target_id, device_route=device_route)
         if not scenarios:
             await session.message_dialog(
@@ -1370,7 +1469,8 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         The screen calls this once per sample; multi-trace runs are paced there, so
         the repeaters never see a burst regardless of the chosen count.
         """
-        path = trace_runner.parse_trace_path(path_spec, contacts) if path_spec.strip() else None
+        spec = path_spec.strip() or auto_spec()
+        path = trace_runner.parse_trace_path(spec, contacts) if spec else None
         params: dict[str, Any] = {"target": record_target}
         if path:
             params["path"] = path
@@ -1410,7 +1510,9 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         width_bytes=lambda: width_bytes,
         sample_count=lambda: sample_count,
         pace_s=ctx.settings.trace_cooldown_s,
-        previous=ctx.repo.latest_trace(record_target),
+        previous=previous,
+        auto_spec=auto_spec,
+        auto_source=auto_source,
     )
     try:
         await session.run_screen(screen)

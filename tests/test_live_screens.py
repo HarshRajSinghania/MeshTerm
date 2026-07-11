@@ -68,12 +68,57 @@ def test_snr_bar_clamps_out_of_range_readings() -> None:
     assert snr_bar(-99.0).plain.count("▆") == 1  # a heard hop always shows something
 
 
+# --- _previous_outbound -----------------------------------------------------------
+
+
+def _walk(*nodes: str, success: bool = True) -> TraceResult:
+    """A stored walk whose hop hashes are ``nodes`` (plus the final hash-less us)."""
+    hops = [Hop(index=i, node=n, snr=1.0) for i, n in enumerate(nodes)]
+    hops.append(Hop(index=len(nodes), node=None, snr=1.0))
+    return TraceResult(
+        target="Alice", success=success, hops=hops, round_trip_ms=200.0, path_hash_bytes=2
+    )
+
+
+def test_previous_outbound_extracts_the_proven_route() -> None:
+    """The last successful boomerang's first half is the reusable outbound leg.
+
+    Verified on hardware that the device itself almost never has a learned route
+    (contacts report flood), so this stored evidence is what auto mode actually
+    walks for a multi-hop target.
+    """
+    from meshterm.ui.trace_screen import _previous_outbound
+
+    walk = _walk("3d63", "f2c2", "aabb", "f2c2", "3d63")
+    assert _previous_outbound(walk, "aabb" + "00" * 30) == ("3d63", "f2c2")
+
+
+def test_previous_outbound_direct_walk_yields_no_repeaters() -> None:
+    """A direct answer (target only) extracts an empty outbound leg — dest-only again."""
+    from meshterm.ui.trace_screen import _previous_outbound
+
+    assert _previous_outbound(_walk("aabb"), "aabb" + "00" * 30) == ()
+
+
+def test_previous_outbound_rejects_unusable_history() -> None:
+    """Failures, asymmetric walks, and walks that turned elsewhere are never reused."""
+    from meshterm.ui.trace_screen import _previous_outbound
+
+    target = "aabb" + "00" * 30
+    assert _previous_outbound(None, target) is None
+    assert _previous_outbound(_walk("3d63", "aabb", "3d63", success=False), target) is None
+    # Asymmetric: came home a different way — not a boomerang to this target.
+    assert _previous_outbound(_walk("3d63", "aabb", "f2c2"), target) is None
+    # Palindromic, but it turned at some other node, not our target.
+    assert _previous_outbound(_walk("3d63", "9999", "3d63"), target) is None
+
+
 # --- TraceScreen ----------------------------------------------------------------
 
 
 def _trace_screen(
     trace=None, compose_path=None, explore=None, pick_width=None, pick_samples=None,
-    previous=None, mode="target", samples=1,
+    previous=None, mode="target", samples=1, auto_spec=None, auto_source="",
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
@@ -99,6 +144,8 @@ def _trace_screen(
         sample_count=lambda: samples,
         pace_s=0.0,  # tests never sleep; pacing is asserted through the statuses
         previous=previous,
+        auto_spec=auto_spec or (lambda: ""),
+        auto_source=auto_source,
     )
     return screen, session
 
@@ -357,6 +404,40 @@ def test_summary_appends_the_displayed_hop_count() -> None:
     assert "· 3 hops" in _plain(screen.render_body(100))
     screen._on_trace(_trace(5.0, 2.0))  # a live 2-hop route now outranks the plan
     assert "· 2 hops" in _plain(screen.render_body(100))
+
+
+def test_auto_resolved_route_renders_with_its_provenance() -> None:
+    """With no composed path, the auto route shows as the plan, labelled with its source.
+
+    What the screen draws is exactly what Trace will put on the air (both read the
+    same resolver), so the user can see the forced boomerang — and where it came
+    from — before committing a transmission.
+    """
+    screen, _ = _trace_screen(
+        auto_spec=lambda: "3d63,f2c2,aabb,f2c2,3d63", auto_source="last trace · Jul 09 14:32"
+    )
+    plan = screen._planned_route().plain
+    assert "Us → 3d63 → f2c2 → aabb → f2c2 → 3d63 → Us" in plan
+    assert "(auto · last trace · Jul 09 14:32)" in plan
+    body = _plain(screen.render_body(100))
+    assert "auto · last trace · Jul 09 14:32" in body  # the summary's path row
+    assert "· 5 hops" in body
+
+
+def test_composed_path_outranks_the_auto_route() -> None:
+    """A hand-composed spec replaces the auto plan everywhere — display and wire."""
+    screen, _ = _trace_screen(auto_spec=lambda: "aabb", auto_source="device route")
+    screen._path_spec = "3d63,aabb,3d63"
+    plan = screen._planned_route().plain
+    assert "Us → 3d63 → aabb → 3d63 → Us" in plan
+    assert "(auto ·" not in plan
+    assert screen._effective_spec() == ("3d63,aabb,3d63", False)
+
+
+def test_unaddressable_target_reads_as_path_less_auto() -> None:
+    """With nothing to force (no target hash), the summary says so instead of lying."""
+    screen, _ = _trace_screen()  # auto_spec resolves ""
+    assert "auto — path-less (unknown target)" in _plain(screen.render_body(100))
 
 
 def test_trace_log_section_hidden_until_there_is_something_to_log() -> None:

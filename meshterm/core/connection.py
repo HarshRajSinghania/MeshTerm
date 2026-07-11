@@ -409,7 +409,9 @@ class Device(ABC):
             target: Name or key prefix of the destination node.
             path: Optional explicit path to force, as a comma-separated string of
                 single-byte hex key prefixes (e.g. ``"3d,f2,3d"``). When ``None``
-                the device chooses the path.
+                the connection resolves one from the contact's learned route (the
+                firmware itself never routes a trace — an explicit path is all it
+                walks), falling back to path-less only for unknown targets.
             timeout: Seconds to wait for the trace reply.
 
         Returns:
@@ -1498,11 +1500,17 @@ class MeshCoreDevice(Device):
         A trace reply only comes back when the *destination's own hash* is the final
         hop in the path — an empty/destination-less path is silently dropped (verified
         on hardware: a direct neighbor answers a single-hop trace to its own hash but
-        not a path-less one). So we always end the path at the contact's key prefix,
-        prepending any learned repeater hops (``out_path``) ahead of it:
+        not a path-less one). So we always end the outbound leg at the contact's key
+        prefix, prepending any learned repeater hops (``out_path``) ahead of it — and,
+        since the trace protocol has no separate return-path field, mirror those same
+        repeaters back afterwards (see :func:`~meshterm.services.topology.render_forced_spec`,
+        which does the same for a composed/adopted path): without an explicit return
+        leg the repeaters have nothing to relay the reply through, so it never comes
+        home.
 
-        * direct neighbor / no learned route → just ``[destination]``;
-        * learned multi-hop route → ``[repeater…, destination]``.
+        * direct neighbor / no learned route → just ``[destination]`` (no repeaters
+          to mirror, so the outbound leg is the whole path);
+        * learned multi-hop route → ``[repeater…, destination, repeater… (reversed)]``.
 
         Each hash is re-encoded at the trace's own width (``1 << flags``, only 1/2/4/8
         bytes), collapsing a region's routing width (e.g. 3) to the widest representable
@@ -1541,17 +1549,21 @@ class MeshCoreDevice(Device):
             size = max(mode + 1, 1)
             trace_size = max(s for s in (1, 2, 4, 8) if s <= size)
 
-            hops: list[bytes] = []
+            repeaters: list[bytes] = []
             out_path = (info.get("out_path") or "").strip().lower().removeprefix("0x")
             out_path_len = int(info.get("out_path_len", -1))
             if 1 <= out_path_len <= 254 and out_path:
                 # Learned multi-hop route: walk each repeater, collapsed to trace width.
                 route = bytes.fromhex(out_path)[: out_path_len * size]
-                hops += [route[i * size : i * size + trace_size] for i in range(out_path_len)]
-            # Always finish at the destination's own hash so the target recognizes the
-            # trace and replies; for a direct neighbor this single hop is the whole path.
-            hops.append(bytes.fromhex(pub)[:trace_size])
-            return b"".join(hops), path_hash_flags(trace_size) or 0
+                repeaters = [
+                    route[i * size : i * size + trace_size] for i in range(out_path_len)
+                ]
+            dest = bytes.fromhex(pub)[:trace_size]
+            # The outbound leg always finishes at the destination's own hash so it
+            # recognizes the trace and replies; the return leg mirrors the same
+            # repeaters back to us, since nothing reflects the packet automatically.
+            path_bytes = b"".join(repeaters) + dest + b"".join(reversed(repeaters))
+            return path_bytes, path_hash_flags(trace_size) or 0
         return None
 
     async def subscribe_events(  # noqa: D102 - inherited docstring
