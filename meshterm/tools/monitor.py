@@ -36,6 +36,7 @@ class MonitorTool(Tool):
 
     name = "monitor"
     title = "Monitor"
+    icon = "🎧"
     help = "Capture overheard packets live for a while and summarize them"
     category = "Diagnostics"
     order = 20

@@ -37,6 +37,7 @@ class TxOptimizeTool(Tool):
 
     name = "tx-optimize"
     title = "TX optimize"
+    icon = "📶"
     help = "Tune a remote node's TX power for the best signal at a target"
     category = "Diagnostics"
     order = 15  # right after Trace, its measurement sibling

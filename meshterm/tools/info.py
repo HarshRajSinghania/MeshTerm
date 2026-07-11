@@ -26,6 +26,7 @@ class InfoTool(Tool):
 
     name = "info"
     title = "Device info"
+    icon = "📋"
     help = "Show device status, identity, and radio config"
     category = "Device"
     order = 11  # after Send advert (10), which slots in behind Device actions

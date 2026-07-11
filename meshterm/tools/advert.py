@@ -27,6 +27,7 @@ class SendAdvertTool(Tool):
 
     name = "advert"
     title = "Send advert"
+    icon = "📡"
     help = "Announce this node to the mesh — zero-hop, flood, or share as QR"
     category = "Device"
     order = 10  # right after Device actions, before Device info

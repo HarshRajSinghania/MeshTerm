@@ -48,6 +48,7 @@ class TraceTool(Tool):
 
     name = "trace"
     title = "Trace target"
+    icon = "🎯"
     help = "Trace a target over a mirrored route and watch per-hop SNR"
     category = "Diagnostics"
     order = 10
@@ -222,6 +223,7 @@ class TracePathTool(Tool):
 
     name = "trace-path"
     title = "Trace path"
+    icon = "👣"
     help = "Walk a hand-composed route — out and back your way"
     category = "Diagnostics"
     order = 11

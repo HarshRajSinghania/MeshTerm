@@ -16,6 +16,7 @@ class NodesTool(Tool):
 
     name = "nodes"
     title = "Nodes"
+    icon = "👥"
     help = "List this node and known contacts (last heard, packets, type, key)"
     category = "Device"
     order = 12

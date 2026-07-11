@@ -36,6 +36,7 @@ class ConfigTool(Tool):
 
     name = "config"
     title = "Device configuration"
+    icon = "🔧"
     help = "View and change device settings — identity, radio, tuning, …"
     category = "Device"
     order = 8

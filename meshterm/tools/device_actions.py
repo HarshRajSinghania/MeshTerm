@@ -30,6 +30,7 @@ class DeviceActionsTool(Tool):
 
     name = "device-actions"
     title = "Device actions"
+    icon = "🔨"
     help = "Act on the device itself — advert, backup, identity key, reboot, reset"
     category = "Device"
     order = 9

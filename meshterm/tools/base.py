@@ -42,6 +42,10 @@ class Tool(ABC):
             window. Capitalized, and kept identical to the screen the item opens so the
             menu never promises one name and delivers another. Falls back to ``name``.
         help: One-line description shown in the menu and ``--help`` (no trailing period).
+        icon: Emoji drawn before the title in the interactive menu (and only there — the
+            result window keeps the plain title). Single-codepoint, emoji-presentation
+            glyphs only, so the two-cell width holds across terminals (see
+            :mod:`meshterm.ui.tui.emoji_width`).
         category: Grouping label used to organize the interactive menu.
         order: Sort key within a category (lower sorts first).
         menu_visible: Whether the tool appears in the interactive menu. Set ``False`` for
@@ -52,6 +56,7 @@ class Tool(ABC):
     name: str = ""
     title: str = ""
     help: str = ""
+    icon: str = ""
     category: str = "General"
     order: int = 100
     menu_visible: bool = True

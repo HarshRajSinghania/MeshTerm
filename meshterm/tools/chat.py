@@ -44,6 +44,7 @@ class ChatTool(Tool):
 
     name = "chat"
     title = "Chat"
+    icon = "💬"
     help = "Channel and direct messaging — live chat, with stored history"
     category = "Messaging"
     order = 10

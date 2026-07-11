@@ -35,6 +35,7 @@ class MapTool(Tool):
 
     name = "map"
     title = "Map"
+    icon = "🌍"
     help = "Show mesh nodes on a street map (pannable; repeaters highlighted)"
     category = "Messaging"
     order = 30
