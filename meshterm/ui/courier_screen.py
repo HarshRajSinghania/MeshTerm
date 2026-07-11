@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from rich.text import Text
 
 from ..core.courier_store import DELIVERED, GAVE_UP, QUEUED, QueuedMessage
-from ..core.models import NODE_TYPE_REPEATER, Contact, utcnow
+from ..core.models import Contact, utcnow
 from .tui import Choice, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import _age_seconds, _format_age
+from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age, _recency_style
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -222,12 +222,17 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         seen = _age_seconds(contact.last_seen)
         return seen if seen is not None else float("inf")
 
+    # The picker's shared presentation: the per-type glyph in the app's marker
+    # palette, the name coloured by recency heat (hotter = heard more recently),
+    # exactly as the Nodes list and the Time Machine picker draw contacts.
     items: list = []
     for contact in sorted(contacts, key=recency):
+        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        secs = _age_seconds(contact.last_seen)
         row = Text()
-        row.append("▲ " if contact.node_type == NODE_TYPE_REPEATER else "● ", style="brand")
-        row.append(contact.name)
-        row.append(f"   heard {_format_age(_age_seconds(contact.last_seen))}", style="muted")
+        row.append(glyph + " ", style=glyph_style)
+        row.append(contact.name, style=_recency_style(secs))
+        row.append(f"   heard {_format_age(secs)}", style="muted")
         items.append(Choice(row, contact))
     contact = await session.select(
         "✉ Courier — recipient",
