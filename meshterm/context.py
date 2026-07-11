@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional
 from rich.console import Console
 
 from .core.admin_store import AdminStore
+from .core.advert_store import AdvertStore
 from .core.config import DeviceProfile, Settings
 from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
@@ -22,6 +23,7 @@ from .persistence.logging import get_logger
 from .persistence.repository import Repository
 
 if TYPE_CHECKING:
+    from .services.advert_scheduler import AdvertScheduler
     from .services.chat_service import ChatService
     from .services.event_hub import EventHub
     from .services.monitor_service import MonitorService
@@ -39,6 +41,8 @@ class AppContext:
         profile: Active device profile, if one was resolved.
         device_store: Store for the remembered "last known good" device.
         admin_store: Store for remembered remote-node admin passwords.
+        advert_store: Store for per-device background-advert schedules (defaults to
+            ``<config_dir>/adverts.json`` when not injected).
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -57,6 +61,7 @@ class AppContext:
     repo: Repository
     device_store: DeviceStore
     admin_store: AdminStore
+    advert_store: Optional[AdvertStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -81,7 +86,13 @@ class AppContext:
     _events: "Optional[EventHub]" = field(default=None, init=False, repr=False)
     _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
     _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
+    _adverts: "Optional[AdvertScheduler]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Derive the advert store's default location when one was not injected."""
+        if self.advert_store is None:
+            self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")
 
     @property
     def profile_name(self) -> Optional[str]:
@@ -209,6 +220,20 @@ class AppContext:
 
             self._chat = ChatService(self)
         return self._chat
+
+    @property
+    def adverts(self) -> "AdvertScheduler":
+        """Return the session's background-advert scheduler, creating it on first use.
+
+        Created idle here; the interactive session starts it alongside the other
+        always-on services. Scripted CLI runs never start it, so a one-shot command
+        can't fire a background transmission.
+        """
+        if self._adverts is None:
+            from .services.advert_scheduler import AdvertScheduler
+
+            self._adverts = AdvertScheduler(self)
+        return self._adverts
 
     @property
     def log(self):  # type: ignore[no-untyped-def]
@@ -423,6 +448,8 @@ class AppContext:
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
+        if self._adverts is not None:
+            await self._adverts.aclose()
         if self._monitor is not None:
             await self._monitor.aclose()
         if self._chat is not None:

@@ -360,6 +360,29 @@ async def test_editor_restaging_the_current_value_clears_the_stage(ctx: AppConte
     assert await edit_config(ctx) is None
 
 
+async def test_editor_stages_background_advert_cadence(ctx: AppContext) -> None:
+    """Picking a cadence stages it under its sentinel; Apply maps it to its own op."""
+    _install(ctx, [
+        ("select", "__advert_flood__"),
+        ("select", 48),  # every 48 h
+        ("select", "__apply__"),
+    ])
+    ops = await edit_config(ctx)
+    assert ops == [("advert_cadence", True, 48)]
+
+
+async def test_editor_repicking_the_cadence_in_force_clears_the_stage(ctx: AppContext) -> None:
+    """Choosing the cadence already in force un-stages the row (nothing to apply)."""
+    _install(ctx, [
+        ("select", "__advert_direct__"),
+        ("select", 4),
+        ("select", "__advert_direct__"),
+        ("select", 1),  # back to the default in force
+        ("select", "__cancel__"),  # nothing staged now — closes without a discard dialog
+    ])
+    assert await edit_config(ctx) is None
+
+
 async def test_editor_asks_before_discarding_staged_changes(ctx: AppContext) -> None:
     """Cancelling with staged changes confirms; Keep editing returns to the menu."""
     _install(ctx, [

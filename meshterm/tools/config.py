@@ -237,8 +237,28 @@ async def apply_ops(
         elif kind == "advert":
             flood = len(op) > 1 and bool(op[1])
             await device.send_advert(flood)
+            # A manual advert resets the background scheduler's countdown for its type,
+            # so the next scheduled send counts from this one (see AdvertScheduler).
+            public_key = str(snapshot.get("public_key") or "")
+            if public_key:
+                ctx.advert_store.mark_sent(public_key, flood=flood)
             kind_label = "flood" if flood else "zero-hop"
             ctx.ui.note(f"[ok]✓[/ok] {kind_label} advertisement sent")
+        elif kind == "advert_cadence":
+            from ..core.advert_store import cadence_label
+
+            flood, hours = bool(op[1]), int(op[2])
+            public_key = str(snapshot.get("public_key") or "")
+            if public_key:
+                ctx.advert_store.set_cadence(public_key, flood=flood, hours=hours)
+                kind_label = "flood" if flood else "zero-hop"
+                ctx.ui.note(
+                    f"[ok]✓[/ok] background {kind_label} advert: "
+                    f"[brand]{cadence_label(hours)}[/brand]"
+                )
+                changes += 1
+            else:  # pragma: no cover - SELF_INFO always carries the key on real firmware
+                ctx.ui.note("[err]device reported no public key — cadence not saved[/err]")
         elif kind == "share":
             _share_contact(ctx, snapshot)
         elif kind == "sync_clock":

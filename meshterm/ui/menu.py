@@ -170,8 +170,9 @@ async def run_menu(ctx: AppContext) -> None:
             if await _startup(ctx):
                 await _session_loop(ctx, session)
         finally:
-            # Stop history + chat recording (closing their run records) and the always-on
-            # event hub, even on an unexpected exit.
+            # Stop history + chat recording (closing their run records), the background
+            # advert scheduler, and the always-on event hub, even on an unexpected exit.
+            await ctx.adverts.aclose()
             await ctx.monitor.aclose()
             await ctx.chat.aclose()
             await ctx.events.aclose()
@@ -410,6 +411,10 @@ async def _resume_monitor(ctx: AppContext) -> None:
         ctx: The shared application context.
     """
     await ctx.monitor.start()
+    # The advert scheduler is safe to run from launch regardless of the connect policy:
+    # each pass checks for a connected device and skips quietly without one, so starting
+    # it here never opens the radio (and it simply waits out a deferred connect).
+    await ctx.adverts.start()
     if not ctx.settings.connect_on_start:
         return
     try:

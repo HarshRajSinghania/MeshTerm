@@ -39,6 +39,13 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
+from ..core.advert_store import (
+    DIRECT_CADENCE_HOURS,
+    FLOOD_CADENCE_HOURS,
+    OFF,
+    AdvertPolicy,
+    cadence_label,
+)
 from ..core.device_config import (
     DeviceConfigError,
     SettingSpec,
@@ -59,6 +66,8 @@ if TYPE_CHECKING:
 _LOCATION = "__location__"
 _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
+_ADVERT_DIRECT = "__advert_direct__"
+_ADVERT_FLOOD = "__advert_flood__"
 _ADVERT = "__advert__"
 _SYNC_CLOCK = "__sync_clock__"
 _REBOOT = "__reboot__"
@@ -99,6 +108,10 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
     device = await ctx.device()
     snapshot = await build_snapshot(device)
     custom = await device.get_custom_vars()
+    # The background-advert cadences are app-side settings (MeshTerm sends the adverts,
+    # not the firmware), but they're staged and applied exactly like device values so
+    # the editor stays one coherent surface.
+    policy = ctx.advert_store.load(str(snapshot.get("public_key") or ""))
 
     # The editor is menu-only, so a full-screen session is always present. Keep the main
     # menu *pushed on the stack* for the whole session (rather than popping it between
@@ -115,7 +128,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
 
     while True:
         staged = len(pending) + len(extra_ops)
-        title, items = _menu_items(snapshot, pending, staged)
+        title, items = _menu_items(snapshot, pending, staged, policy)
         menu = SelectScreen(
             title, items, default=cursor, wrap=False,
             footer_hint="↑↓ move · type to filter · Enter select · Esc back",
@@ -136,10 +149,17 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                     continue  # keep editing — the same menu is rebuilt next loop
                 return None
             if choice == _APPLY:
-                ops: list[tuple] = [("set", k, v) for k, v in pending.items()]
+                ops: list[tuple] = []
+                for k, v in pending.items():
+                    if k in (_ADVERT_DIRECT, _ADVERT_FLOOD):
+                        ops.append(("advert_cadence", k == _ADVERT_FLOOD, v))
+                    else:
+                        ops.append(("set", k, v))
                 ops.extend(extra_ops)
                 return ops or None
-            if choice == _LOCATION:
+            if choice in (_ADVERT_DIRECT, _ADVERT_FLOOD):
+                await _stage_advert_cadence(ctx, choice == _ADVERT_FLOOD, policy, pending)
+            elif choice == _LOCATION:
                 await _stage_location(ctx, snapshot, pending)
             elif choice == _PRESETS:
                 await _stage_preset(ctx, pending)
@@ -267,7 +287,7 @@ def _lane_row(label: str, value: Text, help_text: str, label_w: int, value_w: in
 
 
 def _menu_items(
-    snapshot: dict, pending: dict, staged: int
+    snapshot: dict, pending: dict, staged: int, policy: AdvertPolicy
 ) -> tuple[str, list]:
     """Build the editor menu's title and rows for the current snapshot + staged state.
 
@@ -305,6 +325,27 @@ def _menu_items(
                 "Set a raw firmware variable by name", _CUSTOM,
             ))
         sections.append((category, rows))
+
+    # App-side rows: the background-advert cadences MeshTerm itself runs (see the
+    # advert scheduler). They stage and apply like device settings, so they sit in the
+    # same lanes under their own heading.
+    sections.append((
+        "Background adverts",
+        [
+            (
+                "Direct advert",
+                _cadence_value(policy, False, pending),
+                "Scheduled zero-hop announce; any manual send resets it",
+                _ADVERT_DIRECT,
+            ),
+            (
+                "Flood advert",
+                _cadence_value(policy, True, pending),
+                "Scheduled mesh-wide announce via repeaters",
+                _ADVERT_FLOOD,
+            ),
+        ],
+    ))
 
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
@@ -350,6 +391,15 @@ def _menu_items(
 def _changes(count: int) -> str:
     """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
     return f"{count} staged change{'' if count == 1 else 's'}"
+
+
+def _cadence_value(policy: AdvertPolicy, flood: bool, pending: dict) -> Text:
+    """One background-advert row's VALUE lane: ``current [→ staged]``."""
+    key = _ADVERT_FLOOD if flood else _ADVERT_DIRECT
+    value = Text(cadence_label(policy.cadence(flood)))
+    if key in pending:
+        value.append(f" → {cadence_label(pending[key])}", style="warn")
+    return value
 
 
 # --- staging individual changes ----------------------------------------------
@@ -441,6 +491,45 @@ async def _prompt_value(
         help_text=_range_hint(spec, snapshot),
     )
     return None if raw is None else parse_value(spec, raw, snapshot)
+
+
+async def _stage_advert_cadence(
+    ctx: "AppContext", flood: bool, policy: AdvertPolicy, pending: dict[str, Any]
+) -> None:
+    """Pick one background-advert type's cadence and stage it.
+
+    Staged under the type's sentinel key; Apply turns it into an ``advert_cadence`` op
+    (see :func:`~meshterm.tools.config.apply_ops`). Picking the value already in force
+    un-stages the row, matching :func:`_stage_setting`.
+    """
+    key = _ADVERT_FLOOD if flood else _ADVERT_DIRECT
+    in_force = policy.cadence(flood)
+    current = pending.get(key, in_force)
+    hours_choices = FLOOD_CADENCE_HOURS if flood else DIRECT_CADENCE_HOURS
+    items: list = [
+        Choice(
+            title=cadence_label(hours).capitalize()
+            + ("  (current)" if hours == current else ""),
+            value=hours,
+        )
+        for hours in (*hours_choices, OFF)
+    ]
+    if flood:
+        prompt = "How often repeaters rebroadcast this node across the mesh:"
+    else:
+        prompt = "How often this node announces itself to neighbours in range:"
+    selected = await ctx.ui.select(
+        "📡 Flood advert" if flood else "📡 Direct advert",
+        items,
+        prompt=prompt,
+        default=current,
+    )
+    if selected is None:
+        return
+    if selected == in_force:
+        pending.pop(key, None)  # set back to the value in force — nothing to change
+    else:
+        pending[key] = selected
 
 
 async def _stage_location(
