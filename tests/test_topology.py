@@ -140,13 +140,13 @@ def test_scenarios_rank_observed_route_and_pin_device_route_first() -> None:
 
 
 def test_scenario_spec_ends_at_target_and_collapses_width() -> None:
-    """Specs are outbound-only, target-terminated, at a width every hash can honour."""
+    """Specs walk out to the target then mirror the hops back, at a uniform width."""
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
     topo = _topo(trace_paths=walks)
     scenario = next(
         s for s in topo.scenarios("f2c24f54551e") if s.hops == ("3d63c6429436",)
     )
-    assert scenario.spec("f2c24f54551e", 2) == "3d63,f2c2"
+    assert scenario.spec("f2c24f54551e", 2) == "3d63,f2c2,3d63"
     assert collapse_width("3d", "f2c24f54551e", ceiling=2) == 1  # narrowest hash rules
 
 
@@ -303,7 +303,7 @@ def test_composer_suggests_from_tail_and_appends_on_enter() -> None:
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
     screen = _composer(_topo(trace_paths=walks))
     body = _rows_plain(screen)
-    assert "Hub" in body and "auto" in body.lower()  # suggestion + symmetric-return note
+    assert "Hub" in body and "auto" in body.lower()  # suggestion + the "Auto" action row
     screen.handle("enter")  # top row: the Hub suggestion
     assert screen._hops == ["3d63c6429436"]
     # From the new tail the target is excluded, so Far never appears as a hop.
@@ -344,7 +344,7 @@ def test_composer_hides_fetch_row_off_fetchable_tails() -> None:
 
 
 async def test_composer_commits_spec_auto_and_cancel() -> None:
-    """Use resolves the target-terminated spec; Auto resolves the empty spec; Esc cancels."""
+    """Use resolves the spec with its mirrored return leg; Auto resolves empty; Esc cancels."""
     import asyncio
 
     walks = [_traced(("3d", 12.0), (None, 12.0))]
@@ -355,7 +355,7 @@ async def test_composer_commits_spec_auto_and_cancel() -> None:
     screen.handle("up")
     screen.handle("up")  # …then back up to "Use this path"
     screen.handle("enter")
-    assert screen.future.result() == "3d,f2"
+    assert screen.future.result() == "3d,f2,3d"
 
     auto = _composer(_topo(trace_paths=walks))
     auto.future = asyncio.get_running_loop().create_future()

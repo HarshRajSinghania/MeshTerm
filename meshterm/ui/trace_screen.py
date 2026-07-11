@@ -18,7 +18,9 @@ whatever you make it, and nothing transmits until you say so. Three verbs drive 
   admin credentials for, the composer can also *fetch that repeater's neighbour table*
   over the mesh (login required; firmware ignores guests): second-vantage evidence,
   persisted and folded straight back into the suggestions. Only the outbound leg is
-  composed: the trace protocol replies back along the reversed path automatically.
+  composed — the return is always those hops in reverse — but the spec sent to the
+  device spells out the whole boomerang, since the trace protocol has no separate
+  return-path field.
 * **x** explores scenarios: ranked candidate routes to the target straight from the
   topology evidence (the device's own learned route, the direct shot, and the strongest
   observed alternatives). Adopt one directly — or probe them all, one measured trace per
@@ -409,24 +411,46 @@ class TraceScreen(Screen):
         return line
 
     def _planned_route(self) -> Optional[Text]:
-        """The composed outbound path as a route preview, or ``None`` without one.
+        """The composed path as a route preview, or ``None`` without one.
 
-        Only the outbound leg exists in the spec; the reply retraces it in reverse, so
-        the preview says so instead of drawing a mirrored (and redundant) return chain.
+        ``_path_spec`` is the literal wire spec: outbound hops, the target, then the
+        return leg (those hops mirrored) — the trace protocol has no separate
+        return-path field, so the composer already baked the return leg in. The
+        preview splits it back at its midpoint (the target) to dim the return half,
+        reading as "this part isn't yours to compose."
         """
-        hops = [h.strip() for h in self._path_spec.split(",") if h.strip()]
-        if not hops:
+        tokens = [h.strip() for h in self._path_spec.split(",") if h.strip()]
+        if not tokens:
             return None
+        mid = len(tokens) // 2  # outbound hops + target = first half, inclusive
+        outbound, return_leg = tokens[: mid + 1], tokens[mid + 1 :]
         text = Text(self._device_label, style="accent")
-        for hop in hops:
+        for hop in outbound:
             text.append(" → ", style="muted")
-            named = self._resolve(hop)
-            if named and named != hop:
-                text.append(named, style="brand")
-                text.append(f" ({hop})", style="muted")
-            else:
-                text.append(hop, style="brand")
-        text.append("  ⟲ auto return  (planned)", style="faint")
+            text.append_text(self._planned_hop_text(hop, dim=False))
+        for hop in return_leg:
+            text.append(" → ", style="faint")
+            text.append_text(self._planned_hop_text(hop, dim=True))
+        text.append(" → ", style="faint")
+        text.append(self._device_label, style="faint")
+        return text
+
+    def _planned_hop_text(self, hop: str, *, dim: bool) -> Text:
+        """One planned-path node: resolved name (with hash) or bare hash.
+
+        Args:
+            hop: The hop's raw hex key prefix.
+            dim: Whether to render in the return leg's faint style rather than the
+                outbound leg's normal brand/muted styling.
+        """
+        style = "faint" if dim else "brand"
+        text = Text()
+        named = self._resolve(hop)
+        if named and named != hop:
+            text.append(named, style=style)
+            text.append(f" ({hop})", style="faint" if dim else "muted")
+        else:
+            text.append(hop, style=style)
         return text
 
     def _summary(self, stats: TraceStats) -> Text:
@@ -728,11 +752,14 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             return None
         topo = fresh_topology()
         target_id = topo.canonical(target_hash) or target_hash[:12]
-        # Re-seed from the current spec, dropping its final hop (the target itself).
+        # Re-seed from the current spec's outbound half only: it reads as hops, the
+        # target, then the target's own hops mirrored back — drop the target and
+        # that whole return leg, keeping just the intermediate hops the user chose.
+        tokens = [p.strip() for p in current.split(",") if p.strip()]
         seed = [
             cid
-            for h in [p for p in current.split(",") if p.strip()][:-1]
-            if (cid := topo.canonical(h.strip())) is not None
+            for h in tokens[: len(tokens) // 2]
+            if (cid := topo.canonical(h)) is not None
         ]
         while True:
             # Nodes whose neighbour table can be asked for: repeater contacts with a
@@ -944,7 +971,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             SelectScreen(
                 f"reach {target_label} · scenarios",
                 items,
-                prompt="Outbound path only — the reply always retraces it in reverse.",
+                prompt="Choose the outbound leg — the return is always those hops mirrored.",
                 footer_hint="↑↓ move · Enter adopt/probe · Esc back",
                 wrap=False,
             )

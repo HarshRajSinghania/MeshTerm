@@ -71,6 +71,32 @@ def _is_hex(value: str) -> bool:
     return bool(value) and len(value) % 2 == 0 and all(c in _HEX_DIGITS for c in value)
 
 
+def render_forced_spec(hops: tuple[str, ...], target_hash: str, width_bytes: int) -> str:
+    """Render a forced-path spec: outbound hops, the target, then the return leg.
+
+    The MeshCore trace protocol has no separate "return path" field — the whole
+    boomerang (out to the target, back to us) is one path the repeaters walk in
+    order, so the spec must spell out the return hops explicitly, not just the
+    outbound ones. The return leg is always the outbound hops in reverse (the
+    trace protocol doesn't support asymmetric routing), so it's appended here
+    rather than asked of the caller.
+
+    Args:
+        hops: Intermediate repeaters, in order from us outward, excluding both
+            endpoints (empty = trace the target directly, no forced hops).
+        target_hash: The target's hex hash (any width ≥ 1 byte).
+        width_bytes: Preferred per-hop path-hash width in bytes (1, 2, 4, or 8);
+            shrunk via :func:`collapse_width` when a hop's known hash is narrower.
+
+    Returns:
+        A comma-separated hex spec, e.g. ``"3d,f2,3d"`` for one forced hop.
+    """
+    width = collapse_width(*hops, target_hash, ceiling=width_bytes)
+    outbound = [h[: width * 2] for h in (*hops, target_hash)]
+    outbound.extend(h[: width * 2] for h in reversed(hops))
+    return ",".join(outbound)
+
+
 def collapse_width(*hashes: str, ceiling: int) -> int:
     """The widest representable per-hop hash width every given hash can honour.
 
@@ -166,9 +192,10 @@ class HopSuggestion:
 class PathScenario:
     """One candidate outbound route to a target, ready to trace.
 
-    A scenario describes only the *outbound* leg, ending at the target: the trace
-    protocol replies along the reversed path automatically, so the return is always the
-    symmetric mirror and is never part of the spec.
+    A scenario stores only the *outbound* leg — the return is always the symmetric
+    mirror, so there's nothing to choose there — but :meth:`spec` renders the full
+    boomerang, since the trace protocol has no separate return-path field: the whole
+    out-and-back route is one spec the repeaters walk in order.
 
     Attributes:
         label: Short human description of where the route came from.
@@ -191,23 +218,18 @@ class PathScenario:
     samples: int = 0
 
     def spec(self, target_hash: str, width_bytes: int) -> str:
-        """Render the scenario as a forced-path spec ending at the target.
+        """Render the scenario as a forced-path spec, return leg included.
 
-        Every hop (and the target's own hash, always the final hop so the destination
-        recognizes the trace and replies) is truncated to one uniform per-hop width —
-        ``width_bytes``, shrunk via :func:`collapse_width` when a hop's known hash is
-        narrower, since a trace transmits every hop at the same width (see
-        :func:`~meshterm.services.trace_runner.parse_trace_path`).
+        See :func:`render_forced_spec` for the width-collapsing and return-leg rules.
 
         Args:
             target_hash: The target's hex hash (any width ≥ 1 byte).
             width_bytes: Preferred per-hop path-hash width in bytes (1, 2, 4, or 8).
 
         Returns:
-            A comma-separated hex spec, e.g. ``"3d,f2"``.
+            A comma-separated hex spec, e.g. ``"3d,f2,3d"``.
         """
-        width = collapse_width(*self.hops, target_hash, ceiling=width_bytes)
-        return ",".join(h[: width * 2] for h in (*self.hops, target_hash))
+        return render_forced_spec(self.hops, target_hash, width_bytes)
 
 
 class MeshTopology:
@@ -365,8 +387,9 @@ class MeshTopology:
            (weakest-link scoring with a per-hop penalty), which is where a path the
            device never learned — but the data supports — comes from.
 
-        Every scenario is an *outbound* leg only: the trace reply retraces it in
-        reverse automatically, so intermediate links are implicitly crossed twice.
+        Every scenario stores an *outbound* leg only — the return is always those hops
+        mirrored, so there's nothing to rank there — but :meth:`PathScenario.spec`
+        renders the full boomerang; intermediate links are implicitly crossed twice.
 
         Args:
             target: The target's canonical id.

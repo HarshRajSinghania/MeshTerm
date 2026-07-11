@@ -164,16 +164,18 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
 
     async def compose(current: str):  # noqa: ANN001
         asked.append(current)
-        return "3d,f2"
+        return "3d,f2,3d"  # one forced hop: outbound, target, then the mirrored return
 
     screen, _ = _trace_screen(compose_path=compose)
     screen.handle("text", "p")
     await asyncio.sleep(0)
     assert asked == [""]
-    assert screen._path_spec == "3d,f2"
+    assert screen._path_spec == "3d,f2,3d"
     body = _plain(screen.render_body(100))
-    assert "3d,f2" in body
-    assert "auto return" in body  # the planned route previews the outbound leg
+    assert "3d,f2,3d" in body
+    # the planned route previews outbound *and* the resolved, dimmed return leg
+    assert body.count("Us") >= 2
+    assert body.count("3d") >= 2
 
 
 async def test_trace_screen_explore_adopts_a_scenario_path() -> None:

@@ -23,8 +23,11 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
 * Enter on **Use this path** commits the composed spec; **Auto** hands routing back to
   the device; Esc cancels with no change.
 
-The return leg is never composed: the trace protocol replies along the reversed path
-automatically, so the dialog shows the outbound route only and says so.
+The return leg is never composed — it's always the outbound hops in reverse, so
+there's nothing to choose there — but it isn't optional either: the trace protocol has
+no separate return-path field, so the spec sent to the device must spell out the whole
+boomerang, out and back. The preview resolves and shows that return leg dimmed,
+right alongside the hops you're actually choosing, rather than leaving it to a footnote.
 """
 
 from __future__ import annotations
@@ -35,11 +38,11 @@ from typing import Optional
 from rich.cells import cell_len
 from rich.text import Text
 
-from ..services.topology import MeshTopology, _is_hex, collapse_width
+from ..services.topology import MeshTopology, _is_hex, render_forced_spec
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
-from .widgets import _age_seconds, _format_age
+from .widgets import _age_seconds, _format_age, _shorten_hash
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
 #: empty-spec convention).
@@ -78,8 +81,9 @@ class FetchNeighbours:
 class PathComposerScreen(Screen):
     """Compose a forced outbound trace path step by step.
 
-    Resolves with the finished spec (comma-separated hex, ending at the target),
-    :data:`AUTO_SPEC` for device routing, or :data:`~meshterm.ui.tui.screen.CANCEL`.
+    Resolves with the finished spec (comma-separated hex: outbound hops, the target,
+    then the return leg), :data:`AUTO_SPEC` for device routing, or
+    :data:`~meshterm.ui.tui.screen.CANCEL`.
     """
 
     footer_hint = (
@@ -183,35 +187,54 @@ class PathComposerScreen(Screen):
         return rows
 
     def _spec(self) -> str:
-        """Render the composed route as the forced-path spec, target hash appended.
+        """Render the composed route as the forced-path spec, return leg included.
 
-        The width shrinks below the preferred one only when a composed hop's known hash
-        is narrower (see :func:`collapse_width`), keeping every hop representable.
+        See :func:`~meshterm.services.topology.render_forced_spec` for the
+        width-collapsing and return-leg rules.
         """
-        width = collapse_width(*self._hops, self._target_hash, ceiling=self._width_bytes)
-        return ",".join(h[: width * 2] for h in (*self._hops, self._target_hash))
+        return render_forced_spec(tuple(self._hops), self._target_hash, self._width_bytes)
 
     # --- rendering ---------------------------------------------------------------
 
-    def _node_text(self, node: str) -> Text:
-        """A node as ``Name (hash)`` when known, else its bare hash, brand-tinted."""
+    def _node_text(self, node: str, *, dim: bool = False) -> Text:
+        """A node as ``Name (hash)`` when known, else its bare hash.
+
+        The hash is shown at the spec's preferred path-hash width — the same width
+        every other trace-feature view (planned route, completed route, hop table)
+        truncates to — so a node reads the same length everywhere instead of the
+        fixed, arbitrary slice a naive ``node[:n]`` would give it.
+
+        Args:
+            node: The node's canonical id (or ``self_id`` for our own device).
+            dim: Whether to render in the resolved-return-leg's faint style rather
+                than the outbound leg's normal accent/brand styling.
+        """
         if node == self._topology.self_id:
-            return Text(self._device_label, style="accent")
+            return Text(self._device_label, style="faint" if dim else "accent")
         name = self._topology.display_name(node)
+        style = "faint" if dim else "brand"
+        shown = _shorten_hash(node, self._width_bytes)
         if name:
-            text = Text(name, style="brand")
-            text.append(f" ({node[:6]})", style="muted")
+            text = Text(name, style=style)
+            text.append(f" ({shown})", style="faint")
             return text
-        return Text(node, style="brand")
+        return Text(shown, style=style)
 
     def _route_preview(self) -> Text:
-        """The outbound route under construction, target pinned as the final hop."""
+        """The route under construction: outbound in full color, the mirrored
+        return leg resolved and dimmed right alongside it.
+        """
         text = Text(self._device_label, style="accent")
         for hop in self._hops:
             text.append(" → ", style="muted")
             text.append_text(self._node_text(hop))
         text.append(" → ", style="muted")
         text.append(self._target_label, style="ok")
+        for hop in reversed(self._hops):
+            text.append(" → ", style="faint")
+            text.append_text(self._node_text(hop, dim=True))
+        text.append(" → ", style="faint")
+        text.append(self._device_label, style="faint")
         return text
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -268,12 +291,6 @@ class PathComposerScreen(Screen):
         self._index = max(0, min(self._index, len(rows) - 1))
 
         lines = render_lines(self._route_preview(), width)
-        lines.extend(
-            render_lines(
-                Text("return: automatic — the reply retraces the path in reverse", style="faint"),
-                width,
-            )
-        )
         lines.append("")
         if self._entry:
             lines.append(render_to_ansi(Text(f"/{self._entry}", style="warn"), width))
