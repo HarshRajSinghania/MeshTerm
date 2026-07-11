@@ -24,7 +24,7 @@ from rich.text import Text
 
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
-from .theme import snr_style
+from .theme import name_style, snr_style
 from .tui.prompt import _LineEditor
 from .tui.render import render_hanging, render_lines
 from .tui.screen import CANCEL, Screen
@@ -35,20 +35,6 @@ if TYPE_CHECKING:
 
 #: How many past messages to load into the transcript when a conversation opens.
 _HISTORY_LIMIT = 200
-
-#: Palette of distinct, dark-theme-friendly colors cycled through to give each channel
-#: sender its own hue (red is reserved for errors, so it's excluded). ``you`` and unknown
-#: senders are styled separately.
-_SENDER_COLORS = (
-    "bold #f472b6",  # pink
-    "bold #60a5fa",  # blue
-    "bold #34d399",  # green
-    "bold #a78bfa",  # violet
-    "bold #fb923c",  # orange
-    "bold #22d3ee",  # cyan
-    "bold #a3e635",  # lime
-    "bold #e879f9",  # fuchsia
-)
 
 #: Matches the ``Name: message`` convention channel senders use to identify themselves
 #: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
@@ -89,11 +75,13 @@ _BYTES_ORANGE = "bold #ff9500"
 def _sender_hue(sender: str) -> str:
     """The stable per-sender colour a name is drawn in, keyed on the name's characters.
 
-    Shared by the live transcript (sender headers, ``@mentions``) and the conversation list
-    (a contact's colour dot, a channel preview's inline sender), so a person reads the same
-    colour everywhere. ``you`` and unknown (``·``) senders are handled by the caller.
+    The app-wide name palette (:func:`~meshterm.ui.theme.name_style`), shared by the live
+    transcript (sender headers, ``@mentions``), the conversation list (a contact's colour
+    dot, a channel preview's inline sender), the dashboard feed, and the packet viewer, so
+    a person reads the same colour everywhere. ``you`` and unknown (``·``) senders are
+    handled by the caller.
     """
-    return _SENDER_COLORS[sum(map(ord, sender)) % len(_SENDER_COLORS)]
+    return name_style(sender)
 
 
 def _split_channel_sender(text: str) -> tuple[Optional[str], str]:

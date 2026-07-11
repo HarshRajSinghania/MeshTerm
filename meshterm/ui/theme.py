@@ -17,8 +17,8 @@ MESH_THEME = Theme(
         # Reversed error (the text-editor cursor sitting on an over-budget character). Baked
         # in for the same reason as ``selected`` — "reverse err" would render as plain text.
         "err.reverse": "reverse bold #f87171",
-        # Our own messages in a chat: pure white, deliberately outside the per-sender hue
-        # palette (see meshterm.ui.chat._SENDER_COLORS) so "you" is always easy to spot.
+        # Our own node, anywhere it is named: pure white, deliberately outside the
+        # per-name hue palette (see NAME_COLORS below) so "you" is always easy to spot.
         "you": "bold #ffffff",
         # A confirmed companion's name on the startup device picker: pure white so the
         # devices we've actually talked to before jump out above the merely-detected ports.
@@ -119,6 +119,38 @@ def hint_style(border_style: str) -> str:
     """
     name = f"hint.{border_style}"
     return name if name in MESH_THEME.styles else "muted"
+
+
+#: Palette of distinct, dark-theme-friendly colors cycled through to give each node or
+#: sender name its own stable hue (red is reserved for errors, so it's excluded). The
+#: app-wide rule: a node's *name* is always coloured — by this palette, unless the
+#: context already colours it (a picker's recency heat, a chart's quality tint) — and
+#: our own node is always the pure-white ``you`` style instead, so "us" never blends
+#: into the crowd. Shared by the chat transcript, the dashboard feed, and the packet
+#: viewer, so one node reads as one colour everywhere.
+NAME_COLORS = (
+    "bold #f472b6",  # pink
+    "bold #60a5fa",  # blue
+    "bold #34d399",  # green
+    "bold #a78bfa",  # violet
+    "bold #fb923c",  # orange
+    "bold #22d3ee",  # cyan
+    "bold #a3e635",  # lime
+    "bold #e879f9",  # fuchsia
+)
+
+
+def name_style(name: str) -> str:
+    """The stable per-name colour a node or sender is drawn in, keyed on its characters.
+
+    Args:
+        name: The display name (not a hash — hashes stay muted).
+
+    Returns:
+        A style string from :data:`NAME_COLORS`; the same name always maps to the
+        same hue, so a node keeps its colour across screens and sessions.
+    """
+    return NAME_COLORS[sum(map(ord, name)) % len(NAME_COLORS)]
 
 
 def snr_style(snr: float | None) -> str:

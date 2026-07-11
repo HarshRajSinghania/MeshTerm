@@ -1244,7 +1244,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             title = Text(f"{w} byte{'s' if w > 1 else ' '}")
             if sample:
                 title.append("  ")
-                title.append_text(highlighted_hash(sample[:16], w))
+                title.append_text(highlighted_hash(sample, w, width=16))
             if w == device_width:
                 title.append("  · device default", style="muted")
             items.append(Choice(title=title, value=w))

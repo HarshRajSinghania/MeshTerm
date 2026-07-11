@@ -670,7 +670,7 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
     """An ``@[Name]`` token renders as a bare ``@Name`` colored in that sender's hue."""
     from datetime import datetime, timezone
 
-    from meshterm.ui.chat import _SENDER_COLORS
+    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS
 
     base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
@@ -908,7 +908,7 @@ def test_channel_self_style_keyed_on_concept_not_label() -> None:
     A remote sender who happens to be named 'you' must still get a palette hue, never the
     white style reserved for us.
     """
-    from meshterm.ui.chat import _SENDER_COLORS
+    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS
 
     screen = _channel_screen([])
     assert screen._sender_style("you", is_self=True) == "you"  # us → white

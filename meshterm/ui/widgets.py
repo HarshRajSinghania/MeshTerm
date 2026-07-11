@@ -233,29 +233,41 @@ def traces_table(
     return table
 
 
-def highlighted_hash(value: str, prefix_bytes: int) -> Text:
-    """Render a full hex key with its leading path-hash prefix highlighted.
+def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None) -> Text:
+    """Render a hex key with its leading path-hash prefix highlighted — THE hash widget.
 
-    The first ``prefix_bytes`` bytes are the slice other nodes address in a forced trace
-    path (the path-hash); they are shown in the brand colour and the remainder muted, so
-    the addressable prefix stands out within the otherwise full key.
+    The one way MeshTerm displays a hash, wherever one appears: the first
+    ``prefix_bytes`` bytes are the slice other nodes address in a forced trace path
+    (the path-hash), shown in the brand colour with the remainder muted, so the
+    addressable prefix stands out within the otherwise full key. A ``width`` budget
+    shorter than the key ellipsizes it (the ``…`` takes the colour of the digit it
+    replaces, so a highlight wider than the budget still reads as one).
 
     Args:
-        value: The full key as hex, optionally ``0x``-prefixed and mixed-case.
+        value: The key as hex, optionally ``0x``-prefixed and mixed-case.
         prefix_bytes: Number of leading bytes the current path-hash mode addresses; ``0``
             (or negative) leaves the whole key un-highlighted.
+        width: Display budget in cells; a longer key shows ``width - 1`` digits plus an
+            ellipsis, a shorter one is right-padded to the budget so lanes stay aligned.
+            ``None`` shows the key whole, unpadded.
 
     Returns:
-        A styled :class:`Text` of the full key.
+        A styled :class:`Text` of the key (exactly ``width`` cells when given).
     """
     raw = value.lower().removeprefix("0x")
     split = max(0, prefix_bytes) * 2
+    pad = 0
+    ellipsis = False
+    if width is not None and len(raw) > width:
+        raw, ellipsis = raw[: max(0, width - 1)], True
+    elif width is not None:
+        pad = width - len(raw)
     text = Text()
-    if split:
-        text.append(raw[:split], style="brand")
-        text.append(raw[split:], style="muted")
-    else:
-        text.append(raw, style="muted")
+    text.append(raw[:split], style="brand")
+    text.append(raw[split:], style="muted")
+    if ellipsis:
+        text.append("…", style="brand" if len(raw) < split else "muted")
+    text.append(" " * pad)
     return text
 
 
@@ -627,7 +639,8 @@ def nodes_table(
 ) -> Group:
     """List this node and its known contacts with recency, packets, type, key, and legend.
 
-    Our own node is the first row (``★``, name in accent); contacts follow in ``sort`` order.
+    Our own node is the first row (``★``, name in the white ``you`` style); contacts follow
+    in ``sort`` order.
     A per-type glyph marks each node in the app's shared colours, the name is coloured by how
     recently it was last heard (brighter = fresher), and the full key is shown with its
     path-hash prefix lit — chopped with an ellipsis only when the terminal is too narrow.
@@ -676,7 +689,8 @@ def nodes_table(
     unknown = Text("?", style="muted")
     table.add_row(
         Text(_SELF[0], style=_SELF[1]),
-        Text.assemble((self_name, "accent"), ("  (you)", "muted")),
+        # Our own name is the app-wide pure-white "you" style, never a palette hue.
+        Text.assemble((self_name, "you"), ("  (you)", "muted")),
         Text("—", style="faint"),
         Text("—", style="faint"),
         highlighted_hash(self_key, prefix_bytes) if self_key else unknown,
