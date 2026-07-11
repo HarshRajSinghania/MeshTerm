@@ -4,9 +4,12 @@ MeshCore never tells us the network's shape outright, but almost everything we *
 carries a fragment of it: a successful trace demonstrably crossed every link in its path
 (out and back, with an SNR reading at each hop), the firmware's per-contact ``out_path``
 is a route distilled from received floods, and — when the companion's packet logging is
-on — every overheard frame reports the relay chain it rode in on. This module folds those
-fragments into one undirected evidence graph and answers the questions the trace path
-composer asks of it:
+on — every overheard frame reports the relay chain it rode in on. A fourth fragment can
+be *asked for*: a repeater we hold admin rights on reports its own neighbour table (who
+it hears directly, at what SNR) when queried over the mesh — a second vantage point that
+reveals links, and whole nodes, our radio has never received anything from. This module
+folds those fragments into one undirected evidence graph and answers the questions the
+trace path composer asks of it:
 
 * *who neighbours whom* — :meth:`MeshTopology.next_hops`, the suggestion list while
   composing a path hop by hop, sorted by the strongest observed link first;
@@ -34,7 +37,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..core.models import Contact, utcnow
-from ..persistence.repository import PacketPath, TracedPath
+from ..persistence.repository import NeighbourLink, PacketPath, TracedPath
 
 #: Canonical id for our own device in the graph (its 12-hex key prefix when known).
 #: Kept distinct from hop hashes by construction: it is derived from the full public key.
@@ -96,7 +99,8 @@ class Link:
         samples: How many independent readings crossed this link, any source.
         snrs: The SNR readings (dB) attributed to the link, either direction.
         last_seen: When the link was most recently observed.
-        sources: Which evidence classes saw it (``trace`` / ``route`` / ``packet``).
+        sources: Which evidence classes saw it (``trace`` / ``route`` / ``packet`` /
+            ``neighbour``).
     """
 
     a: str
@@ -293,7 +297,8 @@ class MeshTopology:
             snrs: Optional per-link SNR readings aligned with the links (``snrs[i]``
                 belongs to the ``nodes[i] → nodes[i+1]`` link, measured at arrival).
             when: When the walk was observed (stamps every touched link's recency).
-            source: Evidence class tag (``trace`` / ``route`` / ``packet``).
+            source: Evidence class tag (``trace`` / ``route`` / ``packet`` /
+                ``neighbour``).
         """
         for i in range(len(nodes) - 1):
             a, b = nodes[i], nodes[i + 1]
@@ -485,10 +490,11 @@ def build_topology(
     contacts: list[Contact],
     trace_paths: list[TracedPath],
     packet_paths: list[PacketPath],
+    neighbour_links: tuple[NeighbourLink, ...] | list[NeighbourLink] = (),
 ) -> MeshTopology:
-    """Assemble the evidence graph from everything we have received.
+    """Assemble the evidence graph from everything we have received — or asked for.
 
-    Three sources fold in, each one walked through :meth:`MeshTopology.add_walk`:
+    Four sources fold in, each one walked through :meth:`MeshTopology.add_walk`:
 
     * **traces** — each successful trace's hop sequence, bracketed by us at both ends
       (the boomerang leaves us and returns to us; the final hash-less hop *is* us).
@@ -500,12 +506,18 @@ def build_topology(
     * **packets** — RX-logged frames: the relay chain, prefixed by the originator when
       known and always ending at us (we heard the last relay). The measured SNR belongs
       to that final link only.
+    * **neighbour reports** — links a remote repeater asserted about itself when we
+      fetched its neighbour table: one two-node walk per entry, SNR as measured at the
+      repeater. The only evidence here not derived from our own reception — it can
+      introduce nodes no other source has ever seen.
 
     Args:
         self_id: Our device's key/hash (any width; canonicalized to 12 hex).
         contacts: The device's known contacts (canonicalization + route evidence).
         trace_paths: Stored successful trace walks (see ``Repository.trace_paths``).
         packet_paths: Stored RX-logged packet paths (see ``Repository.packet_paths``).
+        neighbour_links: Current repeater-reported links (see
+            ``Repository.neighbour_links``); empty when none have been fetched.
 
     Returns:
         The populated :class:`MeshTopology`.
@@ -542,5 +554,13 @@ def build_topology(
         # Only the last link (last relay → us) carries the measured reception SNR.
         snrs = [None] * (len(nodes) - 2) + [packet.snr]
         topo.add_walk(nodes, snrs=snrs, when=packet.when, source="packet")
+
+    for reported in neighbour_links:
+        topo.add_walk(
+            [topo.canonical(reported.repeater), topo.canonical(reported.neighbour)],
+            snrs=[reported.snr],
+            when=reported.when,
+            source="neighbour",
+        )
 
     return topo

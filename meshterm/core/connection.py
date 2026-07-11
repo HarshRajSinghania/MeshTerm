@@ -18,7 +18,7 @@ import logging
 import random
 import sys
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .channels import CHANNEL_SLOT_PROBE_CAP
@@ -30,8 +30,10 @@ from .models import (
     Contact,
     Hop,
     Message,
+    NeighbourInfo,
     Observation,
     TraceResult,
+    utcnow,
 )
 
 if TYPE_CHECKING:
@@ -345,6 +347,29 @@ class Device(ABC):
 
         Raises:
             DeviceCommandError: If the node rejected the command.
+        """
+
+    @abstractmethod
+    async def fetch_neighbours(self, node: Contact) -> list[NeighbourInfo]:
+        """Ask a remote node for its neighbour table: who it hears directly, and how well.
+
+        A second vantage point for the topology graph: every entry is a link
+        ``node ↔ neighbour`` with SNR measured *at the remote node*, including nodes we
+        have never received anything from ourselves. Requires an authenticated session
+        (:meth:`admin_login` first) — firmware silently ignores the request from guests,
+        which surfaces here as a timeout.
+
+        Args:
+            node: The contact to query (must already be logged in).
+
+        Returns:
+            The reported neighbour entries; empty when the node's table is empty (a
+            normal answer — repeaters forget neighbours across reboots and only relearn
+            them as adverts arrive).
+
+        Raises:
+            DeviceCommandError: If the node never answered (not logged in, out of
+                reach, or firmware without neighbour tables).
         """
 
     @abstractmethod
@@ -1263,6 +1288,39 @@ class MeshCoreDevice(Device):
         # since some firmware answers tersely or drops the ack under duty-cycle limits.
         await self._send_admin_cmd(node, f"set tx {value}")
 
+    async def fetch_neighbours(self, node: Contact) -> list[NeighbourInfo]:  # noqa: D102
+        mc = self._require()
+        pub = self._node_pubkey(node)
+        # The library pages through the table (one binary request per ~25 entries) and
+        # concatenates; ``min_timeout`` keeps slow multi-hop replies from being cut off
+        # at the companion's optimistic suggested timeout.
+        result = await mc.commands.fetch_all_neighbours(pub, min_timeout=20)
+        if result is None:
+            raise DeviceCommandError(
+                f"{node.name!r} did not answer the neighbour request. Firmware ignores "
+                "it without an admin login (log in first), and firmware older than "
+                "~v1.15 has no neighbour table at all."
+            )
+        now = utcnow()
+        neighbours: list[NeighbourInfo] = []
+        for entry in result.get("neighbours") or []:
+            pubkey = str(entry.get("pubkey") or "").lower()
+            if not pubkey:
+                continue
+            snr = entry.get("snr")
+            secs_ago = entry.get("secs_ago")
+            heard_at = None
+            if isinstance(secs_ago, (int, float)) and secs_ago >= 0:
+                heard_at = now - timedelta(seconds=float(secs_ago))
+            neighbours.append(
+                NeighbourInfo(
+                    node=pubkey,
+                    snr=float(snr) if snr is not None else None,
+                    heard_at=heard_at,
+                )
+            )
+        return neighbours
+
     async def run_trace(  # noqa: D102 - inherited docstring
         self,
         target: str,
@@ -1789,6 +1847,21 @@ class MockDevice(Device):
         self._admin_sessions: set[str] = set()
         self._remote_tx: dict[str, int] = {}
         self._default_remote_tx = 20
+        # Simulated neighbour tables, keyed by the repeater's key prefix: what each
+        # repeater "hears directly" as ``(neighbour_prefix, snr_db, secs_ago)``. The
+        # ``e5f6a7b8`` entry is deliberately absent from the contact list, so the
+        # fetched-evidence flow exercises discovering a node we never received from.
+        self._neighbour_tables: dict[str, list[tuple[str, float, int]]] = {
+            "a1b2c3d4": [
+                ("d4e5f6a7", 6.5, 300),
+                ("b2c3d4e5", -3.25, 1200),
+                ("e5f6a7b8", 2.0, 3600),
+            ],
+            "b2c3d4e5": [
+                ("c3d4e5f6", 8.0, 240),
+                ("a1b2c3d4", -3.25, 900),
+            ],
+        }
         # Mutable configuration state, keyed exactly like the real SELF_INFO payload so the
         # settings registry behaves identically on the simulator and on hardware.
         self._info: dict = {
@@ -1888,6 +1961,28 @@ class MockDevice(Device):
                 f"not logged in to {node.name!r}; call admin_login first."
             )
         self._remote_tx[key] = value
+
+    async def fetch_neighbours(self, node: Contact) -> list[NeighbourInfo]:  # noqa: D102
+        await asyncio.sleep(0)
+        key = self._mock_key(node)
+        # Mirrors real firmware (verified on v1.15): without a login the request is
+        # silently dropped, which the caller experiences as a timeout.
+        if key not in self._admin_sessions:
+            raise DeviceCommandError(
+                f"{node.name!r} did not answer the neighbour request. Firmware ignores "
+                "it without an admin login (log in first)."
+            )
+        table = self._neighbour_tables.get(key[:8])
+        if table is None:
+            raise DeviceCommandError(
+                f"{node.name!r} did not answer the neighbour request (no neighbour "
+                "table on this node type)."
+            )
+        now = utcnow()
+        return [
+            NeighbourInfo(node=prefix, snr=snr, heard_at=now - timedelta(seconds=ago))
+            for prefix, snr, ago in table
+        ]
 
     @staticmethod
     def _mock_key(node: Contact) -> str:

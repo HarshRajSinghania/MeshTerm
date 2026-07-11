@@ -81,6 +81,28 @@ class Contact:
 
 
 @dataclass(slots=True)
+class NeighbourInfo:
+    """One entry of a remote repeater's neighbour table, fetched over the mesh.
+
+    Repeater firmware keeps a table of the nodes it has *heard directly* (zero-hop),
+    each with the SNR measured at the repeater — a vantage point ours can't reproduce.
+    :meth:`~meshterm.core.connection.Device.fetch_neighbours` returns these; the values
+    describe the link ``repeater ↔ node`` as observed *at the repeater*.
+
+    Attributes:
+        node: The neighbour's hex public-key prefix, lowercased (the width the firmware
+            replied at — typically 8 hex).
+        snr: SNR (dB) the repeater measured receiving this neighbour, if reported.
+        heard_at: When the repeater last heard the neighbour (derived from the reply's
+            seconds-ago field), or ``None`` when it didn't say.
+    """
+
+    node: str
+    snr: Optional[float] = None
+    heard_at: Optional[datetime] = None
+
+
+@dataclass(slots=True)
 class Observation:
     """A single over-the-air reception heard while passively monitoring the mesh.
 

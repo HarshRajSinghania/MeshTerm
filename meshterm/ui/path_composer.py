@@ -15,6 +15,11 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
   even-length hex, an *add custom hop* row appears, so a node we have never observed
   (or a bare hash from another tool) can be forced into the route.
 * Backspace erases the filter first; with the filter empty it removes the last hop.
+* When the path's tail is a repeater we hold admin credentials for, a *fetch
+  neighbours* row asks that repeater over the mesh for its own neighbour table —
+  fresh second-vantage evidence exactly where composing ran out of it. The dialog
+  resolves :class:`FetchNeighbours` and the owning flow fetches, refreshes the
+  topology, and reopens the composer mid-thought (hops preserved).
 * Enter on **Use this path** commits the composed spec; **Auto** hands routing back to
   the device; Esc cancels with no change.
 
@@ -24,6 +29,7 @@ automatically, so the dialog shows the outbound route only and says so.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 from rich.cells import cell_len
@@ -49,8 +55,24 @@ _AUTO = "auto"
 _CANCEL = "cancel"
 
 #: One-letter tags for the evidence classes backing a link, shown beside each
-#: suggestion: T(race), R(oute — the firmware's learned out_path), P(acket log).
-_SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P"}
+#: suggestion: T(race), R(oute — the firmware's learned out_path), P(acket log),
+#: N(eighbour table fetched from a repeater).
+_SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P", "neighbour": "N"}
+
+
+@dataclass(frozen=True, slots=True)
+class FetchNeighbours:
+    """The composer's resolution when the user asks a repeater for its neighbours.
+
+    The dialog itself never touches the radio; it resolves this marker and the owning
+    flow performs the login + fetch, refreshes the topology, and reopens the composer
+    with :attr:`PathComposerScreen.hops` re-seeded.
+
+    Attributes:
+        node: Canonical id of the repeater to query (the path's tail when committed).
+    """
+
+    node: str
 
 
 class PathComposerScreen(Screen):
@@ -74,6 +96,7 @@ class PathComposerScreen(Screen):
         topology: MeshTopology,
         width_bytes: int,
         hops: Optional[list[str]] = None,
+        fetch_nodes: frozenset[str] = frozenset(),
     ) -> None:
         """Build the composer.
 
@@ -88,6 +111,9 @@ class PathComposerScreen(Screen):
             width_bytes: Preferred per-hop path-hash width (bytes) for the emitted spec.
             hops: Canonical ids of already-composed intermediate hops (reopening the
                 dialog resumes where the user left off).
+            fetch_nodes: Canonical ids whose live neighbour table can be fetched
+                (repeater contacts with a public key); when the path's tail is one of
+                them, the *fetch neighbours* row appears.
         """
         super().__init__()
         self.title = f"compose path · {target_label}"
@@ -98,8 +124,14 @@ class PathComposerScreen(Screen):
         self._topology = topology
         self._width_bytes = width_bytes
         self._hops: list[str] = list(hops or [])
+        self._fetch_nodes = fetch_nodes
         self._entry = ""
         self._index = 0
+
+    @property
+    def hops(self) -> list[str]:
+        """The composed intermediate hops so far (for re-seeding after a fetch)."""
+        return list(self._hops)
 
     # --- state -----------------------------------------------------------------
 
@@ -134,12 +166,17 @@ class PathComposerScreen(Screen):
         return needle if _is_hex(needle) else None
 
     def _rows(self) -> list[tuple[str, object]]:
-        """The cursor-addressable rows: custom hop, suggestions, then the actions."""
+        """The cursor-addressable rows: custom hop, suggestions, fetch, then actions."""
         rows: list[tuple[str, object]] = []
         custom = self._custom_hex()
         if custom:
             rows.append(("custom", custom))
         rows.extend(("hop", s) for s in self._suggestions())
+        # Standing on a repeater we hold credentials for, its live neighbour table is
+        # one keypress away — placed with the suggestions, because that is what it
+        # extends: "don't see the node you need? ask the repeater what it hears."
+        if self._tail() in self._fetch_nodes:
+            rows.append(("fetch", self._tail()))
         rows.append(("action", _USE))
         rows.append(("action", _AUTO))
         rows.append(("action", _CANCEL))
@@ -202,6 +239,12 @@ class PathComposerScreen(Screen):
             return text
         if kind == "hop":
             return self._suggestion_text(payload)
+        if kind == "fetch":
+            name = self._topology.display_name(str(payload)) or str(payload)[:12]
+            text = Text("⇣ Fetch neighbours from ", style="")
+            text.append(name, style="brand")
+            text.append("  (asks the repeater over the mesh)", style="muted")
+            return text
         if payload == _USE:
             label = Text.assemble(("✓ ", "ok"), "Use this path")
             label.append(f"  ({self._spec()})", style="muted")
@@ -255,7 +298,10 @@ class PathComposerScreen(Screen):
                 cursor_at = len(lines)
             lines.append(render_to_ansi(text, width))
         if not any(kind == "hop" for kind, _ in rows):
-            note = "(no observed links from here — type a hex hash to force a hop)"
+            if any(kind == "fetch" for kind, _ in rows):
+                note = "(no observed links from here — fetch the repeater's neighbours, or type a hex hash)"
+            else:
+                note = "(no observed links from here — type a hex hash to force a hop)"
             lines.append(render_to_ansi(Text(note, style="muted"), width))
 
         self._cursor = cursor_at
@@ -282,6 +328,8 @@ class PathComposerScreen(Screen):
             self._hops.append(payload.node)  # type: ignore[union-attr]
             self._entry = ""
             self._index = 0
+        elif kind == "fetch":
+            self.resolve(FetchNeighbours(node=str(payload)))
         elif payload == _USE:
             self.resolve(self._spec())
         elif payload == _AUTO:

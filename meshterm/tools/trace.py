@@ -3,10 +3,12 @@
 In the interactive menu this opens the live trace screen
 (:mod:`meshterm.ui.trace_screen`): pick a target from a recency-ordered list and the
 screen opens armed but idle — Enter runs a burst under an abortable tracing dialog, ``p``
-composes a forced path hop by hop from the topology observed in received traffic, and
-``x`` explores ranked path scenarios (with an optional probe that measures each candidate
-and offers the winner). On the CLI it stays a scriptable one-shot: run N traces, print
-the per-trace table and the aggregate summary, exit.
+composes a forced path hop by hop from the topology observed in received traffic (and,
+standing on a repeater with stored admin credentials, can fetch that repeater's live
+neighbour table for suggestions our own radio never heard), and ``x`` explores ranked
+path scenarios (with an optional probe that measures each candidate and offers the
+winner). On the CLI it stays a scriptable one-shot: run N traces, print the per-trace
+table and the aggregate summary, exit.
 
 Both front ends persist identically: one ``runs`` row per burst with every trace recorded
 under it, so stored history reads the same no matter where it came from.

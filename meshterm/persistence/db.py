@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -83,6 +83,19 @@ CREATE TABLE IF NOT EXISTS path_candidates (
     created_at    TEXT    NOT NULL
 );
 
+-- One entry of a remote repeater's neighbour table, fetched over the mesh (v8). Each row
+-- is a link the repeater reported hearing directly, with SNR measured at the repeater;
+-- refetching appends a new snapshot and readers take the latest row per pair.
+CREATE TABLE IF NOT EXISTS neighbour_reports (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    repeater   TEXT    NOT NULL,  -- canonical id of the repeater that was asked
+    neighbour  TEXT    NOT NULL,  -- reported neighbour's key-prefix hex, as replied
+    snr        REAL,              -- dB, measured at the repeater
+    heard_at   TEXT,              -- when the repeater last heard the neighbour
+    fetched_at TEXT    NOT NULL
+);
+
 -- One packet overheard while passively monitoring the mesh (advert/telemetry/...).
 CREATE TABLE IF NOT EXISTS observations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,6 +133,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_traces_run ON traces(run_id);
 CREATE INDEX IF NOT EXISTS idx_trace_hops_trace ON trace_hops(trace_id);
 CREATE INDEX IF NOT EXISTS idx_tx_samples_run ON tx_samples(run_id);
+CREATE INDEX IF NOT EXISTS idx_neighbour_reports_pair ON neighbour_reports(repeater, neighbour);
 CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
 CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);

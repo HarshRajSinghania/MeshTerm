@@ -17,6 +17,7 @@ from ..core.models import (
     ChatMessage,
     HeardNode,
     Hop,
+    NeighbourInfo,
     Observation,
     TraceResult,
     TxLevelResult,
@@ -91,6 +92,29 @@ class PacketPath:
     origin: Optional[str]
     snr: Optional[float]
     hops: list[str]
+
+
+@dataclass(slots=True)
+class NeighbourLink:
+    """One repeater-reported direct link, as evidence for the topology graph.
+
+    The fetched counterpart of :class:`TracedPath`/:class:`PacketPath`: instead of being
+    inferred from what *we* received, this link was asserted by a remote repeater about
+    its own reception (see :meth:`Repository.neighbour_links`).
+
+    Attributes:
+        when: The link's recency — when the repeater last heard the neighbour, falling
+            back to when we fetched the table.
+        repeater: Canonical id of the repeater that reported the link.
+        neighbour: The neighbour's hex hash as the repeater replied it (any width; the
+            topology layer canonicalizes).
+        snr: SNR (dB) measured at the repeater, if reported.
+    """
+
+    when: datetime
+    repeater: str
+    neighbour: str
+    snr: Optional[float]
 
 
 @dataclass(slots=True)
@@ -402,6 +426,83 @@ class Repository:
                 PacketPath(when=when, origin=row["node"], snr=row["snr"], hops=hops)
             )
         return paths
+
+    def record_neighbours(
+        self, run_id: int, repeater: str, neighbours: list[NeighbourInfo]
+    ) -> None:
+        """Persist one fetched neighbour-table snapshot from a remote repeater.
+
+        Every entry becomes a row; refetching the same repeater later appends a fresh
+        snapshot rather than overwriting, and :meth:`neighbour_links` reads back only
+        the latest row per ``(repeater, neighbour)`` pair — a neighbour table is the
+        repeater's *current* state, so a new snapshot supersedes the old one instead
+        of stacking as extra evidence.
+
+        Args:
+            run_id: The owning run.
+            repeater: Canonical id of the repeater the table came from.
+            neighbours: The fetched entries (may be empty — recorded as no rows).
+        """
+        fetched_at = utcnow().isoformat()
+        self._conn.executemany(
+            "INSERT INTO neighbour_reports "
+            "(run_id, repeater, neighbour, snr, heard_at, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run_id,
+                    repeater,
+                    n.node,
+                    n.snr,
+                    n.heard_at.isoformat() if n.heard_at is not None else None,
+                    fetched_at,
+                )
+                for n in neighbours
+            ],
+        )
+        self._conn.commit()
+
+    def neighbour_links(self, *, limit: int = 2000) -> list[NeighbourLink]:
+        """Return the current repeater-reported links, newest report first.
+
+        The fetched side of the topology evidence. Only the most recent row per
+        ``(repeater, neighbour)`` pair is returned (see :meth:`record_neighbours`), so
+        repeatedly refreshing a table never inflates a link's sample count.
+
+        Args:
+            limit: Maximum number of links to load.
+
+        Returns:
+            One :class:`NeighbourLink` per currently-reported link.
+        """
+        rows = self._conn.execute(
+            "SELECT r.repeater, r.neighbour, r.snr, r.heard_at, r.fetched_at "
+            "FROM neighbour_reports r "
+            "JOIN (SELECT MAX(id) AS id FROM neighbour_reports "
+            "      GROUP BY repeater, neighbour) latest ON latest.id = r.id "
+            "ORDER BY r.id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        links: list[NeighbourLink] = []
+        for row in rows:
+            when: Optional[datetime] = None
+            for stamp in (row["heard_at"], row["fetched_at"]):
+                try:
+                    when = datetime.fromisoformat(stamp)
+                    break
+                except (TypeError, ValueError):
+                    continue
+            if when is None:
+                continue  # a malformed stray contributes no evidence
+            links.append(
+                NeighbourLink(
+                    when=when,
+                    repeater=row["repeater"],
+                    neighbour=row["neighbour"],
+                    snr=row["snr"],
+                )
+            )
+        return links
 
     def record_tx_sample(self, run_id: int, level: TxLevelResult) -> None:
         """Persist one robust TX-power level from an optimization sweep.

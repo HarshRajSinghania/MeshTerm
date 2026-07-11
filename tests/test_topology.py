@@ -10,11 +10,19 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from meshterm.core.models import Contact, Observation, utcnow
-from meshterm.persistence.repository import PacketPath, Repository, TracedPath
+import pytest
+
+from meshterm.core.connection import DeviceCommandError, MockDevice
+from meshterm.core.models import Contact, NeighbourInfo, Observation, utcnow
+from meshterm.persistence.repository import (
+    NeighbourLink,
+    PacketPath,
+    Repository,
+    TracedPath,
+)
 from meshterm.services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
 from meshterm.services.topology import build_topology, collapse_width
-from meshterm.ui.path_composer import AUTO_SPEC, PathComposerScreen
+from meshterm.ui.path_composer import AUTO_SPEC, FetchNeighbours, PathComposerScreen
 from meshterm.ui.tui.screen import CANCEL
 
 US = "aaaaaaaaaaaa"
@@ -23,12 +31,13 @@ FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c2
 LEAF = Contact(name="Leaf", public_key="27d4396a2967" + "0" * 52, key_prefix="27d4396a2967")
 
 
-def _topo(trace_paths=(), packet_paths=(), contacts=None):  # noqa: ANN001
+def _topo(trace_paths=(), packet_paths=(), neighbour_links=(), contacts=None):  # noqa: ANN001
     return build_topology(
         self_id=US + "0" * 52,
         contacts=list(contacts) if contacts is not None else [REPEATER, FAR, LEAF],
         trace_paths=list(trace_paths),
         packet_paths=list(packet_paths),
+        neighbour_links=list(neighbour_links),
     )
 
 
@@ -80,6 +89,23 @@ def test_contact_routes_and_packet_paths_feed_the_graph() -> None:
     # Only the final link (last relay → us) carries the reception SNR.
     assert topo.link(topo.self_id, "3d63c6429436").snrs == [8.0]
     assert packet_link.snrs == []
+
+
+def test_neighbour_reports_feed_the_graph_as_fetched_evidence() -> None:
+    """A repeater's fetched table adds links at its vantage point, tagged ``neighbour``."""
+    reported = [
+        NeighbourLink(when=utcnow(), repeater="3d63c6429436", neighbour="f2c2", snr=7.0),
+        NeighbourLink(when=utcnow(), repeater="3d63c6429436", neighbour="beefbeef", snr=None),
+    ]
+    topo = _topo(neighbour_links=reported)
+    link = topo.link("3d63c6429436", "f2c24f54551e")  # 'f2c2' canonicalizes onto Far
+    assert link is not None and link.sources == {"neighbour"}
+    assert link.snrs == [7.0]  # the SNR measured at the repeater rides the link
+    # A neighbour no contact matches still counts — discovery of an unseen node.
+    unknown = topo.link("3d63c6429436", "beefbeef")
+    assert unknown is not None and unknown.snrs == []
+    suggested = [s.node for s in topo.next_hops("3d63c6429436")]
+    assert "f2c24f54551e" in suggested and "beefbeef" in suggested
 
 
 # --- suggestions and scenarios ----------------------------------------------------
@@ -152,6 +178,54 @@ def test_repository_round_trips_packet_paths_and_candidates(tmp_path) -> None:  
     repo.close()
 
 
+def test_repository_neighbour_snapshots_keep_latest_per_pair(tmp_path) -> None:  # noqa: ANN001
+    """A refetched table supersedes the old snapshot instead of stacking as evidence."""
+    repo = Repository(tmp_path / "n.db")
+    run = repo.start_run("trace", {"mode": "neighbours"})
+    heard = utcnow() - timedelta(hours=2)
+    repo.record_neighbours(
+        run,
+        "3d63c6429436",
+        [
+            NeighbourInfo(node="f2c24f54", snr=-5.0, heard_at=heard),
+            NeighbourInfo(node="beefbeef", snr=2.0, heard_at=None),
+        ],
+    )
+    links = {link.neighbour: link for link in repo.neighbour_links()}
+    assert len(links) == 2
+    assert links["f2c24f54"].snr == -5.0
+    assert links["f2c24f54"].when == heard  # the repeater's own recency survives
+    assert links["beefbeef"].when is not None  # no heard_at → falls back to fetched_at
+
+    repo.record_neighbours(run, "3d63c6429436", [NeighbourInfo(node="f2c24f54", snr=9.0)])
+    links = {link.neighbour: link for link in repo.neighbour_links()}
+    assert len(links) == 2  # still one link per pair
+    assert links["f2c24f54"].snr == 9.0  # the fresh snapshot won
+    repo.close()
+
+
+async def test_mock_fetch_neighbours_is_login_gated_like_real_firmware() -> None:
+    """No login → ignored (error); logged in → the table, including an unseen node."""
+    device = MockDevice()
+    await device.connect()
+    contacts = await device.get_contacts()
+    yagi = next(c for c in contacts if c.name == "Yagi-Repeater")
+
+    with pytest.raises(DeviceCommandError):
+        await device.fetch_neighbours(yagi)  # mirrors v1.15 firmware: guests are ignored
+
+    assert await device.admin_login(yagi, "admin")
+    entries = await device.fetch_neighbours(yagi)
+    nodes = {e.node for e in entries}
+    assert "e5f6a7b8" in nodes  # a node absent from the contact list: pure discovery
+    assert all(e.heard_at is not None for e in entries)
+
+    alice = next(c for c in contacts if c.name == "Alice")
+    assert await device.admin_login(alice, "admin")
+    with pytest.raises(DeviceCommandError):
+        await device.fetch_neighbours(alice)  # chat nodes keep no neighbour table
+
+
 # --- path probe ----------------------------------------------------------------------
 
 
@@ -180,7 +254,7 @@ async def test_probe_paths_ranks_reliability_first() -> None:
 # --- path composer ---------------------------------------------------------------------
 
 
-def _composer(topo, hops=None):  # noqa: ANN001
+def _composer(topo, hops=None, fetch_nodes=frozenset()):  # noqa: ANN001
     return PathComposerScreen(
         target_id="f2c24f54551e",
         target_hash="f2c24f54551e" + "0" * 52,
@@ -189,6 +263,7 @@ def _composer(topo, hops=None):  # noqa: ANN001
         topology=topo,
         width_bytes=1,
         hops=list(hops or []),
+        fetch_nodes=fetch_nodes,
     )
 
 
@@ -217,6 +292,28 @@ def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:
     assert screen._hops == ["beef"]
     screen.handle("backspace")  # entry is empty → removes the last hop
     assert screen._hops == []
+
+
+async def test_composer_fetch_row_resolves_a_fetch_request() -> None:
+    """Standing on a fetchable repeater, Enter on the fetch row hands off to the owner."""
+    import asyncio
+
+    screen = _composer(
+        _topo(), hops=["3d63c6429436"], fetch_nodes=frozenset({"3d63c6429436"})
+    )
+    screen.future = asyncio.get_running_loop().create_future()
+    body = _rows_plain(screen)
+    assert "Fetch neighbours from" in body and "Hub" in body
+    screen.handle("enter")  # an empty graph offers no suggestions: fetch is the top row
+    result = screen.future.result()
+    assert isinstance(result, FetchNeighbours) and result.node == "3d63c6429436"
+    assert screen.hops == ["3d63c6429436"]  # preserved, so the owner can reopen mid-path
+
+
+def test_composer_hides_fetch_row_off_fetchable_tails() -> None:
+    """The fetch row tracks the path's tail: at our own node there is nothing to ask."""
+    screen = _composer(_topo(), fetch_nodes=frozenset({"3d63c6429436"}))
+    assert "Fetch neighbours" not in _rows_plain(screen)  # tail is us, not the repeater
 
 
 async def test_composer_commits_spec_auto_and_cancel() -> None:

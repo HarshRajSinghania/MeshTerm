@@ -11,7 +11,10 @@ whatever you make it, and nothing transmits until you say so. Three verbs drive 
 * **p** opens the path composer (:mod:`~meshterm.ui.path_composer`): build the outbound
   route hop by hop, each step suggested from the links observed in *received* traffic —
   traces, firmware-learned contact routes, and RX-logged packet paths — strongest first,
-  with raw hex entry for nodes the data has never seen. Only the outbound leg is
+  with raw hex entry for nodes the data has never seen. Standing on a repeater you hold
+  admin credentials for, the composer can also *fetch that repeater's neighbour table*
+  over the mesh (login required; firmware ignores guests): second-vantage evidence,
+  persisted and folded straight back into the suggestions. Only the outbound leg is
   composed: the trace protocol replies back along the reversed path automatically.
 * **x** explores scenarios: ranked candidate routes to the target straight from the
   topology evidence (the device's own learned route, the direct shot, and the strongest
@@ -128,6 +131,9 @@ class TracingDialog(Screen):
         self.status = "transmitting…"
         #: The most recent trace result, echoed beneath the status line.
         self.last: Optional[TraceResult] = None
+        #: Whether to render the last-reply line. Trace/probe owners stream replies
+        #: through it; request-shaped owners (a neighbour fetch) have none to show.
+        self.show_last = True
 
     @property
     def dialog_width(self) -> int:
@@ -159,7 +165,8 @@ class TracingDialog(Screen):
         chip = self._spinner.text()
         chip.append(f"  {self.status}", style="")
         lines = render_lines(chip, width)
-        lines.extend(render_lines(self._last_line(), width))
+        if self.show_last:
+            lines.extend(render_lines(self._last_line(), width))
         lines.append("")
         lines.append(render_to_ansi(Text("❯ [ Abort ]", style="selected"), width))
         return lines
@@ -554,10 +561,11 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from ..core.models import LOCAL_DEVICE_LABEL
+    from ..core.connection import DeviceAuthenticationError
+    from ..core.models import LOCAL_DEVICE_LABEL, Contact, NeighbourInfo
     from ..services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
     from ..services.topology import MeshTopology, PathScenario, _is_hex, build_topology
-    from .path_composer import PathComposerScreen
+    from .path_composer import FetchNeighbours, PathComposerScreen
     from .surface import TuiUi
     from .tui import CANCEL, Choice, SelectScreen, Separator
 
@@ -609,6 +617,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             contacts=contacts,
             trace_paths=ctx.repo.trace_paths(),
             packet_paths=ctx.repo.packet_paths(),
+            neighbour_links=ctx.repo.neighbour_links(),
         )
 
     async def unaddressable() -> None:
@@ -621,8 +630,122 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             title="no destination hash",
         )
 
+    async def fetch_neighbours_via(repeater: Contact, repeater_id: str) -> bool:
+        """Log in to a repeater, fetch its neighbour table, and persist the snapshot.
+
+        The composer's fetch action lands here: password from the admin store (or a
+        one-time prompt, remembered on success — the tx-optimize convention), then the
+        login + fetch run under a floating spinner dialog with Abort. Every outcome
+        closes its own ``runs`` row; a rejected login also forgets the stored password
+        so the next attempt asks fresh.
+
+        Args:
+            repeater: The repeater contact to query (carries the public key).
+            repeater_id: Its canonical id, the key the snapshot is stored under.
+
+        Returns:
+            ``True`` when new neighbour links were recorded (the caller should rebuild
+            the topology); ``False`` on cancel, failure, or an empty table.
+        """
+        password = ctx.admin_store.get(repeater)
+        if password is None:
+            password = await session.text(
+                f"Admin password for {repeater.name}",
+                prompt="The repeater ignores neighbour requests without an admin login.",
+                password=True,
+            )
+            if not password:
+                return False
+        run_id = ctx.repo.start_run(
+            "trace",
+            {"mode": "neighbours", "repeater": repeater.name},
+            ctx.profile_name,
+        )
+        spinner = Spinner()
+        dialog = TracingDialog(
+            f"neighbours · {repeater.name}", spinner=spinner, on_abort=lambda: None
+        )
+        dialog.show_last = False  # a fetch has no streaming replies to echo
+        dialog.status = f"logging in to {repeater.name}…"
+
+        async def work() -> list[NeighbourInfo]:
+            if not await device.admin_login(repeater, password):
+                raise DeviceAuthenticationError(
+                    f"{repeater.name!r} rejected the admin login (wrong password?). "
+                    "The saved password was cleared; retry to enter a new one."
+                )
+            ctx.admin_store.remember(repeater, password)
+            dialog.status = "fetching the neighbour table…"
+            session.invalidate()
+            return await device.fetch_neighbours(repeater)
+
+        task = asyncio.ensure_future(work())
+        dialog.on_abort = task.cancel
+
+        async def animate() -> None:
+            while True:
+                await asyncio.sleep(_SPINNER_INTERVAL)
+                spinner.tick()
+                session.invalidate()
+
+        ticker = asyncio.ensure_future(animate())
+        session.push(dialog)
+        error: Optional[BaseException] = None
+        aborted = False
+        entries: list[NeighbourInfo] = []
+        try:
+            entries = await task
+        except asyncio.CancelledError:
+            aborted = True
+        except Exception as exc:  # noqa: BLE001 - surface in a dialog, keep composing
+            error = exc
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a spinner hiccup must never break a fetch
+                pass
+            session.pop(dialog)
+        if aborted:
+            ctx.repo.finish_run(run_id, "error", {"error": "aborted"})
+            return False
+        if error is not None:
+            if isinstance(error, DeviceAuthenticationError):
+                ctx.admin_store.forget(repeater)  # bad password: don't keep reusing it
+            ctx.repo.finish_run(
+                run_id, "error", {"error": str(error) or type(error).__name__}
+            )
+            await session.message_dialog(
+                Text(str(error), style="err"), title="fetch neighbours"
+            )
+            return False
+        ctx.repo.record_neighbours(run_id, repeater_id, entries)
+        ctx.repo.finish_run(
+            run_id, "ok", {"repeater": repeater.name, "neighbours": len(entries)}
+        )
+        if not entries:
+            # Verified on real firmware: an empty table is a normal answer (repeaters
+            # forget neighbours across reboots and relearn them from adverts).
+            await session.message_dialog(
+                Text(
+                    f"{repeater.name} answered, but its neighbour table is empty — "
+                    "it relearns neighbours from received adverts, so ask again later.",
+                    style="muted",
+                ),
+                title="fetch neighbours",
+            )
+            return False
+        return True
+
     async def compose(current: str) -> Optional[str]:
-        """Open the hop-by-hop composer seeded with the current spec's hops."""
+        """Open the hop-by-hop composer seeded with the current spec's hops.
+
+        Runs the composer in a loop: a :class:`FetchNeighbours` resolution performs the
+        fetch, rebuilds the topology with the new evidence, and reopens the composer
+        exactly where the user stood (same hops, refreshed suggestions).
+        """
         if target_hash is None:
             await unaddressable()
             return None
@@ -634,8 +757,17 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             for h in [p for p in current.split(",") if p.strip()][:-1]
             if (cid := topo.canonical(h.strip())) is not None
         ]
-        result = await session.run_screen(
-            PathComposerScreen(
+        while True:
+            # Nodes whose neighbour table can be asked for: repeater contacts with a
+            # public key to log in against (our own node has nothing new to tell us).
+            fetchable: dict[str, Contact] = {}
+            for c in contacts:
+                if not c.is_repeater or not (c.public_key or "").strip():
+                    continue
+                cid = topo.canonical(c.public_key)
+                if cid is not None and cid != topo.self_id:
+                    fetchable[cid] = c
+            screen = PathComposerScreen(
                 target_id=target_id,
                 target_hash=target_hash,
                 target_label=target_label,
@@ -643,9 +775,20 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
                 topology=topo,
                 width_bytes=width_bytes,
                 hops=seed,
+                fetch_nodes=frozenset(fetchable),
             )
-        )
-        return None if result is CANCEL else result
+            result = await session.run_screen(screen)
+            if result is CANCEL:
+                return None
+            if isinstance(result, FetchNeighbours):
+                seed = screen.hops  # resume mid-thought after the fetch
+                repeater = fetchable.get(result.node)
+                if repeater is not None and await fetch_neighbours_via(
+                    repeater, result.node
+                ):
+                    topo = fresh_topology()  # fold the new reports into suggestions
+                continue
+            return result
 
     def scenario_title(scenario: PathScenario, topo: MeshTopology) -> Text:
         """One scenario as a select row: source, route, and its observed evidence."""
