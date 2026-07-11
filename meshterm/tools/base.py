@@ -51,6 +51,10 @@ class Tool(ABC):
         menu_visible: Whether the tool appears in the interactive menu. Set ``False`` for
             CLI-only tools (e.g. startup-time diagnostics with no place in a connected
             session); such tools still register a CLI subcommand as usual.
+        popup: Whether the menu stays pushed while this tool runs, so the tool's prompts
+            and result float over it as modal popups (the quit-dialog pattern) instead of
+            replacing the screen. For quick dialog-sized tools; a tool that pushes its
+            own full screen keeps the default.
     """
 
     name: str = ""
@@ -60,6 +64,7 @@ class Tool(ABC):
     category: str = "General"
     order: int = 100
     menu_visible: bool = True
+    popup: bool = False
 
     @abstractmethod
     async def run(self, ctx: "AppContext", params: dict[str, Any]) -> ToolResult:

@@ -9,15 +9,14 @@ Two sibling screens live here, deliberately kept distinct:
   backing out with staged changes asks before discarding them. The editor returns the
   staged operations for :class:`~meshterm.tools.config.ConfigTool` to execute and log.
 * **Device actions** (:func:`device_actions`, behind the ``device-actions`` tool) — the
-  operations that act on the box itself rather than a value: adverts, backup/restore, the
-  identity key, reboot, and factory reset. These *run immediately* (after their own
-  confirmation dialog — destructive ones gate behind typing a confirmation word); they
-  have no meaningful "preview", so their result is shown at once. They share the settings
-  snapshot and :func:`~meshterm.tools.config.apply_ops` executor with the editor, which is
-  why both screens live in this module. The everyday advert action is *also* promoted to
-  its own main-menu entry (the ``advert`` tool, via :func:`send_advert`), so it is one
-  keystroke away instead of two screens deep; the row here stays so the actions screen
-  remains the complete inventory of immediate operations.
+  operations that act on the box itself rather than a value: backup/restore, the
+  identity key, clock sync, reboot, and factory reset. These *run immediately* (after
+  their own confirmation dialog — destructive ones gate behind typing a confirmation
+  word); they have no meaningful "preview", so their result is shown at once. They share
+  the settings snapshot and :func:`~meshterm.tools.config.apply_ops` executor with the
+  editor, which is why both screens live in this module. The everyday advert action
+  lives in its own main-menu entry instead (the ``advert`` tool, via
+  :func:`send_advert`), one keystroke away as a popup over the menu.
 
 Multiple-choice values are picked in dialogs (booleans as an On/Off button pair, enums as
 a floating select), the node's location can be set by pointing at the full-screen map (see
@@ -68,7 +67,6 @@ _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
 _ADVERT_DIRECT = "__advert_direct__"
 _ADVERT_FLOOD = "__advert_flood__"
-_ADVERT = "__advert__"
 _SYNC_CLOCK = "__sync_clock__"
 _REBOOT = "__reboot__"
 _BACKUP = "__backup__"
@@ -700,9 +698,7 @@ async def device_actions(ctx: "AppContext") -> None:
             if choice is CANCEL or choice in (None, _CANCEL):
                 return
             cursor = choice
-            if choice == _ADVERT:
-                await _advert_menu(ctx, device, snapshot)
-            elif choice == _SYNC_CLOCK:
+            if choice == _SYNC_CLOCK:
                 await _sync_clock(ctx, device, snapshot)
             elif choice == _BACKUP:
                 await _backup_now(ctx, device, snapshot)
@@ -730,7 +726,6 @@ def _action_items() -> list:
     reset keeps its err-tinted label so the one irreversible row reads as such.
     """
     actions: list[tuple[str, str, str, str]] = [
-        ("📡 Send advert…", "Zero-hop, flood, or share this node as a QR code", _ADVERT, ""),
         ("🕒 Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK, ""),
         ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP, ""),
         ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE, ""),
@@ -773,13 +768,12 @@ async def _run_now(
 
 
 async def send_advert(ctx: "AppContext") -> None:
-    """Run the Send advert flow standalone, behind the main menu's ``advert`` tool.
+    """Run the Send advert flow, behind the main menu's ``advert`` popup tool.
 
-    The same flow the Device actions screen opens (see :func:`_advert_menu`), promoted to
-    a top-level menu entry because announcing the node is the everyday action in that
-    bucket. Only ``SELF_INFO`` is read here: the advert command itself never consults the
-    snapshot, and the contact card needs just the name, public key, and advert type — so
-    opening this skips the tuning/path-hash reads of a full
+    Send an advert (zero-hop or flood) or show this node's shareable contact card. Only
+    ``SELF_INFO`` is read here: the advert command itself never consults the snapshot,
+    and the contact card needs just the name, public key, and advert type — so opening
+    this skips the tuning/path-hash reads of a full
     :func:`~meshterm.core.device_config.build_snapshot` and stays snappy over Bluetooth.
 
     Args:
@@ -787,11 +781,6 @@ async def send_advert(ctx: "AppContext") -> None:
     """
     device = await ctx.device()
     snapshot = dict(await device.get_self_info())
-    await _advert_menu(ctx, device, snapshot)
-
-
-async def _advert_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
-    """Send an advert (zero-hop or flood) or show this node's shareable contact card."""
     choice = await ctx.ui.select(
         "📡 Send advert",
         [

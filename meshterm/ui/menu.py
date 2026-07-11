@@ -354,6 +354,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         )
         menu.future = loop.create_future()
         session.push(menu)
+        ran_over_menu = False
         try:
             selection = await menu.future
             if selection is CANCEL:  # Esc at the top level
@@ -396,9 +397,16 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
                     last_selection = "__quit__"
                 continue
             last_selection = selection
+            # A popup tool runs while the menu is still pushed, so its prompts and
+            # result float over it as modal dialogs instead of replacing the screen.
+            tool = next((t for t in tools if t.name == selection), None)
+            if tool is not None and tool.popup:
+                ran_over_menu = True
+                await _run_selection(ctx, selection)
         finally:
             session.pop(menu)
-        await _run_selection(ctx, selection)
+        if not ran_over_menu:
+            await _run_selection(ctx, selection)
 
 
 async def _startup(ctx: AppContext) -> bool:

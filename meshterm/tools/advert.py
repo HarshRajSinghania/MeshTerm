@@ -2,10 +2,9 @@
 
 Opens the Send advert flow (see :func:`meshterm.ui.config_editor.send_advert`) — a
 zero-hop or flood advertisement, or this node's shareable contact card as a QR code.
-The same flow also lives inside the Device actions screen; it gets its own menu entry
-because sending an advert is the everyday operation in that bucket, promoted to the top
-level so it sits one keystroke (and one type-to-filter match) away instead of two
-screens deep.
+A ``popup`` tool: the flow's prompts and result float over the still-pushed main menu
+as modal dialogs (the quit-dialog pattern), so the everyday action stays a quick
+in-place popup rather than a screen change.
 
 Menu-only: the scripted equivalents are ``config advert`` and ``config share``, so no
 duplicate subcommand is registered here (the same pattern as ``device-actions``).
@@ -31,6 +30,7 @@ class SendAdvertTool(Tool):
     help = "Announce this node to the mesh — zero-hop, flood, or share as QR"
     category = "Device"
     order = 10  # right after Device actions, before Device info
+    popup = True  # dialog-sized: float over the menu instead of replacing it
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the interactive advert flow; there are never parameters to collect.

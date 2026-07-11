@@ -459,8 +459,8 @@ async def test_editor_location_clear_stages_the_no_fix_pair(ctx: AppContext) -> 
     assert ("set", "adv_lon", 0.0) in ops
 
 
-async def test_actions_advert_zero_hop_and_flood_run_immediately(ctx: AppContext) -> None:
-    """The advert dialog sends immediately: zero-hop by default, flood when chosen."""
+async def test_send_advert_sends_zero_hop_and_flood_immediately(ctx: AppContext) -> None:
+    """The advert popup sends immediately: zero-hop by default, flood when chosen."""
     device = await ctx.device()
     sent: list[bool] = []
 
@@ -468,43 +468,20 @@ async def test_actions_advert_zero_hop_and_flood_run_immediately(ctx: AppContext
         sent.append(flood)
 
     device.send_advert = _record  # type: ignore[method-assign]
-    ui = _install(ctx, [
-        ("select", "__advert__"),
-        ("select", "zero"),
-        ("select", "__advert__"),
-        ("select", "flood"),
-        ("select", "__cancel__"),
-    ])
-    await device_actions(ctx)
-    assert sent == [False, True]
-    assert any("zero-hop" in n for n in ui.notes)
-    assert any("flood" in n for n in ui.notes)
-
-
-async def test_actions_advert_share_shows_the_contact_card(ctx: AppContext) -> None:
-    """The share option opens the QR/URI view built from the node's own identity."""
-    ui = _install(ctx, [
-        ("select", "__advert__"),
-        ("select", "share"),
-        ("select", "__cancel__"),
-    ])
-    await device_actions(ctx)
-    assert any(v.startswith("Share ") for v in ui.views)
-
-
-async def test_send_advert_standalone_sends_without_the_actions_screen(ctx: AppContext) -> None:
-    """The promoted main-menu flow sends an advert directly — no Device actions hop."""
-    device = await ctx.device()
-    sent: list[bool] = []
-
-    async def _record(flood: bool = False) -> None:
-        sent.append(flood)
-
-    device.send_advert = _record  # type: ignore[method-assign]
+    ui = _install(ctx, [("select", "zero")])
+    await send_advert(ctx)
     ui = _install(ctx, [("select", "flood")])
     await send_advert(ctx)
-    assert sent == [True]
+    assert sent == [False, True]
     assert any("flood" in n for n in ui.notes)
+
+
+async def test_device_actions_no_longer_lists_the_advert_row(ctx: AppContext) -> None:
+    """The advert action lives only in the main menu now — the actions screen dropped it."""
+    from meshterm.ui.config_editor import _action_items
+
+    labels = [str(getattr(item, "title", "")) for item in _action_items()]
+    assert not any("advert" in label.lower() for label in labels)
 
 
 async def test_send_advert_standalone_shares_the_contact_card(ctx: AppContext) -> None:
