@@ -71,6 +71,7 @@ from rich.text import Text
 from ..core.models import PATH_TRACE_TARGET, TraceResult, TraceStats
 from ..services import trace_runner
 from ..services.topology import render_forced_spec
+from .braillechart import meter
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
@@ -93,16 +94,6 @@ _BAR_WIDTH = 8
 _BAR_SNR_MIN = -15.0
 _BAR_SNR_MAX = 10.0
 
-#: A half-filled bar step: a braille cell with only its left column of the middle
-#: two dot rows raised (dots 2, 3 — the top row, dots 1 and 4, and the bottom row,
-#: dots 7 and 8, both stay blank, so the glyph sits mid-cell instead of hugging
-#: either edge).
-_BAR_HALF = "⠆"
-
-#: A full bar step: both columns of the same middle two rows raised (dots 2, 3,
-#: 5, 6).
-_BAR_FULL = "⠶"
-
 #: The sample counts the Sample count dialog offers: how many traces one Trace action
 #: runs, paced between transmissions.
 SAMPLE_CHOICES = (1, 2, 3, 5, 8)
@@ -122,13 +113,9 @@ PathFlow = Callable[[str], Awaitable[Optional[str]]]
 def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
     """Render an SNR reading as a horizontal quality bar in the shared SNR colours.
 
-    Packs two fill steps into each character — a half step (:data:`_BAR_HALF`) then
-    a full step (:data:`_BAR_FULL`) — for 16-step resolution in ``width`` characters
-    instead of needing one cell per step. The unlit remainder draws in the same
-    :data:`_BAR_FULL` glyph, dimmed to the ``track`` style — a background the reading
-    fills in, not a run of unrelated dots. The one glyph a single colour can't split
-    is the boundary half-step itself: it carries the reading's colour, not the
-    track's, since it's still part of what was actually measured.
+    The slim-on-a-track flavour of the app's braille :func:`~meshterm.ui.braillechart.meter`:
+    the reading maps onto :data:`_BAR_SNR_MIN` → :data:`_BAR_SNR_MAX` and fills a dark
+    same-glyph track at two steps per cell.
 
     Args:
         snr: The reading in dB, or ``None`` (renders as an entirely unlit track).
@@ -139,15 +126,10 @@ def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
         coloured by :func:`~meshterm.ui.theme.snr_style`.
     """
     if snr is None:
-        return Text(_BAR_FULL * width, style="track")
+        return meter(None, width, style="track", slim=True, track="track")
     span = _BAR_SNR_MAX - _BAR_SNR_MIN
     frac = min(1.0, max(0.0, (snr - _BAR_SNR_MIN) / span))
-    steps = max(1, round(frac * width * 2))
-    full, half = divmod(steps, 2)
-    filled = _BAR_FULL * full + _BAR_HALF * half
-    bar = Text(filled, style=snr_style(snr))
-    bar.append(_BAR_FULL * (width - len(filled)), style="track")
-    return bar
+    return meter(frac, width, style=snr_style(snr), slim=True, track="track")
 
 
 class TracingDialog(Screen):

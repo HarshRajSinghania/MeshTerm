@@ -13,9 +13,13 @@ from datetime import timedelta
 import pytest
 
 from meshterm.core.models import Hop, TraceResult, TraceStats, TxLevelResult, TxOptResult, utcnow
+from meshterm.ui.braillechart import _METER_SLIM
 from meshterm.ui.theme import snr_style
-from meshterm.ui.trace_screen import _BAR_FULL, _BAR_HALF, _BAR_WIDTH, TraceScreen, snr_bar
+from meshterm.ui.trace_screen import _BAR_WIDTH, TraceScreen, snr_bar
 from meshterm.ui.tx_screen import TxSweepScreen
+
+# The slim meter's fill glyphs (the SNR bar draws through the shared braille meter).
+_BAR_FULL, _BAR_HALF = _METER_SLIM
 
 
 class _FakeSession:

@@ -1,4 +1,4 @@
-"""Scrolling braille bar charts: the one way MeshTerm draws a value-over-time row.
+"""Braille charts: the one way MeshTerm draws a value-over-time row or a meter.
 
 Every timeline in the app — the header's activity pulse, the channel manager's
 per-channel sparklines, the dashboard's tall packet chart, the Time Machine's
@@ -22,6 +22,14 @@ spans anchored on the baseline, and each character cell takes the bar style when
 any bar dot falls in it, the faint baseline style when only the zero line does,
 and stays blank braille otherwise (blank braille, not a space, so the grid stays
 monospace under fonts with slightly odd braille metrics).
+
+Beyond timelines, the module owns the app's two other braille conventions:
+
+* :func:`meter` — the single-value horizontal bar (the dashboard's traffic
+  tallies, the SNR quality bars), always packing two fill steps per cell so a
+  ``width``-cell meter resolves ``2 × width`` levels.
+* :func:`axis_caption` — the ``oldest → now`` line under a timeline, which
+  fills in intermediate marks whenever the chart is wide enough to fit them.
 """
 
 from __future__ import annotations
@@ -150,6 +158,120 @@ def activity_sparkline(
         height = bisect_right(levels, count)
         bars.append((0, height - 1) if height else None)
     return _assemble(bars, [float(c) for c in reversed(window)], 1, 0, style, "faint")[0]
+
+
+#: The meter's fill glyphs, ``(full step, half step)``, by profile. A *full-height*
+#: meter lights all four dot rows (``⣿`` both columns, ``⡇`` the left column alone),
+#: reading as a solid tally bar. A *slim* meter lights only the middle two rows
+#: (``⠶`` / ``⠆``), so the bar floats mid-cell and can sit over an unlit track of the
+#: same glyph without turning into a solid block.
+_METER_FULL = ("⣿", "⡇")
+_METER_SLIM = ("⠶", "⠆")
+
+
+def meter(
+    fraction: Optional[float],
+    width: int,
+    *,
+    style: str,
+    slim: bool = False,
+    track: Optional[str] = None,
+) -> Text:
+    """Render a single value as a horizontal braille meter, two fill steps per cell.
+
+    The one way MeshTerm draws a proportion as a bar. Both dot columns of every cell
+    are always exploited — a ``width``-cell meter resolves ``2 × width`` levels — and
+    any *reading* lights at least one half step, even one clamped to the floor of its
+    scale: a measured bottom is still a measurement, so it never vanishes (``None``
+    is how a truly empty meter is asked for). Two profiles cover the app's two cases:
+
+    * **full-height, no track** (the default): all four dot rows, unlit cells left
+      blank — a tally bar whose length *is* the reading (the dashboard's traffic
+      lanes).
+    * **slim, on a track** (``slim=True, track="track"``): only the middle two dot
+      rows, with the unlit remainder drawn in the same glyph dimmed to ``track`` — a
+      gauge whose reading fills in a visible background (the SNR quality bars). The
+      boundary half-step keeps the reading's colour, not the track's: it is still
+      part of what was measured.
+
+    Args:
+        fraction: The fill as a fraction of full scale, clamped to ``0 .. 1``;
+            ``None`` draws an entirely unlit meter (just the track, if any).
+        width: The meter's full-scale span in character cells.
+        style: Style for the lit fill.
+        slim: Light only the middle two dot rows instead of all four.
+        track: Style for the unlit remainder, drawn in the full-step glyph; ``None``
+            pads with spaces instead, so the meter still occupies ``width`` cells.
+
+    Returns:
+        A :class:`Text` exactly ``width`` cells wide.
+    """
+    full_glyph, half_glyph = _METER_SLIM if slim else _METER_FULL
+    if fraction is None:
+        steps = 0
+    else:
+        frac = min(1.0, max(0.0, fraction))
+        steps = max(1, round(frac * width * 2))
+    full, half = divmod(steps, 2)
+    bar = Text(full_glyph * full + half_glyph * half, style=style)
+    rest = width - full - half
+    if track is not None:
+        bar.append(full_glyph * rest, style=track)
+    else:
+        bar.append(" " * rest)
+    return bar
+
+
+def axis_caption(
+    chars: int,
+    label_at: Callable[[float], str],
+    *,
+    style: str = "faint",
+) -> Text:
+    """The caption line under a timeline: edge labels plus whatever marks fit between.
+
+    Every chart used to caption only its ends (``oldest … now``); this asks
+    ``label_at`` for the labels at the quarter points too and keeps the densest set
+    that fits — quarters, else the midpoint, else just the two ends — so a wide chart
+    reads its timescale without counting cells. The first label is left-aligned on the
+    chart's left edge, the last right-aligned on its right edge, and interior labels
+    are centred on the fraction they describe, each separated by at least two blank
+    cells so they never run together.
+
+    Args:
+        chars: The chart's width in character cells (the caption matches it).
+        label_at: Maps a position fraction (``0.0`` = the oldest column, ``1.0`` =
+            now) to its label.
+        style: Style the whole caption is drawn in.
+
+    Returns:
+        A :class:`Text` exactly ``chars`` cells wide.
+    """
+    for segments in (4, 2, 1):
+        fractions = [i / segments for i in range(segments + 1)]
+        labels = [label_at(f) for f in fractions]
+        cells: list[str] = [" "] * chars
+        taken: list[tuple[int, int]] = []  # placed [start, end) spans, in order
+        ok = True
+        for frac, label in zip(fractions, labels):
+            if frac == 0.0:
+                start = 0
+            elif frac == 1.0:
+                start = chars - len(label)
+            else:
+                centre = round(frac * chars)
+                start = min(chars - len(label), max(0, centre - len(label) // 2))
+            end = start + len(label)
+            if end > chars or any(start < e + 2 and s < end + 2 for s, e in taken):
+                ok = False
+                break
+            taken.append((start, end))
+            cells[start:end] = label
+        if ok:
+            return Text("".join(cells), style=style)
+    # Even the two edge labels collide: keep the left one and let it stand alone.
+    label = label_at(0.0)[:chars]
+    return Text(label.ljust(chars), style=style)
 
 
 def _baseline_row(lo: float, hi: float, total: int) -> int:
