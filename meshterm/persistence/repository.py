@@ -58,6 +58,42 @@ class ChannelStats:
 
 
 @dataclass(slots=True)
+class TracedPath:
+    """One successful trace's walked path, as evidence for the topology graph.
+
+    Attributes:
+        when: When the trace completed.
+        hops: The per-hop readings in path order, each ``(node, snr)`` — ``node`` is the
+            hop's raw hex hash (``None`` for the final hash-less hop, our own device) and
+            ``snr`` the reception measured *arriving at* that hop. Because trace replies
+            retrace the path, the sequence covers the outbound and return legs alike.
+    """
+
+    when: datetime
+    hops: list[tuple[Optional[str], float]]
+
+
+@dataclass(slots=True)
+class PacketPath:
+    """One RX-logged packet's relay path, as evidence for the topology graph.
+
+    Attributes:
+        when: When the packet was overheard.
+        origin: The originating node's hex hash, when the packet class reveals it
+            (adverts do); ``None`` otherwise.
+        snr: Our reception SNR (dB) — a reading on the link from the *last relay*
+            (or, with no relays, the origin) to us.
+        hops: The relay hashes in propagation order, nearest the origin first and the
+            repeater we actually heard last; empty for a direct (zero-hop) packet.
+    """
+
+    when: datetime
+    origin: Optional[str]
+    snr: Optional[float]
+    hops: list[str]
+
+
+@dataclass(slots=True)
 class RunRecord:
     """A summary row from the ``runs`` table.
 
@@ -299,6 +335,74 @@ class Repository:
         ).fetchall()
         return [row["target"] for row in rows]
 
+    def trace_paths(self, *, limit: int = 2000) -> list[TracedPath]:
+        """Return the walked paths of recent successful traces, newest first.
+
+        This is the trace side of the topology evidence: every successful trace is a
+        packet that demonstrably crossed each link in its path (out and back), with an
+        SNR reading at every hop. Hops are returned raw — hex hashes at whatever width
+        the original command addressed them — for the topology layer to canonicalize.
+
+        Args:
+            limit: Maximum number of traces to load.
+
+        Returns:
+            One :class:`TracedPath` per successful trace that recorded hops.
+        """
+        rows = self._conn.execute(
+            "SELECT t.id, t.created_at FROM traces t "
+            "WHERE t.success = 1 ORDER BY t.id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        paths: list[TracedPath] = []
+        for row in rows:
+            hop_rows = self._conn.execute(
+                "SELECT node, snr FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
+                (row["id"],),
+            ).fetchall()
+            if not hop_rows:
+                continue
+            try:
+                when = datetime.fromisoformat(row["created_at"])
+            except (TypeError, ValueError):
+                continue  # a malformed stray contributes no evidence
+            paths.append(
+                TracedPath(when=when, hops=[(h["node"], h["snr"]) for h in hop_rows])
+            )
+        return paths
+
+    def packet_paths(self, *, limit: int = 5000) -> list[PacketPath]:
+        """Return the relay paths of recent RX-logged packets, newest first.
+
+        The passive side of the topology evidence: each row is a packet the companion
+        overheard whose header carried the repeater path it had traversed so far. Only
+        ``packet``-kind observations carry one (see :meth:`record_observation`); rows
+        whose path is NULL are skipped, and an empty path (a direct packet) is returned
+        with no hops so a known origin still yields a direct-link reading.
+
+        Args:
+            limit: Maximum number of packet observations to load.
+
+        Returns:
+            One :class:`PacketPath` per stored packet observation.
+        """
+        rows = self._conn.execute(
+            "SELECT node, snr, path, observed_at FROM observations "
+            "WHERE kind = 'packet' AND path IS NOT NULL ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        paths: list[PacketPath] = []
+        for row in rows:
+            try:
+                when = datetime.fromisoformat(row["observed_at"])
+            except (TypeError, ValueError):
+                continue  # a malformed stray contributes no evidence
+            hops = [h for h in (row["path"] or "").split(",") if h]
+            paths.append(
+                PacketPath(when=when, origin=row["node"], snr=row["snr"], hops=hops)
+            )
+        return paths
+
     def record_tx_sample(self, run_id: int, level: TxLevelResult) -> None:
         """Persist one robust TX-power level from an optimization sweep.
 
@@ -325,10 +429,51 @@ class Repository:
         )
         self._conn.commit()
 
+    def record_path_candidate(
+        self,
+        run_id: int,
+        target: str,
+        path: str,
+        *,
+        bottleneck_snr: Optional[float],
+        success_rate: float,
+        median_rtt_ms: Optional[float],
+    ) -> None:
+        """Persist one measured candidate path from a path-probe sweep.
+
+        Args:
+            run_id: The owning probe run.
+            target: The node the candidate paths lead to.
+            path: The forced outbound path measured (comma-separated hex hashes).
+            bottleneck_snr: Median of the candidate's per-trace bottleneck SNRs (dB),
+                or ``None`` when no trace over it succeeded.
+            success_rate: Fraction of traces over this path that replied, ``[0, 1]``.
+            median_rtt_ms: Median round-trip time over this path, if measured.
+        """
+        self._conn.execute(
+            "INSERT INTO path_candidates "
+            "(run_id, target, path_json, bottleneck_snr, success_rate, median_rtt_ms, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                target,
+                json.dumps(path.split(",")),
+                bottleneck_snr,
+                success_rate,
+                median_rtt_ms,
+                utcnow().isoformat(),
+            ),
+        )
+        self._conn.commit()
+
     # -- observations (passive monitoring) --------------------------------------
 
     def record_observation(self, run_id: int, obs: Observation) -> None:
         """Persist one overheard packet from a monitoring run.
+
+        ``packet``-kind observations (the companion's RX packet log) also carry the relay
+        path the packet traversed — the raw material of the topology graph (see
+        :meth:`packet_paths`).
 
         Args:
             run_id: The owning run.
@@ -336,8 +481,8 @@ class Repository:
         """
         self._conn.execute(
             "INSERT INTO observations "
-            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, observed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
@@ -348,6 +493,7 @@ class Repository:
                 obs.rssi,
                 obs.lat,
                 obs.lon,
+                obs.path,
                 obs.observed_at.isoformat(),
             ),
         )
@@ -370,7 +516,10 @@ class Repository:
 
         Spans every monitoring run (optionally limited to recent history), so the result
         is a longitudinal view of which nodes have been heard, how strongly, and where —
-        the substrate for the monitor summary and the coverage map.
+        the substrate for the monitor summary and the coverage map. ``packet``-kind rows
+        are excluded: their SNR describes our link to the packet's *last relay*, not to
+        the originating node, so folding them in would misattribute reception quality
+        (they feed the topology graph instead — see :meth:`packet_paths`).
 
         Args:
             since: Only include observations at or after this time, if given.
@@ -378,10 +527,13 @@ class Repository:
         Returns:
             One :class:`HeardNode` per distinct node, ordered by most-recently heard.
         """
-        sql = "SELECT node, name, node_type, snr, rssi, lat, lon, observed_at FROM observations"
+        sql = (
+            "SELECT node, name, node_type, snr, rssi, lat, lon, observed_at "
+            "FROM observations WHERE kind != 'packet'"
+        )
         params: list[Any] = []
         if since is not None:
-            sql += " WHERE observed_at >= ?"
+            sql += " AND observed_at >= ?"
             params.append(since.isoformat())
         rows = self._conn.execute(sql, params).fetchall()
 

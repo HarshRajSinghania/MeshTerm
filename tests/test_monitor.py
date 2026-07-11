@@ -237,8 +237,13 @@ async def test_observations_round_trip_and_aggregate(tmp_path: Path) -> None:
 
     nodes = repo.heard_nodes()
     assert nodes
-    # Every node aggregated should have been heard at least once.
-    assert sum(n.count for n in nodes) == len(observations)
+    # Every aggregated reception should be counted — except packet-log rows, whose SNR
+    # belongs to the last relay rather than the node, so they feed topology instead.
+    receptions = [o for o in observations if o.kind != "packet"]
+    assert sum(n.count for n in nodes) == len(receptions)
+    # The simulator also overhears relayed packets, which persist with their path.
+    packets = repo.packet_paths()
+    assert packets and all(p.hops for p in packets)
     # Nodes are ordered most-recently-heard first.
     assert nodes == sorted(nodes, key=lambda n: n.last_seen, reverse=True)
     repo.close()

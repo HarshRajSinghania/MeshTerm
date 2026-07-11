@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS observations (
     rssi        REAL,
     lat         REAL,
     lon         REAL,
+    path        TEXT,             -- 'packet' rows: comma-separated relay-hop hex hashes
     observed_at TEXT    NOT NULL
 );
 
@@ -172,3 +173,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # v4 -> v5: observations gained the transmitting node's advert type, so the map can
         # tell repeaters from leaf nodes. Older rows simply carry NULL (type unknown).
         conn.execute("ALTER TABLE observations ADD COLUMN node_type INTEGER")
+    if "path" not in observation_cols:
+        # v6 -> v7: observations gained the relay path of RX-logged packets, the passive
+        # evidence the mesh topology graph is built from. Older rows carry NULL (no path).
+        conn.execute("ALTER TABLE observations ADD COLUMN path TEXT")

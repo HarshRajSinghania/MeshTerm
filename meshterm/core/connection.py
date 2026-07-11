@@ -1169,6 +1169,7 @@ class MeshCoreDevice(Device):
                     node_type=_as_int(info.get("type", info.get("adv_type"))),
                     lat=lat,
                     lon=lon,
+                    route_hops=_contact_route(info),
                 )
             )
         return contacts
@@ -1414,6 +1415,11 @@ class MeshCoreDevice(Device):
         def ack_handler(event) -> None:  # noqa: ANN001
             on_event(MeshEvent.ack_event(ack_from_event(event)))
 
+        def packet_handler(event) -> None:  # noqa: ANN001
+            obs = packet_observation_from_event(event)
+            if obs is not None:
+                on_event(MeshEvent.observation_event(obs))
+
         # Subscribe to whichever event types this firmware/library build exposes. The
         # event payload field names the mappers read are best-effort and, like the trace
         # mapping, should be validated against your firmware's event schema.
@@ -1427,6 +1433,13 @@ class MeshCoreDevice(Device):
             etype = getattr(EventType, attr, None)
             if etype is not None:
                 subs.append(subscribe(etype, observation_handler(kind)))
+        # The companion's RX packet log, when its firmware has packet logging enabled:
+        # every overheard frame arrives with the relay path it traversed — the passive
+        # topology evidence the trace path composer suggests hops from. Firmware without
+        # RX logging simply never pushes these; subscribing is free either way.
+        etype = getattr(EventType, "RX_LOG_DATA", None)
+        if etype is not None:
+            subs.append(subscribe(etype, packet_handler))
         for attr in ("CONTACT_MSG_RECV", "CHANNEL_MSG_RECV"):
             etype = getattr(EventType, attr, None)
             if etype is not None:
@@ -1756,15 +1769,19 @@ class MockDevice(Device):
         self._rng = random.Random(seed)
         self._tx_power = 20
         self._connected = False
+        # Routes mirror what real firmware learns from received floods: the repeaters are
+        # direct neighbours, the leaf nodes sit one hop behind one of them — so the trace
+        # path composer and its topology suggestions are fully exercisable without radio.
         self._contacts = [
             Contact(name="Yagi-Repeater", public_key=_mock_pub("a1b2c3d4"), key_prefix="a1b2c3d4",
-                    node_type=NODE_TYPE_REPEATER, lat=45.5019, lon=-73.5674),
+                    node_type=NODE_TYPE_REPEATER, lat=45.5019, lon=-73.5674, route_hops=()),
             Contact(name="Local-Repeater", public_key=_mock_pub("b2c3d4e5"), key_prefix="b2c3d4e5",
-                    node_type=NODE_TYPE_REPEATER, lat=45.4768, lon=-73.5990),
+                    node_type=NODE_TYPE_REPEATER, lat=45.4768, lon=-73.5990, route_hops=()),
             Contact(name="Observer-Bot", public_key=_mock_pub("c3d4e5f6"), key_prefix="c3d4e5f6",
-                    node_type=NODE_TYPE_CHAT, lat=45.4880, lon=-73.5810),
+                    node_type=NODE_TYPE_CHAT, lat=45.4880, lon=-73.5810,
+                    route_hops=("b2c3d4e5",)),
             Contact(name="Alice", public_key=_mock_pub("d4e5f6a7"), key_prefix="d4e5f6a7",
-                    node_type=NODE_TYPE_CHAT),
+                    node_type=NODE_TYPE_CHAT, route_hops=("a1b2c3d4",)),
         ]
         # Remote-admin simulation: which nodes we're "logged in" to, and each tuned
         # node's transmit power keyed by full public key. ``_default_remote_tx`` is the
@@ -2045,6 +2062,12 @@ class MockDevice(Device):
             for contact in self._contacts:
                 on_event(MeshEvent.observation_event(self._synth_observation(contact, seq)))
                 seq += 1
+            # Simulate the companion's RX packet log: overheard packets from the routed
+            # leaf nodes, each carrying the relay path it crossed — so topology capture
+            # accumulates passive path evidence on the simulator exactly as on hardware
+            # with packet logging enabled. The first burst always includes one.
+            if burst % 4 == 0:
+                on_event(MeshEvent.observation_event(self._synth_packet(burst // 4)))
             # Periodically simulate an inbound direct message so message-driven features
             # (and their tests) have traffic to react to; the first burst always includes
             # one so a subscriber sees a message without waiting.
@@ -2103,6 +2126,29 @@ class MockDevice(Device):
             rssi=round(self._rng.gauss(-95.0, 8.0), 1),
             lat=lat_lon[0] if lat_lon else None,
             lon=lat_lon[1] if lat_lon else None,
+        )
+
+    def _synth_packet(self, seq: int) -> Observation:
+        """Build one plausible RX-logged packet observation (simulator only).
+
+        Rotates over the leaf contacts that sit behind a repeater, emitting the packet
+        with the relay path its route implies — matching how a real companion reports an
+        overheard relayed frame.
+
+        Args:
+            seq: Monotonic emission counter, used to rotate the originating contact.
+
+        Returns:
+            A ``packet``-kind :class:`Observation` carrying a one-hop relay path.
+        """
+        routed = [c for c in self._contacts if c.route_hops]
+        contact = routed[seq % len(routed)]
+        return Observation(
+            node=contact.key_prefix or contact.public_key[:12],
+            kind="packet",
+            snr=round(self._rng.gauss(6.0, 3.0), 1),
+            rssi=round(self._rng.gauss(-95.0, 8.0), 1),
+            path=",".join(contact.route_hops or ()),
         )
 
     def _synth_message(self, seq: int) -> Message:
@@ -2267,6 +2313,58 @@ def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: 
     )
 
 
+def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN001
+    """Map a meshcore ``RX_LOG_DATA`` event into a ``packet``-kind :class:`Observation`.
+
+    The companion's RX packet log reports every frame it overhears together with the
+    header's relay path — the repeaters the packet crossed before reaching us, nearest
+    the originator first. That path is the passive topology evidence the trace path
+    composer runs on, so it is preserved verbatim (as comma-separated per-hop hex).
+
+    The originating node is only knowable when the payload class reveals it: the library
+    decodes adverts inline (``adv_key``/``adv_name``), so those carry an origin; other
+    packet classes are recorded origin-less — their path (plus our reception of its last
+    relay) is still adjacency evidence. Frames that carry neither an origin nor any path
+    teach us nothing about topology and map to ``None``.
+
+    Args:
+        event: A meshcore ``RX_LOG_DATA`` event (anything exposing a ``payload`` mapping).
+
+    Returns:
+        The parsed :class:`Observation` (``kind="packet"``), or ``None`` for frames with
+        no topology content or an unparsable path.
+    """
+    payload = dict(getattr(event, "payload", {}) or {})
+    path_len = _as_int(payload.get("path_len")) or 0
+    hash_size = _as_int(payload.get("path_hash_size")) or 1
+    path_hex = str(payload.get("path") or "").lower().removeprefix("0x")
+    hops: list[str] = []
+    if path_len > 0:
+        width = hash_size * 2
+        hops = [path_hex[i * width : (i + 1) * width] for i in range(path_len)]
+        if any(len(h) != width for h in hops):
+            return None  # a truncated path would fabricate adjacency between wrong nodes
+
+    origin = payload.get("adv_key")
+    if not origin and not hops:
+        return None  # neither endpoint nor relays: no topology content
+    node = str(origin).lower().removeprefix("0x")[:12] if origin else None
+    lat = payload.get("adv_lat")
+    lon = payload.get("adv_lon")
+    return Observation(
+        node=node,
+        name=payload.get("adv_name"),
+        kind="packet",
+        node_type=_as_int(payload.get("adv_type")),
+        snr=_as_float(payload.get("snr")),
+        rssi=_as_float(payload.get("rssi")),
+        lat=_as_float(lat) if lat else None,
+        lon=_as_float(lon) if lon else None,
+        path=",".join(hops),
+        raw=payload,
+    )
+
+
 def message_from_event(event) -> Optional[Message]:  # noqa: ANN001
     """Map a meshcore ``CONTACT_MSG_RECV`` / ``CHANNEL_MSG_RECV`` event into a message.
 
@@ -2347,6 +2445,40 @@ def _advert_time(last_advert: object) -> Optional[datetime]:
     if seconds <= 0:
         return None
     return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+
+def _contact_route(info: dict) -> Optional[tuple[str, ...]]:
+    """Extract a contact's device-learned outbound route as per-hop hex hashes.
+
+    The firmware distills the paths of received flood packets into each contact's
+    ``out_path``: the repeater chain to send through, one path-hash per hop, from us
+    outward. The wire reports the hop count and hash width packed into one byte
+    (``0xFF`` = no learned route, i.e. flood) and the path itself as a fixed 64-byte
+    field, so the real route is the leading ``out_path_len × size`` bytes.
+
+    Args:
+        info: One contact's raw info mapping from the companion's contacts payload.
+
+    Returns:
+        The route as a tuple of per-hop hex hashes (empty = a learned *direct* route),
+        or ``None`` when no route is learned or the report is unparsable.
+    """
+    out_path_len = _as_int(info.get("out_path_len"))
+    if out_path_len is None or out_path_len < 0:
+        return None  # 0xFF on the wire: flood routing, no learned path
+    if out_path_len == 0:
+        return ()
+    mode = _as_int(info.get("out_path_hash_mode"))
+    size = max((mode if mode is not None and mode >= 0 else 0) + 1, 1)
+    out_path = str(info.get("out_path") or "").lower().removeprefix("0x")
+    try:
+        route = bytes.fromhex(out_path)[: out_path_len * size]
+    except ValueError:
+        return None
+    hops = tuple(route[i * size : (i + 1) * size].hex() for i in range(out_path_len))
+    if any(len(h) != size * 2 for h in hops):
+        return None  # the field was shorter than the declared route; don't guess
+    return hops
 
 
 def _contact_location(info: dict) -> tuple[Optional[float], Optional[float]]:

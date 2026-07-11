@@ -53,6 +53,11 @@ class Contact:
         node_type: Advert type of the node (see the ``NODE_TYPE_*`` constants), if known.
         lat: Latitude the node last advertised (decimal degrees), if it shared one.
         lon: Longitude the node last advertised (decimal degrees), if it shared one.
+        route_hops: The device-learned outbound route to this contact, one hex path-hash
+            per repeater in order from us outward — knowledge the firmware distilled from
+            the paths of *received* flood packets. An empty tuple means the firmware
+            considers the contact a direct neighbour (a zero-hop route); ``None`` means
+            no route has been learned (or the transport didn't report one).
     """
 
     name: str
@@ -62,6 +67,7 @@ class Contact:
     node_type: Optional[int] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    route_hops: Optional[tuple[str, ...]] = None
 
     @property
     def has_location(self) -> bool:
@@ -92,6 +98,14 @@ class Observation:
         rssi: Received signal strength (dBm), if reported.
         lat: Advertised latitude (decimal degrees), when the node shares location.
         lon: Advertised longitude (decimal degrees), when the node shares location.
+        path: For ``packet`` observations (the companion's RX packet log), the relay
+            path the packet traversed before reaching us: comma-separated per-hop hex
+            hashes in propagation order, nearest the *originator* first and the repeater
+            we actually heard last. An empty string means the packet arrived direct
+            (zero hops); ``None`` means the packet class carries no path. For packets,
+            :attr:`snr`/:attr:`rssi` describe our reception from the *last relay* in
+            this path — not the originating :attr:`node` — which is why packet rows are
+            kept out of per-node reception statistics and feed topology instead.
         observed_at: When the packet was heard.
         raw: Optional raw event payload for debugging/replay.
     """
@@ -104,6 +118,7 @@ class Observation:
     rssi: Optional[float] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    path: Optional[str] = None
     observed_at: datetime = field(default_factory=utcnow)
     raw: Optional[dict] = None
 

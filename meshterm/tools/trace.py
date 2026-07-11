@@ -1,11 +1,12 @@
 """The ``trace`` tool: path traces to a target, live in the menu, one-shot on the CLI.
 
 In the interactive menu this opens the live trace screen
-(:mod:`meshterm.ui.trace_screen`): pick a target from a recency-ordered list and traces
-start streaming immediately — further bursts, sample counts, and a forced path are
-keystrokes inside the screen, following the same living-screen pattern as chat and the
-nodes list. On the CLI it stays a scriptable one-shot: run N traces, print the per-trace
-table and the aggregate summary, exit.
+(:mod:`meshterm.ui.trace_screen`): pick a target from a recency-ordered list and the
+screen opens armed but idle — Enter runs a burst under an abortable tracing dialog, ``p``
+composes a forced path hop by hop from the topology observed in received traffic, and
+``x`` explores ranked path scenarios (with an optional probe that measures each candidate
+and offers the winner). On the CLI it stays a scriptable one-shot: run N traces, print
+the per-trace table and the aggregate summary, exit.
 
 Both front ends persist identically: one ``runs`` row per burst with every trace recorded
 under it, so stored history reads the same no matter where it came from.

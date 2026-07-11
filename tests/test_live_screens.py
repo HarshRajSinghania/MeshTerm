@@ -18,13 +18,23 @@ from meshterm.ui.tx_screen import TxSweepScreen
 
 
 class _FakeSession:
-    """The one session capability the screens use directly: requesting a repaint."""
+    """The session capabilities the screens use directly: repaints and the dialog stack."""
 
     def __init__(self) -> None:
         self.repaints = 0
+        self.stack: list = []
 
     def invalidate(self) -> None:
         self.repaints += 1
+
+    def push(self, screen) -> None:  # noqa: ANN001
+        self.stack.append(screen)
+
+    def pop(self, screen=None) -> None:  # noqa: ANN001
+        if screen is None:
+            self.stack.pop()
+        elif screen in self.stack:
+            self.stack.remove(screen)
 
 
 def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceResult:
@@ -61,14 +71,16 @@ def test_snr_bar_clamps_out_of_range_readings() -> None:
 # --- TraceScreen ----------------------------------------------------------------
 
 
-def _trace_screen(burst=None, edit_path=None, previous=None) -> tuple[TraceScreen, _FakeSession]:
+def _trace_screen(
+    burst=None, compose_path=None, explore=None, previous=None
+) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
     async def default_burst(samples, path_spec, on_trace):  # noqa: ANN001
         for _ in range(samples):
             on_trace(_trace(5.0, 2.0))
 
-    async def default_edit(current):  # noqa: ANN001
+    async def default_flow(current):  # noqa: ANN001
         return current
 
     screen = TraceScreen(
@@ -78,7 +90,8 @@ def _trace_screen(burst=None, edit_path=None, previous=None) -> tuple[TraceScree
         resolve=lambda label: label,
         session=session,
         burst=burst or default_burst,
-        edit_path=edit_path or default_edit,
+        compose_path=compose_path or default_flow,
+        explore=explore or default_flow,
         previous=previous,
     )
     return screen, session
@@ -152,20 +165,91 @@ async def test_trace_screen_samples_cycle_only_when_idle() -> None:
     assert screen._samples == 5  # locked while a burst is in flight
 
 
-async def test_trace_screen_path_dialog_updates_the_spec() -> None:
-    """`p` opens the injected path prompt; its result becomes the next burst's path."""
+async def test_trace_screen_composer_updates_the_spec() -> None:
+    """`p` opens the injected composer flow; its result becomes the next burst's path."""
     asked: list[str] = []
 
-    async def edit(current: str):  # noqa: ANN001
+    async def compose(current: str):  # noqa: ANN001
         asked.append(current)
         return "3d,f2"
 
-    screen, _ = _trace_screen(edit_path=edit)
+    screen, _ = _trace_screen(compose_path=compose)
     screen.handle("text", "p")
     await asyncio.sleep(0)
     assert asked == [""]
     assert screen._path_spec == "3d,f2"
-    assert "3d,f2" in _plain(screen.render_body(100))
+    body = _plain(screen.render_body(100))
+    assert "3d,f2" in body
+    assert "auto return" in body  # the planned route previews the outbound leg
+
+
+async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
+    """`x` runs the injected explore flow; adopting a path sets the spec, None keeps it."""
+
+    async def adopt(current: str):  # noqa: ANN001
+        return "3d63,f2c2"
+
+    screen, _ = _trace_screen(explore=adopt)
+    screen.handle("text", "x")
+    await asyncio.sleep(0)
+    assert screen._path_spec == "3d63,f2c2"
+
+    async def keep(current: str):  # noqa: ANN001
+        return None
+
+    screen._explore = keep
+    screen.handle("text", "x")
+    await asyncio.sleep(0)
+    assert screen._path_spec == "3d63,f2c2"  # None leaves the spec untouched
+
+
+async def test_trace_screen_opens_idle_until_enter() -> None:
+    """Selecting a target must never transmit by itself: no burst until Enter."""
+    screen, session = _trace_screen()
+    assert not screen._running and screen._worker is None
+    assert "press Enter to trace" in _plain(screen.render_body(100))
+    screen.handle("enter")
+    assert screen._running
+    await screen._worker
+    assert session.stack == []  # the tracing dialog was popped with the burst
+
+
+async def test_trace_screen_burst_floats_the_tracing_dialog() -> None:
+    """A burst pushes the abortable dialog for its duration and pops it however it ends."""
+    release = asyncio.Event()
+
+    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+        on_trace(_trace(5.0))
+        await release.wait()
+
+    screen, session = _trace_screen(burst=burst)
+    screen.start_burst()
+    await asyncio.sleep(0)
+    assert len(session.stack) == 1
+    dialog = session.stack[0]
+    assert "2/3" in dialog.status  # one reply landed; the second is in flight
+    body = _plain(dialog.render_body(60))
+    assert "Abort" in body
+    release.set()
+    await screen._worker
+    assert session.stack == []
+
+
+async def test_tracing_dialog_abort_cancels_the_burst() -> None:
+    """Enter/Esc on the tracing dialog cancels the in-flight burst via the screen."""
+    release = asyncio.Event()
+
+    async def burst(samples, path_spec, on_trace):  # noqa: ANN001
+        await release.wait()
+
+    screen, session = _trace_screen(burst=burst)
+    screen.start_burst()
+    await asyncio.sleep(0)
+    session.stack[0].handle("escape")
+    with pytest.raises(asyncio.CancelledError):
+        await screen._worker
+    assert session.stack == []
+    assert not screen._running
 
 
 async def test_trace_screen_escape_cancels_the_inflight_burst() -> None:

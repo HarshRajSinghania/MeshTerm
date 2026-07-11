@@ -1,0 +1,315 @@
+"""The trace path composer: build a forced route hop by hop, guided by observed links.
+
+A floating dialog over the live trace screen. The route under construction reads across
+the top — ``us → hop → … → target`` with the target pinned as the final hop, since a
+trace only replies when the destination's own hash ends the path — and beneath it sits a
+suggestion list: the nodes the topology evidence says the path's current tail can hear,
+strongest observed link first (see :meth:`~meshterm.services.topology.MeshTopology.
+next_hops`). Every link is bidirectional evidence, so a path that was ever *received*
+through two nodes proposes that link in either direction.
+
+Interaction, following the reorder screen's cursor-over-rows-and-actions pattern:
+
+* ↑/↓ move over suggestions and the action rows; Enter on a suggestion appends it.
+* Typing filters the suggestions by name or hash — and when the typed text is itself
+  even-length hex, an *add custom hop* row appears, so a node we have never observed
+  (or a bare hash from another tool) can be forced into the route.
+* Backspace erases the filter first; with the filter empty it removes the last hop.
+* Enter on **Use this path** commits the composed spec; **Auto** hands routing back to
+  the device; Esc cancels with no change.
+
+The return leg is never composed: the trace protocol replies along the reversed path
+automatically, so the dialog shows the outbound route only and says so.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from rich.cells import cell_len
+from rich.text import Text
+
+from ..services.topology import MeshTopology, _is_hex, collapse_width
+from .theme import snr_style
+from .tui.render import render_lines, render_to_ansi
+from .tui.screen import Screen
+from .widgets import _age_seconds, _format_age
+
+#: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
+#: empty-spec convention).
+AUTO_SPEC = ""
+
+#: How many suggestions to show at most; beyond this the evidence is too weak to matter
+#: and the dialog would outgrow the screen.
+_MAX_SUGGESTIONS = 12
+
+#: Action-row sentinels (kept distinct from suggestion rows, which carry node ids).
+_USE = "use"
+_AUTO = "auto"
+_CANCEL = "cancel"
+
+#: One-letter tags for the evidence classes backing a link, shown beside each
+#: suggestion: T(race), R(oute — the firmware's learned out_path), P(acket log).
+_SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P"}
+
+
+class PathComposerScreen(Screen):
+    """Compose a forced outbound trace path step by step.
+
+    Resolves with the finished spec (comma-separated hex, ending at the target),
+    :data:`AUTO_SPEC` for device routing, or :data:`~meshterm.ui.tui.screen.CANCEL`.
+    """
+
+    footer_hint = (
+        "↑↓ move · Enter add/select · type to filter or enter hex · ⌫ remove · Esc cancel"
+    )
+
+    def __init__(
+        self,
+        *,
+        target_id: str,
+        target_hash: str,
+        target_label: str,
+        device_label: str,
+        topology: MeshTopology,
+        width_bytes: int,
+        hops: Optional[list[str]] = None,
+    ) -> None:
+        """Build the composer.
+
+        Args:
+            target_id: The target's canonical id (excluded from suggestions; the path
+                implicitly ends at it).
+            target_hash: The target's hex hash used as the spec's final hop (its full
+                key prefix; truncated to the spec width at commit).
+            target_label: The target's display name for the route preview.
+            device_label: Our own node's name, opening the route preview.
+            topology: The evidence graph suggestions are drawn from.
+            width_bytes: Preferred per-hop path-hash width (bytes) for the emitted spec.
+            hops: Canonical ids of already-composed intermediate hops (reopening the
+                dialog resumes where the user left off).
+        """
+        super().__init__()
+        self.title = f"compose path · {target_label}"
+        self._target_id = target_id
+        self._target_hash = target_hash.lower().removeprefix("0x")
+        self._target_label = target_label
+        self._device_label = device_label
+        self._topology = topology
+        self._width_bytes = width_bytes
+        self._hops: list[str] = list(hops or [])
+        self._entry = ""
+        self._index = 0
+
+    # --- state -----------------------------------------------------------------
+
+    def _tail(self) -> str:
+        """The node the path currently ends at (us until a hop is added)."""
+        return self._hops[-1] if self._hops else self._topology.self_id
+
+    def _suggestions(self) -> list:
+        """The current suggestion rows, filtered by the typed entry.
+
+        Returns:
+            The (possibly filtered) :class:`~meshterm.services.topology.HopSuggestion`
+            list for the path's tail, capped at :data:`_MAX_SUGGESTIONS`.
+        """
+        exclude = frozenset(
+            {self._topology.self_id, self._target_id, *self._hops}
+        )
+        suggestions = self._topology.next_hops(self._tail(), exclude=exclude)
+        needle = self._entry.lower()
+        if needle:
+            suggestions = [
+                s
+                for s in suggestions
+                if s.node.startswith(needle)
+                or needle in (self._topology.display_name(s.node) or "").lower()
+            ]
+        return suggestions[:_MAX_SUGGESTIONS]
+
+    def _custom_hex(self) -> Optional[str]:
+        """The typed entry as an addable hex hop, or ``None`` when it isn't one."""
+        needle = self._entry.lower().removeprefix("0x")
+        return needle if _is_hex(needle) else None
+
+    def _rows(self) -> list[tuple[str, object]]:
+        """The cursor-addressable rows: custom hop, suggestions, then the actions."""
+        rows: list[tuple[str, object]] = []
+        custom = self._custom_hex()
+        if custom:
+            rows.append(("custom", custom))
+        rows.extend(("hop", s) for s in self._suggestions())
+        rows.append(("action", _USE))
+        rows.append(("action", _AUTO))
+        rows.append(("action", _CANCEL))
+        return rows
+
+    def _spec(self) -> str:
+        """Render the composed route as the forced-path spec, target hash appended.
+
+        The width shrinks below the preferred one only when a composed hop's known hash
+        is narrower (see :func:`collapse_width`), keeping every hop representable.
+        """
+        width = collapse_width(*self._hops, self._target_hash, ceiling=self._width_bytes)
+        return ",".join(h[: width * 2] for h in (*self._hops, self._target_hash))
+
+    # --- rendering ---------------------------------------------------------------
+
+    def _node_text(self, node: str) -> Text:
+        """A node as ``Name (hash)`` when known, else its bare hash, brand-tinted."""
+        if node == self._topology.self_id:
+            return Text(self._device_label, style="accent")
+        name = self._topology.display_name(node)
+        if name:
+            text = Text(name, style="brand")
+            text.append(f" ({node[:6]})", style="muted")
+            return text
+        return Text(node, style="brand")
+
+    def _route_preview(self) -> Text:
+        """The outbound route under construction, target pinned as the final hop."""
+        text = Text(self._device_label, style="accent")
+        for hop in self._hops:
+            text.append(" → ", style="muted")
+            text.append_text(self._node_text(hop))
+        text.append(" → ", style="muted")
+        text.append(self._target_label, style="ok")
+        return text
+
+    def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
+        """One suggestion row: node, then its link's evidence trail."""
+        text = self._node_text(suggestion.node)
+        link = suggestion.link
+        snr = link.median_snr
+        if snr is not None:
+            text.append("  ↔ ", style="muted")
+            text.append(f"{snr:+.1f} dB", style=snr_style(snr))
+        text.append(f"  {link.samples}×", style="muted")
+        age = _format_age(_age_seconds(link.last_seen))
+        text.append(f" · {age}", style="muted")
+        tags = "".join(_SOURCE_TAGS[s] for s in sorted(link.sources & _SOURCE_TAGS.keys()))
+        if tags:
+            text.append(f" · {tags}", style="faint")
+        return text
+
+    def _row_text(self, kind: str, payload: object) -> Text:
+        """The display text for one cursor-addressable row."""
+        if kind == "custom":
+            text = Text("+ add hop ", style="warn")
+            text.append(str(payload), style="brand")
+            text.append("  (typed hex)", style="muted")
+            return text
+        if kind == "hop":
+            return self._suggestion_text(payload)
+        if payload == _USE:
+            label = Text.assemble(("✓ ", "ok"), "Use this path")
+            label.append(f"  ({self._spec()})", style="muted")
+            return label
+        if payload == _AUTO:
+            return Text("Auto — let the device route")
+        return Text.assemble(("✗ ", "err"), "Cancel")
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width hugging the widest row (compositor still caps it)."""
+        widths = [cell_len(self.title), cell_len(self.footer_hint)]
+        widths.append(cell_len(self._route_preview().plain))
+        for kind, payload in self._rows():
+            widths.append(cell_len(self._row_text(kind, payload).plain) + 2)
+        return max(widths, default=20) + 8
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the route preview, filter/hint line, suggestions, and actions."""
+        rows = self._rows()
+        self._index = max(0, min(self._index, len(rows) - 1))
+
+        lines = render_lines(self._route_preview(), width)
+        lines.extend(
+            render_lines(
+                Text("return: automatic — the reply retraces the path in reverse", style="faint"),
+                width,
+            )
+        )
+        lines.append("")
+        if self._entry:
+            lines.append(render_to_ansi(Text(f"/{self._entry}", style="warn"), width))
+        else:
+            heading = Text("Next hop from ", style="muted")
+            heading.append_text(self._node_text(self._tail()))
+            heading.append(" — strongest first", style="muted")
+            lines.extend(render_lines(heading, width))
+
+        cursor_at: Optional[int] = None
+        for i, (kind, payload) in enumerate(rows):
+            if kind == "action" and (i == 0 or rows[i - 1][0] != "action"):
+                lines.append("")  # a spacer sets the action group apart
+            is_sel = i == self._index
+            text = Text("❯ " if is_sel else "  ", style="brand" if is_sel else "")
+            text.append_text(self._row_text(kind, payload))
+            if is_sel:
+                text.style = "brand"
+            text.no_wrap = True
+            text.truncate(width, overflow="ellipsis")
+            if is_sel:
+                cursor_at = len(lines)
+            lines.append(render_to_ansi(text, width))
+        if not any(kind == "hop" for kind, _ in rows):
+            note = "(no observed links from here — type a hex hash to force a hop)"
+            lines.append(render_to_ansi(Text(note, style="muted"), width))
+
+        self._cursor = cursor_at
+        self._scroll_total = max(1, len(lines))
+        return lines
+
+    def cursor_line(self) -> Optional[int]:
+        """The body line of the highlighted row, so the session keeps it visible."""
+        return getattr(self, "_cursor", None)
+
+    # --- input ---------------------------------------------------------------------
+
+    def _commit_row(self) -> None:
+        """Apply the highlighted row: append a hop or run an action."""
+        rows = self._rows()
+        if not rows:
+            return
+        kind, payload = rows[self._index]
+        if kind == "custom":
+            self._hops.append(str(payload))
+            self._entry = ""
+            self._index = 0
+        elif kind == "hop":
+            self._hops.append(payload.node)  # type: ignore[union-attr]
+            self._entry = ""
+            self._index = 0
+        elif payload == _USE:
+            self.resolve(self._spec())
+        elif payload == _AUTO:
+            self.resolve(AUTO_SPEC)
+        else:
+            super().handle("escape")
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Move the cursor, edit the entry, add/remove hops, or commit/cancel."""
+        rows = self._rows()
+        if action == "up" and rows:
+            self._index = (self._index - 1) % len(rows)
+        elif action == "down" and rows:
+            self._index = (self._index + 1) % len(rows)
+        elif action in ("home", "ctrl_home"):
+            self._index = 0
+        elif action in ("end", "ctrl_end"):
+            self._index = max(0, len(rows) - 1)
+        elif action == "enter":
+            self._commit_row()
+        elif action == "backspace":
+            if self._entry:
+                self._entry = self._entry[:-1]
+            elif self._hops:
+                self._hops.pop()
+            self._index = 0
+        elif action == "text" and data.isprintable() and data not in ("/",):
+            self._entry += data
+            self._index = 0
+        elif action == "escape":
+            super().handle("escape")
