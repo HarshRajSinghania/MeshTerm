@@ -13,7 +13,7 @@ from datetime import timedelta
 import pytest
 
 from meshterm.core.models import Hop, TraceResult, TraceStats, TxLevelResult, TxOptResult, utcnow
-from meshterm.ui.trace_screen import TraceScreen, snr_bar
+from meshterm.ui.trace_screen import _BAR_FULL, _BAR_HALF, _BAR_WIDTH, TraceScreen, snr_bar
 from meshterm.ui.tx_screen import TxSweepScreen
 
 
@@ -53,19 +53,37 @@ def _plain(lines: list[str]) -> str:
 # --- snr_bar -------------------------------------------------------------------
 
 
+def _filled_steps(bar: str) -> int:
+    """Count a rendered bar's fill steps — two per full braille cell, one per half."""
+    return bar.count(_BAR_FULL) * 2 + bar.count(_BAR_HALF)
+
+
 def test_snr_bar_scales_with_signal_quality() -> None:
     """A stronger signal fills more of the track; None renders an empty muted track."""
     weak = snr_bar(-12.0).plain
     strong = snr_bar(8.0).plain
-    assert weak.count("▆") < strong.count("▆")
-    assert len(weak) == len(strong)  # the track width is constant
-    assert "▆" not in snr_bar(None).plain
+    assert _filled_steps(weak) < _filled_steps(strong)
+    assert len(weak) == len(strong) == _BAR_WIDTH  # the track width is constant
+    assert _filled_steps(snr_bar(None).plain) == 0
 
 
 def test_snr_bar_clamps_out_of_range_readings() -> None:
     """Readings beyond the display range clamp to the ends instead of over/underflowing."""
-    assert snr_bar(99.0).plain.count("▆") == snr_bar(10.0).plain.count("▆")
-    assert snr_bar(-99.0).plain.count("▆") == 1  # a heard hop always shows something
+    assert _filled_steps(snr_bar(99.0).plain) == _filled_steps(snr_bar(10.0).plain)
+    assert _filled_steps(snr_bar(-99.0).plain) == 1  # a heard hop always shows something
+
+
+def test_snr_bar_packs_two_steps_per_character() -> None:
+    """16 steps of resolution pack into 8 characters: full cells, then one trailing half."""
+    one_step = snr_bar(-13.4375).plain  # frac = 1/16 of the -15..+10 span
+    assert one_step[0] == _BAR_HALF
+    assert one_step[1:] == "·" * (_BAR_WIDTH - 1)
+
+    three_steps = snr_bar(-10.3125).plain  # frac = 3/16 → one full cell, one half
+    assert three_steps[:2] == _BAR_FULL + _BAR_HALF
+    assert three_steps[2:] == "·" * (_BAR_WIDTH - 2)
+
+    assert snr_bar(10.0).plain == _BAR_FULL * _BAR_WIDTH  # top of range: every cell full
 
 
 # --- _previous_outbound -----------------------------------------------------------

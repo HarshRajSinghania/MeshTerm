@@ -83,13 +83,25 @@ if TYPE_CHECKING:
 #: Seconds between spinner frames while a trace or probe is in flight.
 _SPINNER_INTERVAL = 0.12
 
-#: How wide the per-hop SNR quality bars draw, in cells.
-_BAR_WIDTH = 16
+#: How wide the per-hop SNR quality bars draw, in characters. Each character packs
+#: two fill steps (see :func:`snr_bar`), so the bar reads at 16-step resolution in
+#: half the columns a one-step-per-cell block bar would need.
+_BAR_WIDTH = 8
 
 #: The SNR range the bars span, in dB: -15 (barely readable) to +10 (excellent). Values
 #: outside clamp to the ends, so the bar always shows *something* for a heard hop.
 _BAR_SNR_MIN = -15.0
 _BAR_SNR_MAX = 10.0
+
+#: A half-filled bar step: a braille cell with only its left column of the middle
+#: two dot rows raised (dots 2, 3 — the top row, dots 1 and 4, and the bottom row,
+#: dots 7 and 8, both stay blank, so the glyph sits mid-cell instead of hugging
+#: either edge).
+_BAR_HALF = "⠆"
+
+#: A full bar step: both columns of the same middle two rows raised (dots 2, 3,
+#: 5, 6).
+_BAR_FULL = "⠶"
 
 #: The sample counts the Sample count dialog offers: how many traces one Trace action
 #: runs, paced between transmissions.
@@ -110,21 +122,27 @@ PathFlow = Callable[[str], Awaitable[Optional[str]]]
 def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
     """Render an SNR reading as a horizontal quality bar in the shared SNR colours.
 
+    Packs two fill steps into each character — a half step (:data:`_BAR_HALF`) then
+    a full step (:data:`_BAR_FULL`) — for 16-step resolution in ``width`` characters
+    instead of needing one cell per step.
+
     Args:
         snr: The reading in dB, or ``None`` (renders as an empty, muted track).
-        width: Total bar track width in cells.
+        width: Bar track width in characters (each worth two fill steps).
 
     Returns:
-        A :class:`Text` of filled blocks over a faint track, coloured by
-        :func:`~meshterm.ui.theme.snr_style`.
+        A :class:`Text` of filled braille cells over a faint dotted track,
+        coloured by :func:`~meshterm.ui.theme.snr_style`.
     """
     if snr is None:
         return Text("·" * width, style="faint")
     span = _BAR_SNR_MAX - _BAR_SNR_MIN
     frac = min(1.0, max(0.0, (snr - _BAR_SNR_MIN) / span))
-    filled = max(1, round(frac * width))
-    bar = Text("▆" * filled, style=snr_style(snr))
-    bar.append("·" * (width - filled), style="faint")
+    steps = max(1, round(frac * width * 2))
+    full, half = divmod(steps, 2)
+    filled = _BAR_FULL * full + _BAR_HALF * half
+    bar = Text(filled, style=snr_style(snr))
+    bar.append("·" * (width - len(filled)), style="faint")
     return bar
 
 
