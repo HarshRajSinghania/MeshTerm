@@ -127,9 +127,10 @@ def _header(ctx: AppContext, cache: dict) -> Text:
 
     Left to right: the app mark, the connected node's own name with where it's reached
     (``(COM5)`` / ``(BLE)``), an unread-message badge (channels and direct alike, shown
-    only when something is waiting), and a two-hour braille activity indicator counting
-    every packet the hub hears — the same drawing as the channel manager's sparklines,
-    with a leading ●/○ live-light for whether the hub is pumping yet.
+    only when something is waiting, in the red-dot language of the channel list and the
+    conversation picker), and a two-hour braille activity indicator counting every
+    packet the hub hears — the same drawing as the channel manager's sparklines, with a
+    leading ●/○ live-light for whether the hub is pumping yet.
 
     Args:
         ctx: The shared application context, read live on every repaint.
@@ -155,7 +156,8 @@ def _header(ctx: AppContext, cache: dict) -> Text:
     unread = ctx.chat.unread_total()
     if unread:
         header.append("  ·  ")
-        header.append(f"✉ {unread}", style="accent")
+        header.append("●", style="err")
+        header.append(f" {unread}", style="warn")
     header.append("  ·  ")
     header.append("●" if ctx.events.active else "○", style="ok" if ctx.events.active else "muted")
     header.append(" ")
