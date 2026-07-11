@@ -72,7 +72,8 @@ def test_snr_bar_clamps_out_of_range_readings() -> None:
 
 
 def _trace_screen(
-    trace=None, compose_path=None, explore=None, pick_width=None, previous=None
+    trace=None, compose_path=None, explore=None, pick_width=None, pick_samples=None,
+    previous=None, mode="target", samples=1,
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
@@ -83,26 +84,30 @@ def _trace_screen(
         return current
 
     screen = TraceScreen(
-        "Alice",
+        "Alice" if mode == "target" else "(path)",
+        mode=mode,
         device_label="Us",
         device_hash="aabb" + "00" * 30,
         resolve=lambda label: label,
         session=session,
         trace=trace or default_trace,
         compose_path=compose_path or default_flow,
-        explore=explore or default_flow,
+        explore=(explore or default_flow) if mode == "target" else None,
         pick_width=pick_width or default_flow,
+        pick_samples=pick_samples or default_flow,
         width_bytes=lambda: 2,
+        sample_count=lambda: samples,
+        pace_s=0.0,  # tests never sleep; pacing is asserted through the statuses
         previous=previous,
     )
     return screen, session
 
 
 async def test_trace_screen_one_trace_per_enter_accumulates() -> None:
-    """Each Enter transmits exactly one trace; the session aggregates what landed.
+    """At the default sample count, each Enter transmits exactly one trace.
 
-    Single-transmission is the screen's blacklist-avoidance rule: repeat sampling is
-    the human's call, so three keypresses mean three traces and a three-sample median.
+    Repeat sampling stays a human decision unless a bigger sample count is chosen
+    explicitly, so three keypresses mean three traces and a three-sample median.
     """
     screen, _ = _trace_screen()
     for _ in range(3):
@@ -113,6 +118,48 @@ async def test_trace_screen_one_trace_per_enter_accumulates() -> None:
     assert "#3" in body  # newest-first numbering
     assert "Per-hop medians" in body
     assert "burst" not in body.lower()  # no burst configuration is offered anywhere
+
+
+async def test_trace_screen_runs_the_chosen_sample_count() -> None:
+    """One Enter runs the whole chosen sample count, every trace recorded."""
+    ran: list[str] = []
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        ran.append(path_spec)
+        on_trace(_trace(5.0))
+
+    screen, session = _trace_screen(trace=trace, samples=3)
+    screen.start_trace()
+    await screen._worker
+    assert len(ran) == 3
+    assert len(screen._traces) == 3
+    assert session.stack == []  # the dialog was popped with the run
+
+
+async def test_trace_screen_multi_trace_reports_progress_and_abort_keeps_landed() -> None:
+    """A multi-trace run counts itself off; aborting keeps what already landed."""
+    release = asyncio.Event()
+    ran = 0
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        nonlocal ran
+        ran += 1
+        on_trace(_trace(5.0))
+        if ran == 2:
+            await release.wait()  # hold the run mid-flight on the second trace
+
+    screen, session = _trace_screen(trace=trace, samples=5)
+    screen.start_trace()
+    await asyncio.sleep(0)
+    dialog = session.stack[0]
+    assert "2/5" in dialog.status  # the dialog counts the run off
+    assert "2/5" in screen.footer_hint
+    assert "2/5" in _plain(screen.render_body(100))  # the log spinner row too
+    screen.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await screen._worker
+    assert len(screen._traces) == 2  # already-recorded traces are kept
+    assert session.stack == []
 
 
 async def test_trace_screen_seeds_route_from_previous_trace() -> None:
@@ -126,6 +173,15 @@ async def test_trace_screen_seeds_route_from_previous_trace() -> None:
     screen._on_trace(_trace(6.0))
     body = _plain(screen.render_body(100))
     assert "(previous" not in body
+
+
+async def test_previous_stamp_sits_on_its_own_line() -> None:
+    """The (previous · …) marker renders under the route, never squeezed beside it."""
+    old = _trace(4.0)
+    old.timestamp = utcnow() - timedelta(hours=3)
+    screen, _ = _trace_screen(previous=old)
+    stamp_line = next(l for l in screen.render_body(100) if "(previous" in l)
+    assert "→" not in stamp_line  # the route stays on the line above
 
 
 async def test_trace_screen_only_one_trace_at_a_time() -> None:
@@ -161,7 +217,7 @@ async def test_trace_screen_failure_reads_inline() -> None:
 
 
 async def test_trace_screen_composer_updates_the_spec() -> None:
-    """`p` opens the injected composer flow; its result becomes the next trace's path."""
+    """Committing Compose path runs the flow; its result becomes the next trace's path."""
     asked: list[str] = []
 
     async def compose(current: str):  # noqa: ANN001
@@ -169,7 +225,9 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
         return "3d,f2,3d"  # one forced hop: outbound, target, then the mirrored return
 
     screen, _ = _trace_screen(compose_path=compose)
-    screen.handle("text", "p")
+    screen.handle("down")  # Trace → Back…
+    screen.handle("down")  # …wrapping onto Compose path, the first row
+    screen.handle("enter")
     await asyncio.sleep(0)
     assert asked == [""]
     assert screen._path_spec == "3d,f2,3d"
@@ -181,13 +239,15 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
 
 
 async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
-    """`x` runs the injected explore flow; adopting a path sets the spec, None keeps it."""
+    """Committing Explore paths runs the flow; adopting sets the spec, None keeps it."""
 
     async def adopt(current: str):  # noqa: ANN001
         return "3d63,f2c2"
 
     screen, _ = _trace_screen(explore=adopt)
-    screen.handle("text", "x")
+    for _ in range(3):
+        screen.handle("up")  # Trace → Sample count → Path width → Explore paths
+    screen.handle("enter")
     await asyncio.sleep(0)
     assert screen._path_spec == "3d63,f2c2"
 
@@ -195,7 +255,7 @@ async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
         return None
 
     screen._explore = keep
-    screen.handle("text", "x")
+    screen.handle("enter")  # the cursor is still on Explore paths
     await asyncio.sleep(0)
     assert screen._path_spec == "3d63,f2c2"  # None leaves the spec untouched
 
@@ -210,35 +270,64 @@ async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
 
     screen, _ = _trace_screen(pick_width=width_flow)
     body = _plain(screen.render_body(100))
-    assert "Trace — one transmission" in body
-    assert "Path width — 2 bytes per hop" in body
-    assert "Compose path" in body and "Explore paths" in body
-    screen.handle("down")  # Trace → Path width
+    # The menu order the actions read in: build first, tune, then transmit, then out.
+    labels = ["Compose path", "Explore paths", "Path width — 2 bytes per hop",
+              "Sample count — 1 trace", "Trace — one transmission", "Back"]
+    positions = [body.index(label) for label in labels]
+    assert positions == sorted(positions)
+    screen.handle("up")  # Trace → Sample count
+    screen.handle("up")  # → Path width
     screen.handle("enter")
     await asyncio.sleep(0)
     assert opened == ["width:"]
     assert screen._path_spec == "3d63,f2c2,3d63"
 
 
-async def test_trace_screen_w_hotkey_opens_the_width_dialog() -> None:
-    """`w` floats the width flow directly; a cancelled flow leaves the spec alone."""
+async def test_trace_screen_sample_count_row_opens_its_dialog() -> None:
+    """Committing Sample count floats the flow; its None resolution keeps the spec."""
     opened: list[str] = []
 
-    async def width_flow(current):  # noqa: ANN001
+    async def samples_flow(current):  # noqa: ANN001
         opened.append(current)
-        return None  # cancelled: the spec must stay untouched
+        return None
 
-    screen, _ = _trace_screen(pick_width=width_flow)
+    screen, _ = _trace_screen(pick_samples=samples_flow)
     screen._path_spec = "3d,f2,3d"
-    screen.handle("text", "w")
+    screen.handle("up")  # Trace → Sample count
+    screen.handle("enter")
     await asyncio.sleep(0)
     assert opened == ["3d,f2,3d"]
-    assert screen._path_spec == "3d,f2,3d"
-    assert screen._index == 0  # the cursor stays on Trace: plain Enter still traces
+    assert screen._path_spec == "3d,f2,3d"  # the count is not a spec: nothing changes
+
+
+async def test_trace_screen_hotkeys_are_retired() -> None:
+    """The old w/p/x shortcuts are gone: typing must not float any flow."""
+    opened: list[str] = []
+
+    async def flow(current):  # noqa: ANN001
+        opened.append(current)
+        return None
+
+    screen, _ = _trace_screen(compose_path=flow, explore=flow, pick_width=flow,
+                              pick_samples=flow)
+    for key in ("p", "x", "w", "s"):
+        screen.handle("text", key)
+    await asyncio.sleep(0)
+    assert opened == []
+    assert not screen._running
+
+
+async def test_trace_screen_back_row_resolves_like_escape() -> None:
+    """The Back row leaves the screen exactly as Esc does."""
+    screen, _ = _trace_screen()
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.handle("down")  # Trace → Back
+    screen.handle("enter")
+    assert screen.future.result() is None
 
 
 def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
-    """A palindromic (symmetric) spec dims its second half; a hand-composed one doesn't."""
+    """A palindromic target-mode spec dims its second half; hand walks never dim."""
     screen, _ = _trace_screen()
 
     def faint_cells(text) -> int:  # noqa: ANN001
@@ -249,10 +338,48 @@ def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
     screen._path_spec = "3d,f2,3d"  # symmetric boomerang: the mirror is dimmed
     symmetric = screen._planned_route()
     assert symmetric.plain == "Us → 3d → f2 → 3d → Us"
-    screen._path_spec = "3d,f2,27"  # asymmetric walk: every hop is the user's
+    screen._path_spec = "3d,f2,27"  # a stale hand walk: every hop is the user's
     custom = screen._planned_route()
     assert custom.plain == "Us → 3d → f2 → 27 → Us"
     assert faint_cells(symmetric) > faint_cells(custom)
+
+    # In path mode even a there-and-back-the-same-way walk is fully hand-composed,
+    # so a palindrome must NOT read as "not yours to compose".
+    walk, _ = _trace_screen(mode="path")
+    walk._path_spec = "3d,f2,3d"
+    assert faint_cells(walk._planned_route()) == faint_cells(custom)
+
+
+def test_summary_appends_the_displayed_hop_count() -> None:
+    """The path row ends with how many nodes the displayed route passes through."""
+    screen, _ = _trace_screen()
+    screen._path_spec = "3d,f2,3d"
+    assert "· 3 hops" in _plain(screen.render_body(100))
+    screen._on_trace(_trace(5.0, 2.0))  # a live 2-hop route now outranks the plan
+    assert "· 2 hops" in _plain(screen.render_body(100))
+
+
+def test_trace_log_section_hidden_until_there_is_something_to_log() -> None:
+    """Idle with no traces, the Traces heading (and its old hint) don't render."""
+    screen, _ = _trace_screen()
+    assert "Traces" not in _plain(screen.render_body(100))
+
+
+async def test_trace_screen_path_mode_gates_trace_and_drops_explore() -> None:
+    """Path mode: no Explore row, and Trace stays inert until a path exists."""
+    screen, _ = _trace_screen(mode="path")
+    body = _plain(screen.render_body(100))
+    assert "Explore paths" not in body
+    assert "Trace — compose a path first" in body
+    assert "none — compose a path" in body
+    screen.handle("enter")  # the cursor opens on Trace, but there is nothing to walk
+    assert not screen._running and screen._worker is None
+    screen._path_spec = "3d,f2"
+    assert "Trace — one transmission" in _plain(screen.render_body(100))
+    screen.handle("enter")
+    assert screen._running
+    await screen._worker
+    assert len(screen._traces) == 1
 
 
 async def test_trace_screen_opens_idle_until_enter() -> None:

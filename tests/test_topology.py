@@ -290,17 +290,25 @@ async def test_probe_paths_defaults_to_one_trace_per_candidate() -> None:
 # --- path composer ---------------------------------------------------------------------
 
 
-def _composer(topo, hops=None, fetch_nodes=frozenset(), symmetric=True):  # noqa: ANN001
+def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True):  # noqa: ANN001
+    """A composer over ``topo`` — pinned on Far (target mode) or target-less."""
+    pinned = (
+        dict(
+            target_id="f2c24f54551e",
+            target_hash="f2c24f54551e" + "0" * 52,
+            target_label="Far",
+        )
+        if target
+        else {}
+    )
     return PathComposerScreen(
-        target_id="f2c24f54551e",
-        target_hash="f2c24f54551e" + "0" * 52,
-        target_label="Far",
         device_label="Us",
+        device_hash=US + "0" * 52,
         topology=topo,
         width_bytes=1,
         hops=list(hops or []),
         fetch_nodes=fetch_nodes,
-        symmetric=symmetric,
+        **pinned,
     )
 
 
@@ -363,7 +371,6 @@ async def test_composer_commits_spec_auto_and_cancel() -> None:
     screen.future = asyncio.get_running_loop().create_future()
     screen.handle("end")  # jump to the last action row (Cancel)…
     screen.handle("up")  # …past Auto…
-    screen.handle("up")  # …and the ⇄ mode toggle…
     screen.handle("up")  # …up to "Use this path"
     screen.handle("enter")
     assert screen.future.result() == "3d,f2,3d"
@@ -381,32 +388,31 @@ async def test_composer_commits_spec_auto_and_cancel() -> None:
     assert cancelled.future.result() is CANCEL
 
 
-def test_composer_mode_toggle_materializes_and_regenerates_the_mirror() -> None:
-    """⇄ to asymmetric turns the shown mirror into editable hops (route unchanged);
-    ⇄ back keeps what precedes the target as the outbound leg."""
-    walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
-    screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"])
-    spec_before = screen._spec()
-    screen.handle("end")  # Cancel…
-    screen.handle("up")  # …Auto…
-    screen.handle("up")  # …the ⇄ mode row
-    screen.handle("enter")
-    assert not screen.symmetric
-    assert screen._hops == ["3d63c6429436", "f2c24f54551e", "3d63c6429436"]
-    assert screen._spec() == spec_before  # the wire route is identical
-    screen.handle("enter")  # the cursor re-anchors on ⇄, so Enter toggles back
-    assert screen.symmetric
-    assert screen._hops == ["3d63c6429436"]
-    assert screen._spec() == spec_before
+def test_composer_path_mode_opens_us_to_us_without_auto() -> None:
+    """Target-less, the preview is just ``us → us`` and there is no Auto action.
+
+    Only the final landing back on us dims — the hops (and the opening endpoint)
+    are all the user's to compose, and with no destination there is nothing for
+    the device to route to.
+    """
+    screen = _composer(_topo(), target=False)
+    assert screen.title == "compose path"  # no target to name
+    preview = screen._route_preview()
+    assert preview.plain == "Us (aa) → Us (aa)"  # endpoints carry our hash
+    faint = sum(
+        span.end - span.start for span in preview.spans if "faint" in str(span.style)
+    )
+    assert 0 < faint < len(preview.plain)  # some dimming (the landing), never all
+    assert "Auto" not in _rows_plain(screen)
 
 
-async def test_composer_asymmetric_suggests_the_target_and_commits_the_walk_verbatim() -> None:
-    """Asymmetric mode routes *through* the target and commits exactly the composed hops."""
+async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim() -> None:
+    """A path walk routes *through* any node and commits exactly the composed hops."""
     import asyncio
 
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
-    screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"], symmetric=False)
-    # The tail (Hub) can hear the target — asymmetric mode must offer it as a hop.
+    screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"], target=False)
+    # No pinned target: the tail (Hub) hears Far, so Far is a plain hop suggestion.
     assert any(s.node == "f2c24f54551e" for s in screen._suggestions())
     screen._hops.append("f2c24f54551e")
     # A return leg may legitimately reuse an outbound repeater (only the tail is barred).
@@ -416,19 +422,17 @@ async def test_composer_asymmetric_suggests_the_target_and_commits_the_walk_verb
 
     loop = asyncio.get_running_loop()
     screen.future = loop.create_future()
-    screen.handle("end")
-    for _ in range(3):
-        screen.handle("up")  # Cancel → Auto → ⇄ → Use this path
+    screen.handle("end")  # Cancel…
+    screen.handle("up")  # …up to "Use this path" (no Auto row between them)
     screen.handle("enter")
     assert screen.future.result() == "3d,f2"
 
     # With no hops at all there is nothing to commit: Use must stay inert, because
     # resolving "" would masquerade as Auto (device-routed).
-    empty = _composer(_topo(trace_paths=walks), symmetric=False)
+    empty = _composer(_topo(trace_paths=walks), target=False)
     empty.future = loop.create_future()
     assert "(add a hop first)" in _rows_plain(empty)
     empty.handle("end")
-    for _ in range(3):
-        empty.handle("up")
+    empty.handle("up")
     empty.handle("enter")
     assert not empty.future.done()

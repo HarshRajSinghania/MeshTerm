@@ -70,11 +70,6 @@ def channel_glyph(name: str, secret: Optional[bytes]) -> str:
         return "🌐"
     return "🔒"
 
-#: Non-breaking space, used in the route line to keep ``name (hash)`` and a node's
-#: trailing arrow on the same line so wraps only ever land *after* an arrow.
-_NBSP = " "
-
-
 def _identity(label: Optional[str]) -> Optional[str]:
     """Default node resolver: leave labels untouched."""
     return label
@@ -300,14 +295,14 @@ def _route_node_text(
         device_hash: Our own device's key/hash, shown alongside its label when known.
 
     Returns:
-        A styled :class:`Text` for the node. A non-breaking space joins name and hash
-        so they never split across a line wrap.
+        A styled :class:`Text` for the node, joined with plain spaces throughout —
+        never non-breaking ones, which prompt_toolkit renders as underscores.
     """
     if not label or label == device_label:
         text = Text(device_label, style="accent")
         shown = _shorten_hash(device_hash, hash_bytes) if device_hash else ""
         if shown:
-            text.append(f"{_NBSP}(", style="muted")  # nbsp keeps "name (hash)" together
+            text.append(" (", style="muted")
             text.append(shown, style="muted")
             text.append(")", style="muted")
         return text
@@ -316,7 +311,7 @@ def _route_node_text(
     if not named or named == label:
         return Text(shown, style="brand")  # unknown node: hash only
     text = Text(named, style="brand")
-    text.append(f"{_NBSP}(", style="muted")  # nbsp keeps "name (hash)" together
+    text.append(" (", style="muted")
     text.append(shown, style="muted")
     text.append(")", style="muted")
     return text
@@ -333,8 +328,7 @@ def _route_text(
     Shows the path the trace actually walked — the forced path, or the route the
     device resolved when auto-routing — with each node annotated by its hash at the
     command's path-hash width, joined by muted arrows, e.g.
-    ``Me (a1b2) → Alice (3d63) → Bob (f2a1) → Me (a1b2)``. The line wraps after an arrow
-    when it is too long for the panel, so each continuation line starts on a node.
+    ``Me (a1b2) → Alice (3d63) → Bob (f2a1) → Me (a1b2)``.
 
     Args:
         result: The trace whose route to display.
@@ -353,9 +347,7 @@ def _route_text(
     text = Text()
     for i, node in enumerate(nodes):
         if i:
-            # A non-breaking space glues the arrow to the preceding node; the trailing
-            # regular space is the only wrap point, so wrapping lands *after* the arrow.
-            text.append(f"{_NBSP}→ ", style="muted")
+            text.append(" → ", style="muted")
         text.append_text(
             _route_node_text(node, device_label, resolve, hash_bytes, device_hash)
         )

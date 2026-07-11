@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from meshterm.core.models import Hop, TraceResult
+from meshterm.core.models import PATH_TRACE_TARGET, Hop, TraceResult
 from meshterm.persistence.repository import Repository
 
 
@@ -165,6 +165,18 @@ def test_traced_targets_recency_ordered_and_capped(repo: Repository) -> None:
 def test_traced_targets_empty_db(repo: Repository) -> None:
     """No traces → empty list."""
     assert repo.traced_targets() == []
+
+
+def test_traced_targets_excludes_path_walks(repo: Repository) -> None:
+    """Path walks record under the ``(path)`` sentinel and never become pickable targets."""
+    run = repo.start_run("trace", {})
+    repo.record_trace(run, _make_trace("Alice", ("r", 1.0)))
+    repo.record_trace(run, _make_trace(PATH_TRACE_TARGET, ("r", 2.0)))
+
+    assert repo.traced_targets() == ["Alice"]
+    # …but the walks still seed the path screen's previous-route line.
+    latest = repo.latest_trace(PATH_TRACE_TARGET)
+    assert latest is not None and latest.target == PATH_TRACE_TARGET
 
 
 # -- latest_trace edge cases -----------------------------------------------

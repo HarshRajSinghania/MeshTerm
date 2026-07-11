@@ -1,11 +1,25 @@
 """The trace path composer: build a forced route hop by hop, guided by observed links.
 
-A floating dialog over the live trace screen. The route under construction reads across
-the top — ``us → hop → … → target ( → mirror → us)`` — and beneath it sits a suggestion
-list: the nodes the topology evidence says the path's current tail can hear, strongest
-observed link first (see :meth:`~meshterm.services.topology.MeshTopology.next_hops`).
-Every link is bidirectional evidence, so a path that was ever *received* through two
-nodes proposes that link in either direction.
+A floating dialog over a live trace screen. The route under construction reads across
+the top — ``us → hop → … → us`` — and beneath it sits a suggestion list: the nodes the
+topology evidence says the path's current tail can hear, strongest observed link first
+(see :meth:`~meshterm.services.topology.MeshTopology.next_hops`). Every link is
+bidirectional evidence, so a path that was ever *received* through two nodes proposes
+that link in either direction.
+
+The composer serves both trace features, and which one owns it decides how the route's
+return half is written (the trace protocol has no separate return-path field — the spec
+sent to the device is one walk that ends within our earshot):
+
+* **Target mode** (*Trace target* — a ``target_id`` is pinned): only the outbound leg
+  is composed. The target stays pinned as the turning point and the return is the
+  outbound hops mirrored — the preview resolves and dims that half, since it isn't
+  yours to choose. An *Auto* action hands routing back to the device.
+* **Path mode** (*Trace path* — no target at all): the whole walk is yours, hop by
+  hop, until the route comes back within earshot of us — only the final landing on
+  our own node is filled in (and dimmed). The preview opens as just ``us → us``.
+  There is no *Auto* action, because with no destination there is nothing for the
+  device to route to.
 
 Interaction, following the reorder screen's cursor-over-rows-and-actions pattern:
 
@@ -18,22 +32,12 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
   neighbours* row asks that repeater over the mesh for its own neighbour table —
   fresh second-vantage evidence exactly where composing ran out of it. The dialog
   resolves :class:`FetchNeighbours` and the owning flow fetches, refreshes the
-  topology, and reopens the composer mid-thought (hops and mode preserved).
-* Enter on **Use this path** commits the composed spec; **Auto** hands routing back to
-  the device; Esc cancels with no change.
+  topology, and reopens the composer mid-thought (hops preserved).
+* Enter on **Use this path** commits the composed spec; Esc cancels with no change.
 
-The trace protocol has no separate return-path field — the spec sent to the device is
-one walk, out to the target and back into our earshot — and the ⇄ action row picks how
-the return half is written:
-
-* **Symmetric** (the default): only the outbound leg is composed. The target stays
-  pinned as the turning point and the return is the outbound hops mirrored — the
-  preview resolves and dims that half, since it isn't yours to choose.
-* **Asymmetric**: the whole walk is yours, hop by hop, target included, until the route
-  comes back within earshot of us — only the final landing on our own node is filled in.
-  Toggling out of symmetric materializes the mirrored return as editable hops, so the
-  route is unchanged until you reshape it; toggling back keeps what precedes the target
-  as the outbound leg and regenerates the mirror.
+Nodes render exactly as the trace screen's route line does — ``Name (hash)`` with the
+name in the brand colour and the hash muted in parentheses — so a node reads the same
+wherever it appears.
 """
 
 from __future__ import annotations
@@ -51,7 +55,8 @@ from .tui.screen import Screen
 from .widgets import _age_seconds, _format_age, _shorten_hash
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
-#: empty-spec convention).
+#: empty-spec convention). Only meaningful in target mode; a path walk has no target
+#: for the device to route to, so path mode never resolves it.
 AUTO_SPEC = ""
 
 #: How many suggestions to show at most; beyond this the evidence is too weak to matter
@@ -60,7 +65,6 @@ _MAX_SUGGESTIONS = 12
 
 #: Action-row sentinels (kept distinct from suggestion rows, which carry node ids).
 _USE = "use"
-_MODE = "mode"
 _AUTO = "auto"
 _CANCEL = "cancel"
 
@@ -86,11 +90,11 @@ class FetchNeighbours:
 
 
 class PathComposerScreen(Screen):
-    """Compose a forced trace path step by step, symmetric or hand-routed.
+    """Compose a forced trace path step by step, mirrored at a target or hand-routed.
 
-    Resolves with the finished spec (comma-separated hex — in symmetric mode the
-    outbound hops, the target, then the mirrored return; in asymmetric mode the
-    composed walk verbatim), :data:`AUTO_SPEC` for device routing, or
+    Resolves with the finished spec (comma-separated hex — in target mode the outbound
+    hops, the target, then the mirrored return; in path mode the composed walk
+    verbatim), :data:`AUTO_SPEC` for device routing (target mode only), or
     :data:`~meshterm.ui.tui.screen.CANCEL`.
     """
 
@@ -99,47 +103,50 @@ class PathComposerScreen(Screen):
     def __init__(
         self,
         *,
-        target_id: str,
-        target_hash: str,
-        target_label: str,
         device_label: str,
         topology: MeshTopology,
         width_bytes: int,
+        target_id: Optional[str] = None,
+        target_hash: Optional[str] = None,
+        target_label: Optional[str] = None,
+        device_hash: Optional[str] = None,
         hops: Optional[list[str]] = None,
         fetch_nodes: frozenset[str] = frozenset(),
-        symmetric: bool = True,
     ) -> None:
         """Build the composer.
 
+        A pinned target (all three ``target_*`` arguments) selects target mode: the
+        target is excluded from suggestions (the path implicitly turns at it) and the
+        emitted spec appends it plus the mirrored return. With no target the composer
+        is in path mode — the whole walk is composed by hand and committed verbatim.
+
         Args:
-            target_id: The target's canonical id. In symmetric mode it is excluded from
-                suggestions (the path implicitly turns at it); in asymmetric mode it is
-                suggested like any node, since the user routes through it themselves.
+            device_label: Our own node's name, opening and closing the route preview.
+            topology: The evidence graph suggestions are drawn from.
+            width_bytes: Preferred per-hop path-hash width (bytes) for the emitted spec.
+            target_id: The pinned target's canonical id, or ``None`` for path mode.
             target_hash: The target's hex hash used as the symmetric spec's turning
                 point (its full key prefix; truncated to the spec width at commit).
             target_label: The target's display name for the route preview.
-            device_label: Our own node's name, opening the route preview.
-            topology: The evidence graph suggestions are drawn from.
-            width_bytes: Preferred per-hop path-hash width (bytes) for the emitted spec.
+            device_hash: Our own public key, so the preview's endpoints carry a hash
+                exactly like the trace screen's route line.
             hops: Canonical ids of already-composed hops (reopening the dialog resumes
                 where the user left off).
             fetch_nodes: Canonical ids whose live neighbour table can be fetched
                 (repeater contacts with a public key); when the path's tail is one of
                 them, the *fetch neighbours* row appears.
-            symmetric: Whether the return leg is auto-mirrored (the default) or the
-                user is composing the whole walk themselves (see :meth:`_toggle_mode`).
         """
         super().__init__()
-        self.title = f"compose path · {target_label}"
+        self.title = f"compose path · {target_label}" if target_label else "compose path"
         self._target_id = target_id
-        self._target_hash = target_hash.lower().removeprefix("0x")
+        self._target_hash = (target_hash or "").lower().removeprefix("0x")
         self._target_label = target_label
         self._device_label = device_label
+        self._device_hash = (device_hash or "").lower().removeprefix("0x")
         self._topology = topology
         self._width_bytes = width_bytes
         self._hops: list[str] = list(hops or [])
         self._fetch_nodes = fetch_nodes
-        self._symmetric = symmetric
         self._entry = ""
         self._index = 0
 
@@ -148,12 +155,12 @@ class PathComposerScreen(Screen):
         """The composed hops so far (for re-seeding after a fetch)."""
         return list(self._hops)
 
-    @property
-    def symmetric(self) -> bool:
-        """Whether the return leg is auto-mirrored (for re-seeding after a fetch)."""
-        return self._symmetric
-
     # --- state -----------------------------------------------------------------
+
+    @property
+    def _mirrored(self) -> bool:
+        """Whether the return leg is the pinned target's mirror (target mode)."""
+        return self._target_id is not None
 
     def _tail(self) -> str:
         """The node the path currently ends at (us until a hop is added)."""
@@ -162,17 +169,16 @@ class PathComposerScreen(Screen):
     def _suggestions(self) -> list:
         """The current suggestion rows, filtered by the typed entry.
 
-        Symmetric mode excludes the target (the path implicitly turns at it) and every
+        Target mode excludes the target (the path implicitly turns at it) and every
         used hop (revisiting one on the outbound leg is never useful — the mirror
-        already recrosses it). Asymmetric mode only excludes ourselves and the tail:
-        the target must be routable *through*, and a return leg legitimately reuses
-        outbound repeaters.
+        already recrosses it). Path mode only excludes ourselves and the tail: a
+        return leg legitimately reuses outbound repeaters.
 
         Returns:
             The (possibly filtered) :class:`~meshterm.services.topology.HopSuggestion`
             list for the path's tail, capped at :data:`_MAX_SUGGESTIONS`.
         """
-        if self._symmetric:
+        if self._mirrored:
             exclude = frozenset({self._topology.self_id, self._target_id, *self._hops})
         else:
             exclude = frozenset({self._topology.self_id, self._tail()})
@@ -205,108 +211,82 @@ class PathComposerScreen(Screen):
         if self._tail() in self._fetch_nodes:
             rows.append(("fetch", self._tail()))
         rows.append(("action", _USE))
-        rows.append(("action", _MODE))
-        rows.append(("action", _AUTO))
+        if self._mirrored:  # a path walk has no target for the device to route to
+            rows.append(("action", _AUTO))
         rows.append(("action", _CANCEL))
         return rows
 
     def _spec(self) -> str:
         """Render the composed route as the spec the trace command will send.
 
-        Symmetric mode appends the target and the mirrored return leg (see
-        :func:`~meshterm.services.topology.render_forced_spec`); asymmetric mode
-        renders the composed walk verbatim (:func:`~meshterm.services.topology.
+        Target mode appends the target and the mirrored return leg (see
+        :func:`~meshterm.services.topology.render_forced_spec`); path mode renders
+        the composed walk verbatim (:func:`~meshterm.services.topology.
         render_custom_spec`) — empty until it has at least one hop.
         """
-        if self._symmetric:
+        if self._mirrored:
             return render_forced_spec(
                 tuple(self._hops), self._target_hash, self._width_bytes
             )
         return render_custom_spec(tuple(self._hops), self._width_bytes)
 
-    def _toggle_mode(self) -> None:
-        """Flip between the symmetric mirror and hand-composing the whole walk.
-
-        The route itself never changes on a toggle — only who owns its return half:
-
-        * symmetric → asymmetric *materializes* the mirror the preview was showing
-          (target and reversed hops become real, editable hops), so backspace can now
-          peel the return leg apart;
-        * asymmetric → symmetric keeps whatever precedes the target's first appearance
-          as the outbound leg (everything after it was return-leg territory, which the
-          mirror now regenerates); with the target nowhere in the walk, every hop is
-          kept as outbound.
-        """
-        if self._symmetric:
-            self._hops = [*self._hops, self._target_id, *reversed(self._hops)]
-        elif self._target_id in self._hops:
-            self._hops = self._hops[: self._hops.index(self._target_id)]
-        self._symmetric = not self._symmetric
-        # The toggle changes the suggestion set (the target's excludability), shifting
-        # row numbers — re-anchor the cursor onto this same action row.
-        rows = self._rows()
-        self._index = next(
-            i for i, (kind, payload) in enumerate(rows)
-            if kind == "action" and payload == _MODE
-        )
-
     # --- rendering ---------------------------------------------------------------
 
     def _node_text(self, node: str, *, dim: bool = False) -> Text:
-        """A node as ``Name (hash)`` when known, else its bare hash.
+        """One route node, rendered exactly as the trace screen's route line does.
 
-        The hash is shown at the spec's preferred path-hash width — the same width
-        every other trace-feature view (planned route, completed route, hop table)
-        truncates to — so a node reads the same length everywhere instead of the
-        fixed, arbitrary slice a naive ``node[:n]`` would give it. The target keeps
-        its ok-tinted name wherever it appears (pinned as the symmetric turning point,
-        or added mid-walk in asymmetric mode), so the route's whole point stays
-        visible at a glance.
+        ``Name (hash)`` when known — name in the brand colour, hash muted in
+        parentheses — a bare brand hash when not, and our own device as its accent
+        label plus hash. Hashes show at the spec's preferred path-hash width, the
+        same width every other trace-feature view truncates to, so a node reads the
+        same length everywhere.
 
         Args:
             node: The node's canonical id (or ``self_id`` for our own device).
-            dim: Whether to render in the resolved-return-leg's faint style rather
-                than the outbound leg's normal accent/brand styling.
+            dim: Whether to render in the resolved-return-leg's uniform faint style
+                rather than the normal route colours.
         """
         if node == self._topology.self_id:
-            return Text(self._device_label, style="faint" if dim else "accent")
+            text = Text(self._device_label, style="faint" if dim else "accent")
+            if self._device_hash:
+                shown = _shorten_hash(self._device_hash, self._width_bytes)
+                text.append(f" ({shown})", style="faint" if dim else "muted")
+            return text
         if node == self._target_id:
-            text = Text(self._target_label, style="faint" if dim else "ok")
-            text.append(
-                f" ({_shorten_hash(self._target_hash, self._width_bytes)})",
-                style="faint",
-            )
-            return text
-        name = self._topology.display_name(node)
-        style = "faint" if dim else "brand"
-        shown = _shorten_hash(node, self._width_bytes)
-        if name:
-            text = Text(name, style=style)
-            text.append(f" ({shown})", style="faint")
-            return text
-        return Text(shown, style=style)
+            name: Optional[str] = self._target_label
+            hash_source = self._target_hash or node
+        else:
+            name = self._topology.display_name(node)
+            hash_source = node
+        shown = _shorten_hash(hash_source, self._width_bytes)
+        if not name:
+            return Text(shown, style="faint" if dim else "brand")
+        text = Text(name, style="faint" if dim else "brand")
+        text.append(f" ({shown})", style="faint" if dim else "muted")
+        return text
 
     def _route_preview(self) -> Text:
         """The route under construction, endpoints filled in automatically.
 
-        Symmetric mode shows the composed outbound in full color, then the pinned
+        Target mode shows the composed outbound in full colour, then the pinned
         target and the mirrored return resolved and dimmed right alongside it — the
-        dimming reads as "this half isn't yours to compose". Asymmetric mode shows
-        every composed hop in full color (they are all yours), with only the final
-        landing back on our own node dimmed.
+        dimming reads as "this half isn't yours to compose". Path mode shows every
+        composed hop in full colour (they are all yours) between our own node at
+        both ends, with only the final landing back on us dimmed.
         """
-        text = Text(self._device_label, style="accent")
+        text = Text()
+        text.append_text(self._node_text(self._topology.self_id))
         for hop in self._hops:
             text.append(" → ", style="muted")
             text.append_text(self._node_text(hop))
-        if self._symmetric:
+        if self._mirrored:
             text.append(" → ", style="muted")
             text.append_text(self._node_text(self._target_id))
             for hop in reversed(self._hops):
                 text.append(" → ", style="faint")
                 text.append_text(self._node_text(hop, dim=True))
         text.append(" → ", style="faint")
-        text.append(self._device_label, style="faint")
+        text.append_text(self._node_text(self._topology.self_id, dim=True))
         return text
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -323,16 +303,6 @@ class PathComposerScreen(Screen):
         tags = "".join(_SOURCE_TAGS[s] for s in sorted(link.sources & _SOURCE_TAGS.keys()))
         if tags:
             text.append(f" · {tags}", style="faint")
-        return text
-
-    @staticmethod
-    def _mode_text(symmetric: bool) -> Text:
-        """The ⇄ action row's label for a mode (Enter on the row flips to the other)."""
-        text = Text("⇄ ")
-        if symmetric:
-            text.append("Symmetric — return mirrors the outbound")
-        else:
-            text.append("Asymmetric — you compose out and back")
         return text
 
     def _row_text(self, kind: str, payload: object) -> Text:
@@ -353,25 +323,18 @@ class PathComposerScreen(Screen):
         if payload == _USE:
             label = Text.assemble(("✓ ", "ok"), "Use this path")
             spec = self._spec()
-            # An asymmetric walk with no hops yet has no spec to commit.
+            # A path walk with no hops yet has no spec to commit.
             label.append(f"  ({spec})" if spec else "  (add a hop first)", style="muted")
             return label
-        if payload == _MODE:
-            return self._mode_text(self._symmetric)
         if payload == _AUTO:
             return Text("Auto — let the device route")
         return Text.assemble(("✗ ", "err"), "Cancel")
 
     @property
     def dialog_width(self) -> int:
-        """Natural outer width hugging the widest row (compositor still caps it).
-
-        Sized for *both* mode labels, not just the active one, so toggling ⇄ never
-        resizes the box mid-interaction.
-        """
+        """Natural outer width hugging the widest row (compositor still caps it)."""
         widths = [cell_len(self.title), cell_len(self.footer_hint)]
         widths.append(cell_len(self._route_preview().plain))
-        widths.append(cell_len(self._mode_text(not self._symmetric).plain) + 2)
         for kind, payload in self._rows():
             widths.append(cell_len(self._row_text(kind, payload).plain) + 2)
         return max(widths, default=20) + 8
@@ -440,10 +403,8 @@ class PathComposerScreen(Screen):
             self.resolve(FetchNeighbours(node=str(payload)))
         elif payload == _USE:
             spec = self._spec()
-            if spec:  # an empty asymmetric walk would masquerade as AUTO_SPEC
+            if spec:  # an empty path walk would masquerade as AUTO_SPEC
                 self.resolve(spec)
-        elif payload == _MODE:
-            self._toggle_mode()
         elif payload == _AUTO:
             self.resolve(AUTO_SPEC)
         else:

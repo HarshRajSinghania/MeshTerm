@@ -192,6 +192,22 @@ def test_route_text_unknown_node_shows_hash_only() -> None:
     assert "aa11bb" not in plain
 
 
+def test_route_text_contains_no_non_breaking_spaces() -> None:
+    """prompt_toolkit draws U+00A0 as an underscore, so route text must never emit one."""
+    from meshterm.core.models import Hop
+    from meshterm.ui.widgets import _route_text
+
+    result = TraceResult(
+        target="x",
+        success=True,
+        hops=[Hop(0, "3d63", 12.0), Hop(1, None, 12.0)],
+        path_hash_bytes=2,
+    )
+    plain = _route_text(result, "Me", device_hash="a1b2" + "00" * 30).plain
+    assert "\xa0" not in plain
+    assert plain == "Me (a1b2) → 3d63 → Me (a1b2)"
+
+
 def test_parse_trace_path_rejects_unknown_token() -> None:
     """A token that is neither a known contact nor valid hex is an error."""
     with pytest.raises(ValueError):

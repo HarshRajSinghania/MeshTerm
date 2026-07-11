@@ -15,6 +15,14 @@ from typing import Optional
 #: Label used for our own (local) device when framing a trace path's endpoints.
 LOCAL_DEVICE_LABEL = "us"
 
+#: Sentinel ``target`` recorded on traces run by the *Trace path* feature, which walks a
+#: hand-composed route with no destination node at all (a trace is one walked path; the
+#: notion of a target is pure UX). The parentheses keep it from colliding with contact
+#: names. History queries key on it: ``Repository.latest_trace`` seeds the path screen
+#: from it, while ``Repository.traced_targets`` excludes it so composed walks never
+#: surface in the target picker's "Recently traced" list.
+PATH_TRACE_TARGET = "(path)"
+
 # MeshCore advert types — the low nibble of an advert's flag byte — classify the kind of
 # node an advert announces. Repeaters are fixed infrastructure and carry the mesh, so
 # location-aware features (e.g. the map) prioritise them over ordinary leaf nodes.

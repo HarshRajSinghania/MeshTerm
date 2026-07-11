@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..core.models import (
+    PATH_TRACE_TARGET,
     ChatMessage,
     HeardNode,
     Hop,
@@ -379,6 +380,8 @@ class Repository:
         This feeds the target picker's *Recently traced* section, so the list is
         deliberately short and recency-ordered: an all-time tally only ever grows,
         burying current work under stale names (``--mock`` targets included).
+        Target-less path walks (recorded under :data:`~meshterm.core.models.
+        PATH_TRACE_TARGET`) are excluded — they aren't destinations one can pick.
 
         Args:
             limit: Maximum number of distinct targets to return.
@@ -387,9 +390,9 @@ class Repository:
             Distinct target names, most recently traced first.
         """
         rows = self._conn.execute(
-            "SELECT target, MAX(id) AS latest FROM traces "
+            "SELECT target, MAX(id) AS latest FROM traces WHERE target != ? "
             "GROUP BY target ORDER BY latest DESC LIMIT ?",
-            (limit,),
+            (PATH_TRACE_TARGET, limit),
         ).fetchall()
         return [row["target"] for row in rows]
 

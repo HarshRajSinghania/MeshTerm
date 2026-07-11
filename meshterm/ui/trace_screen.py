@@ -1,49 +1,59 @@
-"""The live trace screen: compose a route from observed topology, then watch it answer.
+"""The live trace screens: compose a route from observed topology, then watch it answer.
 
-This is the interactive face of the ``trace`` tool (the scripted CLI keeps its one-shot
-table output). Where the old flow started tracing the instant a target was picked, the
-screen now opens *armed but idle*: the target's last-known route shows, the path is
+This is the interactive face of the two trace tools (the scripted CLI keeps its one-shot
+table output). A trace is one walked path — the protocol has no destination field, so
+"target" is purely a UX notion — and the two menu features split along exactly that line:
+
+* **Trace target** (:func:`open_trace`) answers *can I reach this node?* The route is
+  symmetric: compose (or explore) the outbound leg, and the return is those hops
+  mirrored around the pinned target.
+* **Trace path** (:func:`open_trace_path`) answers *how far can a route I build carry?*
+  There is no target at all: the whole walk is composed by hand, out and back by
+  whatever way you choose, and it only has to end within our own earshot.
+
+Both open the same screen, *armed but idle*: the last-known route shows, the path is
 whatever you make it, and nothing transmits until you say so. An action list drives it —
-↑/↓ select a row, Enter commits it, and each row keeps its hotkey:
+↑/↓ select a row, Enter commits it:
 
-* **Trace** (Enter — the cursor opens here, so plain Enter still just traces) runs a
-  *single* trace. While it flies, a floating *tracing* dialog (spinner, Abort) sits over
-  the screen — the reply streams into the log behind it, and Esc in the dialog cancels
-  the trace without leaving the screen. One transmission per keypress is deliberate:
-  repeaters penalize chatty nodes (flood detection can blacklist us), so sampling is
-  left human-paced — commit Trace again and the screen keeps aggregating every trace of
-  the session into its medians.
-* **Path width** (``w``) floats a small dialog picking the per-hop path-hash width (1,
-  2, 4, or 8 bytes — the leading key slice forced hops are addressed by). It seeds from
-  the device's routing width; changing it re-renders a standing forced path at the new
-  width and shapes every spec the composer and explorer emit after it.
-* **Compose path** (``p``) opens the path composer (:mod:`~meshterm.ui.path_composer`):
-  build the route hop by hop, each step suggested from the links observed in *received*
+* **Compose path** opens the path composer (:mod:`~meshterm.ui.path_composer`): build
+  the route hop by hop, each step suggested from the links observed in *received*
   traffic — traces, firmware-learned contact routes, and RX-logged packet paths —
   strongest first, with raw hex entry for nodes the data has never seen. Standing on a
   repeater you hold admin credentials for, the composer can also *fetch that repeater's
   neighbour table* over the mesh (login required; firmware ignores guests):
   second-vantage evidence, persisted and folded straight back into the suggestions.
-  By default only the outbound leg is composed and the return is those hops mirrored —
-  the spec sent to the device spells out the whole boomerang, since the trace protocol
-  has no separate return-path field — but the composer's ⇄ row switches to asymmetric,
-  where the entire walk (out *and* home) is yours to route.
-* **Explore paths** (``x``) explores scenarios: ranked candidate routes to the target
-  straight from the topology evidence (the device's own learned route, the direct shot,
-  and the strongest observed alternatives). Adopt one directly — or probe them all, one
-  measured trace per candidate (the same single-transmission rule), persisted as
-  ``path_candidates`` rows and ranked reliability-first, with the winner offered for
-  adoption. Evidence proposes, measurement decides, you dispose.
+* **Explore paths** (Trace target only — candidates need a destination) explores
+  scenarios: ranked candidate routes to the target straight from the topology evidence
+  (the device's own learned route, the direct shot, and the strongest observed
+  alternatives). Adopt one directly — or probe them all, one measured trace per
+  candidate, persisted as ``path_candidates`` rows and ranked reliability-first, with
+  the winner offered for adoption. Evidence proposes, measurement decides, you dispose.
+* **Path width** floats a small dialog picking the per-hop path-hash width (1, 2, 4,
+  or 8 bytes — the leading key slice forced hops are addressed by). It seeds from the
+  device's routing width; changing it re-renders a standing forced path at the new
+  width and shapes every spec the composer and explorer emit after it.
+* **Sample count** floats a dialog picking how many traces one Trace action runs
+  (1, 2, 3, 5, or 8). Multi-trace runs are *paced* — a cooldown sleeps between
+  transmissions, because repeaters penalize (and can blacklist) nodes that burst
+  traffic — and the in-flight dialog counts them off as replies stream in.
+* **Trace** (the cursor opens here, so plain Enter still just traces) runs the chosen
+  number of traces. While they fly, a floating *tracing* dialog (spinner, progress,
+  Abort) sits over the screen — replies stream into the log behind it, and Esc in the
+  dialog cancels without leaving the screen; traces already recorded are kept. The
+  screen keeps aggregating every trace of the session into its medians.
+* **Back** leaves the screen, exactly like Esc.
 
 Layout, top to bottom: the walked route (live when a reply has landed, else the planned
-composed path, else the target's last stored trace), the run's robust aggregates, the
+composed path, else the most recent stored trace), the run's robust aggregates, the
 action list, per-hop median SNR with quality bars, and the individual traces
 newest-first. The body scrolls with PgUp/PgDn/Home/End (↑/↓ belong to the action
 cursor, which only pins the view while it is actually being moved).
 
 Every trace is persisted exactly like a scripted run: one ``runs`` row per trace,
 recorded under it, so the stored history reads the same no matter which front end
-produced it.
+produced it. Path walks record under :data:`~meshterm.core.models.PATH_TRACE_TARGET`,
+keeping them out of the target picker's history while still seeding the path screen's
+previous-route line.
 """
 
 from __future__ import annotations
@@ -56,7 +66,7 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from ..core.models import TraceResult, TraceStats
+from ..core.models import PATH_TRACE_TARGET, TraceResult, TraceStats
 from ..services import trace_runner
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
@@ -78,14 +88,19 @@ _BAR_WIDTH = 16
 _BAR_SNR_MIN = -15.0
 _BAR_SNR_MAX = 10.0
 
+#: The sample counts the Sample count dialog offers: how many traces one Trace action
+#: runs, paced between transmissions.
+SAMPLE_CHOICES = (1, 2, 3, 5, 8)
+
 #: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
-#: the result to ``on_trace`` when it lands. Provided by :func:`open_trace`, which closes
+#: the result to ``on_trace`` when it lands. Provided by the session openers, which close
 #: over the device, repository, and settings so the screen stays free of persistence
 #: concerns.
 TraceOnce = Callable[[str, Callable[[TraceResult], None]], Awaitable[None]]
 
 #: A path picker flow: takes the current spec, runs its own dialogs over the screen, and
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
+#: The sample-count flow shares the shape and simply always resolves ``None``.
 PathFlow = Callable[[str], Awaitable[Optional[str]]]
 
 
@@ -113,7 +128,7 @@ def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
 class TracingDialog(Screen):
     """The floating in-flight dialog: a spinner chip, live progress, and Abort.
 
-    Pushed over the trace screen while a trace (or scenario probe) transmits, so the
+    Pushed over the trace screen while traces (or a scenario probe) transmit, so the
     activity — and the way out — is unmissable while replies keep streaming into the
     screen behind it. Enter, Esc, or Space aborts via the injected callback; the owner
     pops the dialog when the work finishes, so it never resolves a value of its own.
@@ -186,62 +201,76 @@ class TracingDialog(Screen):
 
 
 class TraceScreen(Screen):
-    """A full-screen live trace session for one target — armed, but idle until told.
+    """A full-screen live trace session — armed, but idle until told.
 
-    An action list carries the verbs: *Trace* (one transmission per commit, because
-    repeaters can blacklist nodes that burst traffic; a floating dialog with Abort
-    rides on top while it flies), *Path width* (``w``), *Compose path* (``p``), and
-    *Explore paths* (``x``). ↑/↓ move the cursor over the rows and Enter commits the
-    selected one — the cursor opens on Trace, so plain Enter still just traces.
-    PgUp/PgDn/Home/End scroll the body, and Esc backs out (cancelling any in-flight
-    trace; already-recorded traces are kept).
+    One screen serves both trace features; ``mode`` decides which. ``"target"`` traces
+    a pinned destination over a symmetric (mirrored) route and offers *Explore paths*;
+    ``"path"`` walks a hand-composed route with no target at all — no Explore (ranked
+    candidates need a destination), no device routing, and Trace stays inert until a
+    path exists to walk.
+
+    ↑/↓ move the cursor over the action rows and Enter commits the selected one — the
+    cursor opens on Trace, so plain Enter still just traces. PgUp/PgDn/Home/End scroll
+    the body, and Esc (or the Back row) backs out, cancelling any in-flight trace;
+    already-recorded traces are kept.
     """
 
     floating = False
-
-    #: The action rows, in display order (each also keeps a hotkey — see :meth:`handle`).
-    _ACTIONS: tuple[str, ...] = ("trace", "width", "compose", "explore")
 
     def __init__(
         self,
         target: str,
         *,
+        mode: str = "target",
         device_label: str,
         device_hash: Optional[str],
         resolve: NodeResolver,
         session: Any,
         trace: TraceOnce,
         compose_path: PathFlow,
-        explore: PathFlow,
         pick_width: PathFlow,
+        pick_samples: PathFlow,
         width_bytes: Callable[[], int],
+        sample_count: Callable[[], int],
+        explore: Optional[PathFlow] = None,
+        pace_s: float = 1.0,
         previous: Optional[TraceResult] = None,
     ) -> None:
         """Create the screen (nothing transmits until the user commits Trace).
 
         Args:
-            target: The trace destination (contact name or key prefix).
+            target: The label traces persist under — the destination's name in target
+                mode, :data:`~meshterm.core.models.PATH_TRACE_TARGET` in path mode.
+            mode: ``"target"`` (symmetric, explorable) or ``"path"`` (hand-composed
+                walk, no destination).
             device_label: Our own node's name, labelling the route's endpoints.
             device_hash: Our own public key, so the endpoints carry a hash like every hop.
             resolve: Maps a hop's raw hash to a friendly contact name when known.
             session: The running TUI session (for repaints and the floating dialog).
             trace: Runs exactly one trace, handing back the result (see
-                :data:`TraceOnce`).
+                :data:`TraceOnce`); the screen loops it for multi-sample runs.
             compose_path: Opens the hop-by-hop path composer over this screen, seeded
                 with the current spec; resolves to the new spec or ``None`` if cancelled.
-            explore: Opens the scenario browser/probe flow over this screen; resolves to
-                an adopted spec or ``None`` to keep the current one.
             pick_width: Floats the path-hash width dialog; resolves to the standing
-                spec re-rendered at the chosen width, or ``None`` when nothing changes
-                (same :data:`PathFlow` shape as the other flows).
+                spec re-rendered at the chosen width, or ``None`` when nothing changes.
+            pick_samples: Floats the sample-count dialog; always resolves ``None``
+                (the count lives with the owner, read back via ``sample_count``).
             width_bytes: Reads the currently chosen per-hop width, for the action row's
                 label (the owner holds the width, since the flows emit specs at it).
-            previous: The target's most recent stored trace, if any — its route seeds the
-                route line so the screen opens knowing the path history last saw.
+            sample_count: Reads the currently chosen sample count, for the action rows
+                and for how many traces one Trace commit runs.
+            explore: Opens the scenario browser/probe flow over this screen (target
+                mode only); resolves to an adopted spec or ``None`` to keep the current.
+            pace_s: Cooldown slept between the traces of a multi-sample run, so a
+                sampling session never reads as a burst to the repeaters.
+            previous: The most recent stored trace, if any — its route seeds the route
+                line so the screen opens knowing the path history last saw.
         """
         super().__init__()
-        self.title = f"trace · {target}"
+        self.title = f"trace · {target}" if mode == "target" else "trace path"
         self._target = target
+        self._mode = mode
+        self._flight_label = target if mode == "target" else "path"
         self._device_label = device_label
         self._device_hash = device_hash
         self._resolve = resolve
@@ -250,30 +279,42 @@ class TraceScreen(Screen):
         self._compose_path = compose_path
         self._explore = explore
         self._pick_width = pick_width
+        self._pick_samples = pick_samples
         self._width_bytes = width_bytes
+        self._sample_count = sample_count
+        self._pace_s = pace_s
         self._previous = previous
         self._path_spec = ""
         self._traces: list[TraceResult] = []
         self._running = False
         self._dialog_open = False
         self._status = ""
+        self._progress: Optional[tuple[int, int]] = None  # (current, total) mid-run
         self._spinner = Spinner()
         self._worker: Optional[asyncio.Task] = None
         self._flight: Optional[TracingDialog] = None
-        self._index = 0  # cursor over the action rows; 0 keeps Enter = trace
+        # The action rows, in display order. Explore needs a destination to rank
+        # candidates for, so path mode drops it; the cursor opens on Trace either way.
+        actions = ["compose"] + (["explore"] if mode == "target" else [])
+        actions += ["width", "samples", "trace", "back"]
+        self._actions: tuple[str, ...] = tuple(actions)
+        self._index = self._actions.index("trace")
         self._pin_cursor = False  # only pin the view while ↑/↓ are actually in use
 
     # --- state -----------------------------------------------------------------
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """The footer keys, tracking whether a trace is in flight."""
+        """The footer keys, tracking whether traces are in flight."""
         if self._running:
+            if self._progress is not None and self._progress[1] > 1:
+                done, total = self._progress
+                return f"tracing {done}/{total}… · PgUp/PgDn scroll · Esc back"
             return "tracing… · PgUp/PgDn scroll · Esc back"
         return "↑↓ actions · Enter run · PgUp/PgDn scroll · Esc back"
 
     def start_trace(self) -> None:
-        """Kick off one trace in the background (no-op while one is already flying)."""
+        """Kick off a trace run in the background (no-op while one is already flying)."""
         if self._running:
             return
         self._running = True
@@ -283,21 +324,33 @@ class TraceScreen(Screen):
         self._session.invalidate()
 
     async def _run_trace(self) -> None:
-        """Drive one trace to completion under the floating tracing dialog.
+        """Drive one Trace commit — the chosen number of traces — under the dialog.
 
-        The dialog is pushed for the duration and popped however the trace ends —
+        Multi-sample runs are paced: :attr:`_pace_s` sleeps between transmissions so
+        the repeaters never see a burst, and the dialog counts the run off as replies
+        land. The dialog is pushed for the duration and popped however the run ends —
         completion, failure, or abort — and its Abort wires straight to :meth:`cancel`,
         so the cancellation path is the same whether Esc lands on the dialog or the
-        screen.
+        screen. An aborted run keeps every trace already recorded.
         """
+        total = max(1, int(self._sample_count()))
         dialog = TracingDialog(
-            f"tracing · {self._target}", spinner=self._spinner, on_abort=self.cancel
+            f"tracing · {self._flight_label}", spinner=self._spinner, on_abort=self.cancel
         )
         self._flight = dialog
         self._session.push(dialog)
         ticker = asyncio.ensure_future(self._animate())
         try:
-            await self._trace_once(self._path_spec, self._on_trace)
+            for done in range(total):
+                self._progress = (done + 1, total)
+                if total > 1:
+                    dialog.status = f"trace {done + 1}/{total} · transmitting…"
+                    self._session.invalidate()
+                await self._trace_once(self._path_spec, self._on_trace)
+                if done + 1 < total and self._pace_s > 0:
+                    dialog.status = f"trace {done + 1}/{total} landed · pacing…"
+                    self._session.invalidate()
+                    await asyncio.sleep(self._pace_s)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - report inline, keep the screen alive
@@ -313,6 +366,7 @@ class TraceScreen(Screen):
             self._session.pop(dialog)
             self._flight = None
             self._running = False
+            self._progress = None
             self._session.invalidate()
 
     async def _animate(self) -> None:
@@ -330,7 +384,7 @@ class TraceScreen(Screen):
         self._session.invalidate()
 
     def cancel(self) -> None:
-        """Cancel any in-flight trace (already-recorded traces are kept)."""
+        """Cancel any in-flight trace run (already-recorded traces are kept)."""
         if self._worker is not None and not self._worker.done():
             self._worker.cancel()
 
@@ -346,17 +400,11 @@ class TraceScreen(Screen):
         if action == "enter":
             self._commit_action()
         elif action == "up":
-            self._index = (self._index - 1) % len(self._ACTIONS)
+            self._index = (self._index - 1) % len(self._actions)
             self._pin_cursor = True
         elif action == "down":
-            self._index = (self._index + 1) % len(self._ACTIONS)
+            self._index = (self._index + 1) % len(self._actions)
             self._pin_cursor = True
-        elif action == "text" and data.lower() == "p":
-            self._open_flow(self._compose_path)
-        elif action == "text" and data.lower() == "x":
-            self._open_flow(self._explore)
-        elif action == "text" and data.lower() == "w":
-            self._open_flow(self._pick_width)
         elif action == "pageup":
             self._pin_cursor = False
             self.scroll_pages(-1)
@@ -375,22 +423,32 @@ class TraceScreen(Screen):
 
     def _commit_action(self) -> None:
         """Run the action row under the cursor (the flows guard against re-entry)."""
-        key = self._ACTIONS[self._index]
+        key = self._actions[self._index]
         if key == "trace":
+            # A path walk has nothing to transmit until a path exists — with no
+            # target, an empty spec can't fall back to device routing.
+            if self._mode == "path" and not self._path_spec:
+                return
             self.start_trace()
         elif key == "width":
             self._open_flow(self._pick_width)
+        elif key == "samples":
+            self._open_flow(self._pick_samples)
         elif key == "compose":
             self._open_flow(self._compose_path)
-        else:
+        elif key == "explore" and self._explore is not None:
             self._open_flow(self._explore)
+        elif key == "back":
+            self.cancel()
+            self.resolve(None)
 
     def _open_flow(self, flow: PathFlow) -> None:
         """Float a path-picking flow over the screen (one at a time, not mid-trace).
 
         The composer, the scenario explorer, and the width picker all resolve the
         same way: a new spec to adopt (``""`` returns routing to the device), or
-        ``None`` to leave the current path untouched.
+        ``None`` to leave the current path untouched (which is all the sample-count
+        flow ever resolves).
 
         Args:
             flow: The dialog flow to run with the current spec.
@@ -422,11 +480,13 @@ class TraceScreen(Screen):
         stats = TraceStats.from_traces(self._target, self._traces)
         current = next((t for t in reversed(self._traces) if t.success), None)
         lines = render_lines(
-            Group(self._route_line(current), Text(), self._summary(stats)), width
+            Group(self._route_line(current), Text(), self._summary(stats, current)), width
         )
         lines.append("")
         self._cursor: Optional[int] = None
-        for i, key in enumerate(self._ACTIONS):
+        for i, key in enumerate(self._actions):
+            if key == "back":
+                lines.append("")  # Back is its own group, set apart like the menus do
             selected = i == self._index
             text = self._action_text(key, selected)
             text.no_wrap = True
@@ -439,8 +499,9 @@ class TraceScreen(Screen):
             hash_bytes = current.path_hash_bytes if current is not None else None
             tail += [Text(), Text("Per-hop medians", style="accent")]
             tail.append(self._hops_table(stats, hash_bytes))
-        tail += [Text(), Text("Traces", style="accent")]
-        tail.append(self._trace_log())
+        if self._running or self._status or self._traces:
+            tail += [Text(), Text("Traces", style="accent")]
+            tail.append(self._trace_log())
         lines.extend(render_lines(Group(*tail), width))
         self._scroll_total = max(1, len(lines))
         return lines
@@ -455,24 +516,34 @@ class TraceScreen(Screen):
         return getattr(self, "_cursor", None) if self._pin_cursor else None
 
     def _action_text(self, key: str, selected: bool) -> Text:
-        """One action row: pointer, glyph, label, and the row's hotkey, muted."""
+        """One action row: pointer, glyph, and label (current value inlined)."""
         text = Text("❯ " if selected else "  ", style="brand" if selected else "")
-        if key == "trace":
-            text.append("▶ ", style="ok")
-            text.append("Trace — one transmission")
+        if key == "compose":
+            text.append("✎ ", style="brand")
+            text.append("Compose path")
+        elif key == "explore":
+            text.append("⚡ ", style="warn")
+            text.append("Explore paths")
         elif key == "width":
             w = self._width_bytes()
             text.append("⚙ ", style="accent")
             text.append(f"Path width — {w} byte{'s' if w != 1 else ''} per hop")
-            text.append("  w", style="muted")
-        elif key == "compose":
-            text.append("✎ ", style="brand")
-            text.append("Compose path")
-            text.append("  p", style="muted")
+        elif key == "samples":
+            n = self._sample_count()
+            text.append("# ", style="accent")
+            text.append(f"Sample count — {n} trace{'s' if n != 1 else ''}")
+        elif key == "trace":
+            text.append("▶ ", style="ok")
+            if self._mode == "path" and not self._path_spec:
+                text.append("Trace — compose a path first", style="muted")
+            else:
+                n = self._sample_count()
+                if n > 1:
+                    text.append(f"Trace — {n} paced transmissions")
+                else:
+                    text.append("Trace — one transmission")
         else:
-            text.append("⚡ ", style="warn")
-            text.append("Explore paths")
-            text.append("  x", style="muted")
+            text.append("Back")
         if selected:
             text.style = "brand"
         return text
@@ -496,25 +567,30 @@ class TraceScreen(Screen):
                 )
             )
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
-            line.append(f"  (previous · {stamp})", style="faint")
+            # On its own line (aligned under the route) so a long route never
+            # squeezes the stamp off the right edge.
+            line.append(f"\n       (previous · {stamp})", style="faint")
             return line
-        line.append("unknown — press Enter to trace", style="muted")
+        if self._mode == "path":
+            line.append("none — compose a path to walk", style="muted")
+        else:
+            line.append("unknown — press Enter to trace", style="muted")
         return line
 
     def _planned_route(self) -> Optional[Text]:
         """The composed path as a route preview, or ``None`` without one.
 
         ``_path_spec`` is the literal wire spec — the whole walk, since the trace
-        protocol has no separate return-path field. A spec that reads the same
-        reversed is a symmetric boomerang (outbound hops, the target, those hops
-        mirrored): its second half is dimmed, reading as "this part isn't yours to
-        compose." Anything else was hand-composed hop by hop, so every hop renders
-        in full colour and only the automatic landing back on us stays faint.
+        protocol has no separate return-path field. In target mode the spec is the
+        symmetric boomerang (outbound hops, the target, those hops mirrored): its
+        second half is dimmed, reading as "this part isn't yours to compose". A path
+        walk was hand-composed hop by hop, so every hop renders in full colour and
+        only the automatic landing back on us stays faint.
         """
         tokens = [h.strip() for h in self._path_spec.split(",") if h.strip()]
         if not tokens:
             return None
-        if len(tokens) % 2 and tokens == tokens[::-1]:
+        if self._mode == "target" and len(tokens) % 2 and tokens == tokens[::-1]:
             mid = len(tokens) // 2  # outbound hops + target = first half, inclusive
             outbound, return_leg = tokens[: mid + 1], tokens[mid + 1 :]
         else:
@@ -548,7 +624,24 @@ class TraceScreen(Screen):
             text.append(hop, style=style)
         return text
 
-    def _summary(self, stats: TraceStats) -> Text:
+    def _displayed_hop_count(self, current: Optional[TraceResult]) -> Optional[int]:
+        """How many nodes the displayed route passes through, endpoints excluded.
+
+        Follows the route line's precedence — the live route, else the planned spec,
+        else the stored previous trace — counting exactly the items drawn between the
+        two ``us`` endpoints (a walked trace's final hash-less hop *is* us, so it
+        doesn't count).
+        """
+        if current is not None:
+            return sum(1 for h in current.hops if h.node)
+        tokens = [h for h in self._path_spec.split(",") if h.strip()]
+        if tokens:
+            return len(tokens)
+        if self._previous is not None and self._previous.hops:
+            return sum(1 for h in self._previous.hops if h.node)
+        return None
+
+    def _summary(self, stats: TraceStats, current: Optional[TraceResult]) -> Text:
         """The session's aggregates plus the current path, label-aligned."""
         snr = stats.median_min_snr
         snr_text = (
@@ -564,8 +657,13 @@ class TraceScreen(Screen):
         )
         if self._path_spec:
             summary.append(self._path_spec, style="brand")
+        elif self._mode == "path":
+            summary.append("none — compose a path first", style="muted")
         else:
             summary.append("auto (device-routed)", style="muted")
+        hops = self._displayed_hop_count(current)
+        if hops is not None:
+            summary.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
         return summary
 
     def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
@@ -592,12 +690,14 @@ class TraceScreen(Screen):
         rows: list[RenderableType] = []
         if self._running:
             spin = self._spinner.text()
-            spin.append("  tracing…", style="muted")
+            if self._progress is not None and self._progress[1] > 1:
+                spin.append(f"  tracing {self._progress[0]}/{self._progress[1]}…",
+                            style="muted")
+            else:
+                spin.append("  tracing…", style="muted")
             rows.append(spin)
         elif self._status:
             rows.append(Text(self._status, style="err"))
-        elif not self._traces:
-            rows.append(Text("press Enter to trace", style="muted"))
         for number, trace in zip(range(len(self._traces), 0, -1), reversed(self._traces)):
             rows.append(self._trace_row(number, trace))
         return Group(*rows)
@@ -637,19 +737,60 @@ def _collapse_trace_width(mode: int) -> int:
 
 
 async def open_trace(ctx: "AppContext", target: str) -> int:
-    """Open the live trace screen for ``target`` and run it until dismissed.
+    """Open the live *Trace target* screen for ``target`` and run it until dismissed.
+
+    The symmetric feature: can I reach this node? Routes turn at the target and come
+    home over the mirrored hops; *Explore paths* ranks candidate outbound legs from
+    the observed evidence.
+
+    Args:
+        ctx: The shared application context (must be running the interactive TUI surface).
+        target: The trace destination (contact name or key prefix).
+
+    Returns:
+        The number of traces run while the screen was open.
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    return await _open_session(ctx, target)
+
+
+async def open_trace_path(ctx: "AppContext") -> int:
+    """Open the live *Trace path* screen and run it until dismissed.
+
+    The hand-routed feature: how far can a route I build carry? There is no target —
+    the whole walk is composed hop by hop and only has to end within our earshot — so
+    there is no target picker, no device routing, and no scenario explorer. Traces
+    record under :data:`~meshterm.core.models.PATH_TRACE_TARGET`.
+
+    Args:
+        ctx: The shared application context (must be running the interactive TUI surface).
+
+    Returns:
+        The number of traces run while the screen was open.
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    return await _open_session(ctx, None)
+
+
+async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
+    """Wire and run one live trace session (both features share this plumbing).
 
     Wires the screen to the radio, the database, and the observed-topology services:
     each trace opens its own ``runs`` row and is recorded under it (same shape a
     scripted ``meshterm trace`` writes); the composer and scenario flows build a fresh
     :class:`~meshterm.services.topology.MeshTopology` from stored evidence on each open,
     so suggestions always reflect the latest received traffic. Nothing transmits until
-    the user asks — the screen opens idle, its route line seeded from the target's most
-    recent stored trace.
+    the user asks — the screen opens idle, its route line seeded from the most recent
+    stored trace.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
-        target: The trace destination (contact name or key prefix).
+        target: The trace destination (contact name or key prefix), or ``None`` for a
+            target-less path walk.
 
     Returns:
         The number of traces run while the screen was open.
@@ -675,6 +816,9 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         raise RuntimeError("the live trace screen is only available in the menu")
     session = ctx.ui.session
 
+    mode = "target" if target is not None else "path"
+    record_target = target if target is not None else PATH_TRACE_TARGET
+
     device = await ctx.device()
     contacts = await device.get_contacts()
     resolve = trace_runner.make_node_resolver(contacts)
@@ -693,26 +837,35 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         width_bytes = 1
     device_width = width_bytes  # remembered so the width dialog can mark the default
 
+    # How many traces one Trace commit runs. Session state like the width; the
+    # screen's *Sample count* action changes it (see pick_samples).
+    sample_count = 1
+
     # The target as an addressable hash: a known contact's full key, or the typed hex
     # prefix itself. A non-hex unknown target can still be traced device-routed, but
-    # composing/exploring needs a destination hash to pin the path on.
-    needle = target.casefold()
-    target_contact = next(
-        (
-            c
-            for c in contacts
-            if c.name.casefold() == needle
-            or ((c.public_key or "").lower().startswith(target.lower()))
-        ),
-        None,
-    )
-    raw_hash = (
-        (target_contact.public_key or target_contact.key_prefix)
-        if target_contact
-        else target
-    ).lower().removeprefix("0x")
-    target_hash = raw_hash if _is_hex(raw_hash) else None
-    target_label = target_contact.name if target_contact else target
+    # composing/exploring needs a destination hash to pin the path on. A path walk has
+    # no target at all — every target_* stays None and the composer runs hand-routed.
+    target_contact: Optional[Contact] = None
+    target_hash: Optional[str] = None
+    target_label: Optional[str] = None
+    if target is not None:
+        needle = target.casefold()
+        target_contact = next(
+            (
+                c
+                for c in contacts
+                if c.name.casefold() == needle
+                or ((c.public_key or "").lower().startswith(target.lower()))
+            ),
+            None,
+        )
+        raw_hash = (
+            (target_contact.public_key or target_contact.key_prefix)
+            if target_contact
+            else target
+        ).lower().removeprefix("0x")
+        target_hash = raw_hash if _is_hex(raw_hash) else None
+        target_label = target_contact.name if target_contact else target
 
     def fresh_topology() -> MeshTopology:
         """Build the evidence graph from everything currently stored + on the device."""
@@ -725,7 +878,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         )
 
     async def unaddressable() -> None:
-        """Explain why path features need a resolvable target, in a small dialog."""
+        """Explain why target-mode path features need a resolvable target."""
         await session.message_dialog(
             Text(
                 f"{target!r} isn't a known contact or a hex key prefix, so a forced "
@@ -850,21 +1003,30 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         fetch, rebuilds the topology with the new evidence, and reopens the composer
         exactly where the user stood (same hops, refreshed suggestions).
         """
-        if target_hash is None:
+        if mode == "target" and target_hash is None:
             await unaddressable()
             return None
         topo = fresh_topology()
-        target_id = topo.canonical(target_hash) or target_hash[:12]
-        # Re-seed from the current spec. A spec that reads the same reversed is the
-        # symmetric boomerang (hops, target, mirror): seed just the outbound hops and
-        # let the composer regenerate the rest. Anything else was hand-composed, so
-        # reopen in asymmetric mode with every hop of the walk editable. Tokens no
-        # contact matches are kept verbatim rather than dropped — an adopted route
-        # must survive a reopen even where the evidence graph is blind.
+        target_id = (
+            (topo.canonical(target_hash) or target_hash[:12])
+            if target_hash is not None
+            else None
+        )
+        # Re-seed from the current spec. A target-mode spec is the symmetric boomerang
+        # (hops, target, mirror): seed just the outbound hops and let the composer
+        # regenerate the rest. A path walk is its spec verbatim. Tokens no contact
+        # matches are kept as they are rather than dropped — an adopted route must
+        # survive a reopen even where the evidence graph is blind.
         tokens = [p.strip() for p in current.split(",") if p.strip()]
         ids = [topo.canonical(h) or h for h in tokens]
-        symmetric = not ids or (len(ids) % 2 == 1 and ids == ids[::-1])
-        seed = ids[: len(ids) // 2] if symmetric else ids
+        if mode == "path":
+            seed = ids
+        elif ids and len(ids) % 2 == 1 and ids == ids[::-1]:
+            seed = ids[: len(ids) // 2]
+        elif target_id in ids:
+            seed = ids[: ids.index(target_id)]  # a stale hand walk: keep the outbound
+        else:
+            seed = ids
         while True:
             # Nodes whose neighbour table can be asked for: repeater contacts with a
             # public key to log in against (our own node has nothing new to tell us).
@@ -876,22 +1038,21 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
                 if cid is not None and cid != topo.self_id:
                     fetchable[cid] = c
             screen = PathComposerScreen(
+                device_label=device_label,
+                device_hash=device_hash,
+                topology=topo,
+                width_bytes=width_bytes,
                 target_id=target_id,
                 target_hash=target_hash,
                 target_label=target_label,
-                device_label=device_label,
-                topology=topo,
-                width_bytes=width_bytes,
                 hops=seed,
                 fetch_nodes=frozenset(fetchable),
-                symmetric=symmetric,
             )
             result = await session.run_screen(screen)
             if result is CANCEL:
                 return None
             if isinstance(result, FetchNeighbours):
                 seed = screen.hops  # resume mid-thought after the fetch
-                symmetric = screen.symmetric
                 repeater = fetchable.get(result.node)
                 if repeater is not None and await fetch_neighbours_via(
                     repeater, result.node
@@ -903,12 +1064,12 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     async def pick_width(current: str) -> Optional[str]:
         """Float the path-hash width picker and re-render the standing spec to match.
 
-        Each row previews the target's key with the addressed slice lit at that
-        width, so the choice reads as "this much of every key goes on the air". The
-        chosen width shapes every spec the composer/explorer emit afterwards; a
-        standing forced path is re-rendered immediately — hops are widened back
-        through their canonical hashes where known, then collapsed uniformly (a hop
-        only ever known narrower keeps the whole spec at what it can honour).
+        Each row previews a key with the addressed slice lit at that width, so the
+        choice reads as "this much of every key goes on the air". The chosen width
+        shapes every spec the composer/explorer emit afterwards; a standing forced
+        path is re-rendered immediately — hops are widened back through their
+        canonical hashes where known, then collapsed uniformly (a hop only ever known
+        narrower keeps the whole spec at what it can honour).
 
         Returns:
             The re-rendered spec, or ``None`` when cancelled, unchanged, or there is
@@ -929,7 +1090,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             SelectScreen(
                 "path width",
                 items,
-                prompt="Forced hops are addressed by this many leading bytes of each key.",
+                prompt="Forced hops are addressed by this many leading key bytes.",
                 default=width_bytes,
                 footer_hint="↑↓ · Enter set · Esc keep",
                 filterable=False,
@@ -947,16 +1108,54 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         width = collapse_width(*full, ceiling=width_bytes)
         return ",".join(f[: width * 2] for f in full)
 
+    async def pick_samples(current: str) -> Optional[str]:
+        """Float the sample-count picker: how many traces one Trace action runs.
+
+        Multi-trace runs are paced by the configured cooldown between transmissions,
+        so choosing 8 is a deliberate sampling session, never a burst. Always resolves
+        ``None`` — the count is session state the screen reads back, not a spec.
+        """
+        nonlocal sample_count
+        pace = ctx.settings.trace_cooldown_s
+        items: list = []
+        for n in SAMPLE_CHOICES:
+            title = Text(f"{n} trace{'s' if n > 1 else ' '}")
+            if n == 1:
+                title.append("  · a single transmission", style="muted")
+            items.append(Choice(title=title, value=n))
+        picked = await session.run_screen(
+            SelectScreen(
+                "sample count",
+                items,
+                prompt=f"One Trace action runs this many traces, {pace:g} s apart.",
+                default=sample_count,
+                footer_hint="↑↓ · Enter set · Esc keep",
+                filterable=False,
+                wrap=False,
+            )
+        )
+        if picked is not CANCEL and picked is not None:
+            sample_count = int(picked)
+        return None
+
     def scenario_title(scenario: PathScenario, topo: MeshTopology) -> Text:
-        """One scenario as a select row: source, route, and its observed evidence."""
-        styles = {"device": "accent", "direct": "muted", "observed": "brand"}
-        text = Text(scenario.label, style=styles.get(scenario.source, ""))
-        if scenario.hops:
-            text.append("  via ", style="muted")
-            names = [topo.display_name(h) or h for h in scenario.hops]
-            text.append(" → ".join(names))
+        """One scenario as a select row: the route itself, and its observed evidence.
+
+        Observed candidates *are* their hop sequence, so the row leads with the route
+        and no label; the device route and the direct shot keep their short labels —
+        that provenance is the point of offering them.
+        """
+        names = [topo.display_name(h) or h for h in scenario.hops]
+        if scenario.source == "observed":
+            text = Text(" → ".join(names), style="brand")
         else:
-            text.append("  no repeaters", style="muted")
+            styles = {"device": "accent", "direct": "muted"}
+            text = Text(scenario.label, style=styles.get(scenario.source, ""))
+            if names:
+                text.append("  via ", style="muted")
+                text.append(" → ".join(names))
+            else:
+                text.append("  no repeaters", style="muted")
         if scenario.weakest_snr is not None:
             text.append("  ·  weakest ", style="muted")
             text.append(f"{scenario.weakest_snr:+.1f} dB", style=snr_style(scenario.weakest_snr))
@@ -992,8 +1191,8 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
 
         One ``runs`` row spans the sweep; each trace and each candidate aggregate is
         recorded under it, so an aborted probe still keeps everything it measured.
-        Each candidate gets exactly one transmission (the screen-wide rule: repeaters
-        can blacklist nodes that burst traffic); ``None`` when aborted.
+        Each candidate gets exactly one transmission (probing is comparison, not
+        sampling); ``None`` when aborted.
         """
         run_id = ctx.repo.start_run(
             "trace",
@@ -1124,7 +1323,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             SelectScreen(
                 f"reach {target_label} · scenarios",
                 items,
-                prompt="Choose the outbound leg — the return is always those hops mirrored.",
+                prompt="Choose the outbound leg — the return mirrors it.",
                 footer_hint="↑↓ move · Enter adopt/probe · Esc back",
                 wrap=False,
             )
@@ -1166,17 +1365,16 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     async def trace_once(path_spec: str, on_trace: Callable[[TraceResult], None]) -> None:
         """Run one persisted trace: one transmission, its own ``runs`` row.
 
-        A single transmission per keypress is deliberate — repeaters penalize (and
-        can blacklist) nodes that burst traffic — so repeat sampling is left to the
-        human, and the screen aggregates whatever lands.
+        The screen calls this once per sample; multi-trace runs are paced there, so
+        the repeaters never see a burst regardless of the chosen count.
         """
         path = trace_runner.parse_trace_path(path_spec, contacts) if path_spec.strip() else None
-        params: dict[str, Any] = {"target": target}
+        params: dict[str, Any] = {"target": record_target}
         if path:
             params["path"] = path
         run_id = ctx.repo.start_run("trace", params, ctx.profile_name)
         try:
-            result = await device.run_trace(target, path=path)
+            result = await device.run_trace(record_target, path=path)
         except BaseException as exc:
             # A cancelled or failed trace still closes its run row, so no ``running``
             # orphan is left behind.
@@ -1188,7 +1386,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
             run_id,
             "ok",
             {
-                "target": target,
+                "target": record_target,
                 "success": result.success,
                 "min_snr": result.min_snr,
                 "rtt_ms": result.round_trip_ms,
@@ -1196,17 +1394,21 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
         )
 
     screen = TraceScreen(
-        target,
+        record_target,
+        mode=mode,
         device_label=device_label,
         device_hash=device_hash,
         resolve=resolve,
         session=session,
         trace=trace_once,
         compose_path=compose,
-        explore=explore,
+        explore=explore if mode == "target" else None,
         pick_width=pick_width,
+        pick_samples=pick_samples,
         width_bytes=lambda: width_bytes,
-        previous=ctx.repo.latest_trace(target),
+        sample_count=lambda: sample_count,
+        pace_s=ctx.settings.trace_cooldown_s,
+        previous=ctx.repo.latest_trace(record_target),
     )
     try:
         await session.run_screen(screen)
