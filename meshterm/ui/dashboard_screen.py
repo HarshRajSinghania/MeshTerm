@@ -4,11 +4,12 @@ The interactive face of the ``dashboard`` tool. One full-screen, always-repainti
 stacks four reads of the mesh, coarsest first:
 
 * **Activity** — a tall braille bar chart of *every* packet the hub hears (adverts,
-  telemetry, RX-logged packets, messages, acks) over the trailing two hours, one column
-  per five-minute bucket, newest at the left — the header indicator's big sibling,
-  drawn from the same :meth:`~meshterm.services.monitor_service.MonitorService`
-  buckets. A pulse line beneath it reads the rate, who's been heard, and the busiest
-  node of the window.
+  telemetry, RX-logged packets, messages, acks), one dot column per minute — braille's
+  full horizontal resolution, two minutes per character — stretched across whatever
+  width the terminal offers, newest at the left with the count scale mirrored on both
+  edges. The header indicator's big sibling, drawn from the same
+  :meth:`~meshterm.services.monitor_service.MonitorService` buckets. A pulse line
+  beneath it reads the rate, who's been heard, and the busiest node of the window.
 * **Traffic** — the session's tallies by packet class, each with a proportional bar,
   from the monitor's kind counters.
 * **RF health** — the trailing window's reception quality: median SNR (on the trace
@@ -35,7 +36,7 @@ from rich.text import Text
 
 from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
-from ..persistence.repository import ACTIVITY_BUCKETS, ACTIVITY_WINDOW
+from ..persistence.repository import ACTIVITY_WINDOW
 from .theme import snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
@@ -84,20 +85,52 @@ def _fit(text: str, width: int) -> str:
     return text.ljust(width)
 
 
-def braille_bars(values: list[int], *, rows: int = _CHART_ROWS) -> list[Text]:
-    """Render ``values`` as a braille bar chart, one full character column per value.
+def _span_label(minutes: int) -> str:
+    """A compact duration — ``45 min`` under two hours, else ``2.5 h`` / ``3 h``."""
+    if minutes < 120:
+        return f"{minutes} min"
+    text = f"{minutes / 60:.1f}"
+    return (text[:-2] if text.endswith(".0") else text) + " h"
 
-    Each value becomes one character-wide column (both dot columns at the same height),
-    scaled so the window's peak fills all ``rows × 4`` dot rows. Zero columns draw a
-    faint two-dot baseline on the bottom row — the flatline convention of the app's
-    sparklines — and blank braille above, so the chart floor is always visible.
+
+def _axis_labels(peak: int, rows: int) -> list[str]:
+    """Each chart row's top-edge count, top row first, dupes and zeros blanked.
+
+    The top row always reads the peak; lower rows read the proportional counts at
+    their upper edges, but a mark that would repeat the one above (a low peak makes
+    neighbouring rows round to the same value) or read zero is left blank, so the
+    scale never shows the same number twice.
+    """
+    labels: list[str] = []
+    seen: set[int] = set()
+    for i in range(rows):
+        value = round(peak * (rows - i) / rows)
+        if peak and value and value not in seen:
+            labels.append(str(value))
+            seen.add(value)
+        else:
+            labels.append("")
+    return labels
+
+
+def braille_bars(values: list[int], *, rows: int = _CHART_ROWS) -> list[Text]:
+    """Render ``values`` as a braille bar chart, one *dot column* per value.
+
+    Braille offers two dot columns per character cell — the font's full horizontal
+    resolution — so consecutive values pair up into one cell, each rising to its own
+    height. Bars are scaled so the window's peak fills all ``rows × 4`` dot rows, and
+    any non-zero value lights at least one dot, so a lone packet never vanishes. A
+    silent dot column keeps a faint one-dot floor on the bottom row — the flatline
+    convention of the app's sparklines — so the chart floor is always visible.
 
     Args:
-        values: The bucket counts, drawn left to right.
+        values: The bucket counts, drawn left to right (two per character cell; an
+            odd count is padded with one silent column).
         rows: How many braille rows tall the chart is.
 
     Returns:
-        ``rows`` :class:`Text` lines, top row first.
+        ``rows`` :class:`Text` lines, top row first, ``ceil(len(values) / 2)``
+        characters wide.
     """
     peak = max(values, default=0)
     total_dots = rows * 4
@@ -105,14 +138,22 @@ def braille_bars(values: list[int], *, rows: int = _CHART_ROWS) -> list[Text]:
         (0 if peak == 0 or v <= 0 else max(1, round(v / peak * total_dots)))
         for v in values
     ]
+    if len(heights) % 2:
+        heights.append(0)
     lines: list[Text] = []
     for row in range(rows):
         floor = (rows - 1 - row) * 4  # dot rows below this braille row
         line = Text()
-        for value, height in zip(values, heights):
-            fill = min(4, max(0, height - floor))
-            if fill:
-                line.append(chr(0x2800 | _COL_LEFT[fill] | _COL_RIGHT[fill]), style="ok")
+        for left, right in zip(heights[0::2], heights[1::2]):
+            lf = min(4, max(0, left - floor))
+            rf = min(4, max(0, right - floor))
+            if lf or rf:
+                mask = _COL_LEFT[lf] | _COL_RIGHT[rf]
+                if row == rows - 1:
+                    # Keep the floor continuous under a half-silent cell: the silent
+                    # dot column still shows its bottom baseline dot.
+                    mask |= (0x40 if lf == 0 else 0) | (0x80 if rf == 0 else 0)
+                line.append(chr(0x2800 | mask), style="ok")
             elif row == rows - 1:
                 line.append(chr(0x2800 | 0x40 | 0x80), style="faint")  # the flatline
             else:
@@ -218,7 +259,7 @@ class DashboardScreen(Screen):
         """Render the four stacked sections for the current state."""
         self._prune()
         sections: list[RenderableType] = [
-            *self._activity_section(),
+            *self._activity_section(width),
             Text(),
             *self._traffic_section(),
             Text(),
@@ -232,61 +273,93 @@ class DashboardScreen(Screen):
 
     # -- activity --
 
-    def _activity_section(self) -> list[RenderableType]:
-        """The two-hour all-packet chart, oldest at the left, plus the pulse line."""
-        histogram = list(self._activity())
-        peak = max(histogram, default=0)
+    def _activity_section(self, width: int) -> list[RenderableType]:
+        """The all-packet chart — newest minute at the left — plus the pulse line.
+
+        One dot column per minute, two per character cell, stretched across every
+        cell the terminal offers between the two scale gutters; a wider terminal
+        simply shows more history. The scale is mirrored on both edges so the counts
+        are readable from either end of a wide chart.
+        """
+        histogram = list(self._activity())  # newest first, one count per minute
+        # Size the label lane from the whole histogram's peak (not just the visible
+        # slice) so the gutters never shift as a burst scrolls out of view.
+        label_w = max(1, len(str(max(histogram, default=0))))
+        chars = max(10, width - 2 * (label_w + 2))
+        minutes = chars * 2
+        shown = (histogram + [0] * minutes)[:minutes]
+        peak = max(shown)
+
         heading = Text("Activity", style="accent")
-        heading.append("  ·  every packet heard · 2 h", style="muted")
-        # The histogram arrives newest-first; the chart reads left→right in time, so
-        # flip it — a burst enters at the right edge and slides left as it ages.
-        chart_rows = braille_bars(histogram[::-1])
-        label_w = len(str(peak)) if peak else 1
+        heading.append("  ·  every packet heard · one minute per dot column",
+                       style="muted")
+        chart_rows = braille_bars(shown)
+        marks = _axis_labels(peak, len(chart_rows))
         out: list[RenderableType] = [heading]
-        for i, row in enumerate(chart_rows):
-            prefix = f"{peak:>{label_w}} ┤" if i == 0 else " " * label_w + " │"
-            line = Text(prefix, style="muted")
+        for mark, row in zip(marks, chart_rows):
+            line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style="muted")
             line.append_text(row)
+            line.append("├" if mark else "│", style="muted")
+            if mark:
+                line.append(f" {mark}", style="muted")
             out.append(line)
-        axis = Text(" " * label_w + " └", style="muted")
-        span = ACTIVITY_BUCKETS  # one character per bucket
-        axis.append("─" * span, style="muted")
+        axis = Text(" " * label_w + " └" + "─" * chars + "┘", style="muted")
         out.append(axis)
-        caption = Text(" " * (label_w + 2), style="muted")
-        caption.append("−2 h", style="faint")
-        pad = span - len("−2 h") - len("now")
-        caption.append(" " * max(1, pad))
+        span = "−" + _span_label(minutes)
+        caption = Text(" " * (label_w + 2))
         caption.append("now", style="faint")
+        caption.append(" " * max(1, chars - len("now") - len(span)))
+        caption.append(span, style="faint")
         out.append(caption)
         out.append(Text())
-        out.append(self._pulse_line(histogram))
+        out.append(self._pulse_line(shown, width))
         return out
 
-    def _pulse_line(self, histogram: list[int]) -> Text:
-        """Rates, who's been heard, and the window's busiest transmitter."""
-        recent = sum(histogram[:3]) / 15.0  # the last three 5-min buckets
-        overall = sum(histogram) / (ACTIVITY_BUCKETS * 5.0)
+    def _pulse_line(self, shown: list[int], width: int) -> Text:
+        """Rates, who's been heard, and the window's busiest transmitter.
+
+        ``shown`` is the chart's visible slice (newest first, one bucket per minute),
+        so the quoted rates describe exactly what the chart draws. The word "heard"
+        after the node count is a luxury: it is kept only when the line fits ``width``
+        without wrapping.
+        """
+        recent = sum(shown[:15]) / max(1, min(15, len(shown)))
+        overall = sum(shown) / max(1, len(shown))
+        span = _span_label(len(shown))
         nodes = {o.node for o in self._window if o.node and o.kind != "packet"}
         repeaters = {
             o.node
             for o in self._window
             if o.node and o.node_type == NODE_TYPE_REPEATER
         }
-        line = Text("pulse    ", style="muted")
-        line.append(f"{recent:.1f} pkt/min", style="brand")
-        line.append(f" (15 m) · {overall:.1f} (2 h)", style="muted")
-        line.append("  ·  ", style="muted")
-        line.append(str(len(nodes)))
-        line.append(f" node{'s' if len(nodes) != 1 else ''} heard", style="muted")
-        if repeaters:
-            line.append(f" ({len(repeaters)} repeater{'s' if len(repeaters) != 1 else ''})",
-                        style="muted")
+
+        def compose(heard: bool) -> Text:
+            line = Text("pulse    ", style="muted")
+            line.append(f"{recent:.1f} pkt/min", style="brand")
+            line.append(f" (15 m) · {overall:.1f} ({span})", style="muted")
+            line.append("  ·  ", style="muted")
+            line.append(str(len(nodes)))
+            suffix = f" node{'s' if len(nodes) != 1 else ''}"
+            line.append(suffix + (" heard" if heard else ""), style="muted")
+            if repeaters:
+                line.append(
+                    f" ({len(repeaters)} repeater{'s' if len(repeaters) != 1 else ''})",
+                    style="muted",
+                )
+            return line
+
+        line = compose(heard=True)
+        if len(line.plain) > width:
+            line = compose(heard=False)
         busiest = self._busiest()
         if busiest is not None:
             name, count = busiest
             line.append("\nbusiest  ", style="muted")
             line.append(name, style="brand")
-            line.append(f"  {count} packets in the window", style="muted")
+            line.append(
+                f"  {count} packet{'s' if count != 1 else ''} in the window",
+                style="muted",
+            )
         return line
 
     def _busiest(self) -> Optional[tuple[str, int]]:
@@ -317,8 +390,13 @@ class DashboardScreen(Screen):
             count = counts[kind]
             row = Text(f"{kind.ljust(label_w)}  ", style="muted")
             row.append(f"{count:>{count_w}}  ")
-            bar_len = max(1, round(count / peak * 24))
-            row.append("⣿" * bar_len, style=_KIND_STYLES.get(kind, "brand"))
+            # Bars step in half characters — braille's two dot columns per cell —
+            # so the lane resolves 48 levels across its 24 cells.
+            halves = max(1, round(count / peak * 48))
+            style = _KIND_STYLES.get(kind, "brand")
+            row.append("⣿" * (halves // 2), style=style)
+            if halves % 2:
+                row.append("⡇", style=style)  # a lone left dot column: the half step
             rows.append(row)
         return rows
 

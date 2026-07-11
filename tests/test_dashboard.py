@@ -6,12 +6,14 @@ approach as the live trace/TX screen tests.
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from pathlib import Path
 
 from meshterm.core.events import MeshEvent
 from meshterm.core.models import Ack, Message, Observation, utcnow
-from meshterm.persistence.repository import ACTIVITY_BUCKETS, Repository
+from meshterm.persistence.repository import Repository
+from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 from meshterm.ui.dashboard_screen import DashboardScreen, braille_bars
 
 
@@ -45,32 +47,54 @@ def _plain(lines: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _stripped(lines: list[str]) -> list[str]:
+    """The rendered lines with ANSI escapes removed, for structural assertions."""
+    return [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
+
+
 # --- braille_bars --------------------------------------------------------------------
 
 
 def test_braille_bars_scales_the_peak_to_full_height() -> None:
-    """The window's peak fills the whole chart; a zero column draws the flatline."""
-    rows = braille_bars([0, 6, 12], rows=3)
+    """The window's peak fills the chart; values pair up two dot columns per cell."""
+    rows = braille_bars([12, 12, 0, 0], rows=3)
     assert len(rows) == 3
-    assert all(len(r.plain) == 3 for r in rows)
-    # The peak column is fully lit on the top row; the zero column is blank there.
-    assert rows[0].plain[2] == chr(0x2800 | 0x47 | 0xB8)
-    assert rows[0].plain[0] == chr(0x2800)
-    # The zero column keeps the faint two-dot floor on the bottom row.
-    assert rows[2].plain[0] == chr(0x2800 | 0x40 | 0x80)
+    assert all(len(r.plain) == 2 for r in rows)
+    # The peak pair fills both dot columns of its cell on the top row; the silent
+    # pair is blank there and keeps the faint two-dot floor on the bottom row.
+    assert rows[0].plain[0] == chr(0x2800 | 0x47 | 0xB8)
+    assert rows[0].plain[1] == chr(0x2800)
+    assert rows[2].plain[1] == chr(0x2800 | 0x40 | 0x80)
+
+
+def test_braille_bars_gives_each_dot_column_its_own_height() -> None:
+    """Two values sharing a cell rise independently — braille's full resolution."""
+    rows = braille_bars([12, 6], rows=3)
+    assert rows[0].plain[0] == chr(0x2800 | 0x47)          # left full, right below
+    assert rows[1].plain[0] == chr(0x2800 | 0x47 | 0xA0)   # right's head: 2 dots
+    assert rows[2].plain[0] == chr(0x2800 | 0x47 | 0xB8)   # both full at the base
 
 
 def test_braille_bars_never_hides_a_lone_packet() -> None:
     """A tiny non-zero value still lights (in the lit style, not the faint floor's)."""
-    rows = braille_bars([1, 1000], rows=3)
+    rows = braille_bars([1, 0, 1000, 1000], rows=3)
     first_span = rows[2].spans[0]
     assert first_span.start == 0 and first_span.style == "ok"
 
 
 def test_braille_bars_all_silent_is_a_flatline() -> None:
     """With nothing heard the chart is a floor line, not a divide-by-zero."""
-    rows = braille_bars([0, 0, 0], rows=2)
+    rows = braille_bars([0, 0, 0, 0, 0, 0], rows=2)
     assert rows[1].plain == chr(0x2800 | 0x40 | 0x80) * 3
+
+
+def test_braille_bars_pads_an_odd_tail_column() -> None:
+    """An odd value count still renders whole cells (the tail column stays silent)."""
+    rows = braille_bars([4], rows=1)
+    assert len(rows[0].plain) == 1
+    # The lone value fills its left dot column; the padded right column keeps the
+    # floor dot so the baseline stays continuous.
+    assert rows[0].plain[0] == chr(0x2800 | 0x47 | 0x80)
 
 
 # --- the screen ----------------------------------------------------------------------
@@ -89,6 +113,40 @@ def test_dashboard_renders_all_four_sections() -> None:
     assert "● live" in body
     assert "nodes heard" in body and "(1 repeater)" in body
     assert "advert" in body and "Alice" in body and "YUL" in body
+
+
+def test_dashboard_activity_chart_reads_newest_left_with_mirrored_scale() -> None:
+    """'now' anchors the left edge and the peak count marks both gutters."""
+    screen = _screen(histogram=[9] + [0] * (ACTIVITY_BUCKETS - 1))
+    lines = _stripped(screen.render_body(80))
+    top = next(line for line in lines if "┤" in line)
+    assert top.strip().startswith("9 ┤")
+    assert top.rstrip().endswith("├ 9")
+    caption = next(line for line in lines if "now" in line)
+    assert caption.index("now") < caption.index("−")  # newest left, oldest right
+
+
+def test_dashboard_activity_chart_fills_the_width() -> None:
+    """The chart stretches to the render width: wider terminal, more minutes shown."""
+    screen = _screen(histogram=[5] * ACTIVITY_BUCKETS)
+    for width in (60, 110):
+        lines = _stripped(screen.render_body(width))
+        top = next(line for line in lines if "┤" in line)
+        assert len(top) == width  # gutters + chart consume every cell
+    narrow = next(line for line in _stripped(screen.render_body(60)) if "└" in line)
+    wide = next(line for line in _stripped(screen.render_body(110)) if "└" in line)
+    assert wide.count("─") > narrow.count("─")
+
+
+def test_dashboard_pulse_drops_heard_only_when_it_wont_fit() -> None:
+    """The pulse line keeps ' heard' at full width and sheds it instead of wrapping."""
+    screen = _screen(window=[_obs(), _obs(node="3d63", node_type=2)])
+    shown = [1] * 120
+    roomy = screen._pulse_line(shown, 100).plain.splitlines()[0]
+    assert "nodes heard" in roomy
+    tight = screen._pulse_line(shown, len(roomy) - 1).plain.splitlines()[0]
+    assert "heard" not in tight and "nodes" in tight
+    assert len(tight) <= len(roomy) - 1
 
 
 def test_dashboard_live_events_land_in_the_feed_and_window() -> None:

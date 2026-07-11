@@ -295,7 +295,7 @@ async def test_monitor_service_counts_every_packet_kind(tmp_path: Path) -> None:
     """The activity histogram counts observations, messages, and acks alike, newest first."""
     from meshterm.core.events import MeshEvent
     from meshterm.core.models import Ack, Message
-    from meshterm.persistence.repository import ACTIVITY_BUCKETS
+    from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 
     repo = Repository(tmp_path / "act.db")
     ctx = _StubContext(repo, MockDevice())

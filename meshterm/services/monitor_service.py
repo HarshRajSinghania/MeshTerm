@@ -22,15 +22,18 @@ from typing import TYPE_CHECKING, Optional
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
-from ..persistence.repository import ACTIVITY_BUCKETS
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Seconds per bucket of the all-packet activity histogram — five minutes, one braille
-#: dot column of the header's indicator, matching the channel sparkline's geometry
-#: (:data:`~meshterm.persistence.repository.ACTIVITY_BUCKETS` buckets = two hours).
-ACTIVITY_BUCKET_S = 300
+#: Seconds per bucket of the all-packet activity histogram — one minute, one braille
+#: dot column of the header indicator and the dashboard's activity chart.
+ACTIVITY_BUCKET_S = 60
+
+#: How many one-minute buckets the histogram retains — six hours, deep enough that the
+#: header and the dashboard can both stretch their charts to fill any realistic terminal
+#: width (two buckets per character cell) and still be drawing history, not padding.
+ACTIVITY_BUCKETS = 360
 
 
 class MonitorService:
@@ -52,10 +55,10 @@ class MonitorService:
         self._run_id: Optional[int] = None
         self._session_count = 0
         self._run_start_count = 0
-        # All-packet activity, bucketed by wall-clock five-minute slot (epoch // span →
-        # count). Every hub event counts — observations, messages, acks — because the
-        # header's indicator answers "is the mesh alive?", not "any mail?". Pruned as it
-        # rolls, so it never holds more than the two-hour window plus one closing bucket.
+        # All-packet activity, bucketed by wall-clock minute (epoch // span → count).
+        # Every hub event counts — observations, messages, acks — because the header's
+        # indicator answers "is the mesh alive?", not "any mail?". Pruned as it rolls,
+        # so it never holds more than the six-hour window plus one closing bucket.
         self._activity: dict[int, int] = {}
         # Session-long tallies by packet class (advert/telemetry/packet/message/ack),
         # fed by the same kind-unfiltered subscription — the dashboard's traffic panel.
@@ -80,14 +83,15 @@ class MonitorService:
         return self._start_total + self._session_count
 
     def activity_histogram(self) -> tuple[int, ...]:
-        """All-packet counts per five-minute bucket over the trailing two hours.
+        """All-packet counts per one-minute bucket over the trailing six hours.
 
-        Newest first — index 0 is the current five minutes — the order the header's
-        braille indicator draws. Counts everything the hub fans out this session; time
-        before launch simply reads as silence.
+        Newest first — index 0 is the current minute — the order the header's braille
+        indicator draws. Counts everything the hub fans out this session; time before
+        launch simply reads as silence. Consumers slice however much of the window
+        fits their chart and treat the rest as history in reserve.
 
         Returns:
-            :data:`~meshterm.persistence.repository.ACTIVITY_BUCKETS` bucket counts.
+            :data:`ACTIVITY_BUCKETS` bucket counts.
         """
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
         return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
