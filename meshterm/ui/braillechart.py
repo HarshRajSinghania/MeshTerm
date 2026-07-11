@@ -85,6 +85,7 @@ def timeline_rows(
     span: Optional[tuple[float, float]] = None,
     style: CellStyle = "ok",
     baseline_style: str = "faint",
+    column_styles: Optional[Sequence[str]] = None,
 ) -> list[Text]:
     """Render a chronological series as a braille bar chart, newest at the right.
 
@@ -103,6 +104,10 @@ def timeline_rows(
         style: Style for lit cells: a Rich style name, or a callable given each
             cell's present readings (for per-slice colouring).
         baseline_style: Style for the zero line where nothing covers it.
+        column_styles: Optional per-column styles, aligned with ``values``,
+            overriding ``style`` — how the activity charts dim history recorded by
+            an earlier session. A cell straddling two styles takes its newer
+            (right) lit column's.
 
     Returns:
         ``rows`` :class:`Text` lines, top row first, ``ceil(len(values)/2)``
@@ -124,7 +129,7 @@ def timeline_rows(
         else:
             height = max(1, round(value / lo * down))
             bars.append((base - height + 1, base))
-    return _assemble(bars, list(values), rows, base, style, baseline_style)
+    return _assemble(bars, list(values), rows, base, style, baseline_style, column_styles)
 
 
 def activity_sparkline(
@@ -133,6 +138,7 @@ def activity_sparkline(
     buckets: int,
     *,
     style: str = "ok",
+    column_styles: Optional[Sequence[str]] = None,
 ) -> Text:
     """A one-row activity sparkline over a newest-first histogram, "now" rightmost.
 
@@ -148,16 +154,25 @@ def activity_sparkline(
         levels: Ascending count thresholds for bar heights 1..4.
         buckets: How many buckets to draw (half this many characters).
         style: Style for lit cells.
+        column_styles: Optional per-bucket styles aligned with ``histogram``
+            (newest first, reversed here alongside it), overriding ``style`` —
+            how the header pulse dims buckets recorded by an earlier session.
 
     Returns:
         A styled Rich :class:`Text` of ``buckets / 2`` braille characters.
     """
     window = (tuple(histogram) + (0,) * buckets)[:buckets]
+    per_column: Optional[list[str]] = None
+    if column_styles is not None:
+        padded = (list(column_styles) + [style] * buckets)[:buckets]
+        per_column = list(reversed(padded))
     bars: list[Optional[tuple[int, int]]] = []
     for count in reversed(window):
         height = bisect_right(levels, count)
         bars.append((0, height - 1) if height else None)
-    return _assemble(bars, [float(c) for c in reversed(window)], 1, 0, style, "faint")[0]
+    return _assemble(
+        bars, [float(c) for c in reversed(window)], 1, 0, style, "faint", per_column
+    )[0]
 
 
 #: The meter's fill glyphs, ``(full step, half step)``, by profile. A *full-height*
@@ -323,6 +338,7 @@ def _assemble(
     base: int,
     style: CellStyle,
     baseline_style: str,
+    column_styles: Optional[Sequence[str]] = None,
 ) -> list[Text]:
     """Assemble bar spans into styled braille rows (the shared cell walk).
 
@@ -339,6 +355,9 @@ def _assemble(
         base: The zero baseline's dot row.
         style: Fixed style, or per-cell callable (see :data:`CellStyle`).
         baseline_style: Style for baseline-only cells.
+        column_styles: Per-column style overrides aligned with ``bars``; a cell
+            takes its right column's style when that column is lit, else its
+            left's (the newer reading wins the shared cell).
 
     Returns:
         ``rows`` :class:`Text` lines, top row first.
@@ -357,7 +376,9 @@ def _assemble(
             right = _column_bits(bars[i + 1], floor, _RIGHT_BITS)
             if left or right:
                 mask = left | right | base_bit_left | base_bit_right
-                if callable(style):
+                if column_styles is not None and i + 1 < len(column_styles):
+                    cell_style = column_styles[i + 1] if right else column_styles[i]
+                elif callable(style):
                     present = [v for v in values[i : i + 2] if v is not None]
                     cell_style = style(present) if present else baseline_style
                 else:

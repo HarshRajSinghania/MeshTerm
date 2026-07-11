@@ -12,7 +12,10 @@ def _ctx(histogram=(), unread=0, alerts=0) -> SimpleNamespace:
     return SimpleNamespace(
         mock=True,
         chat=SimpleNamespace(unread_total=lambda: unread),
-        monitor=SimpleNamespace(activity_histogram=lambda: tuple(histogram)),
+        monitor=SimpleNamespace(
+            activity_histogram=lambda: tuple(histogram),
+            activity_session_flags=lambda: (True,) * len(tuple(histogram)),
+        ),
         watchtower=SimpleNamespace(unacked_count=lambda: alerts),
     )
 

@@ -155,9 +155,17 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     # Two dot columns per cell: every cell left of the row's edge shows two minutes.
     room = width - header.cell_len
     if room > 0:
+        # Buckets seeded from a previous session's stored history draw grey; only
+        # traffic this session actually heard pulses green.
+        styles = [
+            "ok" if live else "muted" for live in ctx.monitor.activity_session_flags()
+        ]
         header.append_text(
             activity_sparkline(
-                ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, room * 2
+                ctx.monitor.activity_histogram(),
+                _HEADER_ACTIVITY_LEVELS,
+                room * 2,
+                column_styles=styles,
             )
         )
     return header

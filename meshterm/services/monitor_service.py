@@ -80,6 +80,9 @@ class MonitorService:
         # "total" is this plus what we capture this session (this process is the only
         # writer during an interactive session), avoiding a DB count on every repaint.
         self._start_total = ctx.repo.observation_count()
+        # The minute this session began: buckets at or after it hold live traffic,
+        # older ones the seeded history — the boundary the activity charts colour by.
+        self._start_bucket = int(time.time() // ACTIVITY_BUCKET_S)
         self._seed_from_history()
 
     def _seed_from_history(self) -> None:
@@ -130,6 +133,20 @@ class MonitorService:
         """
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
         return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
+
+    def activity_session_flags(self) -> tuple[bool, ...]:
+        """Whether each histogram bucket holds this session's own traffic.
+
+        Aligned with :meth:`activity_histogram` (newest first): ``True`` for buckets
+        at or after the session's first minute, ``False`` for the seeded history —
+        the split the activity charts use to draw live traffic green and a previous
+        session's grey.
+
+        Returns:
+            :data:`ACTIVITY_BUCKETS` flags, newest first.
+        """
+        bucket = int(time.time() // ACTIVITY_BUCKET_S)
+        return tuple(bucket - i >= self._start_bucket for i in range(ACTIVITY_BUCKETS))
 
     def kind_counts(self) -> dict[str, int]:
         """Tallies by packet class: advert/telemetry/packet, message, ack.
