@@ -32,7 +32,7 @@ class DeviceActionsTool(Tool):
     title = "Device actions"
     icon = "🔨"
     help = "Act on the device itself — advert, backup, identity key, reboot, reset"
-    category = "Device"
+    category = "Device management"
     order = 9
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:

@@ -50,7 +50,7 @@ class TraceTool(Tool):
     title = "Trace target"
     icon = "🎯"
     help = "Trace a target over a mirrored route and watch per-hop SNR"
-    category = "Diagnostics"
+    category = "Tools"
     order = 10
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
@@ -225,7 +225,7 @@ class TracePathTool(Tool):
     title = "Trace path"
     icon = "👣"
     help = "Walk a hand-composed route — out and back your way"
-    category = "Diagnostics"
+    category = "Tools"
     order = 11
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:

@@ -28,8 +28,8 @@ class SendAdvertTool(Tool):
     title = "Send advert"
     icon = "📡"
     help = "Announce this node to the mesh — zero-hop, flood, or share as QR"
-    category = "Device"
-    order = 10  # right after Device actions, before Device info
+    category = "Mesh"
+    order = 40  # the section's one action, after its views
     popup = True  # dialog-sized: float over the menu instead of replacing it
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:

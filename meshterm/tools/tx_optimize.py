@@ -39,7 +39,7 @@ class TxOptimizeTool(Tool):
     title = "TX optimize"
     icon = "📶"
     help = "Tune a remote node's TX power for the best signal at a target"
-    category = "Diagnostics"
+    category = "Tools"
     order = 15  # right after Trace, its measurement sibling
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:

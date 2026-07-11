@@ -37,7 +37,7 @@ class MapTool(Tool):
     title = "Map"
     icon = "🌍"
     help = "Show mesh nodes on a street map (pannable; repeaters highlighted)"
-    category = "Messaging"
+    category = "Mesh"
     order = 30
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:

@@ -38,7 +38,7 @@ class MonitorTool(Tool):
     title = "Monitor"
     icon = "🎧"
     help = "Capture overheard packets live for a while and summarize them"
-    category = "Diagnostics"
+    category = "Tools"
     order = 20
     menu_visible = False  # recording is always on; in the menu the header/Nodes/Map show it
 

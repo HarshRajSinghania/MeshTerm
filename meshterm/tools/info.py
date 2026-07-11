@@ -28,7 +28,7 @@ class InfoTool(Tool):
     title = "Device info"
     icon = "📋"
     help = "Show device status, identity, and radio config"
-    category = "Device"
+    category = "Device management"
     order = 11  # after Send advert (10), which slots in behind Device actions
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:

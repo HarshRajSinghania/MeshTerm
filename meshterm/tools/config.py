@@ -38,7 +38,7 @@ class ConfigTool(Tool):
     title = "Device configuration"
     icon = "🔧"
     help = "View and change device settings — identity, radio, tuning, …"
-    category = "Device"
+    category = "Device management"
     order = 8
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
