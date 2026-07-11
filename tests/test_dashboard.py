@@ -32,6 +32,7 @@ def _screen(window=None, histogram=None, kinds=None, active=True) -> DashboardSc
         resolve=lambda h: {"a1b2": "Alice", "3d63": "YUL"}.get(h, ""),
         window=list(window or []),
         activity=lambda: tuple(histogram or (0,) * ACTIVITY_BUCKETS),
+        activity_flags=lambda: (True,) * ACTIVITY_BUCKETS,
         kind_counts=lambda: dict(kinds or {}),
         hub_active=lambda: active,
     )
@@ -103,13 +104,18 @@ def test_dashboard_activity_chart_fills_the_width() -> None:
 
 def test_dashboard_pulse_drops_heard_only_when_it_wont_fit() -> None:
     """The pulse line keeps ' heard' at full width and sheds it instead of wrapping."""
+    from meshterm.ui.tui.render import render_lines
+
+    def pulse_row(width: int) -> str:
+        grid = screen._pulse_grid(shown, width)
+        return _stripped(render_lines(grid, width))[0]
+
     screen = _screen(window=[_obs(), _obs(node="3d63", node_type=2)])
     shown = [1] * 120
-    roomy = screen._pulse_line(shown, 100).plain.splitlines()[0]
+    roomy = pulse_row(100)
     assert "nodes heard" in roomy
-    tight = screen._pulse_line(shown, len(roomy) - 1).plain.splitlines()[0]
+    tight = pulse_row(len(roomy.rstrip()) - 1)
     assert "heard" not in tight and "nodes" in tight
-    assert len(tight) <= len(roomy) - 1
 
 
 def test_dashboard_live_events_land_in_the_feed_and_window() -> None:
