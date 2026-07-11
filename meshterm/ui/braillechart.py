@@ -30,6 +30,10 @@ Beyond timelines, the module owns the app's two other braille conventions:
   ``width``-cell meter resolves ``2 × width`` levels.
 * :func:`axis_caption` — the ``oldest → now`` line under a timeline, which
   fills in intermediate marks whenever the chart is wide enough to fit them.
+* :func:`axis_chart` — frames :func:`timeline_rows` output in a mirrored
+  numeric y-axis (the dashboard's activity chart, the Time Machine's per-day
+  and rhythm charts), so a chart quotes its scale on the gutters instead of
+  just naming the peak in its heading.
 """
 
 from __future__ import annotations
@@ -287,6 +291,72 @@ def axis_caption(
     # Even the two edge labels collide: keep the left one and let it stand alone.
     label = label_at(0.0)[:chars]
     return Text(label.ljust(chars), style=style)
+
+
+def y_axis_labels(peak: float, rows: int) -> list[str]:
+    """Each chart row's top-edge value, top row first, dupes and zeros blanked.
+
+    The top row always reads the peak; lower rows read the proportional values at
+    their upper edges, but a mark that would repeat the one above (a low peak makes
+    neighbouring rows round to the same value) or read zero is left blank, so the
+    scale never shows the same number twice.
+    """
+    labels: list[str] = []
+    seen: set[int] = set()
+    for i in range(rows):
+        value = round(peak * (rows - i) / rows)
+        if peak and value and value not in seen:
+            labels.append(str(value))
+            seen.add(value)
+        else:
+            labels.append("")
+    return labels
+
+
+def axis_chart(
+    chart_rows: list[Text],
+    peak: float,
+    chars: int,
+    label_at: Callable[[float], str],
+    *,
+    label_w: Optional[int] = None,
+    style: str = "muted",
+) -> list[Text]:
+    """Frame :func:`timeline_rows` output with a mirrored y-axis and x-axis caption.
+
+    Each row's top-edge value is mirrored on both gutters (blank where it would
+    repeat the mark above or read zero), closed with a boxed bottom border, and
+    followed by :func:`axis_caption`, indented to clear the gutter.
+
+    Args:
+        chart_rows: The chart's rows, as returned by :func:`timeline_rows`.
+        peak: The value the top row's mark reads (the chart's tallest bar).
+        chars: The chart's width in character cells.
+        label_at: Maps a position fraction to the x-axis caption at that point.
+        label_w: The gutter's digit width, when several stacked charts must
+            share one width so their gutters line up; sized from ``peak`` alone
+            by default.
+        style: Style for the gutters, ticks, marks, and border.
+
+    Returns:
+        ``len(chart_rows) + 2`` :class:`Text` lines: the decorated rows, the
+        bottom border, and the caption.
+    """
+    label_w = label_w or max(1, len(str(round(peak))))
+    marks = y_axis_labels(peak, len(chart_rows))
+    out: list[Text] = []
+    for mark, row in zip(marks, chart_rows):
+        line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style=style)
+        line.append_text(row)
+        line.append("├" if mark else "│", style=style)
+        if mark:
+            line.append(f" {mark}", style=style)
+        out.append(line)
+    out.append(Text(" " * label_w + " └" + "─" * chars + "┘", style=style))
+    caption = Text(" " * (label_w + 2))
+    caption.append_text(axis_caption(chars, label_at))
+    out.append(caption)
+    return out
 
 
 def _baseline_row(lo: float, hi: float, total: int) -> int:

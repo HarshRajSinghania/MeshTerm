@@ -5,27 +5,33 @@ the rows share this module's per-kind chrome — a colour and a two-cell icon pe
 class — and every row can open into the same viewer: a centered dialog over the list
 that lays the packet out in full, flavoured by kind. An advert shows the node's
 identity, type, and location; telemetry shows the node and its reported values; an
-RX-logged packet shows the relay path it rode in on; a message shows the sender, the
+RX-logged packet shows its parsed class and route plus the relay path it rode in on —
+and, for an overheard channel-text frame naming a channel we hold the key for, the
+decrypted text too (see :func:`~meshterm.core.channels.decrypt_channel_text`), even
+though the radio itself never decoded it for us; a message shows the sender, the
 conversation, and the text; an ack shows its code. Common to all: the timestamp, the
-node (name coloured by the app-wide palette, hash in the hash widget), and reception
-quality on the shared SNR bar.
+node (name coloured by the app-wide palette, hash in the hash widget), reception
+quality on the shared SNR bar, and any leftover raw field the flavoured layout doesn't
+already show.
 
-When opened over a list the viewer pages through it in place — PgUp/PgDn step to the
-newer/older packet, Home/End jump to the newest/oldest — so a burst can be read
-packet by packet without bouncing back out to the list. ``↑``/``↓`` scroll a tall
-packet inside the dialog; Esc closes it.
+When opened over a list the viewer pages through it in place — ``↑``/``↓`` step to
+the newer/older packet, Home/End jump to the newest/oldest, mirroring the keys the
+opening list itself walks rows with — so a burst can be read packet by packet
+without bouncing back out to the list. PgUp/PgDn scroll a tall packet inside the
+dialog, matching what they do on every other screen; Esc closes it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from rich.console import RenderableType
 from rich.table import Table
 from rich.text import Text
 
+from ..core.channels import decrypt_channel_text
 from ..core.models import NODE_TYPE_LABELS, Observation
 from ..services.trace_runner import NodeResolver
 from .theme import name_style, snr_style
@@ -33,6 +39,38 @@ from .trace_screen import snr_bar
 from .tui.render import render_lines
 from .tui.screen import Screen
 from .widgets import _age_seconds, _format_age, highlighted_hash
+
+#: Friendly gloss for a raw packet's parsed payload class (mirrors the meshcore
+#: library's own ``PAYLOAD_TYPENAMES``), shown on a ``packet`` entry's "class" row.
+_PAYLOAD_GLOSS = {
+    "REQ": "request",
+    "RESPONSE": "response",
+    "TEXT_MSG": "direct message",
+    "ACK": "ack",
+    "ADVERT": "advert",
+    "GRP_TXT": "channel text",
+    "GRP_DATA": "channel data",
+    "ANON_REQ": "anonymous request",
+    "PATH": "path",
+    "TRACE": "trace",
+    "MULTIPART": "multipart",
+    "CONTROL": "control",
+}
+
+#: Raw-payload fields already folded into a flavoured row elsewhere in :meth:`_rows`
+#: (frame plumbing parsed into "class"/"route", the channel crypto handled by
+#: :meth:`PacketViewer._decrypt_rows`, or an advert field duplicating ``node``/
+#: ``lat``/``lon``/etc.) — skipped so the generic dump doesn't repeat them.
+_RAW_ROW_SKIP = frozenset({
+    "node", "name", "kind", "snr", "rssi", "lat", "lon", "path", "node_type",
+    "observed_at", "text",
+    "header", "payload_ver", "transport_code", "path_len", "path_hash_size",
+    "payload_type", "payload_typename", "route_type", "route_typename",
+    "pkt_payload", "pkt_hash", "raw_hex", "payload", "payload_length", "recv_time",
+    "chan_hash", "cipher_mac", "crypted", "message", "msg_hash", "sender_timestamp",
+    "attempt", "txt_type",
+    "adv_key", "adv_name", "adv_type", "adv_lat", "adv_lon",
+})
 
 #: Display style per packet class, shared by every packet list and the viewer.
 KIND_STYLES = {
@@ -157,9 +195,10 @@ class PacketViewer(Screen):
     """The floating packet dialog: one entry laid out in full, pageable over its list.
 
     A read-only popup. The opener hands it the list *as rendered* (newest first) and
-    the index of the row the user opened; PgUp/PgDn then walk toward newer/older
-    packets, Home/End jump to the ends, ``↑``/``↓`` scroll a tall body, Esc closes.
-    Opened over a single packet (a one-entry list) the paging keys simply do nothing.
+    the index of the row the user opened; ``↑``/``↓`` then walk toward newer/older
+    packets — the same keys the opening list itself uses — Home/End jump to the
+    ends, PgUp/PgDn scroll a tall body, Esc closes. Opened over a single packet (a
+    one-entry list) the paging keys simply do nothing.
     """
 
     def __init__(
@@ -171,6 +210,7 @@ class PacketViewer(Screen):
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
         on_navigate: Optional[Callable[[PacketEntry], None]] = None,
+        channels: Sequence[tuple[str, bytes]] = (),
     ) -> None:
         """Open the viewer over a packet list.
 
@@ -183,6 +223,10 @@ class PacketViewer(Screen):
             self_name: Our own node's name, drawn white wherever it appears.
             on_navigate: Called with the newly shown entry whenever paging moves the
                 view, so the opening list can walk its own highlight in step.
+            channels: The device's configured channels, as ``(name, secret)`` pairs —
+                tried against an overheard ``packet`` entry's channel-text frame (see
+                :func:`~meshterm.core.channels.decrypt_channel_text`), so a raw frame
+                the radio never decoded for us can still be read when we hold the key.
         """
         super().__init__()
         self._entries = entries
@@ -191,8 +235,9 @@ class PacketViewer(Screen):
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._on_navigate = on_navigate
+        self._channels = channels
         if len(entries) > 1:
-            self.footer_hint = "PgUp/PgDn newer/older · Home/End ends · Esc close"
+            self.footer_hint = "↑↓ newer/older · PgUp/PgDn scroll · Home/End ends · Esc close"
         else:
             self.footer_hint = "Esc close"
         self._set_title()
@@ -208,18 +253,18 @@ class PacketViewer(Screen):
 
     def handle(self, action: str, data: str = "") -> None:
         """Page through the list, scroll a tall entry, or dismiss."""
-        if action == "pageup":
+        if action == "up":
             self._jump(self._index - 1)
-        elif action in ("pagedown", "space"):
+        elif action == "down":
             self._jump(self._index + 1)
         elif action in ("home", "ctrl_home"):
             self._jump(0)
         elif action in ("end", "ctrl_end"):
             self._jump(len(self._entries) - 1)
-        elif action == "up":
-            self.scroll_lines(-1)
-        elif action == "down":
-            self.scroll_lines(1)
+        elif action == "pageup":
+            self.scroll_pages(-1)
+        elif action in ("pagedown", "space"):
+            self.scroll_pages(1)
         elif action in ("escape", "enter"):
             self.resolve(None)
 
@@ -277,11 +322,7 @@ class PacketViewer(Screen):
         if entry.snr is not None or entry.rssi is not None:
             rows.append(("snr", self._reception(entry)))
         if entry.kind == "packet":
-            rows.append(("via", self._path_text(entry)))
-            rows.append((
-                "", Text("reception describes the last relay, not the origin",
-                         style="faint"),
-            ))
+            rows.extend(self._packet_rows(entry))
         if entry.lat is not None and entry.lon is not None:
             rows.append(("location", Text(f"{entry.lat:.5f}, {entry.lon:.5f}")))
 
@@ -324,6 +365,61 @@ class PacketViewer(Screen):
                 text.append(hop, style="muted")
         return text
 
+    def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
+        """A raw ``packet`` entry's parsed class/route, relay path, and — for a
+        channel-text frame naming a channel we hold the key for — its plaintext.
+        """
+        raw = entry.raw if isinstance(entry.raw, dict) else {}
+        rows: list[tuple[str, RenderableType]] = []
+        typename = raw.get("payload_typename")
+        if typename:
+            rows.append(("class", Text(_PAYLOAD_GLOSS.get(typename, typename.lower()))))
+        route = raw.get("route_typename")
+        if route:
+            rows.append(("route", Text(route.replace("_", " ").lower())))
+        rows.append(("via", self._path_text(entry)))
+        rows.append((
+            "", Text("reception describes the last relay, not the origin",
+                     style="faint"),
+        ))
+        if typename == "GRP_TXT":
+            rows.extend(self._decrypt_rows(raw))
+        return rows
+
+    def _decrypt_rows(self, raw: dict) -> list[tuple[str, RenderableType]]:
+        """Try every known channel's key against an overheard channel-text frame.
+
+        The frame names its channel only by a one-byte hash fingerprint (several
+        channels can collide on it), so :func:`~meshterm.core.channels.
+        decrypt_channel_text` confirms the match by MAC before trusting a key to
+        decrypt anything — a channel we don't hold the key for, or a fingerprint we
+        can't confirm, is reported as such rather than left silently missing.
+        """
+        chan_hash = raw.get("chan_hash")
+        cipher_mac = raw.get("cipher_mac")
+        crypted = raw.get("crypted")
+        if not (chan_hash and cipher_mac and crypted):
+            return []
+        decrypted = decrypt_channel_text(chan_hash, cipher_mac, crypted, self._channels)
+        if decrypted is None:
+            return [(
+                "channel",
+                Text(f"unknown (hash {chan_hash}) — can't decrypt", style="muted"),
+            )]
+        rows: list[tuple[str, RenderableType]] = [
+            ("channel", Text(decrypted.channel_name, style="brand")),
+        ]
+        body = Text(decrypted.text)
+        if decrypted.sent_at is not None:
+            body.append(
+                f"  · sent {decrypted.sent_at.astimezone().strftime('%H:%M:%S')}",
+                style="muted",
+            )
+        if decrypted.attempt:
+            body.append(f"  (resend #{decrypted.attempt})", style="muted")
+        rows.append(("text", body))
+        return rows
+
     def _raw_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """The raw payload's leftover fields, one labelled row each (telemetry's meat).
 
@@ -334,13 +430,7 @@ class PacketViewer(Screen):
         raw = entry.raw if isinstance(entry.raw, dict) else None
         if not raw:
             return []
-        shown = {
-            k: v
-            for k, v in raw.items()
-            if k not in ("node", "name", "kind", "snr", "rssi", "lat", "lon", "path",
-                         "node_type", "observed_at", "text")
-            and v is not None
-        }
+        shown = {k: v for k, v in raw.items() if k not in _RAW_ROW_SKIP and v is not None}
         if not shown:
             return []
         rows: list[tuple[str, RenderableType]] = [("", Text())]

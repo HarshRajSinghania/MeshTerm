@@ -1,19 +1,26 @@
-"""Pure channel logic: secret derivation and MeshCore share-URL round-tripping.
+"""Pure channel logic: secret derivation, MeshCore share-URL round-tripping, and decrypt.
 
 A MeshCore channel is a name plus a 16-byte shared secret. *Public* channels (whose name
 starts with ``#``) derive their secret deterministically from the name, so anyone naming the
 channel the same way lands on the same key; *private* channels carry a random secret shared
 out of band. This module holds that logic with no device or I/O dependency, so the create /
 join flows — and the ``meshcore://`` share links behind the QR codes — can be built and
-validated (and unit-tested) without hardware.
+validated (and unit-tested) without hardware. :func:`decrypt_channel_text` runs the same AES
+key against an overheard, still-encrypted channel-text frame (the packet viewer's use of it),
+so the app never needs the radio's own decode to read a channel it holds the key for.
 """
 
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Optional
+from typing import Iterable, Optional
 from urllib.parse import parse_qs, quote, urlsplit
+
+from Crypto.Cipher import AES
+from Crypto.Hash import HMAC, SHA256 as _SHA256
 
 #: A channel shared secret is exactly 16 bytes (128-bit), per the MeshCore protocol.
 CHANNEL_SECRET_BYTES = 16
@@ -248,3 +255,76 @@ def parse_share_url(url: str) -> Optional[tuple[str, bytes]]:
         return names[0], normalize_secret(keys[0])
     except ValueError:
         return None
+
+
+@dataclass(slots=True)
+class DecryptedText:
+    """A channel-text frame recovered from an overheard, encrypted packet.
+
+    Attributes:
+        channel_name: The name of the channel whose key unlocked the frame.
+        text: The decrypted message body.
+        sent_at: The sender's own clock at the moment it composed the message, when
+            the embedded timestamp parses to a sane value.
+        attempt: The sender's resend counter for this message (0 = first try).
+    """
+
+    channel_name: str
+    text: str
+    sent_at: Optional[datetime]
+    attempt: int
+
+
+def decrypt_channel_text(
+    chan_hash: str,
+    cipher_mac: str,
+    crypted: str,
+    channels: Iterable[tuple[str, bytes]],
+) -> Optional[DecryptedText]:
+    """Recover a GRP_TXT frame's plaintext against a set of known channels.
+
+    Mirrors the firmware's own decode of an overheard channel-text packet: the frame
+    names its channel only by :func:`channel_hash`'s one-byte fingerprint — several
+    channels can collide on it — so every same-fingerprint candidate is tried and its
+    2-byte MAC checked before its key is trusted to decrypt anything. A frame from a
+    channel not in ``channels`` (or whose fingerprint matches but MAC doesn't — a
+    genuine collision) simply yields ``None``, same as firmware that doesn't know the
+    channel either.
+
+    Args:
+        chan_hash: The frame's channel-hash fingerprint (2 hex chars).
+        cipher_mac: The frame's MAC, hex-encoded (2 bytes).
+        crypted: The frame's ciphertext, hex-encoded (a whole number of AES blocks).
+        channels: Candidate channels to try, as ``(name, secret)`` pairs.
+
+    Returns:
+        The decrypted text and its channel, or ``None`` if no known channel's MAC
+        matches or the ciphertext is malformed.
+    """
+    try:
+        mac = bytes.fromhex(cipher_mac)
+        msg = bytes.fromhex(crypted)
+    except ValueError:
+        return None
+    if not msg or len(msg) % AES.block_size:
+        return None  # not a whole number of blocks: not a decryptable GRP_TXT body
+    for name, secret in channels:
+        key = effective_secret(name, secret)
+        if channel_hash(key) != chan_hash:
+            continue
+        mac_check = HMAC.new(key, digestmod=_SHA256)
+        mac_check.update(msg)
+        if mac_check.digest()[:2] != mac:
+            continue  # fingerprint collided but the key doesn't actually match
+        plain = AES.new(key, AES.MODE_ECB).decrypt(msg)
+        timestamp = int.from_bytes(plain[0:4], "little")
+        attempt = plain[4] & 0x03
+        text = plain[5:].strip(b"\x00").decode("utf-8", "ignore")
+        sent_at = None
+        if timestamp:
+            try:
+                sent_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                sent_at = None
+        return DecryptedText(channel_name=name, text=text, sent_at=sent_at, attempt=attempt)
+    return None

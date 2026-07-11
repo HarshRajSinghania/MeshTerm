@@ -19,6 +19,7 @@ from meshterm.core.channels import (
     CHANNEL_SECRET_BYTES,
     DEFAULT_PUBLIC_SECRET,
     channel_hash,
+    decrypt_channel_text,
     derive_secret,
     full_channel_hash,
     normalize_secret,
@@ -35,7 +36,7 @@ from meshterm.ui.channels import (
     ChannelSlot,
     _apply_order,
     _next_free_slot,
-    _read_slots,
+    read_channel_slots,
 )
 from meshterm.ui.qr import qr_text
 
@@ -109,6 +110,88 @@ def test_parse_share_url_rejects_non_channel_links() -> None:
     assert parse_share_url("meshcore://channel/add?name=x") is None  # missing secret
     assert parse_share_url("meshcore://channel/add?name=x&secret=nothex") is None
     assert parse_share_url("meshcore://channel/add?secret=" + "00" * 16) is None  # no name
+
+
+# -- channel-text decryption ---------------------------------------------------
+
+
+def _grp_txt_frame(
+    name: str, secret: bytes, text: str, *, timestamp: int = 1_700_000_000, attempt: int = 0
+) -> tuple[str, str, str]:
+    """Build a firmware-shaped GRP_TXT frame (chan_hash, cipher_mac, crypted), all hex.
+
+    Mirrors the encoding :func:`~meshterm.core.channels.decrypt_channel_text` reverses:
+    a 4-byte little-endian timestamp, an attempt/type byte, the text, zero-padded to a
+    whole AES block, encrypted ECB, then MAC'd with HMAC-SHA256 truncated to 2 bytes.
+    """
+    from Crypto.Cipher import AES
+    from Crypto.Hash import HMAC, SHA256
+
+    from meshterm.core.channels import effective_secret
+
+    key = effective_secret(name, secret)
+    plain = timestamp.to_bytes(4, "little") + bytes([attempt & 3]) + text.encode("utf-8")
+    plain += b"\x00" * (-len(plain) % 16)
+    crypted = AES.new(key, AES.MODE_ECB).encrypt(plain)
+    mac = HMAC.new(key, digestmod=SHA256)
+    mac.update(crypted)
+    return channel_hash(key), mac.digest()[:2].hex(), crypted.hex()
+
+
+def test_decrypt_channel_text_round_trips_a_known_channel() -> None:
+    """A frame encrypted for a channel we hold the key for decodes cleanly."""
+    name, secret = "#general", derive_secret("#general")
+    chash, mac, crypted = _grp_txt_frame(name, secret, "hello mesh")
+    result = decrypt_channel_text(chash, mac, crypted, [(name, secret)])
+    assert result is not None
+    assert result.channel_name == name
+    assert result.text == "hello mesh"
+    assert result.attempt == 0
+    assert result.sent_at is not None
+
+
+def test_decrypt_channel_text_reports_a_resend_attempt() -> None:
+    """The sender's resend counter survives into the decrypted result."""
+    name, secret = "Ops", random_secret()
+    chash, mac, crypted = _grp_txt_frame(name, secret, "again", attempt=2)
+    result = decrypt_channel_text(chash, mac, crypted, [(name, secret)])
+    assert result is not None and result.attempt == 2
+
+
+def test_decrypt_channel_text_returns_none_for_an_unknown_channel() -> None:
+    """A frame from a channel we don't hold the key for decrypts to nothing."""
+    name, secret = "#general", derive_secret("#general")
+    chash, mac, crypted = _grp_txt_frame(name, secret, "hello mesh")
+    other = ("Ops", random_secret())
+    assert decrypt_channel_text(chash, mac, crypted, [other]) is None
+    assert decrypt_channel_text(chash, mac, crypted, []) is None
+
+
+def test_decrypt_channel_text_rejects_a_fingerprint_collision() -> None:
+    """A candidate sharing the frame's hash byte but not its key fails the MAC check.
+
+    The one-byte channel-hash fingerprint can collide between unrelated channels;
+    the MAC is what actually confirms the key, so a same-fingerprint wrong channel
+    must not be mistaken for a match, and decryption must fall through to try the
+    next (correct) candidate instead of stopping at the collision.
+    """
+    name, secret = "#general", derive_secret("#general")
+    chash, mac, crypted = _grp_txt_frame(name, secret, "hello mesh")
+    # Brute-force a same-fingerprint, wrong-key decoy (a 1-byte hash, so cheap to find).
+    decoy = next(
+        s for s in (random_secret() for _ in range(10_000))
+        if channel_hash(s) == chash and s != secret
+    )
+    result = decrypt_channel_text(
+        chash, mac, crypted, [("decoy", decoy), (name, secret)]
+    )
+    assert result is not None and result.text == "hello mesh"  # falls through to the real key
+
+
+def test_decrypt_channel_text_rejects_malformed_hex() -> None:
+    """Garbage hex fields fail closed instead of raising."""
+    assert decrypt_channel_text("zz", "zzzz", "zzzzzzzzzzzzzzzz", [("x", random_secret())]) is None
+    assert decrypt_channel_text("00", "0000", "00" * 15, [("x", random_secret())]) is None  # not block-aligned
 
 
 # -- QR rendering -------------------------------------------------------------
@@ -187,12 +270,12 @@ async def test_apply_order_relays_channels_into_new_positions(ctx: AppContext) -
     await device.set_channel(1, "#beta", None)  # public, key derived from the name
     await device.set_channel(2, "Gamma", bytes(range(16, 32)))  # private
 
-    slots = await _read_slots(device)
+    slots = await read_channel_slots(device)
     # Reverse the display order: the row that was third moves first, first moves last.
     writes = await _apply_order(device, slots, [2, 1, 0])
     assert writes == 2  # the middle channel keeps its slot; the two ends swap
 
-    after = {s.idx: s for s in await _read_slots(device)}
+    after = {s.idx: s for s in await read_channel_slots(device)}
     assert after[0].name == "Gamma" and after[0].secret == bytes(range(16, 32))
     assert after[1].name == "#beta" and after[1].is_public  # public key re-derived in place
     assert after[2].name == "Alpha" and after[2].secret == bytes(range(16))
@@ -277,7 +360,7 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
         )
         await manage_channels(ctx)
 
-        ops = next(s for s in await _read_slots(device) if s.name == "Ops")
+        ops = next(s for s in await read_channel_slots(device) if s.name == "Ops")
         assert ops.idx == 0  # the new channel took the freed slot
 
         # A message now arrives on slot 0 — which is Ops, not Public.
@@ -311,7 +394,7 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
         await chat.send_channel(0, "hello from alpha", label="Alpha")
         await chat.send_channel(1, "hello from beta", label="Beta")
 
-        slots = await _read_slots(device)
+        slots = await read_channel_slots(device)
         before = {s.name: s for s in slots}
         alpha_id, beta_id = before["Alpha"].identity, before["Beta"].identity
 
@@ -320,7 +403,7 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
         assert writes == 2
         await chat.refresh_channels()
 
-        after = {s.name: s for s in await _read_slots(device)}
+        after = {s.name: s for s in await read_channel_slots(device)}
         assert after["Alpha"].idx == 1 and after["Beta"].idx == 0  # slots actually swapped
         assert after["Alpha"].identity == alpha_id  # identity is unchanged by the move
 
@@ -399,7 +482,7 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
 
     device = await ctx.device()
     await device.set_channel(0, "Ops", bytes(range(16)))
-    slots = await _read_slots(device)
+    slots = await read_channel_slots(device)
     slot = slots[0]
     for text in ("one", "two"):
         ctx.repo.record_chat_message(
@@ -462,7 +545,7 @@ async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> N
 
     device = await ctx.device()
     await device.set_channel(3, "Ops", bytes(range(16)))
-    slot = next(s for s in await _read_slots(device) if s.idx == 3)
+    slot = next(s for s in await read_channel_slots(device) if s.idx == 3)
 
     assert _detail_summary(ctx, slot, _LiveStats(ctx)) == "Slot 3 · no messages recorded yet"
 
@@ -499,7 +582,7 @@ async def test_cli_add_private_generates_key_and_lists(ctx: AppContext) -> None:
     result = await tool.run(ctx, {"cli_action": "add", "index": 1, "name": "Ops", "secret": None})
     assert result.summary == {"index": 1, "name": "Ops"}
 
-    slots = await _read_slots(await ctx.device())
+    slots = await read_channel_slots(await ctx.device())
     slot = next(s for s in slots if s.idx == 1)
     assert slot.name == "Ops"
     assert not slot.is_public  # a random key, not derived from the name
@@ -509,7 +592,7 @@ async def test_cli_add_public_derives_key(ctx: AppContext) -> None:
     """`add` with a #-name creates a public channel keyed from the name."""
     tool = ChannelsTool()
     await tool.run(ctx, {"cli_action": "add", "index": 2, "name": "#general", "secret": None})
-    slot = next(s for s in await _read_slots(await ctx.device()) if s.idx == 2)
+    slot = next(s for s in await read_channel_slots(await ctx.device()) if s.idx == 2)
     assert slot.name == "#general" and slot.is_public
 
 
@@ -520,12 +603,12 @@ async def test_cli_join_and_import_round_trip(ctx: AppContext) -> None:
     await tool.run(
         ctx, {"cli_action": "join", "index": 3, "name": "Squad", "secret": secret.hex()}
     )
-    slot = next(s for s in await _read_slots(await ctx.device()) if s.idx == 3)
+    slot = next(s for s in await read_channel_slots(await ctx.device()) if s.idx == 3)
     assert slot.name == "Squad" and slot.secret == secret
 
     # Importing the channel's own share link onto another slot reproduces it.
     await tool.run(ctx, {"cli_action": "import", "index": 4, "url": share_url("Squad", secret)})
-    imported = next(s for s in await _read_slots(await ctx.device()) if s.idx == 4)
+    imported = next(s for s in await read_channel_slots(await ctx.device()) if s.idx == 4)
     assert imported.name == "Squad" and imported.secret == secret
 
 

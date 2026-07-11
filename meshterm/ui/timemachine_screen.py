@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import axis_caption, chart_span, timeline_rows
+from .braillechart import axis_caption, axis_chart, chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -361,29 +361,29 @@ def _mesh_sections(
             Text("Press w to widen it.", style="muted"),
         ]
 
-    # Day-wide bars stretched to the chart's width; a deep history falls back to
-    # one dot column per day, the width capping how many trailing days fit.
-    chars = max(20, width - 2 * _GUTTER)
+    # The y-axis gutter is sized from the whole window's peaks (not just the
+    # visible slice), shared by both day charts so their gutters line up and
+    # neither chart's date range shifts relative to the other's.
+    label_w = max(len(str(max(d[1] for d in days))), len(str(max(d[2] for d in days))))
+    chars = max(20, width - 2 * (label_w + 2))
     shown = days[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
-    out.append(
-        _heading("Packets per day", f"UTC days · peak {max(packets)} · newest at the right")
-    )
+    out.append(_heading("Packets per day", "UTC days · newest at the right"))
     out.extend(
-        _chart_block(
+        axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
-            _day_axis(shown), chars,
+            max(packets), chars, _day_axis(shown), label_w=label_w,
         )
     )
 
     nodes = [d[2] for d in shown]
     out.append(Text())
-    out.append(_heading("Nodes per day", f"distinct nodes heard · peak {max(nodes)}"))
+    out.append(_heading("Nodes per day", "distinct nodes heard"))
     out.extend(
-        _chart_block(
+        axis_chart(
             timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
-            _day_axis(shown), chars,
+            max(nodes), chars, _day_axis(shown), label_w=label_w,
         )
     )
 
@@ -397,7 +397,7 @@ def _mesh_sections(
     hours = [utc_hours[(h - offset) % 24] for h in range(24)]
     out.append(Text())
     out.append(_heading("Rhythm", "packets by local hour of day"))
-    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), _hour_axis, 12))
+    out.extend(axis_chart(timeline_rows(hours, rows=_CHART_ROWS), max(hours), 12, _hour_axis))
 
     arrivals = ctx.repo.first_seen(since=since)
     out.append(Text())

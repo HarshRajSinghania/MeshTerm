@@ -152,7 +152,7 @@ async def manage_channels(ctx: "AppContext") -> int:
     highlight: Optional[object] = None
 
     while True:
-        slots = await _read_slots(device)
+        slots = await read_channel_slots(device)
         title, items = _menu_items(ctx, slots, capacity, stats)
 
         async def handle(choice: object) -> bool:
@@ -248,7 +248,7 @@ async def _refresh_chat_channels(ctx: "AppContext") -> None:
 # --- reading -----------------------------------------------------------------
 
 
-async def _read_slots(device: Device) -> list[ChannelSlot]:
+async def read_channel_slots(device: Device) -> list[ChannelSlot]:
     """Probe the channel slots and return the configured ones, in index order.
 
     The scan runs up to :data:`CHANNEL_SLOT_PROBE_CAP` and stops as soon as the firmware

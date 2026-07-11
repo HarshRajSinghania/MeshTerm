@@ -22,7 +22,8 @@ stacks four reads of the mesh, coarsest first:
   opens full, then streamed live off the event hub. ``↑``/``↓`` walk the feed rows
   and Enter opens the highlighted packet in the shared
   :class:`~meshterm.ui.packet_viewer.PacketViewer` — which then pages through the
-  feed itself with PgUp/PgDn.
+  feed itself with the same ``↑``/``↓``, and, for an overheard channel-text packet
+  naming a channel we hold the key for, decrypts it.
 
 The screen holds no subscriptions of its own — the opener (:func:`open_dashboard`)
 wires the hub subscription, the device-stats poll, and the once-a-second repaint, and
@@ -35,7 +36,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, deque
 from statistics import median
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 from rich.console import Group, RenderableType
 from rich.table import Table
@@ -44,7 +45,7 @@ from rich.text import Text
 from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
-from .braillechart import axis_caption, meter, timeline_rows
+from .braillechart import axis_chart, meter, timeline_rows
 from .packet_viewer import KIND_STYLES, PacketEntry, PacketViewer, kind_icon, node_label
 from .theme import snr_style
 from .trace_screen import snr_bar
@@ -99,31 +100,11 @@ def _span_label(minutes: int) -> str:
     return (text[:-2] if text.endswith(".0") else text) + " h"
 
 
-def _axis_labels(peak: int, rows: int) -> list[str]:
-    """Each chart row's top-edge count, top row first, dupes and zeros blanked.
-
-    The top row always reads the peak; lower rows read the proportional counts at
-    their upper edges, but a mark that would repeat the one above (a low peak makes
-    neighbouring rows round to the same value) or read zero is left blank, so the
-    scale never shows the same number twice.
-    """
-    labels: list[str] = []
-    seen: set[int] = set()
-    for i in range(rows):
-        value = round(peak * (rows - i) / rows)
-        if peak and value and value not in seen:
-            labels.append(str(value))
-            seen.add(value)
-        else:
-            labels.append("")
-    return labels
-
-
 class DashboardScreen(Screen):
     """The live mesh overview. Renders state and scrolls; the opener feeds it."""
 
     floating = False
-    footer_hint = "↑↓ packets · Enter open · PgUp/PgDn scroll · Esc back"
+    footer_hint = "↑↓ packets · Enter open · PgUp/PgDn/Home/End scroll · Esc back"
 
     def __init__(
         self,
@@ -137,6 +118,7 @@ class DashboardScreen(Screen):
         hub_active: Any,
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
+        channels: Sequence[tuple[str, bytes]] = (),
     ) -> None:
         """Create the dashboard over its data feeds.
 
@@ -151,6 +133,9 @@ class DashboardScreen(Screen):
             hub_active: Zero-arg callable: whether the event hub is pumping.
             prefix_bytes: Path-hash width to light in the packet viewer's hashes.
             self_name: Our own node's name, drawn white wherever it appears.
+            channels: The device's configured channels, as ``(name, secret)`` pairs,
+                handed to each opened :class:`~meshterm.ui.packet_viewer.PacketViewer`
+                so it can attempt to decrypt an overheard channel-text packet.
         """
         super().__init__()
         self.title = "dashboard · mesh overview"
@@ -162,6 +147,7 @@ class DashboardScreen(Screen):
         self._hub_active = hub_active
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
+        self._channels = channels
         #: The trailing window of observations (stored seed + live), oldest first.
         self._window: deque[Observation] = deque(window, maxlen=4000)
         #: The feed: latest events of every class as data, newest first — rendered
@@ -280,6 +266,7 @@ class DashboardScreen(Screen):
             list(self._feed), self._selected,
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
             self_name=self._self_name, on_navigate=follow,
+            channels=self._channels,
         )
         asyncio.ensure_future(self._session.run_screen(viewer))
 
@@ -342,26 +329,16 @@ class DashboardScreen(Screen):
         chart_rows = timeline_rows(
             list(reversed(shown)), rows=_CHART_ROWS, column_styles=styles
         )
-        marks = _axis_labels(peak, len(chart_rows))
-        out: list[RenderableType] = [heading]
-        for mark, row in zip(marks, chart_rows):
-            line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style="muted")
-            line.append_text(row)
-            line.append("├" if mark else "│", style="muted")
-            if mark:
-                line.append(f" {mark}", style="muted")
-            out.append(line)
-        axis = Text(" " * label_w + " └" + "─" * chars + "┘", style="muted")
-        out.append(axis)
 
         def caption_at(frac: float) -> str:
             if frac >= 1.0:
                 return "now"
             return "−" + _span_label(round(minutes * (1 - frac)))
 
-        caption = Text(" " * (label_w + 2))
-        caption.append_text(axis_caption(chars, caption_at))
-        out.append(caption)
+        out: list[RenderableType] = [
+            heading,
+            *axis_chart(chart_rows, peak, chars, caption_at, label_w=label_w),
+        ]
         out.append(Text())
         out.append(self._pulse_grid(shown, width))
         return out
@@ -607,6 +584,7 @@ async def open_dashboard(ctx: "AppContext") -> None:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
     from ..services import trace_runner
+    from .channels import read_channel_slots
     from .surface import TuiUi
     from .timemachine_screen import _routing_prefix_bytes
 
@@ -616,11 +594,13 @@ async def open_dashboard(ctx: "AppContext") -> None:
 
     contacts = []
     self_name: Optional[str] = None
+    channels: list[tuple[str, bytes]] = []
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
             device = await ctx.device()
             contacts = await device.get_contacts()
             self_name = (await device.get_self_info()).get("name") or None
+            channels = [(s.name, s.secret) for s in await read_channel_slots(device)]
     except Exception:  # noqa: BLE001 - the dashboard renders fine without contact names
         contacts = []
     # Contacts first, every name the recorder ever overheard as the fallback — the
@@ -639,6 +619,7 @@ async def open_dashboard(ctx: "AppContext") -> None:
         hub_active=lambda: ctx.events.active,
         prefix_bytes=prefix_bytes,
         self_name=self_name,
+        channels=channels,
     )
 
     unsubscribe = ctx.events.subscribe(screen.on_event)

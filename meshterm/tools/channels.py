@@ -83,10 +83,10 @@ class ChannelsTool(Tool):
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
         """List the configured channel slots."""
-        from ..ui.channels import _read_slots
+        from ..ui.channels import read_channel_slots
 
         device = await ctx.device()
-        slots = await _read_slots(device)
+        slots = await read_channel_slots(device)
         if not slots:
             ctx.ui.note("[muted]no channels configured[/muted]")
             return ToolResult(summary={"channels": 0})
@@ -146,11 +146,11 @@ class ChannelsTool(Tool):
 
     async def _cli_share(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Print a channel's share link and QR code."""
-        from ..ui.channels import _read_slots
+        from ..ui.channels import read_channel_slots
 
         device = await ctx.device()
         idx = int(params["index"])
-        slot = next((s for s in await _read_slots(device) if s.idx == idx), None)
+        slot = next((s for s in await read_channel_slots(device) if s.idx == idx), None)
         if slot is None:
             ctx.ui.note(f"[warn]slot {idx} is empty[/warn]")
             return ToolResult(summary={"index": idx, "shared": False})

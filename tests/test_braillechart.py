@@ -6,7 +6,13 @@ the rendered braille bitmasks.
 
 from __future__ import annotations
 
-from meshterm.ui.braillechart import activity_sparkline, chart_span, timeline_rows
+from meshterm.ui.braillechart import (
+    activity_sparkline,
+    axis_chart,
+    chart_span,
+    timeline_rows,
+    y_axis_labels,
+)
 
 #: Dot bits for a column filled bottom-up to height 0–4 (left / right column).
 _L = (0x00, 0x40, 0x44, 0x46, 0x47)
@@ -147,3 +153,42 @@ def test_sparkline_pads_and_crops_to_the_window() -> None:
     assert padded.plain == _BASE * 2 + _ch(_R[4], 0x40)
     cropped = activity_sparkline((0, 0, 21, 21, 9, 9), (1, 3, 8, 21), 2)
     assert cropped.plain == _BASE  # only the two newest (silent) buckets survive
+
+
+# --- y_axis_labels / axis_chart -------------------------------------------------------
+
+
+def test_y_axis_labels_blanks_a_silent_chart() -> None:
+    """A zero peak draws no marks at all."""
+    assert y_axis_labels(0, 3) == ["", "", ""]
+
+
+def test_y_axis_labels_top_row_reads_the_peak() -> None:
+    """The top row always reads the peak; lower rows are proportional."""
+    assert y_axis_labels(10, 2) == ["10", "5"]
+
+
+def test_y_axis_labels_blanks_a_repeated_mark() -> None:
+    """A low peak rounds a lower row to the same value as the one above: left blank."""
+    assert y_axis_labels(1, 3) == ["1", "", ""]
+
+
+def test_axis_chart_mirrors_marks_on_both_gutters() -> None:
+    """Each row's mark is framed by tick glyphs and repeated on both edges."""
+    rows = timeline_rows([9] * 8, rows=2)
+    out = axis_chart(rows, 9, 4, lambda f: "now" if f >= 1.0 else "old")
+    assert len(out) == 4  # 2 chart rows + bottom border + caption
+    assert out[0].plain == "9 ┤⣿⣿⣿⣿├ 9"
+    assert out[1].plain == "4 ┤⣿⣿⣿⣿├ 4"
+    assert out[2].plain.startswith("  └") and out[2].plain.endswith("┘")
+
+
+def test_axis_chart_honours_a_shared_label_width() -> None:
+    """An explicit label_w widens the gutter past the peak's own digit count.
+
+    Lets several stacked charts (the Time Machine's per-day pair) share one gutter
+    width sized from the wider chart, so their marks line up column for column.
+    """
+    rows = timeline_rows([9] * 8, rows=1)
+    out = axis_chart(rows, 9, 4, lambda f: "x", label_w=3)
+    assert out[0].plain.startswith("  9 ┤")
