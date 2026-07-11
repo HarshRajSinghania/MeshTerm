@@ -494,6 +494,8 @@ class TraceScreen(Screen):
             if selected:
                 self._cursor = len(lines)
             lines.append(render_to_ansi(text, width))
+            if key in ("explore", "samples"):
+                lines.append("")  # set the next group apart
         tail: list[RenderableType] = []
         if stats.hop_snrs:
             hash_bytes = current.path_hash_bytes if current is not None else None
@@ -567,9 +569,9 @@ class TraceScreen(Screen):
                 )
             )
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
-            # On its own line (aligned under the route) so a long route never
-            # squeezes the stamp off the right edge.
-            line.append(f"\n       (previous · {stamp})", style="faint")
+            # On its own line so a long route never squeezes the stamp off the
+            # right edge.
+            line.append(f"\n(previous · {stamp})", style="faint")
             return line
         if self._mode == "path":
             line.append("none — compose a path to walk", style="muted")

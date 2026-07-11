@@ -102,39 +102,25 @@ class TraceTool(Tool):
     # -- interactive (menu) -------------------------------------------------------
 
     async def _run_live(self, ctx: AppContext, target: str) -> ToolResult:
-        """Loop the live screen and the target picker until the user backs out.
-
-        Backing out of a trace session (Esc) steps back to the target picker rather than
-        all the way to the main menu — the chat pattern — with the just-closed target
-        pre-highlighted; Esc from the picker returns to the menu.
+        """Open the live screen for one target; backing out drops to the main menu.
 
         Args:
             ctx: Shared application context.
-            target: The first target to open.
+            target: The target to open.
 
         Returns:
-            A :class:`ToolResult` counting the sessions and traces run.
+            A :class:`ToolResult` counting the traces run.
         """
         from ..ui.trace_screen import open_trace
 
-        sessions = 0
-        traces = 0
-        current: Optional[str] = target
-        while current is not None:
-            traces += await open_trace(ctx, current)
-            sessions += 1
-            current = await self._pick_target(ctx, default=current)
-        return ToolResult(summary={"sessions": sessions, "traces": traces})
+        traces = await open_trace(ctx, target)
+        return ToolResult(summary={"sessions": 1, "traces": traces})
 
-    async def _pick_target(
-        self, ctx: AppContext, *, default: Optional[str] = None
-    ) -> Optional[str]:
+    async def _pick_target(self, ctx: AppContext) -> Optional[str]:
         """Pick a trace target: recently traced first, then contacts by recency.
 
         Args:
             ctx: Shared application context.
-            default: A target name to pre-highlight (the one just traced), so the cursor
-                lands where the user left.
 
         Returns:
             The chosen target name, or ``None`` if cancelled. With no known contacts and
@@ -180,7 +166,7 @@ class TraceTool(Tool):
         items.append(Choice(title="Back", value=_BACK))
 
         choice = await ctx.ui.select(
-            "Trace target — pick a target", items, default=default, wrap=False
+            "Trace target — pick a target", items, wrap=False
         )
         if choice in (None, _BACK):
             return None
