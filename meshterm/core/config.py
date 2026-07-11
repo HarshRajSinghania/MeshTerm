@@ -100,6 +100,11 @@ class Settings:
             (and starts always-on background listening) immediately at launch. When
             ``False`` the connection is opened lazily — only once monitoring is turned on
             or a tool first needs the radio — so launching the menu touches no serial port.
+        history_days: How many days of overheard-packet history the recorder retains.
+            Observations older than this are pruned once per session start (the
+            housekeeping sweep), keeping the database bounded while the dashboard and
+            Time Machine draw on everything inside the window. ``0`` disables pruning
+            entirely — history grows forever.
     """
 
     config_dir: Path = field(default_factory=default_config_dir)
@@ -112,6 +117,7 @@ class Settings:
     tx_opt_max: int = 28
     direct_message_soft_retries: int = 2
     connect_on_start: bool = True
+    history_days: int = 365
 
     def __post_init__(self) -> None:
         """Derive dependent paths that were not explicitly provided."""
@@ -187,4 +193,5 @@ class Settings:
                 ),
             ),
             connect_on_start=bool(data.get("connect_on_start", True)),
+            history_days=max(0, int(data.get("history_days", 365))),
         )

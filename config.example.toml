@@ -13,6 +13,9 @@ trace_cooldown_s = 1.0
 # 0, 1, or 2 (clamped): 0 = one shot, 2 (default) = up to three tries. Ctrl-R in chat is a
 # further manual retry on top of this.
 direct_message_soft_retries = 2
+# Days of overheard-packet history the recorder keeps; older observations are pruned
+# once per session start (0 = keep everything forever).
+history_days = 365
 # db_path = "C:/Users/you/meshterm/meshterm.db"
 # output_dir = "C:/Users/you/meshterm/output"
 

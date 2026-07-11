@@ -831,6 +831,49 @@ class Repository:
         arrivals.sort(key=lambda t: t[2], reverse=True)
         return arrivals
 
+    def kind_counts(self, *, since: Optional[datetime] = None) -> dict[str, int]:
+        """Stored observation tallies by packet class, optionally windowed.
+
+        The persistent seed of the dashboard's traffic panel: what the recorder has
+        heard across sessions, by kind, so the panel opens populated instead of
+        counting from zero every launch. Messages and acks are separate event
+        families (not observations) and are counted live on top of this.
+
+        Args:
+            since: Only observations at or after this time, if given.
+
+        Returns:
+            ``kind → count`` for every packet class ever stored (in the window).
+        """
+        sql = "SELECT kind, COUNT(*) AS n FROM observations"
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE observed_at >= ?"
+            params.append(since.isoformat())
+        sql += " GROUP BY kind"
+        rows = self._conn.execute(sql, params).fetchall()
+        return {row["kind"]: row["n"] for row in rows}
+
+    def prune_observations(self, older_than: datetime) -> int:
+        """Delete observations that aged past the retention window (housekeeping).
+
+        The once-per-session sweep that keeps a permanently-recording database
+        bounded: everything the dashboard and Time Machine read lives inside the
+        retention window, so rows beyond it are pure weight. Timestamps compare as
+        strings, like every other ``observed_at`` filter here.
+
+        Args:
+            older_than: Observations strictly before this time are deleted.
+
+        Returns:
+            How many rows were removed (0 when the window has no stale rows).
+        """
+        cur = self._conn.execute(
+            "DELETE FROM observations WHERE observed_at < ?", (older_than.isoformat(),)
+        )
+        self._conn.commit()
+        return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+
     def node_names(self) -> dict[str, str]:
         """The most recent advertised name per node, across everything ever recorded.
 

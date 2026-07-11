@@ -18,10 +18,12 @@ counters shown live in the menu header.
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING, Optional
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
+from ..core.models import utcnow
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -60,13 +62,44 @@ class MonitorService:
         # indicator answers "is the mesh alive?", not "any mail?". Pruned as it rolls,
         # so it never holds more than the six-hour window plus one closing bucket.
         self._activity: dict[int, int] = {}
-        # Session-long tallies by packet class (advert/telemetry/packet/message/ack),
-        # fed by the same kind-unfiltered subscription — the dashboard's traffic panel.
+        # Tallies by packet class (advert/telemetry/packet/message/ack): seeded from
+        # stored history below, then fed live by the kind-unfiltered subscription —
+        # the dashboard's traffic panel, persistent across sessions.
         self._kind_counts: dict[str, int] = {}
+        # Housekeeping: age out observations past the retention window once per
+        # session, so an always-recording database stays bounded (0 = keep forever).
+        days = getattr(getattr(ctx, "settings", None), "history_days", 0) or 0
+        if days:
+            try:
+                pruned = ctx.repo.prune_observations(utcnow() - timedelta(days=days))
+                if pruned:
+                    ctx.log.info("history housekeeping: pruned %s observations", pruned)
+            except Exception as exc:  # noqa: BLE001 - housekeeping must never block startup
+                ctx.log.debug("history housekeeping failed: %s", exc)
         # Total observations already in the database when the session began; the live
         # "total" is this plus what we capture this session (this process is the only
         # writer during an interactive session), avoiding a DB count on every repaint.
         self._start_total = ctx.repo.observation_count()
+        self._seed_from_history()
+
+    def _seed_from_history(self) -> None:
+        """Warm the activity buckets and kind tallies from stored observations.
+
+        The dashboard's persistence: a fresh session opens mid-story — the activity
+        chart already showing the trailing six hours and the traffic panel its
+        all-history tallies — instead of an empty chart that only fills while the app
+        happens to be running. Live events then stack on top (they are *new* rows, so
+        nothing double-counts). Stored history holds observations only; messages and
+        acks resume counting from zero each session.
+        """
+        try:
+            window = timedelta(seconds=ACTIVITY_BUCKET_S * ACTIVITY_BUCKETS)
+            for obs in self._ctx.repo.recent_observations(since=utcnow() - window):
+                bucket = int(obs.observed_at.timestamp() // ACTIVITY_BUCKET_S)
+                self._activity[bucket] = self._activity.get(bucket, 0) + 1
+            self._kind_counts = dict(self._ctx.repo.kind_counts())
+        except Exception as exc:  # noqa: BLE001 - a cold start is worse than a blank chart
+            self._ctx.log.debug("monitor: history seed failed: %s", exc)
 
     @property
     def active(self) -> bool:
@@ -86,10 +119,11 @@ class MonitorService:
         """All-packet counts per one-minute bucket over the trailing six hours.
 
         Newest first — index 0 is the current minute — the order the chart widgets
-        expect (they draw "now" at the right edge). Counts everything the hub fans out
-        this session; time before launch simply reads as silence. Consumers slice
-        however much of the window fits their chart and treat the rest as history in
-        reserve.
+        expect (they draw "now" at the right edge). Seeded from stored observations at
+        session start and fed live by everything the hub fans out, so the header's
+        pulse and the dashboard's chart open mid-story after a restart. Consumers
+        slice however much of the window fits their chart and treat the rest as
+        history in reserve.
 
         Returns:
             :data:`ACTIVITY_BUCKETS` bucket counts.
@@ -98,8 +132,10 @@ class MonitorService:
         return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
 
     def kind_counts(self) -> dict[str, int]:
-        """Session tallies by packet class: advert/telemetry/packet, message, ack.
+        """Tallies by packet class: advert/telemetry/packet, message, ack.
 
+        Seeded from stored history at session start and grown live from there, so the
+        numbers describe everything the recorder retains, not just this session.
         Observation classes come from the packet itself (``Observation.kind``);
         messages and acks are their own classes. A copy, safe to mutate.
         """
