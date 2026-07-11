@@ -831,6 +831,24 @@ class Repository:
         arrivals.sort(key=lambda t: t[2], reverse=True)
         return arrivals
 
+    def node_names(self) -> dict[str, str]:
+        """The most recent advertised name per node, across everything ever recorded.
+
+        The fill-in-the-blanks source for screens that meet a node id without a name
+        (a telemetry-only node in the Time Machine, a relay hash in the dashboard
+        feed): whatever name that node *ever* put on the air. One indexed scan;
+        ``packet`` rows are excluded because they carry no reliable identity.
+
+        Returns:
+            Latest non-empty name keyed by stored node id (the 12-hex key prefix).
+        """
+        rows = self._conn.execute(
+            "SELECT node, name FROM observations "
+            "WHERE node IS NOT NULL AND name IS NOT NULL AND name != '' "
+            "AND kind != 'packet' ORDER BY observed_at"
+        ).fetchall()
+        return {row["node"]: row["name"] for row in rows}
+
     def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 

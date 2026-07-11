@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import chart_span, timeline_rows
+from .braillechart import axis_caption, chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -46,6 +46,7 @@ from .widgets import (
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..core.models import HeardNode
+    from ..services.trace_runner import NodeResolver
 
 #: The switchable history windows (``None`` = everything ever recorded).
 _WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
@@ -98,21 +99,36 @@ def _snr_cell_style(values: list[float]) -> str:
 
 
 def _chart_block(
-    rows: list[Text], left_caption: str, right_caption: str, chars: int
+    rows: list[Text], label_at: Callable[[float], str], chars: int
 ) -> list[RenderableType]:
-    """Indent chart rows into the gutter and add the oldest→now caption line."""
+    """Indent chart rows into the gutter and add the oldest→now caption line.
+
+    The caption is the shared :func:`~meshterm.ui.braillechart.axis_caption`, so a
+    wide chart gains intermediate time marks between its two edge labels for free.
+    """
     out: list[RenderableType] = []
     for row in rows:
         line = Text("  ")
         line.append_text(row)
         out.append(line)
     caption = Text("  ")
-    caption.append(left_caption, style="faint")
-    pad = chars - len(left_caption) - len(right_caption)
-    caption.append(" " * max(1, pad))
-    caption.append(right_caption, style="faint")
+    caption.append_text(axis_caption(chars, label_at))
     out.append(caption)
     return out
+
+
+def _time_axis(start: datetime, end: datetime) -> Callable[[float], str]:
+    """An axis labeller over a real time span: timestamps left of the closing ``now``."""
+    def label_at(frac: float) -> str:
+        if frac >= 1.0:
+            return "now"
+        return _when_label(start + (end - start) * frac)
+    return label_at
+
+
+def _hour_axis(frac: float) -> str:
+    """The rhythm charts' labeller: the local hour of day at ``frac`` of the sweep."""
+    return f"{round(frac * 23)} h"
 
 
 def _heading(title: str, note: str) -> Text:
@@ -223,7 +239,7 @@ def _node_sections(
     out.extend(
         _chart_block(
             timeline_rows(bucketize(stamps, start, now, buckets), rows=_CHART_ROWS),
-            _when_label(start), "now", chars,
+            _time_axis(start, now), chars,
         )
     )
 
@@ -241,14 +257,14 @@ def _node_sections(
                 f"median per slice · grey line = 0 · scale {lo:+.1f} → {hi:+.1f} dB",
             )
         )
-        out.extend(_chart_block(rows, _when_label(start), "now", chars))
+        out.extend(_chart_block(rows, _time_axis(start, now), chars))
 
     hours = [0] * 24
     for stamp in stamps:
         hours[stamp.astimezone().hour] += 1
     out.append(Text())
     out.append(_heading("Rhythm", "receptions by local hour of day"))
-    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), "0 h", "23 h", 12))
+    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), _hour_axis, 12))
 
     out.append(Text())
     out.append(_heading("Record", "this window"))
@@ -283,11 +299,19 @@ def _node_sections(
 # --- the mesh page -----------------------------------------------------------------------
 
 
+def _day_axis(shown: list) -> Callable[[float], str]:
+    """An axis labeller over the day charts: the UTC date at ``frac`` of the sweep."""
+    def label_at(frac: float) -> str:
+        return shown[min(len(shown) - 1, round(frac * (len(shown) - 1)))][0]
+    return label_at
+
+
 def _mesh_sections(
     ctx: "AppContext",
     window: Optional[timedelta],
     width: int,
     prefix_bytes: int = 0,
+    resolve: "NodeResolver" = lambda label: label,
 ) -> list[RenderableType]:
     """Build the whole-mesh overview: days, rhythm, arrivals, and the all-time ledger.
 
@@ -296,6 +320,8 @@ def _mesh_sections(
         window: The history window (``None`` = everything ever recorded).
         width: Render width in columns.
         prefix_bytes: Path-hash width to light in the arrival hashes (0 = none).
+        resolve: Names a node hash from the device's contacts, for arrivals whose
+            observations never carried a name.
     """
     now = utcnow()
     since = now - window if window is not None else None
@@ -319,18 +345,14 @@ def _mesh_sections(
         _heading("Packets per day", f"UTC days · peak {max(packets)} · today at the right")
     )
     out.extend(
-        _chart_block(
-            timeline_rows(packets, rows=_CHART_ROWS), shown[0][0], shown[-1][0], chars
-        )
+        _chart_block(timeline_rows(packets, rows=_CHART_ROWS), _day_axis(shown), chars)
     )
 
     nodes = [d[2] for d in shown]
     out.append(Text())
     out.append(_heading("Nodes per day", f"distinct nodes heard · peak {max(nodes)}"))
     out.extend(
-        _chart_block(
-            timeline_rows(nodes, rows=_CHART_ROWS), shown[0][0], shown[-1][0], chars
-        )
+        _chart_block(timeline_rows(nodes, rows=_CHART_ROWS), _day_axis(shown), chars)
     )
 
     # The node page's rhythm chart, mesh-wide: when does this *mesh* talk? Hours are
@@ -343,7 +365,7 @@ def _mesh_sections(
     hours = [utc_hours[(h - offset) % 24] for h in range(24)]
     out.append(Text())
     out.append(_heading("Rhythm", "packets by local hour of day"))
-    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), "0 h", "23 h", 12))
+    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), _hour_axis, 12))
 
     arrivals = ctx.repo.first_seen(since=since)
     out.append(Text())
@@ -354,7 +376,12 @@ def _mesh_sections(
         # Aligned lanes under column labels, the picker's presentation: the name
         # coloured by heat ("unknown" included), the hash lit at the routing width.
         # The FIRST HEARD header carries what used to be repeated on every row.
-        listed = arrivals[:12]
+        # A nameless arrival first asks the resolver (the device may know the node
+        # as a contact even though its stored observations never carried a name).
+        listed = [
+            (node, _known_name(resolve, node, name), first)
+            for node, name, first in arrivals[:12]
+        ]
         name_w = min(
             _PICK_NAME_MAX,
             max([len("unknown"), *(len(n) for _node, n, _f in listed if n)]),
@@ -373,9 +400,8 @@ def _mesh_sections(
             line = Text("  ", no_wrap=True, overflow="ellipsis")
             line.append(_fit(name or "unknown", name_w), style=_recency_style(secs))
             line.append("  ")
-            shown_hash = node[:_PICK_HASH_W]
-            line.append_text(highlighted_hash(shown_hash, prefix_bytes))
-            line.append(" " * (_PICK_HASH_W - len(shown_hash) + 2))
+            line.append_text(highlighted_hash(node, prefix_bytes, width=_PICK_HASH_W))
+            line.append("  ")
             line.append(_when_label(first))
             line.append(f"  ({_format_age(secs)} ago)", style="muted")
             out.append(line)
@@ -417,6 +443,23 @@ def _fit(text: str, width: int) -> str:
     return text.ljust(width)
 
 
+def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str]) -> Optional[str]:
+    """The best display name for a heard node, or ``None`` when truly unknown.
+
+    The app-wide fill-in-the-blanks rule: a node id without a stored name is not
+    necessarily a mystery — the device's contact list may know it. The stored name
+    wins (it's what the node itself last put on the air); the resolver fills the
+    blanks; only a node neither source can name stays ``unknown``.
+    """
+    if name:
+        return name
+    if node:
+        named = resolve(node)
+        if named and named != node:
+            return named
+    return None
+
+
 def _picker_header(name_w: int) -> str:
     """Column labels over the node picker's lanes (see :func:`_picker_row`).
 
@@ -433,25 +476,25 @@ def _picker_header(name_w: int) -> str:
     )
 
 
-def _picker_row(node: "HeardNode", name_w: int, prefix_bytes: int) -> Text:
+def _picker_row(node: "HeardNode", name: Optional[str], name_w: int, prefix_bytes: int) -> Text:
     """One heard node as fixed, colour-coded picker lanes.
 
-    The type glyph leads (the app's shared marker palette), the name is coloured by
-    recency heat — ``unknown`` included, so a freshly heard mystery node still reads
-    hot — and the hash is a separate lane with its path-hash prefix lit at the
-    device's routing width, exactly as the Nodes list draws keys. Packet count and
-    age close the row, right-aligned under their headers.
+    The type glyph leads (the app's shared marker palette), the name — stored, or
+    filled in by the contact resolver (see :func:`_known_name`) — is coloured by
+    recency heat, ``unknown`` included, so a freshly heard mystery node still reads
+    hot. The hash is a separate lane in the shared hash widget, its path-hash prefix
+    lit at the device's routing width, exactly as the Nodes list draws keys. Packet
+    count and age close the row, right-aligned under their headers.
     """
     glyph, glyph_style = _NODE_GLYPHS.get(node.node_type, _DEFAULT_GLYPH)
     secs = _age_seconds(node.last_seen)
     row = Text(no_wrap=True, overflow="ellipsis")
     row.append(glyph, style=glyph_style)
     row.append(" ")
-    row.append(_fit(node.name or "unknown", name_w), style=_recency_style(secs))
+    row.append(_fit(name or "unknown", name_w), style=_recency_style(secs))
     row.append("  ")
-    shown = (node.node or "")[:_PICK_HASH_W]
-    row.append_text(highlighted_hash(shown, prefix_bytes))
-    row.append(" " * (_PICK_HASH_W - len(shown) + 2))
+    row.append_text(highlighted_hash(node.node or "", prefix_bytes, width=_PICK_HASH_W))
+    row.append("  ")
     row.append(f"{min(node.count, 99999):>5}", style="muted")
     row.append("  ")
     row.append(f"{_format_age(secs):>5}", style="muted")
@@ -475,6 +518,26 @@ async def _routing_prefix_bytes(ctx: "AppContext") -> int:
     return (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
 
 
+async def _contact_resolver(ctx: "AppContext") -> "NodeResolver":
+    """A name resolver over the device's contacts, best-effort like the prefix read.
+
+    Fills the picker's and arrivals' ``unknown`` blanks for nodes the companion
+    knows as contacts but whose stored observations never carried a name (a
+    telemetry-only sensor, a repeater heard before it advertised). With no device
+    reachable the resolver simply knows nothing, and the stored names stand alone.
+    """
+    from ..services.trace_runner import make_node_resolver
+
+    contacts = []
+    try:
+        if ctx.is_connected or ctx.settings.connect_on_start:
+            device = await ctx.device()
+            contacts = await device.get_contacts()
+    except Exception:  # noqa: BLE001 - optional read; absence just leaves names stored-only
+        contacts = []
+    return make_node_resolver(contacts)
+
+
 async def open_timemachine(ctx: "AppContext") -> None:
     """Run the Time Machine: pick a subject, explore its page, repeat until Esc.
 
@@ -491,6 +554,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
         raise RuntimeError("the time machine is only available in the menu")
     session = ctx.ui.session
     prefix_bytes = await _routing_prefix_bytes(ctx)
+    resolve = await _contact_resolver(ctx)
 
     while True:
         heard = ctx.repo.heard_nodes()
@@ -504,10 +568,16 @@ async def open_timemachine(ctx: "AppContext") -> None:
                 title="⏳ Time machine",
             )
             return
-        listed = [node for node in heard if node.node]
+        # Stored names first, the contact resolver filling the blanks (the app-wide
+        # rule: a node we *can* name never shows as unknown).
+        listed = [
+            (node, _known_name(resolve, node.node, node.name))
+            for node in heard
+            if node.node
+        ]
         name_w = min(
             _PICK_NAME_MAX,
-            max([len("unknown"), *(len(n.name) for n in listed if n.name)]),
+            max([len("unknown"), *(len(n) for _node, n in listed if n)]),
         )
         items: list = [
             Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
@@ -515,11 +585,11 @@ async def open_timemachine(ctx: "AppContext") -> None:
             Separator("Nodes, most recently heard first", style="accent"),
             Separator(_picker_header(name_w)),
         ]
-        for node in listed:
+        for node, name in listed:
             items.append(
                 Choice(
-                    _picker_row(node, name_w, prefix_bytes),
-                    (node.node, node.name or node.node),
+                    _picker_row(node, name, name_w, prefix_bytes),
+                    (node.node, name or node.node),
                 )
             )
         picked = await session.select(
@@ -533,7 +603,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
             label = "the whole mesh"
             build = (  # noqa: E731
                 lambda window, width, _pb=prefix_bytes: _mesh_sections(
-                    ctx, window, width, _pb
+                    ctx, window, width, _pb, resolve
                 )
             )
         else:

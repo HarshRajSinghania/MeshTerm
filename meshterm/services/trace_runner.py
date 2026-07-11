@@ -26,16 +26,23 @@ NodeResolver = Callable[[Optional[str]], Optional[str]]
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
 
-def make_node_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
+def make_node_resolver(
+    contacts: Optional[list[Contact]],
+    stored_names: Optional[dict[str, str]] = None,
+) -> NodeResolver:
     """Build a resolver that names a trace hop from its key-prefix hash.
 
     Trace replies identify each repeater only by a short hash — a leading slice of
     its public key. This maps that hash to the contact's friendly name when we know
     the node, so results read as names instead of opaque hex, and falls back to the
-    raw hash for unknown nodes.
+    raw hash for unknown nodes. ``stored_names`` widens the net beyond the device's
+    contact list to names the recorder has *ever* overheard (the repository's
+    latest advertised name per node), so a node the companion never befriended — or
+    has since forgotten — still resolves; contacts are listed first, so they win.
 
     Args:
         contacts: Known contacts to resolve against.
+        stored_names: Fallback names keyed by stored node id (a hex key prefix).
 
     Returns:
         A callable taking a hop label and returning a contact name when the hash
@@ -49,6 +56,10 @@ def make_node_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
         prefix = (c.key_prefix or "").lower().removeprefix("0x")
         if c.name and (pub or prefix):
             entries.append((c.name, pub, prefix))
+    for node, name in (stored_names or {}).items():
+        ident = node.lower().removeprefix("0x")
+        if name and ident:
+            entries.append((name, "", ident))
 
     def resolve(label: Optional[str]) -> Optional[str]:
         if not label:

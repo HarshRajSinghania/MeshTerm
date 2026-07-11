@@ -204,7 +204,7 @@ def test_picker_row_lanes_align_under_the_header() -> None:
         node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
         last_rssi=None, last_seen=utcnow(),
     )
-    row = _picker_row(node, 10, 2)
+    row = _picker_row(node, node.name, 10, 2)
     plain = row.plain
     assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
     # A just-heard mystery node reads hot (white), not placeholder-grey.
