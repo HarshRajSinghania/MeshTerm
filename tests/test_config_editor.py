@@ -190,18 +190,23 @@ def test_location_picker_opens_on_the_initial_spot_and_commits_the_centre() -> N
 
 
 def test_location_picker_moves_the_crosshair_and_resets_to_initial() -> None:
-    """Panning moves the committed point; ``r`` returns to the starting location."""
+    """Panning moves the committed point; ``Home`` returns to the starting location."""
     screen = _picker(initial=(45.5, -73.6))
     screen.render_body(80)
-    screen.handle("text", "d")  # pan east
-    screen.handle("text", "s")  # pan south
+    screen.handle("right")  # pan east
+    screen.handle("down")  # pan south
     screen.handle("enter")
     lat, lon = screen.future.value
     assert lon > -73.6 and lat < 45.5
 
-    screen.handle("text", "r")  # back to the initial spot
+    screen.handle("home")  # back to the initial spot
     assert screen._viewport.center_lat == pytest.approx(45.5)
     assert screen._viewport.center_lon == pytest.approx(-73.6)
+
+    # Typing does nothing here — the picker has no find filter to feed.
+    view = screen._viewport
+    screen.handle("text", "d")
+    assert screen._viewport is view and screen._filter == ""
 
 
 def test_location_picker_draws_a_live_crosshair_without_keeping_it() -> None:
@@ -221,7 +226,7 @@ def test_location_picker_without_nodes_or_initial_shows_the_world() -> None:
     screen = _picker()
     screen.render_body(80)
     assert screen._viewport.zoom == 2
-    screen.handle("text", "r")  # reset with nothing to fit stays on the world view
+    screen.handle("home")  # reset with nothing to fit stays on the world view
     assert screen._viewport.zoom == 2
     screen.handle("escape")
     assert screen.future.value is None

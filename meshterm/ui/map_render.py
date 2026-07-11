@@ -137,6 +137,7 @@ def render_map(
     markers: list[MapMarker],
     *,
     max_labels: int = 80,
+    find: str = "",
 ) -> list[str]:
     """Render a full map frame to truecolour ANSI lines.
 
@@ -145,6 +146,9 @@ def render_map(
         tiles: Decoded layers keyed by ``(z, x, y)``; ``None`` values are pending/absent.
         markers: Mesh nodes to overlay.
         max_labels: Cap on basemap labels placed, to keep the map readable.
+        find: A live node-name filter: markers whose label contains it
+            (case-insensitively) draw with bright white labels while the rest dim to
+            unlabelled context. Empty draws every node normally.
 
     Returns:
         One ANSI string per row, ready for the TUI frame or the console.
@@ -157,7 +161,7 @@ def render_map(
             _draw_tile(frame, layers, z, x, y)
 
     # Nodes reserve their cells first so basemap labels route around them.
-    _draw_nodes(canvas, viewport, markers)
+    _draw_nodes(canvas, viewport, markers, find=find)
 
     # Then place basemap labels by importance, honouring the zoom gate and collisions.
     placed = 0
@@ -336,7 +340,21 @@ def _pile_color(color: RGB, count: int, *, cap: int = _PILE_FULL) -> RGB:
     )
 
 
-def _draw_nodes(canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker]) -> None:
+#: How far a node outside an active find filter dims (glyph colour multiplier).
+_FIND_DIM = 0.35
+
+#: Label colour for find-filter matches: full white, the brightest thing on the map.
+_FIND_MATCH_LABEL: RGB = (255, 255, 255)
+
+
+def _dimmed(color: RGB, factor: float) -> RGB:
+    """``color`` scaled toward black by ``factor``, clamped to byte range."""
+    return tuple(max(0, min(255, round(c * factor))) for c in color)  # type: ignore[return-value]
+
+
+def _draw_nodes(
+    canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker], *, find: str = ""
+) -> None:
     """Overlay mesh nodes: every glyph, then labels by importance until they collide.
 
     Glyphs are drawn lowest-priority first so self/repeaters land on top of leaf nodes.
@@ -345,23 +363,38 @@ def _draw_nodes(canvas: MapCanvas, viewport: Viewport, markers: list[MapMarker])
     Labels are then placed highest-priority first — self, then repeaters, then leaf
     nodes — each only if it fits without overlapping. So on a crowded map the important
     labels win the available space and the rest show as a bare marker (no overlap).
+
+    With a ``find`` filter active only the matching nodes keep labels — drawn in bright
+    white so they pop — while everything else dims to near-background context and match
+    labels never lose the collision contest to non-matches.
     """
-    placed: list[tuple[MapMarker, int, int]] = []
+    needle = find.casefold()
+    placed: list[tuple[MapMarker, int, int, bool]] = []
     for marker in markers:
         x, y = viewport.lonlat_to_dot(marker.lat, marker.lon)
         ix, iy = int(round(x)), int(round(y))
         if not (0 <= ix < viewport.dot_w and 0 <= iy < viewport.dot_h):
             continue
-        placed.append((marker, ix, iy))
+        matched = not needle or needle in marker.label.casefold()
+        placed.append((marker, ix, iy, matched))
 
     # A cell is (dot_x >> 1, dot_y >> 2); count how many nodes land on each.
-    pile = Counter((ix >> 1, iy >> 2) for _, ix, iy in placed)
+    pile = Counter((ix >> 1, iy >> 2) for _, ix, iy, _m in placed)
 
-    for marker, ix, iy in sorted(placed, key=lambda p: p[0]._rank()):
+    # Matches draw after (over) dimmed non-matches whatever their rank, so the node
+    # being searched for is never buried under a brighter neighbour.
+    for marker, ix, iy, matched in sorted(placed, key=lambda p: (p[3], p[0]._rank())):
         glyph, color = _marker_style(marker)
-        count = pile[(ix >> 1, iy >> 2)]
-        canvas.marker(ix, iy, glyph, _pile_color(parse_hex(color), count))
+        rgb = parse_hex(color)
+        if not matched:
+            rgb = _dimmed(rgb, _FIND_DIM)
+        else:
+            rgb = _pile_color(rgb, pile[(ix >> 1, iy >> 2)])
+        canvas.marker(ix, iy, glyph, rgb)
 
-    for marker, ix, iy in sorted(placed, key=lambda p: -p[0]._rank()):
+    # A filtered-out node is context: bare dim glyph, no label.
+    labelled = (p for p in placed if p[3])
+    for marker, ix, iy, _matched in sorted(labelled, key=lambda p: -p[0]._rank()):
         _, color = _marker_style(marker)
-        canvas.marker_label(ix, iy, marker.label, parse_hex(color))
+        label_color = _FIND_MATCH_LABEL if needle else parse_hex(color)
+        canvas.marker_label(ix, iy, marker.label, label_color)

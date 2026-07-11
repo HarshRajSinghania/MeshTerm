@@ -5,13 +5,16 @@ Viewport` over the mesh's nodes, fetches the vector tiles covering it in the bac
 the UI never blocks on the network), and redraws via :func:`~meshterm.ui.map_render.
 render_map`. Keys:
 
-* ``w`` / ``a`` / ``s`` / ``d`` (or the arrow keys) pan north / west / south / east,
-* holding **Shift** (Shift+arrows, or the uppercase ``W`` / ``A`` / ``S`` / ``D``) pans by a
-  single character cell for fine positioning,
-* ``=`` / ``+`` zoom in, ``-`` / ``_`` zoom out,
-* ``r`` recenters and refits to the dense core of the nodes (the same default view the map
-  opens on),
-* ``Esc`` / ``q`` leaves the map.
+* the **arrow keys** pan; holding **Shift** pans by a single character cell for fine
+  positioning,
+* ``PgUp`` / ``PgDn`` zoom in / out,
+* ``Home`` recenters and refits to the dense core of the nodes (the same default view the
+  map opens on),
+* **typing finds nodes**: every letter key feeds a live name filter — matching nodes keep
+  bright labels while the rest dim to context, ``Enter`` frames the matches, ``Backspace``
+  edits, and ``Esc`` clears the filter (a second ``Esc`` leaves the map). This is why no
+  letters are bound to actions here,
+* ``Esc`` leaves the map.
 
 With no network (and no cached tiles) the basemap is simply absent and nodes are plotted on a
 blank grid — the map still works, it just has no streets.
@@ -43,9 +46,6 @@ _PAN_DIRS: dict[str, tuple[int, int]] = {
     "right": (1, 0),
 }
 
-#: Which pan direction each letter key drives (w/a/s/d ≈ north/west/south/east).
-_PAN_KEYS: dict[str, str] = {"w": "up", "a": "left", "s": "down", "d": "right"}
-
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
 
@@ -58,6 +58,11 @@ class MapScreen(Screen):
     """A full-screen, keyboard-driven map of the mesh's located nodes over an OSM basemap."""
 
     floating = False
+
+    #: Whether printable keys feed the find-as-you-type node filter. The location
+    #: picker turns this off: there, typing has no job and a silent filter would
+    #: mysteriously dim the context markers.
+    find_enabled = True
 
     def __init__(
         self,
@@ -96,6 +101,10 @@ class MapScreen(Screen):
         # The view last handed to ``on_view_change``; seeded with the restored view so
         # reopening unchanged doesn't rewrite it.
         self._last_saved = saved_view
+        #: The live find-as-you-type node filter ("" = off). Every printable key lands
+        #: here — the map binds no letters to actions — and rendering highlights the
+        #: matching markers while dimming the rest.
+        self._filter = ""
         self._viewport: Optional[Viewport] = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
         # Ask the session to scrub the panel's right edge on the next paint (see
@@ -110,10 +119,15 @@ class MapScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Key hints plus a live tile-loading indicator."""
-        base = (
-            "wasd/↑↓←→ pan (⇧ fine) · +/-/PgUp/PgDn zoom · r reset · Esc back"
-        )
+        """Key hints — or the live find query — plus a tile-loading indicator.
+
+        While a find filter is active the hints give way to the query itself with its
+        editing keys, so the typed text is always visible somewhere fixed.
+        """
+        if self._filter:
+            base = f"find: {self._filter}▏ · Enter frame · Bksp erase · Esc clear"
+        else:
+            base = "↑↓←→ pan · ⇧ fine · PgUp/PgDn zoom · Home reset · type to find · Esc"
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:
@@ -153,7 +167,7 @@ class MapScreen(Screen):
         self.title = self._title(self._viewport)
         self._persist()
         tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
-        return render_map(self._viewport, tiles, self._markers)
+        return render_map(self._viewport, tiles, self._markers, find=self._filter)
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
@@ -184,8 +198,15 @@ class MapScreen(Screen):
         self._last_saved = view
         self._on_view_change(vp)
 
+    def _matches(self) -> list[MapMarker]:
+        """The markers the live find filter currently matches (all of them when off)."""
+        if not self._filter:
+            return self._markers
+        needle = self._filter.casefold()
+        return [m for m in self._markers if needle in m.label.casefold()]
+
     def _title(self, vp: Viewport) -> str:
-        """A compact status title: zoom, node count, and scale (metres per dot)."""
+        """A compact status title: zoom, node count (find matches), and ground scale."""
         # Ground metres per braille dot at the view centre, for a rough sense of scale.
         m_per_dot = (
             2 * math.pi * EARTH_RADIUS_KM * 1000
@@ -194,7 +215,11 @@ class MapScreen(Screen):
         )
         scale = f"{m_per_dot * vp.dot_w:.0f} m across" if m_per_dot * vp.dot_w < 1000 else \
             f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
-        return f"Map · z{vp.zoom} · {len(self._markers)} nodes · {scale}"
+        if self._filter:
+            nodes = f"{len(self._matches())} of {len(self._markers)} match"
+        else:
+            nodes = f"{len(self._markers)} nodes"
+        return f"Map · z{vp.zoom} · {nodes} · {scale}"
 
     # --- tiles ---------------------------------------------------------------
 
@@ -224,11 +249,19 @@ class MapScreen(Screen):
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
-        """Pan, zoom, reset, or exit in response to a normalized key action."""
+        """Pan, zoom, reset, edit the find filter, or exit.
+
+        Every printable key feeds the find filter — nothing pans or zooms by letter, so
+        typing a node name can never fling the view around. Esc peels one layer: an
+        active filter first, the map itself only once the filter is clear.
+        """
         vp = self._viewport
         if action == "escape":
-            self.resolve(None)
-            return
+            if self._filter:
+                self._filter = ""
+            else:
+                self.resolve(None)
+                return
         if vp is None:
             return
         if action in _PAN_DIRS:
@@ -239,11 +272,46 @@ class MapScreen(Screen):
             self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
         elif action == "pagedown":
             self._viewport = vp.zoomed(-1)
-        elif action == "text":
-            self._handle_key(data, vp)
+        elif action in ("home", "ctrl_home"):
+            self._reset_view(vp)
+        elif action == "text" and self.find_enabled:
+            self._filter += data
+        elif action == "space" and self._filter:
+            self._filter += " "  # node names carry spaces; only meaningful mid-query
+        elif action == "backspace":
+            self._filter = self._filter[:-1]
+        elif action == "enter" and self._filter:
+            self._frame_matches(vp)
         # Any handled key may have redrawn the body, so clean the right edge next paint.
         self._needs_scrub = True
         self._persist()
+
+    def _reset_view(self, vp: Viewport) -> None:
+        """Refit the view to the nodes' dense core (the map's opening frame)."""
+        self._viewport = Viewport.fit(
+            [(m.lat, m.lon) for m in self._markers],
+            vp.dot_w,
+            vp.dot_h,
+            max_zoom=self._max_tile_zoom,
+            fraction=self._view_fraction,
+        )
+
+    def _frame_matches(self, vp: Viewport) -> None:
+        """Refit the view around the find filter's matches (Enter on an active find).
+
+        All matches are framed (``fraction=1.0`` — the user asked for exactly these
+        nodes, so no dense-core trimming), and no matches at all leaves the view alone.
+        """
+        matches = self._matches()
+        if not matches:
+            return
+        self._viewport = Viewport.fit(
+            [(m.lat, m.lon) for m in matches],
+            vp.dot_w,
+            vp.dot_h,
+            max_zoom=self._max_tile_zoom,
+            fraction=1.0,
+        )
 
     def _pan(self, vp: Viewport, direction: str, *, fine: bool) -> None:
         """Pan by one coarse step, or — when ``fine`` — a single character cell.
@@ -257,29 +325,6 @@ class MapScreen(Screen):
         else:
             self._viewport = vp.panned(dx * _PAN_STEP, dy * _PAN_STEP)
 
-    def _handle_key(self, key: str, vp: Viewport) -> None:
-        """Handle a printable-key action (pan/zoom/reset/quit).
-
-        An uppercase pan letter (Shift held) pans by a single cell for fine positioning.
-        """
-        low = key.lower()
-        if low in _PAN_KEYS:
-            self._pan(vp, _PAN_KEYS[low], fine=key.isupper())
-        elif low in ("=", "+"):
-            self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
-        elif low in ("-", "_"):
-            self._viewport = vp.zoomed(-1)
-        elif low == "r":
-            self._viewport = Viewport.fit(
-                [(m.lat, m.lon) for m in self._markers],
-                vp.dot_w,
-                vp.dot_h,
-                max_zoom=self._max_tile_zoom,
-                fraction=self._view_fraction,
-            )
-        elif low == "q":
-            self.resolve(None)
-
 
 class LocationPickScreen(MapScreen):
     """The map, repurposed as a coordinate picker: pan the crosshair, Enter to choose.
@@ -287,12 +332,15 @@ class LocationPickScreen(MapScreen):
     Used by the config editor to set the node's advertised location by *pointing at the
     map* instead of typing degrees. It is a :class:`MapScreen` with three changes: a
     crosshair marker rides the view centre (labelled with the live coordinates, so the
-    user always sees exactly what they're about to pick), Enter resolves with the centre's
-    ``(lat, lon)`` instead of doing nothing, and ``r`` recentres on the *initial* location
+    user always sees exactly what they're about to pick), Enter resolves with the
+    centre's ``(lat, lon)`` instead of framing find matches (find is off here — see
+    :attr:`MapScreen.find_enabled`), and ``Home`` recentres on the *initial* location
     rather than refitting the node cloud. The surrounding mesh nodes are still drawn, so
     placing yourself relative to a known repeater is easy. Esc cancels (resolves CANCEL,
     surfaced as ``None`` by the caller).
     """
+
+    find_enabled = False
 
     def __init__(
         self,
@@ -324,7 +372,7 @@ class LocationPickScreen(MapScreen):
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
         """Key hints for picking, plus the live tile-loading indicator."""
-        base = "wasd/↑↓←→ pan (⇧ fine) · +/- zoom · Enter set location · Esc cancel"
+        base = "↑↓←→ pan · ⇧ fine · PgUp/PgDn zoom · Enter set location · Esc cancel"
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:
@@ -370,13 +418,13 @@ class LocationPickScreen(MapScreen):
         return f"set location · {vp.center_lat:.5f}, {vp.center_lon:.5f} · z{vp.zoom} · {scale}"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Commit the centre on Enter; ``r`` returns to the initial spot; else the map keys."""
+        """Commit the centre on Enter; ``Home`` returns to the initial spot; else map keys."""
         if action == "enter":
             vp = self._viewport
             if vp is not None:
                 self.resolve((vp.center_lat, vp.center_lon))
             return
-        if action == "text" and data.lower() == "r" and self._viewport is not None:
+        if action in ("home", "ctrl_home") and self._viewport is not None:
             # Reset returns to the *starting* view — the initial location when one was
             # given, else the node frame — rather than refitting a cloud that now includes
             # nowhere in particular. With neither, fall back to the world view.

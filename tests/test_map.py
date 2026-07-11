@@ -444,21 +444,27 @@ def test_map_screen_renders_pans_zooms_and_resets() -> None:
     assert len(lines) == 24  # fills the body height reported by the session
     start = screen._viewport
 
-    screen.handle("text", "d")  # pan east → longitude increases
+    screen.handle("right")  # pan east → longitude increases
     assert screen._viewport.center_lon > start.center_lon
-    screen.handle("text", "w")  # pan north → latitude increases
+    screen.handle("up")  # pan north → latitude increases
     assert screen._viewport.center_lat > start.center_lat
 
     z = screen._viewport.zoom
-    screen.handle("text", "=")
+    screen.handle("pageup")
     assert screen._viewport.zoom == z + 1
-    screen.handle("text", "-")
+    screen.handle("pagedown")
     assert screen._viewport.zoom == z
 
-    screen.handle("text", "r")  # reset refits to the nodes
+    screen.handle("home")  # reset refits to the nodes
     refit = Viewport.fit([(m.lat, m.lon) for m in markers], start.dot_w, start.dot_h, max_zoom=14)
     assert screen._viewport.zoom == refit.zoom
     assert screen._viewport.center_lat == pytest.approx(refit.center_lat)
+
+    # Letters never pan or zoom — they feed the find filter instead.
+    view = screen._viewport
+    screen.handle("text", "d")
+    assert screen._viewport is view and screen._filter == "d"
+    screen.handle("backspace")
 
     # Offline source: nodes still render and both markers are present.
     assert "▲" in _plain(screen.render_body(80)) and "●" in _plain(screen.render_body(80))
@@ -466,7 +472,7 @@ def test_map_screen_renders_pans_zooms_and_resets() -> None:
 
 
 def test_map_screen_shift_pans_by_a_single_cell() -> None:
-    """Holding Shift (Shift+arrow, or uppercase WASD) pans finely, by one character cell."""
+    """Holding Shift with an arrow pans finely, by one character cell."""
     from meshterm.core.geo import lonlat_to_world, world_to_lonlat
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -490,10 +496,52 @@ def test_map_screen_shift_pans_by_a_single_cell() -> None:
     _, expected_lon = world_to_lonlat(cx + 2, cy, start.zoom)
     assert screen._viewport.center_lon == pytest.approx(expected_lon)
 
-    # Uppercase WASD is the same fine step via the text path.
-    screen._viewport = start
-    screen.handle("text", "D")
-    assert screen._viewport.center_lon == pytest.approx(start.center_lon + fine)
+
+def test_map_screen_find_filters_frames_and_clears() -> None:
+    """Typing builds the find query; Enter frames matches; Esc peels filter then map."""
+    import asyncio
+
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    markers = [
+        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Alice", 45.40, -73.50),
+        MapMarker("Yagi-North", 45.60, -73.65),
+    ]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
+    screen.render_body(80)
+
+    for ch in "yu":
+        screen.handle("text", ch)
+    assert screen._filter == "yu"
+    assert [m.label for m in screen._matches()] == ["YUL-Cartierville"]
+    screen.render_body(80)
+    assert "1 of 3 match" in screen.title
+    assert "find: yu" in screen.footer_hint
+
+    # Only the match keeps a label; the others dim to bare context glyphs.
+    body = _plain(screen.render_body(80))
+    assert "YUL-Cartierville" in body
+    assert "Alice" not in body and "Yagi-North" not in body
+
+    # Enter frames the matches: the view centres on YUL.
+    screen.handle("enter")
+    assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.05)
+    assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.05)
+
+    # Backspace edits; Esc clears the filter first and only then dismisses.
+    screen.handle("backspace")
+    assert screen._filter == "y"
+
+    async def drive() -> object:
+        screen.future = asyncio.get_running_loop().create_future()
+        screen.handle("escape")
+        assert screen._filter == "" and not screen.future.done()
+        screen.handle("escape")
+        return await screen.future
+
+    assert asyncio.run(drive()) is None
 
 
 def test_map_screen_restores_and_persists_view() -> None:
@@ -518,11 +566,11 @@ def test_map_screen_restores_and_persists_view() -> None:
     assert screen._viewport.center_lon == pytest.approx(-71.20)
     assert saved == []  # reopening unchanged doesn't rewrite the stored view
 
-    screen.handle("text", "d")  # pan east persists the moved view
+    screen.handle("right")  # pan east persists the moved view
     assert saved and saved[-1][2] == 12  # zoom unchanged
     assert saved[-1][1] > -71.20  # centre moved east
 
-    screen.handle("text", "=")  # zooming in persists too
+    screen.handle("pageup")  # zooming in persists too
     assert saved[-1][2] == 13
 
 
@@ -534,7 +582,7 @@ def test_map_screen_scrubs_right_edge_after_move() -> None:
     markers = [MapMarker("A", 45.5, -73.6)]
     braille = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
     braille.render_body(80)
-    braille.handle("text", "d")  # a move flags the edge for a scrub
+    braille.handle("right")  # a move flags the edge for a scrub
     assert braille.consume_edge_scrub() == 2  # right padding + border columns
     assert braille.consume_edge_scrub() == 0  # consumed — not repeated without another move
 
