@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from rich.cells import cell_len
 from rich.console import Group
-from rich.table import Table
 from rich.text import Text
 
 from ..core.channels import (
@@ -749,31 +748,40 @@ async def _show_share(
     await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc back")
 
 
-def _hash_text(full_hash: str) -> Text:
-    """Render a full channel hash with its first byte (the MeshCore fingerprint) highlighted."""
-    text = Text(no_wrap=True)
-    text.append(full_hash[:2], style="brand")  # the leading byte the companion app reports
-    text.append(full_hash[2:], style="muted")
-    return text
-
-
 async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
-    """Show a channel's name, key, hash, and share URL in a small table."""
-    table = Table(border_style="muted", expand=False, show_header=False)
-    table.add_column("", style="muted")
-    table.add_column("")
-    table.add_row("Name", Text(slot.name, style="brand"))
+    """Show a channel's name, type, hash, key, and share link as labelled blocks.
+
+    Deliberately not a table: a bordered grid inside a popup is visual noise and wastes
+    the very columns the values need. Each field is instead a muted column-header-style
+    label with its value on the line beneath, and the long values — the hash, key, and
+    link exist to be copied out whole — *wrap* to the popup's width (``overflow="fold"``,
+    since they are single unbreakable words) rather than being chopped at an ellipsis.
+    The hash's first byte keeps the brand highlight: it is the two-character fingerprint
+    the MeshCore companion app reports.
+    """
     if slot.is_name_derived:
         kind = "public (key from name)"
     elif slot.is_public:
         kind = "public (default channel)"
     else:
         kind = "private"
-    table.add_row("Type", kind)
-    table.add_row("Hash", _hash_text(slot.full_hash))
-    table.add_row("Key", Text(slot.secret.hex(), style="warn"))
-    table.add_row("Link", Text(share_url(slot.name, slot.secret), style="accent"))
-    await ctx.ui.view(table, title=f"Key — {slot.name}", footer_hint="Esc back")
+    hash_text = Text(overflow="fold")
+    hash_text.append(slot.full_hash[:2], style="brand")
+    hash_text.append(slot.full_hash[2:], style="muted")
+    fields: list[tuple[str, Text]] = [
+        ("NAME", Text(slot.name, style="brand", overflow="fold")),
+        ("TYPE", Text(kind)),
+        ("HASH", hash_text),
+        ("KEY", Text(slot.secret.hex(), style="warn", overflow="fold")),
+        ("LINK", Text(share_url(slot.name, slot.secret), style="accent", overflow="fold")),
+    ]
+    blocks: list[Text] = []
+    for label, value in fields:
+        if blocks:
+            blocks.append(Text())
+        blocks.append(Text(label, style="muted"))
+        blocks.append(value)
+    await ctx.ui.view(Group(*blocks), title=f"Key — {slot.name}", footer_hint="Esc back")
 
 
 async def _open_chat(ctx: "AppContext", slot: ChannelSlot) -> None:

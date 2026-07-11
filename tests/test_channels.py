@@ -425,6 +425,36 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert label.spans[-1].style == "ok"  # …and its newest cell reads as live traffic
 
 
+async def test_show_key_popup_wraps_values_under_header_labels() -> None:
+    """The key popup is labelled blocks, not a table, and long values wrap whole."""
+    from types import SimpleNamespace
+
+    from meshterm.ui.channels import _show_key
+    from meshterm.ui.tui.render import render_lines
+
+    captured: dict = {}
+
+    async def view(renderable, *, title="", footer_hint=""):  # noqa: ANN001, ANN202
+        captured["renderable"] = renderable
+        captured["title"] = title
+
+    slot = ChannelSlot(idx=0, name="Ops", secret=bytes(range(16)))
+    await _show_key(SimpleNamespace(ui=SimpleNamespace(view=view)), slot)
+    assert captured["title"] == "Key — Ops"
+
+    # Render at a deliberately narrow dialog width: every value must survive whole,
+    # wrapped across lines, with no ellipsis truncation anywhere.
+    lines = [_ANSI.sub("", line) for line in render_lines(captured["renderable"], 40)]
+    text = "\n".join(lines)
+    for label in ("NAME", "TYPE", "HASH", "KEY", "LINK"):
+        assert label in text
+    assert "…" not in text
+    joined = text.replace("\n", "").replace(" ", "")
+    assert slot.secret.hex() in joined  # the 32-hex key, reassembled across wraps
+    assert full_channel_hash(slot.secret) in joined  # the 64-hex hash likewise
+    assert share_url("Ops", slot.secret).replace(" ", "") in joined
+
+
 async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> None:
     """The detail screen's vital-signs line covers slot, totals, unread, and recency."""
     from meshterm.core.models import ChatMessage
