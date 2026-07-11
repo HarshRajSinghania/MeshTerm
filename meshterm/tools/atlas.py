@@ -2,8 +2,9 @@
 
 Opens the full-screen Mesh Atlas (see :mod:`meshterm.ui.atlas_screen`): every link the
 evidence graph holds — trace walks, firmware routes, overheard relay chains, repeater
-neighbour tables — drawn as braille edges coloured by SNR around our own node, with
-node-by-node walking and per-link detail. The geographic map answers *where* the mesh
+neighbour tables — drawn as braille edges coloured by SNR on hop-distance rings around
+our own node. Pannable and zoomable like the street map, with find-as-you-type node
+search, Tab-walking, and per-link detail. The geographic map answers *where* the mesh
 is; the atlas answers *how it hangs together*.
 
 Menu-only: the atlas is an interactive reading of stored evidence (and transmits
