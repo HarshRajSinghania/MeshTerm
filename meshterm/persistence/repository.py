@@ -695,6 +695,112 @@ class Repository:
             )
         return observations
 
+    def node_observations(
+        self, node: str, *, since: Optional[datetime] = None, limit: int = 50000
+    ) -> list[Observation]:
+        """Every stored reception of one node, oldest first — its longitudinal record.
+
+        The Time Machine's per-node feed. ``packet``-kind rows are excluded for the
+        same reason :meth:`heard_nodes` drops them: their SNR describes the last relay,
+        not the node itself, so they would poison a reception timeline.
+
+        Args:
+            node: The node's stored id (the 12-hex key prefix observations carry).
+            since: Only observations at or after this time, if given.
+            limit: Hard cap on rows (newest kept) so an ancient, chatty node stays cheap.
+
+        Returns:
+            The node's observations, oldest first.
+        """
+        sql = (
+            "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at "
+            "FROM observations WHERE node = ? AND kind != 'packet'"
+        )
+        params: list[Any] = [node]
+        if since is not None:
+            sql += " AND observed_at >= ?"
+            params.append(since.isoformat())
+        sql += " ORDER BY observed_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        observations: list[Observation] = []
+        for row in reversed(rows):
+            try:
+                observed_at = datetime.fromisoformat(row["observed_at"])
+            except (TypeError, ValueError):
+                continue  # a malformed stray simply doesn't make the record
+            observations.append(
+                Observation(
+                    node=row["node"],
+                    name=row["name"],
+                    kind=row["kind"] or "advert",
+                    node_type=row["node_type"],
+                    snr=row["snr"],
+                    rssi=row["rssi"],
+                    lat=row["lat"],
+                    lon=row["lon"],
+                    path=row["path"],
+                    observed_at=observed_at,
+                )
+            )
+        return observations
+
+    def daily_activity(self) -> list[tuple[str, int, int]]:
+        """Per-day activity totals across the whole stored history, oldest first.
+
+        Days are UTC calendar days (``observed_at`` is stored as UTC ISO-8601, so the
+        grouping is a cheap string prefix); the Time Machine labels them as such.
+
+        Returns:
+            ``(day, packets, nodes)`` per day with any activity: the day as
+            ``YYYY-MM-DD``, every stored observation counted, and the distinct
+            identified nodes heard (``packet`` rows excluded — no reliable identity).
+        """
+        rows = self._conn.execute(
+            "SELECT substr(observed_at, 1, 10) AS day, COUNT(*) AS pkts, "
+            "COUNT(DISTINCT CASE WHEN kind != 'packet' THEN node END) AS nodes "
+            "FROM observations GROUP BY day ORDER BY day"
+        ).fetchall()
+        return [(row["day"], int(row["pkts"]), int(row["nodes"])) for row in rows]
+
+    def first_seen(
+        self, *, since: Optional[datetime] = None
+    ) -> list[tuple[str, Optional[str], datetime]]:
+        """When each node first ever appeared in the history, newest arrivals first.
+
+        The Time Machine's "new arrivals" feed: a single ordered scan folds out each
+        node's earliest observation and its most recent advertised name (``packet``
+        rows excluded — no reliable identity).
+
+        Args:
+            since: Only nodes whose *first* appearance is at or after this time.
+
+        Returns:
+            ``(node, latest_name, first_heard)`` triples, most recent arrival first.
+        """
+        rows = self._conn.execute(
+            "SELECT node, name, observed_at FROM observations "
+            "WHERE node IS NOT NULL AND kind != 'packet' ORDER BY observed_at"
+        ).fetchall()
+        firsts: dict[str, datetime] = {}
+        names: dict[str, str] = {}
+        for row in rows:
+            node = row["node"]
+            if node not in firsts:
+                try:
+                    firsts[node] = datetime.fromisoformat(row["observed_at"])
+                except (TypeError, ValueError):
+                    continue
+            if row["name"]:
+                names[node] = row["name"]
+        arrivals = [
+            (node, names.get(node), first)
+            for node, first in firsts.items()
+            if since is None or first >= since
+        ]
+        arrivals.sort(key=lambda t: t[2], reverse=True)
+        return arrivals
+
     def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 
