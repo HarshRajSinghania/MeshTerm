@@ -10,8 +10,8 @@ charts and stats over a switchable window (``w`` cycles 24 h → 7 d → 30 d �
   by quality), its hour-of-day rhythm (when does this node talk?), and the roll-up
   stats — first/last heard, medians, extremes;
 * the **whole mesh** shows packets per day and nodes per day across the history, the
-  arrivals of the window (nodes heard for the first time ever), and the all-time
-  totals.
+  mesh-wide hour-of-day rhythm, the arrivals of the window (nodes heard for the first
+  time ever, in aligned name/hash/first-heard lanes), and the all-time totals.
 
 Charts read chronologically — oldest at the left, now at the right, the app-wide
 timeline direction — and draw through :mod:`~meshterm.ui.braillechart`, so the grey
@@ -34,10 +34,18 @@ from .braillechart import chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
-from .widgets import _NODE_GLYPHS, _age_seconds, _format_age, _recency_style
+from .widgets import (
+    _DEFAULT_GLYPH,
+    _NODE_GLYPHS,
+    _age_seconds,
+    _format_age,
+    _recency_style,
+    highlighted_hash,
+)
 
 if TYPE_CHECKING:
     from ..context import AppContext
+    from ..core.models import HeardNode
 
 #: The switchable history windows (``None`` = everything ever recorded).
 _WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
@@ -276,9 +284,19 @@ def _node_sections(
 
 
 def _mesh_sections(
-    ctx: "AppContext", window: Optional[timedelta], width: int
+    ctx: "AppContext",
+    window: Optional[timedelta],
+    width: int,
+    prefix_bytes: int = 0,
 ) -> list[RenderableType]:
-    """Build the whole-mesh overview: days, arrivals, and the all-time ledger."""
+    """Build the whole-mesh overview: days, rhythm, arrivals, and the all-time ledger.
+
+    Args:
+        ctx: The shared application context (repository reads only).
+        window: The history window (``None`` = everything ever recorded).
+        width: Render width in columns.
+        prefix_bytes: Path-hash width to light in the arrival hashes (0 = none).
+    """
     now = utcnow()
     since = now - window if window is not None else None
     days = ctx.repo.daily_activity()
@@ -315,18 +333,52 @@ def _mesh_sections(
         )
     )
 
+    # The node page's rhythm chart, mesh-wide: when does this *mesh* talk? Hours are
+    # grouped by UTC in SQL and rotated here by the current local offset (see
+    # Repository.hourly_activity for why one rotation is honest enough).
+    offset = round(
+        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 3600
+    )
+    utc_hours = ctx.repo.hourly_activity(since=since)
+    hours = [utc_hours[(h - offset) % 24] for h in range(24)]
+    out.append(Text())
+    out.append(_heading("Rhythm", "packets by local hour of day"))
+    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), "0 h", "23 h", 12))
+
     arrivals = ctx.repo.first_seen(since=since)
     out.append(Text())
     out.append(_heading("Arrivals", "nodes heard for the first time ever"))
     if not arrivals:
         out.append(Text("none in this window", style="muted"))
-    for node, name, first in arrivals[:12]:
-        line = Text("  ")
-        secs = _age_seconds(first)
-        line.append(name or node, style=_recency_style(secs))
-        line.append(f"  first heard {_when_label(first)}", style="muted")
-        line.append(f"  ({_format_age(secs)} ago)", style="muted")
-        out.append(line)
+    else:
+        # Aligned lanes under column labels, the picker's presentation: the name
+        # coloured by heat ("unknown" included), the hash lit at the routing width.
+        # The FIRST HEARD header carries what used to be repeated on every row.
+        listed = arrivals[:12]
+        name_w = min(
+            _PICK_NAME_MAX,
+            max([len("unknown"), *(len(n) for _node, n, _f in listed if n)]),
+        )
+        out.append(
+            Text(
+                "  "
+                + "NAME".ljust(name_w + 2)
+                + "HASH".ljust(_PICK_HASH_W + 2)
+                + "FIRST HEARD",
+                style="muted",
+            )
+        )
+        for node, name, first in listed:
+            secs = _age_seconds(first)
+            line = Text("  ", no_wrap=True, overflow="ellipsis")
+            line.append(_fit(name or "unknown", name_w), style=_recency_style(secs))
+            line.append("  ")
+            shown_hash = node[:_PICK_HASH_W]
+            line.append_text(highlighted_hash(shown_hash, prefix_bytes))
+            line.append(" " * (_PICK_HASH_W - len(shown_hash) + 2))
+            line.append(_when_label(first))
+            line.append(f"  ({_format_age(secs)} ago)", style="muted")
+            out.append(line)
 
     all_days = ctx.repo.daily_activity()
     total_nodes = len(ctx.repo.first_seen())
@@ -351,6 +403,77 @@ def _mesh_sections(
 
 # --- the picker loop ---------------------------------------------------------------------
 
+#: Widest the picker's name lane grows (longer names ellipsize so the lanes stay put).
+_PICK_NAME_MAX = 18
+
+#: The picker's hash lane: heard-node ids are the observations' 12-hex key prefixes.
+_PICK_HASH_W = 12
+
+
+def _fit(text: str, width: int) -> str:
+    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that overflows."""
+    if len(text) > width:
+        return text[: width - 1] + "…"
+    return text.ljust(width)
+
+
+def _picker_header(name_w: int) -> str:
+    """Column labels over the node picker's lanes (see :func:`_picker_row`).
+
+    The four leading spaces cover the select screen's pointer column (2 cells) plus
+    the one-cell type glyph and its gap, so each label lands over its lane.
+    """
+    return (
+        "    "
+        + "NAME".ljust(name_w + 2)
+        + "HASH".ljust(_PICK_HASH_W + 2)
+        + f"{'PKTS':>5}"
+        + "  "
+        + f"{'HEARD':>5}"
+    )
+
+
+def _picker_row(node: "HeardNode", name_w: int, prefix_bytes: int) -> Text:
+    """One heard node as fixed, colour-coded picker lanes.
+
+    The type glyph leads (the app's shared marker palette), the name is coloured by
+    recency heat — ``unknown`` included, so a freshly heard mystery node still reads
+    hot — and the hash is a separate lane with its path-hash prefix lit at the
+    device's routing width, exactly as the Nodes list draws keys. Packet count and
+    age close the row, right-aligned under their headers.
+    """
+    glyph, glyph_style = _NODE_GLYPHS.get(node.node_type, _DEFAULT_GLYPH)
+    secs = _age_seconds(node.last_seen)
+    row = Text(no_wrap=True, overflow="ellipsis")
+    row.append(glyph, style=glyph_style)
+    row.append(" ")
+    row.append(_fit(node.name or "unknown", name_w), style=_recency_style(secs))
+    row.append("  ")
+    shown = (node.node or "")[:_PICK_HASH_W]
+    row.append_text(highlighted_hash(shown, prefix_bytes))
+    row.append(" " * (_PICK_HASH_W - len(shown) + 2))
+    row.append(f"{min(node.count, 99999):>5}", style="muted")
+    row.append("  ")
+    row.append(f"{_format_age(secs):>5}", style="muted")
+    return row
+
+
+async def _routing_prefix_bytes(ctx: "AppContext") -> int:
+    """The device's path-hash width in bytes, or 0 when unknowable.
+
+    Best-effort, exactly like the Nodes tool: the Time Machine reads stored history
+    and must work with no radio at all, so an unreachable device (or firmware that
+    doesn't report the mode) just leaves every hash un-highlighted.
+    """
+    try:
+        if not (ctx.is_connected or ctx.settings.connect_on_start):
+            return 0
+        device = await ctx.device()
+        mode = await device.get_path_hash_mode()
+    except Exception:  # noqa: BLE001 - optional read; absence just skips highlighting
+        return 0
+    return (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
+
 
 async def open_timemachine(ctx: "AppContext") -> None:
     """Run the Time Machine: pick a subject, explore its page, repeat until Esc.
@@ -363,11 +486,11 @@ async def open_timemachine(ctx: "AppContext") -> None:
     """
     from .surface import TuiUi
     from .tui import Choice, Separator
-    from .widgets import _DEFAULT_GLYPH
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the time machine is only available in the menu")
     session = ctx.ui.session
+    prefix_bytes = await _routing_prefix_bytes(ctx)
 
     while True:
         heard = ctx.repo.heard_nodes()
@@ -381,24 +504,24 @@ async def open_timemachine(ctx: "AppContext") -> None:
                 title="⏳ Time machine",
             )
             return
+        listed = [node for node in heard if node.node]
+        name_w = min(
+            _PICK_NAME_MAX,
+            max([len("unknown"), *(len(n.name) for n in listed if n.name)]),
+        )
         items: list = [
             Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
             Separator(""),
             Separator("Nodes, most recently heard first", style="accent"),
+            Separator(_picker_header(name_w)),
         ]
-        for node in heard:
-            if not node.node:
-                continue
-            glyph, glyph_style = _NODE_GLYPHS.get(node.node_type, _DEFAULT_GLYPH)
-            secs = _age_seconds(node.last_seen)
-            row = Text()
-            row.append(glyph, style=glyph_style)
-            row.append(" ")
-            row.append(node.name or node.node, style=_recency_style(secs))
-            row.append(
-                f"   {node.count}× · heard {_format_age(secs)}", style="muted"
+        for node in listed:
+            items.append(
+                Choice(
+                    _picker_row(node, name_w, prefix_bytes),
+                    (node.node, node.name or node.node),
+                )
             )
-            items.append(Choice(row, (node.node, node.name or node.node)))
         picked = await session.select(
             "⏳ Time machine — pick a subject",
             items,
@@ -408,7 +531,11 @@ async def open_timemachine(ctx: "AppContext") -> None:
             return
         if picked == MESH:
             label = "the whole mesh"
-            build = lambda window, width: _mesh_sections(ctx, window, width)  # noqa: E731
+            build = (  # noqa: E731
+                lambda window, width, _pb=prefix_bytes: _mesh_sections(
+                    ctx, window, width, _pb
+                )
+            )
         else:
             node_id, label = picked
             build = (  # noqa: E731 - a tiny binding closure reads better than a def here

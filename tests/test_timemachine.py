@@ -105,6 +105,24 @@ def test_daily_activity_counts_packets_and_nodes(tmp_path: Path) -> None:
     repo.close()
 
 
+def test_hourly_activity_groups_by_utc_hour(tmp_path: Path) -> None:
+    """The rhythm feed lands each observation in its UTC hour, windowed on demand."""
+    repo = Repository(tmp_path / "hh.db")
+    run = repo.start_run("monitor", {}, None)
+    base = utcnow().replace(hour=5, minute=0, second=0, microsecond=0)
+    for minutes in (0, 10, 20):
+        repo.record_observation(
+            run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=minutes))
+        )
+    repo.record_observation(
+        run, Observation(node="aa" * 6, observed_at=base.replace(hour=17))
+    )
+    counts = repo.hourly_activity()
+    assert counts[5] == 3 and counts[17] == 1 and sum(counts) == 4
+    assert sum(repo.hourly_activity(since=base.replace(hour=6))) == 1
+    repo.close()
+
+
 # --- the math ---------------------------------------------------------------------------
 
 
@@ -161,15 +179,46 @@ def test_node_page_empty_window_offers_widening(tmp_path: Path) -> None:
     repo.close()
 
 
-def test_mesh_page_renders_days_arrivals_and_ledger(tmp_path: Path) -> None:
-    """The overview shows daily charts, the newcomers, and the all-time ledger."""
+def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> None:
+    """The overview shows daily charts, the rhythm, the newcomers, and the ledger."""
     repo = _seeded_repo(tmp_path)
     ctx = SimpleNamespace(repo=repo)
-    body = _plain(_mesh_sections(ctx, None, 90))
+    body = _plain(_mesh_sections(ctx, None, 90, prefix_bytes=2))
     assert "Packets per day" in body and "Nodes per day" in body
+    assert "Rhythm" in body and "local hour" in body
     assert "Arrivals" in body and "Newcomer" in body
+    # Arrivals are aligned lanes: the hash sits in its own column and the old
+    # per-row "first heard" prefix now lives once, in the column header.
+    assert "f7" * 6 in body
+    assert "FIRST HEARD" in body and "first heard" not in body
     assert "Ledger" in body and "26 observations" in body and "2 nodes" in body
     repo.close()
+
+
+def test_picker_row_lanes_align_under_the_header() -> None:
+    """Picker rows lane up under the header; unknown nodes read as heat-coloured names."""
+    from meshterm.core.models import HeardNode
+    from meshterm.ui.timemachine_screen import _picker_header, _picker_row
+
+    node = HeardNode(
+        node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
+        last_rssi=None, last_seen=utcnow(),
+    )
+    row = _picker_row(node, 10, 2)
+    plain = row.plain
+    assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
+    # A just-heard mystery node reads hot (white), not placeholder-grey.
+    assert any(span.style == "#ffffff" for span in row.spans)
+    # The hash's routing prefix (2 bytes here) is lit brand, the tail muted.
+    hash_at = plain.index("3d" * 6)
+    assert any(
+        span.style == "brand" and span.start == hash_at and span.end == hash_at + 4
+        for span in row.spans
+    )
+    # Header labels land over their lanes (+2 covers the select pointer column).
+    header = _picker_header(10)
+    assert header.index("HASH") == plain.index("3d" * 6) + 2
+    assert header.index("NAME") == plain.index("unknown") + 2
 
 
 def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:

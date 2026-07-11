@@ -763,6 +763,36 @@ class Repository:
         ).fetchall()
         return [(row["day"], int(row["pkts"]), int(row["nodes"])) for row in rows]
 
+    def hourly_activity(self, *, since: Optional[datetime] = None) -> list[int]:
+        """Observation counts by UTC hour of day (0–23) across the stored history.
+
+        The whole-mesh Rhythm chart's feed: every stored observation counted into
+        the hour-of-day it arrived, grouped in SQL off a cheap string slice of the
+        ISO-8601 ``observed_at`` (position 12 is where ``HH`` starts), so the cost
+        stays 24 rows however deep the history grows. The caller rotates the
+        histogram into local hours — one current-offset rotation, which is honest
+        enough for a rhythm chart even across a DST boundary.
+
+        Args:
+            since: Only observations at or after this time, if given.
+
+        Returns:
+            24 counts, index = UTC hour.
+        """
+        sql = "SELECT substr(observed_at, 12, 2) AS hh, COUNT(*) AS n FROM observations"
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE observed_at >= ?"
+            params.append(since.isoformat())
+        sql += " GROUP BY hh"
+        counts = [0] * 24
+        for row in self._conn.execute(sql, params).fetchall():
+            try:
+                counts[int(row["hh"])] += int(row["n"])
+            except (TypeError, ValueError, IndexError):
+                continue  # a malformed stray timestamp simply isn't counted
+        return counts
+
     def first_seen(
         self, *, since: Optional[datetime] = None
     ) -> list[tuple[str, Optional[str], datetime]]:
