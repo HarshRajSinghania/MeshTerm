@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from rich.console import RenderableType
 from rich.table import Table
@@ -170,6 +170,7 @@ class PacketViewer(Screen):
         resolve: NodeResolver,
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
+        on_navigate: Optional[Callable[[PacketEntry], None]] = None,
     ) -> None:
         """Open the viewer over a packet list.
 
@@ -180,6 +181,8 @@ class PacketViewer(Screen):
             resolve: Maps a node hash to a friendly name when known.
             prefix_bytes: Path-hash width to light in displayed hashes (0 = none).
             self_name: Our own node's name, drawn white wherever it appears.
+            on_navigate: Called with the newly shown entry whenever paging moves the
+                view, so the opening list can walk its own highlight in step.
         """
         super().__init__()
         self._entries = entries
@@ -187,6 +190,7 @@ class PacketViewer(Screen):
         self._resolve = resolve
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
+        self._on_navigate = on_navigate
         if len(entries) > 1:
             self.footer_hint = "PgUp/PgDn newer/older · Home/End ends · Esc close"
         else:
@@ -226,6 +230,8 @@ class PacketViewer(Screen):
             self._index = index
             self.scroll = 0
             self._set_title()
+            if self._on_navigate is not None:
+                self._on_navigate(self._entries[index])
 
     # --- rendering -------------------------------------------------------------
 

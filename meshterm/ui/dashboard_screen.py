@@ -228,9 +228,17 @@ class DashboardScreen(Screen):
         elif action in ("pagedown", "space"):
             self.scroll_pages(1)
         elif action in ("home", "ctrl_home"):
-            self.scroll_to_top()
+            # With the feed highlight active, Home jumps to the newest packet;
+            # otherwise it keeps its plain scroll-to-top meaning (End mirrors it).
+            if self._selected is not None:
+                self._select_index(0)
+            else:
+                self.scroll_to_top()
         elif action in ("end", "ctrl_end"):
-            self.scroll_to_bottom()
+            if self._selected is not None:
+                self._select_index(len(self._feed) - 1)
+            else:
+                self.scroll_to_bottom()
         elif action == "escape":
             if self._selected is not None:
                 self._selected = None  # first Esc peels the highlight, second leaves
@@ -243,19 +251,35 @@ class DashboardScreen(Screen):
         if not self._feed:
             return
         if self._selected is None:
-            self._selected = 0
+            self._select_index(0)
         else:
-            self._selected = max(0, min(self._selected + delta, len(self._feed) - 1))
+            self._select_index(self._selected + delta)
+
+    def _select_index(self, index: int) -> None:
+        """Highlight one feed row (clamped) and repaint."""
+        self._selected = max(0, min(index, len(self._feed) - 1))
         self._session.invalidate()
 
     def _open_packet(self) -> None:
-        """Float the packet viewer over the highlighted feed row."""
+        """Float the packet viewer over the highlighted feed row.
+
+        Paging inside the viewer walks the feed highlight in step (via
+        ``on_navigate``), so closing it lands back on the packet last viewed.
+        """
         if self._selected is None or not self._feed:
             return
+
+        def follow(entry: PacketEntry) -> None:
+            # The feed may have grown since the snapshot; find the entry itself.
+            for i, candidate in enumerate(self._feed):
+                if candidate is entry:
+                    self._select_index(i)
+                    return
+
         viewer = PacketViewer(
             list(self._feed), self._selected,
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
-            self_name=self._self_name,
+            self_name=self._self_name, on_navigate=follow,
         )
         asyncio.ensure_future(self._session.run_screen(viewer))
 
