@@ -202,7 +202,7 @@ async def optimize_tx_power(
     traces_by_tx: dict[int, list[TraceResult]] = {}
     levels: dict[int, TxLevelResult] = {}
 
-    coarse = _coarse_levels(tx_min, tx_max, coarse_step)
+    coarse = coarse_levels(tx_min, tx_max, coarse_step)
     total_estimate = len(coarse) + (2 * coarse_step if refine else 0) + (1 if verify else 0)
     completed = 0
 
@@ -308,8 +308,11 @@ def _round_trip_path(outbound: list[str]) -> str:
     return ",".join(outbound + outbound[-2::-1])
 
 
-def _coarse_levels(tx_min: int, tx_max: int, step: int) -> list[int]:
+def coarse_levels(tx_min: int, tx_max: int, step: int) -> list[int]:
     """Build the coarse sweep grid, always including both endpoints.
+
+    Public so the live sweep screen can quote the worst-case transmission count
+    of a commit before anything goes on the air.
 
     Args:
         tx_min: Lowest TX power.

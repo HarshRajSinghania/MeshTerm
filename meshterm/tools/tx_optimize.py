@@ -5,11 +5,14 @@ measured. The node one hop *before* the target — one you hold admin rights on 
 node whose transmit power gets swept and tuned. Admin passwords are remembered between
 runs.
 
-In the interactive menu one prompt picks the path and the live sweep screen
-(:mod:`meshterm.ui.tx_screen`) takes it from there: levels land in a bar chart as they
-are measured, and the apply decision is made *after* the sweep, over the evidence. On the
-CLI it stays a scriptable one-shot with the full flag set (range, step, samples,
-``--apply``, the HTML chart), and progress streams like a trace.
+In the interactive menu two pickers choose the link — the node to tune (repeaters
+you hold credentials for lead the list), then the target whose reception is optimized —
+and the live sweep screen (:mod:`meshterm.ui.tx_screen`) takes it from there, armed but
+idle: route, range, step, and samples are adjusted in place, nothing transmits until
+Sweep is committed, levels land in a bar chart as they are measured, and the apply
+decision is made *after* the sweep, over the evidence. On the CLI it stays a scriptable
+one-shot with the full flag set (``--path``, range, step, samples, ``--apply``, the HTML
+chart), and progress streams like a trace.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
-from ..core.models import Contact
+from ..core.models import NODE_TYPE_REPEATER, NODE_TYPE_ROOM, Contact
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
 from ..viz.tx_plot import render_tx_optimization
@@ -43,34 +46,26 @@ class TxOptimizeTool(Tool):
     order = 15  # right after Trace, its measurement sibling
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Pick the path for the live sweep (everything else defaults, tuned in-screen).
+        """Pick the tuned link for the live sweep: the admin node, then the target.
+
+        Everything else — route, range, step, samples — is adjusted on the armed-idle
+        sweep screen itself, so the entry flow is two quick pickers, not a typed path.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"live": True, "path": spec}``, or ``None`` if the user cancelled.
+            ``{"live": True, "admin": name, "target": name}``, or ``None`` on cancel.
         """
         device = await ctx.device()
         contacts = await device.get_contacts()
-        choices = [c.name for c in contacts]
-
-        prompt = (
-            "Comma-separated contacts/hex, ending at the target — "
-            "the node just before it is tuned"
-        )
-        validate_path = lambda v: _validate_link_path(v, contacts)  # noqa: E731
-        if choices:
-            path_spec = await ctx.ui.autocomplete(
-                "Path to the target", choices, prompt=prompt, validate=validate_path
-            )
-        else:
-            path_spec = await ctx.ui.text(
-                "Path to the target", prompt=prompt, validate=validate_path
-            )
-        if not path_spec:
+        admin = await _pick_admin(ctx, contacts)
+        if admin is None:
             return None
-        return {"live": True, "path": path_spec.strip()}
+        target = await _pick_target(ctx, contacts, admin)
+        if target is None:
+            return None
+        return {"live": True, "admin": admin.name, "target": target}
 
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run — without the outer run row on the live path.
@@ -95,39 +90,56 @@ class TxOptimizeTool(Tool):
 
         Args:
             ctx: Shared application context.
-            params: ``live`` + ``path`` from the menu prompt; or ``path``, ``samples``,
-                ``tx_min``, ``tx_max``, ``step``, ``apply``, optional ``password``/
-                ``viz``, and the injected ``_run_id`` from the CLI.
+            params: ``live`` + ``admin``/``target`` from the menu pickers; or ``path``,
+                ``samples``, ``tx_min``, ``tx_max``, ``step``, ``apply``, optional
+                ``password``/``viz``, and the injected ``_run_id`` from the CLI.
 
         Returns:
             A :class:`ToolResult` with the optimum and any chart path.
         """
         if params.get("live"):
-            return await self._run_live(ctx, str(params["path"]))
+            return await self._run_live(ctx, params)
         return await self._run_cli(ctx, params)
 
     # -- interactive (menu) ---------------------------------------------------------
 
-    async def _run_live(self, ctx: AppContext, path_spec: str) -> ToolResult:
-        """Resolve the link, log in, and hand off to the live sweep screen.
+    async def _run_live(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Resolve the picked link and hand off to the armed-idle sweep screen.
+
+        No login here: the screen logs in inside the first Sweep commit, so backing
+        out of an idle screen never touched the radio beyond the contact reads.
 
         Args:
             ctx: Shared application context.
-            path_spec: The user's comma-separated path entry (names and/or hex).
+            params: ``admin`` and ``target`` — the picker's contact names (the target
+                may also be a typed hex prefix).
 
         Returns:
-            A :class:`ToolResult` echoing the sweep's recorded summary.
+            A :class:`ToolResult` echoing the last sweep's recorded summary.
         """
         from ..ui.tx_screen import open_tx_optimize
 
         device = await ctx.device()
         contacts = await device.get_contacts()
-        path = trace_runner.parse_trace_path(path_spec, contacts)
-        admin_node, target_label = _resolve_link(path, contacts)
-        await self._login(ctx, admin_node, {})
+        admin_node = next(
+            (c for c in contacts if c.name == str(params["admin"])), None
+        )
+        if admin_node is None:
+            raise DeviceCommandError(f"unknown contact: {params['admin']!r}")
+        target = str(params["target"])
+        target_contact = next((c for c in contacts if c.name == target), None)
+        if target_contact is not None:
+            target_label = target_contact.name
+            target_hash = target_contact.public_key or target_contact.key_prefix
+        else:
+            target_label = target
+            target_hash = target  # a typed hex prefix stands for itself
 
         summary = await open_tx_optimize(
-            ctx, admin_node=admin_node, target_label=target_label, path=path
+            ctx,
+            admin_node=admin_node,
+            target_label=target_label,
+            target_hash=target_hash,
         )
         return ToolResult(summary=summary)
 
@@ -383,25 +395,121 @@ def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Optional[Contac
     return None
 
 
-def _validate_link_path(value: str, contacts: list[Contact]) -> bool | str:
-    """Validate the interactive path entry: parseable and at least two hops.
+async def _pick_admin(ctx: AppContext, contacts: list[Contact]) -> Optional[Contact]:
+    """Pick the node to tune: credentialed repeaters lead, the rest follow by recency.
+
+    Repeaters (and room servers) with a remembered admin password sit in their own
+    section wearing a key glyph — those are the nodes previously tuned or administered,
+    the likeliest picks. Any contact with a public key can be chosen, since holding a
+    password is a fact about the *user*, not the node.
 
     Args:
-        value: The raw comma-separated path entry.
-        contacts: Known contacts used to resolve names.
+        ctx: Shared application context (for the UI surface and the admin store).
+        contacts: The device's known contacts.
 
     Returns:
-        ``True`` if valid, otherwise an error message string.
+        The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
     """
-    if not value.strip():
-        return "Enter a path ending at the target node."
-    try:
-        path = trace_runner.parse_trace_path(value, contacts)
-    except ValueError as exc:
-        return str(exc)
-    if len([h for h in path.split(",") if h]) < 2:
-        return "Need at least two hops: the node to tune, then the target."
-    return True
+    from ..ui.tui import Choice, Separator
+    from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+
+    candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
+    if not candidates:
+        ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
+        await ctx.ui.present(title="TX optimize")
+        return None
+
+    def row(contact: Contact) -> Any:
+        glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        from rich.text import Text
+
+        label = Text(glyph, style=style)
+        label.append(f" {contact.name}")
+        return Choice(title=label, value=contact.name)
+
+    def recency(contact: Contact) -> float:
+        return -(contact.last_seen.timestamp() if contact.last_seen else 0.0)
+
+    remembered = [c for c in candidates if ctx.admin_store.get(c) is not None]
+    infrastructure = [
+        c for c in candidates
+        if c not in remembered and c.node_type in (NODE_TYPE_REPEATER, NODE_TYPE_ROOM)
+    ]
+    others = [c for c in candidates if c not in remembered and c not in infrastructure]
+
+    items: list = []
+    if remembered:
+        items.append(Separator("── 🔑 Remembered admins ──", style="accent"))
+        items.extend(row(c) for c in sorted(remembered, key=recency))
+    if infrastructure:
+        items.append(Separator("── Repeaters & rooms ──", style="accent"))
+        items.extend(row(c) for c in sorted(infrastructure, key=recency))
+    if others:
+        items.append(Separator("── Other contacts ──", style="accent"))
+        items.extend(row(c) for c in sorted(others, key=recency))
+    items.append(Separator(" "))
+    items.append(Choice(title="Back", value=None))
+
+    choice = await ctx.ui.select(
+        "TX optimize — node to tune",
+        items,
+        prompt="Whose transmit power gets tuned (you need its admin password):",
+        wrap=False,
+    )
+    if choice is None:
+        return None
+    return next((c for c in candidates if c.name == choice), None)
+
+
+async def _pick_target(
+    ctx: AppContext, contacts: list[Contact], admin: Contact
+) -> Optional[str]:
+    """Pick the target the tuned node's signal is measured at, by recency heard.
+
+    Args:
+        ctx: Shared application context (for the UI surface).
+        contacts: The device's known contacts.
+        admin: The already-picked tuned node (excluded — it can't measure itself).
+
+    Returns:
+        The chosen contact name, or ``None`` if cancelled. With no other contacts,
+        falls back to a free-text prompt so a hex key prefix can be typed.
+    """
+    from ..ui.tui import Choice, Separator
+    from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+
+    candidates = [c for c in contacts if c.name != admin.name]
+    if not candidates:
+        entered = await ctx.ui.text(
+            "Target node",
+            prompt=f"Name or hex key prefix of the node that hears {admin.name}:",
+        )
+        return entered.strip() if entered else None
+
+    from rich.text import Text
+
+    def row(contact: Contact) -> Any:
+        glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        label = Text(glyph, style=style)
+        label.append(f" {contact.name}")
+        return Choice(title=label, value=contact.name)
+
+    items: list = [
+        row(c)
+        for c in sorted(
+            candidates,
+            key=lambda c: -(c.last_seen.timestamp() if c.last_seen else 0.0),
+        )
+    ]
+    items.append(Separator(" "))
+    items.append(Choice(title="Back", value=None))
+    choice = await ctx.ui.select(
+        "TX optimize — measure at",
+        items,
+        prompt=f"The node whose reception of {admin.name} gets optimized:",
+        wrap=False,
+    )
+    return str(choice) if choice is not None else None
 
 
 def _fmt_snr(snr: Optional[float]) -> str:

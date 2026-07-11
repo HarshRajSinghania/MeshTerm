@@ -679,18 +679,21 @@ def _level(tx: int, snr: float | None, successes: int = 2, samples: int = 2) -> 
     )
 
 
-def _sweep_screen(offer_apply=None) -> tuple[TxSweepScreen, _FakeSession]:
+def _sweep_screen(apply_winner=None, run_sweep=None) -> tuple[TxSweepScreen, _FakeSession]:
     session = _FakeSession()
     screen = TxSweepScreen(
         admin_label="Repeater",
         target_label="Alice",
-        path="a1b2,d4e5",
+        device_label="us",
+        device_hash="00" * 32,
+        resolve=lambda h: h,
+        session=session,
         tx_min=12,
         tx_max=28,
         step=3,
         samples=3,
-        session=session,
-        offer_apply=offer_apply or (lambda: None),
+        run_sweep=run_sweep or (lambda: None),
+        apply_winner=apply_winner or (lambda: None),
     )
     return screen, session
 
@@ -709,15 +712,37 @@ def _result(best_tx: int = 19, best_snr: float | None = 8.8) -> TxOptResult:
     )
 
 
+def test_sweep_screen_opens_armed_and_idle_on_sweep() -> None:
+    """The screen opens with the cursor on Sweep and nothing transmitted."""
+    ran: list[bool] = []
+    screen, _ = _sweep_screen(run_sweep=lambda: ran.append(True))
+    body = _plain(screen.render_body(100))
+    assert "Sweep — up to" in body and "Route — direct to Repeater" in body
+    assert not screen.running and ran == []
+    screen.handle("enter")  # the cursor opens on Sweep
+    assert ran == [True]
+
+
+def test_sweep_screen_quotes_the_transmission_budget() -> None:
+    """The Sweep row's worst case tracks the window, step, and samples."""
+    screen, _ = _sweep_screen()
+    # 12–28 step 3 → 7 coarse levels (28 appended); refine ≤ 4; verify 1 → 12 × 3.
+    assert screen.estimated_traces() == 36
+    screen.samples = 1
+    screen.step = 1
+    # Every level measured up front (17), no refine grid, one verify batch.
+    assert screen.estimated_traces() == 18
+    assert "up to 18 paced transmissions" in _plain(screen.render_body(100))
+
+
 def test_sweep_screen_stars_the_running_best() -> None:
     """Each landed level renders ascending by TX with the current best starred."""
     screen, _ = _sweep_screen()
     screen.on_phase("coarse")
     screen.on_level(1, 7, _level(12, -2.0))
     screen.on_level(2, 7, _level(18, 7.5))
-    body = _plain(screen.render_body(100))
-    assert "coarse sweep" in body and "level 2/7" in body
-    starred = next(line for line in body.splitlines() if "★" in line)
+    assert screen.phase_label() == "coarse sweep · level 2/7"
+    starred = next(line for line in _plain(screen.render_body(100)).splitlines() if "★" in line)
     assert "18" in starred
 
 
@@ -729,38 +754,38 @@ def test_sweep_screen_shows_failed_levels_distinctly() -> None:
 
 
 def test_sweep_screen_completion_offers_the_winner() -> None:
-    """After completion the outcome shows and `a` re-offers the apply dialog."""
+    """Completion lands the cursor on the new Apply row; Enter re-offers the dialog."""
     offered: list[bool] = []
-    screen, _ = _sweep_screen(offer_apply=lambda: offered.append(True))
-    screen.handle("text", "a")  # mid-sweep: nothing to offer yet
-    assert offered == []
+    screen, _ = _sweep_screen(apply_winner=lambda: offered.append(True))
+    assert "apply" not in screen._actions  # nothing to apply while measuring
     screen.complete(_result())
     body = _plain(screen.render_body(100))
-    assert "sweep complete" in body and "TX 19" in body and "press a to apply" in body
-    assert "a apply winner" in screen.footer_hint
-    screen.handle("text", "a")
+    assert "best" in body and "TX 19" in body
+    assert "Apply winner — set TX 19 on Repeater" in body
+    screen.handle("enter")  # the cursor parked itself on Apply
     assert offered == [True]
 
 
-def test_sweep_screen_apply_updates_status_and_retires_the_key() -> None:
-    """Marking the winner applied flips the status line and stops offering `a`."""
+def test_sweep_screen_apply_updates_status_and_retires_the_row() -> None:
+    """Marking the winner applied flips the status line and removes the Apply row."""
     offered: list[bool] = []
-    screen, _ = _sweep_screen(offer_apply=lambda: offered.append(True))
+    screen, _ = _sweep_screen(apply_winner=lambda: offered.append(True))
     screen.complete(_result())
     screen.mark_applied()
-    assert "✓ TX 19 set on Repeater" in _plain(screen.render_body(100))
-    assert "a apply winner" not in screen.footer_hint
-    screen.handle("text", "a")
+    body = _plain(screen.render_body(100))
+    assert "✓ TX 19 set on Repeater" in body
+    assert "Apply winner" not in body
+    screen.handle("enter")
     assert offered == []
 
 
 def test_sweep_screen_no_result_never_offers_apply() -> None:
-    """A sweep where nothing got through warns and keeps the apply key retired."""
+    """A sweep where nothing got through warns and never grows an Apply row."""
     screen, _ = _sweep_screen()
     screen.complete(_result(best_snr=None))
     body = _plain(screen.render_body(100))
     assert "no traces reached" in body
-    assert "a apply winner" not in screen.footer_hint
+    assert "Apply winner" not in body
 
 
 def test_sweep_screen_failure_keeps_measured_levels_on_screen() -> None:
@@ -771,6 +796,23 @@ def test_sweep_screen_failure_keeps_measured_levels_on_screen() -> None:
     body = _plain(screen.render_body(100))
     assert "sweep failed: link lost" in body
     assert "-2.0" in body
+
+
+def test_sweep_screen_new_sweep_clears_the_old_evidence() -> None:
+    """Starting another sweep is a new measurement: chart and outcome reset."""
+    screen, _ = _sweep_screen()
+    screen.on_level(1, 7, _level(12, -2.0))
+    screen.complete(_result())
+
+    async def go() -> None:
+        task = asyncio.ensure_future(asyncio.sleep(0))
+        screen.sweep_started(task)
+        assert screen.running
+        body = _plain(screen.render_body(100))
+        assert "TX 19" not in body and "-2.0" not in body
+        await task
+
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(go())
 
 
 def test_sweep_screen_escape_resolves() -> None:
@@ -792,3 +834,14 @@ def test_sweep_screen_escape_resolves() -> None:
     screen.future = _Fut()
     screen.handle("escape")
     assert screen.future.done()
+
+
+def test_parse_tx_range_clamps_and_rejects() -> None:
+    """The typed window accepts two ordered numbers and clamps to the remote range."""
+    from meshterm.ui.tx_screen import parse_tx_range
+
+    assert parse_tx_range("14-24") == (14, 24)
+    assert parse_tx_range("14 24") == (14, 24)
+    assert parse_tx_range("2-99") == (12, 28)  # clamped to the firmware window
+    assert parse_tx_range("24-14") is None
+    assert parse_tx_range("banana") is None
