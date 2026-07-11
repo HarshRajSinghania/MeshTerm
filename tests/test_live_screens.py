@@ -13,6 +13,7 @@ from datetime import timedelta
 import pytest
 
 from meshterm.core.models import Hop, TraceResult, TraceStats, TxLevelResult, TxOptResult, utcnow
+from meshterm.ui.theme import snr_style
 from meshterm.ui.trace_screen import _BAR_FULL, _BAR_HALF, _BAR_WIDTH, TraceScreen, snr_bar
 from meshterm.ui.tx_screen import TxSweepScreen
 
@@ -53,35 +54,63 @@ def _plain(lines: list[str]) -> str:
 # --- snr_bar -------------------------------------------------------------------
 
 
-def _filled_steps(bar: str) -> int:
+def _lit_plain(bar) -> str:  # noqa: ANN001
+    """The reading's own coloured prefix, stripped of the dimmed unlit track.
+
+    The unlit remainder reuses :data:`_BAR_FULL` too (dimmed to the ``track`` style
+    instead of a distinct glyph), so telling lit from unlit means reading which
+    style each character actually landed in, not just which glyph it is.
+    """
+    if bar.style == "track":
+        return ""
+    track_spans = [s for s in bar.spans if s.style == "track"]
+    end = min((s.start for s in track_spans), default=len(bar.plain))
+    return bar.plain[:end]
+
+
+def _filled_steps(bar) -> int:  # noqa: ANN001
     """Count a rendered bar's fill steps — two per full braille cell, one per half."""
-    return bar.count(_BAR_FULL) * 2 + bar.count(_BAR_HALF)
+    plain = _lit_plain(bar)
+    return plain.count(_BAR_FULL) * 2 + plain.count(_BAR_HALF)
 
 
 def test_snr_bar_scales_with_signal_quality() -> None:
-    """A stronger signal fills more of the track; None renders an empty muted track."""
-    weak = snr_bar(-12.0).plain
-    strong = snr_bar(8.0).plain
+    """A stronger signal fills more of the track; None renders an entirely unlit one."""
+    weak = snr_bar(-12.0)
+    strong = snr_bar(8.0)
     assert _filled_steps(weak) < _filled_steps(strong)
-    assert len(weak) == len(strong) == _BAR_WIDTH  # the track width is constant
-    assert _filled_steps(snr_bar(None).plain) == 0
+    assert len(weak.plain) == len(strong.plain) == _BAR_WIDTH  # track width is constant
+    none_bar = snr_bar(None)
+    assert _filled_steps(none_bar) == 0
+    assert none_bar.style == "track"  # the whole track dims, not a separate faint dot run
 
 
 def test_snr_bar_clamps_out_of_range_readings() -> None:
     """Readings beyond the display range clamp to the ends instead of over/underflowing."""
-    assert _filled_steps(snr_bar(99.0).plain) == _filled_steps(snr_bar(10.0).plain)
-    assert _filled_steps(snr_bar(-99.0).plain) == 1  # a heard hop always shows something
+    assert _filled_steps(snr_bar(99.0)) == _filled_steps(snr_bar(10.0))
+    assert _filled_steps(snr_bar(-99.0)) == 1  # a heard hop always shows something
 
 
 def test_snr_bar_packs_two_steps_per_character() -> None:
     """16 steps of resolution pack into 8 characters: full cells, then one trailing half."""
-    one_step = snr_bar(-13.4375).plain  # frac = 1/16 of the -15..+10 span
-    assert one_step[0] == _BAR_HALF
-    assert one_step[1:] == "·" * (_BAR_WIDTH - 1)
+    one_step = snr_bar(-13.4375)  # frac = 1/16 of the -15..+10 span
+    assert one_step.plain[0] == _BAR_HALF
+    assert one_step.plain[1:] == _BAR_FULL * (_BAR_WIDTH - 1)  # unlit track, same glyph
+    track_spans = [(s.start, s.end) for s in one_step.spans if s.style == "track"]
+    assert track_spans == [(1, _BAR_WIDTH)]
 
-    three_steps = snr_bar(-10.3125).plain  # frac = 3/16 → one full cell, one half
-    assert three_steps[:2] == _BAR_FULL + _BAR_HALF
-    assert three_steps[2:] == "·" * (_BAR_WIDTH - 2)
+    three_steps = snr_bar(-10.3125)  # frac = 3/16 → one full cell, one half
+    assert three_steps.plain[:2] == _BAR_FULL + _BAR_HALF
+    assert three_steps.plain[2:] == _BAR_FULL * (_BAR_WIDTH - 2)
+
+
+def test_snr_bar_unlit_track_dims_to_a_distinct_style() -> None:
+    """The unlit track renders in ``track``, not the reading's colour or old ``faint`` dots."""
+    bar = snr_bar(-10.3125)
+    assert "·" not in bar.plain  # no more plain-dot placeholder
+    track_span = next(s for s in bar.spans if s.style == "track")
+    assert bar.plain[track_span.start : track_span.end] == _BAR_FULL * (_BAR_WIDTH - 2)
+    assert bar.style == snr_style(-10.3125)  # the lit prefix still carries the reading's colour
 
     assert snr_bar(10.0).plain == _BAR_FULL * _BAR_WIDTH  # top of range: every cell full
 

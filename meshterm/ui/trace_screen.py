@@ -124,25 +124,29 @@ def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
 
     Packs two fill steps into each character — a half step (:data:`_BAR_HALF`) then
     a full step (:data:`_BAR_FULL`) — for 16-step resolution in ``width`` characters
-    instead of needing one cell per step.
+    instead of needing one cell per step. The unlit remainder draws in the same
+    :data:`_BAR_FULL` glyph, dimmed to the ``track`` style — a background the reading
+    fills in, not a run of unrelated dots. The one glyph a single colour can't split
+    is the boundary half-step itself: it carries the reading's colour, not the
+    track's, since it's still part of what was actually measured.
 
     Args:
-        snr: The reading in dB, or ``None`` (renders as an empty, muted track).
+        snr: The reading in dB, or ``None`` (renders as an entirely unlit track).
         width: Bar track width in characters (each worth two fill steps).
 
     Returns:
-        A :class:`Text` of filled braille cells over a faint dotted track,
+        A :class:`Text` of filled braille cells over a dark, same-glyph track,
         coloured by :func:`~meshterm.ui.theme.snr_style`.
     """
     if snr is None:
-        return Text("·" * width, style="faint")
+        return Text(_BAR_FULL * width, style="track")
     span = _BAR_SNR_MAX - _BAR_SNR_MIN
     frac = min(1.0, max(0.0, (snr - _BAR_SNR_MIN) / span))
     steps = max(1, round(frac * width * 2))
     full, half = divmod(steps, 2)
     filled = _BAR_FULL * full + _BAR_HALF * half
     bar = Text(filled, style=snr_style(snr))
-    bar.append("·" * (width - len(filled)), style="faint")
+    bar.append(_BAR_FULL * (width - len(filled)), style="track")
     return bar
 
 

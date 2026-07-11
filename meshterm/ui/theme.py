@@ -55,6 +55,9 @@ MESH_THEME = Theme(
         # A step darker than ``muted`` for placeholder dashes (a node's missing packet count /
         # age) that should recede below the real, muted values around them.
         "faint": "#64748b",
+        # A further step darker than ``faint``, for a meter's unlit track (the SNR quality
+        # bars): dark enough to read as background, not as a dimmer version of the reading.
+        "track": "#334155",
         "snr.good": "bold #4ade80",
         "snr.ok": "bold #fbbf24",
         "snr.bad": "bold #f87171",
