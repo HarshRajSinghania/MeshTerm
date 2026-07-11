@@ -71,9 +71,9 @@ class ChannelStats:
         last_at: When the channel's most recent message was stored, or ``None`` if the
             stored timestamp can't be parsed.
         histogram: The window's messages split into :data:`ACTIVITY_BUCKETS` equal time
-            buckets, *newest first* — bucket 0 is the current five minutes, so the
-            sparkline drawn from it reads now→past left-to-right and traffic slides right
-            as it ages. ``recent`` is always its sum.
+            buckets, *newest first* — bucket 0 is the current five minutes, the order
+            :func:`~meshterm.ui.braillechart.activity_sparkline` expects (it flips the
+            window so "now" draws at the right edge). ``recent`` is always its sum.
     """
 
     total: int
@@ -981,7 +981,7 @@ class Repository:
             try:
                 created_at = datetime.fromisoformat(row["created_at"])
                 # Bucket by *age* so the histogram comes out newest-first (bucket 0 holds
-                # the current five minutes) — the order the sparkline draws it in.
+                # the current five minutes) — the order the sparkline widget expects.
                 idx = min(ACTIVITY_BUCKETS - 1, int((now - created_at) / bucket_span))
             except (TypeError, ValueError):
                 continue  # a malformed/naive stray simply doesn't land in a bucket

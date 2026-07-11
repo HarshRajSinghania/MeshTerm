@@ -52,9 +52,10 @@ from ..core.channels import (
 from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_BUCKETS
+from .braillechart import activity_sparkline
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
-from .widgets import _age_seconds, _format_age, activity_sparkline, channel_glyph
+from .widgets import _age_seconds, _format_age, channel_glyph
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -344,9 +345,9 @@ _ACTIVITY_LEVELS = (1, 3, 8, 21)
 
 
 def _activity_sparkline(histogram: "tuple[int, ...]") -> Text:
-    """The channel's braille activity sparkline over the trailing two hours.
+    """The channel's braille activity sparkline over the trailing two hours, now at the right.
 
-    The shared :func:`~meshterm.ui.widgets.activity_sparkline`, drawn at this list's
+    The shared :func:`~meshterm.ui.braillechart.activity_sparkline`, drawn at this list's
     message-count thresholds over the repository histogram's :data:`ACTIVITY_BUCKETS`
     five-minute buckets.
     """

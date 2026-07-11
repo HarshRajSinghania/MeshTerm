@@ -491,50 +491,6 @@ def _format_age(secs: Optional[float]) -> str:
     return f"{int(secs // 604800)}w"
 
 
-#: Braille dot masks for a bar filled bottom-up to height 0–4 in a cell's left column
-#: (dots 7, 3, 2, 1 — the Unicode braille block numbers its rows top-down) and right
-#: column (dots 8, 6, 5, 4). OR one of each, add to U+2800, and that's the character.
-_BRAILLE_LEFT = (0x00, 0x40, 0x44, 0x46, 0x47)
-_BRAILLE_RIGHT = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
-#: A braille cell with just its two bottom dots (7 and 8) lit — the resting baseline a
-#: silent pair of buckets draws, so a quiet stretch still shows a flatline, not a gap.
-_SPARK_BASELINE = chr(0x2800 | 0x40 | 0x80)
-
-
-def activity_sparkline(
-    histogram: "tuple[int, ...]", levels: tuple[int, ...], buckets: int
-) -> Text:
-    """A braille activity sparkline: one dot column per bucket, two columns per cell.
-
-    Each bucket's bar rises bottom-up through the cell's four dot rows. Heights are
-    absolute, stepped at ``levels`` (the count a bucket must reach for each extra dot),
-    so the same traffic always draws the same bar and a lone packet never vanishes. Time
-    runs *newest first*: "now" is the leftmost column and traffic slides right as it
-    ages. Cells with traffic draw in the ok green; a silent cell drops to a faint
-    two-bottom-dot baseline, so a quiet stretch reads as a flatline under the green
-    spikes rather than a hole in the row.
-
-    Args:
-        histogram: Per-bucket counts, newest first; padded/cropped to ``buckets``.
-        levels: Ascending count thresholds for bar heights 1..4.
-        buckets: How many buckets to draw (half this many characters).
-
-    Returns:
-        A styled Rich :class:`Text` of ``buckets / 2`` braille characters.
-    """
-    from bisect import bisect_right
-
-    histogram = (tuple(histogram) + (0,) * buckets)[:buckets]
-    text = Text()
-    for left, right in zip(histogram[0::2], histogram[1::2]):
-        lh, rh = bisect_right(levels, left), bisect_right(levels, right)
-        if lh or rh:
-            text.append(chr(0x2800 | _BRAILLE_LEFT[lh] | _BRAILLE_RIGHT[rh]), style="ok")
-        else:
-            text.append(_SPARK_BASELINE, style="faint")
-    return text
-
-
 def _recency_style(secs: Optional[float]) -> str:
     """The heat-map name colour for a contact last heard ``secs`` ago (hotter = more recent).
 

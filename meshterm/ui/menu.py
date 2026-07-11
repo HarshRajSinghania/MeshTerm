@@ -27,7 +27,7 @@ from ..context import AppContext
 from ..persistence.logging import get_logger
 from ..tools import all_tools
 from .surface import TuiUi
-from .widgets import activity_sparkline
+from .braillechart import activity_sparkline
 from .theme import make_console
 from .tui import (
     CANCEL,
@@ -120,17 +120,22 @@ def _silence_console_logging() -> Iterator[None]:
 #: and 21 or more max the column out.
 _HEADER_ACTIVITY_LEVELS = (1, 3, 8, 21)
 
+#: The fewest sparkline cells the header aims to keep. When the fixed segments with
+#: roomy "  ·  " separators would leave less than this, the header re-lays itself with
+#: the compact " · " so a 72-column terminal still shows a readable stretch of pulse.
+_SPARK_MIN_CELLS = 24
+
 
 def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
 
     Left to right: the app mark, the connected node's own name with where it's reached
-    (``(COM5)`` / ``(BLE)``), an unread-message badge (channels and direct alike, shown
-    only when something is waiting, in the red-dot language of the channel list and the
-    conversation picker), and a braille activity indicator counting every packet the
-    hub hears at one minute per dot column — stretched to fill every remaining cell of
-    the row, so a wider terminal simply shows deeper history — with a leading ●/○
-    live-light for whether the hub is pumping yet.
+    (``(COM5)`` / ``(BLE)``), unread-message and Watchtower badges (shown only when
+    something is waiting), and the braille activity pulse counting every packet the hub
+    hears at one minute per dot column — newest at the right edge, like every MeshTerm
+    timeline — stretched to fill every remaining cell of the row, so a wider terminal
+    simply shows deeper history. Separators are roomy by default and drop to a compact
+    ``·`` when that would squeeze the pulse below :data:`_SPARK_MIN_CELLS`.
 
     Args:
         ctx: The shared application context, read live on every repaint.
@@ -144,10 +149,39 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         single line (see ``frame.compose_base``), so a too-narrow terminal chops the
         tail rather than wrapping.
     """
+    header = _header_segments(ctx, cache, "  ·  ")
+    if width - header.cell_len < _SPARK_MIN_CELLS:
+        header = _header_segments(ctx, cache, " · ")
+    # Two dot columns per cell: every cell left of the row's edge shows two minutes.
+    room = width - header.cell_len
+    if room > 0:
+        header.append_text(
+            activity_sparkline(
+                ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, room * 2
+            )
+        )
+    return header
+
+
+def _header_segments(ctx: AppContext, cache: dict, sep: str) -> Text:
+    """The header's fixed segments — everything left of the pulse — at one separator width.
+
+    Built twice per repaint at worst (roomy first, compact if the row is tight; see
+    :func:`_header`). The trailing separator is included, so the caller can append the
+    sparkline directly after it.
+
+    Args:
+        ctx: The shared application context.
+        cache: The device-label cache (see :func:`_device_label`).
+        sep: The separator between segments (``"  ·  "`` or the compact ``" · "``).
+
+    Returns:
+        The fixed-left portion of the header row.
+    """
     header = Text()
     header.append("MeshTerm", style="brand")
     header.append(f" v{__version__}", style="muted")
-    header.append("  ·  ")
+    header.append(sep)
     if ctx.mock:
         header.append("simulator", style="warn")
     else:
@@ -157,26 +191,16 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
             header.append(f" ({where})", style="muted")
     unread = ctx.chat.unread_total()
     if unread:
-        header.append("  ·  ")
+        header.append(sep)
         header.append("●", style="err")
         header.append(f" {unread}", style="warn")
     alerts = ctx.watchtower.unacked_count()
     if alerts:
         # The Watchtower's badge: a triangle so it never reads as unread mail.
-        header.append("  ·  ")
+        header.append(sep)
         header.append("▲", style="err")
         header.append(f" {alerts}", style="warn")
-    header.append("  ·  ")
-    header.append("●" if ctx.events.active else "○", style="ok" if ctx.events.active else "muted")
-    header.append(" ")
-    # Two dot columns per cell: every cell left of the row's edge shows two minutes.
-    room = width - header.cell_len
-    if room > 0:
-        header.append_text(
-            activity_sparkline(
-                ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, room * 2
-            )
-        )
+    header.append(sep)
     return header
 
 

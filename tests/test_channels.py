@@ -369,23 +369,25 @@ def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> 
 
 
 def test_activity_sparkline_packs_24_buckets_into_braille() -> None:
-    """The sparkline draws two buckets per cell at absolute, thresholded heights."""
+    """The sparkline draws two buckets per cell at absolute heights, newest at the right."""
     from meshterm.ui.channels import _activity_sparkline
 
     assert _activity_sparkline((0,) * 24).plain == "⣀" * 12  # silent window: a flatline
     assert _activity_sparkline(()).plain == "⣀" * 12  # a channel with no stats at all
     assert _activity_sparkline((21,) * 24).plain == "⣿" * 12  # flat-out: every dot lit
-    # A lone message in the newest bucket: one dot in the *first* cell's left column (time
-    # runs newest→oldest), the rest of the window on the faint baseline.
+    # A lone message in the newest bucket: one tier-one dot in the *final* cell's right
+    # column (now sits at the right edge), riding the continuing baseline — so the glyph
+    # matches the flatline and the ok-green style is what marks it as traffic.
     lone = _activity_sparkline((1,) + (0,) * 23)
-    assert lone.plain == "⡀" + "⣀" * 11
+    assert lone.plain == "⣀" * 12
     styles = [span.style for span in lone.spans]
-    assert styles[0] == "ok" and set(styles[1:]) == {"faint"}
-    # Heights step at the absolute thresholds 1 / 3 / 8 / 21 messages per bucket.
+    assert styles[-1] == "ok" and set(styles[:-1]) == {"faint"}
+    # Heights step at the absolute thresholds 1 / 3 / 8 / 21 messages per bucket, the
+    # newest (tallest here) pair in the rightmost cell.
     steps = _activity_sparkline((1, 2, 3, 7, 8, 20, 21, 999) + (0,) * 16).plain
-    assert steps[:4] == "".join(
+    assert steps[-4:] == "".join(
         chr(0x2800 | left | right)
-        for left, right in ((0x40, 0x80), (0x44, 0xA0), (0x46, 0xB0), (0x47, 0xB8))
+        for left, right in ((0x47, 0xB8), (0x46, 0xB0), (0x44, 0xA0), (0x40, 0x80))
     )
 
 
@@ -412,10 +414,12 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert "Ops" in plain and "private" in plain and slot.hash in plain
     assert "● 2" in plain  # the unread badge
     assert "now" in plain  # the just-recorded message's age
-    # Both just-recorded messages sit in the sparkline's newest bucket — the *first* cell's
-    # left column (one dot: two messages is still tier one) — with the rest of the window
-    # on the faint flatline baseline.
-    assert plain.rstrip().endswith("⡀" + "⣀" * 11)  # the sparkline is the final lane
+    # Both just-recorded messages sit in the sparkline's newest bucket — the *final*
+    # cell's right column (one dot: two messages is still tier one), riding the baseline
+    # at the row's right edge — with the rest of the window on the faint flatline.
+    assert plain.rstrip().endswith("⣀" * 12)  # the sparkline is the final lane
+    label = row.label
+    assert label.spans[-1].style == "ok"  # …and its newest cell reads as live traffic
 
 
 async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> None:

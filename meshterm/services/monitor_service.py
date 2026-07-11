@@ -85,10 +85,11 @@ class MonitorService:
     def activity_histogram(self) -> tuple[int, ...]:
         """All-packet counts per one-minute bucket over the trailing six hours.
 
-        Newest first — index 0 is the current minute — the order the header's braille
-        indicator draws. Counts everything the hub fans out this session; time before
-        launch simply reads as silence. Consumers slice however much of the window
-        fits their chart and treat the rest as history in reserve.
+        Newest first — index 0 is the current minute — the order the chart widgets
+        expect (they draw "now" at the right edge). Counts everything the hub fans out
+        this session; time before launch simply reads as silence. Consumers slice
+        however much of the window fits their chart and treat the rest as history in
+        reserve.
 
         Returns:
             :data:`ACTIVITY_BUCKETS` bucket counts.
