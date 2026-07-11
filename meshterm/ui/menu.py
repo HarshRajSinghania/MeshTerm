@@ -25,7 +25,6 @@ from rich.text import Text
 from .. import __version__
 from ..context import AppContext
 from ..persistence.logging import get_logger
-from ..persistence.repository import ACTIVITY_BUCKETS
 from ..tools import all_tools
 from .surface import TuiUi
 from .widgets import activity_sparkline
@@ -114,33 +113,36 @@ def _silence_console_logging() -> Iterator[None]:
             logger.addHandler(handler)
 
 
-#: Packet counts a five-minute bucket must reach for each extra dot of the header
+#: Packet counts a one-minute bucket must reach for each extra dot of the header
 #: indicator's bar height. Higher-shouldered than the channel sparkline's thresholds
 #: because this counts *every* packet the hub hears (adverts, telemetry, messages,
-#: acks), not one conversation: 1 packet lights a dot, 5 light two, 21 light three,
-#: and 89 or more max the column out.
-_HEADER_ACTIVITY_LEVELS = (1, 5, 21, 89)
+#: acks), not one conversation: 1 packet lights a dot, 3 light two, 8 light three,
+#: and 21 or more max the column out.
+_HEADER_ACTIVITY_LEVELS = (1, 3, 8, 21)
 
 
-def _header(ctx: AppContext, cache: dict) -> Text:
+def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
 
     Left to right: the app mark, the connected node's own name with where it's reached
     (``(COM5)`` / ``(BLE)``), an unread-message badge (channels and direct alike, shown
     only when something is waiting, in the red-dot language of the channel list and the
-    conversation picker), and a two-hour braille activity indicator counting every
-    packet the hub hears — the same drawing as the channel manager's sparklines, with a
-    leading ●/○ live-light for whether the hub is pumping yet.
+    conversation picker), and a braille activity indicator counting every packet the
+    hub hears at one minute per dot column — stretched to fill every remaining cell of
+    the row, so a wider terminal simply shows deeper history — with a leading ●/○
+    live-light for whether the hub is pumping yet.
 
     Args:
         ctx: The shared application context, read live on every repaint.
         cache: Scratch owned by the session (see :func:`_device_label`) so the
             device-name lookup doesn't re-read the registry file per repaint.
+        width: The terminal width in columns; the sparkline soaks up whatever the
+            fixed segments leave of it.
 
     Returns:
         A Rich :class:`Text` shown at the top of every screen. The frame crops it to a
-        single line (see ``frame.compose_base``), so a narrow terminal chops the tail
-        rather than wrapping.
+        single line (see ``frame.compose_base``), so a too-narrow terminal chops the
+        tail rather than wrapping.
     """
     header = Text()
     header.append("MeshTerm", style="brand")
@@ -161,9 +163,14 @@ def _header(ctx: AppContext, cache: dict) -> Text:
     header.append("  ·  ")
     header.append("●" if ctx.events.active else "○", style="ok" if ctx.events.active else "muted")
     header.append(" ")
-    header.append_text(
-        activity_sparkline(ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, ACTIVITY_BUCKETS)
-    )
+    # Two dot columns per cell: every cell left of the row's edge shows two minutes.
+    room = width - header.cell_len
+    if room > 0:
+        header.append_text(
+            activity_sparkline(
+                ctx.monitor.activity_histogram(), _HEADER_ACTIVITY_LEVELS, room * 2
+            )
+        )
     return header
 
 
@@ -229,7 +236,7 @@ async def run_menu(ctx: AppContext) -> None:
     calibrate_emoji_width()
 
     header_cache: dict = {}
-    session = TuiSession(header=lambda: _header(ctx, header_cache))
+    session = TuiSession(header=lambda cols: _header(ctx, header_cache, cols))
     ctx.ui = TuiUi(session)
 
     async def main() -> None:

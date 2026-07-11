@@ -97,7 +97,7 @@ class TuiSession:
 
     def __init__(
         self,
-        header: Optional[Callable[[], RenderableType]] = None,
+        header: Optional[Callable[[int], RenderableType]] = None,
         *,
         input: Any = None,  # noqa: A002 - matches prompt_toolkit's Application(input=) name
         output: Any = None,
@@ -105,15 +105,17 @@ class TuiSession:
         """Create a session.
 
         Args:
-            header: Callable returning the persistent header renderable (banner + live
-                status), re-invoked on every repaint. Defaults to a plain title.
+            header: Callable taking the terminal width in columns and returning the
+                persistent header renderable (banner + live status), re-invoked on
+                every repaint — the width lets it stretch trailing content (the
+                activity sparkline) to fill the row exactly. Defaults to a plain title.
             input: Optional prompt_toolkit input to drive the app from (tests use a pipe);
                 defaults to the real terminal.
             output: Optional prompt_toolkit output to render to (tests use a dummy);
                 defaults to the real terminal.
         """
         self._stack: list[Screen] = []
-        self._header = header or (lambda: Text("MeshTerm", style="brand"))
+        self._header = header or (lambda cols: Text("MeshTerm", style="brand"))
         self._app: Optional[Application] = None
         self._input = input
         self._output = output
@@ -707,7 +709,7 @@ class TuiSession:
         from .render import render_lines
 
         cols, rows = self._size()
-        header_h = len(render_lines(self._header(), cols, no_wrap=True))
+        header_h = len(render_lines(self._header(cols), cols, no_wrap=True))
         viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
         return cols - 4, viewport
 
@@ -737,7 +739,7 @@ class TuiSession:
         if not base.chrome:
             return ANSI(frame.compose_startup(base, cols, rows))
         footer = self.top.footer_hint if self.top else base.footer_hint
-        return ANSI(frame.compose_base(self._header(), base, footer, cols, rows))
+        return ANSI(frame.compose_base(self._header(cols), base, footer, cols, rows))
 
     def _render_float(self) -> ANSI:
         """Render the top screen as a centered dialog (only when floating)."""
