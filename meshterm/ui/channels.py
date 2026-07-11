@@ -9,9 +9,11 @@ link. Every change is written to the device immediately (like a phone app), so t
 see always reflects the radio.
 
 The list is laid out like the config editor: fixed, column-aligned lanes under one header
-line — name, openness, hash fingerprint, unread badge, total messages, last-message age,
-and a braille sparkline of the trailing two hours' traffic — so a glance shows not just
-*which* channels exist but which ones are alive. The message statistics come from
+line — the openness glyph and name, unread badge, total messages, last-message age, and a
+braille sparkline of the trailing two hours' traffic — so a glance shows not just *which*
+channels exist but which ones are alive. Openness beyond the glyph, and the hash, live in
+the detail views (the title line and Show key), keeping the list lean enough that the
+activity lane survives a 72-column terminal. The message statistics come from
 :meth:`~meshterm.persistence.repository.Repository.channel_stats` (read through a small
 TTL cache) and the unread counts from the live chat service, and each row is a callable
 title re-resolved on repaint, so a message arriving while the list sits open updates its
@@ -328,10 +330,6 @@ class _LiveStats:
 
 #: Widest the name lane grows (longer names are ellipsized so the lanes stay put).
 _NAME_WIDTH_MAX = 18
-#: Width of the openness lane (fits ``private``).
-_TYPE_WIDTH = 7
-#: Width of the hash lane (sized to its ``HASH`` header; the value itself is two chars).
-_HASH_WIDTH = 4
 #: Width of the unread-badge lane (fits ``● 999``), matching the conversation picker's.
 _BADGE_WIDTH = 5
 #: Width of the right-aligned total-messages lane.
@@ -370,13 +368,13 @@ def _lanes_header(name_w: int) -> str:
     The leading spaces cover the select screen's pointer column (2 cells) plus the glyph
     lane (3 cells), so each header lands exactly over its column. ``UNREAD`` borrows its
     lane's trailing gap — the badge lane itself is one cell too narrow for the word — which
-    still leaves a space before the message count.
+    still leaves a space before the message count. (No TYPE or HASH lane: the glyph already
+    carries the openness and the hash lives in Show key, which buys the activity sparkline
+    its room on a 72-column terminal.)
     """
     return (
         "     "
         + "CHANNEL".ljust(name_w + 2)
-        + "TYPE".ljust(_TYPE_WIDTH + 2)
-        + "HASH".ljust(_HASH_WIDTH + 2)
         + "UNREAD".ljust(_BADGE_WIDTH + 2)
         + f"{'MSGS':>{_COUNT_WIDTH}}"
         + "  "
@@ -402,9 +400,9 @@ def _slot_text(
 ) -> Text:
     """Build one channel's list row as fixed-width, colour-coded lanes.
 
-    Alignment carries the readability — glyph, name, openness, hash, unread badge, total
-    messages, last-message age, and the activity sparkline each sit in their own lane under
-    the :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
+    Alignment carries the readability — glyph, name, unread badge, total messages,
+    last-message age, and the activity sparkline each sit in their own lane under the
+    :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
     focus in the base colour, the descriptive lanes are muted, the unread ``●`` badge is
     red with its count in warn (the conversation picker's language), and the sparkline
     draws in the ok green over a faint flatline. The row is always a Rich
@@ -416,10 +414,6 @@ def _slot_text(
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(f"{channel_glyph(slot.name, slot.secret)} ")  # ＃ / 🌐 / 🔒 (2 cells) + gap
     text.append(_fit(slot.name, name_w))
-    text.append("  ")
-    text.append(("public" if slot.is_public else "private").ljust(_TYPE_WIDTH), style="muted")
-    text.append("  ")
-    text.append(slot.hash.ljust(_HASH_WIDTH), style="muted")
     text.append("  ")
     if unread:
         text.append("●", style="err")

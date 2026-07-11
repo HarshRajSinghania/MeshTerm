@@ -411,7 +411,10 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert title == "Channels — 1/8 slots"
     row = next(it for it in items if isinstance(it, Choice) and it.value == 0)
     plain = row.label.plain  # the title is a live callable; .label resolves it
-    assert "Ops" in plain and "private" in plain and slot.hash in plain
+    assert "Ops" in plain
+    # No TYPE or HASH lane: the glyph carries openness, Show key carries the hash —
+    # the freed cells keep the activity lane visible at 72 columns.
+    assert "private" not in plain and slot.hash not in plain
     assert "● 2" in plain  # the unread badge
     assert "now" in plain  # the just-recorded message's age
     # Both just-recorded messages sit in the sparkline's newest bucket — the *final*
