@@ -232,7 +232,11 @@ class TraceScreen(Screen):
     a pinned destination over a symmetric (mirrored) route and offers *Explore paths*;
     ``"path"`` walks a hand-composed route with no target at all — no Explore (ranked
     candidates need a destination), no device routing, and Trace stays inert until a
-    path exists to walk.
+    path exists to walk (composed here, or auto-resolved from the last stored walk).
+
+    Adopting a different path — composed, explored, or re-rendered at a new width —
+    restarts the measurement: the aggregates, per-hop medians, and trace log all
+    described the old route, so they clear as if the screen had just opened.
 
     ↑/↓ move the cursor over the action rows and Enter commits the selected one — the
     cursor opens on Trace, so plain Enter still just traces. PgUp/PgDn/Home/End scroll
@@ -294,8 +298,9 @@ class TraceScreen(Screen):
                 line so the screen opens knowing the path history last saw.
             auto_spec: Renders the spec an *auto* trace (no composed path) actually
                 walks right now — the session resolves it from the device's learned
-                route or the stored history at the current width. ``""`` means a
-                path-less trace (unaddressable target, or a path walk).
+                route or the stored history at the current width (in path mode, the
+                last successful stored walk verbatim). ``""`` means a path-less
+                trace (unaddressable target, or a path walk with no history).
             auto_source: Short provenance of the auto route (e.g. ``device route``,
                 ``last trace · Jul 09 14:32``) for the route line and summary, so
                 the screen never claims a route the radio wasn't given.
@@ -321,7 +326,12 @@ class TraceScreen(Screen):
         self._auto_spec = auto_spec
         self._auto_source = auto_source
         self._path_spec = ""
+        #: Traces aggregated on screen — the current route's run. Adopting a
+        #: different path clears it (old numbers describe the old route).
         self._traces: list[TraceResult] = []
+        #: Every trace this screen ever ran, across path changes — the session
+        #: count the owner reports, immune to the per-route clears above.
+        self._total_traces = 0
         self._running = False
         self._dialog_open = False
         self._status = ""
@@ -415,6 +425,7 @@ class TraceScreen(Screen):
     def _on_trace(self, result: TraceResult) -> None:
         """Append the landed trace, echo it on the dialog, and repaint."""
         self._traces.append(result)
+        self._total_traces += 1
         if self._flight is not None:
             self._flight.last = result
         self._session.invalidate()
@@ -461,9 +472,10 @@ class TraceScreen(Screen):
         """Run the action row under the cursor (the flows guard against re-entry)."""
         key = self._actions[self._index]
         if key == "trace":
-            # A path walk has nothing to transmit until a path exists — with no
-            # target, an empty spec can't fall back to device routing.
-            if self._mode == "path" and not self._path_spec:
+            # A path walk has nothing to transmit until a path exists (composed,
+            # or the last stored walk) — with no target, an empty spec can't fall
+            # back to device routing.
+            if self._mode == "path" and not self._effective_spec()[0]:
                 return
             self.start_trace()
         elif key == "width":
@@ -496,8 +508,13 @@ class TraceScreen(Screen):
         async def run() -> None:
             try:
                 spec = await flow(self._path_spec)
-                if spec is not None:
+                if spec is not None and spec.strip() != self._path_spec:
+                    # A different spec is a different measurement: the aggregates,
+                    # per-hop medians, and log all belong to the old route, so the
+                    # session restarts as clean as a fresh screen.
                     self._path_spec = spec.strip()
+                    self._traces.clear()
+                    self._status = ""
             finally:
                 self._dialog_open = False
                 self._session.invalidate()
@@ -572,7 +589,7 @@ class TraceScreen(Screen):
             text.append(f"Sample count — {n} trace{'s' if n != 1 else ''}")
         elif key == "trace":
             text.append("▶ ", style="ok")
-            if self._mode == "path" and not self._path_spec:
+            if self._mode == "path" and not self._effective_spec()[0]:
                 text.append("Trace — compose a path first", style="muted")
             else:
                 n = self._sample_count()
@@ -618,14 +635,15 @@ class TraceScreen(Screen):
     def _effective_spec(self) -> tuple[str, bool]:
         """The wire spec the next Trace walks, and whether auto resolution supplied it.
 
-        A composed/adopted spec wins verbatim; with none, target mode asks the
-        session's auto resolver what it would force right now (the device's learned
-        route, or the stored history) — the same call :func:`_open_session`'s
-        ``trace_once`` makes, so the route on screen is the route on the air.
+        A composed/adopted spec wins verbatim; with none, the session's auto
+        resolver says what it would force right now (the device's learned route or
+        the stored history in target mode, the last successful stored walk in path
+        mode) — the same call :func:`_open_session`'s ``trace_once`` makes, so the
+        route on screen is the route on the air.
         """
         if self._path_spec:
             return self._path_spec, False
-        spec = self._auto_spec() if self._mode == "target" else ""
+        spec = self._auto_spec()
         return spec, bool(spec)
 
     def _planned_route(self) -> Optional[Text]:
@@ -634,10 +652,11 @@ class TraceScreen(Screen):
         Renders the literal wire spec — the whole walk, since the trace protocol
         has no separate return-path field. In target mode the spec is the symmetric
         boomerang (outbound hops, the target, those hops mirrored): its second half
-        is dimmed, reading as "this part isn't yours to compose". A path walk was
-        hand-composed hop by hop, so every hop renders in full colour and only the
-        automatic landing back on us stays faint. An auto-resolved spec carries a
-        faint provenance line naming where the route came from.
+        is dimmed, reading as "this part isn't yours to compose". A path walk's spec
+        is the whole route (hand-composed, or the last stored walk), so every hop
+        renders in full colour and only the automatic landing back on us stays
+        faint. An auto-resolved spec carries a faint provenance line naming where
+        the route came from.
         """
         spec, auto = self._effective_spec()
         tokens = [h.strip() for h in spec.split(",") if h.strip()]
@@ -715,10 +734,10 @@ class TraceScreen(Screen):
         )
         if self._path_spec:
             summary.append(self._path_spec, style="brand")
-        elif self._mode == "path":
-            summary.append("none — compose a path first", style="muted")
         elif self._effective_spec()[1] and self._auto_source:
             summary.append(f"auto · {self._auto_source}", style="muted")
+        elif self._mode == "path":
+            summary.append("none — compose a path first", style="muted")
         else:
             summary.append("auto — path-less (unknown target)", style="muted")
         hops = self._displayed_hop_count(current)
@@ -826,6 +845,28 @@ def _previous_outbound(
     if not target_hash.lower().startswith(tokens[mid]):
         return None
     return tuple(tokens[:mid])
+
+
+def _previous_walk(previous: Optional[TraceResult]) -> Optional[tuple[str, ...]]:
+    """Extract the whole walked route from the last successful stored path walk.
+
+    A path walk has no destination to route to, but its stored spec is a route the
+    mesh has already carried end to end — so the previous walk the screen opens
+    showing is also a path Trace can immediately walk again. The hop hashes come
+    back verbatim (the final hash-less hop is us and drops out): they were proven
+    at the width they were transmitted, so no re-rendering is applied.
+
+    Args:
+        previous: The most recent stored path walk, if any.
+
+    Returns:
+        The walked hop hashes in transmit order, or ``None`` when there is no
+        stored walk, it failed, or it recorded no addressable hops.
+    """
+    if previous is None or not previous.success:
+        return None
+    tokens = tuple(h.node.lower() for h in previous.hops if h.node)
+    return tokens or None
 
 
 async def open_trace(ctx: "AppContext", target: str) -> int:
@@ -998,11 +1039,22 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 auto_source = f"last trace · {stamp}"
             else:
                 auto_hops, auto_source = (), "direct — no known route"
+    elif mode == "path":
+        auto_hops = _previous_walk(previous)
+        if auto_hops is not None and previous is not None:
+            stamp = previous.timestamp.astimezone().strftime("%b %d %H:%M")
+            auto_source = f"last walk · {stamp}"
 
     def auto_spec() -> str:
-        """The spec auto forces at the session's current width (``""`` = path-less)."""
-        if target_hash is None or auto_hops is None:
+        """The spec auto forces at the session's current width (``""`` = path-less).
+
+        A path walk's auto spec is the stored hops verbatim — they were proven at
+        the width they were transmitted, so no re-rendering is applied to them.
+        """
+        if auto_hops is None:
             return ""
+        if target_hash is None:
+            return ",".join(auto_hops)
         return render_forced_spec(auto_hops, target_hash, width_bytes)
 
     async def unaddressable() -> None:
@@ -1540,4 +1592,4 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         await session.run_screen(screen)
     finally:
         screen.cancel()
-    return len(screen._traces)
+    return screen._total_traces

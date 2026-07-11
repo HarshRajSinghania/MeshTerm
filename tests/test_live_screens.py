@@ -160,6 +160,31 @@ def test_previous_outbound_rejects_unusable_history() -> None:
     assert _previous_outbound(_walk("3d63", "9999", "3d63"), target) is None
 
 
+# --- _previous_walk ---------------------------------------------------------------
+
+
+def test_previous_walk_returns_the_whole_proven_route() -> None:
+    """The last successful path walk comes back verbatim — it's a whole spec already.
+
+    Unlike a target-mode boomerang there is no shape to recognise: whatever route
+    the mesh carried end to end is the route to offer again, hop hashes at the
+    width they were transmitted.
+    """
+    from meshterm.ui.trace_screen import _previous_walk
+
+    walk = _walk("3d63", "f2c2", "27ab")
+    assert _previous_walk(walk) == ("3d63", "f2c2", "27ab")
+
+
+def test_previous_walk_rejects_unusable_history() -> None:
+    """No history, a failed walk, or one with no addressable hops is never reused."""
+    from meshterm.ui.trace_screen import _previous_walk
+
+    assert _previous_walk(None) is None
+    assert _previous_walk(_walk("3d63", success=False)) is None
+    assert _previous_walk(_walk()) is None  # only the hash-less final hop (us)
+
+
 # --- TraceScreen ----------------------------------------------------------------
 
 
@@ -507,6 +532,71 @@ async def test_trace_screen_path_mode_gates_trace_and_drops_explore() -> None:
     screen.handle("enter")
     assert screen._running
     await screen._worker
+    assert len(screen._traces) == 1
+
+
+async def test_trace_screen_path_mode_arms_from_the_previous_walk() -> None:
+    """The last stored walk isn't just displayed — it's the path Enter walks.
+
+    Path mode's auto route (the previous successful walk) must arm Trace exactly
+    like a composed spec, and read as the plan with its provenance, so the screen
+    never shows a route it then refuses to trace.
+    """
+    screen, _ = _trace_screen(
+        mode="path", auto_spec=lambda: "3d,f2", auto_source="last walk · Jul 09 14:32"
+    )
+    body = _plain(screen.render_body(100))
+    assert "Trace — one transmission" in body  # armed, not "compose a path first"
+    assert "auto · last walk · Jul 09 14:32" in body  # the summary's path row
+    plan = screen._planned_route().plain
+    assert "Us → 3d → f2 → Us" in plan
+    assert "(auto · last walk · Jul 09 14:32)" in plan
+    screen.handle("enter")  # the cursor opens on Trace
+    assert screen._running
+    await screen._worker
+    assert len(screen._traces) == 1
+
+
+async def test_adopting_a_new_path_restarts_the_measurement() -> None:
+    """A different spec clears the aggregates and log, like a freshly opened screen.
+
+    The old numbers described the old route; only the screen-lifetime total (what
+    the owner reports as the session's trace count) survives the reset.
+    """
+
+    async def compose(current: str):  # noqa: ANN001
+        return "3d,f2,3d"
+
+    screen, _ = _trace_screen(compose_path=compose)
+    screen.start_trace()
+    await screen._worker
+    assert "Traces" in _plain(screen.render_body(100))
+    for _ in range(4):
+        screen.handle("up")  # Trace → Sample count → Path width → Explore → Compose
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert screen._path_spec == "3d,f2,3d"
+    assert screen._traces == []
+    body = _plain(screen.render_body(100))
+    assert "Traces" not in body and "Per-hop medians" not in body
+    assert screen._total_traces == 1  # the session count is not rewritten
+
+
+async def test_keeping_the_same_path_keeps_the_stats() -> None:
+    """Flows that resolve None or the unchanged spec never touch the accumulated run."""
+
+    async def keep(current: str):  # noqa: ANN001
+        return current  # e.g. the width dialog re-rendering to an identical spec
+
+    screen, _ = _trace_screen(compose_path=keep)
+    screen._path_spec = "3d,f2,3d"
+    screen.start_trace()
+    await screen._worker
+    for _ in range(4):
+        screen.handle("up")  # Trace → Sample count → Path width → Explore → Compose
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert screen._path_spec == "3d,f2,3d"
     assert len(screen._traces) == 1
 
 
