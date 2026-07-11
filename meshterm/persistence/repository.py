@@ -649,6 +649,52 @@ class Repository:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM observations").fetchone()
         return int(row["n"]) if row else 0
 
+    def recent_observations(
+        self, *, since: datetime, limit: int = 4000
+    ) -> list[Observation]:
+        """Return raw stored observations in a recent window, oldest first.
+
+        The dashboard's seed: everything overheard in the window — adverts, telemetry,
+        and ``packet`` RX-log rows alike — hydrated back into
+        :class:`~meshterm.core.models.Observation` values so the live screen can treat
+        stored history and fresh hub events identically. Timestamps compare as strings
+        (every ``observed_at`` is written by ``datetime.isoformat`` in UTC), the same
+        trick :meth:`channel_stats` relies on.
+
+        Args:
+            since: Only observations at or after this time.
+            limit: Hard cap on rows (newest kept), so a very busy window stays cheap.
+
+        Returns:
+            The window's observations, oldest first (ready to append live events to).
+        """
+        rows = self._conn.execute(
+            "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at "
+            "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
+            (since.isoformat(), limit),
+        ).fetchall()
+        observations: list[Observation] = []
+        for row in reversed(rows):
+            try:
+                observed_at = datetime.fromisoformat(row["observed_at"])
+            except (TypeError, ValueError):
+                continue  # a malformed stray simply doesn't make the window
+            observations.append(
+                Observation(
+                    node=row["node"],
+                    name=row["name"],
+                    kind=row["kind"] or "advert",
+                    node_type=row["node_type"],
+                    snr=row["snr"],
+                    rssi=row["rssi"],
+                    lat=row["lat"],
+                    lon=row["lon"],
+                    path=row["path"],
+                    observed_at=observed_at,
+                )
+            )
+        return observations
+
     def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 

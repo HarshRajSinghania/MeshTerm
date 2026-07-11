@@ -57,6 +57,9 @@ class MonitorService:
         # header's indicator answers "is the mesh alive?", not "any mail?". Pruned as it
         # rolls, so it never holds more than the two-hour window plus one closing bucket.
         self._activity: dict[int, int] = {}
+        # Session-long tallies by packet class (advert/telemetry/packet/message/ack),
+        # fed by the same kind-unfiltered subscription — the dashboard's traffic panel.
+        self._kind_counts: dict[str, int] = {}
         # Total observations already in the database when the session began; the live
         # "total" is this plus what we capture this session (this process is the only
         # writer during an interactive session), avoiding a DB count on every repaint.
@@ -89,10 +92,21 @@ class MonitorService:
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
         return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
 
-    def _count_packet(self, _event: MeshEvent) -> None:
+    def kind_counts(self) -> dict[str, int]:
+        """Session tallies by packet class: advert/telemetry/packet, message, ack.
+
+        Observation classes come from the packet itself (``Observation.kind``);
+        messages and acks are their own classes. A copy, safe to mutate.
+        """
+        return dict(self._kind_counts)
+
+    def _count_packet(self, event: MeshEvent) -> None:
         """Land one packet in the current activity bucket (and prune scrolled-off ones)."""
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
         self._activity[bucket] = self._activity.get(bucket, 0) + 1
+        obs = event.observation
+        kind = obs.kind if obs is not None else event.kind.value
+        self._kind_counts[kind] = self._kind_counts.get(kind, 0) + 1
         if len(self._activity) > ACTIVITY_BUCKETS + 1:
             cutoff = bucket - ACTIVITY_BUCKETS
             for stale in [b for b in self._activity if b < cutoff]:
