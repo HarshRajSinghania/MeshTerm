@@ -19,7 +19,7 @@ class NodesTool(Tool):
     icon = "👥"
     help = "List this node and known contacts (last heard, packets, type, key)"
     category = "Mesh"
-    order = 25  # between Channels and Map: the "who's out there" view
+    order = 10  # right under the Dashboard: the "who's out there" view
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Query the device and render the node/contact list.

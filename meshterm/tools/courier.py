@@ -32,8 +32,8 @@ class CourierTool(Tool):
     title = "Courier"
     icon = "📨"
     help = "Store-and-forward outbox — deliver when the node is next heard"
-    category = "Mesh"
-    order = 12  # right after Chat: the same conversation, minus the waiting around
+    category = "Messaging"
+    order = 30  # after Chat and Channels: the same conversations, minus the waiting around
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the outbox screen; there are never parameters to collect.
