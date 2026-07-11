@@ -300,10 +300,35 @@ def _node_sections(
 
 
 def _day_axis(shown: list) -> Callable[[float], str]:
-    """An axis labeller over the day charts: the UTC date at ``frac`` of the sweep."""
+    """An axis labeller over the day charts: compact dates, ``today`` at the right.
+
+    Dates render in the caption style the rest of the app speaks (``Jul 05``, not
+    raw ISO), and the right edge reads ``today`` when the newest charted day is
+    today — mirroring the node page's closing ``now``.
+    """
+    today = utcnow().strftime("%Y-%m-%d")
+
     def label_at(frac: float) -> str:
-        return shown[min(len(shown) - 1, round(frac * (len(shown) - 1)))][0]
+        iso = shown[min(len(shown) - 1, round(frac * (len(shown) - 1)))][0]
+        if frac >= 1.0 and iso == today:
+            return "today"
+        try:
+            return datetime.strptime(iso, "%Y-%m-%d").strftime("%b %d")
+        except ValueError:
+            return iso
     return label_at
+
+
+def _day_columns(values: list[int], chars: int) -> list[int]:
+    """Stretch per-day counts into day-wide bars that fill the chart's width.
+
+    One dot column per day leaves a short history as a sliver in a wide terminal —
+    beneath how every other MeshTerm chart spends its width. Each day repeats over
+    ``2 × chars // len(values)`` columns instead (at least one), so few days read
+    as wide bars and a deep history falls back to the one-column-per-day density.
+    """
+    per_day = max(1, (chars * 2) // max(1, len(values)))
+    return [value for value in values for _ in range(per_day)]
 
 
 def _mesh_sections(
@@ -336,23 +361,30 @@ def _mesh_sections(
             Text("Press w to widen it.", style="muted"),
         ]
 
-    # One dot column per day; the width caps how many trailing days fit.
+    # Day-wide bars stretched to the chart's width; a deep history falls back to
+    # one dot column per day, the width capping how many trailing days fit.
     chars = max(20, width - 2 * _GUTTER)
     shown = days[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
     out.append(
-        _heading("Packets per day", f"UTC days · peak {max(packets)} · today at the right")
+        _heading("Packets per day", f"UTC days · peak {max(packets)} · newest at the right")
     )
     out.extend(
-        _chart_block(timeline_rows(packets, rows=_CHART_ROWS), _day_axis(shown), chars)
+        _chart_block(
+            timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
+            _day_axis(shown), chars,
+        )
     )
 
     nodes = [d[2] for d in shown]
     out.append(Text())
     out.append(_heading("Nodes per day", f"distinct nodes heard · peak {max(nodes)}"))
     out.extend(
-        _chart_block(timeline_rows(nodes, rows=_CHART_ROWS), _day_axis(shown), chars)
+        _chart_block(
+            timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
+            _day_axis(shown), chars,
+        )
     )
 
     # The node page's rhythm chart, mesh-wide: when does this *mesh* talk? Hours are
