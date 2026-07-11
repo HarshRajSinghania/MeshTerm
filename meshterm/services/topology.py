@@ -373,6 +373,14 @@ class MeshTopology:
         """How many distinct links the graph holds evidence for."""
         return len(self._links)
 
+    def links(self) -> list[Link]:
+        """Every link the graph holds evidence for (no particular order).
+
+        The whole-graph view the Mesh Atlas draws; path queries should prefer
+        :meth:`next_hops` / :meth:`scenarios`, which rank and filter.
+        """
+        return list(self._links.values())
+
     def link(self, a: str, b: str) -> Optional[Link]:
         """The evidence for the undirected link between ``a`` and ``b``, if any."""
         return self._links.get((a, b) if a < b else (b, a))
