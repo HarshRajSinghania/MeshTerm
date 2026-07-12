@@ -58,3 +58,25 @@ def test_path_text_lights_the_hash_prefix() -> None:
     text = path_text(["77bb"], _resolve, prefix_bytes=1)
     brand = [text.plain[s.start : s.end] for s in text.spans if "brand" in str(s.style)]
     assert "77" in brand  # the addressed prefix stands out within the hash
+
+
+def test_path_text_trace_flavour_annotates_hashes_and_brackets_us() -> None:
+    """show_hash appends the addressed hash to names; None hops are our device."""
+    text = path_text(
+        [None, "aa", "77bb", None], _resolve, self_name="Homestead",
+        show_hash=True, hash_bytes=1, device_hash="c0ffee",
+    )
+    assert text.plain == "Homestead (c0) → Alice (aa) → 77 → Homestead (c0)"
+
+
+def test_path_text_dims_the_tail_from_dim_from() -> None:
+    """The mirrored return leg (and the arrows into it) render faint."""
+    text = path_text(
+        [None, "aa", "3d", "aa", None], _resolve, self_name="us",
+        show_hash=True, dim_from=3,
+    )
+    styles = [(text.plain[s.start : s.end], str(s.style)) for s in text.spans]
+    assert ("us", "you") in styles  # the departure keeps the white you
+    assert ("us", "faint") in styles  # the landing back on us is faint
+    assert any(run.startswith("Alice") and style == "faint" for run, style in styles)
+    assert any(run.startswith("YUL") and style != "faint" for run, style in styles)

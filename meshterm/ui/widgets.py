@@ -38,7 +38,7 @@ from ..core.models import (
     utcnow,
 )
 from .map_render import _NODE, _REPEATER, _SELF
-from .theme import snr_style
+from .theme import name_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
@@ -132,12 +132,12 @@ def _link_text(
     hash_bytes: Optional[int] = None,
     device_hash: Optional[str] = None,
 ) -> Text:
-    """Render an ``origin -> destination`` link as ``name (hash)`` nodes, arrow styled.
+    """Render an ``origin -> destination`` link through THE path widget.
 
-    Each end is rendered like the route line: a known node as ``name (hash)``, an
-    unknown one as its bare hash, and our own device as its label plus ``device_hash``
-    when supplied. Hashes are truncated to ``hash_bytes`` so they match how the trace
-    command addressed each node.
+    A two-node :func:`path_text` in the trace presentation: a known node as
+    ``name (hash)``, an unknown one as its bare hash, our own device as its label
+    (plus ``device_hash`` when supplied). Hashes are truncated to ``hash_bytes`` so
+    they match how the trace command addressed each node.
 
     Args:
         origin: The transmitting node (``None`` = our device).
@@ -150,12 +150,14 @@ def _link_text(
     Returns:
         A :class:`Text` like ``us (a1) → Alice (3d)`` with the arrow muted.
     """
-    text = _route_node_text(origin, device_label, resolve, hash_bytes, device_hash)
-    text.append(" → ", style="muted")
-    text.append_text(
-        _route_node_text(destination, device_label, resolve, hash_bytes, device_hash)
+    ends = [
+        None if not node or node == device_label else node
+        for node in (origin, destination)
+    ]
+    return path_text(
+        ends, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
+        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
     )
-    return text
 
 
 def traces_table(
@@ -234,51 +236,106 @@ def traces_table(
 
 
 def path_text(
-    hops: Sequence[str],
+    hops: Sequence[Optional[str]],
     resolve: NodeResolver = _identity,
     *,
     prefix_bytes: int = 0,
     self_name: Optional[str] = None,
     empty: str = "direct",
+    show_hash: bool = False,
+    hash_bytes: Optional[int] = None,
+    device_hash: Optional[str] = None,
+    dim_from: Optional[int] = None,
 ) -> Text:
-    """Render a relay path compactly on one line — THE path widget.
+    """Render a hop sequence compactly on one line — THE path widget.
 
-    The one way MeshTerm shows a walked/relayed hop sequence wherever a single line has
-    to carry it (a packet's ``via`` row, a message's delivery paths, a feed note): each
-    hop as its resolved name — coloured in the app-wide per-name hue, our own node pure
-    white — or, unnamed, as its bare hash through :func:`highlighted_hash` (the prefix
-    lit, the rest muted; colour stays the "this is a name" signal). Hops are joined by
-    muted ``→`` arrows and no hash is repeated after a name, so the line stays terse
-    enough to survive a 72-column row. An empty path reads as ``empty``.
+    The one way MeshTerm shows a walked, relayed, or planned hop sequence, wherever one
+    appears: a packet's ``via`` row, a message's delivery paths, a feed note, a trace's
+    walked route or planned spec. Each hop renders as its resolved name — coloured in
+    the app-wide per-name hue, our own node pure white — or, unnamed, as its hash
+    through :func:`highlighted_hash` (the addressed prefix lit, the rest muted; colour
+    stays the "this is a name" signal). Hops are joined by muted ``→`` arrows and, by
+    default, no hash is repeated after a name, so the compact form survives a 72-column
+    row. The trace-flavoured options: ``show_hash`` annotates each named hop with the
+    hash it is addressed by (``Alice (3d63)``), a ``None`` hop is our own device at a
+    route's endpoints, and ``dim_from`` fades the tail a caller wants read as automatic
+    (a boomerang's mirrored return leg). An empty path reads as ``empty``.
 
     Args:
-        hops: The hop hashes in propagation order (already split; empties skipped).
+        hops: The hops in propagation order — hex hashes, with ``None`` marking our
+            own device (empty strings are skipped; ``dim_from`` counts rendered hops).
         resolve: Maps a hop hash to a friendly name when known.
         prefix_bytes: Path-hash width to light in unnamed hops' hashes (0 = none).
-        self_name: Our own node's name, drawn in the white ``you`` style when it
-            appears along the path.
+        self_name: Our own node's name — drawn in the white ``you`` style when a
+            resolved name matches it, and naming any ``None`` device hop.
         empty: The muted text shown when there are no hops (e.g. ``"direct"``).
+        show_hash: Annotate named hops (and, with ``device_hash``, our device) with
+            their hash in parentheses — the trace presentation.
+        hash_bytes: Truncate shown/annotated hashes to this byte width (the width the
+            hops were addressed at); ``None`` shows them whole.
+        device_hash: Our own device's key, annotated onto ``None`` hops when
+            ``show_hash`` is on.
+        dim_from: Render hops at/after this index — and the arrows into them — faint
+            (a planned route's return leg); ``None`` dims nothing.
 
     Returns:
-        A one-line :class:`Text`; callers ellipsize with ``no_wrap`` when space is
-        tighter than the path.
+        A one-line :class:`Text`. Space tighter than the path is the caller's call,
+        per surface: ellipsize (``no_wrap``), wrap under a hanging indent, or crop
+        with horizontal scrolling.
     """
-    from .theme import name_style
-
-    shown = [h for h in hops if h]
+    shown = [h for h in hops if h is None or h]
     if not shown:
         return Text(empty, style="muted")
     text = Text()
     for i, hop in enumerate(shown):
+        dim = dim_from is not None and i >= dim_from
         if i:
-            text.append(" → ", style="muted")
-        named = resolve(hop)
-        if named and named != hop:
-            style = "you" if self_name and named == self_name else name_style(named)
-            text.append(named, style=style)
-        else:
-            text.append_text(highlighted_hash(hop, prefix_bytes))
+            text.append(" → ", style="faint" if dim else "muted")
+        text.append_text(
+            _path_node(
+                hop, resolve, prefix_bytes=prefix_bytes, self_name=self_name,
+                show_hash=show_hash, hash_bytes=hash_bytes, device_hash=device_hash,
+                dim=dim,
+            )
+        )
     return text
+
+
+def _path_node(
+    hop: Optional[str],
+    resolve: NodeResolver,
+    *,
+    prefix_bytes: int,
+    self_name: Optional[str],
+    show_hash: bool,
+    hash_bytes: Optional[int],
+    device_hash: Optional[str],
+    dim: bool,
+) -> Text:
+    """One node of :func:`path_text` (see there for the rendering rules)."""
+    note_style = "faint" if dim else "muted"
+    if hop is None:
+        text = Text(self_name or LOCAL_DEVICE_LABEL, style="faint" if dim else "you")
+        annotated = _shorten_hash(device_hash, hash_bytes) if device_hash else ""
+        if show_hash and annotated:
+            text.append(f" ({annotated})", style=note_style)
+        return text
+    named = resolve(hop)
+    if named and named != hop:
+        if dim:
+            style = "faint"
+        elif self_name and named == self_name:
+            style = "you"
+        else:
+            style = name_style(named)
+        text = Text(named, style=style)
+        if show_hash:
+            text.append(f" ({_shorten_hash(hop, hash_bytes)})", style=note_style)
+        return text
+    shown = _shorten_hash(hop, hash_bytes)
+    if dim:
+        return Text(shown, style="faint")
+    return highlighted_hash(shown, prefix_bytes)
 
 
 def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None) -> Text:
@@ -333,61 +390,18 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
     return raw[: hash_bytes * 2] if hash_bytes else raw
 
 
-def _route_node_text(
-    label: Optional[str],
-    device_label: str,
-    resolve: NodeResolver,
-    hash_bytes: Optional[int],
-    device_hash: Optional[str] = None,
-) -> Text:
-    """Render one route node as ``name (hash)``, the hash at the command's width.
-
-    Our own device (``label`` is ``None`` or equal to ``device_label``) carries no
-    hash. A known node shows its friendly name followed by its key-prefix hash; an
-    unknown node shows just the hash. The hash is truncated to ``hash_bytes`` — the
-    per-hop width the trace command used — so it matches how the node was addressed.
-
-    Args:
-        label: The node's raw hop hash, or ``None``/``device_label`` for our device.
-        device_label: The label used for our own device.
-        resolve: Maps a raw hop hash to a friendly contact name when known.
-        hash_bytes: Path-hash width (bytes) to truncate the shown hash to.
-        device_hash: Our own device's key/hash, shown alongside its label when known.
-
-    Returns:
-        A styled :class:`Text` for the node, joined with plain spaces throughout —
-        never non-breaking ones, which prompt_toolkit renders as underscores.
-    """
-    if not label or label == device_label:
-        text = Text(device_label, style="accent")
-        shown = _shorten_hash(device_hash, hash_bytes) if device_hash else ""
-        if shown:
-            text.append(" (", style="muted")
-            text.append(shown, style="muted")
-            text.append(")", style="muted")
-        return text
-    shown = _shorten_hash(label, hash_bytes)
-    named = resolve(label)
-    if not named or named == label:
-        return Text(shown, style="brand")  # unknown node: hash only
-    text = Text(named, style="brand")
-    text.append(" (", style="muted")
-    text.append(shown, style="muted")
-    text.append(")", style="muted")
-    return text
-
-
 def _route_text(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
     device_hash: Optional[str] = None,
 ) -> Text:
-    """Render a trace's route as a sequence of ``name (hash)`` nodes.
+    """Render a trace's walked route through THE path widget.
 
     Shows the path the trace actually walked — the forced path, or the route the
-    device resolved when auto-routing — with each node annotated by its hash at the
-    command's path-hash width, joined by muted arrows, e.g.
+    device resolved when auto-routing — as a :func:`path_text` in the trace
+    presentation: each node annotated by its hash at the command's path-hash width,
+    our own device bracketing both ends, e.g.
     ``Me (a1b2) → Alice (3d63) → Bob (f2a1) → Me (a1b2)``.
 
     Args:
@@ -404,14 +418,11 @@ def _route_text(
         return Text("no hops recorded", style="muted")
     hash_bytes = result.path_hash_bytes
     nodes = [edges[0].origin] + [edge.destination for edge in edges]
-    text = Text()
-    for i, node in enumerate(nodes):
-        if i:
-            text.append(" → ", style="muted")
-        text.append_text(
-            _route_node_text(node, device_label, resolve, hash_bytes, device_hash)
-        )
-    return text
+    hops = [None if not node or node == device_label else node for node in nodes]
+    return path_text(
+        hops, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
+        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
+    )
 
 
 def _hop_medians_table(

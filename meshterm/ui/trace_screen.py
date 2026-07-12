@@ -74,10 +74,10 @@ from ..services.topology import render_forced_spec
 from .braillechart import meter
 from .menus import back_rows
 from .theme import snr_style
-from .tui.render import render_lines, render_to_ansi
+from .tui.render import render_hanging, render_lines, render_to_ansi
 from .tui.screen import Screen
 from .tui.spinner import Spinner
-from .widgets import NodeResolver, _link_text, _route_text, highlighted_hash
+from .widgets import NodeResolver, _link_text, _route_text, highlighted_hash, path_text
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -523,9 +523,12 @@ class TraceScreen(Screen):
         """
         stats = TraceStats.from_traces(self._target, self._traces)
         current = next((t for t in reversed(self._traces) if t.success), None)
-        lines = render_lines(
-            Group(self._route_line(current), Text(), self._summary(stats, current)), width
+        # The route hangs under its own value block when it wraps (the app-wide
+        # labelled-row rule), so a long walk never folds back to column zero.
+        lines = render_hanging(
+            Text("route  ", style="muted"), self._route_line(current), width, indent=7
         )
+        lines.extend(render_lines(Group(Text(), self._summary(stats, current)), width))
         lines.append("")
         self._cursor: Optional[int] = None
         for i, key in enumerate(self._actions):
@@ -595,22 +598,19 @@ class TraceScreen(Screen):
         return text
 
     def _route_line(self, current: Optional[TraceResult]) -> Text:
-        """The route: live when a reply has landed, else planned, else the stored one."""
-        line = Text("route  ", style="muted")
+        """The route: live when a reply has landed, else planned, else the stored one.
+
+        The label lane ("route  ") is added by the caller, which renders this body
+        with a hanging indent so wrapped routes align under themselves.
+        """
         if current is not None:
-            line.append_text(
-                _route_text(current, self._device_label, self._resolve, self._device_hash)
-            )
-            return line
+            return _route_text(current, self._device_label, self._resolve, self._device_hash)
         planned = self._planned_route()
         if planned is not None:
-            line.append_text(planned)
-            return line
+            return planned
         if self._previous is not None:
-            line.append_text(
-                _route_text(
-                    self._previous, self._device_label, self._resolve, self._device_hash
-                )
+            line = _route_text(
+                self._previous, self._device_label, self._resolve, self._device_hash
             )
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
             # On its own line so a long route never squeezes the stamp off the
@@ -618,10 +618,8 @@ class TraceScreen(Screen):
             line.append(f"\n(previous · {stamp})", style="faint")
             return line
         if self._mode == "path":
-            line.append("none — compose a path to walk", style="muted")
-        else:
-            line.append("unknown — press Enter to trace", style="muted")
-        return line
+            return Text("none — compose a path to walk", style="muted")
+        return Text("unknown — press Enter to trace", style="muted")
 
     def _effective_spec(self) -> tuple[str, bool]:
         """The wire spec the next Trace walks, and whether auto resolution supplied it.
@@ -640,14 +638,15 @@ class TraceScreen(Screen):
     def _planned_route(self) -> Optional[Text]:
         """The route the next Trace walks as a preview, or ``None`` without one.
 
-        Renders the literal wire spec — the whole walk, since the trace protocol
-        has no separate return-path field. In target mode the spec is the symmetric
-        boomerang (outbound hops, the target, those hops mirrored): its second half
-        is dimmed, reading as "this part isn't yours to compose". A path walk's spec
-        is the whole route (hand-composed, or the last stored walk), so every hop
-        renders in full colour and only the automatic landing back on us stays
-        faint. An auto-resolved spec carries a faint provenance line naming where
-        the route came from.
+        Renders the literal wire spec through the shared path widget — the whole
+        walk, since the trace protocol has no separate return-path field. In target
+        mode the spec is the symmetric boomerang (outbound hops, the target, those
+        hops mirrored): its second half is dimmed via the widget's ``dim_from``,
+        reading as "this part isn't yours to compose". A path walk's spec is the
+        whole route (hand-composed, or the last stored walk), so every hop renders
+        in full colour and only the automatic landing back on us stays faint. An
+        auto-resolved spec carries a faint provenance line naming where the route
+        came from.
         """
         spec, auto = self._effective_spec()
         tokens = [h.strip() for h in spec.split(",") if h.strip()]
@@ -658,37 +657,18 @@ class TraceScreen(Screen):
             outbound, return_leg = tokens[: mid + 1], tokens[mid + 1 :]
         else:
             outbound, return_leg = tokens, []
-        text = Text(self._device_label, style="accent")
-        for hop in outbound:
-            text.append(" → ", style="muted")
-            text.append_text(self._planned_hop_text(hop, dim=False))
-        for hop in return_leg:
-            text.append(" → ", style="faint")
-            text.append_text(self._planned_hop_text(hop, dim=True))
-        text.append(" → ", style="faint")
-        text.append(self._device_label, style="faint")
+        text = path_text(
+            [None, *outbound, *return_leg, None],
+            self._resolve,
+            prefix_bytes=8,  # spec tokens are the addressed slices: light them whole
+            self_name=self._device_label,
+            show_hash=True,
+            dim_from=1 + len(outbound),
+        )
         if auto and self._auto_source:
             # On its own line (like the previous-trace stamp) so a long route
             # never squeezes the provenance off the right edge.
             text.append(f"\n(auto · {self._auto_source})", style="faint")
-        return text
-
-    def _planned_hop_text(self, hop: str, *, dim: bool) -> Text:
-        """One planned-path node: resolved name (with hash) or bare hash.
-
-        Args:
-            hop: The hop's raw hex key prefix.
-            dim: Whether to render in the return leg's faint style rather than the
-                outbound leg's normal brand/muted styling.
-        """
-        style = "faint" if dim else "brand"
-        text = Text()
-        named = self._resolve(hop)
-        if named and named != hop:
-            text.append(named, style=style)
-            text.append(f" ({hop})", style="faint" if dim else "muted")
-        else:
-            text.append(hop, style=style)
         return text
 
     def _displayed_hop_count(self, current: Optional[TraceResult]) -> Optional[int]:
