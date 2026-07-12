@@ -295,10 +295,41 @@ def test_node_page_renders_all_sections(tmp_path: Path) -> None:
     body = _plain(_node_sections(ctx, NODE, "YUL", None, 90))
     assert "Volume" in body and "24 receptions" in body
     assert "SNR" in body and "-2.0" in body and "+8.0" in body
-    assert "Rhythm" in body and "local hour" in body
+    assert "Rhythm" in body and "15-min" in body  # 15-minute slices, like the mesh page
     assert "Record" in body and "median" in body
     assert "advert 24" in body  # kinds breakdown, packet rows absent
     repo.close()
+
+
+def test_node_page_rhythm_is_fifteen_minute_and_shares_the_volume_gutter(tmp_path: Path) -> None:
+    """The node rhythm matches the mesh's: a full-day 15-min sweep, gutter-aligned to Volume."""
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    lines = _plain(_node_sections(ctx, NODE, "YUL", None, 90), width=90).split("\n")
+
+    def border_col(heading: str) -> int:
+        start = next(i for i, line in enumerate(lines) if heading in line)
+        border = next(line for line in lines[start:] if "└" in line)
+        return border.index("└")
+
+    assert border_col("Volume") == border_col("Rhythm")  # shared gutter → aligned left edge
+    rhythm = next(i for i, line in enumerate(lines) if "Rhythm" in line)
+    caption = next(lines[i + 1] for i in range(rhythm, len(lines)) if "└" in lines[i])
+    assert "24 h" in caption  # the full-day sweep closes on 24 h, like the mesh rhythm
+
+
+def test_time_axis_shortens_to_dates_on_wide_windows_and_times_on_narrow() -> None:
+    """A multi-day window labels marks as bare dates; a same-day one, as times."""
+    from datetime import datetime, timedelta, timezone
+
+    from meshterm.ui.timemachine_screen import _time_axis
+
+    start = datetime(2026, 7, 1, 8, 0, tzinfo=timezone.utc)
+    wide = _time_axis(start, start + timedelta(days=10))
+    narrow = _time_axis(start, start + timedelta(hours=12))
+    assert wide(1.0) == "now" and narrow(1.0) == "now"
+    assert any(ch.isalpha() for ch in wide(0.0))  # a month name, e.g. "Jul 1"
+    assert ":" in narrow(0.0)                      # a clock time, e.g. "08:00"
 
 
 def test_node_page_empty_window_offers_widening(tmp_path: Path) -> None:

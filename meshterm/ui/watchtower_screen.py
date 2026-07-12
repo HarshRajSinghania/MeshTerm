@@ -152,6 +152,9 @@ def _menu_items(
             _TOGGLE_NEW,
         )
     )
+
+    items.append(Separator(""))
+    items.append(Choice("← Back", None))  # a visible exit beside Esc
     return items
 
 

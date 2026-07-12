@@ -417,6 +417,45 @@ def test_compose_dialog_is_bounded() -> None:
     assert out.count("\n") + 1 <= 20
 
 
+def _box_height(screen: Screen) -> int:
+    """The row height of the dialog box ``compose_dialog`` draws for ``screen``."""
+    return frame.compose_dialog(screen, 80, 40).count("\n") + 1
+
+
+def test_ordinary_dialog_box_resizes_to_each_body() -> None:
+    """A plain (non grow-only) dialog sizes to whatever body it is currently showing."""
+    short = _box_height(ScrollScreen(Text("one line"), title="d"))
+    tall = _box_height(ScrollScreen(Text("\n".join(f"row {i}" for i in range(15))), title="d"))
+    assert tall > short
+
+
+class _GrowScreen(Screen):
+    """A grow-only dialog whose body height is set per paint, for the ratchet test."""
+
+    grow_only = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title = "d"
+        self.footer_hint = ""
+        self.n = 1
+
+    def render_body(self, width: int) -> list[str]:
+        return [f"row {i}" for i in range(self.n)]
+
+
+def test_grow_only_dialog_box_holds_its_tallest_size() -> None:
+    """A grow-only dialog grows its box for a taller body and never shrinks for a shorter one."""
+    screen = _GrowScreen()
+    screen.n = 2
+    small = _box_height(screen)
+    screen.n = 16
+    grown = _box_height(screen)
+    assert grown > small       # a taller body enlarges the box
+    screen.n = 2
+    assert _box_height(screen) == grown  # a shorter body after keeps the larger box
+
+
 def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     """The startup splash fills the height, draws the banner, and omits header/footer bars."""
     screen = SelectScreen("pick", [Choice("alpha", 1), Choice("beta", 2)])

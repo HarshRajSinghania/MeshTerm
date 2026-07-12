@@ -36,6 +36,11 @@ class Screen:
         future: Resolved with the screen's result (or :data:`CANCEL`) when it commits.
         floating: Whether the session should draw this screen as a centered dialog over
             the dimmed screen beneath it (deeper layers float; the base does not).
+        grow_only: Whether a floating dialog may only ever grow. Its box is sized to the
+            tallest body it has shown, not the current one, so a screen whose body height
+            swings as its content changes (the packet viewer paging between packets) keeps
+            a steady, centred box — blank-padded when the current body is shorter — instead
+            of resizing on every page.
         chrome: Whether, as the base screen, this layer is wrapped in the session's
             persistent header/footer frame. A startup splash sets this ``False`` so the
             session instead centers it under the :attr:`banner` with no status bars.
@@ -48,6 +53,7 @@ class Screen:
     title: str = ""
     footer_hint: str = "Esc back"
     floating: bool = True
+    grow_only: bool = False
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
     footnote: Optional[str] = None
@@ -65,6 +71,11 @@ class Screen:
         # clamp to the content without every caller threading the sizes through.
         self._scroll_total = 1
         self._scroll_viewport = 1
+        # A grow-only screen's high-water body height: the tallest body it has rendered
+        # into a dialog, so its box can be held at that size once reached (see
+        # :meth:`ratchet_viewport`). Zero until the first paint; irrelevant while not
+        # :attr:`grow_only`.
+        self._viewport_floor = 0
 
     # --- rendering -----------------------------------------------------------
 
@@ -78,6 +89,19 @@ class Screen:
             One ANSI string per body line; the session slices these to the viewport.
         """
         raise NotImplementedError
+
+    def ratchet_viewport(self, body_h: int) -> int:
+        """The body height a :attr:`grow_only` dialog is sized to: its running maximum.
+
+        The frame calls this each paint with the current body's height. A grow-only
+        screen returns the tallest height it has yet shown — so its box never shrinks,
+        and the frame blank-pads a now-shorter body to fill it — while an ordinary
+        screen returns the height unchanged and is sized to each body as it comes.
+        """
+        if not self.grow_only:
+            return body_h
+        self._viewport_floor = max(self._viewport_floor, body_h)
+        return self._viewport_floor
 
     def cursor_line(self) -> Optional[int]:
         """Return a body line that must stay visible, or ``None`` for free scrolling.

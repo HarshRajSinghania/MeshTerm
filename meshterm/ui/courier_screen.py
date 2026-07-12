@@ -146,6 +146,7 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
         items.append(Separator("  empty — queued messages wait here for their moment"))
     for message in waiting:
         items.append(Choice(_waiting_row(ctx, message), ("msg", message.ident)))
+    items.append(Separator(""))  # space the action off the outbox rows above it
     items.append(Choice("✉ Queue a message…", _QUEUE))
 
     if done:
@@ -154,6 +155,9 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
         for message in done[:15]:
             items.append(Choice(_done_row(message), ("msg", message.ident)))
         items.append(Choice("🗑 Clear finished", _CLEAR))
+
+    items.append(Separator(""))
+    items.append(Choice("← Back", None))  # a visible exit beside Esc
     return items
 
 

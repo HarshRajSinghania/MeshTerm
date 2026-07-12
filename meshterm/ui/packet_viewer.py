@@ -93,14 +93,6 @@ KIND_ICONS = {
 }
 DEFAULT_ICON = "❔"
 
-#: The floating dialog is sized to its content, which otherwise shrinks and grows as you
-#: page between a five-line advert and a telemetry frame's twenty — a jarring resize on
-#: every keystroke. Padding a short packet's body up to this floor holds the box at a
-#: steady minimum height so navigation stays put; a genuinely tall packet still grows past
-#: it. Sized for the common overheard-packet layout (heard/from/reception/class/route/via)
-#: so paging a burst of similar frames never resizes at all.
-_MIN_BODY_ROWS = 10
-
 
 @dataclass(slots=True)
 class PacketEntry:
@@ -223,7 +215,15 @@ class PacketViewer(Screen):
     packets — the same keys the opening list itself uses — Home/End jump to the
     ends, PgUp/PgDn scroll a tall body, Esc closes. Opened over a single packet (a
     one-entry list) the paging keys simply do nothing.
+
+    The dialog only ever grows (see
+    :attr:`~meshterm.ui.tui.screen.Screen.grow_only`): paging from a short packet to a
+    tall one enlarges the box, but paging back keeps it at that size — blank-padded
+    below the shorter body — rather than re-centering smaller, so the header the reader
+    is looking at never hops around as they page.
     """
+
+    grow_only = True
 
     def __init__(
         self,
@@ -360,23 +360,25 @@ class PacketViewer(Screen):
         # same packet, so the title's ``n/total`` and the reachable range stay current.
         self._sync()
         entry = self._entries[self._index]
+        rows = self._rows(entry)
+        # The label lane is one fixed width for the whole grid so wrapped values align with
+        # their own block (the app-wide hanging-indent rule), never with column zero. Size it
+        # to the widest label actually present — a raw payload field's full name included, so
+        # none is clipped — plus a one-cell gutter, but never so wide it leaves the value
+        # column under 20 cells (a pathological key then ellipsises instead of crushing it).
+        widest = max((len(label) for label, _ in rows), default=0)
+        label_w = max(10, min(widest + 1, width - 20))
         grid = Table(
             box=None, show_header=False, show_edge=False, pad_edge=False,
             padding=(0, 0), expand=False,
         )
-        # The label lane is fixed so wrapped values align with their own block
-        # (the app-wide hanging-indent rule), never with column zero.
-        grid.add_column(width=10, no_wrap=True)
-        grid.add_column(overflow="fold", max_width=max(20, width - 10))
+        grid.add_column(width=label_w, no_wrap=True)
+        grid.add_column(overflow="fold", max_width=max(20, width - label_w))
 
-        for label, value in self._rows(entry):
+        for label, value in rows:
             grid.add_row(Text(label, style="muted"), value)
         lines = render_lines(grid, width)
         self._scroll_total = max(1, len(lines))
-        # Hold the dialog at a steady minimum height so paging between a short packet and
-        # a tall one doesn't resize the box out from under the reader (see _MIN_BODY_ROWS).
-        if len(lines) < _MIN_BODY_ROWS:
-            lines += [""] * (_MIN_BODY_ROWS - len(lines))
         return lines
 
     def _rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
@@ -520,5 +522,8 @@ class PacketViewer(Screen):
             body = str(value)
             if len(body) > 200:
                 body = body[:199] + "…"
-            rows.append((f"  {key[:8]}", Text(body, style="muted")))
+            # The label lane widens to fit the full key (see :meth:`render_body`), so the
+            # field name is shown whole rather than clipped; the two-space indent nests it
+            # visually under the "payload" heading above.
+            rows.append((f"  {key}", Text(body, style="muted")))
         return rows

@@ -677,9 +677,7 @@ class TuiSession:
             content=base_window,
             floats=[
                 Float(
-                    ConditionalContainer(
-                        float_window, filter=Condition(self._has_float)
-                    )
+                    ConditionalContainer(float_window, filter=Condition(self._has_float))
                 ),
                 Float(
                     ConditionalContainer(

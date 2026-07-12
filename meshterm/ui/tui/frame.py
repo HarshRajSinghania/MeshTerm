@@ -272,6 +272,26 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     return "\n".join(lines)
 
 
+def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int, list[str]]:
+    """Size a floating dialog: ``(outer_width, vpad, viewport, body_lines)``."""
+    # Most dialogs stretch to a generous cap; a screen may instead request a natural width
+    # (a short confirm sized to its content), still bounded to the terminal.
+    cap = min(cols - 6, 100)
+    natural = getattr(screen, "dialog_width", None)
+    max_w = cap if natural is None else max(24, min(cap, natural))
+    # Rows the box may spend between its borders — on body lines and breathing room alike.
+    budget = max(3, rows - 6)
+    body_lines = screen.render_body(max_w - 4)
+    # A grow-only screen (the packet viewer paging between packets) sizes to the tallest
+    # body it has shown, not this one, so a shorter body keeps the larger box instead of
+    # re-centring smaller — the frame blank-pads the slack. The breathing room is taken
+    # from that ratcheted height, so the box stays put as the body shrinks below it.
+    body_h = screen.ratchet_viewport(max(1, len(body_lines)))
+    vpad = _breathing_room(body_h, budget)
+    viewport = min(budget - 2 * vpad, body_h)
+    return max_w, vpad, viewport, body_lines
+
+
 def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     """Compose a centered dialog panel for a floating screen, bounded to the terminal.
 
@@ -283,16 +303,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     Returns:
         An ANSI string sized to the dialog's content (never larger than the terminal).
     """
-    # Most dialogs stretch to a generous cap; a screen may instead request a natural width
-    # (a short confirm sized to its content), still bounded to the terminal.
-    cap = min(cols - 6, 100)
-    natural = getattr(screen, "dialog_width", None)
-    max_w = cap if natural is None else max(24, min(cap, natural))
-    # Rows the box may spend between its borders — on body lines and breathing room alike.
-    budget = max(3, rows - 6)
-    body_lines = screen.render_body(max_w - 4)
-    vpad = _breathing_room(len(body_lines), budget)
-    viewport = min(budget - 2 * vpad, max(1, len(body_lines)))
+    max_w, vpad, viewport, body_lines = _dialog_layout(screen, cols, rows)
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
     border = getattr(screen, "border_style", "accent")

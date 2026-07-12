@@ -96,17 +96,22 @@ def _snr_cell_style(values: list[float]) -> str:
 
 
 def _time_axis(start: datetime, end: datetime) -> Callable[[float], str]:
-    """An axis labeller over a real time span: timestamps left of the closing ``now``."""
+    """A compact axis labeller over a real time span, closing on ``now``.
+
+    A window wider than a couple of days reads its marks as bare dates (``Jul 4``); a
+    tighter one, where the calendar day barely changes, reads them as times (``18:30``)
+    — the same "shorten what you can" the day charts' dates use, so the volume and SNR
+    axes stay legible instead of repeating a full ``Jul 04 18:30`` stamp at every tick.
+    """
+    wide = (end - start).total_seconds() > 2 * 86400
+
     def label_at(frac: float) -> str:
         if frac >= 1.0:
             return "now"
-        return _when_label(start + (end - start) * frac)
+        when = (start + (end - start) * frac).astimezone()
+        return f"{when:%b} {when.day}" if wide else f"{when:%H:%M}"
+
     return label_at
-
-
-def _hour_axis(frac: float) -> str:
-    """The node rhythm's labeller: the local hour of day at ``frac`` of the 24-slot sweep."""
-    return f"{round(frac * 23)} h"
 
 
 def _quarter_axis(frac: float) -> str:
@@ -221,10 +226,16 @@ def _node_sections(
         (o.observed_at, float(o.snr)) for o in observations if o.snr is not None
     ]
 
-    # Volume and SNR share one y-axis gutter width (like the mesh page's day pair) so
-    # their axes line up; a provisional width finds the peaks that size the gutter, then
-    # the real width re-buckets the bars flush with it. The rhythm below is its own
-    # narrow chart, so it keeps its own gutter.
+    # Volume, SNR, and the rhythm share one y-axis gutter width (like the mesh page's
+    # charts) so their left edges line up. A provisional width finds the peaks that size
+    # the gutter, then the real width re-buckets Volume/SNR flush with it. The rhythm folds
+    # every reception into 96 fifteen-minute local-time slices — a slice's tally can top a
+    # single volume bucket's — so its peak joins the sizing too.
+    slots = [0] * 96
+    for stamp in stamps:
+        local = stamp.astimezone()
+        slots[local.hour * 4 + local.minute // 15] += 1
+
     def _layout(label_w: int) -> tuple[int, int]:
         chars = max(20, width - 2 * (label_w + 2))
         return chars, chars * 2
@@ -232,7 +243,9 @@ def _node_sections(
     chars, buckets = _layout(1)
     volume = bucketize(stamps, start, now, buckets)
     lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
-    label_w = max(1, len(str(max(volume))), len(str(round(hi))), len(str(round(lo))))
+    label_w = max(
+        1, len(str(max(volume))), len(str(round(hi))), len(str(round(lo))), len(str(max(slots)))
+    )
     chars, buckets = _layout(label_w)
     volume = bucketize(stamps, start, now, buckets)
 
@@ -257,12 +270,14 @@ def _node_sections(
             )
         )
 
-    hours = [0] * 24
-    for stamp in stamps:
-        hours[stamp.astimezone().hour] += 1
     out.append(Text())
-    out.append(_heading("Rhythm", "receptions by local hour of day"))
-    out.extend(axis_chart(timeline_rows(hours, rows=_CHART_ROWS), max(hours), 12, _hour_axis))
+    out.append(_heading("Rhythm", "receptions by local time of day · 15-min slices"))
+    out.extend(
+        axis_chart(
+            timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48,
+            _quarter_axis, label_w=label_w,
+        )
+    )
 
     out.append(Text())
     out.append(_heading("Record", "this window"))

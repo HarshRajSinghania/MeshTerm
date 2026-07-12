@@ -98,13 +98,17 @@ def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
     assert viewer.footer_hint == "Esc close"
 
 
-def test_packet_viewer_holds_a_minimum_height() -> None:
-    """A short packet's body is padded to a floor, so paging never shrinks the dialog."""
-    from meshterm.ui.packet_viewer import _MIN_BODY_ROWS
-
-    tiny = PacketEntry(when=utcnow(), kind="ack", where="01c3")  # a two-row packet
+def test_packet_viewer_grows_its_dialog_only() -> None:
+    """The viewer opts into a grow-only dialog so paging enlarges but never shrinks it."""
+    tiny = PacketEntry(when=utcnow(), kind="ack", where="01c3")
     viewer = PacketViewer([tiny], 0, resolve=lambda h: "")
-    assert len(viewer.render_body(80)) >= _MIN_BODY_ROWS
+    assert viewer.grow_only is True
+    # The body is left at its natural (unpadded) height; the frame, not a floor, pads it.
+    assert len(viewer.render_body(80)) < 10
+    # ratchet_viewport is the grow-only contract: it rises to a taller body and never drops.
+    assert viewer.ratchet_viewport(6) == 6
+    assert viewer.ratchet_viewport(14) == 14  # a taller packet enlarges the box
+    assert viewer.ratchet_viewport(4) == 14   # a shorter one after keeps the larger box
 
 
 def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> None:
@@ -116,4 +120,14 @@ def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> Non
     body = _plain(_viewer(entry).render_body(80))
     assert "path_len" not in body
     assert "header" not in body
-    assert "novel_fi" in body  # an unrecognized field still surfaces (label truncates to 8)
+    assert "novel_field" in body  # an unrecognized field surfaces with its full name
+
+
+def test_packet_viewer_shows_full_raw_field_labels() -> None:
+    """A long raw-field name is shown whole — the label lane widens rather than clipping it."""
+    entry = _grp_txt_entry({
+        "chan_hash": "ab", "cipher_mac": "0000", "crypted": "00" * 16,
+        "battery_millivolts": 4102,
+    })
+    body = _plain(_viewer(entry).render_body(80))
+    assert "battery_millivolts" in body  # the 18-char key is not clipped to 8
