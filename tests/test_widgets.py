@@ -7,7 +7,7 @@ and every caller inherits it.
 
 from __future__ import annotations
 
-from meshterm.ui.widgets import _format_age, format_ago
+from meshterm.ui.widgets import _format_age, format_ago, path_text
 
 
 def test_format_age_is_the_bare_column_form() -> None:
@@ -26,3 +26,35 @@ def test_format_ago_speaks_grammatical_prose() -> None:
     assert format_ago(None) == "never"
     assert format_ago(90) == "1m ago"
     assert format_ago(7200) == "2h ago"
+
+
+def _resolve(hop: str) -> str:
+    return {"aa": "Alice", "3d": "YUL"}.get(hop, hop)
+
+
+def test_path_text_names_hops_and_keeps_hashes_bare() -> None:
+    """Named hops read as their name alone; unnamed ones as their bare hash."""
+    text = path_text(["aa", "77", "3d"], _resolve)
+    assert text.plain == "Alice → 77 → YUL"  # no parenthesized hash after a name
+
+
+def test_path_text_marks_us_white_and_names_in_their_hue() -> None:
+    """Our own node takes the white ``you`` style; other names their palette hue."""
+    text = path_text(["aa", "3d"], _resolve, self_name="Alice")
+    styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
+    assert styles.get("Alice") == "you"
+    assert "YUL" in styles and styles["YUL"] != "you"
+
+
+def test_path_text_empty_reads_as_direct() -> None:
+    """No hops (or only empty tokens) renders the caller's empty word, muted."""
+    assert path_text([], _resolve).plain == "direct"
+    assert path_text(["", ""], _resolve).plain == "direct"
+    assert path_text([], _resolve, empty="direct — no relays").plain == "direct — no relays"
+
+
+def test_path_text_lights_the_hash_prefix() -> None:
+    """An unnamed hop renders through the shared hash widget, its prefix lit."""
+    text = path_text(["77bb"], _resolve, prefix_bytes=1)
+    brand = [text.plain[s.start : s.end] for s in text.spans if "brand" in str(s.style)]
+    assert "77" in brand  # the addressed prefix stands out within the hash

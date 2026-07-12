@@ -132,12 +132,16 @@ def test_dashboard_live_events_land_in_the_feed_and_window() -> None:
 
 
 def test_dashboard_packet_rows_show_their_relay_path() -> None:
-    """An RX-log packet reads as its relay path, resolved to names where known."""
+    """An RX-log packet reads as its relay path, resolved to names where known.
+
+    The path renders through the shared compact path widget, so each name carries its
+    own hue — assert on the stripped text, not the raw ANSI.
+    """
     screen = _screen()
     screen.on_event(
         MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0))
     )
-    assert "via YUL → Alice" in _plain(screen.render_body(100))
+    assert "via YUL → Alice" in "\n".join(_stripped(screen.render_body(100)))
 
 
 def test_dashboard_feed_names_a_relayed_packet_by_its_payload_class() -> None:

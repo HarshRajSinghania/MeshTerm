@@ -48,6 +48,7 @@ from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
 from .menus import fit_cells
+from .widgets import path_text
 from .packet_viewer import (
     KIND_STYLES,
     PacketEntry,
@@ -577,8 +578,9 @@ class DashboardScreen(Screen):
             style="muted",
         )
         note = self._feed_note(entry)
-        if note:
-            row.append(f"  {note}", style="muted")
+        if note is not None:
+            row.append("  ")
+            row.append_text(note)
         return row
 
     def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
@@ -605,13 +607,25 @@ class DashboardScreen(Screen):
             return entry.where, "muted"  # an ack's code, or any other stray context
         return "—", "muted"
 
-    def _feed_note(self, entry: PacketEntry) -> Optional[str]:
-        """The row's trailing detail: a packet's relay path, a message's conversation."""
+    def _feed_note(self, entry: PacketEntry) -> Optional[Text]:
+        """The row's trailing detail: a packet's relay path, a message's conversation.
+
+        The path renders through the shared compact path widget, so a relayed frame's
+        ``via`` chain reads the same here as in the packet viewer and the chat paths.
+        """
         if entry.kind == "packet" and entry.path is not None:
-            hops = [h for h in entry.path.split(",") if h]
-            return "via " + " → ".join(self._name(h) for h in hops) if hops else "direct"
-        if entry.kind == "message":
-            return entry.where
+            note = Text("via ", style="muted")
+            note.append_text(
+                path_text(
+                    entry.path.split(","),
+                    self._resolve,
+                    prefix_bytes=self._prefix_bytes,
+                    self_name=self._self_name,
+                )
+            )
+            return note
+        if entry.kind == "message" and entry.where:
+            return Text(entry.where, style="muted")
         return None
 
     def _name(self, node: Optional[str]) -> str:

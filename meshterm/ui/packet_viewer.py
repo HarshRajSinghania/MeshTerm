@@ -38,7 +38,7 @@ from .theme import name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
 from .tui.screen import Screen
-from .widgets import _age_seconds, format_ago, highlighted_hash
+from .widgets import _age_seconds, format_ago, highlighted_hash, path_text
 
 #: Friendly gloss for a raw packet's parsed payload class (mirrors the meshcore
 #: library's own ``PAYLOAD_TYPENAMES``), shown on a ``packet`` entry's "class" row.
@@ -431,22 +431,14 @@ class PacketViewer(Screen):
         return line
 
     def _path_text(self, entry: PacketEntry) -> Text:
-        """A ``packet`` entry's relay path as named hops, or ``direct``."""
-        hops = [h for h in (entry.path or "").split(",") if h]
-        if not hops:
-            return Text("direct — no relays", style="muted")
-        text = Text()
-        for i, hop in enumerate(hops):
-            if i:
-                text.append(" → ", style="muted")
-            named = self._resolve(hop)
-            if named and named != hop:
-                style = "you" if self._self_name and named == self._self_name else name_style(named)
-                text.append(named, style=style)
-                text.append(f" ({hop})", style="muted")
-            else:
-                text.append(hop, style="muted")
-        return text
+        """A ``packet`` entry's relay path, rendered by the shared compact path widget."""
+        return path_text(
+            (entry.path or "").split(","),
+            self._resolve,
+            prefix_bytes=self._prefix_bytes,
+            self_name=self._self_name,
+            empty="direct — no relays",
+        )
 
     def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """A raw ``packet`` entry's parsed class/route, relay path, and — for a

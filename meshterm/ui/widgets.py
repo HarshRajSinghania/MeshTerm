@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from rich import box
 from rich.console import Console, Group
@@ -231,6 +231,54 @@ def traces_table(
     table.add_section()
     table.add_row(*min_row)
     return table
+
+
+def path_text(
+    hops: Sequence[str],
+    resolve: NodeResolver = _identity,
+    *,
+    prefix_bytes: int = 0,
+    self_name: Optional[str] = None,
+    empty: str = "direct",
+) -> Text:
+    """Render a relay path compactly on one line — THE path widget.
+
+    The one way MeshTerm shows a walked/relayed hop sequence wherever a single line has
+    to carry it (a packet's ``via`` row, a message's delivery paths, a feed note): each
+    hop as its resolved name — coloured in the app-wide per-name hue, our own node pure
+    white — or, unnamed, as its bare hash through :func:`highlighted_hash` (the prefix
+    lit, the rest muted; colour stays the "this is a name" signal). Hops are joined by
+    muted ``→`` arrows and no hash is repeated after a name, so the line stays terse
+    enough to survive a 72-column row. An empty path reads as ``empty``.
+
+    Args:
+        hops: The hop hashes in propagation order (already split; empties skipped).
+        resolve: Maps a hop hash to a friendly name when known.
+        prefix_bytes: Path-hash width to light in unnamed hops' hashes (0 = none).
+        self_name: Our own node's name, drawn in the white ``you`` style when it
+            appears along the path.
+        empty: The muted text shown when there are no hops (e.g. ``"direct"``).
+
+    Returns:
+        A one-line :class:`Text`; callers ellipsize with ``no_wrap`` when space is
+        tighter than the path.
+    """
+    from .theme import name_style
+
+    shown = [h for h in hops if h]
+    if not shown:
+        return Text(empty, style="muted")
+    text = Text()
+    for i, hop in enumerate(shown):
+        if i:
+            text.append(" → ", style="muted")
+        named = resolve(hop)
+        if named and named != hop:
+            style = "you" if self_name and named == self_name else name_style(named)
+            text.append(named, style=style)
+        else:
+            text.append_text(highlighted_hash(hop, prefix_bytes))
+    return text
 
 
 def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None) -> Text:
