@@ -146,16 +146,86 @@ def test_atlas_home_refocuses_us() -> None:
     assert screen._trail == [topo.self_id]
 
 
-def test_atlas_came_from_anchors_west_on_the_canvas() -> None:
-    """The node the trail arrived from sits due west of the focus."""
+def test_atlas_came_from_anchors_west_and_the_fan_stays_east() -> None:
+    """The trail-back node sits at the far west; every fan node east of the focus."""
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
     screen.handle("enter")  # focus YUL; we came from us
-    placed = screen._place_neighbours(100, 40, 60.0, 30.0)
-    assert placed[topo.self_id] == (40, 40)  # cx - rx, level with the centre
     alice = topo.canonical(ALICE.public_key)
-    assert placed[alice][0] > 100  # everyone else fans east
+    fx, fy = screen._focus_pos(80, 12)
+    placed = screen._place_neighbours(80, 12, [alice], topo.self_id, False)
+    bx, by = placed[topo.self_id]
+    assert bx < fx and by > fy  # back home: far left, ducked under the focus label
+    assert placed[alice][0] > fx  # the fan is east of the focus
+    assert fx <= (80 * 2) // 3  # and the focus itself leans left
+
+
+def _hub_topo(spokes: int) -> MeshTopology:
+    """Us at the centre of a ``spokes``-neighbour hub, strengths descending."""
+    topo = MeshTopology(US, contacts=[])
+    when = utcnow()
+    for i in range(spokes):
+        node = f"{i:02x}" * 6
+        for _ in range(spokes - i):  # more samples = stronger, so the order is fixed
+            topo.add_walk([topo.self_id, node], snrs=[5.0], when=when, source="trace")
+    return topo
+
+
+def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
+    """Beyond the area's capacity, weaker neighbours fold into a single ``…`` node."""
+    screen = AtlasScreen(
+        session=_FakeSession(cell_h=20), topo=_hub_topo(14), contacts={}, self_label="us"
+    )
+    body = _plain(screen.render_body(80))
+    assert "weaker" in body  # the collapsed marker is labelled "+n weaker"
+    canvas_part = body.split("Links")[0]
+    assert "…" in canvas_part
+    # The list still names every neighbour — selection is the list's job.
+    assert len(screen._rows()) == 14
+
+
+def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
+    """Highlighting a weak (collapsed) row surfaces its name at the ``…`` marker."""
+    screen = AtlasScreen(
+        session=_FakeSession(cell_h=20), topo=_hub_topo(14), contacts={}, self_label="us"
+    )
+    screen.render_body(80)
+    screen._index = len(screen._rows()) - 1  # the weakest row, surely collapsed
+    body = _plain(screen.render_body(80))
+    weakest = screen._rows()[-1][:8]
+    canvas_part = body.split("Links")[0]
+    assert weakest in canvas_part  # the ellipsis marker took the selection's label
+    assert "weaker" not in canvas_part  # ...replacing the "+n weaker" count
+
+
+def test_atlas_body_fits_the_viewport_and_windows_the_list() -> None:
+    """The screen never outgrows the frame; only the link list scrolls, marked."""
+    screen = AtlasScreen(
+        session=_FakeSession(cell_h=22), topo=_hub_topo(16), contacts={}, self_label="us"
+    )
+    lines = screen.render_body(80)
+    assert len(lines) <= 22  # canvas + chrome + list window == the viewport
+    body = _plain(lines)
+    assert "↓" in body and "more" in body  # the window marks the rows below
+    assert "Links" in body
+
+
+def test_atlas_pgdn_pages_the_highlight_by_the_list_window() -> None:
+    """PgUp/PgDn stride by the list window, and the window follows the highlight."""
+    screen = AtlasScreen(
+        session=_FakeSession(cell_h=22), topo=_hub_topo(16), contacts={}, self_label="us"
+    )
+    screen.render_body(80)
+    stride = screen._list_page
+    assert stride >= 1
+    screen.handle("pagedown")
+    assert screen._index == min(15, stride)
+    for _ in range(6):
+        screen.handle("pagedown")
+    assert screen._index == 15  # clamped at the last row
+    body = _plain(screen.render_body(80))
+    assert "↑" in body and "more" in body  # rows scrolled off above are counted
 
 
 # --- find ---------------------------------------------------------------------------------

@@ -10,23 +10,28 @@ Rather than plotting the whole mesh at once (which reads as a hairball the momen
 graph grows), the atlas keeps one node *in focus* — our own, to begin with — and shows
 only its immediate neighbourhood:
 
-* the **canvas** draws the focus at the centre with its direct neighbours fanned around
-  it, edges as braille lines coloured by the link's median SNR (green → amber → red,
-  slate for links with no reading) and faded by evidence age. The node the trail came
-  from is anchored to the **west**, so walking always reads as moving right and backing
-  up as moving left. A dozen markers at most — never a tangle.
-* the **link list** beneath repeats those neighbours as selectable rows, strongest
+* the **canvas** — the majority of the screen, so the shape stays legible — draws the
+  focus toward the left (its label to the left of its marker) with its strongest
+  neighbours fanned to the right, labels rightward, edges as braille lines coloured by
+  the link's median SNR (green → amber → red, slate for links with no reading) and
+  faded by evidence age. The node the trail came from is anchored at the far **west**,
+  so walking always reads as moving right and backing up as moving left. Only as many
+  neighbours as the canvas area can carry are drawn; the weaker rest collapse into one
+  ``…`` marker (which lights up as whichever collapsed row the list highlights).
+* the **link list** beneath names every neighbour as a selectable row, strongest
   observed link first: type glyph, name, hash, SNR with a quality bar, the evidence
   behind the link (samples, sources, age), and how many links continue onward from
-  that node. The highlighted row's marker and label light white on the canvas.
+  that node. The highlighted row's marker and label light white on the canvas. The
+  list scrolls *within* the screen — the canvas, legend, and heading hold still, and
+  faint ``↑/↓ n more`` markers bracket the window — with ↑↓ moving one row and
+  PgUp/PgDn a windowful.
 
 **Enter walks**: the highlighted neighbour becomes the new focus, the breadcrumb trail
 across the top grows (``you › YUL-Cartierville › …``), and **⌫ steps back** along it.
 **Home** refocuses our own node. **Typing finds** — a global filter over every node in
 the graph, islands included; Enter teleports the focus to the highlighted match (the
 trail restarts there, since the walk didn't cross the gap). ``^R`` rebuilds the graph
-from storage, and Esc peels find first, the screen second. PgUp/PgDn scroll when a hub
-node's list outgrows the viewport.
+from storage, and Esc peels find first, the screen second.
 """
 
 from __future__ import annotations
@@ -62,22 +67,30 @@ if TYPE_CHECKING:
 _PAD_X_DOTS = 18
 _PAD_Y_DOTS = 6
 
-#: The canvas's height in character rows: enough to read the fan's shape, never so
-#: tall it starves the link list (the body scrolls, but the list should open visible).
+#: The canvas's floor in character rows: below this the fan's shape stops reading.
 _CANVAS_MIN_H = 6
-_CANVAS_MAX_H = 12
+
+#: Rows the link list always keeps for itself under the canvas, however tall the
+#: graph would like to be — a windowed list needs at least a few rows to scroll in.
+_LIST_MIN_ROWS = 3
 
 #: The widest a node label may render on the canvas before it is ellipsized.
 _LABEL_W = 16
 
-#: How many canvas labels are offered beyond the always-on ones (focus, selection,
-#: trail-back). A busy hub keeps its markers but drops the excess labels — the list
-#: below names every row anyway.
-_LABEL_BUDGET = 8
+#: The fan's angular reach on each side of due east, in radians. The whole fan stays
+#: east of the focus — neighbours to the right, labels rightward — and a smaller
+#: neighbourhood uses proportionally less of the arc so two nodes never sit at its
+#: extremes with nothing between them.
+_FAN_HALF_ANGLE = math.radians(72)
 
-#: The fan's angular reach on each side of due east, in radians. The west wedge is
-#: reserved for the trail-back node, so the fan never overprints it.
-_FAN_HALF_ANGLE = math.radians(130)
+#: Vertical dot spacing one fan marker (and its possible label row) needs; the canvas
+#: area divided by this is how many neighbours the graph can carry before the weaker
+#: rest collapse into the one ``…`` marker.
+_FAN_SLOT_DOTS = 6
+
+#: Sentinel key for the collapsed weaker-links marker in the placed-node map. NUL can
+#: never collide with a canonical id (those are hex).
+_MORE = "\x00more"
 
 #: How many find matches the list shows at most (the filter narrows it fast).
 _MAX_MATCHES = 10
@@ -181,7 +194,11 @@ class AtlasScreen(Screen):
         #: The live find-as-you-type filter ("" = off; matches every node known).
         self._filter = ""
         self._needs_scrub = True  # braille smear scrub, exactly like the map
-        self._cursor: Optional[int] = None
+        #: First list row the internal window shows (the list scrolls, the screen
+        #: doesn't), and how many rows that window carried on the last paint — the
+        #: stride a PgUp/PgDn moves the highlight by.
+        self._list_top = 0
+        self._list_page = 6
 
     # --- state -------------------------------------------------------------------
 
@@ -277,12 +294,11 @@ class AtlasScreen(Screen):
         elif action == "down" and rows:
             self._index = (self._index + 1) % len(rows)
         elif action == "pageup" and rows:
-            # The highlight pages (the dashboard feed's behaviour): a row is always
-            # selected here, and the cursor pin keeps it in view, so paging the view
-            # without the highlight would just snap straight back.
-            self._index = max(0, self._index - self._page_step)
+            # The highlight pages by one list windowful: the window follows the
+            # highlight, so paging the view without it would just snap straight back.
+            self._index = max(0, self._index - self._list_page)
         elif action == "pagedown" and rows:
-            self._index = min(len(rows) - 1, self._index + self._page_step)
+            self._index = min(len(rows) - 1, self._index + self._list_page)
         elif action == "enter":
             self._walk(rows)
         elif action == "backspace":
@@ -344,30 +360,52 @@ class AtlasScreen(Screen):
     # --- rendering -----------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Render the trail, the focus line, the canvas, and the link list."""
+        """Render the trail, the focus line, the canvas, and the windowed link list.
+
+        The body is laid out to fit the frame's viewport exactly: the canvas takes
+        the majority of the rows (a touch less of the share on tall terminals), the
+        chrome around it holds still, and whatever remains is the link list's
+        window — only its rows scroll, inside :meth:`_list_lines`.
+        """
         links = self._topo.links()
         rows = self._rows()
         self._index = max(0, min(self._index, len(rows) - 1)) if rows else 0
         self.title = self._compose_title(links)
-        self._cursor = None
         if not links:
             return self._empty_state(width)
 
         depths = self._hops_out()
         selected = rows[self._index] if rows else None
+        _, viewport = self._session.base_body_size()
 
-        lines: list[str] = []
-        lines.extend(self._header_lines(width, depths))
-        lines.extend(self._canvas_lines(width, selected))
+        header = self._header_lines(width, depths)
+        chrome = len(header) + 3  # legend, blank, list heading
+        canvas_h = self._canvas_height(viewport, chrome)
+        list_win = max(1, viewport - chrome - canvas_h)
+
+        lines: list[str] = list(header)
+        lines.extend(self._canvas_lines(width, canvas_h, selected))
         lines.append(render_to_ansi(self._legend(), width, no_wrap=True))
         lines.append("")
-        lines.extend(self._list_lines(width, rows, depths))
+        lines.extend(self._list_lines(width, rows, depths, list_win))
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def cursor_line(self) -> Optional[int]:
-        """The highlighted list row, so the session keeps it in view."""
-        return self._cursor
+    def _canvas_height(self, viewport: int, chrome: int) -> int:
+        """Rows the canvas takes: the majority of the screen, ceded where pointless.
+
+        The share starts at ~62% of the viewport and tapers toward half on tall
+        terminals (a huge graph area buys little once the fan is legible, while the
+        list keeps earning rows). A sparse neighbourhood caps it lower — a two-node
+        link needs no half-screen void — and the link list always keeps its
+        :data:`_LIST_MIN_ROWS` under the fixed chrome.
+        """
+        crowd = len(self._links_of(self._focus))
+        share = 0.62 - 0.12 * min(max(viewport - 20, 0) / 24.0, 1.0)
+        height = round(viewport * share)
+        height = min(height, max(_CANVAS_MIN_H, 5 + 2 * crowd))
+        height = min(height, viewport - chrome - _LIST_MIN_ROWS)
+        return max(4, height)
 
     def _compose_title(self, links: list[Link]) -> str:
         """``Mesh atlas — focus`` plus the graph's status atoms."""
@@ -427,93 +465,168 @@ class AtlasScreen(Screen):
 
     # -- the canvas --
 
-    def _canvas_lines(self, width: int, selected: Optional[str]) -> list[str]:
-        """Draw the focus neighbourhood: centre marker, west trail-back, eastern fan."""
-        _, cell_h = self._session.base_body_size()
-        # Sized to the neighbourhood: a two-node link needs no twelve-row void, while
-        # a hub earns the full fan height — always capped so the list opens visible.
-        crowd = len(self._links_of(self._focus))
-        canvas_h = max(_CANVAS_MIN_H, min(_CANVAS_MAX_H, cell_h - 10, 5 + crowd))
-        canvas = MapCanvas(width, canvas_h)
-        dot_w, dot_h = width * 2, canvas_h * 4
-        cx, cy = dot_w // 2, dot_h // 2
-        rx = max(10.0, dot_w / 2.0 - _PAD_X_DOTS)
-        ry = max(6.0, dot_h / 2.0 - _PAD_Y_DOTS)
+    def _canvas_lines(
+        self, width: int, canvas_h: int, selected: Optional[str]
+    ) -> list[str]:
+        """Draw the focus neighbourhood: focus at the left, the strongest fan east.
 
-        now = utcnow()
-        placed = self._place_neighbours(cx, cy, rx, ry)
+        Only as many neighbours as the area can carry get their own marker (see
+        :meth:`_fan_capacity`); the weaker rest collapse into one ``…`` marker at
+        the fan's foot. Highlighting a collapsed row from the list lights that
+        marker white and swaps its label for the highlighted node's name, so the
+        selection is always somewhere on the picture.
+        """
+        canvas = MapCanvas(width, canvas_h)
+        fx, fy = self._focus_pos(width, canvas_h)
+
+        pairs = self._links_of(self._focus)
+        by_other = dict(pairs)
+        back = self._came_from if self._came_from in by_other else None
+        fan = [other for other, _link in pairs if other != back]
+        capacity = self._fan_capacity(canvas_h)
+        if len(fan) > capacity + 1:  # collapsing exactly one node would save nothing
+            shown, hidden = fan[:capacity], fan[capacity:]
+        else:
+            shown, hidden = fan, []
+        placed = self._place_neighbours(width, canvas_h, shown, back, bool(hidden))
 
         # Edges first (markers and labels overprint them), coloured by SNR and faded
-        # by evidence age; the highlighted neighbour's edge wins its cells.
-        by_other = {other: link for other, link in self._links_of(self._focus)}
+        # by evidence age; the highlighted neighbour's edge wins its cells. The
+        # collapsed marker's edge is slate — unless the selection hides in it, when
+        # it takes the selected link's colour instead.
+        now = utcnow()
         for other, (x, y) in placed.items():
-            link = by_other.get(other)
-            if link is None:  # pragma: no cover - placed comes from the same list
-                continue
-            color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
-            priority = 3 if other == selected else 2
-            canvas.draw_line([(cx, cy), (x, y)], color, priority)
+            if other == _MORE:
+                if selected in hidden:
+                    link = by_other[selected]
+                    color = _scaled(
+                        _snr_rgb(link.median_snr), _freshness(link.last_seen, now)
+                    )
+                    priority = 3
+                else:
+                    color = _scaled(_NO_READING, 0.6)
+                    priority = 1
+            else:
+                link = by_other[other]
+                color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
+                priority = 3 if other == selected else 2
+            canvas.draw_line([(fx, fy), (x, y)], color, priority)
 
-        # The focus marker and its label, always on and always white-labelled.
+        # The focus marker, its label to the LEFT — the walker reads left-to-right,
+        # so the focus name never sits in the fan's way.
         glyph, color_hex = self._glyph(self._focus)
-        canvas.marker(cx, cy, glyph, parse_hex(color_hex))
-        self._place_label(canvas, cx, cy, self._label(self._focus), (255, 255, 255))
+        canvas.marker(fx, fy, glyph, parse_hex(color_hex))
+        self._label_left(canvas, fx, fy, self._label(self._focus), (255, 255, 255))
 
-        # Neighbour markers, then labels under a budget (selection and trail-back
-        # always labelled; the rest strongest-first until the budget runs out).
+        # Markers, then labels in priority order (selection first, trail-back next,
+        # then strongest-first) so the collision check drops the least important.
+        white = (255, 255, 255)
         for other, (x, y) in placed.items():
+            if other == _MORE:
+                rgb = white if selected in hidden else parse_hex(_UNKNOWN[1])
+                canvas.marker(x, y, "…", rgb)
+                continue
             glyph, color_hex = self._glyph(other)
-            rgb = (255, 255, 255) if other == selected else parse_hex(color_hex)
-            canvas.marker(x, y, glyph, rgb)
-        budget = _LABEL_BUDGET
-        for other, (x, y) in placed.items():
-            always = other in (selected, self._came_from)
-            if not always:
-                if budget <= 0:
-                    continue
-                budget -= 1
-            rgb = (255, 255, 255) if other == selected else parse_hex(self._glyph(other)[1])
+            canvas.marker(x, y, glyph, white if other == selected else parse_hex(color_hex))
+        ordered = [n for n in (selected, back) if n is not None and n in placed]
+        ordered += [n for n in shown if n not in ordered]
+        for other in ordered:
+            x, y = placed[other]
+            rgb = white if other == selected else parse_hex(self._glyph(other)[1])
             self._place_label(canvas, x, y, self._label(other), rgb)
+        if _MORE in placed:
+            x, y = placed[_MORE]
+            if selected in hidden:
+                self._place_label(canvas, x, y, self._label(selected), white)
+            else:
+                self._place_label(canvas, x, y, f"+{len(hidden)} weaker", parse_hex(_UNKNOWN[1]))
 
         return canvas.to_ansi_lines()
 
-    def _place_neighbours(
-        self, cx: int, cy: int, rx: float, ry: float
-    ) -> dict[str, tuple[int, int]]:
-        """Dot-space positions for the focus's neighbours.
+    def _fan_capacity(self, canvas_h: int) -> int:
+        """How many fan markers the canvas area carries before the rest collapse.
 
-        The trail-back node (when among them) anchors due west; everyone else fans
-        across the eastern arc, strongest link at the top, weakest at the bottom —
-        the same order as the list below, so the picture and the rows correspond.
+        One marker (plus the row its label may need) wants :data:`_FAN_SLOT_DOTS`
+        of the fan's vertical span; the area's height decides the count — a taller
+        graph area simply shows more of the mesh.
         """
-        neighbours = [other for other, _link in self._links_of(self._focus)]
+        span = canvas_h * 4 - 2 * _PAD_Y_DOTS
+        return max(3, span // _FAN_SLOT_DOTS + 1)
+
+    def _focus_pos(self, width: int, canvas_h: int) -> tuple[int, int]:
+        """The focus marker's dot position: left of centre, room for its west label."""
+        label_cells = min(len(self._label(self._focus)), _LABEL_W)
+        dot_w = width * 2
+        x = max((label_cells + 3) * 2, dot_w // 5)
+        return min(x, dot_w // 3), (canvas_h * 4) // 2
+
+    def _place_neighbours(
+        self,
+        width: int,
+        canvas_h: int,
+        shown: list[str],
+        back: Optional[str],
+        more: bool,
+    ) -> dict[str, tuple[int, int]]:
+        """Dot-space positions for the drawn neighbourhood.
+
+        The trail-back node (when among the neighbours) anchors at the far west,
+        a couple of rows below the focus — the focus's own label owns the row to
+        its left, so the back node ducks under it and keeps its label eastward;
+        everyone shown fans across the arc east of the focus, strongest link at
+        the top, weakest at the bottom — the same order as the list below, so the
+        picture and the rows correspond — with the collapsed ``…`` marker (keyed
+        :data:`_MORE`) taking the fan's last slot. A small fan uses proportionally
+        less of the arc, so two neighbours sit near due east rather than at
+        opposite rims.
+        """
+        dot_w, dot_h = width * 2, canvas_h * 4
+        fx, fy = self._focus_pos(width, canvas_h)
         placed: dict[str, tuple[int, int]] = {}
-        back = self._came_from
-        if back in neighbours:
-            placed[back] = (round(cx - rx), cy)
-            fan = [n for n in neighbours if n != back]
-        else:
-            fan = neighbours
-        n = len(fan)
-        for i, node in enumerate(fan):
-            if n == 1:
-                angle = 0.0
-            else:
-                angle = -_FAN_HALF_ANGLE + (2 * _FAN_HALF_ANGLE) * i / (n - 1)
-            x = cx + rx * math.cos(angle)
-            y = cy + ry * math.sin(angle)
+        if back is not None:
+            placed[back] = (4, min(fy + 8, dot_h - 4))
+        slots = len(shown) + (1 if more else 0)
+        if not slots:
+            return placed
+        rx = max(10.0, dot_w - _PAD_X_DOTS - fx)
+        ry = max(4.0, dot_h / 2.0 - _PAD_Y_DOTS)
+        phi = _FAN_HALF_ANGLE * min(1.0, (slots - 1) / 5.0)
+        keys = list(shown) + ([_MORE] if more else [])
+        for i, node in enumerate(keys):
+            angle = 0.0 if slots == 1 else -phi + (2 * phi) * i / (slots - 1)
+            x = fx + rx * math.cos(angle)
+            y = fy + ry * math.sin(angle)
             placed[node] = (round(x), round(y))
         return placed
 
     def _place_label(
         self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
     ) -> None:
-        """Place one marker label, retrying a row below then above on collision."""
+        """Place one marker label (right of the marker when it fits, else left),
+        retrying a row below then above on collision."""
         if len(label) > _LABEL_W:
             label = label[: _LABEL_W - 1] + "…"
         for dy in (0, 4, -4):
             if canvas.marker_label(x, y + dy, label, rgb):
                 return
+
+    def _label_left(
+        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
+    ) -> None:
+        """Place the focus label to the *left* of its marker, forced if it must be.
+
+        The focus is drawn first, so a collision is rare (a trail-back label at
+        most); after the dodge rows are exhausted the label is stamped anyway —
+        the focus must always be named.
+        """
+        if len(label) > _LABEL_W:
+            label = label[: _LABEL_W - 1] + "…"
+        cx, cy = x >> 1, y >> 2
+        start = cx - 1 - len(label)
+        for dy in (0, 1, -1):
+            if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):
+                return
+        canvas._place_run(start, cy, label, rgb, bold=True)
 
     def _legend(self) -> Text:
         """The one-line glyph legend and edge key under the canvas."""
@@ -530,9 +643,15 @@ class AtlasScreen(Screen):
     # -- the list --
 
     def _list_lines(
-        self, width: int, rows: list[str], depths: dict[str, int]
+        self, width: int, rows: list[str], depths: dict[str, int], win: int
     ) -> list[str]:
-        """The selectable rows: find matches, or the focus's links strongest-first."""
+        """The selectable rows, windowed to ``win`` lines under a pinned heading.
+
+        Only the rows scroll — the heading (and everything above it) holds still.
+        When the list outgrows the window, faint ``↑/↓ n more`` markers take the
+        window's edge rows and the highlight is kept inside what remains; the
+        window's row count becomes the PgUp/PgDn stride.
+        """
         out: list[str] = []
         if self._filter:
             heading = Text("Matches", style="accent")
@@ -540,27 +659,63 @@ class AtlasScreen(Screen):
             out.append(render_to_ansi(heading, width, no_wrap=True))
             if not rows:
                 out.append(render_to_ansi(Text("no matches", style="muted"), width))
-            for i, node in enumerate(rows):
-                text = self._match_row(node, i == self._index, depths)
-                if i == self._index:
-                    self._cursor = len(out)
-                out.append(render_to_ansi(text, width, no_wrap=True))
-            return out
+                return out
 
-        heading = Text("Links", style="accent")
-        heading.append("  ·  strongest observed first · Enter walks", style="muted")
-        out.append(render_to_ansi(heading, width, no_wrap=True))
-        pairs = self._links_of(self._focus)
-        if not pairs:
-            note = Text("no observed links from here — type to find another node", style="muted")
-            out.append(render_to_ansi(note, width))
-        onward = self._onward_counts(pairs)
-        for i, (other, link) in enumerate(pairs):
-            text = self._link_row(other, link, i == self._index, onward.get(other, 0))
-            if i == self._index:
-                self._cursor = len(out)
-            out.append(render_to_ansi(text, width, no_wrap=True))
+            def render(i: int) -> Text:
+                return self._match_row(rows[i], i == self._index, depths)
+        else:
+            heading = Text("Links", style="accent")
+            heading.append("  ·  strongest observed first · Enter walks", style="muted")
+            out.append(render_to_ansi(heading, width, no_wrap=True))
+            pairs = self._links_of(self._focus)
+            if not pairs:
+                note = Text(
+                    "no observed links from here — type to find another node", style="muted"
+                )
+                out.append(render_to_ansi(note, width))
+                return out
+            onward = self._onward_counts(pairs)
+
+            def render(i: int) -> Text:
+                other, link = pairs[i]
+                return self._link_row(other, link, i == self._index, onward.get(other, 0))
+
+        top, count = self._window(len(rows), win)
+        if top > 0:
+            out.append(render_to_ansi(Text(f"  ↑ {top} more", style="faint"), width))
+        for i in range(top, top + count):
+            out.append(render_to_ansi(render(i), width, no_wrap=True))
+        below = len(rows) - top - count
+        if below > 0:
+            out.append(render_to_ansi(Text(f"  ↓ {below} more", style="faint"), width))
         return out
+
+    def _window(self, n: int, win: int) -> tuple[int, int]:
+        """The list window: ``(first row, row count)`` keeping the highlight inside.
+
+        The ``↑/↓ n more`` markers eat the window's edge rows exactly when there are
+        hidden rows on that side, so the content capacity shifts as the window slides;
+        a couple of passes settles top, capacity, and the highlight clamp together.
+        The settled capacity is remembered as the PgUp/PgDn stride.
+        """
+        if n <= win:
+            self._list_top = 0
+            self._list_page = max(1, win)
+            return 0, n
+        top = max(0, min(self._list_top, n - 1))
+        count = 1
+        for _ in range(4):
+            above = 1 if top > 0 else 0
+            below = 1 if n - top > win - above else 0
+            count = max(1, win - above - below)
+            if self._index < top:
+                top = self._index
+            elif self._index >= top + count:
+                top = self._index - count + 1
+            top = max(0, min(top, n - count))
+        self._list_top = top
+        self._list_page = count
+        return top, count
 
     def _onward_counts(self, pairs: list[tuple[str, Link]]) -> dict[str, int]:
         """How many links continue from each neighbour, the one back here excluded."""
