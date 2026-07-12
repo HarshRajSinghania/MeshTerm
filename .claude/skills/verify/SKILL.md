@@ -1,6 +1,7 @@
 ---
 name: verify
 description: How to build, launch, and drive MeshTerm to verify changes at runtime.
+model: haiku
 ---
 
 # Verifying MeshTerm changes

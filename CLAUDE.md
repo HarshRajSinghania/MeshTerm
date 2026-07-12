@@ -7,6 +7,12 @@ everything heard is recorded to SQLite (`meshterm/persistence/`).
 
 Run the tests with `python -m pytest -q`. Screens must stay readable at 72 columns.
 
+## Git workflow
+
+Commit directly on `main` — do not create topic branches unless explicitly asked (this
+is a solo repo; branches just create divergence to merge back later). Commit freely, but
+never `git push` unless explicitly asked in that moment.
+
 ## UX standards
 
 These are binding. Every new screen, dialog, row, or hint follows them; when you touch an
