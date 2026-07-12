@@ -47,6 +47,7 @@ from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
+from .menus import fit_cells
 from .packet_viewer import (
     KIND_STYLES,
     PacketEntry,
@@ -106,13 +107,6 @@ def _channel_sender(text: Optional[str]) -> Optional[str]:
         return None
     name = match.group(1).strip()
     return name if name and not name.isdigit() else None
-
-
-def _fit(text: str, width: int) -> str:
-    """Left-justify ``text`` to ``width`` columns, ellipsizing anything longer."""
-    if len(text) > width:
-        return text[: width - 1] + "…"
-    return text.ljust(width)
 
 
 def _span_label(minutes: int) -> str:
@@ -572,7 +566,7 @@ class DashboardScreen(Screen):
         label, style = node_label(entry, self._resolve, self._self_name)
         if label == "?":
             label, style = self._feed_subject(entry)  # no node identity: name what we can
-        row.append(_fit(label, _FEED_NAME_WIDTH), style=style)
+        row.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
         row.append("  ")
         row.append(
             f"{entry.snr:+5.1f} dB" if entry.snr is not None else " " * 8,

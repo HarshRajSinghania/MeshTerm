@@ -30,6 +30,7 @@ from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, utcnow
 from ..ui.chat import _MENTION, _sender_hue, _split_channel_sender
+from ..ui.menus import fit_cells
 from ..ui.tui import Choice, Separator
 from ..ui.widgets import channel_glyph
 from .base import Tool, ToolResult, register
@@ -569,7 +570,7 @@ def _title(
     last = lasts.get(conversation.key)
     text = Text(no_wrap=True, overflow="ellipsis")
     _append_marker(text, conversation, last)
-    text.append(_fit(conversation.label, _LABEL_WIDTH))
+    text.append(fit_cells(conversation.label, _LABEL_WIDTH))
     text.append("  ")
     # Unread badge lane (_BADGE_WIDTH cells): a red ● with the count in warn, or blank filler so
     # the following lanes still line up on rows with nothing unread.
@@ -664,13 +665,6 @@ def _ago(when: Any) -> str:
     if secs < 604800:
         return f"{int(secs // 86400)}d"
     return f"{int(secs // 604800)}w"
-
-
-def _fit(text: str, width: int) -> str:
-    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that would overflow."""
-    if len(text) > width:
-        return text[: width - 1] + "…"
-    return text.ljust(width)
 
 
 def _history_table(label: str, messages: list[ChatMessage]) -> Table:

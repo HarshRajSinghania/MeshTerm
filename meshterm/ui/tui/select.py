@@ -245,7 +245,7 @@ class SelectScreen(Screen):
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
         if not choices:
-            lines.append(render_to_ansi(Text("(no matches)", style="muted"), width))
+            lines.append(render_to_ansi(Text("no matches", style="muted"), width))
         # Remember where the highlighted row landed so the session can keep it in view,
         # shifted past any prompt lines drawn above the list.
         base_cursor = _cursor_line(rows, selected, bool(self._filter))

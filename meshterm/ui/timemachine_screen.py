@@ -31,6 +31,7 @@ from rich.text import Text
 
 from ..core.models import utcnow
 from .braillechart import GAP, axis_chart, chart_span, timeline_rows
+from .menus import fit_cells, section_heading
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -581,7 +582,7 @@ def _mesh_sections(
         for node, name, first in listed:
             secs = _age_seconds(first)
             line = Text("  ", no_wrap=True, overflow="ellipsis")
-            line.append(_fit(name or "unknown", name_w), style=_recency_style(secs))
+            line.append(fit_cells(name or "unknown", name_w), style=_recency_style(secs))
             line.append("  ")
             line.append_text(highlighted_hash(node, prefix_bytes, width=_PICK_HASH_W))
             line.append("  ")
@@ -617,13 +618,6 @@ _PICK_NAME_MAX = 18
 
 #: The picker's hash lane: heard-node ids are the observations' 12-hex key prefixes.
 _PICK_HASH_W = 12
-
-
-def _fit(text: str, width: int) -> str:
-    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that overflows."""
-    if len(text) > width:
-        return text[: width - 1] + "…"
-    return text.ljust(width)
 
 
 def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str]) -> Optional[str]:
@@ -674,7 +668,7 @@ def _picker_row(node: "HeardNode", name: Optional[str], name_w: int, prefix_byte
     row = Text(no_wrap=True, overflow="ellipsis")
     row.append(glyph, style=glyph_style)
     row.append(" ")
-    row.append(_fit(name or "unknown", name_w), style=_recency_style(secs))
+    row.append(fit_cells(name or "unknown", name_w), style=_recency_style(secs))
     row.append("  ")
     row.append_text(highlighted_hash(node.node or "", prefix_bytes, width=_PICK_HASH_W))
     row.append("  ")
@@ -764,8 +758,8 @@ async def open_timemachine(ctx: "AppContext") -> None:
         )
         items: list = [
             Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
-            Separator(""),
-            Separator("Nodes, most recently heard first", style="accent"),
+            Separator(" "),
+            section_heading("Nodes · most recently heard first"),
             Separator(_picker_header(name_w)),
         ]
         for node, name in listed:

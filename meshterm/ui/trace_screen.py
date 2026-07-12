@@ -72,6 +72,7 @@ from ..core.models import PATH_TRACE_TARGET, TraceResult, TraceStats
 from ..services import trace_runner
 from ..services.topology import render_forced_spec
 from .braillechart import meter
+from .menus import back_rows
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
@@ -1463,7 +1464,9 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             )
             return None
 
-        items: list = [Separator("── Candidate paths · from received evidence ──", style="accent")]
+        items: list = [
+            Separator("── Candidate paths · from received evidence ──", style="accent")
+        ]
         for scenario in scenarios:
             items.append(
                 Choice(title=scenario_title(scenario, topo), value=("use", scenario))
@@ -1475,7 +1478,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 value=("probe", None),
             )
         )
-        items.append(Choice(title="Back", value=("back", None)))
+        items.extend(back_rows(("back", None)))
         picked = await session.run_screen(
             SelectScreen(
                 f"reach {target_label} · scenarios",
@@ -1506,7 +1509,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         for rank, outcome in enumerate(outcomes, start=1):
             result_items.append(Choice(title=outcome_title(rank, outcome), value=outcome))
         result_items.append(Separator(" "))
-        result_items.append(Choice(title="Keep current path", value=None))
+        result_items.append(Choice(title="Keep current path", value=None))  # the exit: no adoption
         adopted = await session.run_screen(
             SelectScreen(
                 f"probe results · {target_label}",

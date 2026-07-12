@@ -55,6 +55,14 @@ from ..core.device_config import (
     parse_value,
     settings_by_category,
 )
+from .menus import (
+    back_rows,
+    confirm_discard,
+    exit_rows,
+    lane_row,
+    menu_rows,
+    section_heading,
+)
 from .tui import Choice, Separator
 
 if TYPE_CHECKING:
@@ -143,7 +151,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                 cursor = choice
 
             if choice in (None, _CANCEL):
-                if staged and not await _confirm_discard(ctx, staged):
+                if staged and not await confirm_discard(ctx, staged, verb="applying"):
                     continue  # keep editing — the same menu is rebuilt next loop
                 return None
             if choice == _APPLY:
@@ -269,21 +277,6 @@ def _location_value(snapshot: dict, pending: dict) -> Text:
     return value
 
 
-def _lane_row(label: str, value: Text, help_text: str, label_w: int, value_w: int) -> Text:
-    """Lay one row out in the SETTING / VALUE / DESCRIPTION lanes.
-
-    Padding is computed in display cells so a wide glyph in a value can't skew the lanes,
-    and the description stays muted under the select highlight (which only tints the
-    row's base style).
-    """
-    row = Text(label)
-    row.append(" " * (label_w - cell_len(label) + 2))
-    row.append_text(value)
-    row.append(" " * (value_w - cell_len(value.plain) + 2))
-    row.append(help_text, style="muted")
-    return row
-
-
 def _menu_items(
     snapshot: dict, pending: dict, staged: int, policy: AdvertPolicy
 ) -> tuple[str, list]:
@@ -356,39 +349,19 @@ def _menu_items(
         )
     ]
     for category, rows in sections:
-        items.append(Separator(f"── {category} ──", style="accent"))
+        items.append(section_heading(category))
         for label, value, help_text, key in rows:
             items.append(
-                Choice(title=_lane_row(label, value, help_text, label_w, value_w), value=key)
+                Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
     # The backtracking rows sit together below one blank line, like every other screen's
     # Back (the main menu's Quit included); with changes staged, Apply joins the group and
-    # Back spells out the consequence of leaving.
-    items.append(Separator(" "))
-    if staged:
-        items.append(
-            Choice(
-                title=Text.assemble(("✓ ", "ok"), f"Apply {_changes(staged)}"),
-                value=_APPLY,
-            )
-        )
-        items.append(
-            Choice(
-                title=Text.assemble(("✗ ", "err"), "Back — discard staged changes"),
-                value=_CANCEL,
-            )
-        )
-    else:
-        items.append(Choice(title="Back", value=_CANCEL))
+    # Back spells out the consequence of leaving (see menus.exit_rows).
+    items.extend(exit_rows(staged, apply_value=_APPLY, back_value=_CANCEL))
 
     title = "Device configuration" + (f" — {staged} staged" if staged else "")
     return title, items
-
-
-def _changes(count: int) -> str:
-    """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
-    return f"{count} staged change{'' if count == 1 else 's'}"
 
 
 def _cadence_value(policy: AdvertPolicy, flood: bool, pending: dict) -> Text:
@@ -618,8 +591,7 @@ async def _stage_preset(ctx: "AppContext", pending: dict[str, Any]) -> None:
         )
         for i, p in enumerate(RADIO_PRESETS)
     ]
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=None))
+    items.extend(back_rows())
     idx = await ctx.ui.select(
         "Radio presets",
         items,
@@ -721,28 +693,24 @@ async def device_actions(ctx: "AppContext") -> None:
 def _action_items() -> list:
     """Build the Device actions rows: label and description in two aligned columns.
 
-    Menu-style lanes (no header line — these are commands, not tabular data), padded in
-    display cells so the double-width emoji can't skew the description column. Factory
-    reset keeps its err-tinted label so the one irreversible row reads as such.
+    The shared menu-row presentation (see :func:`~meshterm.ui.menus.menu_rows`).
+    Factory reset keeps its err-tinted label so the one irreversible row reads as such.
     """
-    actions: list[tuple[str, str, str, str]] = [
-        ("🕒 Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK, ""),
-        ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP, ""),
-        ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE, ""),
-        ("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY, ""),
-        ("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT, ""),
-        ("⚠ Factory reset…", "Erase everything (typed confirmation)", _RESET, "err"),
-    ]
-    width = max(cell_len(label) for label, _, _, _ in actions)
-    items: list = []
-    for label, help_text, value, style in actions:
-        row = Text()
-        row.append(label, style=style or None)
-        row.append(" " * (width - cell_len(label) + 2))
-        row.append(help_text, style="muted")
-        items.append(Choice(title=row, value=value))
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=_CANCEL))
+    items = menu_rows(
+        [
+            ("🕒 Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK),
+            ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP),
+            ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE),
+            ("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY),
+            ("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT),
+            (
+                Text("⚠ Factory reset…", style="err"),
+                "Erase everything (typed confirmation)",
+                _RESET,
+            ),
+        ]
+    )
+    items.extend(back_rows(_CANCEL))
     return items
 
 
@@ -789,11 +757,14 @@ async def send_advert(ctx: "AppContext") -> None:
     choice = await ctx.ui.select(
         "Send advert",
         [
-            Choice(title="Zero-hop  —  Announce to direct neighbours", value="zero"),
-            Choice(title="Flood  —  Repeaters rebroadcast it across the mesh", value="flood"),
-            Choice(title="Share QR / URI  —  Show this node's contact card", value="share"),
-            Separator(" "),
-            Choice(title="Back", value=None),
+            *menu_rows(
+                [
+                    ("Zero-hop", "Announce to direct neighbours", "zero"),
+                    ("Flood", "Repeaters rebroadcast it across the mesh", "flood"),
+                    ("Share QR / URI", "Show this node's contact card", "share"),
+                ]
+            ),
+            *back_rows(),
         ],
         prompt="Announce this node to the mesh:",
         filterable=False,
@@ -1004,11 +975,14 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
     choice = await ctx.ui.select(
         "🔐 Identity key",
         [
-            Choice(title="Show private key  —  Display it on screen (sensitive)", value="show"),
-            Choice(title="Export to a file…  —  Write it to disk (keep it secret)", value="file"),
-            Choice(title="Import a key…  —  Replace this device's identity", value="import"),
-            Separator(" "),
-            Choice(title="Back", value=None),
+            *menu_rows(
+                [
+                    ("Show private key", "Display it on screen (sensitive)", "show"),
+                    ("Export to a file…", "Write it to disk (keep it secret)", "file"),
+                    ("Import a key…", "Replace this device's identity", "import"),
+                ]
+            ),
+            *back_rows(),
         ],
         prompt="Manage this node's private identity key:",
     )
@@ -1075,21 +1049,6 @@ async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) ->
         return False
     await _run_now(ctx, device, snapshot, [("factory_reset",)], "Factory reset")
     return True
-
-
-# --- confirmations -------------------------------------------------------------
-
-
-async def _confirm_discard(ctx: "AppContext", staged: int) -> bool:
-    """Ask before dropping staged changes on the way out; ``True`` means discard."""
-    choice = await ctx.ui.dialog(
-        f"Discard {_changes(staged)} without applying them?",
-        [("Keep editing", "keep"), ("Discard", "discard")],
-        title="Unsaved changes",
-        default=1,
-        danger=True,
-    )
-    return choice == "discard"
 
 
 # --- validators --------------------------------------------------------------

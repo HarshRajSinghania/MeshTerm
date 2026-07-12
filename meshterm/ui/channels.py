@@ -32,7 +32,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
-from rich.cells import cell_len
 from rich.console import Group
 from rich.text import Text
 
@@ -54,6 +53,7 @@ from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_BUCKETS
 from .braillechart import activity_sparkline
+from .menus import back_rows, fit_cells, menu_rows, section_heading
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
@@ -351,13 +351,6 @@ def _activity_sparkline(histogram: "tuple[int, ...]") -> Text:
     return activity_sparkline(histogram, _ACTIVITY_LEVELS, ACTIVITY_BUCKETS)
 
 
-def _fit(text: str, width: int) -> str:
-    """Left-justify ``text`` to ``width`` columns, ellipsizing anything that would overflow."""
-    if len(text) > width:
-        return text[: width - 1] + "…"
-    return text.ljust(width)
-
-
 # --- menus -------------------------------------------------------------------
 
 
@@ -412,7 +405,7 @@ def _slot_text(
     unread = ctx.chat.unread(slot.conversation.key)
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(f"{channel_glyph(slot.name, slot.secret)} ")  # ＃ / 🌐 / 🔒 (2 cells) + gap
-    text.append(_fit(slot.name, name_w))
+    text.append(fit_cells(slot.name, name_w))
     text.append("  ")
     if unread:
         text.append("●", style="err")
@@ -451,22 +444,27 @@ def _menu_items(
         for slot in slots:
             items.append(Choice(title=_slot_row(ctx, slot, stats, name_w), value=slot.idx))
     else:
-        items.append(Separator("  (no channels configured yet)"))
+        items.append(Separator("  no channels configured yet"))
 
     if len(slots) > 1:
-        items.append(Separator("── Organize ──", style="accent"))
+        items.append(section_heading("Organize"))
         # Two spaces after the arrow: ↕ (East-Asian-ambiguous width) renders one cell where
         # the sibling rows' glyphs (＋ ＃ 🔑 🔗) render two, so the extra space keeps this
         # label's text column-aligned with theirs.
         items.append(Choice(title="↕  Reorder channels", value=_REORDER))
 
-    items.append(Separator("── Add a channel ──", style="accent"))
-    items.append(Choice(title="＋ New private channel (random key)", value=_CREATE))
-    items.append(Choice(title="＃ Public channel (key from its name)", value=_PUBLIC))
-    items.append(Choice(title="🔑 Join a channel with its key", value=_JOIN))
-    items.append(Choice(title="🔗 Import a meshcore:// link", value=_IMPORT))
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=_BACK))
+    items.append(section_heading("Add a channel"))
+    items.extend(
+        menu_rows(
+            [
+                ("＋ New private channel…", "A fresh random key", _CREATE),
+                ("＃ Public channel…", "Key derived from its name", _PUBLIC),
+                ("🔑 Join with a key…", "Paste a channel's 32-hex key", _JOIN),
+                ("🔗 Import a link…", "Paste a meshcore:// share link", _IMPORT),
+            ]
+        )
+    )
+    items.extend(back_rows(_BACK))
 
     return f"Channels — {len(slots)}/{capacity} slots", items
 
@@ -498,23 +496,20 @@ def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
     if unread:
         chat_label.append("  ●", style="err")
         chat_label.append(f" {unread}", style="warn")
-    rows: list[tuple[Text, str, object]] = [
-        (Text("📱 Show QR code"), "Share this channel as a scannable code", _QR),
-        (Text("🔑 Show key"), "The name, key, hash, and share link", _KEY),
-        (chat_label, "Read and send messages on this channel", _CHAT),
-        (Text("✎ Rename / change key"), "Edit the name or paste a different key", _EDIT),
-        (Text("🗑 Clear this slot", style="err"), "Remove the channel from this device", _CLEAR),
-    ]
-    width = max(cell_len(label.plain) for label, _, _ in rows)
-    items: list = []
-    for label, help_text, value in rows:
-        row = Text()
-        row.append_text(label)
-        row.append(" " * (width - cell_len(label.plain) + 2))
-        row.append(help_text, style="muted")
-        items.append(Choice(title=row, value=value))
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=_BACK))
+    items = menu_rows(
+        [
+            ("📱 Show QR code", "Share this channel as a scannable code", _QR),
+            ("🔑 Show key", "The name, key, hash, and share link", _KEY),
+            (chat_label, "Read and send messages on this channel", _CHAT),
+            ("✎ Rename / change key…", "Edit the name or paste a different key", _EDIT),
+            (
+                Text("🗑 Clear this slot…", style="err"),
+                "Remove the channel from this device",
+                _CLEAR,
+            ),
+        ]
+    )
+    items.extend(back_rows(_BACK))
     return items
 
 

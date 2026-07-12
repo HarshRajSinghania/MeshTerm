@@ -36,6 +36,7 @@ from ..core.remote_config import (
     reply_is_error,
     settings_by_category,
 )
+from .menus import confirm_discard, exit_rows, lane_row, menu_rows, section_heading
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
 from .tui.spinner import Spinner
@@ -162,7 +163,7 @@ async def _admin_session(
                 cursor = choice
 
             if choice in (None, _CANCEL):
-                if pending and not await _confirm_discard(ctx, len(pending)):
+                if pending and not await confirm_discard(ctx, len(pending), verb="sending"):
                     continue
                 return {"node": node.name, "applied": applied}
             if choice == _APPLY:
@@ -229,45 +230,28 @@ def _menu_items(
         )
     ]
     for category, rows in sections:
-        items.append(Separator(f"── {category} ──", style="accent"))
+        items.append(section_heading(category))
         for label, value, help_text, key in rows:
             items.append(
-                Choice(title=_lane_row(label, value, help_text, label_w, value_w), value=key)
+                Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
-    items.append(Separator("── Actions ──", style="accent"))
-    actions: list[tuple[str, str, str]] = [
-        ("↻ Read settings", "Fetch every value from the node, one paced get", _READ),
-        ("⌨ Command line…", "Talk to the node's CLI directly", _CLI),
-        ("📡 Send advert…", "Have the node announce itself now", _ADVERT),
-        ("🕒 Sync clock…", "Set the node's clock over the mesh", _CLOCK),
-        ("🔐 Admin password…", "Change the node's admin password", _PASSWORD),
-        ("🔄 Reboot node…", "Restart it remotely", _REBOOT),
-    ]
-    action_w = max(cell_len(label) for label, _, _ in actions)
-    for label, help_text, value in actions:
-        row = Text(label)
-        row.append(" " * (action_w - cell_len(label) + 2))
-        row.append(help_text, style="muted")
-        items.append(Choice(title=row, value=value))
+    items.append(section_heading("Actions"))
+    items.extend(
+        menu_rows(
+            [
+                ("↻ Read settings", "Fetch every value from the node, one paced get", _READ),
+                ("⌨ Command line…", "Talk to the node's CLI directly", _CLI),
+                ("📡 Send advert…", "Have the node announce itself now", _ADVERT),
+                ("🕒 Sync clock…", "Set the node's clock over the mesh", _CLOCK),
+                ("🔐 Admin password…", "Change the node's admin password", _PASSWORD),
+                ("🔄 Reboot node…", "Restart it remotely", _REBOOT),
+            ]
+        )
+    )
 
-    items.append(Separator(" "))
     staged = len(pending)
-    if staged:
-        items.append(
-            Choice(
-                title=Text.assemble(("✓ ", "ok"), f"Apply {_changes(staged)}"),
-                value=_APPLY,
-            )
-        )
-        items.append(
-            Choice(
-                title=Text.assemble(("✗ ", "err"), "Back — discard staged changes"),
-                value=_CANCEL,
-            )
-        )
-    else:
-        items.append(Choice(title="Back", value=_CANCEL))
+    items.extend(exit_rows(staged, apply_value=_APPLY, back_value=_CANCEL))
 
     title = f"Repeater admin — {node.name}" + (f" · {staged} staged" if staged else "")
     return title, items
@@ -288,33 +272,6 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
     if spec.key in pending:
         value.append(f" → {pending[spec.key]}", style="warn")
     return value
-
-
-def _lane_row(label: str, value: Text, help_text: str, label_w: int, value_w: int) -> Text:
-    """Lay one row out in the SETTING / VALUE / DESCRIPTION lanes (cell-padded)."""
-    row = Text(label)
-    row.append(" " * (label_w - cell_len(label) + 2))
-    row.append_text(value)
-    row.append(" " * (value_w - cell_len(value.plain) + 2))
-    row.append(help_text, style="muted")
-    return row
-
-
-def _changes(count: int) -> str:
-    """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
-    return f"{count} staged change{'' if count == 1 else 's'}"
-
-
-async def _confirm_discard(ctx: "AppContext", staged: int) -> bool:
-    """Ask before dropping staged changes on the way out; ``True`` means discard."""
-    choice = await ctx.ui.dialog(
-        f"Discard {_changes(staged)} without sending them?",
-        [("Keep editing", "keep"), ("Discard", "discard")],
-        title="Unsaved changes",
-        default=1,
-        danger=True,
-    )
-    return choice == "discard"
 
 
 # --- staging and applying ---------------------------------------------------------

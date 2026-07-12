@@ -21,8 +21,9 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from rich.text import Text
 
-from ..core.courier_store import DELIVERED, GAVE_UP, QUEUED, QueuedMessage
+from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
+from .menus import back_rows, section_heading
 from .tui import Choice, Separator
 from .watchtower_screen import contact_watch_key
 from .widgets import (
@@ -148,23 +149,22 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
     waiting = [m for m in entries if m.status == QUEUED]
     done = [m for m in entries if m.status != QUEUED]
 
-    items: list = [Separator("Outbox", style="accent")]
+    items: list = [section_heading("Outbox")]
     if not waiting:
         items.append(Separator("  empty — queued messages wait here for their moment"))
     for message in waiting:
         items.append(Choice(_waiting_row(ctx, message), ("msg", message.ident)))
-    items.append(Separator(""))  # space the action off the outbox rows above it
-    items.append(Choice("✉ Queue a message…", _QUEUE))
+    items.append(Separator(" "))  # space the action off the outbox rows above it
+    items.append(Choice("📨 Queue a message…", _QUEUE))
 
     if done:
-        items.append(Separator(""))
-        items.append(Separator("Finished", style="accent"))
+        items.append(Separator(" "))
+        items.append(section_heading("Finished"))
         for message in done[:15]:
             items.append(Choice(_done_row(message), ("msg", message.ident)))
         items.append(Choice("🗑 Clear finished", _CLEAR))
 
-    items.append(Separator(""))
-    items.append(Choice("← Back", None))  # a visible exit beside Esc
+    items.extend(back_rows())  # a visible exit beside Esc
     return items
 
 
@@ -329,7 +329,7 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
         return
     items = [
         Choice("📤 Send now — one forced attempt", "send"),
-        Choice("✖ Cancel this message", "cancel"),
+        Choice(Text.assemble(("✗ ", "err"), "Cancel this message"), "cancel"),
     ]
     picked = await session.select(
         f"📨 {message.node_name} — “{_shorten(message.text, 28)}”",

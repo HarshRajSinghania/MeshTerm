@@ -22,6 +22,7 @@ from rich.text import Text
 
 from ..core.models import NODE_TYPE_REPEATER, Contact
 from ..core.watch_store import OFF, SILENCE_CHOICES_H, Alert, WatchedNode
+from .menus import back_rows, section_heading
 from .tui import Choice, Separator
 from .widgets import _age_seconds, _format_age
 
@@ -124,7 +125,7 @@ def _menu_items(
     alerts: list[Alert], watched: dict[str, WatchedNode], new_node_alerts: bool
 ) -> list:
     """Build the screen's rows: alerts, then the watchlist, then the actions."""
-    items: list = [Separator("Alerts", style="accent")]
+    items: list = [section_heading("Alerts")]
     if not alerts:
         items.append(Separator("  nothing yet — tripped rules land here"))
     for alert in alerts[:_SHOWN_ALERTS]:
@@ -132,19 +133,19 @@ def _menu_items(
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
     if unacked:
-        items.append(Choice(f"✔ Acknowledge all ({unacked})", _ACK_ALL))
+        items.append(Choice(f"✓ Acknowledge all ({unacked})", _ACK_ALL))
     if acked:
         items.append(Choice("🗑 Clear acknowledged", _CLEAR))
 
-    items.append(Separator(""))
-    items.append(Separator("Watched nodes", style="accent"))
+    items.append(Separator(" "))
+    items.append(section_heading("Watched nodes"))
     if not watched:
         items.append(Separator("  none starred yet — silence and SNR rules need one"))
     for key in sorted(watched, key=lambda k: watched[k].name.casefold()):
         items.append(Choice(_watched_row(watched[key]), ("node", key)))
     items.append(Choice("⭐ Watch a node…", _WATCH))
 
-    items.append(Separator(""))
+    items.append(Separator(" "))
     state = "[ok]on[/ok]" if new_node_alerts else "[muted]off[/muted]"
     items.append(
         Choice(
@@ -153,8 +154,7 @@ def _menu_items(
         )
     )
 
-    items.append(Separator(""))
-    items.append(Choice("← Back", None))  # a visible exit beside Esc
+    items.extend(back_rows())  # a visible exit beside Esc
     return items
 
 
@@ -241,12 +241,11 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             return
         silence = "off" if entry.silence_hours == OFF else f"after {entry.silence_hours} h"
         items = [
-            Choice(f"🕐 Silence alarm      {silence}", "silence"),
+            Choice(f"🕒 Silence alarm      {silence}", "silence"),
             Choice("📶 SNR watch          " + ("on" if entry.snr_watch else "off"), "snr"),
-            Separator(""),
-            Choice("✖ Stop watching this node", "unwatch"),
-            Separator(""),
-            Choice("← Close", None),
+            Separator(" "),
+            Choice(Text.assemble(("✗ ", "err"), "Stop watching this node"), "unwatch"),
+            *back_rows(),
         ]
         picked = await session.select(
             f"Rules — {entry.name}", items, filterable=False,

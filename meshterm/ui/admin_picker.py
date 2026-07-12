@@ -38,7 +38,8 @@ async def pick_admin_node(
     Returns:
         The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
     """
-    from .tui import Choice, Separator
+    from .menus import back_rows, section_heading
+    from .tui import Choice
     from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
     candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
@@ -65,16 +66,15 @@ async def pick_admin_node(
 
     items: list = []
     if remembered:
-        items.append(Separator("── 🔑 Remembered admins ──", style="accent"))
+        items.append(section_heading("Remembered admins"))
         items.extend(row(c) for c in sorted(remembered, key=recency))
     if infrastructure:
-        items.append(Separator("── Repeaters & rooms ──", style="accent"))
+        items.append(section_heading("Repeaters & rooms"))
         items.extend(row(c) for c in sorted(infrastructure, key=recency))
     if others:
-        items.append(Separator("── Other contacts ──", style="accent"))
+        items.append(section_heading("Other contacts"))
         items.extend(row(c) for c in sorted(others, key=recency))
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=None))
+    items.extend(back_rows())
 
     choice = await ctx.ui.select(title, items, prompt=prompt, wrap=False)
     if choice is None:
