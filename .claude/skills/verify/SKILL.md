@@ -33,3 +33,6 @@ model: haiku
   the default) block until Ctrl-C — always pass an explicit `--seconds N`.
 - INFO log lines (event hub / monitor) print to the console in CLI mode;
   that's normal outside the full-screen session.
+- **Housekeeping is part of verifying**: every `--mock` run pollutes the real
+  database with fake nodes. When the mock runs are done, run the
+  `purge-test-data` skill before handing back.
