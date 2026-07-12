@@ -28,9 +28,9 @@ stacks four reads of the mesh, coarsest first:
 
 The screen holds no subscriptions of its own — the opener (:func:`open_dashboard`)
 wires the hub subscription, the device-stats poll, and the once-a-second repaint, and
-tears them all down when the screen resolves. PgUp/PgDn/Home/End move the feed window
-(carrying the highlight when one is set); Esc first drops the feed highlight, then
-backs out.
+tears them all down when the screen resolves. The newest packet is highlighted from the
+moment the screen opens; PgUp/PgDn/Home/End walk that highlight, and Esc backs out
+directly.
 """
 
 from __future__ import annotations
@@ -172,8 +172,9 @@ class DashboardScreen(Screen):
         self._feed: deque[PacketEntry] = deque(maxlen=_FEED_CAP)
         for obs in list(self._window)[-_FEED_CAP:][::-1]:
             self._feed.append(PacketEntry.from_observation(obs))
-        #: The highlighted feed row (``None`` = nothing selected, window scrolls free).
-        self._selected: Optional[int] = None
+        #: The highlighted feed row. Starts on the newest packet (``None`` only when
+        #: the feed is empty) so a lone Esc always backs straight out of the screen.
+        self._selected: Optional[int] = 0 if self._feed else None
         #: The feed's window within the fixed screen (only its rows scroll).
         self._feed_window = ListWindow()
         #: The device's own numbers, refreshed by the opener's poll (Device info's
@@ -256,11 +257,7 @@ class DashboardScreen(Screen):
                 self._feed_window.to_end()
                 self._session.invalidate()
         elif action == "escape":
-            if self._selected is not None:
-                self._selected = None  # first Esc peels the highlight, second leaves
-                self._session.invalidate()
-            else:
-                self.resolve(None)
+            self.resolve(None)
 
     def _move_selection(self, delta: int) -> None:
         """Move the feed highlight (the first press lands on the newest packet)."""

@@ -186,8 +186,7 @@ def test_dashboard_page_keys_move_the_feed_selection() -> None:
     window = [_obs(node=f"n{i}", age_s=i) for i in range(20)]
     screen = _screen(window=window)
     screen._feed_window.page = 5  # as if the last paint settled a five-row window
-    screen.handle("down")  # first press lands the highlight on the newest feed row
-    assert screen._selected == 0
+    assert screen._selected == 0  # the newest packet is highlighted from the start
     screen.handle("pagedown")
     assert screen._selected == 5  # the selection travelled down a page, not just the view
     screen.handle("pageup")
