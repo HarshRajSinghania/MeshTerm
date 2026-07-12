@@ -294,15 +294,15 @@ def test_channel_identity_is_stable_across_slot_moves() -> None:
 class _ScriptedUi:
     """A UI surface that replays queued answers, for driving the channel manager headless.
 
-    ``select``/``text``/``confirm`` each pop their next scripted answer; the display methods
+    ``select``/``text``/``dialog`` each pop their next scripted answer; the display methods
     are no-ops. Enough of the :class:`~meshterm.ui.surface.Ui` contract for the channel
     manager's create/clear flows.
     """
 
-    def __init__(self, selects: list, texts: list, confirms: list) -> None:
+    def __init__(self, selects: list, texts: list, dialogs: list) -> None:
         self._selects = list(selects)
         self._texts = list(texts)
-        self._confirms = list(confirms)
+        self._dialogs = list(dialogs)
 
     def show(self, *renderables) -> None:  # noqa: ANN002
         pass
@@ -319,8 +319,8 @@ class _ScriptedUi:
     async def text(self, title: str, *, default: str = "", validate=None, help_text: str = "", password: bool = False):  # noqa: ANN001, ANN201
         return self._texts.pop(0)
 
-    async def confirm(self, title: str, *, default: bool = True):  # noqa: ANN201
-        return self._confirms.pop(0)
+    async def dialog(self, prompt, buttons, *, title: str = "", default: int = 0, keys=None, danger: bool = False):  # noqa: ANN001, ANN201
+        return self._dialogs.pop(0)
 
 
 async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppContext) -> None:
@@ -356,7 +356,7 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
         ctx.ui = _ScriptedUi(
             selects=[0, _CLEAR, _CREATE, _BACK],
             texts=["Ops"],  # the new channel's name
-            confirms=[True],  # confirm the clear
+            dialogs=["clear"],  # confirm the clear on its Cancel/Clear dialog
         )
         await manage_channels(ctx)
 

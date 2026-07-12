@@ -516,7 +516,7 @@ async def test_chat_screen_enter_sends_and_appends() -> None:
 
 
 async def test_direct_send_spins_until_the_ack_resolves(monkeypatch) -> None:
-    """A pending direct message spins while the send is in flight, then settles on ✅."""
+    """A pending direct message spins while the send is in flight, then settles on ✓."""
     from meshterm.ui.tui.spinner import Spinner
 
     monkeypatch.setattr("meshterm.ui.chat._SPINNER_INTERVAL", 0.005)
@@ -547,7 +547,7 @@ async def test_direct_send_spins_until_the_ack_resolves(monkeypatch) -> None:
         if screen._messages[-1].acked is not None:
             break
     assert screen._messages[-1].acked is True
-    assert "✅" in "\n".join(screen.render_body(60))
+    assert "✓" in "\n".join(screen.render_body(60))
 
 
 def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
@@ -653,7 +653,7 @@ async def test_over_limit_message_is_not_sent_and_buffer_is_kept() -> None:
 
 
 def test_chat_screen_shows_delivery_glyphs() -> None:
-    """Outbound direct messages end with delivery glyphs: a spinner, then ✅ / ❌."""
+    """Outbound direct messages end with delivery marks: a spinner, then ✓ / ✗."""
     from meshterm.ui.tui.spinner import Spinner
 
     messages = [
@@ -664,9 +664,10 @@ def test_chat_screen_shows_delivery_glyphs() -> None:
     screen = _screen(_StubSession(), send=None, messages=messages)
 
     joined = "\n".join(screen.render_body(60))
-    # A message still awaiting its ack spins (a Braille frame) rather than showing the old
-    # static hourglass; resolved ones show ✅ / ❌.
-    assert "✅" in joined and "❌" in joined
+    # A message still awaiting its ack spins (a Braille frame); resolved ones show the
+    # app-wide ✓/✗ status marks (never the ✅/❌ emoji, which are packet-class icons).
+    assert "✓" in joined and "✗" in joined
+    assert "✅" not in joined and "❌" not in joined
     assert Spinner.BRAILLE[0] in joined and "⏳" not in joined
     # A failed message advertises the retry shortcut in the footer hint (the app-wide
     # compact ^-notation for Ctrl chords).
@@ -740,7 +741,7 @@ def test_direct_transcript_groups_under_sender_headers() -> None:
     assert "d4e5f6a7" not in rendered  # the key is never shown when a name is known
     assert "you" in rendered  # our own reply gets its own header
     assert "hi" in rendered and "you there?" in rendered and "yes!" in rendered
-    assert "✅" in rendered  # the outbound message keeps its delivery glyph
+    assert "✓" in rendered  # the outbound message keeps its delivery mark
 
 
 async def test_chat_screen_retry_resends_failed_message() -> None:
@@ -765,7 +766,7 @@ async def test_chat_screen_retry_resends_failed_message() -> None:
     await asyncio.sleep(0)  # let the scheduled resend task run
 
     assert screen._messages[-1].acked is True  # same object, now acknowledged
-    assert "✅" in "\n".join(screen.render_body(60))
+    assert "✓" in "\n".join(screen.render_body(60))
 
 
 def test_chat_screen_scroll_detaches_and_end_reattaches() -> None:

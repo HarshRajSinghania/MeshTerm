@@ -47,11 +47,13 @@ _SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
 _MENTION = re.compile(r"@\[([^\]]{1,20})\]")
 
 
-#: Delivery-state indicators for a *resolved* outbound direct message, shown at the end of
-#: its line: acknowledged, or transmitted-but-unacknowledged (retryable via Ctrl-R). While
-#: the ack is still pending the line shows an animated spinner instead (see
-#: :meth:`ChatScreen._delivery_glyph`).
-_DELIVERED, _FAILED = "✅", "❌"
+#: Delivery-state marks for a *resolved* outbound direct message, shown at the end of its
+#: line: acknowledged, or transmitted-but-unacknowledged (retryable via ^R). The app-wide
+#: ``✓``/``✗`` status marks in their ok/err styles — not the ✅/❌ emoji, which belong to
+#: the packet-class icon lane. While the ack is still pending the line shows an animated
+#: spinner instead (see :meth:`ChatScreen._delivery_glyph`).
+_DELIVERED = ("✓", "ok")
+_FAILED = ("✗", "err")
 
 #: Seconds between spinner frames on a message that is still awaiting its ack.
 _SPINNER_INTERVAL = 0.12
@@ -409,15 +411,16 @@ class ChatScreen(Screen):
         return text
 
     def _delivery_glyph(self, acked: Optional[bool]) -> Text:
-        """Map an outbound direct message's ``acked`` state to its trailing glyph.
+        """Map an outbound direct message's ``acked`` state to its trailing mark.
 
         A message still awaiting its ack (``acked is None``) shows the current spinner frame,
         animated by :meth:`_spin_while` for as long as the send is in flight; a resolved one
-        shows the delivered ✅ or the unacknowledged ❌.
+        shows the delivered ``✓`` (ok) or the unacknowledged ``✗`` (err).
         """
         if acked is None:
             return self._spinner.text()
-        return Text(_DELIVERED if acked else _FAILED)
+        glyph, style = _DELIVERED if acked else _FAILED
+        return Text(glyph, style=style)
 
     def _reply_banner(self) -> Text:
         """One-line cue shown above the input when a message is picked to reply to."""
@@ -635,8 +638,9 @@ class ChatScreen(Screen):
             self._session.invalidate()
             asyncio.ensure_future(self._send_channel(text))
         else:
-            # Direct chats show an optimistic bubble whose trailing glyph tracks delivery:
-            # ⏳ now, then ✅/❌ once the ack resolves (or times out). acked=None ⇒ ⏳.
+            # Direct chats show an optimistic bubble whose trailing mark tracks delivery:
+            # a spinner now, then ✓/✗ once the ack resolves (or times out). acked=None
+            # ⇒ still spinning.
             pending = ChatMessage(text=text, outbound=True, created_at=utcnow())
             self._messages.append(pending)
             self._status = ""

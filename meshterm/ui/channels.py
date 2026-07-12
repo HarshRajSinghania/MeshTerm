@@ -665,11 +665,19 @@ async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
 
 
 async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
-    """Clear a channel slot after confirmation; return whether it was cleared."""
-    if not await ctx.ui.confirm(
-        f"Clear [brand]{slot.name}[/brand]? This removes the channel from this device.",
-        default=False,
-    ):
+    """Clear a channel slot after confirmation; return whether it was cleared.
+
+    A standard destructive dialog (Cancel left, the verb right and default, danger
+    theming) rather than a bare yes/no, so it reads like every other confirm.
+    """
+    choice = await ctx.ui.dialog(
+        f"Clear {slot.name}? This removes the channel from this device.",
+        [("Cancel", None), ("Clear", "clear")],
+        title="Clear channel",
+        default=1,
+        danger=True,
+    )
+    if choice != "clear":
         return False
     await device.set_channel(slot.idx, "", None)  # empty name => the slot reads as unused
     ctx.ui.note(f"[warn]cleared channel {slot.name}[/warn]")

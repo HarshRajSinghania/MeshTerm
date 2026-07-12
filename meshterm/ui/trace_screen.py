@@ -171,7 +171,7 @@ class TracingDialog(Screen):
         """Natural outer width hugging the widest line (compositor still caps it)."""
         widths = [cell_len(self.title), cell_len(self.footer_hint),
                   cell_len(self.status) + 4, len("last  ✗ no reply — will retry"),
-                  len("[ Abort ]")]
+                  len("  Abort  ")]
         return max(widths) + 8
 
     def _last_line(self) -> Text:
@@ -192,14 +192,22 @@ class TracingDialog(Screen):
         return line
 
     def render_body(self, width: int) -> list[str]:
-        """Render the spinner chip, the last reply, and the Abort button."""
+        """Render the spinner chip, the last reply, and the Abort button.
+
+        The button is the app's one button look — a centered reverse-video chip in the
+        shared ``selected`` fill, exactly as the ButtonDialog and reconnect dialog draw
+        theirs — so every popup's committing control reads the same.
+        """
+        from .tui.prompt import _center
+
         chip = self._spinner.text()
         chip.append(f"  {self.status}", style="")
         lines = render_lines(chip, width)
         if self.show_last:
             lines.extend(render_lines(self._last_line(), width))
         lines.append("")
-        lines.append(render_to_ansi(Text("❯ [ Abort ]", style="selected"), width))
+        button = Text("  Abort  ", style="selected")
+        lines.append(render_to_ansi(_center(button, width), width))
         return lines
 
     def handle(self, action: str, data: str = "") -> None:
