@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import GAP, axis_caption, axis_chart, chart_span, timeline_rows
+from .braillechart import GAP, axis_chart, chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -58,9 +58,6 @@ _WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
 
 #: Picker sentinel for the whole-mesh overview page.
 MESH = ("mesh",)
-
-#: Character cells the charts keep clear for their side gutters.
-_GUTTER = 4
 
 #: How many braille rows tall the volume/rhythm charts draw.
 _CHART_ROWS = 2
@@ -98,25 +95,6 @@ def _snr_cell_style(values: list[float]) -> str:
     return snr_style(sum(values) / len(values))
 
 
-def _chart_block(
-    rows: list[Text], label_at: Callable[[float], str], chars: int
-) -> list[RenderableType]:
-    """Indent chart rows into the gutter and add the oldest→now caption line.
-
-    The caption is the shared :func:`~meshterm.ui.braillechart.axis_caption`, so a
-    wide chart gains intermediate time marks between its two edge labels for free.
-    """
-    out: list[RenderableType] = []
-    for row in rows:
-        line = Text("  ")
-        line.append_text(row)
-        out.append(line)
-    caption = Text("  ")
-    caption.append_text(axis_caption(chars, label_at))
-    out.append(caption)
-    return out
-
-
 def _time_axis(start: datetime, end: datetime) -> Callable[[float], str]:
     """An axis labeller over a real time span: timestamps left of the closing ``now``."""
     def label_at(frac: float) -> str:
@@ -127,8 +105,18 @@ def _time_axis(start: datetime, end: datetime) -> Callable[[float], str]:
 
 
 def _hour_axis(frac: float) -> str:
-    """The rhythm charts' labeller: the local hour of day at ``frac`` of the sweep."""
+    """The node rhythm's labeller: the local hour of day at ``frac`` of the 24-slot sweep."""
     return f"{round(frac * 23)} h"
+
+
+def _quarter_axis(frac: float) -> str:
+    """The mesh rhythm's labeller: the local hour at ``frac`` of a full-day quarter-hour sweep.
+
+    The 96 fifteen-minute slices span midnight to midnight, so the fraction maps onto the
+    whole ``0 → 24 h`` day (the right edge closing on ``24 h``), landing the intermediate
+    marks on clean six-hour boundaries.
+    """
+    return f"{round(frac * 24)} h"
 
 
 def _heading(title: str, note: str) -> Text:
@@ -228,43 +216,53 @@ def _node_sections(
             Text("Press w to widen it.", style="muted"),
         ]
     start = since or observations[0].observed_at
-    chars = max(20, width - 2 * _GUTTER)
-    buckets = chars * 2
-
-    out: list[RenderableType] = []
     stamps = [o.observed_at for o in observations]
-    out.append(
-        _heading("Volume", f"{len(observations)} receptions · now at the right")
-    )
-    out.extend(
-        _chart_block(
-            timeline_rows(bucketize(stamps, start, now, buckets), rows=_CHART_ROWS),
-            _time_axis(start, now), chars,
-        )
-    )
-
     snr_pairs = [
         (o.observed_at, float(o.snr)) for o in observations if o.snr is not None
     ]
+
+    # Volume and SNR share one y-axis gutter width (like the mesh page's day pair) so
+    # their axes line up; a provisional width finds the peaks that size the gutter, then
+    # the real width re-buckets the bars flush with it. The rhythm below is its own
+    # narrow chart, so it keeps its own gutter.
+    def _layout(label_w: int) -> tuple[int, int]:
+        chars = max(20, width - 2 * (label_w + 2))
+        return chars, chars * 2
+
+    chars, buckets = _layout(1)
+    volume = bucketize(stamps, start, now, buckets)
+    lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
+    label_w = max(1, len(str(max(volume))), len(str(round(hi))), len(str(round(lo))))
+    chars, buckets = _layout(label_w)
+    volume = bucketize(stamps, start, now, buckets)
+
+    out: list[RenderableType] = []
+    out.append(_heading("Volume", f"{len(observations)} receptions"))
+    out.extend(
+        axis_chart(
+            timeline_rows(volume, rows=_CHART_ROWS),
+            max(volume), chars, _time_axis(start, now), label_w=label_w,
+        )
+    )
+
     if snr_pairs:
         medians = bucket_medians(snr_pairs, start, now, buckets)
         lo, hi = chart_span(medians)
         rows = timeline_rows(medians, rows=_SNR_ROWS, style=_snr_cell_style)
         out.append(Text())
-        out.append(
-            _heading(
-                "SNR",
-                f"median per slice · grey line = 0 · scale {lo:+.1f} → {hi:+.1f} dB",
+        out.append(_heading("SNR", "median dB per slice · grey line = 0"))
+        out.extend(
+            axis_chart(
+                rows, hi, chars, _time_axis(start, now), label_w=label_w, floor=lo,
             )
         )
-        out.extend(_chart_block(rows, _time_axis(start, now), chars))
 
     hours = [0] * 24
     for stamp in stamps:
         hours[stamp.astimezone().hour] += 1
     out.append(Text())
     out.append(_heading("Rhythm", "receptions by local hour of day"))
-    out.extend(_chart_block(timeline_rows(hours, rows=_CHART_ROWS), _hour_axis, 12))
+    out.extend(axis_chart(timeline_rows(hours, rows=_CHART_ROWS), max(hours), 12, _hour_axis))
 
     out.append(Text())
     out.append(_heading("Record", "this window"))
@@ -299,24 +297,75 @@ def _node_sections(
 # --- the mesh page -----------------------------------------------------------------------
 
 
-def _day_axis(shown: list) -> Callable[[float], str]:
-    """An axis labeller over the day charts: compact dates, ``today`` at the right.
+def _day_centers(days: int, chars: int) -> list[int]:
+    """The chart cell each day's bar is centred on, mirroring :func:`_day_columns`.
 
-    Dates render in the caption style the rest of the app speaks (``Jul 05``, not
-    raw ISO), and the right edge reads ``today`` when the newest charted day is
-    today — mirroring the node page's closing ``now``.
+    Replays the same even split ``_day_columns`` uses to spread ``days`` bars across
+    ``2 × chars`` dot columns, so a tick placed at ``centers[i]`` lands under day
+    ``i``'s bar rather than at an arbitrary fraction of the axis.
+
+    Args:
+        days: How many day bars the chart draws.
+        chars: The chart's width in character cells.
+
+    Returns:
+        One centre cell (``0 .. chars - 1``) per day, oldest first.
     """
-    today = utcnow().strftime("%Y-%m-%d")
+    n = max(1, days)
+    centers: list[int] = []
+    dot = 0  # running dot-column offset, two per character cell
+    base, extra = divmod(chars, n) if n <= chars else divmod(chars * 2, n)
+    for i in range(n):
+        span = (base + (1 if i < extra else 0)) * (2 if n <= chars else 1)
+        centers.append(min(chars - 1, (dot + span // 2) // 2))
+        dot += span
+    return centers
 
-    def label_at(frac: float) -> str:
-        iso = shown[min(len(shown) - 1, round(frac * (len(shown) - 1)))][0]
-        if frac >= 1.0 and iso == today:
-            return "today"
+
+def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
+    """``(cell, label)`` axis ticks under the day bars: short dates, thinned to fit.
+
+    One tick per day where they all fit, else an evenly spaced subset keeping both
+    ends; each label sits under its own bar (see :func:`_day_centers`). Dates are
+    kept compact — the month is shown only on the first tick and whenever it rolls
+    over, so most ticks read as a bare day number — and the newest bar reads
+    ``today`` when it is, mirroring the node page's closing ``now``.
+
+    Args:
+        shown: The charted days, oldest first, each ``(iso_date, ...)``.
+        chars: The chart's width in character cells.
+
+    Returns:
+        The ticks to pass to :func:`~meshterm.ui.braillechart.axis_chart`.
+    """
+    n = len(shown)
+    centers = _day_centers(n, chars)
+    today = utcnow().strftime("%Y-%m-%d")
+    # A dated label is at most "Jul 12" (6 cells); keep a couple of cells between them.
+    fit = max(2, chars // 8)
+    if n <= fit:
+        picks = list(range(n))
+    else:
+        picks = sorted({round(i * (n - 1) / (fit - 1)) for i in range(fit)})
+    ticks: list[tuple[int, str]] = []
+    prev_month: Optional[str] = None
+    for i in picks:
+        iso = shown[i][0]
         try:
-            return datetime.strptime(iso, "%Y-%m-%d").strftime("%b %d")
+            day = datetime.strptime(iso, "%Y-%m-%d")
         except ValueError:
-            return iso
-    return label_at
+            ticks.append((centers[i], iso))
+            continue
+        month = day.strftime("%b")
+        if i == n - 1 and iso == today:
+            label = "today"
+        elif month != prev_month:
+            label = f"{month} {day.day}"
+        else:
+            label = str(day.day)
+        prev_month = month
+        ticks.append((centers[i], label))
+    return ticks
 
 
 def _day_columns(values: list[int], chars: int) -> list:
@@ -406,11 +455,12 @@ def _mesh_sections(
     shown = days[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
-    out.append(_heading("Packets per day", "UTC days · newest at the right"))
+    day_ticks = _day_ticks(shown, chars)
+    out.append(_heading("Packets per day", "UTC days"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
-            max(packets), chars, _day_axis(shown), label_w=label_w,
+            max(packets), chars, label_w=label_w, ticks=day_ticks,
         )
     )
 
@@ -420,21 +470,22 @@ def _mesh_sections(
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
-            max(nodes), chars, _day_axis(shown), label_w=label_w,
+            max(nodes), chars, label_w=label_w, ticks=day_ticks,
         )
     )
 
-    # The node page's rhythm chart, mesh-wide: when does this *mesh* talk? Hours are
-    # grouped by UTC in SQL and rotated here by the current local offset (see
-    # Repository.hourly_activity for why one rotation is honest enough).
-    offset = round(
-        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 3600
+    # The node page's rhythm chart, mesh-wide and four times finer: when does this *mesh*
+    # talk? 15-minute slices are grouped by UTC in SQL and rotated here into local time by
+    # the current offset in quarter-hour units (see Repository.quarter_hour_activity for why
+    # one rotation is honest enough). The wider chart earns the finer resolution its width.
+    offset_slots = round(
+        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 900
     )
-    utc_hours = ctx.repo.hourly_activity(since=since)
-    hours = [utc_hours[(h - offset) % 24] for h in range(24)]
+    utc_slots = ctx.repo.quarter_hour_activity(since=since)
+    slots = [utc_slots[(s - offset_slots) % 96] for s in range(96)]
     out.append(Text())
-    out.append(_heading("Rhythm", "packets by local hour of day"))
-    out.extend(axis_chart(timeline_rows(hours, rows=_CHART_ROWS), max(hours), 12, _hour_axis))
+    out.append(_heading("Rhythm", "packets by local time of day · 15-min slices"))
+    out.extend(axis_chart(timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48, _quarter_axis))
 
     arrivals = ctx.repo.first_seen(since=since)
     out.append(Text())

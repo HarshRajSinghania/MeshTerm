@@ -38,6 +38,39 @@ ACTIVITY_WINDOW = timedelta(hours=2)
 ACTIVITY_BUCKETS = 24
 
 
+def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
+    """Rebuild the minimal raw payload a stored ``packet`` observation is read back with.
+
+    Two things a live RX-log event carried in its raw payload are kept per row: the
+    frame's payload class (``payload_typename``), so a list can name what the packet is,
+    and — for an overheard ``GRP_TXT`` frame — the three crypto fields it decrypts from
+    (fingerprint, MAC, ciphertext), so a channel we hold the key for stays readable
+    straight from history via the same code path a fresh frame takes. A row that stored
+    neither carries no raw (``None``), exactly as before.
+    """
+    typename = _row_value(row, "payload_typename")
+    chan_hash = row["chan_hash"]
+    if not typename and not chan_hash:
+        return None
+    raw: dict = {}
+    if typename:
+        raw["payload_typename"] = typename
+    if chan_hash:
+        raw.setdefault("payload_typename", "GRP_TXT")
+        raw["chan_hash"] = chan_hash
+        raw["cipher_mac"] = row["cipher_mac"]
+        raw["crypted"] = row["crypted"]
+    return raw
+
+
+def _row_value(row: sqlite3.Row, key: str) -> Any:
+    """Read ``key`` from a row, tolerating a query that didn't select it (returns ``None``)."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
+
+
 def _hops_hash_bytes(hops: list[Hop]) -> Optional[int]:
     """Recover a stored trace's per-hop path-hash width from its hop hashes.
 
@@ -613,14 +646,29 @@ class Repository:
         path the packet traversed — the raw material of the topology graph (see
         :meth:`packet_paths`).
 
+        An overheard channel-text (``GRP_TXT``) frame also keeps the three fields the
+        packet viewer decrypts from — the channel-hash fingerprint, the 2-byte MAC, and
+        the ciphertext — lifted out of the raw payload so a channel we hold the key for
+        is still readable when the feed is later seeded from stored history.
+
         Args:
             run_id: The owning run.
             obs: The observation to store.
         """
+        chan_hash = cipher_mac = crypted = None
+        raw = obs.raw if isinstance(obs.raw, dict) else {}
+        # The payload class identifies a relayed 'packet' that names no origin node — kept
+        # for every packet, not only channel text; the crypto trio is kept for GRP_TXT alone.
+        typename = raw.get("payload_typename") if obs.kind == "packet" else None
+        if raw.get("payload_typename") == "GRP_TXT":
+            chan_hash = raw.get("chan_hash")
+            cipher_mac = raw.get("cipher_mac")
+            crypted = raw.get("crypted")
         self._conn.execute(
             "INSERT INTO observations "
-            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
+            "chan_hash, cipher_mac, crypted, payload_typename) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
@@ -633,6 +681,10 @@ class Repository:
                 obs.lon,
                 obs.path,
                 obs.observed_at.isoformat(),
+                chan_hash,
+                cipher_mac,
+                crypted,
+                typename,
             ),
         )
         self._conn.commit()
@@ -669,7 +721,8 @@ class Repository:
             The window's observations, oldest first (ready to append live events to).
         """
         rows = self._conn.execute(
-            "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at "
+            "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
+            "chan_hash, cipher_mac, crypted, payload_typename "
             "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
             (since.isoformat(), limit),
         ).fetchall()
@@ -691,6 +744,7 @@ class Repository:
                     lon=row["lon"],
                     path=row["path"],
                     observed_at=observed_at,
+                    raw=_packet_raw(row),
                 )
             )
         return observations
@@ -789,6 +843,40 @@ class Repository:
         for row in self._conn.execute(sql, params).fetchall():
             try:
                 counts[int(row["hh"])] += int(row["n"])
+            except (TypeError, ValueError, IndexError):
+                continue  # a malformed stray timestamp simply isn't counted
+        return counts
+
+    def quarter_hour_activity(self, *, since: Optional[datetime] = None) -> list[int]:
+        """Observation counts by UTC quarter-hour of day (0–95) across the history.
+
+        The finer sibling of :meth:`hourly_activity` — four slices an hour instead of
+        one — feeding the whole-mesh Rhythm chart at its full 15-minute resolution. The
+        slice index is ``HH * 4 + MM // 15``, computed in SQL off the same cheap ISO-8601
+        substrings (``HH`` at position 12, ``MM`` at position 15), so the cost stays 96
+        rows however deep the history grows. The caller rotates the histogram into local
+        time (one current-offset rotation, in 15-minute units).
+
+        Args:
+            since: Only observations at or after this time, if given.
+
+        Returns:
+            96 counts, index = UTC quarter-hour slice of the day.
+        """
+        sql = (
+            "SELECT CAST(substr(observed_at, 12, 2) AS INTEGER) * 4 "
+            "+ CAST(substr(observed_at, 15, 2) AS INTEGER) / 15 AS slot, COUNT(*) AS n "
+            "FROM observations"
+        )
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE observed_at >= ?"
+            params.append(since.isoformat())
+        sql += " GROUP BY slot"
+        counts = [0] * 96
+        for row in self._conn.execute(sql, params).fetchall():
+            try:
+                counts[int(row["slot"])] += int(row["n"])
             except (TypeError, ValueError, IndexError):
                 continue  # a malformed stray timestamp simply isn't counted
         return counts

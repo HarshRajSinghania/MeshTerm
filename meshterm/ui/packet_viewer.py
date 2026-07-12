@@ -157,6 +157,22 @@ def kind_icon(kind: str) -> str:
     return KIND_ICONS.get(kind, DEFAULT_ICON)
 
 
+def payload_class(raw: Optional[dict]) -> Optional[str]:
+    """The friendly payload-class label for a raw ``packet`` frame, or ``None`` if unknown.
+
+    Maps the frame's ``payload_typename`` (``GRP_TXT``, ``TRACE``, …) through
+    :data:`_PAYLOAD_GLOSS` — the one identifying thing a relayed flood carries when it
+    names no origin node, so a packet list can read "channel text" / "trace" instead of a
+    bare ``?``. Shared by the viewer's "class" row and the dashboard feed's node lane.
+    """
+    if not isinstance(raw, dict):
+        return None
+    typename = raw.get("payload_typename")
+    if not typename:
+        return None
+    return _PAYLOAD_GLOSS.get(typename, typename.lower())
+
+
 def node_label(
     entry: PacketEntry, resolve: NodeResolver, self_name: Optional[str] = None
 ) -> tuple[str, str]:
@@ -211,12 +227,12 @@ class PacketViewer(Screen):
         self_name: Optional[str] = None,
         on_navigate: Optional[Callable[[PacketEntry], None]] = None,
         channels: Sequence[tuple[str, bytes]] = (),
+        source: Optional[Callable[[], Sequence[PacketEntry]]] = None,
     ) -> None:
         """Open the viewer over a packet list.
 
         Args:
-            entries: The list's packets, newest first (a snapshot; live inserts into
-                the underlying list don't shift the view).
+            entries: The list's packets, newest first — the opening snapshot.
             index: Which entry to open on.
             resolve: Maps a node hash to a friendly name when known.
             prefix_bytes: Path-hash width to light in displayed hashes (0 = none).
@@ -227,19 +243,64 @@ class PacketViewer(Screen):
                 tried against an overheard ``packet`` entry's channel-text frame (see
                 :func:`~meshterm.core.channels.decrypt_channel_text`), so a raw frame
                 the radio never decoded for us can still be read when we hold the key.
+            source: Optional zero-arg callable returning the list's *current* packets
+                (newest first). When given, the viewer re-reads it every repaint and
+                keypress and re-locates the packet being viewed by identity, so packets
+                that arrive while the dialog is open become reachable (``↑`` walks up
+                into them) instead of the view being frozen at its opening snapshot.
         """
         super().__init__()
-        self._entries = entries
-        self._index = max(0, min(index, len(entries) - 1))
+        self._entries = list(entries)
+        self._index = max(0, min(index, len(self._entries) - 1))
         self._resolve = resolve
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._on_navigate = on_navigate
         self._channels = channels
-        if len(entries) > 1:
+        self._source = source
+        #: The packet currently shown, tracked by identity so a live prepend to the
+        #: source (which shifts every index) never slides the view onto another packet.
+        self._current: Optional[PacketEntry] = (
+            self._entries[self._index] if self._entries else None
+        )
+        self._update_footer()
+        self._set_title()
+
+    def _update_footer(self) -> None:
+        """Set the footer hint to match whether the list currently has more than one entry."""
+        if len(self._entries) > 1:
             self.footer_hint = "↑↓ newer/older · PgUp/PgDn scroll · Home/End ends · Esc close"
         else:
             self.footer_hint = "Esc close"
+
+    def _sync(self) -> None:
+        """Refresh the entries from the live source, re-finding the viewed packet by identity.
+
+        A no-op without a ``source``. Otherwise the list is re-read (picking up any
+        packets that arrived since the last paint) and the view stays on the *same*
+        packet object — its index simply moves as newer packets prepend ahead of it —
+        so paging keys measure against the current list and newly arrived packets sit
+        reachable above the one being read. A packet that has since aged out of the
+        list drops the view to the nearest surviving index.
+        """
+        if self._source is None:
+            return
+        entries = list(self._source())
+        if not entries:
+            return
+        self._entries = entries
+        if self._current is not None:
+            for i, candidate in enumerate(entries):
+                if candidate is self._current:
+                    self._index = i
+                    break
+            else:
+                self._index = min(self._index, len(entries) - 1)
+                self._current = entries[self._index]
+        else:
+            self._index = min(self._index, len(entries) - 1)
+            self._current = entries[self._index]
+        self._update_footer()
         self._set_title()
 
     def _set_title(self) -> None:
@@ -253,6 +314,10 @@ class PacketViewer(Screen):
 
     def handle(self, action: str, data: str = "") -> None:
         """Page through the list, scroll a tall entry, or dismiss."""
+        if action in ("up", "down", "home", "ctrl_home", "end", "ctrl_end"):
+            # Re-read the live list first so newly arrived packets are in range before we
+            # step — otherwise the first ``↑`` off the newest could never reach them.
+            self._sync()
         if action == "up":
             self._jump(self._index - 1)
         elif action == "down":
@@ -273,15 +338,19 @@ class PacketViewer(Screen):
         index = max(0, min(index, len(self._entries) - 1))
         if index != self._index:
             self._index = index
+            self._current = self._entries[index]
             self.scroll = 0
             self._set_title()
             if self._on_navigate is not None:
-                self._on_navigate(self._entries[index])
+                self._on_navigate(self._current)
 
     # --- rendering -------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
         """Lay the current entry out as labelled rows, flavoured by its kind."""
+        # Fold in any packets that arrived since the last paint, keeping the view on the
+        # same packet, so the title's ``n/total`` and the reachable range stay current.
+        self._sync()
         entry = self._entries[self._index]
         grid = Table(
             box=None, show_header=False, show_edge=False, pad_edge=False,
@@ -373,7 +442,7 @@ class PacketViewer(Screen):
         rows: list[tuple[str, RenderableType]] = []
         typename = raw.get("payload_typename")
         if typename:
-            rows.append(("class", Text(_PAYLOAD_GLOSS.get(typename, typename.lower()))))
+            rows.append(("class", Text(payload_class(raw) or typename.lower())))
         route = raw.get("route_typename")
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))

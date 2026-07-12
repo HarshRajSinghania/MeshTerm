@@ -26,7 +26,7 @@ from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import name_style, snr_style
 from .tui.prompt import _LineEditor
-from .tui.render import render_hanging, render_lines
+from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner
 
@@ -200,15 +200,16 @@ class ChatScreen(Screen):
             lines = self._render_grouped(width)
 
         limit = self._byte_limit()
-        # The byte budget rides the input line itself (no row of its own): it trails
-        # the cursor and wraps along with a long compose, so it is exactly as visible
-        # as the input — never the one line a full transcript pushes off the bottom.
+        # The byte budget is pinned to the right edge of the input's *last* line — so a
+        # compose that wraps onto a second line keeps the counter in the bottom-right
+        # corner rather than letting it trail the cursor down the wrap. Only a last line
+        # already full to the edge pushes it onto a right-aligned line of its own.
         input_line = self._editor.render(overflow_at=self._overflow_at(limit))
-        input_line.append("  ")
-        input_line.append_text(self._byte_counter(limit))
+        counter = self._byte_counter(limit)
+        compose = right_aligned_tail(input_line, counter, width)
         footer_parts: list[RenderableType] = [
             Text("─" * width, style="muted"),
-            input_line,
+            compose,
         ]
         if self._is_channel and self._selected is not None:
             footer_parts.append(self._reply_banner())

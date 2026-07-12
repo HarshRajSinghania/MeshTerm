@@ -215,6 +215,22 @@ def test_axis_chart_mirrors_marks_on_both_gutters() -> None:
     assert out[2].plain.startswith("  └") and out[2].plain.endswith("┘")
 
 
+def test_y_axis_labels_signed_span_quotes_both_extremes() -> None:
+    """A signed chart's marks run from the peak down through zero toward the floor."""
+    # rows=3 over +8..-4: top edge 8, middle 4, then 0 (blanked — it is the grey line).
+    assert y_axis_labels(8, 3, lo=-4) == ["8", "4", ""]
+    # A wider signed span surfaces a negative mark on the bottom row.
+    assert y_axis_labels(6, 3, lo=-6) == ["6", "2", "-2"]
+
+
+def test_axis_chart_floor_frames_a_signed_chart_and_widens_the_gutter() -> None:
+    """A signed floor draws negative marks and sizes the gutter for the widest one."""
+    rows = timeline_rows([5, -5], rows=3, span=(-5, 5))
+    out = axis_chart(rows, 5, 1, lambda f: "x", floor=-5)
+    assert out[0].plain.startswith(" 5 ┤")   # peak on top, gutter widened to two cells
+    assert out[2].plain.startswith("-2 ┤")   # a negative mark near the floor
+
+
 def test_axis_chart_honours_a_shared_label_width() -> None:
     """An explicit label_w widens the gutter past the peak's own digit count.
 
@@ -224,3 +240,24 @@ def test_axis_chart_honours_a_shared_label_width() -> None:
     rows = timeline_rows([9] * 8, rows=1)
     out = axis_chart(rows, 9, 4, lambda f: "x", label_w=3)
     assert out[0].plain.startswith("  9 ┤")
+
+
+# --- axis_chart column ticks ----------------------------------------------------------
+
+
+def test_axis_chart_ticks_notch_the_border_and_centre_labels() -> None:
+    """Explicit column ticks draw a ``┬`` on the border with the label centred beneath."""
+    rows = timeline_rows([9] * 8, rows=1)
+    out = axis_chart(rows, 9, 4, ticks=[(0, "A"), (3, "D")])
+    assert out[1].plain == "  └┬──┬┘"   # ticks at chart cells 0 and 3
+    assert out[2].plain == "   A  D"     # labels centred under their ticks
+
+
+def test_axis_chart_ticks_thin_a_label_that_would_collide() -> None:
+    """A tick whose label would overprint the one before it is dropped, tick and all."""
+    rows = timeline_rows([9] * 16, rows=1)
+    out = axis_chart(rows, 9, 8, ticks=[(0, "aaaa"), (2, "aaaa"), (7, "b")])
+    border, caption = out[1].plain, out[2].plain
+    assert caption.count("aaaa") == 1   # the crowded twin was skipped
+    assert "b" in caption
+    assert border.count("┬") == 2       # …and its tick with it (only two survive)

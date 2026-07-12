@@ -93,6 +93,43 @@ def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = Fals
     return lines
 
 
+def right_aligned_tail(body: Text, tail: Text, width: int) -> Text:
+    """Lay ``body`` out with ``tail`` pinned to the right edge of its last line.
+
+    ``body`` wraps at ``width`` as usual; ``tail`` — a short status such as the chat
+    compose bar's byte counter — is right-aligned on ``body``'s final wrapped line when
+    it still fits there (after at least one blank cell), otherwise on a new line of its
+    own, also right-aligned. So the tail reads as a steady gauge in the corner rather
+    than trailing the cursor and wrapping along with the text.
+
+    Args:
+        body: The wrappable leading content (e.g. the input line, cursor block included).
+        tail: The short run to pin to the right edge.
+        width: Total render width in columns.
+
+    Returns:
+        A single :class:`Text` with embedded newlines, ready for :func:`render_lines`.
+    """
+    width = max(1, width)
+    console = _console(width)
+    lines = list(body.wrap(console, width)) or [Text("")]
+    combined = Text()
+    for line in lines[:-1]:
+        combined.append_text(line)
+        combined.append("\n")
+    last = lines[-1]
+    gap = width - last.cell_len - tail.cell_len
+    if gap >= 1:
+        combined.append_text(last)
+        combined.append(" " * gap)
+    else:
+        combined.append_text(last)
+        combined.append("\n")
+        combined.append(" " * max(0, width - tail.cell_len))
+    combined.append_text(tail)
+    return combined
+
+
 def render_hanging(prefix: Text, body: Text, width: int, *, indent: int) -> list[str]:
     """Render ``prefix + body`` at ``width``, wrapping the body with a hanging indent.
 

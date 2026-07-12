@@ -560,12 +560,15 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
     counter = screen._byte_counter(screen._byte_limit())
     assert isinstance(counter, Text)
     assert counter.plain.strip() == "5/150"  # 5 bytes used of the 150-byte direct-message cap
-    # The budget rides the input line itself, right after the compose text, so it can
-    # never be the one row a full transcript pushes off the bottom of the viewport.
+    # The budget is pinned to the input line's right edge (padded out from the compose text,
+    # not trailing the cursor), while still sharing the input's own row so a full transcript
+    # can never push it off the bottom of the viewport.
     import re
 
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(80)))
-    assert re.search(r"› hello.*5/150", body)
+    input_row = next(line for line in body.splitlines() if "5/150" in line)
+    assert re.search(r"› hello +5/150$", input_row.rstrip())  # a gap of padding, flush right
+    assert len(input_row.rstrip()) == 80  # the counter reaches the right edge of the width
     # Only the "5" carries a color; the "/150" tail stays muted (it never changes).
     used_at = counter.plain.index("5")
     slash_at = counter.plain.index("/")
@@ -573,6 +576,25 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
     tail_spans = [s for s in counter.spans if s.start <= slash_at < s.end]
     assert used_spans and used_spans[0].style == "ok"  # green with room to spare
     assert tail_spans and tail_spans[0].style == "muted"
+
+
+def test_byte_counter_stays_bottom_right_when_the_compose_wraps() -> None:
+    """A compose line long enough to wrap keeps the counter pinned to the last line's
+    right edge — not trailing the cursor down onto the second row."""
+    import re
+
+    screen = _screen(_StubSession(), send=None)
+    text = "this is a long compose line that certainly wraps onto several rows here ok"
+    for ch in text:
+        screen.handle("text", ch)
+    counter = f"{len(text)}/150"
+    body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(40)))
+    counter_rows = [line for line in body.splitlines() if counter in line]
+    assert len(counter_rows) == 1
+    row = counter_rows[0]
+    assert row.rstrip().endswith(counter)      # flush right, not mid-line after the text
+    assert len(row.rstrip()) == 40             # reaches the render width's right edge
+    assert not row.lstrip().startswith("›")    # on a wrapped row, not the first input row
 
 
 def test_byte_style_escalates_as_budget_runs_out() -> None:

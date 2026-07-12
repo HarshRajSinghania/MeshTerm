@@ -34,6 +34,7 @@ drops the feed highlight, then backs out.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import Counter, deque
 from statistics import median
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -46,8 +47,15 @@ from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
-from .packet_viewer import KIND_STYLES, PacketEntry, PacketViewer, kind_icon, node_label
-from .theme import snr_style
+from .packet_viewer import (
+    KIND_STYLES,
+    PacketEntry,
+    PacketViewer,
+    kind_icon,
+    node_label,
+    payload_class,
+)
+from .theme import name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -83,6 +91,21 @@ _FEED_LABEL_MIN_WIDTH = 76
 #: The label column every hanging-indent section grid reserves (the ``snr      `` /
 #: ``radio    `` lane), so wrapped values align with their own block, never column 0.
 _GRID_LABEL_W = 9
+
+
+#: A channel message carries no sender field on the wire, so senders self-identify by
+#: prefixing ``Name: `` (mirrors the chat transcript's own parse). Lifting the name out
+#: lets the feed's node lane show *who* sent it rather than the bare channel it came in on.
+_SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+\S")
+
+
+def _channel_sender(text: Optional[str]) -> Optional[str]:
+    """The sender named by a channel message's ``Name: `` prefix, or ``None`` if absent."""
+    match = _SENDER_PREFIX.match(text or "")
+    if match is None:
+        return None
+    name = match.group(1).strip()
+    return name if name and not name.isdigit() else None
 
 
 def _fit(text: str, width: int) -> str:
@@ -210,9 +233,18 @@ class DashboardScreen(Screen):
         elif action == "enter":
             self._open_packet()
         elif action == "pageup":
-            self.scroll_pages(-1)
+            # With a feed row highlighted the page keys walk the selection (a screenful
+            # at a time), so the highlight travels with the view instead of the view
+            # scrolling out from under a pinned selection; with none, they free-scroll.
+            if self._selected is not None:
+                self._select_index(self._selected - self._page_step)
+            else:
+                self.scroll_pages(-1)
         elif action in ("pagedown", "space"):
-            self.scroll_pages(1)
+            if self._selected is not None:
+                self._select_index(self._selected + self._page_step)
+            else:
+                self.scroll_pages(1)
         elif action in ("home", "ctrl_home"):
             # With the feed highlight active, Home jumps to the newest packet;
             # otherwise it keeps its plain scroll-to-top meaning (End mirrors it).
@@ -267,6 +299,9 @@ class DashboardScreen(Screen):
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
             self_name=self._self_name, on_navigate=follow,
             channels=self._channels,
+            # The live feed itself (newest first), so the viewer keeps up with packets
+            # that arrive while it is open instead of freezing at this snapshot.
+            source=lambda: list(self._feed),
         )
         asyncio.ensure_future(self._session.run_screen(viewer))
 
@@ -535,8 +570,8 @@ class DashboardScreen(Screen):
         if show_label:
             row.append(entry.kind.ljust(10), style=KIND_STYLES.get(entry.kind, "brand"))
         label, style = node_label(entry, self._resolve, self._self_name)
-        if label == "?" and entry.where:
-            label, style = entry.where, "muted"  # a senderless message/ack: its context
+        if label == "?":
+            label, style = self._feed_subject(entry)  # no node identity: name what we can
         row.append(_fit(label, _FEED_NAME_WIDTH), style=style)
         row.append("  ")
         row.append(
@@ -551,6 +586,30 @@ class DashboardScreen(Screen):
         if note:
             row.append(f"  {note}", style="muted")
         return row
+
+    def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
+        """Name the node lane when an entry carries no resolvable node identity.
+
+        The fallback the vast majority of rows hit — a relayed ``packet`` naming no
+        origin, or a channel message with no sender field. Rather than a useless ``?``
+        (or the bare ``ch 3`` that only repeats the note), it reads the most identifying
+        thing the entry does carry: the sender a channel message named itself with, or
+        what *kind* of frame a relayed packet is (``channel text`` / ``trace`` / …). An
+        ack falls back to its code; nothing else, to a dash.
+        """
+        if entry.kind == "message":
+            sender = _channel_sender(entry.text)
+            if sender:
+                ours = self._self_name and sender == self._self_name
+                return sender, ("you" if ours else name_style(sender))
+            return "channel", "muted"
+        if entry.kind == "packet":
+            cls = payload_class(entry.raw)
+            if cls:
+                return cls, "muted"
+        if entry.where:
+            return entry.where, "muted"  # an ack's code, or any other stray context
+        return "—", "muted"
 
     def _feed_note(self, entry: PacketEntry) -> Optional[str]:
         """The row's trailing detail: a packet's relay path, a message's conversation."""

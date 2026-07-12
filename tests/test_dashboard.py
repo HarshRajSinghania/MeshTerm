@@ -8,7 +8,7 @@ covered in ``test_braillechart``.)
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from meshterm.core.events import MeshEvent
@@ -140,12 +140,58 @@ def test_dashboard_packet_rows_show_their_relay_path() -> None:
     assert "via YUL → Alice" in _plain(screen.render_body(100))
 
 
+def test_dashboard_feed_names_a_relayed_packet_by_its_payload_class() -> None:
+    """A relayed packet naming no origin reads as its payload class, never a bare '?'."""
+    screen = _screen()
+    raw = {"payload_typename": "TRACE", "route_typename": "FLOOD"}
+    screen.on_event(
+        MeshEvent.observation_event(
+            _obs(node="", kind="packet", snr=1.0, path="3d63,a1b2", raw=raw)
+        )
+    )
+    feed = _plain(screen.render_body(100)).split("Feed")[1]
+    assert "trace" in feed  # the payload-class gloss stands in for the missing identity
+    assert "?" not in feed  # …instead of the useless placeholder
+
+
+def test_dashboard_feed_names_a_channel_message_by_its_sender() -> None:
+    """A channel message's ``Name:`` prefix names the node lane, not the bare channel."""
+    from meshterm.core.models import Message
+
+    screen = _screen()
+    screen.on_event(
+        MeshEvent.message_event(Message(text="Alice: hi all", channel=3, is_channel=True))
+    )
+    feed = _plain(screen.render_body(100)).split("Feed")[1]
+    assert "Alice" in feed          # the parsed sender leads the row
+    assert "ch 3" in feed           # …with the channel kept as the trailing context
+
+
 def test_dashboard_prunes_the_window_but_keeps_the_feed() -> None:
     """Observations older than the window drop out of the statistics."""
     stale = _obs(age_s=3 * 3600, snr=-12.0)
     screen = _screen(window=[stale])
     body = _plain(screen.render_body(100))
     assert "no receptions in the window yet" in body  # stats pruned the stale row
+
+
+def test_dashboard_page_keys_move_the_feed_selection() -> None:
+    """With a feed row highlighted, PgUp/PgDn walk the selection a screenful at a time."""
+    window = [_obs(node=f"n{i}", age_s=i) for i in range(20)]
+    screen = _screen(window=window)
+    screen.note_metrics(total=40, viewport=6)  # a screenful is _page_step = 5 rows
+    screen.handle("down")  # first press lands the highlight on the newest feed row
+    assert screen._selected == 0
+    screen.handle("pagedown")
+    assert screen._selected == 5  # the selection travelled down a page, not just the view
+    screen.handle("pageup")
+    assert screen._selected == 0
+
+    # With nothing highlighted, the page keys free-scroll the body as before.
+    screen._selected = None
+    screen.scroll = 0
+    screen.handle("pagedown")
+    assert screen.scroll > 0 and screen._selected is None
 
 
 def test_dashboard_without_a_device_reads_as_waiting() -> None:
@@ -182,4 +228,83 @@ def test_recent_observations_windows_and_orders(tmp_path: Path) -> None:
     window = repo.recent_observations(since=utcnow() - timedelta(hours=2))
     assert [o.node for o in window] == ["mid", "new"]
     assert window[0].kind == "packet" and window[0].path == "3d63"
+    repo.close()
+
+
+def test_recent_observations_rehydrate_channel_text_for_decryption(tmp_path: Path) -> None:
+    """A stored GRP_TXT frame comes back with the fields the packet viewer decrypts from."""
+    from Crypto.Cipher import AES
+    from Crypto.Hash import HMAC, SHA256
+
+    from meshterm.core.channels import channel_hash, derive_secret
+    from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
+
+    name, secret = "#general", derive_secret("#general")
+    plain = (0).to_bytes(4, "little") + bytes([0]) + b"hi from history"
+    plain += b"\x00" * (-len(plain) % 16)
+    crypted = AES.new(secret, AES.MODE_ECB).encrypt(plain)
+    mac = HMAC.new(secret, digestmod=SHA256)
+    mac.update(crypted)
+    raw = {
+        "payload_typename": "GRP_TXT",
+        "chan_hash": channel_hash(secret),
+        "cipher_mac": mac.digest()[:2].hex(),
+        "crypted": crypted.hex(),
+    }
+
+    repo = Repository(tmp_path / "chan.db")
+    run = repo.start_run("monitor", {}, None)
+    repo.record_observation(run, _obs(node="src", kind="packet", path="3d63", raw=raw))
+    repo.record_observation(run, _obs(node="adv", kind="advert"))  # a plain advert nearby
+
+    window = {o.node: o for o in repo.recent_observations(since=utcnow() - timedelta(hours=2))}
+    stored = window["src"]
+    assert stored.raw is not None and stored.raw["chan_hash"] == channel_hash(secret)
+    assert window["adv"].raw is None  # nothing to rebuild from → no raw, as before
+
+    # The stored frame decrypts straight out of history — the whole point of persisting it.
+    viewer = PacketViewer(
+        [PacketEntry.from_observation(stored)], 0,
+        resolve=lambda h: "", channels=[(name, secret)],
+    )
+    body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in viewer.render_body(80))
+    assert "#general" in body and "hi from history" in body
+    repo.close()
+
+
+def test_recent_observations_rehydrate_the_packet_payload_class(tmp_path: Path) -> None:
+    """A stored ``packet`` comes back carrying its payload class, so a list can name it."""
+    repo = Repository(tmp_path / "cls.db")
+    run = repo.start_run("monitor", {}, None)
+    repo.record_observation(
+        run,
+        _obs(node="", kind="packet", path="3d63", raw={"payload_typename": "TRACE"}),
+    )
+    repo.record_observation(run, _obs(node="a1b2", kind="advert"))  # a plain advert nearby
+
+    window = {o.node or "": o for o in repo.recent_observations(since=utcnow() - timedelta(hours=2))}
+    assert window[""].raw is not None and window[""].raw["payload_typename"] == "TRACE"
+    assert window["a1b2"].raw is None  # an advert keeps no packet raw, as before
+    repo.close()
+
+
+def test_quarter_hour_activity_buckets_by_15_minute_slice(tmp_path: Path) -> None:
+    """Observations fall into 96 quarter-hour-of-day slots (``HH * 4 + MM // 15``)."""
+    repo = Repository(tmp_path / "q.db")
+    run = repo.start_run("monitor", {}, None)
+
+    def at(hh: int, mm: int) -> Observation:
+        return Observation(
+            node="n", name="n", kind="advert",
+            observed_at=datetime(2026, 7, 8, hh, mm, tzinfo=timezone.utc),
+        )
+
+    for hh, mm in [(0, 0), (0, 44), (17, 55), (17, 59)]:
+        repo.record_observation(run, at(hh, mm))
+    slots = repo.quarter_hour_activity()
+    assert len(slots) == 96
+    assert slots[0] == 1        # 00:00 → slot 0
+    assert slots[2] == 1        # 00:44 → slot 2 (44 // 15)
+    assert slots[71] == 2       # 17:55 and 17:59 → slot 17*4 + 3
+    assert sum(slots) == 4
     repo.close()

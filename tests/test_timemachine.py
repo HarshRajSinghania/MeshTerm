@@ -16,7 +16,9 @@ from meshterm.persistence.repository import Repository
 from meshterm.ui.braillechart import GAP
 from meshterm.ui.timemachine_screen import (
     TimeMachineScreen,
+    _day_centers,
     _day_columns,
+    _day_ticks,
     _mesh_sections,
     _node_sections,
     _snr_cell_style,
@@ -168,6 +170,47 @@ def test_day_columns_always_hits_the_exact_width() -> None:
         assert len(cols) == chars * 2, (n, chars)
 
 
+def test_day_centers_land_under_each_bar() -> None:
+    """A day's centre cell sits within its own bar's span (so a tick points at it)."""
+    chars = 60
+    n = 7
+    centers = _day_centers(n, chars)
+    assert len(centers) == n
+    base = chars / n
+    for i, cell in enumerate(centers):
+        assert i * base <= cell <= (i + 1) * base  # inside day i's character span
+    assert centers == sorted(centers) and centers[-1] <= chars - 1
+
+
+def test_day_ticks_shorten_dates_and_align_to_bars() -> None:
+    """One tick per day when they fit: month only on the first, bare day numbers after."""
+    days = [(f"2026-07-{d:02d}", 10, 3) for d in range(1, 8)]  # Jul 1..7
+    chars = 60
+    ticks = _day_ticks(days, chars)
+    assert [cell for cell, _ in ticks] == _day_centers(len(days), chars)  # under the bars
+    labels = [label for _, label in ticks]
+    assert labels[0] == "Jul 1"          # month printed once, on the first tick
+    assert labels[1:] == ["2", "3", "4", "5", "6", "7"]  # bare day numbers after it
+
+
+def test_day_ticks_reprint_the_month_on_a_rollover() -> None:
+    """The month reappears the first time a new one starts, so a boundary reads clearly."""
+    days = [(iso, 1, 1) for iso in ("2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02")]
+    labels = [label for _, label in _day_ticks(days, 60)]
+    assert labels == ["Jun 29", "30", "Jul 1", "2"]
+
+
+def test_day_ticks_thin_to_fit_keeping_both_ends() -> None:
+    """More days than labels fit: an evenly spaced subset is kept, first and last included."""
+    days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
+    chars = 40  # ~5 dated labels fit (chars // 8)
+    ticks = _day_ticks(days, chars)
+    centers = _day_centers(len(days), chars)
+    assert 2 <= len(ticks) <= 6
+    cols = [cell for cell, _ in ticks]
+    assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive the thinning
+
+
 def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:
     """A day wide enough to span several characters opens with a GAP dot column."""
     cols = _day_columns([2, 8, 4], 12)  # 3 days, 12 chars -> 4 chars (8 dots) each
@@ -243,7 +286,7 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
     ctx = SimpleNamespace(repo=repo)
     body = _plain(_mesh_sections(ctx, None, 90, prefix_bytes=2))
     assert "Packets per day" in body and "Nodes per day" in body
-    assert "Rhythm" in body and "local hour" in body
+    assert "Rhythm" in body and "15-min" in body  # 15-minute slices, four per hour
     assert "Arrivals" in body and "Newcomer" in body
     # Arrivals are aligned lanes: the hash sits in its own column and the old
     # per-row "first heard" prefix now lives once, in the column header.
@@ -258,16 +301,41 @@ def test_mesh_page_day_chart_axis_matches_the_bar_width(tmp_path: Path) -> None:
 
     A rounding mismatch here (the old ``_day_columns``) leaves the border and
     caption sized for a wider chart than the bars actually drawn — the bars
-    reading as shifted left of an axis drawn for more columns than exist.
+    reading as shifted left of an axis drawn for more columns than exist. The
+    border now carries ``┬`` tick marks under the dated columns, so its interior
+    is counted as dashes *and* ticks together.
     """
     repo = _seeded_repo(tmp_path)
     ctx = SimpleNamespace(repo=repo)
     lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
-    border_idx = next(i for i, line in enumerate(lines) if re.fullmatch(r"\s*└─+┘", line))
-    border_dashes = lines[border_idx].count("─")
+    heading_idx = next(i for i, line in enumerate(lines) if "Packets per day" in line)
+    border_idx = next(
+        i for i, line in enumerate(lines[heading_idx:], heading_idx)
+        if re.fullmatch(r"\s*└[─┬]+┘", line)
+    )
+    border_interior = len(re.search(r"└([─┬]+)┘", lines[border_idx]).group(1))
     row_line = lines[border_idx - 1]
     content = re.search(r"[┤│](.*?)[├│]", row_line).group(1)
-    assert len(content) == border_dashes
+    assert len(content) == border_interior
+    repo.close()
+
+
+def test_mesh_page_day_axis_ticks_sit_under_dated_columns(tmp_path: Path) -> None:
+    """The day chart notches its border with ``┬`` and labels the ticks with dates."""
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
+    heading_idx = next(i for i, line in enumerate(lines) if "Packets per day" in line)
+    border = next(
+        line for line in lines[heading_idx:] if re.fullmatch(r"\s*└[─┬]+┘", line)
+    )
+    caption = lines[lines.index(border) + 1]
+    tick_cols = [i for i, ch in enumerate(border) if ch == "┬"]
+    assert tick_cols, "the day axis should carry tick marks"
+    # The seeded history ends today, so the newest bar's tick reads 'today'.
+    assert "today" in caption
+    # Every tick has a non-blank label somewhere near it (labels centre on their tick).
+    assert any(not caption[max(0, c - 3):c + 4].isspace() for c in tick_cols)
     repo.close()
 
 

@@ -68,6 +68,36 @@ def test_packet_viewer_reports_an_unknown_channel() -> None:
     assert "unknown" in body and "can't decrypt" in body
 
 
+def test_packet_viewer_reaches_packets_that_arrive_after_open() -> None:
+    """A live source lets the viewer page up into packets that arrive after it opens."""
+    old = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    feed = [old]
+    viewer = PacketViewer(list(feed), 0, resolve=lambda h: "", source=lambda: list(feed))
+    assert viewer._entries[viewer._index] is old
+
+    # A newer packet is prepended (the feed is newest-first) while the dialog sits on the
+    # old one; a repaint folds it in and the view stays put on `old` (now at index 1).
+    newer = PacketEntry(when=utcnow(), kind="message", node="bb", text="new!")
+    feed.insert(0, newer)
+    viewer.render_body(80)
+    assert viewer._entries[viewer._index] is old
+    assert "2/2" in viewer.title
+
+    # ↑ (newer) now reaches the packet that arrived after the dialog opened.
+    viewer.handle("up")
+    assert viewer._entries[viewer._index] is newer
+    assert "1/2" in viewer.title
+
+
+def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
+    """With no live source the viewer is frozen on its opening list (unchanged behaviour)."""
+    entry = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    viewer = PacketViewer([entry], 0, resolve=lambda h: "")
+    viewer.render_body(80)
+    assert viewer._entries == [entry]
+    assert viewer.footer_hint == "Esc close"
+
+
 def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> None:
     """Fields already shown as class/route/via/channel rows don't also dump generically."""
     entry = _grp_txt_entry({

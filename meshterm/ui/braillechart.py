@@ -318,19 +318,22 @@ def axis_caption(
     return Text(label.ljust(chars), style=style)
 
 
-def y_axis_labels(peak: float, rows: int) -> list[str]:
+def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
     """Each chart row's top-edge value, top row first, dupes and zeros blanked.
 
     The top row always reads the peak; lower rows read the proportional values at
     their upper edges, but a mark that would repeat the one above (a low peak makes
     neighbouring rows round to the same value) or read zero is left blank, so the
-    scale never shows the same number twice.
+    scale never shows the same number twice. A signed chart passes its floor as
+    ``lo`` (``< 0``): the marks then run linearly from ``peak`` at the top down
+    through the grey zero line to ``lo`` at the bottom, so the gutter quotes both
+    extremes (an SNR band's ``+5 … −10 dB``) instead of only the positive peak.
     """
     labels: list[str] = []
     seen: set[int] = set()
     for i in range(rows):
-        value = round(peak * (rows - i) / rows)
-        if peak and value and value not in seen:
+        value = round(peak - (peak - lo) * i / rows)
+        if peak != lo and value and value not in seen:
             labels.append(str(value))
             seen.add(value)
         else:
@@ -338,37 +341,99 @@ def y_axis_labels(peak: float, rows: int) -> list[str]:
     return labels
 
 
+#: Minimum blank cells kept between two column-axis labels, so a thinned tick row
+#: reads as separate marks rather than a run of touching text.
+_TICK_GAP = 2
+
+
+def _tick_axis(
+    chars: int,
+    label_w: int,
+    ticks: Sequence[tuple[int, str]],
+    style: str,
+) -> tuple[Text, str]:
+    """Build the boxed border and its caption for a column chart with explicit ticks.
+
+    Each tick is a ``(cell, label)`` pointing at a chart column: the border draws a
+    ``┬`` at that column and the label sits centred beneath it. Labels are placed
+    left to right and any that would land within :data:`_TICK_GAP` cells of the one
+    before it is dropped — tick and all — so a crowded axis thins to what fits
+    instead of overprinting. Callers pre-thin to roughly the right count (see the
+    Time Machine's ``_day_ticks``); this is the collision backstop.
+
+    Args:
+        chars: The chart's width in character cells.
+        label_w: The y-axis gutter width the border and caption indent past.
+        ticks: ``(cell, label)`` marks, any order; ``cell`` is a 0-based chart column.
+        style: Style for the border (and its ticks).
+
+    Returns:
+        ``(border, caption_text)`` — the border :class:`Text` and the plain caption
+        string, ready to indent under the gutter.
+    """
+    cells = [" "] * chars
+    marked: set[int] = set()
+    last_end = -_TICK_GAP
+    for cell, label in sorted(ticks):
+        cell = max(0, min(chars - 1, cell))
+        start = max(0, min(chars - len(label), cell - len(label) // 2))
+        if start < last_end + _TICK_GAP:
+            continue  # would crowd the label before it — drop this mark
+        cells[start : start + len(label)] = list(label)
+        marked.add(cell)
+        last_end = start + len(label)
+    bar = "".join("┬" if i in marked else "─" for i in range(chars))
+    border = Text(" " * label_w + " └" + bar + "┘", style=style)
+    return border, "".join(cells)
+
+
 def axis_chart(
     chart_rows: list[Text],
     peak: float,
     chars: int,
-    label_at: Callable[[float], str],
+    label_at: Optional[Callable[[float], str]] = None,
     *,
     label_w: Optional[int] = None,
     style: str = "muted",
+    floor: float = 0.0,
+    ticks: Optional[Sequence[tuple[int, str]]] = None,
 ) -> list[Text]:
     """Frame :func:`timeline_rows` output with a mirrored y-axis and x-axis caption.
 
     Each row's top-edge value is mirrored on both gutters (blank where it would
     repeat the mark above or read zero), closed with a boxed bottom border, and
-    followed by :func:`axis_caption`, indented to clear the gutter.
+    followed by an x-axis caption indented to clear the gutter.
+
+    The caption comes one of two ways. A *continuous* chart passes ``label_at`` and
+    the ends-plus-quarters marks of :func:`axis_caption` fill in whatever fits. A
+    *columnar* chart — bars of a fixed width apiece, a day or a slot each — instead
+    passes ``ticks``: explicit ``(cell, label)`` marks that centre a label under its
+    own column and notch the border with a ``┬`` beneath it (see :func:`_tick_axis`),
+    so a date sits under the bar it names rather than at an arbitrary fraction.
 
     Args:
         chart_rows: The chart's rows, as returned by :func:`timeline_rows`.
         peak: The value the top row's mark reads (the chart's tallest bar).
         chars: The chart's width in character cells.
-        label_at: Maps a position fraction to the x-axis caption at that point.
+        label_at: Maps a position fraction to the x-axis caption at that point
+            (a continuous chart); ignored when ``ticks`` is given.
         label_w: The gutter's digit width, when several stacked charts must
-            share one width so their gutters line up; sized from ``peak`` alone
-            by default.
+            share one width so their gutters line up; sized from ``peak`` (and
+            ``floor``) by default.
         style: Style for the gutters, ticks, marks, and border.
+        floor: The value the bottom edge reads on a signed chart (``< 0``), so
+            the gutter quotes both extremes of a zero-crossing series (the Time
+            Machine's SNR band). Defaults to ``0`` — an all-positive chart whose
+            baseline sits on the floor, the common case.
+        ticks: Explicit ``(cell, label)`` column marks for a columnar chart; when
+            given they drive the border and caption instead of ``label_at``.
 
     Returns:
         ``len(chart_rows) + 2`` :class:`Text` lines: the decorated rows, the
         bottom border, and the caption.
     """
-    label_w = label_w or max(1, len(str(round(peak))))
-    marks = y_axis_labels(peak, len(chart_rows))
+    label_w = label_w or max(1, len(str(round(peak))), len(str(round(floor))))
+    marks = y_axis_labels(peak, len(chart_rows), lo=floor)
     out: list[Text] = []
     for mark, row in zip(marks, chart_rows):
         line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style=style)
@@ -377,9 +442,16 @@ def axis_chart(
         if mark:
             line.append(f" {mark}", style=style)
         out.append(line)
-    out.append(Text(" " * label_w + " └" + "─" * chars + "┘", style=style))
-    caption = Text(" " * (label_w + 2))
-    caption.append_text(axis_caption(chars, label_at))
+    if ticks is not None:
+        border, caption_text = _tick_axis(chars, label_w, ticks, style)
+        out.append(border)
+        caption = Text(" " * (label_w + 2))
+        caption.append(caption_text, style="faint")
+    else:
+        assert label_at is not None, "axis_chart needs label_at or ticks"
+        out.append(Text(" " * label_w + " └" + "─" * chars + "┘", style=style))
+        caption = Text(" " * (label_w + 2))
+        caption.append_text(axis_caption(chars, label_at))
     out.append(caption)
     return out
 

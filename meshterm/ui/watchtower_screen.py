@@ -242,12 +242,13 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             Choice("📶 SNR watch          " + ("on" if entry.snr_watch else "off"), "snr"),
             Separator(""),
             Choice("✖ Stop watching this node", "unwatch"),
+            Choice("← Close", None),
         ]
         picked = await session.select(
             f"Rules — {entry.name}", items, filterable=False,
             footer_hint="↑↓ move · Enter change · Esc back",
         )
-        if picked is None:
+        if picked is None:  # Close, or Esc
             return
         if picked == "silence":
             await _pick_silence(ctx, key, entry)

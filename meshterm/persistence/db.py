@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -109,7 +109,11 @@ CREATE TABLE IF NOT EXISTS observations (
     lat         REAL,
     lon         REAL,
     path        TEXT,             -- 'packet' rows: comma-separated relay-hop hex hashes
-    observed_at TEXT    NOT NULL
+    observed_at TEXT    NOT NULL,
+    chan_hash   TEXT,             -- overheard GRP_TXT frames: channel-hash fingerprint (hex)
+    cipher_mac  TEXT,             -- …its 2-byte MAC (hex)
+    crypted     TEXT,             -- …its ciphertext (hex), so a stored channel text still decrypts
+    payload_typename TEXT         -- 'packet' rows: the frame's payload class (GRP_TXT/TRACE/…)
 );
 
 -- One chat message, sent or received, on a channel or with a contact. Unlike the other
@@ -191,3 +195,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # v6 -> v7: observations gained the relay path of RX-logged packets, the passive
         # evidence the mesh topology graph is built from. Older rows carry NULL (no path).
         conn.execute("ALTER TABLE observations ADD COLUMN path TEXT")
+    if "chan_hash" not in observation_cols:
+        # v8 -> v9: overheard channel-text (GRP_TXT) frames keep the fields the packet
+        # viewer needs to decrypt them — the channel-hash fingerprint, the 2-byte MAC, and
+        # the ciphertext — so a channel we hold the key for stays readable even when the feed
+        # is seeded from stored history (a live frame carries them in its raw payload; a
+        # replayed one had nowhere to keep them). Older rows carry NULL (never decryptable).
+        conn.execute("ALTER TABLE observations ADD COLUMN chan_hash TEXT")
+        conn.execute("ALTER TABLE observations ADD COLUMN cipher_mac TEXT")
+        conn.execute("ALTER TABLE observations ADD COLUMN crypted TEXT")
+    if "payload_typename" not in observation_cols:
+        # v9 -> v10: 'packet' RX-log rows keep their payload class (GRP_TXT, TRACE, PATH,
+        # ACK, …), the one identifying thing a relayed flood carries when it names no
+        # origin node — so the dashboard feed can read "channel text" / "trace" instead of
+        # a bare "?" even when seeded from history. Older rows carry NULL (class unknown).
+        conn.execute("ALTER TABLE observations ADD COLUMN payload_typename TEXT")

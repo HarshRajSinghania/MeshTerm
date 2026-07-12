@@ -781,8 +781,12 @@ async def send_advert(ctx: "AppContext") -> None:
     """
     device = await ctx.device()
     snapshot = dict(await device.get_self_info())
+    # No emoji in this floating dialog's title: a terminal that paints an emoji a cell
+    # narrower than Rich measures it leaves the content-sized popup's title border short,
+    # bleeding the backdrop through the frame. The menu row keeps its 📡 icon (drawn in the
+    # full-width base, where the miscount has nowhere to show).
     choice = await ctx.ui.select(
-        "📡 Send advert",
+        "Send advert",
         [
             Choice(title="Zero-hop  —  Announce directly to neighbours in range", value="zero"),
             Choice(title="Flood  —  Repeaters rebroadcast it across the mesh", value="flood"),
