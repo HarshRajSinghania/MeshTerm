@@ -769,14 +769,19 @@ async def test_chat_screen_retry_resends_failed_message() -> None:
     assert "✓" in "\n".join(screen.render_body(60))
 
 
-def test_chat_screen_scroll_detaches_and_end_reattaches() -> None:
-    """Scrolling up detaches from the live tail; End re-sticks to the bottom."""
-    screen = _screen(_StubSession(), send=None)
-    assert screen._stick is True
+def test_chat_screen_up_picks_and_ctrl_end_returns_to_compose() -> None:
+    """↑ picks the newest message (detaching from the tail); ^End returns to compose."""
+    messages = [
+        ChatMessage(text="hi", peer="d4e5f6a7"),
+        ChatMessage(text="reply", outbound=True, peer="d4e5f6a7", acked=True),
+    ]
+    screen = _screen(_StubSession(), send=None, messages=messages)
+    assert screen._stick is True and screen._selected is None
     screen.handle("up")
     assert screen._stick is False
-    screen.handle("end")
-    assert screen._stick is True
+    assert screen._selected == len(screen._messages) - 1  # the newest message
+    screen.handle("ctrl_end")
+    assert screen._stick is True and screen._selected is None
 
 
 def test_split_channel_sender_extracts_name_prefix() -> None:
@@ -870,30 +875,87 @@ def test_chat_home_end_and_word_keys_move_the_compose_cursor() -> None:
     assert screen._editor.cursor == 6  # start of "world"
 
 
-def test_chat_scroll_keys_detach_and_reattach_to_the_tail() -> None:
-    """PageUp/Ctrl+Home detach from the live tail; Ctrl+End snaps back to it."""
+async def test_chat_paths_key_opens_the_picked_or_latest_message() -> None:
+    """^P presents the picked message's paths — or the latest, when nothing is picked."""
+    import asyncio
+
+    shown: list[str] = []
+
+    async def paths(message) -> None:  # noqa: ANN001 - ChatMessage
+        shown.append(message.text)
+
+    messages = [
+        ChatMessage(text="first", peer="d4e5f6a7"),
+        ChatMessage(text="second", peer="d4e5f6a7"),
+    ]
+    conv = Conversation(
+        label="Alice",
+        is_channel=False,
+        contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
+    )
+    screen = ChatScreen(
+        conv, messages, send=None, names={}, session=_StubSession(), paths=paths
+    )
+    screen.handle("paths")  # nothing picked → the latest message
+    await asyncio.sleep(0)
+    assert shown == ["second"]
+
+    screen.handle("up")
+    screen.handle("up")  # pick the older message
+    screen.handle("paths")
+    await asyncio.sleep(0)
+    assert shown == ["second", "first"]
+
+
+async def test_chat_direct_enter_on_a_pick_opens_paths() -> None:
+    """In a direct chat, Enter on a picked message opens its paths (channels reply)."""
+    import asyncio
+
+    shown: list[str] = []
+
+    async def paths(message) -> None:  # noqa: ANN001 - ChatMessage
+        shown.append(message.text)
+
+    messages = [ChatMessage(text="only", peer="d4e5f6a7")]
+    conv = Conversation(
+        label="Alice",
+        is_channel=False,
+        contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
+    )
+    screen = ChatScreen(
+        conv, messages, send=None, names={}, session=_StubSession(), paths=paths
+    )
+    screen.handle("up")
+    assert "Enter paths" in screen.footer_hint
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert shown == ["only"]
+
+
+def test_chat_pick_walks_with_page_keys_and_ctrl_home() -> None:
+    """PgUp walks the pick a screenful back; ^Home jumps it to the very first message."""
     screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
     lines = screen.render_body(60)
     screen.note_metrics(total=len(lines), viewport=5)
     screen.handle("pageup")
-    assert screen._stick is False  # a screenful up detaches from the tail
+    assert screen._stick is False and screen._selected is not None
     screen.handle("ctrl_home")
-    assert screen.scroll == 0 and screen._stick is False
+    assert screen._selected == 0  # the very first message
     screen.handle("ctrl_end")
-    assert screen._stick is True  # re-attached to the newest message
+    assert screen._stick is True and screen._selected is None
 
 
-def test_chat_ctrl_page_scrolls_between_day_dividers() -> None:
-    """Ctrl+PageDown/PageUp move the transcript scroll between day dividers."""
+def test_chat_ctrl_page_picks_across_day_dividers() -> None:
+    """Ctrl+PageDown/PageUp move the pick between day boundaries (both chat kinds)."""
     screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
-    lines = screen.render_body(60)
-    screen.note_metrics(total=len(lines), viewport=5)
-    (idx0, _), (idx1, _) = screen._sticky_headers
-    screen.scroll = 0
+    starts = screen._day_start_indices()
+    assert len(starts) == 2
+    screen.handle("ctrl_home")
+    assert screen._selected == 0
     screen.handle("ctrl_pagedown")
-    assert screen.scroll == idx1 and screen._stick is False  # to the second day's divider
+    assert screen._selected == starts[1]  # first message of the second day
     screen.handle("ctrl_pageup")
-    assert screen.scroll == idx0  # back to the first day's divider
+    assert screen._selected == starts[0]  # back to the first day
 
 
 def _two_day_channel_messages():

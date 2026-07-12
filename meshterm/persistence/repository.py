@@ -726,8 +726,39 @@ class Repository:
             "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
             (since.isoformat(), limit),
         ).fetchall()
+        return self._hydrate_observations(reversed(rows))
+
+    def packet_frames_between(
+        self, start: datetime, end: datetime, *, limit: int = 2000
+    ) -> list[Observation]:
+        """RX-logged ``packet`` frames inside a closed time window, oldest first.
+
+        The message-paths view's feed: every relayed frame the radio reported in the
+        window around a chat message, raw crypto fields included, so a channel frame
+        can be decrypted and matched to the message and a direct frame correlated by
+        time. Timestamps compare as ISO strings, like every observation query.
+
+        Args:
+            start: The window's inclusive start.
+            end: The window's inclusive end.
+            limit: Hard cap on rows (oldest kept — the window centres on the message).
+
+        Returns:
+            The window's ``packet`` observations, oldest first.
+        """
+        rows = self._conn.execute(
+            "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
+            "chan_hash, cipher_mac, crypted, payload_typename "
+            "FROM observations WHERE kind = 'packet' AND observed_at >= ? "
+            "AND observed_at <= ? ORDER BY observed_at ASC LIMIT ?",
+            (start.isoformat(), end.isoformat(), limit),
+        ).fetchall()
+        return self._hydrate_observations(rows)
+
+    def _hydrate_observations(self, rows) -> list[Observation]:  # noqa: ANN001 - sqlite rows
+        """Rebuild :class:`Observation` values from full observation rows, in order."""
         observations: list[Observation] = []
-        for row in reversed(rows):
+        for row in rows:
             try:
                 observed_at = datetime.fromisoformat(row["observed_at"])
             except (TypeError, ValueError):

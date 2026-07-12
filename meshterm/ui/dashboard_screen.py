@@ -34,7 +34,6 @@ drops the feed highlight, then backs out.
 from __future__ import annotations
 
 import asyncio
-import re
 from collections import Counter, deque
 from statistics import median
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -43,6 +42,7 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
+from ..core.channels import split_channel_sender
 from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
@@ -95,19 +95,15 @@ _FEED_LABEL_MIN_WIDTH = 76
 _GRID_LABEL_W = 9
 
 
-#: A channel message carries no sender field on the wire, so senders self-identify by
-#: prefixing ``Name: `` (mirrors the chat transcript's own parse). Lifting the name out
-#: lets the feed's node lane show *who* sent it rather than the bare channel it came in on.
-_SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+\S")
-
-
 def _channel_sender(text: Optional[str]) -> Optional[str]:
-    """The sender named by a channel message's ``Name: `` prefix, or ``None`` if absent."""
-    match = _SENDER_PREFIX.match(text or "")
-    if match is None:
-        return None
-    name = match.group(1).strip()
-    return name if name and not name.isdigit() else None
+    """The sender named by a channel message's ``Name: `` prefix, or ``None`` if absent.
+
+    The shared protocol-layer parse (see
+    :func:`~meshterm.core.channels.split_channel_sender`), so the feed's node lane names
+    exactly the sender the chat transcript would.
+    """
+    name, _body = split_channel_sender(text or "")
+    return name
 
 
 def _span_label(minutes: int) -> str:

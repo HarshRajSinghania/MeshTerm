@@ -66,6 +66,7 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.Delete: "delete",
     Keys.Tab: "tab",
     Keys.ControlR: "retry",
+    Keys.ControlP: "paths",
 }
 
 

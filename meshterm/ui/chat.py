@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from ..core.channels import split_channel_sender
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import name_style, snr_style
@@ -29,17 +30,13 @@ from .tui.prompt import _LineEditor
 from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner
+from .widgets import path_text
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
 #: How many past messages to load into the transcript when a conversation opens.
 _HISTORY_LIMIT = 200
-
-#: Matches the ``Name: message`` convention channel senders use to identify themselves
-#: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
-#: be followed by ``": "`` — conservative enough to leave ``http://…`` and ``note:x`` alone.
-_SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
 
 #: Matches an ``@[Name]`` mention token, as the reply flow primes into the compose line (see
 #: :meth:`ChatScreen._begin_reply`). The transcript renders each as a bare ``@Name`` colored
@@ -86,34 +83,23 @@ def _sender_hue(sender: str) -> str:
     return name_style(sender)
 
 
-def _split_channel_sender(text: str) -> tuple[Optional[str], str]:
-    """Split a channel message into ``(sender_name, body)`` when it carries a name prefix.
-
-    Channel messages have no sender field on the wire, so senders identify themselves by
-    prefixing the text with ``Name: ``. Lifting that name out lets the transcript show it
-    as a colored header and keep the body clean.
-
-    Args:
-        text: The raw channel message text.
-
-    Returns:
-        ``(name, body)`` when a plausible ``Name: `` prefix is present, else ``(None, text)``.
-    """
-    match = _SENDER_PREFIX.match(text)
-    if match is None:
-        return None, text
-    name, body = match.group(1).strip(), match.group(2)
-    if not name or name.isdigit() or body.startswith("//"):  # reject URLs / timestamps
-        return None, text
-    return name, body
+#: The sender-prefix parser, shared app-wide from the protocol layer (the transcript,
+#: the conversation picker, the dashboard feed, and the message-paths matcher must all
+#: split ``Name: body`` identically). Kept under its old private name for the callers
+#: that import it from here.
+_split_channel_sender = split_channel_sender
 
 
 class ChatScreen(Screen):
     """A live conversation: a scrolling transcript above a pinned input line.
 
-    The transcript auto-sticks to the newest message (and snaps back to the bottom whenever
-    you type or send). Scrolling up with the arrows / PageUp detaches from the bottom to
-    read history; End re-attaches. Enter sends the current line; Esc leaves the chat.
+    The transcript auto-sticks to the newest message (and snaps back to the bottom
+    whenever you type or send). ↑ picks a message — the pick walks with ↑↓/PgUp/PgDn
+    and carries the view with it; ^End (or Esc) returns focus to the compose line.
+    Enter sends the current line, or acts on a picked message: in a channel it primes
+    a reply ``@mention``, in a direct chat it opens the message's delivery paths. ^P
+    opens the paths of the picked (or latest) message in either kind. Esc leaves the
+    chat once nothing is picked.
     """
 
     floating = False
@@ -127,6 +113,7 @@ class ChatScreen(Screen):
         names: dict[str, str],
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
         resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None,
+        paths: Optional[Callable[[ChatMessage], Awaitable[None]]] = None,
     ) -> None:
         """Build the chat screen.
 
@@ -141,6 +128,8 @@ class ChatScreen(Screen):
                 request repaints when messages arrive or a send completes.
             resend: Async callable that re-attempts delivery of an unacknowledged direct
                 message, updating it in place (direct chats only; ``None`` for channels).
+            paths: Async callable that presents the delivery paths of one message (the
+                ^P view); ``None`` leaves the affordance quietly inert.
         """
         super().__init__()
         self.title = conversation.label
@@ -148,6 +137,7 @@ class ChatScreen(Screen):
         self._messages = list(messages)
         self._send = send
         self._resend = resend
+        self._paths = paths
         self._names = names
         self._session = session
         self._editor = _LineEditor()
@@ -158,22 +148,24 @@ class ChatScreen(Screen):
         self._spinner = Spinner()
         self._status = ""
         self._stick = True  # keep the newest message in view until the user scrolls up
-        # Channel-only reply selection: index of the highlighted message (or None when the
-        # compose line is focused), plus the body line it rendered on so the frame keeps it
-        # in view. Direct chats keep the flat, free-scrolling view and never select.
+        self._paths_open = False  # one paths dialog at a time
+        # The pick: index of the highlighted message (or None when the compose line is
+        # focused), plus the body line it rendered on so the frame keeps it in view.
         self._selected: Optional[int] = None
         self._selected_line: Optional[int] = None
 
     @property
     def footer_hint(self) -> str:
-        """Key hint, reflecting whether a message is picked for reply (channels only)."""
-        if not self._is_channel:
-            if any(m.outbound and m.acked is False for m in self._messages):
-                return "Enter send · ^R retry failed · ↑↓/PgUp scroll · ^End latest · Esc back"
-            return "Enter send · ↑↓/PgUp scroll · ^End latest · Esc back"
+        """Key hint, reflecting whether a message is picked and what Enter does to it."""
         if self._selected is not None:
-            return "Enter reply (@mention) · ↑↓ pick · ^End/Esc cancel"
-        return "Enter send · ↑ pick a message to reply · Esc back"
+            if self._is_channel:
+                return "Enter reply (@mention) · ^P paths · ↑↓ pick · ^End/Esc cancel"
+            return "Enter paths · ↑↓ pick · ^End/Esc cancel"
+        if not self._is_channel and any(
+            m.outbound and m.acked is False for m in self._messages
+        ):
+            return "Enter send · ↑ pick a message · ^R retry failed · ^P paths · Esc back"
+        return "Enter send · ↑ pick a message · ^P paths · Esc back"
 
     # --- live updates --------------------------------------------------------
 
@@ -213,8 +205,8 @@ class ChatScreen(Screen):
             Text("─" * width, style="muted"),
             compose,
         ]
-        if self._is_channel and self._selected is not None:
-            footer_parts.append(self._reply_banner())
+        if self._selected is not None:
+            footer_parts.append(self._pick_banner())
         if self._status:
             footer_parts.append(Text(self._status, style="muted"))
         lines += render_lines(Group(*footer_parts), width)
@@ -422,13 +414,23 @@ class ChatScreen(Screen):
         glyph, style = _DELIVERED if acked else _FAILED
         return Text(glyph, style=style)
 
-    def _reply_banner(self) -> Text:
-        """One-line cue shown above the input when a message is picked to reply to."""
+    def _pick_banner(self) -> Text:
+        """One-line cue shown above the input while a message is picked.
+
+        Channels lead with the reply affordance (Enter's job there); direct chats with
+        the paths view (their Enter). Both mention what the pick is for, so the state
+        never reads as a mystery highlight.
+        """
         message = self._messages[self._selected]
         sender, _ = self._sender_and_body(message)
         who = "this message" if message.outbound or sender == "·" else sender
+        if self._is_channel:
+            return Text(
+                f"↩ Enter to reply to {who} with an @mention · End to cancel",
+                style="accent",
+            )
         return Text(
-            f"↩ Enter to reply to {who} with an @mention · End to cancel", style="accent"
+            "Enter to see the paths this message took · End to cancel", style="accent"
         )
 
     def _sender_style(self, sender: str, *, is_self: bool = False) -> str:
@@ -448,67 +450,34 @@ class ChatScreen(Screen):
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
-        """Dispatch a key: channels navigate a reply selection; direct chats free-scroll."""
-        if self._is_channel:
-            self._handle_channel(action, data)
-        else:
-            self._handle_flat(action, data)
+        """Dispatch a key: pick and act on messages, edit the compose line, or leave.
 
-    def _handle_flat(self, action: str, data: str = "") -> None:
-        """Direct-chat input: send on Enter, scroll the transcript, edit, or leave on Esc.
-
-        Home/End and Ctrl+←/→ act on the compose line (like any text field); scrolling the
-        transcript is on the arrows, PageUp/PageDown (a screenful), Ctrl+Home/End (top / live
-        tail), and Ctrl+PageUp/PageDown (previous / next day divider).
-        """
-        if action == "enter":
-            self._submit()
-        elif action == "retry":
-            self._retry()
-        elif action == "escape":
-            self.resolve(CANCEL)
-        elif action == "up":
-            self._detach_and(self.scroll_lines, -1)
-        elif action == "pageup":
-            self._detach_and(self.scroll_pages, -1)
-        elif action == "down":
-            self._detach_and(self.scroll_lines, 1)
-        elif action == "pagedown":
-            self._detach_and(self.scroll_pages, 1)
-        elif action == "ctrl_home":
-            self._detach_and(self.scroll_to_top)
-        elif action == "ctrl_pageup":
-            self._detach_and(self.scroll_to_section_start)
-        elif action == "ctrl_pagedown":
-            self._detach_and(self.scroll_to_next_section)
-        elif action == "ctrl_end":
-            self._stick = True  # snap back to the live tail / compose line
-        else:
-            if self._editor.edit(action, data):
-                self._status = ""  # trimming clears the "too long" notice
-                self._stick = True  # touching the compose line snaps back to the live tail
-
-    def _detach_and(self, move: Callable[..., None], *args: Any) -> None:
-        """Detach from the live tail and run a scroll move (the shared scroll helpers)."""
-        self._stick = False
-        move(*args)
-
-    def _handle_channel(self, action: str, data: str = "") -> None:
-        """Channel input: arrows pick a message to reply to; Enter sends or starts a reply.
-
-        With no message picked the view behaves like the compose line (Enter sends). Moving
-        up enters the selection from the newest message; moving down past the newest (or
-        End) returns focus to the compose line and clears the selection. Enter on a picked
-        message primes the input with an ``@mention`` instead of sending.
+        Both chat kinds share one model. With no message picked, Enter sends and typing
+        edits the compose line. ↑ picks the newest message; the pick then walks with
+        ↑↓, PgUp/PgDn (a screenful), Ctrl+Home (the very first message), and
+        Ctrl+PgUp/PgDn (day dividers), carrying the view with it. Enter on a picked
+        message primes a reply ``@mention`` in a channel and opens the delivery paths
+        in a direct chat; ^P opens the paths of the picked (or latest) message in
+        either kind. ^End (or moving past the newest) returns to the compose line;
+        Esc peels the pick first, the screen second.
         """
         if action == "enter":
             if self._selected is not None:
-                self._begin_reply()
+                if self._is_channel:
+                    self._begin_reply()
+                else:
+                    self._open_paths(self._selected)
             else:
                 self._submit()
+        elif action == "paths":
+            target = self._selected if self._selected is not None else len(self._messages) - 1
+            self._open_paths(target)
+        elif action == "retry":
+            if not self._is_channel:
+                self._retry()
         elif action == "escape":
             if self._selected is not None:
-                self._clear_selection()  # first Esc deselects; next leaves the chat
+                self._clear_selection()  # first Esc unpicks; next leaves the chat
                 self._session.invalidate()
             else:
                 self.resolve(CANCEL)
@@ -533,10 +502,26 @@ class ChatScreen(Screen):
             self._stick = True  # jump back to the live tail / compose line
         else:
             if self._editor.edit(action, data):
-                # Touching the compose line returns focus there — nothing stays selected.
+                # Touching the compose line returns focus there — nothing stays picked.
                 self._status = ""  # trimming clears the "too long" notice
                 self._clear_selection()
                 self._stick = True
+
+    def _open_paths(self, index: Optional[int]) -> None:
+        """Float the delivery-paths view for the message at ``index`` (one at a time)."""
+        if index is None or not self._messages or self._paths is None or self._paths_open:
+            return
+        message = self._messages[max(0, min(index, len(self._messages) - 1))]
+        self._paths_open = True
+
+        async def run() -> None:
+            try:
+                await self._paths(message)
+            finally:
+                self._paths_open = False
+                self._session.invalidate()
+
+        asyncio.ensure_future(run())
 
     def _move_selection(self, delta: int) -> None:
         """Move the reply selection by ``delta`` messages (negative = toward older).
@@ -815,8 +800,15 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
             assert conversation.contact is not None
             return await ctx.chat.resend_direct(conversation.contact, message)
 
+    paths = await _make_paths_presenter(ctx, conversation, device)
     screen = ChatScreen(
-        conversation, history, send=send, names=names, session=session, resend=resend
+        conversation,
+        history,
+        send=send,
+        names=names,
+        session=session,
+        resend=resend,
+        paths=paths,
     )
     ctx.chat.set_active(conversation.key)
 
@@ -868,3 +860,148 @@ def _belongs(message: Message, conversation: Conversation) -> bool:
     if not sender or not peer:
         return False
     return sender.startswith(peer) or peer.startswith(sender)
+
+
+# --- message paths (the ^P view) -----------------------------------------------------
+
+
+async def _make_paths_presenter(
+    ctx: "AppContext",
+    conversation: Conversation,
+    device,  # noqa: ANN001 - core Device; typed at the source
+) -> Callable[[ChatMessage], Awaitable[None]]:
+    """Build the async presenter behind the chat's ^P delivery-paths view.
+
+    Gathers what the presenter needs once per chat open: a hop-name resolver over the
+    contacts plus every name the recorder ever overheard (the app-wide rule that a
+    nameable node never shows as a bare hash), our own node's name for the white
+    ``you``, the routing prefix width for the hash highlights, and — for a channel —
+    its secret, read from the device when the conversation didn't carry one (a picker
+    conversation knows its identity but not always its key).
+
+    Args:
+        ctx: The shared application context.
+        conversation: The conversation the chat screen is opening.
+        device: The connected device (already awaited by the caller).
+
+    Returns:
+        An async callable presenting one message's paths in a floating window.
+    """
+    from ..services import trace_runner
+    from ..services.message_paths import (
+        channel_arrivals,
+        direct_frames_near,
+        distinct_paths,
+    )
+    from .timemachine_screen import _routing_prefix_bytes
+
+    session = ctx.ui.session
+    resolve = trace_runner.make_node_resolver(
+        await device.get_contacts(), ctx.repo.node_names()
+    )
+    prefix_bytes = await _routing_prefix_bytes(ctx)
+    self_name: Optional[str] = None
+    try:
+        self_name = str((await device.get_self_info()).get("name") or "") or None
+    except Exception:  # noqa: BLE001 - a nameless self just skips the white highlight
+        self_name = None
+
+    secret = conversation.secret
+    if conversation.is_channel and not secret and conversation.channel_idx is not None:
+        try:
+            payload = await device.get_channel(conversation.channel_idx)
+            raw = (payload or {}).get("channel_secret")
+            secret = bytes(raw) if raw else None
+        except Exception:  # noqa: BLE001 - no key, no decrypt; the view says so honestly
+            secret = None
+
+    async def present(message: ChatMessage) -> None:
+        if conversation.is_channel and secret:
+            arrivals = channel_arrivals(
+                ctx.repo, message, channel_name=conversation.label, secret=secret
+            )
+            body = _paths_view(
+                message, arrivals, matched=True, resolve=resolve,
+                prefix_bytes=prefix_bytes, self_name=self_name,
+                summary=f"heard {len(arrivals)} time{'s' if len(arrivals) != 1 else ''}"
+                f" · {distinct_paths(arrivals)} distinct "
+                f"path{'s' if distinct_paths(arrivals) != 1 else ''}"
+                if arrivals else "no copies in the packet log",
+            )
+        elif conversation.is_channel:
+            body = Text(
+                "This channel's key isn't at hand, so overheard frames can't be "
+                "matched to the message.",
+                style="muted",
+            )
+        else:
+            arrivals = direct_frames_near(ctx.repo, message)
+            body = _paths_view(
+                message, arrivals, matched=False, resolve=resolve,
+                prefix_bytes=prefix_bytes, self_name=self_name,
+                summary="direct frames are encrypted — matched by time alone (±90 s)",
+            )
+        await session.scroll(body, title="Message paths")
+
+    return present
+
+
+def _paths_view(
+    message: ChatMessage,
+    arrivals: list,
+    *,
+    matched: bool,
+    resolve,  # noqa: ANN001 - NodeResolver
+    prefix_bytes: int,
+    self_name: Optional[str],
+    summary: str,
+) -> Group:
+    """Lay one message's arrivals out: the quoted text, a summary, then one row each.
+
+    Every row reads through the shared compact path widget, so a path here looks
+    exactly like the same path in the dashboard feed or the packet viewer: time,
+    reception SNR, then ``direct`` or the relay chain (with a resend counter when a
+    decrypted channel frame carried one).
+    """
+    quoted = message.text.replace("\n", " ")
+    if len(quoted) > 64:
+        quoted = quoted[:63] + "…"
+    head = Text(f"“{quoted}”")
+    stamp = Text(message.created_at.astimezone().strftime("%b %d %H:%M"), style="muted")
+    stamp.append("  ·  ", style="muted")
+    stamp.append(summary, style="muted" if matched else "warn")
+
+    parts: list[RenderableType] = [head, stamp]
+    if not arrivals:
+        parts.append(Text())
+        if matched:
+            parts.append(Text(
+                "Nothing overheard — the radio only logs frames it hears while "
+                "MeshTerm is listening.", style="muted",
+            ))
+        else:
+            parts.append(Text("No direct-message frames logged in the window.", style="muted"))
+        return Group(*parts)
+
+    parts.append(Text())
+    for arrival in arrivals:
+        row = Text(no_wrap=True, overflow="ellipsis")
+        row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
+        row.append("  ")
+        if arrival.snr is not None:
+            row.append(f"{arrival.snr:+5.1f} dB", style=snr_style(arrival.snr))
+        else:
+            row.append(" " * 8, style="muted")
+        row.append("  ")
+        if arrival.hops:
+            row.append("via ", style="muted")
+        row.append_text(
+            path_text(
+                arrival.hops, resolve,
+                prefix_bytes=prefix_bytes, self_name=self_name, empty="direct",
+            )
+        )
+        if arrival.resend:
+            row.append(f"  (resend #{arrival.resend})", style="muted")
+        parts.append(row)
+    return Group(*parts)

@@ -12,6 +12,7 @@ so the app never needs the radio's own decode to read a channel it holds the key
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,35 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256 as _SHA256
+
+#: Matches the ``Name: message`` convention channel senders use to identify themselves
+#: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
+#: be followed by ``": "`` — conservative enough to leave ``http://…`` and ``note:x`` alone.
+SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
+
+
+def split_channel_sender(text: str) -> tuple[Optional[str], str]:
+    """Split a channel message into ``(sender_name, body)`` when it carries a name prefix.
+
+    Channel messages have no sender field on the wire, so senders identify themselves by
+    prefixing the text with ``Name: ``. Lifting that name out lets a transcript show it
+    as a coloured header, a feed name *who* spoke, and the message-paths matcher compare
+    an on-air body against a stored one.
+
+    Args:
+        text: The raw channel message text.
+
+    Returns:
+        ``(name, body)`` when a plausible ``Name: `` prefix is present, else
+        ``(None, text)``.
+    """
+    match = SENDER_PREFIX.match(text)
+    if match is None:
+        return None, text
+    name, body = match.group(1).strip(), match.group(2)
+    if not name or name.isdigit() or body.startswith("//"):  # reject URLs / timestamps
+        return None, text
+    return name, body
 
 #: A channel shared secret is exactly 16 bytes (128-bit), per the MeshCore protocol.
 CHANNEL_SECRET_BYTES = 16
