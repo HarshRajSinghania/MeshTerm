@@ -242,6 +242,7 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             Choice("📶 SNR watch          " + ("on" if entry.snr_watch else "off"), "snr"),
             Separator(""),
             Choice("✖ Stop watching this node", "unwatch"),
+            Separator(""),
             Choice("← Close", None),
         ]
         picked = await session.select(

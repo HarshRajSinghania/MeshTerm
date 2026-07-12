@@ -98,6 +98,15 @@ def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
     assert viewer.footer_hint == "Esc close"
 
 
+def test_packet_viewer_holds_a_minimum_height() -> None:
+    """A short packet's body is padded to a floor, so paging never shrinks the dialog."""
+    from meshterm.ui.packet_viewer import _MIN_BODY_ROWS
+
+    tiny = PacketEntry(when=utcnow(), kind="ack", where="01c3")  # a two-row packet
+    viewer = PacketViewer([tiny], 0, resolve=lambda h: "")
+    assert len(viewer.render_body(80)) >= _MIN_BODY_ROWS
+
+
 def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> None:
     """Fields already shown as class/route/via/channel rows don't also dump generically."""
     entry = _grp_txt_entry({

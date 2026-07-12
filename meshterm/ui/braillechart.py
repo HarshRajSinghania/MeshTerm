@@ -271,7 +271,7 @@ def axis_caption(
     label_at: Callable[[float], str],
     *,
     style: str = "faint",
-) -> Text:
+) -> tuple[Text, list[int]]:
     """The caption line under a timeline: edge labels plus whatever marks fit between.
 
     Every chart used to caption only its ends (``oldest … now``); this asks
@@ -289,33 +289,40 @@ def axis_caption(
         style: Style the whole caption is drawn in.
 
     Returns:
-        A :class:`Text` exactly ``chars`` cells wide.
+        ``(caption, tick_cells)`` — the caption :class:`Text` exactly ``chars`` cells
+        wide, and the chart column each placed label points at, so the axis border can
+        notch a ``┬`` under it (see :func:`axis_chart`).
     """
     for segments in (4, 2, 1):
         fractions = [i / segments for i in range(segments + 1)]
         labels = [label_at(f) for f in fractions]
         cells: list[str] = [" "] * chars
         taken: list[tuple[int, int]] = []  # placed [start, end) spans, in order
+        ticks: list[int] = []  # the chart column each label points at
         ok = True
         for frac, label in zip(fractions, labels):
             if frac == 0.0:
                 start = 0
+                ref = 0
             elif frac == 1.0:
                 start = chars - len(label)
+                ref = chars - 1
             else:
                 centre = round(frac * chars)
                 start = min(chars - len(label), max(0, centre - len(label) // 2))
+                ref = min(chars - 1, centre)
             end = start + len(label)
             if end > chars or any(start < e + 2 and s < end + 2 for s, e in taken):
                 ok = False
                 break
             taken.append((start, end))
+            ticks.append(ref)
             cells[start:end] = label
         if ok:
-            return Text("".join(cells), style=style)
+            return Text("".join(cells), style=style), ticks
     # Even the two edge labels collide: keep the left one and let it stand alone.
     label = label_at(0.0)[:chars]
-    return Text(label.ljust(chars), style=style)
+    return Text(label.ljust(chars), style=style), [0]
 
 
 def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
@@ -372,7 +379,7 @@ def _tick_axis(
         string, ready to indent under the gutter.
     """
     cells = [" "] * chars
-    marked: set[int] = set()
+    marked: list[int] = []
     last_end = -_TICK_GAP
     for cell, label in sorted(ticks):
         cell = max(0, min(chars - 1, cell))
@@ -380,11 +387,16 @@ def _tick_axis(
         if start < last_end + _TICK_GAP:
             continue  # would crowd the label before it — drop this mark
         cells[start : start + len(label)] = list(label)
-        marked.add(cell)
+        marked.append(cell)
         last_end = start + len(label)
+    return _tick_border(chars, label_w, marked, style), "".join(cells)
+
+
+def _tick_border(chars: int, label_w: int, tick_cells: Sequence[int], style: str) -> Text:
+    """The boxed bottom border, notched with a ``┬`` at each charted tick column."""
+    marked = {max(0, min(chars - 1, c)) for c in tick_cells}
     bar = "".join("┬" if i in marked else "─" for i in range(chars))
-    border = Text(" " * label_w + " └" + bar + "┘", style=style)
-    return border, "".join(cells)
+    return Text(" " * label_w + " └" + bar + "┘", style=style)
 
 
 def axis_chart(
@@ -444,14 +456,17 @@ def axis_chart(
         out.append(line)
     if ticks is not None:
         border, caption_text = _tick_axis(chars, label_w, ticks, style)
-        out.append(border)
         caption = Text(" " * (label_w + 2))
         caption.append(caption_text, style="faint")
     else:
         assert label_at is not None, "axis_chart needs label_at or ticks"
-        out.append(Text(" " * label_w + " └" + "─" * chars + "┘", style=style))
+        # A continuous axis notches the same ┬ ticks under its ends-and-quarters
+        # labels as a columnar one does under its bars — one axis grammar everywhere.
+        caption_body, tick_cells = axis_caption(chars, label_at)
+        border = _tick_border(chars, label_w, tick_cells, style)
         caption = Text(" " * (label_w + 2))
-        caption.append_text(axis_caption(chars, label_at))
+        caption.append_text(caption_body)
+    out.append(border)
     out.append(caption)
     return out
 

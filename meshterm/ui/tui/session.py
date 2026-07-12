@@ -140,11 +140,20 @@ class TuiSession:
         """Pop ``screen`` (or the top) off the stack and repaint."""
         if not self._stack:
             return
+        popped: Optional[Screen] = None
         if screen is None or self._stack[-1] is screen:
-            self._stack.pop()
+            popped = self._stack.pop()
         elif screen in self._stack:
             self._stack.remove(screen)
+            popped = screen
         self._expose_overlay()
+        # A floating dialog is drawn as a content-sized box over the screen beneath. If any
+        # of its cells held a glyph the terminal painted wider than prompt_toolkit tracks
+        # (an emoji or box-draw fallback the differential renderer can't see), that overhang
+        # would otherwise survive as stray characters in the dialog's wake. Force the frame
+        # beneath to rewrite every cell as the dialog is torn down so nothing of it lingers.
+        if popped is not None and getattr(popped, "floating", False):
+            self._invalidate_last_frame()
         self.invalidate()
 
     def reset(self) -> None:

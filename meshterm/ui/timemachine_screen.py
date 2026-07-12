@@ -22,7 +22,7 @@ transmits.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from statistics import median
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -368,6 +368,43 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     return ticks
 
 
+def _fill_days(
+    active: list[tuple[str, int, int]], since: Optional[datetime], now: datetime
+) -> list[tuple[str, int, int]]:
+    """Fill a day series' gaps so an empty day shows as an empty bar, not a skip.
+
+    ``daily_activity`` returns only days with traffic, so a quiet day used to vanish and
+    its busy neighbours fused — a fortnight with two dead days reading as twelve adjacent
+    bars. This walks every calendar day of the window and emits ``(iso, 0, 0)`` for the
+    silent ones, so the chart's x-axis is real calendar time. The range runs from the
+    window's floor (but never earlier than the first day ever recorded — we don't invent
+    emptiness from before monitoring began) through today.
+
+    Args:
+        active: ``(iso_day, packets, nodes)`` for days with activity, oldest first.
+        since: The window's start (``None`` = all of history).
+        now: The current time (the series ends on its calendar day).
+
+    Returns:
+        ``(iso_day, packets, nodes)`` for every calendar day in range, oldest first.
+    """
+    if not active:
+        return []
+    by_iso = {iso: (packets, nodes) for iso, packets, nodes in active}
+    first = date.fromisoformat(active[0][0])
+    floor = since.date() if since is not None else first
+    start = max(first, floor)
+    end = max(start, now.date())
+    out: list[tuple[str, int, int]] = []
+    day = start
+    while day <= end:
+        iso = day.isoformat()
+        packets, nodes = by_iso.get(iso, (0, 0))
+        out.append((iso, packets, nodes))
+        day += timedelta(days=1)
+    return out
+
+
 def _day_columns(values: list[int], chars: int) -> list:
     """Stretch per-day counts into day-wide bars that fill the chart's width exactly.
 
@@ -436,10 +473,7 @@ def _mesh_sections(
     """
     now = utcnow()
     since = now - window if window is not None else None
-    days = ctx.repo.daily_activity()
-    if since is not None:
-        floor = since.strftime("%Y-%m-%d")
-        days = [d for d in days if d[0] >= floor]
+    days = _fill_days(ctx.repo.daily_activity(), since, now)
     if not days:
         return [
             Text(),
@@ -447,10 +481,23 @@ def _mesh_sections(
             Text("Press w to widen it.", style="muted"),
         ]
 
-    # The y-axis gutter is sized from the whole window's peaks (not just the
-    # visible slice), shared by both day charts so their gutters line up and
-    # neither chart's date range shifts relative to the other's.
-    label_w = max(len(str(max(d[1] for d in days))), len(str(max(d[2] for d in days))))
+    # The mesh-wide rhythm (charted below) folds the whole window into 96 fifteen-minute
+    # slices, so a busy slice's tally can top any single day's — compute it up front so its
+    # peak joins the day peaks in sizing one shared y-axis gutter.
+    offset_slots = round(
+        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 900
+    )
+    utc_slots = ctx.repo.quarter_hour_activity(since=since)
+    slots = [utc_slots[(s - offset_slots) % 96] for s in range(96)]
+
+    # The y-axis gutter is sized from the whole window's peaks (not just the visible
+    # slice) and shared by every chart, so all their gutters — and thus their left edges —
+    # line up. The rhythm keeps its own finer width; only the gutter is common.
+    label_w = max(
+        len(str(max(d[1] for d in days))),
+        len(str(max(d[2] for d in days))),
+        len(str(max(slots))),
+    )
     chars = max(20, width - 2 * (label_w + 2))
     shown = days[-chars * 2 :]
     out: list[RenderableType] = []
@@ -475,17 +522,17 @@ def _mesh_sections(
     )
 
     # The node page's rhythm chart, mesh-wide and four times finer: when does this *mesh*
-    # talk? 15-minute slices are grouped by UTC in SQL and rotated here into local time by
-    # the current offset in quarter-hour units (see Repository.quarter_hour_activity for why
-    # one rotation is honest enough). The wider chart earns the finer resolution its width.
-    offset_slots = round(
-        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 900
-    )
-    utc_slots = ctx.repo.quarter_hour_activity(since=since)
-    slots = [utc_slots[(s - offset_slots) % 96] for s in range(96)]
+    # talk? The 96 fifteen-minute slices (grouped by UTC in SQL, rotated into local time
+    # above) keep their own 48-cell width but share the day charts' gutter, so this chart's
+    # left edge lines up with the two above it.
     out.append(Text())
     out.append(_heading("Rhythm", "packets by local time of day · 15-min slices"))
-    out.extend(axis_chart(timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48, _quarter_axis))
+    out.extend(
+        axis_chart(
+            timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48,
+            _quarter_axis, label_w=label_w,
+        )
+    )
 
     arrivals = ctx.repo.first_seen(since=since)
     out.append(Text())

@@ -93,6 +93,14 @@ KIND_ICONS = {
 }
 DEFAULT_ICON = "❔"
 
+#: The floating dialog is sized to its content, which otherwise shrinks and grows as you
+#: page between a five-line advert and a telemetry frame's twenty — a jarring resize on
+#: every keystroke. Padding a short packet's body up to this floor holds the box at a
+#: steady minimum height so navigation stays put; a genuinely tall packet still grows past
+#: it. Sized for the common overheard-packet layout (heard/from/reception/class/route/via)
+#: so paging a burst of similar frames never resizes at all.
+_MIN_BODY_ROWS = 10
+
 
 @dataclass(slots=True)
 class PacketEntry:
@@ -365,6 +373,10 @@ class PacketViewer(Screen):
             grid.add_row(Text(label, style="muted"), value)
         lines = render_lines(grid, width)
         self._scroll_total = max(1, len(lines))
+        # Hold the dialog at a steady minimum height so paging between a short packet and
+        # a tall one doesn't resize the box out from under the reader (see _MIN_BODY_ROWS).
+        if len(lines) < _MIN_BODY_ROWS:
+            lines += [""] * (_MIN_BODY_ROWS - len(lines))
         return lines
 
     def _rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:

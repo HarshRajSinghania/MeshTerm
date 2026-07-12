@@ -76,7 +76,7 @@ class SelectScreen(Screen):
         *,
         prompt: str = "",
         default: Any = None,
-        footer_hint: str = "↑↓ move · type to filter · Enter select · Esc back",
+        footer_hint: Optional[str] = None,
         filterable: bool = True,
         wrap: bool = True,
     ) -> None:
@@ -88,7 +88,8 @@ class SelectScreen(Screen):
             prompt: An optional instruction shown inside the box, above the list — so a
                 floating select reads like the other dialogs (a prompt above its controls).
             default: A choice value to pre-highlight, if present.
-            footer_hint: Footer key hint.
+            footer_hint: Footer key hint; defaults to one that mentions type-to-filter only
+                when ``filterable`` (a fixed list shouldn't advertise a filter it ignores).
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
                 the startup device picker) where type-to-filter would only get in the way.
             wrap: Whether the highlight wraps around the ends (Down from the last row jumps
@@ -97,6 +98,12 @@ class SelectScreen(Screen):
         """
         super().__init__()
         self.title = title
+        if footer_hint is None:
+            footer_hint = (
+                "↑↓ move · type to filter · Enter select · Esc back"
+                if filterable
+                else "↑↓ move · Enter select · Esc back"
+            )
         self.footer_hint = footer_hint
         self._prompt = prompt
         self._filterable = filterable

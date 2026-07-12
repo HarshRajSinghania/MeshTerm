@@ -111,10 +111,13 @@ class Ui:
         prompt: str = "",
         default: Any = None,
         wrap: bool = True,
+        filterable: bool = True,
     ) -> Any:
         """Prompt the user to choose one item; return its value or ``None`` if cancelled.
 
-        ``prompt`` draws an instruction inside the popup, above the list.
+        ``prompt`` draws an instruction inside the popup, above the list. Pass
+        ``filterable=False`` for a short, fixed list so a stray key can't narrow (and
+        resize) it.
         """
         raise NotImplementedError
 
@@ -282,6 +285,7 @@ class PlainUi(Ui):
         prompt: str = "",
         default: Any = None,
         wrap: bool = True,
+        filterable: bool = True,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -494,10 +498,11 @@ class TuiUi(Ui):
         prompt: str = "",
         default: Any = None,
         wrap: bool = True,
+        filterable: bool = True,
     ) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(
-            title, items, prompt=prompt, default=default, wrap=wrap
+            title, items, prompt=prompt, default=default, wrap=wrap, filterable=filterable
         )
 
     async def select_startup(

@@ -253,6 +253,17 @@ def test_axis_chart_ticks_notch_the_border_and_centre_labels() -> None:
     assert out[2].plain == "   A  D"     # labels centred under their ticks
 
 
+def test_axis_chart_continuous_axis_notches_ticks_under_its_labels() -> None:
+    """A continuous (label_at) chart now notches ┬ ticks under its ends-and-quarters labels."""
+    rows = timeline_rows([9] * 8, rows=1)
+    out = axis_chart(rows, 9, 20, lambda f: "now" if f >= 1.0 else str(round(f * 100)))
+    border, caption = out[1].plain, out[2].plain
+    assert "┬" in border                      # the continuous axis is ticked, not a plain rule
+    assert border.startswith("  └") and border.endswith("┘")
+    assert border[-2] == "┬"                  # the rightmost tick sits at the 'now' edge
+    assert "now" in caption and "0" in caption
+
+
 def test_axis_chart_ticks_thin_a_label_that_would_collide() -> None:
     """A tick whose label would overprint the one before it is dropped, tick and all."""
     rows = timeline_rows([9] * 16, rows=1)

@@ -784,17 +784,19 @@ async def send_advert(ctx: "AppContext") -> None:
     # No emoji in this floating dialog's title: a terminal that paints an emoji a cell
     # narrower than Rich measures it leaves the content-sized popup's title border short,
     # bleeding the backdrop through the frame. The menu row keeps its 📡 icon (drawn in the
-    # full-width base, where the miscount has nowhere to show).
+    # full-width base, where the miscount has nowhere to show). filterable=False too: a
+    # stray key must not narrow (and so resize) this fixed four-item list.
     choice = await ctx.ui.select(
         "Send advert",
         [
-            Choice(title="Zero-hop  —  Announce directly to neighbours in range", value="zero"),
+            Choice(title="Zero-hop  —  Announce to direct neighbours", value="zero"),
             Choice(title="Flood  —  Repeaters rebroadcast it across the mesh", value="flood"),
             Choice(title="Share QR / URI  —  Show this node's contact card", value="share"),
             Separator(" "),
             Choice(title="Back", value=None),
         ],
         prompt="Announce this node to the mesh:",
+        filterable=False,
     )
     if choice is None:
         return

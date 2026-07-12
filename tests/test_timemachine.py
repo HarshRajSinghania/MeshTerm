@@ -170,6 +170,36 @@ def test_day_columns_always_hits_the_exact_width() -> None:
         assert len(cols) == chars * 2, (n, chars)
 
 
+def test_fill_days_shows_gap_days_as_zero_bars() -> None:
+    """A quiet day between busy ones is emitted with zero counts, not skipped."""
+    from datetime import datetime, timezone
+
+    from meshterm.ui.timemachine_screen import _fill_days
+
+    active = [("2026-07-02", 50, 5), ("2026-07-05", 80, 8)]
+    now = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
+    filled = _fill_days(active, datetime(2026, 7, 1, tzinfo=timezone.utc), now)
+    assert [iso for iso, _p, _n in filled] == [
+        "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06",
+    ]
+    counts = {iso: packets for iso, packets, _n in filled}
+    assert counts["2026-07-03"] == 0 and counts["2026-07-04"] == 0  # the gap, now visible
+    assert counts["2026-07-02"] == 50 and counts["2026-07-05"] == 80  # the busy days intact
+
+
+def test_fill_days_never_invents_days_before_recording_began() -> None:
+    """A window floor earlier than the first recorded day clamps to that day, not the floor."""
+    from datetime import datetime, timezone
+
+    from meshterm.ui.timemachine_screen import _fill_days
+
+    active = [("2026-07-10", 10, 1)]
+    now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+    filled = _fill_days(active, datetime(2026, 6, 12, tzinfo=timezone.utc), now)  # a 30 d floor
+    assert filled[0][0] == "2026-07-10"   # not the 2026-06-12 floor
+    assert filled[-1][0] == "2026-07-12"  # …but still runs through today
+
+
 def test_day_centers_land_under_each_bar() -> None:
     """A day's centre cell sits within its own bar's span (so a tick points at it)."""
     chars = 60
@@ -336,6 +366,26 @@ def test_mesh_page_day_axis_ticks_sit_under_dated_columns(tmp_path: Path) -> Non
     assert "today" in caption
     # Every tick has a non-blank label somewhere near it (labels centre on their tick).
     assert any(not caption[max(0, c - 3):c + 4].isspace() for c in tick_cols)
+    repo.close()
+
+
+def test_mesh_page_rhythm_left_edge_aligns_with_the_day_charts(tmp_path: Path) -> None:
+    """The rhythm shares the day charts' y-axis gutter, so all three left edges line up.
+
+    The rhythm keeps its own narrower width (only the gutter is shared), so this checks
+    the border's opening ``└`` column, not the whole width.
+    """
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
+
+    def border_col(heading: str) -> int:
+        start = next(i for i, line in enumerate(lines) if heading in line)
+        border = next(line for line in lines[start:] if "└" in line)
+        return border.index("└")
+
+    assert border_col("Packets per day") == border_col("Rhythm")
+    assert border_col("Nodes per day") == border_col("Rhythm")
     repo.close()
 
 

@@ -28,7 +28,12 @@ class AtlasTool(Tool):
 
     name = "atlas"
     title = "Mesh atlas"
-    icon = "🕸️"
+    # A single-codepoint emoji (like every other tool icon), not a VS16 sequence: the
+    # emoji-width calibration strips VS16 on terminals that render it narrow, which would
+    # measure a 🕸️ one cell short of how it paints and drift this row's help text right of
+    # the column the others align to. The wireframe globe reads as the logical topology,
+    # the geographic map's 🌍 counterpart.
+    icon = "🌐"
     help = "Draw the mesh's observed topology — links, SNR, hop rings"
     category = "Mesh"
     order = 32  # beside Map: the logical shape next to the geographic one
