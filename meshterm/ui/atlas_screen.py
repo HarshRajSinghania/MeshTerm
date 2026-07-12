@@ -1,32 +1,38 @@
-"""The Mesh Atlas: the mesh's observed shape, drawn as an explorable braille graph.
+"""The Mesh atlas: walk the mesh's observed shape one node at a time.
 
 The interactive face of the ``atlas`` tool. The trace path composer already distills
 every fragment of topology we ever received — trace walks, firmware routes, RX-logged
 relay chains, repeater neighbour tables — into one evidence graph
-(:mod:`~meshterm.services.topology`); this screen is that graph made visible. Nothing
+(:mod:`~meshterm.services.topology`); this screen is that graph made explorable. Nothing
 here transmits: the atlas is a reading of what the radio has already heard.
 
-Our own node anchors the centre and every other node sits on a concentric ring at its
-evidenced hop distance — the rings are drawn as faint dotted guides, so the picture
-answers *how far out is everything?* like a radar scope. Angles come from the
-:mod:`~meshterm.services.atlas_layout` relaxation, so linked nodes gather into wedges
-instead of piling onto one line. Edges are braille lines coloured by the link's median
-SNR (green → amber → red, slate for links with no reading) and faded by evidence age.
+Rather than plotting the whole mesh at once (which reads as a hairball the moment the
+graph grows), the atlas keeps one node *in focus* — our own, to begin with — and shows
+only its immediate neighbourhood:
 
-The camera is the map's: **arrows pan** (Shift for fine), **PgUp/PgDn zoom**, and
-**Home** resets to the full fit — so a tangle that reads as noise at 1× opens right up
-at 4×, with the label budget growing as the zoom does. **Typing finds nodes** (matches
-keep bright labels, everything else dims; ``Enter`` selects the first match), **Tab**
-walks the graph selection node by node (recentring when the selection is off-screen),
-``Enter`` floats the selected node's per-link details, ``Ctrl+R`` rebuilds from
-storage, and ``Esc`` peels find → selection → screen. The bottom panel reads the
-overview, the selection, or the find state, whichever is active.
+* the **canvas** draws the focus at the centre with its direct neighbours fanned around
+  it, edges as braille lines coloured by the link's median SNR (green → amber → red,
+  slate for links with no reading) and faded by evidence age. The node the trail came
+  from is anchored to the **west**, so walking always reads as moving right and backing
+  up as moving left. A dozen markers at most — never a tangle.
+* the **link list** beneath repeats those neighbours as selectable rows, strongest
+  observed link first: type glyph, name, hash, SNR with a quality bar, the evidence
+  behind the link (samples, sources, age), and how many links continue onward from
+  that node. The highlighted row's marker and label light white on the canvas.
+
+**Enter walks**: the highlighted neighbour becomes the new focus, the breadcrumb trail
+across the top grows (``you › YUL-Cartierville › …``), and **⌫ steps back** along it.
+**Home** refocuses our own node. **Typing finds** — a global filter over every node in
+the graph, islands included; Enter teleports the focus to the highlighted match (the
+trail restarts there, since the walk didn't cross the gap). ``^R`` rebuilds the graph
+from storage, and Esc peels find first, the screen second. PgUp/PgDn scroll when a hub
+node's list outgrows the viewport.
 """
 
 from __future__ import annotations
 
-import asyncio
 import math
+from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -38,50 +44,53 @@ from ..core.models import (
     Contact,
     utcnow,
 )
-from ..services.atlas_layout import AtlasLayout, compute_layout
 from ..services.topology import Link, MeshTopology
 from .map_render import _NODE, _REPEATER, _SELF
 from .mapcanvas import RGB, MapCanvas, parse_hex
-from .theme import snr_style
+from .menus import fit_cells
+from .theme import name_style, snr_style
+from .trace_screen import snr_bar
 from .tui.render import render_to_ansi
 from .tui.screen import Screen
-from .widgets import _format_age
+from .widgets import _format_age, highlighted_hash
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Horizontal / vertical dot-space margins the 1× fit keeps clear of the canvas edge,
-#: so an outermost node's marker and label have room to land.
-_PAD_X_DOTS = 16
-_PAD_Y_DOTS = 5
+#: Horizontal / vertical dot-space margins the neighbour fan keeps clear of the canvas
+#: edge, so an outermost marker and its label have room to land.
+_PAD_X_DOTS = 18
+_PAD_Y_DOTS = 6
 
-#: Bottom lines reserved under the canvas for the info panel (a spacer + three rows).
-_PANEL_H = 4
+#: The canvas's height in character rows: enough to read the fan's shape, never so
+#: tall it starves the link list (the body scrolls, but the list should open visible).
+_CANVAS_MIN_H = 6
+_CANVAS_MAX_H = 12
 
 #: The widest a node label may render on the canvas before it is ellipsized.
 _LABEL_W = 16
 
-#: Zoom bounds and the factor one PgUp/PgDn step multiplies by. 1.0 is the full fit;
-#: the ceiling is deep enough to open up any realistic wedge of nodes.
-_ZOOM_MIN = 1.0
-_ZOOM_MAX = 12.0
-_ZOOM_STEP = 1.5
+#: How many canvas labels are offered beyond the always-on ones (focus, selection,
+#: trail-back). A busy hub keeps its markers but drops the excess labels — the list
+#: below names every row anyway.
+_LABEL_BUDGET = 8
 
-#: Fraction of the visible span one coarse pan keypress moves the camera.
-_PAN_STEP = 0.30
+#: The fan's angular reach on each side of due east, in radians. The west wedge is
+#: reserved for the trail-back node, so the fan never overprints it.
+_FAN_HALF_ANGLE = math.radians(130)
 
-#: How many labels the canvas offers at 1×; the budget grows with the zoom's square
-#: (zooming in *creates* the space the labels need). Selection, find matches, and our
-#: own node are always offered regardless.
-_LABEL_BUDGET_BASE = 6
+#: How many find matches the list shows at most (the filter narrows it fast).
+_MAX_MATCHES = 10
 
-#: Ring-guide dot colour — dark slate, beneath every edge — and the dot-space gap
-#: between its dots (sparse enough to read as a guide, not a feature).
-_RING_RGB: RGB = (52, 61, 78)
-_RING_DOT_GAP = 4.0
+#: Display cells the neighbour list's name lane spans (longer names ellipsize).
+_LIST_NAME_W = 16
+
+#: Display cells the hash lane spans (canonical ids are 12 hex; six with an ellipsis
+#: keeps rows inside 72 columns while the prefix stays recognisable).
+_LIST_HASH_W = 6
 
 #: SNR (dB) → edge colour anchors, interpolated linearly and clamped at the ends: the
-#: red/amber/green of the app's snr styles, so the graph and the tables agree.
+#: red/amber/green of the app's snr styles, so the graph and the rows agree.
 _SNR_STOPS: tuple[tuple[float, RGB], ...] = (
     (-15.0, (239, 68, 68)),
     (0.0, (250, 204, 21)),
@@ -94,8 +103,9 @@ _NO_READING: RGB = (100, 116, 139)
 #: Marker style for a node no contact matches — heard of, never identified.
 _UNKNOWN = ("○", "#94a3b8")
 
-#: Label colour for find-filter matches: full white, the brightest thing drawn.
-_MATCH_LABEL: RGB = (255, 255, 255)
+#: One-letter tags for the evidence classes backing a link, matching the path
+#: composer's: T(race), R(oute), P(acket log), N(eighbour table).
+_SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P", "neighbour": "N"}
 
 
 def _snr_rgb(snr: Optional[float]) -> RGB:
@@ -131,7 +141,7 @@ def _freshness(last_seen: Optional[datetime], now: datetime) -> float:
 
 
 class AtlasScreen(Screen):
-    """The full-screen atlas: pannable/zoomable canvas, a live info panel beneath."""
+    """The full-screen atlas walker: a focus neighbourhood canvas over a link list."""
 
     floating = False
 
@@ -142,16 +152,18 @@ class AtlasScreen(Screen):
         topo: MeshTopology,
         contacts: dict[str, Contact],
         self_label: str,
+        prefix_bytes: int = 0,
         rebuild: Optional[Callable[[], MeshTopology]] = None,
     ) -> None:
         """Create the atlas over a built topology snapshot.
 
         Args:
-            session: The running TUI session (size, repaints, and the detail dialog).
-            topo: The evidence graph to draw.
+            session: The running TUI session (repaints).
+            topo: The evidence graph to walk.
             contacts: Contacts keyed by canonical id, for glyphs, names, and ages.
             self_label: Display name for our own node (its mesh name when known).
-            rebuild: Rebuilds the graph from storage for the ``Ctrl+R`` key; ``None``
+            prefix_bytes: Path-hash width to light in the hash lane (0 = none).
+            rebuild: Rebuilds the graph from storage for the ``^R`` key; ``None``
                 leaves the snapshot fixed (tests, and the odd caller without a repo).
         """
         super().__init__()
@@ -159,166 +171,168 @@ class AtlasScreen(Screen):
         self._topo = topo
         self._contacts = contacts
         self._self_label = self_label
+        self._prefix_bytes = prefix_bytes
         self._rebuild = rebuild
-        #: Selected canonical id, or ``None`` for the whole-mesh overview.
-        self._selected: Optional[str] = None
-        #: Tab cycle: us first, then rings inside-out, each ring by angle.
-        self._cycle: list[str] = []
-        #: The camera: zoom (1.0 = the whole graph fits) and its unit-space centre.
-        self._zoom = _ZOOM_MIN
-        self._cam = (0.0, 0.0)
-        #: The live find-as-you-type node filter ("" = off).
+        #: The walked trail of canonical ids; the focus is its last entry. Walking
+        #: appends, ⌫ pops, Home resets to us, a find teleport restarts it.
+        self._trail: list[str] = [topo.self_id]
+        #: Index of the highlighted row in the current list (neighbours or matches).
+        self._index = 0
+        #: The live find-as-you-type filter ("" = off; matches every node known).
         self._filter = ""
-        #: A node to bring on-screen at the next paint (set by Tab / find-select).
-        self._reveal: Optional[str] = None
-        self._layout: Optional[AtlasLayout] = None
-        self._layout_generation: Optional[int] = None
-        self._generation = 0  # bumped by rebuild so the layout cache invalidates
-        self._dot_size = (2, 2)  # dot-space canvas size, recorded each render
-        self._dialog_open = False
         self._needs_scrub = True  # braille smear scrub, exactly like the map
+        self._cursor: Optional[int] = None
 
-    # --- input -----------------------------------------------------------------------
+    # --- state -------------------------------------------------------------------
+
+    @property
+    def _focus(self) -> str:
+        """The node currently in focus (the trail's last step)."""
+        return self._trail[-1]
+
+    @property
+    def _came_from(self) -> Optional[str]:
+        """The node the trail arrived from, or ``None`` at the trail's start."""
+        return self._trail[-2] if len(self._trail) > 1 else None
+
+    def _links_of(self, node: str) -> list[tuple[str, Link]]:
+        """``(other, link)`` for every link off ``node``, strongest evidence first."""
+        now = utcnow()
+        pairs = [
+            (link.b if link.a == node else link.a, link)
+            for link in self._topo.links()
+            if node in (link.a, link.b)
+        ]
+        pairs.sort(key=lambda pair: -pair[1].strength(now))
+        return pairs
+
+    def _all_nodes(self) -> set[str]:
+        """Every node the graph mentions, plus us (walkable even when alone)."""
+        nodes = {self._topo.self_id}
+        for link in self._topo.links():
+            nodes.add(link.a)
+            nodes.add(link.b)
+        return nodes
+
+    def _hops_out(self) -> dict[str, int]:
+        """BFS hop distance from our own node over the evidence links.
+
+        Nodes with no path to us are absent — they are the islands, flagged as such
+        wherever a distance would otherwise show.
+        """
+        adjacency: dict[str, set[str]] = {}
+        for link in self._topo.links():
+            adjacency.setdefault(link.a, set()).add(link.b)
+            adjacency.setdefault(link.b, set()).add(link.a)
+        depths = {self._topo.self_id: 0}
+        queue: deque[str] = deque([self._topo.self_id])
+        while queue:
+            node = queue.popleft()
+            for neighbour in adjacency.get(node, ()):
+                if neighbour not in depths:
+                    depths[neighbour] = depths[node] + 1
+                    queue.append(neighbour)
+        return depths
+
+    def _matches(self) -> list[str]:
+        """Nodes the find filter matches: nearest first, then by display name."""
+        needle = self._filter.casefold()
+        if not needle:
+            return []
+        depths = self._hops_out()
+        candidates = [
+            node for node in self._all_nodes()
+            if needle in self._label(node).casefold() or needle in node.casefold()
+        ]
+        candidates.sort(key=lambda n: (depths.get(n, 999), self._label(n).casefold()))
+        return candidates[:_MAX_MATCHES]
+
+    def _rows(self) -> list[str]:
+        """The selectable node ids the list currently shows (matches, or neighbours)."""
+        if self._filter:
+            return self._matches()
+        return [other for other, _link in self._links_of(self._focus)]
+
+    # --- input -------------------------------------------------------------------
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Camera and find hints; the find query takes the row over while active."""
+        """Walking keys — or the live find query while one is being typed."""
         if self._filter:
-            return f"find: {self._filter}▏ · Enter select · ⌫ erase · Esc clear"
-        return "↑↓←→ pan · PgUp/PgDn zoom · Tab walk · Enter info · type to find · Esc"
+            return f"find: {self._filter}▏ · ↑↓ move · Enter focus · ⌫ erase · Esc clear"
+        return "↑↓ move · Enter focus · ⌫ back · Home you · type to find · Esc back"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Pan, zoom, walk, find, rebuild, or dismiss.
-
-        Every printable key feeds the find filter — no letters are bound to actions —
-        and Esc peels one layer at a time: the filter, then the selection, then the
-        screen itself.
-        """
+        """Move the highlight, walk, back up, find, rebuild, or dismiss."""
+        rows = self._rows()
         if action == "escape":
             if self._filter:
                 self._filter = ""
-            elif self._selected is not None:
-                self._selected = None
+                self._index = 0
             else:
                 self.resolve(None)
                 return
-        elif action in ("up", "down", "left", "right"):
-            self._pan(action, fine=False)
-        elif action.startswith("shift_") and action[len("shift_"):] in (
-            "up", "down", "left", "right",
-        ):
-            self._pan(action[len("shift_"):], fine=True)
-        elif action == "pageup":
-            self._set_zoom(self._zoom * _ZOOM_STEP)
-        elif action == "pagedown":
-            self._set_zoom(self._zoom / _ZOOM_STEP)
-        elif action in ("home", "ctrl_home"):
-            self._zoom = _ZOOM_MIN
-            self._cam = (0.0, 0.0)
-        elif action == "tab":
-            self._step_selection(1)
+        elif action == "up" and rows:
+            self._index = (self._index - 1) % len(rows)
+        elif action == "down" and rows:
+            self._index = (self._index + 1) % len(rows)
+        elif action == "pageup" and rows:
+            # The highlight pages (the dashboard feed's behaviour): a row is always
+            # selected here, and the cursor pin keeps it in view, so paging the view
+            # without the highlight would just snap straight back.
+            self._index = max(0, self._index - self._page_step)
+        elif action == "pagedown" and rows:
+            self._index = min(len(rows) - 1, self._index + self._page_step)
         elif action == "enter":
-            self._commit_enter()
+            self._walk(rows)
+        elif action == "backspace":
+            if self._filter:
+                self._filter = self._filter[:-1]
+                self._index = 0
+            elif len(self._trail) > 1:
+                self._trail.pop()
+                self._index = 0
+        elif action in ("home", "ctrl_home"):
+            self._trail = [self._topo.self_id]
+            self._filter = ""
+            self._index = 0
         elif action == "text":
             self._filter += data
+            self._index = 0
         elif action == "space" and self._filter:
             self._filter += " "  # node names carry spaces; only meaningful mid-query
-        elif action == "backspace":
-            self._filter = self._filter[:-1]
-        elif action == "retry":  # Ctrl+R
+        elif action == "retry":  # ^R
             self._do_rebuild()
         self._needs_scrub = True
         self._session.invalidate()
 
-    def _pan(self, direction: str, *, fine: bool) -> None:
-        """Move the camera one step (or one character cell, when ``fine``).
-
-        The step is a fraction of the *visible* unit span, so panning covers the same
-        on-screen distance at every zoom; the camera is then clamped so the graph can
-        never be lost off-screen (at 1× it snaps back to centre).
-        """
-        dx = {"left": -1, "right": 1}.get(direction, 0)
-        dy = {"up": -1, "down": 1}.get(direction, 0)
-        span = 2.0 / self._zoom  # the visible extent of unit space, edge to edge
-        step = span * (_PAN_STEP / 8 if fine else _PAN_STEP)
-        self._cam = (self._cam[0] + dx * step, self._cam[1] + dy * step)
-        self._clamp_cam()
-
-    def _set_zoom(self, zoom: float) -> None:
-        """Clamp and apply a zoom level, re-clamping the camera to the new range."""
-        self._zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
-        self._clamp_cam()
-
-    def _clamp_cam(self) -> None:
-        """Keep the camera within the graph: the pan range grows as the zoom does.
-
-        At 1× the whole graph is on screen and the only sensible centre is the
-        origin; each zoom step frees ``1 - 1/zoom`` of unit space per side (plus a
-        small overshoot so an edge node can be centred).
-        """
-        limit = max(0.0, 1.0 - 1.0 / self._zoom) * 1.1
-        self._cam = (
-            max(-limit, min(limit, self._cam[0])),
-            max(-limit, min(limit, self._cam[1])),
-        )
-
-    def _step_selection(self, delta: int) -> None:
-        """Cycle ``… → overview → us → ring by ring …`` and reveal the new selection."""
-        if not self._cycle:
+    def _walk(self, rows: list[str]) -> None:
+        """Focus the highlighted row: a step along the trail, or a find teleport."""
+        if not rows:
             return
-        stops: list[Optional[str]] = [None, *self._cycle]
-        at = stops.index(self._selected) if self._selected in stops else 0
-        self._selected = stops[(at + delta) % len(stops)]
-        self._reveal = self._selected
-
-    def _matches(self) -> list[str]:
-        """Nodes the live find filter matches, in the Tab cycle's stable order."""
-        needle = self._filter.casefold()
-        if not needle:
-            return []
-        return [n for n in self._cycle if needle in self._label(n).casefold()]
-
-    def _commit_enter(self) -> None:
-        """Enter: adopt the find's first match, or open the selection's details."""
+        target = rows[min(self._index, len(rows) - 1)]
         if self._filter:
-            matches = self._matches()
-            if matches:
-                self._selected = matches[0]
-                self._reveal = matches[0]
-                self._filter = ""
-            return
-        if self._selected is not None:
-            self._open_details()
+            # A teleport restarts the trail at the target — the walk didn't cross the
+            # gap, so pretending it did would make ⌫ retrace a path never taken.
+            self._trail = [target]
+            self._filter = ""
+        elif target == self._came_from:
+            self._trail.pop()  # walking back through the west node = one step back
+        else:
+            self._trail.append(target)
+        self._index = 0
 
     def _do_rebuild(self) -> None:
-        """Re-read the evidence and relayout, keeping the selection when it survives."""
+        """Re-read the evidence and keep the trail where it survives."""
         if self._rebuild is None:
             return
         self._topo = self._rebuild()
-        self._generation += 1  # the next paint recomputes the layout
+        known = self._all_nodes()
+        kept = [node for node in self._trail if node in known]
+        self._trail = kept or [self._topo.self_id]
+        self._index = 0
 
-    def _open_details(self) -> None:
-        """Float the selected node's full link listing over the atlas."""
-        node = self._selected
-        if node is None or self._dialog_open:
-            return
-        self._dialog_open = True
-
-        async def run() -> None:
-            try:
-                await self._session.message_dialog(
-                    self._details_text(node), title=self._label(node)
-                )
-            finally:
-                self._dialog_open = False
-                self._session.invalidate()
-
-        try:
-            asyncio.ensure_future(run())
-        except RuntimeError:  # pragma: no cover - no running loop (unit rendering)
-            self._dialog_open = False
-
-    # --- smear scrub (same fallback-glyph problem as the map) -------------------------
+    # --- smear scrub (same fallback-glyph problem as the map) ---------------------
 
     def consume_edge_scrub(self) -> int:
         """Right-edge columns to force-repaint after a redraw (see the map screen)."""
@@ -327,167 +341,304 @@ class AtlasScreen(Screen):
         self._needs_scrub = False
         return 2
 
-    # --- projection --------------------------------------------------------------------
-
-    def _project(self, unit: tuple[float, float]) -> tuple[int, int]:
-        """Unit-space → dot-space through the current camera (aspect, zoom, pan)."""
-        dot_w, dot_h = self._dot_size
-        rx = max(8.0, dot_w / 2.0 - _PAD_X_DOTS)
-        ry = max(6.0, dot_h / 2.0 - _PAD_Y_DOTS)
-        x = dot_w / 2.0 + (unit[0] - self._cam[0]) * rx * self._zoom
-        y = dot_h / 2.0 + (unit[1] - self._cam[1]) * ry * self._zoom
-        return round(x), round(y)
-
-    def _reveal_if_offscreen(self, node: str) -> None:
-        """Centre the camera on ``node`` if it currently projects off the canvas."""
-        layout = self._layout
-        if layout is None or node not in layout.positions:
-            return
-        dot_w, dot_h = self._dot_size
-        x, y = self._project(layout.positions[node])
-        if 0 <= x < dot_w and 0 <= y < dot_h:
-            return
-        self._cam = layout.positions[node]
-        self._clamp_cam()
-
-    # --- rendering ---------------------------------------------------------------------
+    # --- rendering -----------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Draw the ring guides, edges, markers, and labels, then the info panel."""
-        _, cell_h = self._session.base_body_size()
-        canvas_h = max(4, cell_h - _PANEL_H)
-        self._dot_size = (width * 2, canvas_h * 4)
-
+        """Render the trail, the focus line, the canvas, and the link list."""
         links = self._topo.links()
-        matches = self._matches()
-        self.title = self._compose_title(links, matches)
+        rows = self._rows()
+        self._index = max(0, min(self._index, len(rows) - 1)) if rows else 0
+        self.title = self._compose_title(links)
+        self._cursor = None
         if not links:
             return self._empty_state(width)
 
-        self._ensure_layout(links)
-        if self._reveal is not None:
-            self._reveal_if_offscreen(self._reveal)
-            self._reveal = None
-        layout = self._layout
-        assert layout is not None  # _ensure_layout just ran
+        depths = self._hops_out()
+        selected = rows[self._index] if rows else None
 
-        canvas = MapCanvas(width, canvas_h)
-        now = utcnow()
-        match_set = set(matches)
+        lines: list[str] = []
+        lines.extend(self._header_lines(width, depths))
+        lines.extend(self._canvas_lines(width, selected))
+        lines.append(render_to_ansi(self._legend(), width, no_wrap=True))
+        lines.append("")
+        lines.extend(self._list_lines(width, rows, depths))
+        self._scroll_total = max(1, len(lines))
+        return lines
 
-        self._draw_rings(canvas, layout)
-        self._draw_edges(canvas, layout, links, now, match_set)
-        self._draw_nodes(canvas, layout, match_set)
+    def cursor_line(self) -> Optional[int]:
+        """The highlighted list row, so the session keeps it in view."""
+        return self._cursor
 
-        return canvas.to_ansi_lines() + self._panel_lines(width, links, matches)
-
-    def _compose_title(self, links: list[Link], matches: list[str]) -> str:
-        """The status title: counts, the zoom level, and the find tally when active."""
-        nodes = len(self._layout_nodes(links))
-        title = f"Mesh atlas · {nodes} nodes · {len(links)} links"
-        if self._zoom > _ZOOM_MIN:
-            title += f" · {self._zoom:.1f}×"
+    def _compose_title(self, links: list[Link]) -> str:
+        """``Mesh atlas — focus`` plus the graph's status atoms."""
+        title = f"Mesh atlas — {self._label(self._focus)}"
+        title += f" · {len(self._all_nodes())} nodes · {len(links)} links"
         if self._filter:
+            matches = self._matches()
             title += f" · {len(matches)} match{'es' if len(matches) != 1 else ''}"
         return title
 
-    def _draw_rings(self, canvas: MapCanvas, layout: AtlasLayout) -> None:
-        """Dot the hop-ring guides under everything: the atlas's radar-scope grid.
+    def _header_lines(self, width: int, depths: dict[str, int]) -> list[str]:
+        """The breadcrumb trail (when walking) and the focus node's identity line."""
+        out: list[str] = []
+        if len(self._trail) > 1:
+            trail = Text()
+            for i, node in enumerate(self._trail):
+                if i:
+                    trail.append(" › ", style="muted")
+                last = i == len(self._trail) - 1
+                trail.append(
+                    self._label(node), style="bold" if last else "muted"
+                )
+            trail.truncate(width, overflow="ellipsis")
+            out.append(render_to_ansi(trail, width, no_wrap=True))
+        out.append(render_to_ansi(self._focus_line(depths), width, no_wrap=True))
+        return out
 
-        Each ring is sampled at a spacing that lands one dot every
-        :data:`_RING_DOT_GAP` dots of on-screen arc, so the guides stay sparse at 1×
-        and don't thicken as the zoom multiplies their radius.
-        """
-        dot_w, dot_h = self._dot_size
-        rx = max(8.0, dot_w / 2.0 - _PAD_X_DOTS) * self._zoom
-        ry = max(6.0, dot_h / 2.0 - _PAD_Y_DOTS) * self._zoom
-        for ring in range(1, layout.max_ring + 1):
-            radius = ring / layout.max_ring
-            arc = math.tau * radius * max(rx, ry)  # on-screen circumference, roughly
-            samples = max(24, int(arc / _RING_DOT_GAP))
-            for i in range(samples):
-                angle = i / samples * math.tau
-                x, y = self._project((radius * math.cos(angle), radius * math.sin(angle)))
-                canvas.plot(x, y, _RING_RGB, 0)
+    def _focus_line(self, depths: dict[str, int]) -> Text:
+        """Who is in focus: glyph, name, hash, kind, distance, and recency."""
+        node = self._focus
+        glyph, color = self._glyph(node)
+        contact = self._contacts.get(node)
+        line = Text()
+        line.append(glyph, style=color)
+        line.append(" ")
+        line.append(self._label(node), style=self._list_name_style(node))
+        line.append("  ")
+        line.append_text(highlighted_hash(node, self._prefix_bytes))
+        if node == self._topo.self_id:
+            line.append("  ·  this device", style="muted")
+        else:
+            kind = (
+                NODE_TYPE_LABELS.get(contact.node_type, "node")
+                if contact is not None
+                else "unknown node"
+            )
+            line.append(f"  ·  {kind}", style="muted")
+            if node not in depths:
+                line.append("  ·  island — no observed path to you", style="warn")
+            else:
+                ring = depths[node]
+                line.append(f"  ·  {ring} hop{'s' if ring != 1 else ''} out", style="muted")
+            if contact is not None and contact.last_seen is not None:
+                secs = max(0.0, (utcnow() - contact.last_seen).total_seconds())
+                line.append(f"  ·  heard {_format_age(secs)}", style="muted")
+        return line
 
-    def _draw_edges(
-        self,
-        canvas: MapCanvas,
-        layout: AtlasLayout,
-        links: list[Link],
-        now: datetime,
-        match_set: set[str],
-    ) -> None:
-        """Draw every link, emphasis following the selection or the find filter."""
-        for link in links:
-            pa = layout.positions.get(link.a)
-            pb = layout.positions.get(link.b)
-            if pa is None or pb is None:
+    # -- the canvas --
+
+    def _canvas_lines(self, width: int, selected: Optional[str]) -> list[str]:
+        """Draw the focus neighbourhood: centre marker, west trail-back, eastern fan."""
+        _, cell_h = self._session.base_body_size()
+        # Sized to the neighbourhood: a two-node link needs no twelve-row void, while
+        # a hub earns the full fan height — always capped so the list opens visible.
+        crowd = len(self._links_of(self._focus))
+        canvas_h = max(_CANVAS_MIN_H, min(_CANVAS_MAX_H, cell_h - 10, 5 + crowd))
+        canvas = MapCanvas(width, canvas_h)
+        dot_w, dot_h = width * 2, canvas_h * 4
+        cx, cy = dot_w // 2, dot_h // 2
+        rx = max(10.0, dot_w / 2.0 - _PAD_X_DOTS)
+        ry = max(6.0, dot_h / 2.0 - _PAD_Y_DOTS)
+
+        now = utcnow()
+        placed = self._place_neighbours(cx, cy, rx, ry)
+
+        # Edges first (markers and labels overprint them), coloured by SNR and faded
+        # by evidence age; the highlighted neighbour's edge wins its cells.
+        by_other = {other: link for other, link in self._links_of(self._focus)}
+        for other, (x, y) in placed.items():
+            link = by_other.get(other)
+            if link is None:  # pragma: no cover - placed comes from the same list
                 continue
             color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
-            priority = 2
-            if self._selected is not None:
-                if self._selected in (link.a, link.b):
-                    priority = 3  # the selection's own links win their cells
-                else:
-                    color = _scaled(color, 0.3)
-                    priority = 1
-            elif match_set and not (link.a in match_set or link.b in match_set):
-                color = _scaled(color, 0.3)
-                priority = 1
-            canvas.draw_line([self._project(pa), self._project(pb)], color, priority)
+            priority = 3 if other == selected else 2
+            canvas.draw_line([(cx, cy), (x, y)], color, priority)
 
-    def _draw_nodes(
-        self, canvas: MapCanvas, layout: AtlasLayout, match_set: set[str]
-    ) -> None:
-        """Place markers, then labels in importance order under the zoom's budget.
+        # The focus marker and its label, always on and always white-labelled.
+        glyph, color_hex = self._glyph(self._focus)
+        canvas.marker(cx, cy, glyph, parse_hex(color_hex))
+        self._place_label(canvas, cx, cy, self._label(self._focus), (255, 255, 255))
 
-        Markers always draw (they are the point of the graph); labels are the scarce
-        resource. The budget starts at :data:`_LABEL_BUDGET_BASE` for the 1× overview
-        and grows with the square of the zoom — zooming in is what creates label room
-        — while the selection, find matches, and our own node are always offered.
-        The canvas's collision avoidance still gets the final say, so a label that
-        doesn't fit cleanly is dropped rather than overprinting a neighbour.
-        """
-        order = self._marker_order(match_set)
-        for node in order:
-            x, y = self._project(layout.positions[node])
-            glyph, color_hex = self._glyph(node)
-            rgb = parse_hex(color_hex)
-            if node == self._selected:
-                rgb = (255, 255, 255)
-            elif match_set and node not in match_set:
-                rgb = _scaled(rgb, 0.35)
+        # Neighbour markers, then labels under a budget (selection and trail-back
+        # always labelled; the rest strongest-first until the budget runs out).
+        for other, (x, y) in placed.items():
+            glyph, color_hex = self._glyph(other)
+            rgb = (255, 255, 255) if other == selected else parse_hex(color_hex)
             canvas.marker(x, y, glyph, rgb)
+        budget = _LABEL_BUDGET
+        for other, (x, y) in placed.items():
+            always = other in (selected, self._came_from)
+            if not always:
+                if budget <= 0:
+                    continue
+                budget -= 1
+            rgb = (255, 255, 255) if other == selected else parse_hex(self._glyph(other)[1])
+            self._place_label(canvas, x, y, self._label(other), rgb)
 
-        budget = int(_LABEL_BUDGET_BASE * self._zoom * self._zoom)
-        placed = 0
-        for node in order:
-            always = (
-                node == self._selected
-                or node == self._topo.self_id
-                or node in match_set
-            )
-            if not always and placed >= budget:
-                continue
-            if match_set and not always:
-                continue  # while finding, non-matches stay as dim context glyphs
-            x, y = self._project(layout.positions[node])
-            label = self._label(node)
-            if len(label) > _LABEL_W:
-                label = label[: _LABEL_W - 1] + "…"
-            if node in match_set:
-                rgb = _MATCH_LABEL
-            elif node == self._selected:
-                rgb = (255, 255, 255)
+        return canvas.to_ansi_lines()
+
+    def _place_neighbours(
+        self, cx: int, cy: int, rx: float, ry: float
+    ) -> dict[str, tuple[int, int]]:
+        """Dot-space positions for the focus's neighbours.
+
+        The trail-back node (when among them) anchors due west; everyone else fans
+        across the eastern arc, strongest link at the top, weakest at the bottom —
+        the same order as the list below, so the picture and the rows correspond.
+        """
+        neighbours = [other for other, _link in self._links_of(self._focus)]
+        placed: dict[str, tuple[int, int]] = {}
+        back = self._came_from
+        if back in neighbours:
+            placed[back] = (round(cx - rx), cy)
+            fan = [n for n in neighbours if n != back]
+        else:
+            fan = neighbours
+        n = len(fan)
+        for i, node in enumerate(fan):
+            if n == 1:
+                angle = 0.0
             else:
-                rgb = parse_hex(self._glyph(node)[1])
-            # Both sides of a crowded marker can be claimed; retry a cell below,
-            # then above, before giving the label up entirely.
-            for dy in (0, 4, -4):
-                if canvas.marker_label(x, y + dy, label, rgb):
-                    placed += 1
-                    break
+                angle = -_FAN_HALF_ANGLE + (2 * _FAN_HALF_ANGLE) * i / (n - 1)
+            x = cx + rx * math.cos(angle)
+            y = cy + ry * math.sin(angle)
+            placed[node] = (round(x), round(y))
+        return placed
+
+    def _place_label(
+        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
+    ) -> None:
+        """Place one marker label, retrying a row below then above on collision."""
+        if len(label) > _LABEL_W:
+            label = label[: _LABEL_W - 1] + "…"
+        for dy in (0, 4, -4):
+            if canvas.marker_label(x, y + dy, label, rgb):
+                return
+
+    def _legend(self) -> Text:
+        """The one-line glyph legend and edge key under the canvas."""
+        legend = Text()
+        for glyph, color in (_SELF, _REPEATER, _NODE, _UNKNOWN):
+            legend.append(glyph, style=color)
+            legend.append(
+                {"★": " you   ", "▲": " repeater   ", "●": " node   ", "○": " unknown"}[glyph],
+                style="muted",
+            )
+        legend.append("  ·  edge = SNR · faint = stale", style="muted")
+        return legend
+
+    # -- the list --
+
+    def _list_lines(
+        self, width: int, rows: list[str], depths: dict[str, int]
+    ) -> list[str]:
+        """The selectable rows: find matches, or the focus's links strongest-first."""
+        out: list[str] = []
+        if self._filter:
+            heading = Text("Matches", style="accent")
+            heading.append("  ·  nearest first · Enter focuses", style="muted")
+            out.append(render_to_ansi(heading, width, no_wrap=True))
+            if not rows:
+                out.append(render_to_ansi(Text("no matches", style="muted"), width))
+            for i, node in enumerate(rows):
+                text = self._match_row(node, i == self._index, depths)
+                if i == self._index:
+                    self._cursor = len(out)
+                out.append(render_to_ansi(text, width, no_wrap=True))
+            return out
+
+        heading = Text("Links", style="accent")
+        heading.append("  ·  strongest observed first · Enter walks", style="muted")
+        out.append(render_to_ansi(heading, width, no_wrap=True))
+        pairs = self._links_of(self._focus)
+        if not pairs:
+            note = Text("no observed links from here — type to find another node", style="muted")
+            out.append(render_to_ansi(note, width))
+        onward = self._onward_counts(pairs)
+        for i, (other, link) in enumerate(pairs):
+            text = self._link_row(other, link, i == self._index, onward.get(other, 0))
+            if i == self._index:
+                self._cursor = len(out)
+            out.append(render_to_ansi(text, width, no_wrap=True))
+        return out
+
+    def _onward_counts(self, pairs: list[tuple[str, Link]]) -> dict[str, int]:
+        """How many links continue from each neighbour, the one back here excluded."""
+        counts: dict[str, int] = {}
+        for other, _link in pairs:
+            counts[other] = sum(
+                1
+                for link in self._topo.links()
+                if other in (link.a, link.b) and self._focus not in (link.a, link.b)
+            )
+        return counts
+
+    def _link_row(self, other: str, link: Link, selected: bool, onward: int) -> Text:
+        """One neighbour row: glyph, name, hash, SNR + bar, evidence, onward count."""
+        glyph, glyph_style = self._glyph(other)
+        row = Text()
+        row.append("❯ " if selected else "  ", style="brand" if selected else "")
+        row.append(glyph, style=glyph_style)
+        row.append(" ")
+        name_style_ = self._list_name_style(other)
+        row.append(fit_cells(self._label(other), _LIST_NAME_W), style=name_style_)
+        row.append(" ")
+        row.append_text(highlighted_hash(other, self._prefix_bytes, width=_LIST_HASH_W))
+        row.append("  ")
+        snr = link.median_snr
+        if snr is not None:
+            row.append(f"{snr:+5.1f}", style=snr_style(snr))
+        else:
+            row.append("    —", style="muted")
+        row.append(" ")
+        row.append_text(snr_bar(snr, width=4))
+        row.append(f" {min(link.samples, 999):>3}×", style="muted")
+        tags = "".join(_SOURCE_TAGS[s] for s in sorted(link.sources & _SOURCE_TAGS.keys()))
+        row.append(f" {tags:<4}", style="faint")
+        age = _format_age(
+            max(0.0, (utcnow() - link.last_seen).total_seconds())
+            if link.last_seen is not None and getattr(link.last_seen, "tzinfo", None)
+            else None
+        )
+        row.append(f"{age:>5}", style="muted")
+        if other == self._came_from:
+            row.append("  ⌫ back", style="faint")
+        elif onward:
+            row.append(f"  ⋯ {onward}", style="faint")
+        if selected:
+            row.style = "brand"
+        return row
+
+    def _match_row(self, node: str, selected: bool, depths: dict[str, int]) -> Text:
+        """One find match: glyph, name, hash, and how far out it sits."""
+        glyph, glyph_style = self._glyph(node)
+        row = Text()
+        row.append("❯ " if selected else "  ", style="brand" if selected else "")
+        row.append(glyph, style=glyph_style)
+        row.append(" ")
+        row.append(fit_cells(self._label(node), _LIST_NAME_W), style=self._list_name_style(node))
+        row.append(" ")
+        row.append_text(highlighted_hash(node, self._prefix_bytes, width=_LIST_HASH_W))
+        row.append("  ")
+        if node == self._topo.self_id:
+            row.append("this device", style="muted")
+        elif node not in depths:
+            row.append("island", style="warn")
+        else:
+            ring = depths[node]
+            row.append(f"{ring} hop{'s' if ring != 1 else ''} out", style="muted")
+        if selected:
+            row.style = "brand"
+        return row
+
+    def _list_name_style(self, node: str) -> str:
+        """The list's name colour: the app-wide palette hue, us in pure white."""
+        if node == self._topo.self_id:
+            return "you"
+        label = self._label(node)
+        if label == node[:8]:  # a bare hash is not a name — colour is the name signal
+            return "muted"
+        return name_style(label)
 
     def _empty_state(self, width: int) -> list[str]:
         """A friendly explanation while the evidence graph is still empty."""
@@ -503,61 +654,6 @@ class AtlasScreen(Screen):
             Text("Run a trace, or just leave MeshTerm listening.", style="muted"),
         ]
         return [render_to_ansi(t, width, no_wrap=True) for t in lines]
-
-    def _layout_nodes(self, links: list[Link]) -> set[str]:
-        """Every node the graph mentions, plus us (drawn even when alone)."""
-        nodes = {self._topo.self_id}
-        for link in links:
-            nodes.add(link.a)
-            nodes.add(link.b)
-        return nodes
-
-    def _ensure_layout(self, links: list[Link]) -> None:
-        """(Re)compute the unit-space layout when the evidence generation changed.
-
-        The layout is camera-independent (zoom and pan happen at projection time),
-        so moving the view never pays for a relayout — only fresh evidence does.
-        """
-        if self._layout is not None and self._layout_generation == self._generation:
-            return
-        now = utcnow()
-        triples = [(l.a, l.b, l.strength(now)) for l in links]
-        self._layout = compute_layout(self._topo.self_id, triples)
-        self._layout_generation = self._generation
-        angle = {
-            node: math.atan2(y, x) % math.tau
-            for node, (x, y) in self._layout.positions.items()
-        }
-        order = sorted(
-            (n for n in self._layout.positions if n != self._topo.self_id),
-            key=lambda n: (self._layout.rings.get(n, 99), angle[n]),
-        )
-        self._cycle = [self._topo.self_id, *order]
-        if self._selected is not None and self._selected not in self._layout.positions:
-            self._selected = None  # the rebuild dropped it
-
-    def _marker_order(self, match_set: set[str]) -> list[str]:
-        """Marker/label priority: selection, matches, us, repeaters, then outward."""
-        layout = self._layout
-        assert layout is not None
-
-        def rank(node: str) -> tuple[int, int, str]:
-            if node == self._selected:
-                lead = 0
-            elif node in match_set:
-                lead = 1
-            elif node == self._topo.self_id:
-                lead = 2
-            elif (
-                self._contacts.get(node) is not None
-                and self._contacts[node].node_type == NODE_TYPE_REPEATER
-            ):
-                lead = 3
-            else:
-                lead = 4
-            return (lead, layout.rings.get(node, 99), node)
-
-        return sorted(layout.positions, key=rank)
 
     def _glyph(self, node: str) -> tuple[str, str]:
         """The marker glyph and hex colour for a node, by identity and type."""
@@ -576,180 +672,15 @@ class AtlasScreen(Screen):
             return self._self_label
         return self._topo.display_name(node) or node[:8]
 
-    # --- the info panel ------------------------------------------------------------
-
-    def _panel_lines(self, width: int, links: list[Link], matches: list[str]) -> list[str]:
-        """The bottom panel: a spacer plus three lines of find, selection, or overview."""
-        if self._filter:
-            rows = self._find_rows(matches)
-        elif self._selected is not None:
-            rows = self._selection_rows(self._selected)
-        else:
-            rows = self._overview_rows(links)
-        rows = (rows + [Text()] * 3)[:3]
-        return [""] + [render_to_ansi(t, width, no_wrap=True) for t in rows]
-
-    def _find_rows(self, matches: list[str]) -> list[Text]:
-        """The find state: the query's tally and who matched, brightest first."""
-        tally = Text("find  ", style="muted")
-        tally.append(self._filter, style="bold")
-        tally.append(
-            f"  ·  {len(matches)} of {max(0, len(self._cycle))} nodes match",
-            style="muted",
-        )
-        names = Text("      ", style="muted")
-        for i, node in enumerate(matches[:6]):
-            if i:
-                names.append("  ·  ", style="muted")
-            names.append(self._label(node), style="bold")
-        if len(matches) > 6:
-            names.append(f"  ·  +{len(matches) - 6} more", style="muted")
-        hint = Text("      Enter selects the first match", style="muted")
-        return [tally, names if matches else Text("      no matches", style="muted"), hint]
-
-    def _overview_rows(self, links: list[Link]) -> list[Text]:
-        """Legend, evidence tallies, and the graph's age span."""
-        # Legend text budgeted to a 72-column terminal (the panel rows never wrap).
-        legend = Text()
-        for glyph, color in (_SELF, _REPEATER, _NODE, _UNKNOWN):
-            legend.append(glyph, style=color)
-            legend.append(
-                {"★": " you   ", "▲": " repeater   ", "●": " node   ", "○": " unknown"}[glyph],
-                style="muted",
-            )
-        legend.append("  ·  edge = SNR · faint = stale", style="muted")
-
-        counts = {
-            src: sum(1 for l in links if src in l.sources)
-            for src in ("trace", "route", "packet", "neighbour")
-        }
-        evidence = Text("evidence  ", style="muted")
-        parts = [f"{src} {n}" for src, n in counts.items() if n]
-        evidence.append(" · ".join(parts) if parts else "—", style="brand")
-        evidence.append("   (links per source)", style="muted")
-
-        stamps = [l.last_seen for l in links if l.last_seen is not None]
-        span = Text("", style="muted")
-        if stamps:
-            newest = max(0.0, (utcnow() - max(stamps)).total_seconds())
-            oldest = max(0.0, (utcnow() - min(stamps)).total_seconds())
-            span.append("freshest ", style="muted")
-            span.append(_format_age(newest), style="brand")
-            span.append(" · oldest ", style="muted")
-            span.append(_format_age(oldest), style="brand")
-            span.append(" · ", style="muted")
-        span.append("rings = hops out · Home reset · ^R rebuild", style="muted")
-        return [legend, evidence, span]
-
-    def _selection_rows(self, node: str) -> list[Text]:
-        """Who the selection is, its links strongest-first, and its evidence roll-up."""
-        glyph, color = self._glyph(node)
-        contact = self._contacts.get(node)
-        layout = self._layout
-
-        who = Text()
-        who.append(glyph, style=color)
-        who.append(f" {self._label(node)} ", style="bold")
-        who.append(f"({node[:12]})", style="muted")
-        if node == self._topo.self_id:
-            who.append("  ·  this device", style="muted")
-        else:
-            kind = (
-                NODE_TYPE_LABELS.get(contact.node_type, "node")
-                if contact is not None
-                else "unknown node"
-            )
-            who.append(f"  ·  {kind}", style="muted")
-            if layout is not None and node in layout.islands:
-                who.append("  ·  island — no observed path to us", style="warn")
-            else:
-                ring = layout.rings.get(node, 0) if layout is not None else 0
-                who.append(f"  ·  {ring} hop{'s' if ring != 1 else ''} out", style="muted")
-            if contact is not None and contact.last_seen is not None:
-                secs = max(0.0, (utcnow() - contact.last_seen).total_seconds())
-                who.append(f"  ·  heard {_format_age(secs)}", style="muted")
-
-        now = utcnow()
-        neighbours = sorted(
-            (
-                (link.strength(now), link.b if link.a == node else link.a, link)
-                for link in self._topo.links()
-                if node in (link.a, link.b)
-            ),
-            key=lambda t: -t[0],
-        )
-        row = Text("links ", style="muted")
-        row.append(str(len(neighbours)), style="brand")
-        row.append("  strongest first:  ", style="muted")
-        for i, (_s, other, link) in enumerate(neighbours):
-            if i:
-                row.append("  ·  ", style="muted")
-            row.append(self._label(other))
-            snr = link.median_snr
-            if snr is not None:
-                row.append(f" {snr:+.1f}", style=snr_style(snr))
-            else:
-                row.append(" —", style="muted")
-
-        samples = sum(link.samples for _s, _o, link in neighbours)
-        sources = sorted({src for _s, _o, link in neighbours for src in link.sources})
-        stamps = [link.last_seen for _s, _o, link in neighbours if link.last_seen]
-        rollup = Text("evidence  ", style="muted")
-        rollup.append(f"{samples} reading{'s' if samples != 1 else ''}", style="brand")
-        if sources:
-            rollup.append(f"  ·  {', '.join(sources)}", style="muted")
-        if stamps:
-            newest = max(0.0, (utcnow() - max(stamps)).total_seconds())
-            rollup.append("  ·  freshest ", style="muted")
-            rollup.append(_format_age(newest), style="brand")
-        rollup.append("  ·  Enter for details", style="muted")
-        return [who, row, rollup]
-
-    def _details_text(self, node: str) -> Text:
-        """The Enter dialog: every link off ``node``, one line each, strongest first."""
-        now = utcnow()
-        neighbours = sorted(
-            (
-                (link.strength(now), link.b if link.a == node else link.a, link)
-                for link in self._topo.links()
-                if node in (link.a, link.b)
-            ),
-            key=lambda t: -t[0],
-        )
-        if not neighbours:
-            return Text("No observed links.", style="muted")
-        name_w = min(
-            _LABEL_W, max(len(self._label(other)) for _s, other, _l in neighbours)
-        )
-        body = Text()
-        for i, (_s, other, link) in enumerate(neighbours):
-            if i:
-                body.append("\n")
-            label = self._label(other)
-            if len(label) > name_w:
-                label = label[: name_w - 1] + "…"
-            body.append(label.ljust(name_w + 2))
-            snr = link.median_snr
-            if snr is not None:
-                body.append(f"{snr:+5.1f} dB", style=snr_style(snr))
-            else:
-                body.append("   — dB", style="muted")
-            body.append(f"  {link.samples:>3}×", style="brand")
-            body.append(f"  {'+'.join(sorted(link.sources))}", style="muted")
-            if link.last_seen is not None:
-                secs = max(0.0, (now - link.last_seen).total_seconds())
-                body.append(f"  {_format_age(secs)}", style="muted")
-        return body
-
 
 async def open_atlas(ctx: "AppContext") -> None:
     """Build the evidence graph and run the full-screen atlas until dismissed.
 
     Contacts and our own identity come from the device when one is reachable
     (best-effort — the stored evidence draws fine without them, just with hashes for
-    names), the graph itself comes entirely from the repository, and ``Ctrl+R``
-    re-reads storage so evidence landing while the screen is open can be pulled in.
-    No transmissions, ever.
+    names), the graph itself comes entirely from the repository, and ``^R`` re-reads
+    storage so evidence landing while the screen is open can be pulled in. No
+    transmissions, ever.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
@@ -759,6 +690,7 @@ async def open_atlas(ctx: "AppContext") -> None:
     """
     from ..services.topology import build_topology
     from .surface import TuiUi
+    from .timemachine_screen import _routing_prefix_bytes
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the atlas is only available in the menu")
@@ -776,6 +708,7 @@ async def open_atlas(ctx: "AppContext") -> None:
             self_hash = str(info.get("public_key") or "") or None
     except Exception:  # noqa: BLE001 - names are a nicety; the graph renders without them
         contacts = []
+    prefix_bytes = await _routing_prefix_bytes(ctx)
 
     def build() -> MeshTopology:
         """One fresh graph from everything currently stored."""
@@ -799,6 +732,7 @@ async def open_atlas(ctx: "AppContext") -> None:
         topo=topo,
         contacts=by_id,
         self_label=self_label,
+        prefix_bytes=prefix_bytes,
         rebuild=build,
     )
     try:

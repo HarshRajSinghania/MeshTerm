@@ -1,11 +1,12 @@
-"""The ``atlas`` tool: the mesh's observed shape, drawn as a live link graph.
+"""The ``atlas`` tool: the mesh's observed shape, explored one node at a time.
 
-Opens the full-screen Mesh Atlas (see :mod:`meshterm.ui.atlas_screen`): every link the
-evidence graph holds — trace walks, firmware routes, overheard relay chains, repeater
-neighbour tables — drawn as braille edges coloured by SNR on hop-distance rings around
-our own node. Pannable and zoomable like the street map, with find-as-you-type node
-search, Tab-walking, and per-link detail. The geographic map answers *where* the mesh
-is; the atlas answers *how it hangs together*.
+Opens the full-screen Mesh atlas (see :mod:`meshterm.ui.atlas_screen`): a walkable
+browser over the evidence graph — trace walks, firmware routes, overheard relay
+chains, repeater neighbour tables. One node holds the focus, its neighbourhood draws
+as SNR-coloured braille edges on a small clean canvas, and its links list beneath as
+rows with quality bars and evidence; Enter walks the graph, ⌫ backtracks along the
+breadcrumb trail, and typing finds any node (islands included). The geographic map
+answers *where* the mesh is; the atlas answers *how it hangs together*.
 
 Menu-only: the atlas is an interactive reading of stored evidence (and transmits
 nothing), so there is no scripted one-shot to register — ``trace``-family commands
@@ -34,7 +35,7 @@ class AtlasTool(Tool):
     # the column the others align to. The wireframe globe reads as the logical topology,
     # the geographic map's 🌍 counterpart.
     icon = "🌐"
-    help = "Draw the mesh's observed topology — links, SNR, hop rings"
+    help = "Walk the mesh's observed topology — links, SNR, evidence"
     category = "Mesh"
     order = 32  # beside Map: the logical shape next to the geographic one
 
