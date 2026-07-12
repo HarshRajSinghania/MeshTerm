@@ -319,16 +319,53 @@ def _day_axis(shown: list) -> Callable[[float], str]:
     return label_at
 
 
-def _day_columns(values: list[int], chars: int) -> list[int]:
-    """Stretch per-day counts into day-wide bars that fill the chart's width.
+def _day_columns(values: list[int], chars: int) -> list[Optional[int]]:
+    """Stretch per-day counts into day-wide bars that fill the chart's width exactly.
 
     One dot column per day leaves a short history as a sliver in a wide terminal —
-    beneath how every other MeshTerm chart spends its width. Each day repeats over
-    ``2 × chars // len(values)`` columns instead (at least one), so few days read
-    as wide bars and a deep history falls back to the one-column-per-day density.
+    beneath how every other MeshTerm chart spends its width — so each day repeats
+    over a share of the chart's columns instead. The share is an even split with
+    the one-off remainder spread across the oldest days, so the total always lands
+    on exactly ``2 × chars`` dot columns: a plain floor division drops the
+    remainder instead, leaving the bars short of the axis border and caption
+    sized for the full width (misreading as the whole chart sitting shifted left).
+
+    A day wide enough to span more than one character has its very first dot
+    column left blank — the left half of its leading braille cell — so same-height
+    neighbours still read as separate bars instead of fusing into one solid block.
+    A history deeper than the chart is wide falls back to one dot column per day
+    (no room for a full character each, so no notch), the dot-column total still
+    landing exactly on ``2 × chars``.
+
+    Args:
+        values: Per-day counts, oldest first.
+        chars: The chart's width in character cells.
+
+    Returns:
+        Exactly ``2 × chars`` dot-column readings, oldest first (``None`` marks a
+        day-boundary notch).
     """
-    per_day = max(1, (chars * 2) // max(1, len(values)))
-    return [value for value in values for _ in range(per_day)]
+    n = max(1, len(values))
+    out: list[Optional[int]] = []
+    if n <= chars:
+        # Each day spans at least one whole character: split in character units so
+        # every day's block starts on an even dot-column index (a fresh cell),
+        # which is what makes "blank the leading cell's left half" well-defined.
+        base, extra = divmod(chars, n)
+        for i, value in enumerate(values):
+            width_chars = base + (1 if i < extra else 0)
+            if width_chars > 1:
+                out.append(None)
+                out.extend([value] * (width_chars * 2 - 1))
+            else:
+                out.extend([value] * (width_chars * 2))
+    else:
+        # More days than characters: no day gets a whole one, so no notch is drawn
+        # (nothing to space apart) — just split the dot columns themselves.
+        base, extra = divmod(chars * 2, n)
+        for i, value in enumerate(values):
+            out.extend([value] * (base + (1 if i < extra else 0)))
+    return out
 
 
 def _mesh_sections(

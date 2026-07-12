@@ -15,6 +15,7 @@ from meshterm.core.models import Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.ui.timemachine_screen import (
     TimeMachineScreen,
+    _day_columns,
     _mesh_sections,
     _node_sections,
     _snr_cell_style,
@@ -154,6 +155,41 @@ def test_snr_band_hangs_negative_readings_below_zero() -> None:
     assert rows[0].spans[1].style == _snr_cell_style([-4.0, -8.0])
 
 
+def test_day_columns_always_hits_the_exact_width() -> None:
+    """The stretched output always lands on exactly 2 × chars, remainder included.
+
+    A plain floor division (the old implementation) drops the remainder, leaving
+    the bars short of the axis border and caption sized for the full width — the
+    chart reading as shifted left of where its own axis says it ends.
+    """
+    for n, chars in [(7, 92), (3, 10), (1, 20), (14, 40), (30, 45), (60, 30)]:
+        cols = _day_columns(list(range(n)), chars)
+        assert len(cols) == chars * 2, (n, chars)
+
+
+def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:
+    """A day wide enough to span several characters opens with a blank dot column."""
+    cols = _day_columns([2, 8, 4], 12)  # 3 days, 12 chars -> 4 chars (8 dots) each
+    assert cols[0] is None and cols[8] is None and cols[16] is None
+    assert cols[1:8] == [2] * 7
+    assert cols[9:16] == [8] * 7
+    assert cols[17:24] == [4] * 7
+
+
+def test_day_columns_skips_the_notch_for_a_single_character_day() -> None:
+    """A day exactly one character wide stays fully lit — nothing to space apart."""
+    cols = _day_columns([5, 9], 2)  # 2 days, 2 chars -> exactly 1 char (2 dots) each
+    assert None not in cols
+    assert cols == [5, 5, 9, 9]
+
+
+def test_day_columns_skips_notches_when_days_outnumber_characters() -> None:
+    """More days than character columns: every day is sub-character, no notches."""
+    cols = _day_columns(list(range(50)), 30)  # 50 days into 30 chars (<=60 dots)
+    assert len(cols) == 60
+    assert None not in cols
+
+
 # --- the pages --------------------------------------------------------------------------
 
 
@@ -192,6 +228,24 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
     assert "f7" * 6 in body
     assert "FIRST HEARD" in body and "first heard" not in body
     assert "Ledger" in body and "26 observations" in body and "2 nodes" in body
+    repo.close()
+
+
+def test_mesh_page_day_chart_axis_matches_the_bar_width(tmp_path: Path) -> None:
+    """A day chart's bottom border spans exactly as many columns as its bars.
+
+    A rounding mismatch here (the old ``_day_columns``) leaves the border and
+    caption sized for a wider chart than the bars actually drawn — the bars
+    reading as shifted left of an axis drawn for more columns than exist.
+    """
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
+    border_idx = next(i for i, line in enumerate(lines) if re.fullmatch(r"\s*└─+┘", line))
+    border_dashes = lines[border_idx].count("─")
+    row_line = lines[border_idx - 1]
+    content = re.search(r"[┤│](.*?)[├│]", row_line).group(1)
+    assert len(content) == border_dashes
     repo.close()
 
 
