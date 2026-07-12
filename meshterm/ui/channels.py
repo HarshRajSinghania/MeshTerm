@@ -56,7 +56,7 @@ from ..persistence.repository import ACTIVITY_BUCKETS
 from .braillechart import activity_sparkline
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
-from .widgets import _age_seconds, _format_age, channel_glyph
+from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -481,8 +481,7 @@ def _detail_summary(ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats) -> 
     if unread:
         parts.append(f"{unread} unread")
     if st.last_at is not None:
-        age = _format_age(_age_seconds(st.last_at))
-        parts.append("last message just now" if age == "now" else f"last message {age} ago")
+        parts.append(f"last message {format_ago(_age_seconds(st.last_at))}")
     return " · ".join(parts)
 
 

@@ -503,6 +503,19 @@ def _format_age(secs: Optional[float]) -> str:
     return f"{int(secs // 604800)}w"
 
 
+def format_ago(secs: Optional[float]) -> str:
+    """The relative-age *phrase* — ``now``, ``5m ago``, ``never`` — for running prose.
+
+    The canonical grammar for every "heard … (…)" and "delivered …" row: a fresh
+    sighting reads as bare ``now`` and an unknown one as bare ``never`` (neither takes
+    the suffix — "now ago" is nonsense), while any measured age reads ``5m ago``.
+    Callers embedding an age in a sentence or parenthetical use this;
+    :func:`_format_age` stays the bare column form for aligned age lanes.
+    """
+    age = _format_age(secs)
+    return age if age in ("now", "never") else f"{age} ago"
+
+
 def _recency_style(secs: Optional[float]) -> str:
     """The heat-map name colour for a contact last heard ``secs`` ago (hotter = more recent).
 

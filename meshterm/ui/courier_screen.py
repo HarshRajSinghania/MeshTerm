@@ -25,7 +25,14 @@ from ..core.courier_store import DELIVERED, GAVE_UP, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
 from .tui import Choice, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age, _recency_style
+from .widgets import (
+    _DEFAULT_GLYPH,
+    _NODE_GLYPHS,
+    _age_seconds,
+    _format_age,
+    _recency_style,
+    format_ago,
+)
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -199,7 +206,7 @@ def _done_row(message: QueuedMessage) -> Text:
     when = message.finished or message.created
     verb = "delivered" if message.status == DELIVERED else "gave up"
     row.append(
-        f"  ·  {verb} {_format_age(_age_seconds(when))} ago"
+        f"  ·  {verb} {format_ago(_age_seconds(when))}"
         f" · {message.attempts} attempt{'s' if message.attempts != 1 else ''}",
         style="muted",
     )

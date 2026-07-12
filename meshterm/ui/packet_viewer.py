@@ -38,7 +38,7 @@ from .theme import name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
 from .tui.screen import Screen
-from .widgets import _age_seconds, _format_age, highlighted_hash
+from .widgets import _age_seconds, format_ago, highlighted_hash
 
 #: Friendly gloss for a raw packet's parsed payload class (mirrors the meshcore
 #: library's own ``PAYLOAD_TYPENAMES``), shown on a ``packet`` entry's "class" row.
@@ -387,7 +387,7 @@ class PacketViewer(Screen):
 
         secs = _age_seconds(entry.when)
         heard = Text(entry.when.astimezone().strftime("%b %d %H:%M:%S"))
-        heard.append(f"  ({_format_age(secs)} ago)", style="muted")
+        heard.append(f"  ({format_ago(secs)})", style="muted")
         rows.append(("heard", heard))
 
         if entry.node or entry.name:

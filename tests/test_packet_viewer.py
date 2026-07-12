@@ -89,6 +89,14 @@ def test_packet_viewer_reaches_packets_that_arrive_after_open() -> None:
     assert "1/2" in viewer.title
 
 
+def test_packet_viewer_heard_row_says_now_not_now_ago() -> None:
+    """A just-heard packet's heard row reads "(now)" — the format_ago grammar."""
+    entry = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    body = _plain(_viewer(entry).render_body(80))
+    assert "(now)" in body
+    assert "now ago" not in body
+
+
 def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
     """With no live source the viewer is frozen on its opening list (unchanged behaviour)."""
     entry = PacketEntry(when=utcnow(), kind="advert", node="aa")

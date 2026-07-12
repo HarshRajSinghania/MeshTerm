@@ -1,17 +1,15 @@
 """The ``device-actions`` tool: immediate operations on the companion device itself.
 
 Opens the Device actions screen (see :func:`meshterm.ui.config_editor.device_actions`) —
-adverts, backup/restore, the identity key, reboot, and factory reset. Where the sibling
-``config`` tool *stages* value changes for review, everything here acts on the box the
-moment it is confirmed, so the two concerns get their own menu entries and screens.
+clock sync, backup/restore, the identity key, reboot, and factory reset. Where the
+sibling ``config`` tool *stages* value changes for review, everything here acts on the
+box the moment it is confirmed, so the two concerns get their own menu entries and
+screens. Sending an advert is not here: that everyday operation lives in its own
+main-menu entry (the sibling ``advert`` tool — see :mod:`meshterm.tools.advert`).
 
 Menu-only: every action already has a first-class scripted equivalent under the ``config``
 CLI group (``config backup``, ``config restore``, ``config reboot``, ...), so no duplicate
 subcommand is registered here.
-
-The advert action is additionally promoted to its own main-menu entry (the sibling
-``advert`` tool — see :mod:`meshterm.tools.advert`): it is the everyday operation in this
-bucket, so it earns a top-level row while remaining available here with the rest.
 """
 
 from __future__ import annotations
@@ -26,12 +24,12 @@ from .base import Tool, ToolResult, register
 
 @register
 class DeviceActionsTool(Tool):
-    """Run immediate device operations: advert, backup, identity key, reboot, reset."""
+    """Run immediate device operations: clock, backup, identity key, reboot, reset."""
 
     name = "device-actions"
     title = "Device actions"
     icon = "🔨"
-    help = "Act on the device itself — advert, backup, identity key, reboot, reset"
+    help = "Act on the device itself — clock, backup, identity key, reboot, reset"
     category = "Device management"
     order = 9
 

@@ -554,7 +554,8 @@ async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> N
     )
     ctx.chat._unread[slot.conversation.key] = 1
     summary = _detail_summary(ctx, slot, _LiveStats(ctx))
-    assert summary == "Slot 3 · 1 message · 1 unread · last message just now"
+    # A fresh age reads as bare "now" (the app-wide format_ago grammar — never "now ago").
+    assert summary == "Slot 3 · 1 message · 1 unread · last message now"
 
 
 # -- the tool against the simulator -------------------------------------------

@@ -40,6 +40,7 @@ from .widgets import (
     _age_seconds,
     _format_age,
     _recency_style,
+    format_ago,
     highlighted_hash,
 )
 
@@ -284,7 +285,7 @@ def _node_sections(
     first, last = observations[0].observed_at, observations[-1].observed_at
     line = Text("heard    ", style="muted")
     line.append(f"first {_when_label(first)} · last {_when_label(last)}")
-    line.append(f"  ({_format_age(_age_seconds(last))} ago)", style="muted")
+    line.append(f"  ({format_ago(_age_seconds(last))})", style="muted")
     out.append(line)
     snrs = [p[1] for p in snr_pairs]
     if snrs:
@@ -585,7 +586,7 @@ def _mesh_sections(
             line.append_text(highlighted_hash(node, prefix_bytes, width=_PICK_HASH_W))
             line.append("  ")
             line.append(_when_label(first))
-            line.append(f"  ({_format_age(secs)} ago)", style="muted")
+            line.append(f"  ({format_ago(secs)})", style="muted")
             out.append(line)
 
     all_days = ctx.repo.daily_activity()
