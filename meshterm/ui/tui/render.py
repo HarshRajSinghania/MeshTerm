@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from io import StringIO
 
+from rich.cells import cell_len
 from rich.console import Console, RenderableType
 from rich.text import Text
 
@@ -128,6 +129,44 @@ def right_aligned_tail(body: Text, tail: Text, width: int) -> Text:
         combined.append(" " * max(0, width - tail.cell_len))
     combined.append_text(tail)
     return combined
+
+
+def crop_cells(text: Text, start: int, width: int) -> Text:
+    """Cut a single-line styled Text to the cell window ``[start, start + width)``.
+
+    The horizontal-scroll primitive: a row wider than its lane is shown ``width``
+    cells at a time, shifted ``start`` cells in, styling preserved. Boundaries are
+    measured in display cells, so a double-width glyph straddling either edge is
+    dropped (replaced by a pad space on the left) rather than half-shown.
+
+    Args:
+        text: The styled line to crop (treated as a single line).
+        start: Cells to skip from the left (clamped at 0).
+        width: Cells the window spans.
+
+    Returns:
+        A new :class:`Text` at most ``width`` cells wide, ``no_wrap`` set so the
+        caller can drop it straight into a row.
+    """
+    start = max(0, start)
+    plain = text.plain
+    index, pad = len(plain), 0
+    if start == 0:
+        index = 0
+    else:
+        acc = 0
+        for i, ch in enumerate(plain):
+            w = cell_len(ch)
+            if acc + w > start:
+                # This character crosses the cut: keep it when it starts exactly at
+                # the boundary, else drop it and pad for its protruding half.
+                index, pad = (i, 0) if acc == start else (i + 1, acc + w - start)
+                break
+            acc += w
+    out = Text(" " * pad, no_wrap=True)
+    out.append_text(text[index:])
+    out.truncate(max(0, width))
+    return out
 
 
 def render_hanging(prefix: Text, body: Text, width: int, *, indent: int) -> list[str]:

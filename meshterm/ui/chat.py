@@ -30,7 +30,6 @@ from .tui.prompt import _LineEditor
 from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner
-from .widgets import path_text
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -893,6 +892,7 @@ async def _make_paths_presenter(
         direct_frames_near,
         distinct_paths,
     )
+    from .message_paths_screen import MessagePathsScreen
     from .timemachine_screen import _routing_prefix_bytes
 
     session = ctx.ui.session
@@ -920,88 +920,42 @@ async def _make_paths_presenter(
             arrivals = channel_arrivals(
                 ctx.repo, message, channel_name=conversation.label, secret=secret
             )
-            body = _paths_view(
-                message, arrivals, matched=True, resolve=resolve,
-                prefix_bytes=prefix_bytes, self_name=self_name,
-                summary=f"heard {len(arrivals)} time{'s' if len(arrivals) != 1 else ''}"
+            matched = True
+            summary = (
+                f"heard {len(arrivals)} time{'s' if len(arrivals) != 1 else ''}"
                 f" · {distinct_paths(arrivals)} distinct "
                 f"path{'s' if distinct_paths(arrivals) != 1 else ''}"
-                if arrivals else "no copies in the packet log",
+                if arrivals else "no copies in the packet log"
             )
         elif conversation.is_channel:
-            body = Text(
-                "This channel's key isn't at hand, so overheard frames can't be "
-                "matched to the message.",
-                style="muted",
+            await session.scroll(
+                Text(
+                    "This channel's key isn't at hand, so overheard frames can't be "
+                    "matched to the message.",
+                    style="muted",
+                ),
+                title="Message paths",
             )
+            return
         else:
             arrivals = direct_frames_near(ctx.repo, message)
-            body = _paths_view(
-                message, arrivals, matched=False, resolve=resolve,
-                prefix_bytes=prefix_bytes, self_name=self_name,
-                summary="direct frames are encrypted — matched by time alone (±90 s)",
-            )
-        await session.scroll(body, title="Message paths")
-
-    return present
-
-
-def _paths_view(
-    message: ChatMessage,
-    arrivals: list,
-    *,
-    matched: bool,
-    resolve,  # noqa: ANN001 - NodeResolver
-    prefix_bytes: int,
-    self_name: Optional[str],
-    summary: str,
-) -> Group:
-    """Lay one message's arrivals out: the quoted text, a summary, then one row each.
-
-    Every row reads through the shared compact path widget, so a path here looks
-    exactly like the same path in the dashboard feed or the packet viewer: time,
-    reception SNR, then ``direct`` or the relay chain (with a resend counter when a
-    decrypted channel frame carried one).
-    """
-    quoted = message.text.replace("\n", " ")
-    if len(quoted) > 64:
-        quoted = quoted[:63] + "…"
-    head = Text(f"“{quoted}”")
-    stamp = Text(message.created_at.astimezone().strftime("%b %d %H:%M"), style="muted")
-    stamp.append("  ·  ", style="muted")
-    stamp.append(summary, style="muted" if matched else "warn")
-
-    parts: list[RenderableType] = [head, stamp]
-    if not arrivals:
-        parts.append(Text())
-        if matched:
-            parts.append(Text(
-                "Nothing overheard — the radio only logs frames it hears while "
-                "MeshTerm is listening.", style="muted",
-            ))
+            matched = False
+            summary = "direct frames are encrypted — matched by time alone (±90 s)"
+        # The graph's left endpoint: who the message set out from. Our own sends are
+        # us; an inbound channel message names its sender on the wire; a direct chat's
+        # origin is the conversation's peer (billed as time-matched by the summary).
+        if message.outbound:
+            source = self_name
+        elif conversation.is_channel:
+            source, _body = _split_channel_sender(message.text)
         else:
-            parts.append(Text("No direct-message frames logged in the window.", style="muted"))
-        return Group(*parts)
-
-    parts.append(Text())
-    for arrival in arrivals:
-        row = Text(no_wrap=True, overflow="ellipsis")
-        row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
-        row.append("  ")
-        if arrival.snr is not None:
-            row.append(f"{arrival.snr:+5.1f} dB", style=snr_style(arrival.snr))
-        else:
-            row.append(" " * 8, style="muted")
-        row.append("  ")
-        if arrival.hops:
-            row.append("via ", style="muted")
-        row.append_text(
-            path_text(
-                arrival.hops, resolve,
-                prefix_bytes=prefix_bytes, self_name=self_name, empty="direct",
+            source = conversation.label
+        await session.run_screen(
+            MessagePathsScreen(
+                message, arrivals, matched=matched, resolve=resolve,
+                prefix_bytes=prefix_bytes, self_name=self_name, summary=summary,
+                source=source or None,
             )
         )
-        if arrival.resend:
-            row.append(f"  (resend #{arrival.resend})", style="muted")
-        parts.append(row)
-    return Group(*parts)
+
+    return present
