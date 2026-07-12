@@ -116,6 +116,10 @@ def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
     Returns:
         A Rich :class:`Panel` of exactly ``viewport + 2`` rows.
     """
+    # Record the viewport *before* the body renders, so a screen that windows a
+    # list inside itself (see :class:`~meshterm.ui.tui.screen.ListWindow`) can size
+    # its chrome to the frame it is about to be sliced into.
+    screen.note_viewport(viewport)
     body_lines = screen.render_body(inner_w)
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
@@ -281,6 +285,10 @@ def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int,
     max_w = cap if natural is None else max(24, min(cap, natural))
     # Rows the box may spend between its borders — on body lines and breathing room alike.
     budget = max(3, rows - 6)
+    # Record the budget as the provisional viewport before the body renders, so a
+    # dialog that windows a list inside itself (the path composer) can size to what
+    # it may spend; the slice records the real, body-sized viewport afterwards.
+    screen.note_viewport(budget)
     body_lines = screen.render_body(max_w - 4)
     # A grow-only screen (the packet viewer paging between packets) sizes to the tallest
     # body it has shown, not this one, so a shorter body keeps the larger box instead of

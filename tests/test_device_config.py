@@ -205,26 +205,29 @@ def test_nodes_screen_arrows_steer_the_sort() -> None:
     assert screen._sort.column == "packets"
 
 
-def test_nodes_screen_pins_column_header_when_scrolled() -> None:
-    """The NAME/HEARD/PKTS/KEY labels stick to the top row once the rows scroll past them."""
+def test_nodes_screen_windows_rows_between_pinned_header_and_legend() -> None:
+    """The rows scroll in place: header and legend hold still, hidden rows counted."""
     import re
 
     from meshterm.core.models import Contact
     from meshterm.ui.nodes_screen import NodesScreen
     from meshterm.ui.widgets import NodesSort
 
-    contacts = [Contact(name=f"n{i}", public_key="ab" * 16) for i in range(12)]
+    contacts = [Contact(name=f"n{i:02}", public_key="ab" * 16) for i in range(30)]
     screen = NodesScreen("Us", "aabbcc" + "00" * 29, contacts, 3, {}, NodesSort())
-    screen.render_body(70)
+    screen.note_viewport(18)  # the frame records this before every real paint
+    lines = screen.render_body(70)
+    plain = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
+    body = "\n".join(plain)
 
-    # Exactly one sticky header — the column-label row — recorded above the table's rule.
-    (idx, header), = screen._sticky_headers
-    labels = re.sub(r"\x1b\[[0-9;]*m", "", header)
-    assert "NAME" in labels and "HEARD" in labels and "KEY" in labels
+    assert len(lines) <= 18  # header + window + legend fit the frame exactly
+    assert "NAME" in body and "you" in body  # the pinned header and legend survive
+    assert "↓" in body and "more" in body  # hidden rows are counted below
+    assert "n29" not in body  # ...because the tail really is out of the window
 
-    # Not pinned while the header is still on screen; pinned once scrolled below it.
-    assert screen.sticky_header(idx) is None
-    assert screen.sticky_header(idx + 5) == header
+    screen.handle("end")  # slide the window to the tail
+    body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(70))
+    assert "n29" in body and "↑" in body  # tail visible, hidden rows counted above
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:

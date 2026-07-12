@@ -27,7 +27,7 @@ class _FakeSession:
 
 
 def _screen(window=None, histogram=None, kinds=None, active=True) -> DashboardScreen:
-    return DashboardScreen(
+    screen = DashboardScreen(
         session=_FakeSession(),
         resolve=lambda h: {"a1b2": "Alice", "3d63": "YUL"}.get(h, ""),
         window=list(window or []),
@@ -36,6 +36,8 @@ def _screen(window=None, histogram=None, kinds=None, active=True) -> DashboardSc
         kind_counts=lambda: dict(kinds or {}),
         hub_active=lambda: active,
     )
+    screen.note_viewport(48)  # the frame records this before every real paint
+    return screen
 
 
 def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> Observation:
@@ -180,10 +182,10 @@ def test_dashboard_prunes_the_window_but_keeps_the_feed() -> None:
 
 
 def test_dashboard_page_keys_move_the_feed_selection() -> None:
-    """With a feed row highlighted, PgUp/PgDn walk the selection a screenful at a time."""
+    """With a feed row highlighted, PgUp/PgDn walk the selection a windowful at a time."""
     window = [_obs(node=f"n{i}", age_s=i) for i in range(20)]
     screen = _screen(window=window)
-    screen.note_metrics(total=40, viewport=6)  # a screenful is _page_step = 5 rows
+    screen._feed_window.page = 5  # as if the last paint settled a five-row window
     screen.handle("down")  # first press lands the highlight on the newest feed row
     assert screen._selected == 0
     screen.handle("pagedown")
@@ -191,11 +193,22 @@ def test_dashboard_page_keys_move_the_feed_selection() -> None:
     screen.handle("pageup")
     assert screen._selected == 0
 
-    # With nothing highlighted, the page keys free-scroll the body as before.
+    # With nothing highlighted, the page keys slide the feed window instead.
     screen._selected = None
-    screen.scroll = 0
     screen.handle("pagedown")
-    assert screen.scroll > 0 and screen._selected is None
+    assert screen._feed_window.top > 0 and screen._selected is None
+
+
+def test_dashboard_feed_windows_inside_the_fixed_screen() -> None:
+    """The charts stay pinned: the body fits the viewport and the feed rows window."""
+    window = [_obs(node=f"n{i}", age_s=i) for i in range(40)]
+    screen = _screen(window=window)
+    screen.note_viewport(24)
+    lines = screen.render_body(100)
+    assert len(lines) <= 24  # charts + feed window == the viewport, never more
+    body = _plain(_stripped(lines))
+    assert "Activity" in body and "Feed" in body  # the chrome is all still there
+    assert "↓" in body and "more" in body  # hidden feed rows are counted below
 
 
 def test_dashboard_without_a_device_reads_as_waiting() -> None:

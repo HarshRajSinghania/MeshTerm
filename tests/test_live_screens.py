@@ -223,6 +223,7 @@ def _trace_screen(
         auto_spec=auto_spec or (lambda: ""),
         auto_source=auto_source,
     )
+    screen.note_viewport(40)  # the frame records this before every real paint
     return screen, session
 
 

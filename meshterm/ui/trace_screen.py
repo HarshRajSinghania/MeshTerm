@@ -47,9 +47,10 @@ Layout, top to bottom: the walked route (live when a reply has landed, else the 
 the next Trace will walk — composed by hand, or auto-resolved from the device's learned
 route or the stored history and labelled with that provenance — else the most recent
 stored trace), the run's robust aggregates, the
-action list, per-hop median SNR with quality bars, and the individual traces
-newest-first. The body scrolls with PgUp/PgDn/Home/End (↑/↓ belong to the action
-cursor, which only pins the view while it is actually being moved).
+action list, then the results — per-hop median SNR with quality bars and the
+individual traces newest-first — scrolling in a window beneath the pinned controls:
+PgUp/PgDn/Home/End slide it (↑/↓ belong to the action cursor), and faint ``↑/↓ n
+more`` markers count what the window hides.
 
 Every trace is persisted exactly like a scripted run: one ``runs`` row per trace,
 recorded under it, so the stored history reads the same no matter which front end
@@ -75,7 +76,7 @@ from .braillechart import meter
 from .menus import back_rows
 from .theme import snr_style
 from .tui.render import render_hanging, render_lines, render_to_ansi
-from .tui.screen import Screen
+from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner
 from .widgets import NodeResolver, _link_text, _route_text, highlighted_hash, path_text
 
@@ -230,9 +231,10 @@ class TraceScreen(Screen):
     described the old route, so they clear as if the screen had just opened.
 
     ↑/↓ move the cursor over the action rows and Enter commits the selected one — the
-    cursor opens on Trace, so plain Enter still just traces. PgUp/PgDn/Home/End scroll
-    the body, and Esc (or the Back row) backs out, cancelling any in-flight trace;
-    already-recorded traces are kept.
+    cursor opens on Trace, so plain Enter still just traces. The results (per-hop
+    medians and the trace log) scroll in a window beneath the pinned controls with
+    PgUp/PgDn/Home/End, and Esc (or the Back row) backs out, cancelling any
+    in-flight trace; already-recorded traces are kept.
     """
 
     floating = False
@@ -337,6 +339,9 @@ class TraceScreen(Screen):
         self._actions: tuple[str, ...] = tuple(actions)
         self._index = self._actions.index("trace")
         self._pin_cursor = False  # only pin the view while ↑/↓ are actually in use
+        #: The results window under the pinned actions (per-hop medians + trace
+        #: log); PgUp/PgDn slide it while the route and controls hold still.
+        self._tail_window = ListWindow()
 
     # --- state -----------------------------------------------------------------
 
@@ -431,9 +436,9 @@ class TraceScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Move the action cursor, commit the selected action, scroll, or dismiss.
 
-        ↑/↓ belong to the action cursor (and pin the view to it); the body scrolls
-        with PgUp/PgDn/Home/End, each of which releases the pin so a long trace log
-        can be read without the cursor yanking the view back.
+        ↑/↓ belong to the action cursor; PgUp/PgDn/Home/End slide the results
+        window beneath the pinned controls, so a long trace log can be read while
+        the route and actions stay on screen.
         """
         if action == "enter":
             self._commit_action()
@@ -445,16 +450,16 @@ class TraceScreen(Screen):
             self._pin_cursor = True
         elif action == "pageup":
             self._pin_cursor = False
-            self.scroll_pages(-1)
+            self._tail_window.top -= self._tail_window.page
         elif action in ("pagedown", "space"):
             self._pin_cursor = False
-            self.scroll_pages(1)
+            self._tail_window.top += self._tail_window.page
         elif action in ("home", "ctrl_home"):
             self._pin_cursor = False
-            self.scroll_to_top()
+            self._tail_window.top = 0
         elif action in ("end", "ctrl_end"):
             self._pin_cursor = False
-            self.scroll_to_bottom()
+            self._tail_window.to_end()
         elif action == "escape":
             self.cancel()
             self.resolve(None)
@@ -543,6 +548,26 @@ class TraceScreen(Screen):
             lines.append(render_to_ansi(text, width))
             if key in ("explore", "samples"):
                 lines.append("")  # set the next group apart
+        tail = self._tail_lines(stats, current, width)
+        if tail:
+            # The results scroll in a window beneath the pinned controls (see
+            # ListWindow): the route and actions never leave the screen, however
+            # long a sampling session's log grows.
+            win = max(3, self._scroll_viewport - len(lines))
+            top, count = self._tail_window.fit(len(tail), win)
+            if top > 0:
+                lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+            lines.extend(tail[top : top + count])
+            below = len(tail) - top - count
+            if below > 0:
+                lines.append(render_to_ansi(ListWindow.marker(below, "below"), width))
+        self._scroll_total = max(1, len(lines))
+        return lines
+
+    def _tail_lines(
+        self, stats: TraceStats, current: Optional[TraceResult], width: int
+    ) -> list[str]:
+        """The windowed results block: per-hop medians, then the trace log."""
         tail: list[RenderableType] = []
         if stats.hop_snrs:
             hash_bytes = current.path_hash_bytes if current is not None else None
@@ -551,9 +576,9 @@ class TraceScreen(Screen):
         if self._running or self._status or self._traces:
             tail += [Text(), Text("Traces", style="accent")]
             tail.append(self._trace_log())
-        lines.extend(render_lines(Group(*tail), width))
-        self._scroll_total = max(1, len(lines))
-        return lines
+        if not tail:
+            return []
+        return render_lines(Group(*tail), width)
 
     def cursor_line(self) -> Optional[int]:
         """The highlighted action row while ↑/↓ are in use; free scrolling otherwise.

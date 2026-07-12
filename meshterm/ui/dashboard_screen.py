@@ -19,16 +19,18 @@ stacks four reads of the mesh, coarsest first:
   way Device info reads them.
 * **Feed** — the latest packets, newest first: time, class (icon + label, icon alone
   on a narrow terminal), node, SNR/RSSI. Seeded from stored history so the screen
-  opens full, then streamed live off the event hub. ``↑``/``↓`` walk the feed rows
-  and Enter opens the highlighted packet in the shared
-  :class:`~meshterm.ui.packet_viewer.PacketViewer` — which then pages through the
-  feed itself with the same ``↑``/``↓``, and, for an overheard channel-text packet
-  naming a channel we hold the key for, decrypts it.
+  opens full, then streamed live off the event hub. The feed scrolls *within* the
+  screen — the charts above hold still, faint ``↑/↓ n more`` markers bracket its
+  window — with ``↑``/``↓`` walking the rows and Enter opening the highlighted
+  packet in the shared :class:`~meshterm.ui.packet_viewer.PacketViewer` — which
+  then pages through the feed itself with the same ``↑``/``↓``, and, for an
+  overheard channel-text packet naming a channel we hold the key for, decrypts it.
 
 The screen holds no subscriptions of its own — the opener (:func:`open_dashboard`)
 wires the hub subscription, the device-stats poll, and the once-a-second repaint, and
-tears them all down when the screen resolves. PgUp/PgDn/Home/End scroll; Esc first
-drops the feed highlight, then backs out.
+tears them all down when the screen resolves. PgUp/PgDn/Home/End move the feed window
+(carrying the highlight when one is set); Esc first drops the feed highlight, then
+backs out.
 """
 
 from __future__ import annotations
@@ -59,8 +61,8 @@ from .packet_viewer import (
 )
 from .theme import name_style, snr_style
 from .trace_screen import snr_bar
-from .tui.render import render_lines
-from .tui.screen import Screen
+from .tui.render import render_lines, render_to_ansi
+from .tui.screen import ListWindow, Screen
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -71,7 +73,8 @@ _REFRESH_S = 1.0
 #: Seconds between polls of the device's own statistics (noise floor, airtime, battery).
 _STATS_POLL_S = 10.0
 
-#: How many feed rows are kept (the body scrolls, so this is history depth, not layout).
+#: How many feed rows are kept (the feed windows within the screen, so this is
+#: history depth, not layout).
 _FEED_CAP = 100
 
 #: The feed's fixed node-name lane width; longer names ellipsize so the columns hold.
@@ -169,10 +172,10 @@ class DashboardScreen(Screen):
         self._feed: deque[PacketEntry] = deque(maxlen=_FEED_CAP)
         for obs in list(self._window)[-_FEED_CAP:][::-1]:
             self._feed.append(PacketEntry.from_observation(obs))
-        #: The highlighted feed row (``None`` = nothing selected, view scrolls free).
+        #: The highlighted feed row (``None`` = nothing selected, window scrolls free).
         self._selected: Optional[int] = None
-        #: Body lines the last render produced before the feed rows began.
-        self._feed_first_line = 0
+        #: The feed's window within the fixed screen (only its rows scroll).
+        self._feed_window = ListWindow()
         #: The device's own numbers, refreshed by the opener's poll (Device info's
         #: dynamic rows): ``stats`` from get_stats, ``battery`` from get_battery.
         self.stats: dict = {}
@@ -224,30 +227,34 @@ class DashboardScreen(Screen):
         elif action == "enter":
             self._open_packet()
         elif action == "pageup":
-            # With a feed row highlighted the page keys walk the selection (a screenful
-            # at a time), so the highlight travels with the view instead of the view
-            # scrolling out from under a pinned selection; with none, they free-scroll.
+            # With a feed row highlighted the page keys walk the selection (a
+            # windowful at a time), so the highlight travels with the window; with
+            # none, they slide the feed window itself under the pinned charts.
             if self._selected is not None:
-                self._select_index(self._selected - self._page_step)
+                self._select_index(self._selected - self._feed_window.page)
             else:
-                self.scroll_pages(-1)
+                self._feed_window.top -= self._feed_window.page
+                self._session.invalidate()
         elif action in ("pagedown", "space"):
             if self._selected is not None:
-                self._select_index(self._selected + self._page_step)
+                self._select_index(self._selected + self._feed_window.page)
             else:
-                self.scroll_pages(1)
+                self._feed_window.top += self._feed_window.page
+                self._session.invalidate()
         elif action in ("home", "ctrl_home"):
             # With the feed highlight active, Home jumps to the newest packet;
-            # otherwise it keeps its plain scroll-to-top meaning (End mirrors it).
+            # otherwise it slides the window to the feed's newest end (End mirrors).
             if self._selected is not None:
                 self._select_index(0)
             else:
-                self.scroll_to_top()
+                self._feed_window.top = 0
+                self._session.invalidate()
         elif action in ("end", "ctrl_end"):
             if self._selected is not None:
                 self._select_index(len(self._feed) - 1)
             else:
-                self.scroll_to_bottom()
+                self._feed_window.to_end()
+                self._session.invalidate()
         elif action == "escape":
             if self._selected is not None:
                 self._selected = None  # first Esc peels the highlight, second leaves
@@ -296,33 +303,32 @@ class DashboardScreen(Screen):
         )
         asyncio.ensure_future(self._session.run_screen(viewer))
 
-    def cursor_line(self) -> Optional[int]:
-        """Keep the highlighted feed row in view (free scrolling when nothing is)."""
-        if self._selected is None or not self._feed:
-            return None
-        return self._feed_first_line + self._selected
-
     # --- rendering ---------------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Render the four stacked sections for the current state."""
+        """Render the pinned overview sections, then the feed's window beneath.
+
+        The charts, traffic, and RF sections size the fixed chrome; whatever the
+        frame's viewport has left is the feed's window — only its rows scroll (see
+        :class:`~meshterm.ui.tui.screen.ListWindow`), so the overview stays
+        glanceable however deep the reader digs into the feed.
+        """
         self._prune()
         if self._selected is not None and self._feed:
             self._selected = min(self._selected, len(self._feed) - 1)
-        sections: list[RenderableType] = [
+        chrome: list[RenderableType] = [
             *self._activity_section(width),
             Text(),
             *self._traffic_section(),
             Text(),
             *self._rf_section(),
             Text(),
-            *self._feed_section(width),
+            self._feed_heading(),
         ]
-        lines = render_lines(Group(*sections), width)
+        lines = render_lines(Group(*chrome), width)
+        win = max(1, self._scroll_viewport - len(lines))
+        lines.extend(self._feed_lines(width, win))
         self._scroll_total = max(1, len(lines))
-        # Feed rows are the body's tail, one line each (they never wrap), so the
-        # highlight's body line is a plain offset from the end.
-        self._feed_first_line = len(lines) - len(self._feed)
         return lines
 
     # -- activity --
@@ -529,21 +535,33 @@ class DashboardScreen(Screen):
 
     # -- feed --
 
-    def _feed_section(self, width: int) -> list[RenderableType]:
-        """The latest packets, newest first, with a live-light in the heading."""
+    def _feed_heading(self) -> Text:
+        """The feed's pinned heading, with a live-light for the hub."""
         heading = Text("Feed", style="accent")
         heading.append("  ·  newest first · Enter opens a packet  ", style="muted")
         if self._hub_active():
             heading.append("● live", style="ok")
         else:
             heading.append("○ waiting for a device", style="muted")
-        rows: list[RenderableType] = [heading]
+        return heading
+
+    def _feed_lines(self, width: int, win: int) -> list[str]:
+        """The feed's windowed rows: newest first, ``↑/↓ n more`` at the edges."""
         if not self._feed:
-            rows.append(Text("nothing heard yet", style="muted"))
+            return [render_to_ansi(Text("nothing heard yet", style="muted"), width)]
         show_label = width >= _FEED_LABEL_MIN_WIDTH
-        for i, entry in enumerate(self._feed):
-            rows.append(self._feed_row(entry, i == self._selected, show_label))
-        return rows
+        entries = list(self._feed)
+        top, count = self._feed_window.fit(len(entries), win, self._selected)
+        out: list[str] = []
+        if top > 0:
+            out.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+        for i in range(top, top + count):
+            row = self._feed_row(entries[i], i == self._selected, show_label)
+            out.append(render_to_ansi(row, width, no_wrap=True))
+        below = len(entries) - top - count
+        if below > 0:
+            out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
+        return out
 
     def _feed_row(self, entry: PacketEntry, selected: bool, show_label: bool) -> Text:
         """Lay one feed row out in fixed lanes: time, class, node, reception, detail.

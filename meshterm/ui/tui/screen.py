@@ -240,6 +240,81 @@ class Screen:
         self.scroll = _clamp_scroll(target, self._scroll_total, self._scroll_viewport)
 
 
+class ListWindow:
+    """Scroll state for a list that scrolls *inside* a fixed screen.
+
+    The app-wide windowed-list pattern (established by the atlas's link list): the
+    screen sizes its fixed chrome — headings, charts, action rows — to the frame's
+    viewport (see :meth:`Screen.note_viewport`; the frame records it before
+    ``render_body`` runs) and hands the leftover rows here; only the list's rows
+    scroll within them. Faint ``↑ n more`` / ``↓ n more`` markers (see
+    :meth:`marker`) take the window's edge rows exactly when rows are hidden on
+    that side, and the settled content capacity is remembered as :attr:`page`, the
+    stride a PgUp/PgDn should move by.
+
+    Attributes:
+        top: First list row the window shows (clamped by :meth:`fit` each paint).
+        page: Rows the window carried on the last :meth:`fit` — the paging stride.
+    """
+
+    def __init__(self) -> None:
+        """Start at the top with a conservative pre-first-paint stride."""
+        self.top = 0
+        self.page = 6
+
+    def fit(self, n: int, win: int, index: Optional[int] = None) -> tuple[int, int]:
+        """Settle the window over ``n`` rows into ``win`` lines: ``(top, count)``.
+
+        The edge markers eat the window's boundary rows exactly when rows hide
+        beyond them, so the content capacity shifts as the window slides; a few
+        passes settle top, capacity, and the highlight clamp together.
+
+        Args:
+            n: Total list rows.
+            win: Lines the window may spend — on content and markers alike.
+            index: A highlighted row that must stay visible, or ``None`` when the
+                window scrolls free (a cursor-less log; ``top`` is just clamped).
+
+        Returns:
+            The first visible row and how many rows to draw. Rows hidden above
+            number ``top``; below, ``n - top - count`` — each side non-zero exactly
+            when its marker row should be drawn.
+        """
+        if n <= win:
+            self.top = 0
+            self.page = max(1, win)
+            return 0, n
+        top = max(0, min(self.top, n - 1))
+        count = 1
+        for _ in range(4):
+            above = 1 if top > 0 else 0
+            below = 1 if n - top > win - above else 0
+            count = max(1, win - above - below)
+            if index is not None:
+                if index < top:
+                    top = index
+                elif index >= top + count:
+                    top = index - count + 1
+            top = max(0, min(top, n - count))
+        self.top = top
+        self.page = count
+        return top, count
+
+    def to_end(self) -> None:
+        """Slide the window to the list's tail on the next :meth:`fit`.
+
+        The overshoot is deliberate — the caller rarely knows the list length at
+        keypress time, and :meth:`fit` clamps to the last windowful either way.
+        """
+        self.top = 10**9
+
+    @staticmethod
+    def marker(hidden: int, direction: str) -> Text:
+        """The faint edge row counting rows hidden ``"above"`` or ``"below"``."""
+        arrow = "↑" if direction == "above" else "↓"
+        return Text(f"  {arrow} {hidden} more", style="faint")
+
+
 def _clamp_scroll(scroll: int, total: int, viewport: int) -> int:
     """Clamp a scroll offset to the valid range for the content and viewport.
 

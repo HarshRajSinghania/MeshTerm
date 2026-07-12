@@ -2,7 +2,9 @@
 
 This wraps :func:`~meshterm.ui.widgets.nodes_table` in a full-screen TUI layer whose sort the
 user steers with the arrows — left/right pick the column, up/down set ascending/descending —
-so the table re-renders in place. The one-shot CLI (``meshterm nodes --sort …``) renders the
+so the table re-renders in place. The rows scroll in a window inside the fixed screen: the
+title, column header, and bottom legend hold still, faint ``↑/↓ n more`` markers bracket the
+window, and PgUp/PgDn slide it. The one-shot CLI (``meshterm nodes --sort …``) renders the
 same table statically; only the menu gets the live sorting.
 """
 
@@ -11,9 +13,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from .tui.render import render_lines
-from .tui.screen import Screen
-from .widgets import NodesSort, nodes_table
+from .tui.render import render_lines, render_to_ansi
+from .tui.screen import ListWindow, Screen
+from .widgets import NodesSort, _nodes_legend, nodes_table
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -56,9 +58,21 @@ class NodesScreen(Screen):
         self._prefix_bytes = prefix_bytes
         self._counts = counts
         self._sort = sort
+        #: The row window inside the fixed screen (title, header, and legend pinned).
+        self._rows_window = ListWindow()
+        #: Whether the last render actually windowed the rows — degenerate renders
+        #: (no header rule found, or a viewport too short) fall back to whole-body
+        #: scrolling, and the page keys follow suit.
+        self._windowed = False
 
     def render_body(self, width: int) -> list[str]:
-        """Render the table+legend at the current sort, pinning the column header on scroll."""
+        """Render the table at the current sort, windowing its rows in place.
+
+        The title, column header, and rule pin above the window; the glyph legend
+        pins beneath it; only the node rows scroll between them. A render whose
+        header rule can't be found (degenerate narrow width) or whose viewport
+        leaves the window no room falls back to the plain whole-body scroll.
+        """
         table = nodes_table(
             self._self_name,
             self._self_key,
@@ -68,29 +82,46 @@ class NodesScreen(Screen):
             self._sort,
         )
         lines = render_lines(table, width)
-        self._scroll_total = max(1, len(lines))
-        # Pin the ``Name / Heard / Pkts / Key`` labels so they stay in view once the rows scroll
-        # past — the base Screen.sticky_header re-draws the recorded line as the top row. The
-        # header sits directly above the rule the table draws under it (box.SIMPLE_HEAD).
-        self._sticky_headers = self._column_header(lines)
-        return lines
+        rule = self._rule_index(lines)
+        legend_h = len(render_lines(_nodes_legend(), width)) + 1  # + its blank spacer
+        win = self._scroll_viewport - (rule + 1) - legend_h if rule is not None else 0
+        self._windowed = rule is not None and win >= 3
+        if not self._windowed:
+            self._scroll_total = max(1, len(lines))
+            return lines
+
+        head, rows, tail = (
+            lines[: rule + 1], lines[rule + 1 : len(lines) - legend_h],
+            lines[len(lines) - legend_h :],
+        )
+        top, count = self._rows_window.fit(len(rows), win)
+        out = list(head)
+        if top > 0:
+            out.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+        out.extend(rows[top : top + count])
+        below = len(rows) - top - count
+        if below > 0:
+            out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
+        out.extend(tail)
+        self._scroll_total = max(1, len(out))
+        return out
 
     @staticmethod
-    def _column_header(lines: list[str]) -> list[tuple[int, str]]:
-        """Locate the column-header row (the line just above the table's header rule).
+    def _rule_index(lines: list[str]) -> "int | None":
+        """Locate the rule the table draws under its column labels.
 
-        The table renders a full-width rule of ``─`` under its column labels; the first such
-        line marks the header, so the row above it carries the labels. Returns a single-entry
-        sticky-header list, or empty if no rule is found (e.g. a degenerate narrow render).
+        The table renders a full-width run of ``─`` there (box.SIMPLE_HEAD); the
+        first such line marks where the pinned head ends and the rows begin.
+        ``None`` if no rule is found (e.g. a degenerate narrow render).
         """
         for idx in range(1, len(lines)):
             bare = _ANSI_RE.sub("", lines[idx]).strip()
             if bare and set(bare) == {"─"}:
-                return [(idx - 1, lines[idx - 1])]
-        return []
+                return idx
+        return None
 
     def handle(self, action: str, data: str = "") -> None:
-        """Re-sort with the arrows, scroll with PageUp/PageDown/Home/End, or dismiss."""
+        """Re-sort with the arrows, slide the row window with the page keys, or dismiss."""
         if action == "left":
             self._sort.move(-1)
         elif action == "right":
@@ -100,13 +131,25 @@ class NodesScreen(Screen):
         elif action == "down":
             self._sort.ascending = False
         elif action == "pageup":
-            self.scroll_pages(-1)
+            if self._windowed:
+                self._rows_window.top -= self._rows_window.page
+            else:
+                self.scroll_pages(-1)
         elif action in ("pagedown", "space"):
-            self.scroll_pages(1)
+            if self._windowed:
+                self._rows_window.top += self._rows_window.page
+            else:
+                self.scroll_pages(1)
         elif action in ("home", "ctrl_home"):
-            self.scroll_to_top()
+            if self._windowed:
+                self._rows_window.top = 0
+            else:
+                self.scroll_to_top()
         elif action in ("end", "ctrl_end"):
-            self.scroll_to_bottom()
+            if self._windowed:
+                self._rows_window.to_end()
+            else:
+                self.scroll_to_bottom()
         elif action in ("escape", "enter"):
             self.resolve(None)
 

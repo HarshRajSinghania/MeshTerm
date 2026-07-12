@@ -301,7 +301,7 @@ def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True):  # noqa: A
         if target
         else {}
     )
-    return PathComposerScreen(
+    screen = PathComposerScreen(
         device_label="Us",
         device_hash=US + "0" * 52,
         topology=topo,
@@ -310,6 +310,8 @@ def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True):  # noqa: A
         fetch_nodes=fetch_nodes,
         **pinned,
     )
+    screen.note_viewport(30)  # the frame records the dialog budget before each paint
+    return screen
 
 
 def _rows_plain(screen: PathComposerScreen) -> str:
@@ -326,6 +328,23 @@ def test_composer_suggests_from_tail_and_appends_on_enter() -> None:
     assert screen._hops == ["3d63c6429436"]
     # From the new tail the target is excluded, so Far never appears as a hop.
     assert all(s.node != "f2c24f54551e" for s in screen._suggestions())
+
+
+def test_composer_windows_rows_under_the_pinned_route_preview() -> None:
+    """A short dialog windows the rows; the route preview and cursor stay visible."""
+    import re
+
+    walks = [
+        _traced((f"{i + 16:02x}", 3.0), (None, 3.0)) for i in range(10)
+    ]
+    screen = _composer(_topo(trace_paths=walks, contacts=[FAR]))
+    screen.note_viewport(9)  # a short dialog budget: preview + heading + a few rows
+    body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
+    assert "Us (aa)" in body  # the route preview is pinned, never scrolled out
+    assert "↓" in body and "more" in body  # hidden rows are counted at the edge
+    screen.handle("end")  # cursor to the last action row — the window follows
+    body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
+    assert "Cancel" in body and "↑" in body
 
 
 def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:

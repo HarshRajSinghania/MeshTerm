@@ -56,7 +56,7 @@ from .menus import fit_cells
 from .theme import name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_to_ansi
-from .tui.screen import Screen
+from .tui.screen import ListWindow, Screen
 from .widgets import _format_age, highlighted_hash
 
 if TYPE_CHECKING:
@@ -194,11 +194,9 @@ class AtlasScreen(Screen):
         #: The live find-as-you-type filter ("" = off; matches every node known).
         self._filter = ""
         self._needs_scrub = True  # braille smear scrub, exactly like the map
-        #: First list row the internal window shows (the list scrolls, the screen
-        #: doesn't), and how many rows that window carried on the last paint — the
-        #: stride a PgUp/PgDn moves the highlight by.
-        self._list_top = 0
-        self._list_page = 6
+        #: The link list's window (the list scrolls, the screen doesn't); its
+        #: settled capacity is the stride a PgUp/PgDn moves the highlight by.
+        self._list = ListWindow()
 
     # --- state -------------------------------------------------------------------
 
@@ -296,9 +294,9 @@ class AtlasScreen(Screen):
         elif action == "pageup" and rows:
             # The highlight pages by one list windowful: the window follows the
             # highlight, so paging the view without it would just snap straight back.
-            self._index = max(0, self._index - self._list_page)
+            self._index = max(0, self._index - self._list.page)
         elif action == "pagedown" and rows:
-            self._index = min(len(rows) - 1, self._index + self._list_page)
+            self._index = min(len(rows) - 1, self._index + self._list.page)
         elif action == "enter":
             self._walk(rows)
         elif action == "backspace":
@@ -376,7 +374,7 @@ class AtlasScreen(Screen):
 
         depths = self._hops_out()
         selected = rows[self._index] if rows else None
-        _, viewport = self._session.base_body_size()
+        viewport = self._scroll_viewport  # recorded by the frame before this render
 
         header = self._header_lines(width, depths)
         chrome = len(header) + 3  # legend, blank, list heading
@@ -680,42 +678,15 @@ class AtlasScreen(Screen):
                 other, link = pairs[i]
                 return self._link_row(other, link, i == self._index, onward.get(other, 0))
 
-        top, count = self._window(len(rows), win)
+        top, count = self._list.fit(len(rows), win, self._index)
         if top > 0:
-            out.append(render_to_ansi(Text(f"  ↑ {top} more", style="faint"), width))
+            out.append(render_to_ansi(ListWindow.marker(top, "above"), width))
         for i in range(top, top + count):
             out.append(render_to_ansi(render(i), width, no_wrap=True))
         below = len(rows) - top - count
         if below > 0:
-            out.append(render_to_ansi(Text(f"  ↓ {below} more", style="faint"), width))
+            out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
         return out
-
-    def _window(self, n: int, win: int) -> tuple[int, int]:
-        """The list window: ``(first row, row count)`` keeping the highlight inside.
-
-        The ``↑/↓ n more`` markers eat the window's edge rows exactly when there are
-        hidden rows on that side, so the content capacity shifts as the window slides;
-        a couple of passes settles top, capacity, and the highlight clamp together.
-        The settled capacity is remembered as the PgUp/PgDn stride.
-        """
-        if n <= win:
-            self._list_top = 0
-            self._list_page = max(1, win)
-            return 0, n
-        top = max(0, min(self._list_top, n - 1))
-        count = 1
-        for _ in range(4):
-            above = 1 if top > 0 else 0
-            below = 1 if n - top > win - above else 0
-            count = max(1, win - above - below)
-            if self._index < top:
-                top = self._index
-            elif self._index >= top + count:
-                top = self._index - count + 1
-            top = max(0, min(top, n - count))
-        self._list_top = top
-        self._list_page = count
-        return top, count
 
     def _onward_counts(self, pairs: list[tuple[str, Link]]) -> dict[str, int]:
         """How many links continue from each neighbour, the one back here excluded."""

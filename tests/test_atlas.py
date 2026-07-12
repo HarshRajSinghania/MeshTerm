@@ -20,12 +20,8 @@ ALICE = Contact(name="Alice", public_key="b2" * 32, last_seen=utcnow() - timedel
 
 
 class _FakeSession:
-    def __init__(self, cell_h: int = 24) -> None:
-        self.cell_h = cell_h
+    def __init__(self) -> None:
         self.repaints = 0
-
-    def base_body_size(self) -> tuple[int, int]:
-        return (80, self.cell_h)
 
     def invalidate(self) -> None:
         self.repaints += 1
@@ -45,8 +41,8 @@ def _topo(*, with_island: bool = False) -> MeshTopology:
 
 
 def _screen(topo: MeshTopology, cell_h: int = 24) -> AtlasScreen:
-    return AtlasScreen(
-        session=_FakeSession(cell_h),
+    screen = AtlasScreen(
+        session=_FakeSession(),
         topo=topo,
         contacts={
             topo.canonical(YUL.public_key): YUL,
@@ -54,6 +50,8 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> AtlasScreen:
         },
         self_label="Homestead",
     )
+    screen.note_viewport(cell_h)  # the frame records this before every real paint
+    return screen
 
 
 def _plain(lines: list[str]) -> str:
@@ -175,8 +173,9 @@ def _hub_topo(spokes: int) -> MeshTopology:
 def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
     """Beyond the area's capacity, weaker neighbours fold into a single ``…`` node."""
     screen = AtlasScreen(
-        session=_FakeSession(cell_h=20), topo=_hub_topo(14), contacts={}, self_label="us"
+        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
     )
+    screen.note_viewport(20)
     body = _plain(screen.render_body(80))
     assert "weaker" in body  # the collapsed marker is labelled "+n weaker"
     canvas_part = body.split("Links")[0]
@@ -188,8 +187,9 @@ def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
 def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
     """Highlighting a weak (collapsed) row surfaces its name at the ``…`` marker."""
     screen = AtlasScreen(
-        session=_FakeSession(cell_h=20), topo=_hub_topo(14), contacts={}, self_label="us"
+        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
     )
+    screen.note_viewport(20)
     screen.render_body(80)
     screen._index = len(screen._rows()) - 1  # the weakest row, surely collapsed
     body = _plain(screen.render_body(80))
@@ -202,8 +202,9 @@ def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> 
 def test_atlas_body_fits_the_viewport_and_windows_the_list() -> None:
     """The screen never outgrows the frame; only the link list scrolls, marked."""
     screen = AtlasScreen(
-        session=_FakeSession(cell_h=22), topo=_hub_topo(16), contacts={}, self_label="us"
+        session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
     )
+    screen.note_viewport(22)
     lines = screen.render_body(80)
     assert len(lines) <= 22  # canvas + chrome + list window == the viewport
     body = _plain(lines)
@@ -214,10 +215,11 @@ def test_atlas_body_fits_the_viewport_and_windows_the_list() -> None:
 def test_atlas_pgdn_pages_the_highlight_by_the_list_window() -> None:
     """PgUp/PgDn stride by the list window, and the window follows the highlight."""
     screen = AtlasScreen(
-        session=_FakeSession(cell_h=22), topo=_hub_topo(16), contacts={}, self_label="us"
+        session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
     )
+    screen.note_viewport(22)
     screen.render_body(80)
-    stride = screen._list_page
+    stride = screen._list.page
     assert stride >= 1
     screen.handle("pagedown")
     assert screen._index == min(15, stride)

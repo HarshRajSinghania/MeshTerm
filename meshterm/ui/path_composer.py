@@ -35,9 +35,12 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
   topology, and reopens the composer mid-thought (hops preserved).
 * Enter on **Use this path** commits the composed spec; Esc cancels with no change.
 
-Nodes render exactly as the trace screen's route line does — ``Name (hash)`` with the
-name in the brand colour and the hash muted in parentheses — so a node reads the same
-wherever it appears.
+Nodes and the route preview render through the shared path widget
+(:func:`~meshterm.ui.widgets.path_text`, trace flavour) — ``Name (hash)`` with names
+in their app-wide hues and our own node the white ``you`` — so a node reads the same
+wherever it appears. The suggestion list scrolls in a window under the pinned route
+preview (faint ``↑/↓ n more`` markers at its edges; PgUp/PgDn stride by a windowful),
+so the route under construction never leaves the screen.
 """
 
 from __future__ import annotations
@@ -51,8 +54,8 @@ from rich.text import Text
 from ..services.topology import MeshTopology, _is_hex, render_custom_spec, render_forced_spec
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
-from .tui.screen import Screen
-from .widgets import _age_seconds, _format_age, _shorten_hash
+from .tui.screen import ListWindow, Screen
+from .widgets import _age_seconds, _format_age, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
 #: empty-spec convention). Only meaningful in target mode; a path walk has no target
@@ -149,6 +152,8 @@ class PathComposerScreen(Screen):
         self._fetch_nodes = fetch_nodes
         self._entry = ""
         self._index = 0
+        #: The suggestion/action list's window under the pinned route preview.
+        self._list = ListWindow()
 
     @property
     def hops(self) -> list[str]:
@@ -232,62 +237,68 @@ class PathComposerScreen(Screen):
 
     # --- rendering ---------------------------------------------------------------
 
-    def _node_text(self, node: str, *, dim: bool = False) -> Text:
-        """One route node, rendered exactly as the trace screen's route line does.
+    def _path_entry(self, node: str) -> Optional[str]:
+        """A canonical id as a :func:`path_text` hop entry (``None`` = our device).
 
-        ``Name (hash)`` when known — name in the brand colour, hash muted in
-        parentheses — a bare brand hash when not, and our own device as its accent
-        label plus hash. Hashes show at the spec's preferred path-hash width, the
-        same width every other trace-feature view truncates to, so a node reads the
-        same length everywhere.
+        The pinned target rides as its full hash when one is known, so its hash
+        annotation shows the spec width even past the canonical id's 12 hex.
+        """
+        if node == self._topology.self_id:
+            return None
+        if node == self._target_id:
+            return self._target_hash or node
+        return node
+
+    def _resolve_entry(self, entry: str) -> str:
+        """Resolve a preview entry to its display name (the target by its label)."""
+        if self._target_id is not None and entry == (self._target_hash or self._target_id):
+            return self._target_label or entry
+        return self._topology.display_name(entry) or entry
+
+    def _node_text(self, node: str, *, dim: bool = False) -> Text:
+        """One route node through THE path widget, the trace presentation.
+
+        ``Name (hash)`` when known — the name in its app-wide hue, our own device
+        the white ``you`` — a bare brand hash when not. Hashes show at the spec's
+        preferred path-hash width, the same width every other trace-feature view
+        truncates to, so a node reads the same length everywhere.
 
         Args:
             node: The node's canonical id (or ``self_id`` for our own device).
             dim: Whether to render in the resolved-return-leg's uniform faint style
                 rather than the normal route colours.
         """
-        if node == self._topology.self_id:
-            text = Text(self._device_label, style="faint" if dim else "accent")
-            if self._device_hash:
-                shown = _shorten_hash(self._device_hash, self._width_bytes)
-                text.append(f" ({shown})", style="faint" if dim else "muted")
-            return text
-        if node == self._target_id:
-            name: Optional[str] = self._target_label
-            hash_source = self._target_hash or node
-        else:
-            name = self._topology.display_name(node)
-            hash_source = node
-        shown = _shorten_hash(hash_source, self._width_bytes)
-        if not name:
-            return Text(shown, style="faint" if dim else "brand")
-        text = Text(name, style="faint" if dim else "brand")
-        text.append(f" ({shown})", style="faint" if dim else "muted")
-        return text
+        return path_text(
+            [self._path_entry(node)], self._resolve_entry,
+            prefix_bytes=self._width_bytes, self_name=self._device_label,
+            show_hash=True, hash_bytes=self._width_bytes,
+            device_hash=self._device_hash or None,
+            dim_from=0 if dim else None,
+        )
 
     def _route_preview(self) -> Text:
         """The route under construction, endpoints filled in automatically.
 
-        Target mode shows the composed outbound in full colour, then the pinned
-        target and the mirrored return resolved and dimmed right alongside it — the
-        dimming reads as "this half isn't yours to compose". Path mode shows every
-        composed hop in full colour (they are all yours) between our own node at
-        both ends, with only the final landing back on us dimmed.
+        One :func:`path_text` in the trace flavour: target mode shows the composed
+        outbound in full colour, then the pinned target and the mirrored return
+        resolved and dimmed right alongside it (``dim_from``) — the dimming reads
+        as "this half isn't yours to compose". Path mode shows every composed hop
+        in full colour (they are all yours) between our own node at both ends,
+        with only the final landing back on us dimmed.
         """
-        text = Text()
-        text.append_text(self._node_text(self._topology.self_id))
-        for hop in self._hops:
-            text.append(" → ", style="muted")
-            text.append_text(self._node_text(hop))
+        entries: list[Optional[str]] = [None]
+        entries.extend(self._path_entry(hop) for hop in self._hops)
         if self._mirrored:
-            text.append(" → ", style="muted")
-            text.append_text(self._node_text(self._target_id))
-            for hop in reversed(self._hops):
-                text.append(" → ", style="faint")
-                text.append_text(self._node_text(hop, dim=True))
-        text.append(" → ", style="faint")
-        text.append_text(self._node_text(self._topology.self_id, dim=True))
-        return text
+            entries.append(self._path_entry(self._target_id))
+            entries.extend(self._path_entry(hop) for hop in reversed(self._hops))
+        entries.append(None)
+        return path_text(
+            entries, self._resolve_entry,
+            prefix_bytes=self._width_bytes, self_name=self._device_label,
+            show_hash=True, hash_bytes=self._width_bytes,
+            device_hash=self._device_hash or None,
+            dim_from=(2 if self._mirrored else 1) + len(self._hops),
+        )
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
         """One suggestion row: node, then its link's evidence trail."""
@@ -340,7 +351,12 @@ class PathComposerScreen(Screen):
         return max(widths, default=20) + 8
 
     def render_body(self, width: int) -> list[str]:
-        """Render the route preview, filter/hint line, suggestions, and actions."""
+        """Render the pinned route preview and filter line, then the windowed rows.
+
+        The preview and heading hold still; the suggestion/action rows scroll in
+        whatever the dialog's budget has left (see :class:`ListWindow`), so a long
+        suggestion list can never push the route being composed out of the dialog.
+        """
         rows = self._rows()
         self._index = max(0, min(self._index, len(rows) - 1))
 
@@ -354,10 +370,12 @@ class PathComposerScreen(Screen):
             heading.append(" — strongest first", style="muted")
             lines.extend(render_lines(heading, width))
 
-        cursor_at: Optional[int] = None
+        # Each windowable entry is one rendered line tagged with its row index
+        # (``None`` = a spacer or note line the cursor can't land on).
+        entries: list[tuple[Optional[int], str]] = []
         for i, (kind, payload) in enumerate(rows):
             if kind == "action" and (i == 0 or rows[i - 1][0] != "action"):
-                lines.append("")  # a spacer sets the action group apart
+                entries.append((None, ""))  # a spacer sets the action group apart
             is_sel = i == self._index
             text = Text("❯ " if is_sel else "  ", style="brand" if is_sel else "")
             text.append_text(self._row_text(kind, payload))
@@ -365,17 +383,28 @@ class PathComposerScreen(Screen):
                 text.style = "brand"
             text.no_wrap = True
             text.truncate(width, overflow="ellipsis")
-            if is_sel:
-                cursor_at = len(lines)
-            lines.append(render_to_ansi(text, width))
+            entries.append((i, render_to_ansi(text, width)))
         if not any(kind == "hop" for kind, _ in rows):
             if any(kind == "fetch" for kind, _ in rows):
                 note = "(no observed links from here — fetch the repeater's neighbours, or type a hex hash)"
             else:
                 note = "(no observed links from here — type a hex hash to force a hop)"
-            lines.append(render_to_ansi(Text(note, style="muted"), width))
+            entries.append((None, render_to_ansi(Text(note, style="muted"), width)))
 
-        self._cursor = cursor_at
+        win = max(3, self._scroll_viewport - len(lines))
+        at = next(p for p, (row, _line) in enumerate(entries) if row == self._index)
+        top, count = self._list.fit(len(entries), win, at)
+        self._cursor = None
+        if top > 0:
+            lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+        for pos in range(top, top + count):
+            row, line = entries[pos]
+            if row == self._index:
+                self._cursor = len(lines)
+            lines.append(line)
+        below = len(entries) - top - count
+        if below > 0:
+            lines.append(render_to_ansi(ListWindow.marker(below, "below"), width))
         self._scroll_total = max(1, len(lines))
         return lines
 
@@ -417,6 +446,10 @@ class PathComposerScreen(Screen):
             self._index = (self._index - 1) % len(rows)
         elif action == "down" and rows:
             self._index = (self._index + 1) % len(rows)
+        elif action == "pageup" and rows:
+            self._index = max(0, self._index - self._list.page)
+        elif action == "pagedown" and rows:
+            self._index = min(len(rows) - 1, self._index + self._list.page)
         elif action in ("home", "ctrl_home"):
             self._index = 0
         elif action in ("end", "ctrl_end"):
