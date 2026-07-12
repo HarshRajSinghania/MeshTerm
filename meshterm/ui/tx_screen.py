@@ -126,7 +126,7 @@ class TxSweepScreen(Screen):
             pick_samples: Floats the per-level sample-count dialog.
         """
         super().__init__()
-        self.title = f"tx optimize · {admin_label} → {target_label}"
+        self.title = f"TX optimize — {admin_label} → {target_label}"
         self._admin_label = admin_label
         self._target_label = target_label
         self._device_label = device_label
@@ -671,7 +671,7 @@ async def open_tx_optimize(
         ]
         picked = await session.run_screen(
             SelectScreen(
-                "sweep range",
+                "Sweep range",
                 items,
                 prompt="The TX window the sweep explores:",
                 default=(screen.tx_min, screen.tx_max),
@@ -710,7 +710,7 @@ async def open_tx_optimize(
         ]
         picked = await session.run_screen(
             SelectScreen(
-                "coarse step",
+                "Coarse step",
                 items,
                 prompt="The coarse sweep measures the window at this spacing, then refines.",
                 default=screen.step,
@@ -735,7 +735,7 @@ async def open_tx_optimize(
         ]
         picked = await session.run_screen(
             SelectScreen(
-                "samples per level",
+                "Samples per level",
                 items,
                 prompt=f"Each TX level is measured with this many traces, {pace:g} s apart.",
                 default=screen.samples,
@@ -779,7 +779,7 @@ async def open_tx_optimize(
                     "The saved password was cleared; sweep again to enter a new one.",
                     style="err",
                 ),
-                title="admin login",
+                title="Admin login",
             )
             return False
         ctx.admin_store.remember(admin_node, password)
@@ -831,7 +831,7 @@ async def open_tx_optimize(
 
         spinner = Spinner()
         flight = TracingDialog(
-            f"sweeping · {admin_node.name} → {target_label}",
+            f"Sweeping — {admin_node.name} → {target_label}",
             spinner=spinner,
             on_abort=screen.cancel,
         )

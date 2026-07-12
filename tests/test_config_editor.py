@@ -218,7 +218,7 @@ def test_location_picker_draws_a_live_crosshair_without_keeping_it() -> None:
     body = _plain(screen.render_body(80))
     assert "⌖" in body and "45.5" in body  # crosshair + its live coordinates
     assert screen._markers == markers  # not accumulated across frames
-    assert "set location" in screen._title(screen._viewport)
+    assert "Set location" in screen._title(screen._viewport)
 
 
 def test_location_picker_without_nodes_or_initial_shows_the_world() -> None:

@@ -415,7 +415,7 @@ class LocationPickScreen(MapScreen):
         """A live status title: the coordinates under the crosshair and the scale."""
         base = super()._title(vp)
         scale = base.rsplit("·", 1)[-1].strip()
-        return f"set location · {vp.center_lat:.5f}, {vp.center_lon:.5f} · z{vp.zoom} · {scale}"
+        return f"Set location · {vp.center_lat:.5f}, {vp.center_lon:.5f} · z{vp.zoom} · {scale}"
 
     def handle(self, action: str, data: str = "") -> None:
         """Commit the centre on Enter; ``Home`` returns to the initial spot; else map keys."""

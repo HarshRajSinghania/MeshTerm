@@ -155,7 +155,7 @@ class DashboardScreen(Screen):
                 so it can attempt to decrypt an overheard channel-text packet.
         """
         super().__init__()
-        self.title = "dashboard · mesh overview"
+        self.title = "Dashboard — mesh overview"
         self._session = session
         self._resolve = resolve
         self._activity = activity

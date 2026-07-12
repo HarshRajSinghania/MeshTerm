@@ -137,7 +137,7 @@ class PathComposerScreen(Screen):
                 them, the *fetch neighbours* row appears.
         """
         super().__init__()
-        self.title = f"compose path · {target_label}" if target_label else "compose path"
+        self.title = f"Compose path — {target_label}" if target_label else "Compose path"
         self._target_id = target_id
         self._target_hash = (target_hash or "").lower().removeprefix("0x")
         self._target_label = target_label

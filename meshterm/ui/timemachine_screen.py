@@ -165,7 +165,7 @@ class TimeMachineScreen(Screen):
 
     def _set_title(self) -> None:
         name, _delta = _WINDOWS[self._window_index]
-        self.title = f"⏳ {self._label} · {name}"
+        self.title = f"{self._label} · {name}"
 
     def handle(self, action: str, data: str = "") -> None:
         """Scroll, cycle the window, or dismiss."""
@@ -742,7 +742,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
                     "MeshTerm listens. Come back after the mesh has talked a while.",
                     style="muted",
                 ),
-                title="⏳ Time machine",
+                title="Time machine",
             )
             return
         # Stored names first, the contact resolver filling the blanks (the app-wide
@@ -770,7 +770,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
                 )
             )
         picked = await session.select(
-            "⏳ Time machine — pick a subject",
+            "Time machine — pick a subject",
             items,
             prompt="Everything the recorder ever heard, explorable:",
         )

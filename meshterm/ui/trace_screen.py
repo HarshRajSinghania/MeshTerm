@@ -148,7 +148,7 @@ class TracingDialog(Screen):
         """Build the dialog.
 
         Args:
-            title: Heading for the dialog border (e.g. ``tracing · YUL-Poly``).
+            title: Heading for the dialog border (e.g. ``Tracing — YUL-Poly``).
             spinner: The spinner to animate (shared with the owner's ticker).
             on_abort: Invoked when the user asks to abort (idempotent expected).
         """
@@ -289,7 +289,7 @@ class TraceScreen(Screen):
                 the screen never claims a route the radio wasn't given.
         """
         super().__init__()
-        self.title = f"trace · {target}" if mode == "target" else "trace path"
+        self.title = f"Trace — {target}" if mode == "target" else "Trace path"
         self._target = target
         self._mode = mode
         self._flight_label = target if mode == "target" else "path"
@@ -364,7 +364,7 @@ class TraceScreen(Screen):
         """
         total = max(1, int(self._sample_count()))
         dialog = TracingDialog(
-            f"tracing · {self._flight_label}", spinner=self._spinner, on_abort=self.cancel
+            f"Tracing — {self._flight_label}", spinner=self._spinner, on_abort=self.cancel
         )
         self._flight = dialog
         self._session.push(dialog)
@@ -1047,7 +1047,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 f"{target!r} isn't a known contact or a hex key prefix, so a forced "
                 "path can't end at it. Trace it device-routed, or pick a contact.",
             ),
-            title="no destination hash",
+            title="No destination hash",
         )
 
     async def fetch_neighbours_via(repeater: Contact, repeater_id: str) -> bool:
@@ -1083,7 +1083,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         )
         spinner = Spinner()
         dialog = TracingDialog(
-            f"neighbours · {repeater.name}", spinner=spinner, on_abort=lambda: None
+            f"Fetch neighbours — {repeater.name}", spinner=spinner, on_abort=lambda: None
         )
         dialog.show_last = False  # a fetch has no streaming replies to echo
         dialog.status = f"logging in to {repeater.name}…"
@@ -1138,7 +1138,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 run_id, "error", {"error": str(error) or type(error).__name__}
             )
             await session.message_dialog(
-                Text(str(error), style="err"), title="fetch neighbours"
+                Text(str(error), style="err"), title="Fetch neighbours"
             )
             return False
         ctx.repo.record_neighbours(run_id, repeater_id, entries)
@@ -1154,7 +1154,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                     "it relearns neighbours from received adverts, so ask again later.",
                     style="muted",
                 ),
-                title="fetch neighbours",
+                title="Fetch neighbours",
             )
             return False
         return True
@@ -1251,7 +1251,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             items.append(Choice(title=title, value=w))
         picked = await session.run_screen(
             SelectScreen(
-                "path width",
+                "Path width",
                 items,
                 prompt="Forced hops are addressed by this many leading key bytes.",
                 default=width_bytes,
@@ -1288,7 +1288,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             items.append(Choice(title=title, value=n))
         picked = await session.run_screen(
             SelectScreen(
-                "sample count",
+                "Sample count",
                 items,
                 prompt=f"One Trace action runs this many traces, {pace:g} s apart.",
                 default=sample_count,
@@ -1367,7 +1367,9 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             ctx.profile_name,
         )
         spinner = Spinner()
-        dialog = TracingDialog(f"probing · {target_label}", spinner=spinner, on_abort=lambda: None)
+        dialog = TracingDialog(
+            f"Probing — {target_label}", spinner=spinner, on_abort=lambda: None
+        )
         dialog.status = f"path 1/{len(candidates)} · one trace each"
 
         def on_result(index: int, done: int, result: TraceResult) -> None:
@@ -1431,7 +1433,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 run_id, "error", {"error": str(error) or type(error).__name__}
             )
             await session.message_dialog(
-                Text(f"probe failed: {error}", style="err"), title="path probe"
+                Text(f"probe failed: {error}", style="err"), title="Path probe"
             )
             return None
         best = outcomes[0] if outcomes else None
@@ -1460,7 +1462,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             await session.message_dialog(
                 Text("no observed evidence involving this target yet — run a trace or "
                      "let monitoring accumulate paths first.", style="muted"),
-                title="explore paths",
+                title="Explore paths",
             )
             return None
 
@@ -1481,7 +1483,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         items.extend(back_rows(("back", None)))
         picked = await session.run_screen(
             SelectScreen(
-                f"reach {target_label} · scenarios",
+                f"Explore paths — {target_label}",
                 items,
                 prompt="Choose the outbound leg — the return mirrors it.",
                 footer_hint="↑↓ move · Enter adopt/probe · Esc back",
@@ -1512,7 +1514,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         result_items.append(Choice(title="Keep current path", value=None))  # the exit: no adoption
         adopted = await session.run_screen(
             SelectScreen(
-                f"probe results · {target_label}",
+                f"Probe results — {target_label}",
                 result_items,
                 footer_hint="↑↓ move · Enter adopt path · Esc keep current",
                 wrap=False,

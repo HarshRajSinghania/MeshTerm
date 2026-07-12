@@ -127,7 +127,7 @@ def test_atlas_renders_graph_and_overview_panel() -> None:
     assert "Homestead" in body and "YUL-Cartierville" in body and "Alice" in body
     assert "trace 1" in body and "packet 1" in body
     assert "rings = hops out" in body  # the overview hint row
-    assert "Mesh Atlas · 3 nodes · 2 links" == screen.title
+    assert "Mesh atlas · 3 nodes · 2 links" == screen.title
 
 
 def test_atlas_empty_graph_renders_guidance() -> None:

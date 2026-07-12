@@ -61,7 +61,7 @@ class RemoteCliScreen(Screen):
             session: The running TUI session (for repaints).
         """
         super().__init__()
-        self.title = f"command line · {node_label}"
+        self.title = f"Command line — {node_label}"
         self._node_label = node_label
         self._send = send
         self._session = session

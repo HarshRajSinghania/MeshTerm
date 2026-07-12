@@ -396,7 +396,7 @@ def test_composer_path_mode_opens_us_to_us_without_auto() -> None:
     the device to route to.
     """
     screen = _composer(_topo(), target=False)
-    assert screen.title == "compose path"  # no target to name
+    assert screen.title == "Compose path"  # no target to name
     preview = screen._route_preview()
     assert preview.plain == "Us (aa) → Us (aa)"  # endpoints carry our hash
     faint = sum(

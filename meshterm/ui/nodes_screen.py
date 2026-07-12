@@ -49,7 +49,7 @@ class NodesScreen(Screen):
             sort: The initial sort; mutated in place as the user presses the arrows.
         """
         super().__init__()
-        self.title = "nodes"
+        self.title = "Nodes"
         self._self_name = self_name
         self._self_key = self_key
         self._contacts = contacts

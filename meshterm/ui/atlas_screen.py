@@ -384,7 +384,7 @@ class AtlasScreen(Screen):
     def _compose_title(self, links: list[Link], matches: list[str]) -> str:
         """The status title: counts, the zoom level, and the find tally when active."""
         nodes = len(self._layout_nodes(links))
-        title = f"Mesh Atlas · {nodes} nodes · {len(links)} links"
+        title = f"Mesh atlas · {nodes} nodes · {len(links)} links"
         if self._zoom > _ZOOM_MIN:
             title += f" · {self._zoom:.1f}×"
         if self._filter:

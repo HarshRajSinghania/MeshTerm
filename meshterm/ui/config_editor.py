@@ -490,7 +490,7 @@ async def _stage_advert_cadence(
     else:
         prompt = "How often this node announces itself to neighbours in range:"
     selected = await ctx.ui.select(
-        "📡 Flood advert" if flood else "📡 Direct advert",
+        "Flood advert" if flood else "Direct advert",
         items,
         prompt=prompt,
         default=current,
@@ -515,7 +515,7 @@ async def _stage_location(
     choice = await ctx.ui.dialog(
         f"Advertised location: {_format_coords(lat, lon)}",
         [("Pick on map", "map"), ("Type coordinates", "type"), ("Clear", "clear")],
-        title="📍 Location",
+        title="Location",
     )
     if choice is None:
         return
@@ -834,7 +834,7 @@ async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
     choice = await ctx.ui.dialog(
         "Reboot the device now?",
         [("Cancel", None), ("Reboot", "reboot")],
-        title="🔄 Reboot device",
+        title="Reboot device",
         default=1,
         danger=True,
     )
@@ -895,7 +895,7 @@ async def _sync_clock(ctx: "AppContext", device: "Device", snapshot: dict) -> No
     choice = await ctx.ui.dialog(
         prompt,
         [("Cancel", None), ("Sync", "sync")],
-        title="🕒 Sync clock",
+        title="Sync clock",
         default=1,
     )
     if choice == "sync":
@@ -948,7 +948,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
     choice = await ctx.ui.dialog(
         "Apply the backup now, or preview the changes first?",
         [("Cancel", None), ("Preview", "preview"), ("Apply", "apply")],
-        title="📂 Restore from backup",
+        title="Restore from backup",
         default=1,
     )
     if choice == "preview":
@@ -956,7 +956,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
         choice = await ctx.ui.dialog(
             "Apply these changes to the device?",
             [("Cancel", None), ("Apply", "apply")],
-            title="📂 Restore from backup",
+            title="Restore from backup",
             default=1,
         )
     if choice != "apply":
@@ -973,7 +973,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
         its snapshot.
     """
     choice = await ctx.ui.select(
-        "🔐 Identity key",
+        "Identity key",
         [
             *menu_rows(
                 [
@@ -994,7 +994,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
             "The private key IS the node's identity — anyone who sees it can impersonate "
             "this node. Show it on screen?",
             [("Cancel", None), ("Show key", "show")],
-            title="🔐 Show private key",
+            title="Show private key",
             default=1,
             danger=True,
         )
@@ -1024,7 +1024,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
         "Importing a key permanently overwrites this device's identity. Contacts and "
         "messages keyed to the old identity will no longer match it.",
         "IMPORT",
-        title="🔐 Import private key",
+        title="Import private key",
     )
     if not confirmed:
         return False
@@ -1043,7 +1043,7 @@ async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) ->
         "This erases EVERYTHING on the device — identity, contacts, channels, and every "
         "setting — and cannot be undone.",
         "RESET",
-        title="⚠ Factory reset",
+        title="Factory reset",
     )
     if not confirmed:
         return False

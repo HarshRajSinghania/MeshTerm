@@ -117,7 +117,7 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
     while True:
         items = _menu_items(ctx, store.entries())
         menu = SelectScreen(
-            "📨 Courier — store-and-forward outbox",
+            "Courier — store-and-forward outbox",
             items,
             default=cursor,
             wrap=False,
@@ -225,7 +225,7 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
                 "No contacts available — connect a device that knows some nodes first.",
                 style="muted",
             ),
-            title="queue a message",
+            title="Queue a message",
         )
         return
 
@@ -246,7 +246,7 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         row.append(f"   heard {_format_age(secs)}", style="muted")
         items.append(Choice(row, contact))
     contact = await session.select(
-        "✉ Courier — recipient",
+        "Courier — recipient",
         items,
         prompt="The message waits in the outbox until this node can take it:",
     )
@@ -265,7 +265,7 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     if key is None:
         await session.message_dialog(
             Text(f"{contact.name!r} has no usable key to address.", style="err"),
-            title="queue a message",
+            title="Queue a message",
         )
         return
     ctx.courier_store.queue(key, contact.name, text, not_before=not_before)
@@ -325,14 +325,14 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
             f"{'s' if message.attempts != 1 else ''}",
             style="muted",
         )
-        await session.message_dialog(body, title=f"📨 {message.node_name}")
+        await session.message_dialog(body, title=message.node_name)
         return
     items = [
         Choice("📤 Send now — one forced attempt", "send"),
         Choice(Text.assemble(("✗ ", "err"), "Cancel this message"), "cancel"),
     ]
     picked = await session.select(
-        f"📨 {message.node_name} — “{_shorten(message.text, 28)}”",
+        f"{message.node_name} — “{_shorten(message.text, 28)}”",
         items, filterable=False,
         footer_hint="↑↓ move · Enter select · Esc back",
     )
@@ -344,7 +344,7 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
                 outcome = await ctx.courier.attempt_now(ident)
         except Exception as exc:  # noqa: BLE001 - surface the failure, keep the queue
             await session.message_dialog(
-                Text(f"send failed: {exc}", style="err"), title="courier"
+                Text(f"send failed: {exc}", style="err"), title="Courier"
             )
             return
         notes = {
@@ -362,5 +362,5 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
             "gone": Text("this entry is no longer queued", style="muted"),
         }
         await session.message_dialog(
-            notes.get(outcome, Text(outcome)), title="courier"
+            notes.get(outcome, Text(outcome)), title="Courier"
         )

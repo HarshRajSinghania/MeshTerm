@@ -88,7 +88,7 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
     while True:
         items = _menu_items(store.alerts(), store.watched(), store.new_node_alerts)
         menu = SelectScreen(
-            "🚨 Watchtower — alerts & watched nodes",
+            "Watchtower — alerts & watched nodes",
             items,
             default=cursor,
             wrap=False,
@@ -206,7 +206,7 @@ async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
             if contacts
             else "No contacts available — connect a device that knows some nodes first."
         )
-        await session.message_dialog(Text(message, style="muted"), title="watch a node")
+        await session.message_dialog(Text(message, style="muted"), title="Watch a node")
         return
 
     def recency(pair: tuple[str, Contact]) -> float:
@@ -221,7 +221,7 @@ async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
         row.append(f"   heard {_format_age(_age_seconds(contact.last_seen))}", style="muted")
         items.append(Choice(row, (key, contact)))
     picked = await session.select(
-        "⭐ Watch a node",
+        "Watch a node",
         items,
         prompt="Silence and SNR rules will watch it from now on:",
     )

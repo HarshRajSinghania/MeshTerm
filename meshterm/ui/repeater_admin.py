@@ -126,7 +126,7 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
                 + "try again to enter a new one.",
                 style="err",
             ),
-            title="admin login",
+            title="Admin login",
         )
         return False
     ctx.admin_store.remember(node, password)
@@ -175,14 +175,14 @@ async def _admin_session(
             elif choice == _ADVERT:
                 await _simple_action(
                     ctx, device, node, "advert",
-                    title="📡 Send advert",
+                    title="Send advert",
                     prompt=f"Ask {node.name} to announce itself (flood) now?",
                     commit="Send",
                 )
             elif choice == _CLOCK:
                 await _simple_action(
                     ctx, device, node, "clock sync",
-                    title="🕒 Sync clock",
+                    title="Sync clock",
                     prompt=f"Set {node.name}'s clock from this companion's time?",
                     commit="Sync",
                 )
@@ -191,7 +191,7 @@ async def _admin_session(
             elif choice == _REBOOT:
                 await _simple_action(
                     ctx, device, node, "reboot",
-                    title="🔄 Reboot node",
+                    title="Reboot node",
                     prompt=f"Reboot {node.name} now? It drops off the mesh while booting.",
                     commit="Reboot",
                     danger=True,
@@ -375,7 +375,7 @@ async def _apply(
             if i < total:
                 await asyncio.sleep(ctx.settings.trace_cooldown_s)
 
-    aborted = await _run_under_dialog(ctx, f"applying · {node.name}", work)
+    aborted = await _run_under_dialog(ctx, f"Applying — {node.name}", work)
     ctx.repo.finish_run(
         run_id, "error" if aborted else "ok",
         {"applied": applied, "staged_left": len(pending)},
@@ -387,7 +387,7 @@ async def _apply(
         summary.append("  (aborted — the rest stay staged)", style="warn")
     await ctx.ui.session.message_dialog(
         Text("\n").join([summary, Text(), *outcomes]) if outcomes else summary,
-        title=f"apply · {node.name}",
+        title=f"Apply — {node.name}",
     )
     return applied
 
@@ -420,7 +420,7 @@ async def _read_all(ctx: "AppContext", device: "Device", node: Contact) -> None:
             if i < len(specs):
                 await asyncio.sleep(ctx.settings.trace_cooldown_s)
 
-    aborted = await _run_under_dialog(ctx, f"reading · {node.name}", work)
+    aborted = await _run_under_dialog(ctx, f"Reading — {node.name}", work)
     ctx.repo.finish_run(
         run_id, "error" if aborted else "ok", {"read": read, "asked": len(specs)}
     )
@@ -517,7 +517,7 @@ async def _change_password(ctx: "AppContext", device: "Device", node: Contact) -
     confirmed = await ctx.ui.dialog(
         f"Change {node.name}'s admin password now? You will need the new one everywhere.",
         [("Cancel", None), ("Change", "go")],
-        title="🔐 Admin password",
+        title="Admin password",
         default=1,
         danger=True,
     )
@@ -538,7 +538,7 @@ async def _change_password(ctx: "AppContext", device: "Device", node: Contact) -
         )
     else:
         body = Text(reply.strip(), style="err")
-    await ctx.ui.session.message_dialog(body, title="admin password")
+    await ctx.ui.session.message_dialog(body, title="Admin password")
 
 
 # --- the command line ---------------------------------------------------------------
