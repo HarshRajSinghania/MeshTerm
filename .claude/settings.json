@@ -1,5 +1,18 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(python -)",
+      "Bash(python -m pytest *)",
+      "Bash(.venv/Scripts/python.exe -m pytest *)",
+      "Bash(./.venv/Scripts/python.exe -m pytest *)",
+      "PowerShell(python -m pytest *)",
+      "PowerShell(.venv\\Scripts\\python.exe -m pytest *)",
+      "PowerShell(.\\.venv\\Scripts\\python.exe -m pytest *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "PowerShell(git add *)",
+      "PowerShell(git commit *)"
+    ],
     "defaultMode": "dontAsk",
     "additionalDirectories": [
       "C:\\Users\\user\\.config\\meshterm\\output"
