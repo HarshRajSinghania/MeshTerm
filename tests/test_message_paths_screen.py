@@ -49,20 +49,32 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     assert "Alice" in body and "Homestead" in body  # origin and us, on the graph
     assert body.count("via") == 2  # one row per arrival
     assert "❯" in body
-    assert "bright = selected path" in body
+    assert "white = selected path" in body
     assert screen.cursor_line() is not None
 
 
-def test_paths_screen_labels_only_the_selected_path() -> None:
-    """Relay labels follow the selection: the other path keeps bare markers."""
+def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
+    """Graph relays carry their first hash byte, both paths at once; names stay
+    in the rows, annotated with the same byte."""
     screen = _screen(_arrivals())
-    graph = _plain(screen.render_body(76)).split("origin →")[0]
-    assert "YUL-Cartier" in graph  # the selected (first) path's relay is named
-    assert "Waymarker" not in graph  # the other path's relays stay unlabelled
+    body = _plain(screen.render_body(76))
+    graph = body.split("origin →")[0]
+    for byte in ("3d", "a1", "77"):  # every relay labelled, selected or not
+        assert byte in graph
+    assert "YUL-Cartier" not in graph and "Waymarker" not in graph
+    assert "YUL-Cartierville (3d)" in body  # the rows carry name + hash byte
+    assert "Waymarker (a1)" in body
+
+
+def test_paths_screen_draws_selected_path_white_over_gray() -> None:
+    """The selected path's edges render white; the unused path's edges gray."""
+    screen = _screen(_arrivals())
+    raw = "\n".join(screen.render_body(76)).split("origin →")[0]
+    assert "38;2;255;255;255" in raw  # the selected path
+    assert "38;2;110;110;110" in raw  # the other path, gray beneath it
     screen.handle("down")
-    graph = _plain(screen.render_body(76)).split("origin →")[0]
-    assert "Waymarker" in graph
-    assert "YUL-Cartier" not in graph
+    raw = "\n".join(screen.render_body(76)).split("origin →")[0]
+    assert "38;2;255;255;255" in raw and "38;2;110;110;110" in raw
 
 
 def test_paths_screen_scrolls_the_selected_line_sideways() -> None:

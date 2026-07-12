@@ -182,13 +182,17 @@ class MapCanvas:
         color: RGB,
         *,
         label_color: Optional[RGB] = None,
+        avoid_dots: bool = False,
     ) -> bool:
         """Place a label beside the marker at dot ``(x, y)``, only if it fits cleanly.
 
         The label goes to the right of the marker (one blank cell gap) when there's room,
         else to the left — but never over another marker or label. When neither side is
         free the label is dropped and just the marker glyph shows, so a crowded map stays
-        legible. Returns whether the label was placed.
+        legible. With ``avoid_dots`` a spot is also rejected when braille dots already sit
+        under it, so a caller can first sweep for placements clear of the drawn lines and
+        only then settle for one that overprints them. Returns whether the label was
+        placed.
         """
         text = single_cell(text)
         if not text:
@@ -197,9 +201,20 @@ class MapCanvas:
         if not (0 <= cx < self.cell_w and 0 <= cy < self.cell_h):
             return False
         lc = label_color or color
-        if self._place_run(cx + 2, cy, text, lc, bold=True, checked=True):
-            return True
-        return self._place_run(cx - 1 - len(text), cy, text, lc, bold=True, checked=True)
+        for start in (cx + 2, cx - 1 - len(text)):
+            if avoid_dots and not self._dot_free(start, cy, len(text)):
+                continue
+            if self._place_run(start, cy, text, lc, bold=True, checked=True):
+                return True
+        return False
+
+    def _dot_free(self, start_cx: int, cy: int, length: int) -> bool:
+        """Whether the run of cells at ``(start_cx…, cy)`` holds no braille dots."""
+        if not (0 <= cy < self.cell_h):
+            return False
+        if start_cx < 0 or start_cx + length > self.cell_w:
+            return False
+        return all(self._bits[cy][mx] == 0 for mx in range(start_cx, start_cx + length))
 
     def place_label(
         self, x: float, y: float, text: str, color: RGB, *, bold: bool = False

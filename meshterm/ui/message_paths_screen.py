@@ -5,17 +5,20 @@ with ``^P`` (or Enter on a picked direct message). The evidence — one logged f
 arrival, each with the relay path it rode — is laid out twice, so the shape and the
 detail read together:
 
-* a **graph** up top draws every distinct path the message took, in the atlas's edge
-  style: braille lines, the final relay → us link coloured by that path's reception
-  SNR (green → amber → red), earlier links slate (their SNR was never ours to
-  measure). The origin sits at the left, we sit at the right, every relay in between
-  gets a marker — but only the nodes on the *currently selected* path are labelled,
-  so a many-path graph stays readable. The selected path draws bright; the rest dim.
+* a **graph** up top draws every distinct path the message took as braille lines:
+  the currently selected path white, the unused paths gray beneath it. The origin
+  sits at the left, we sit at the right, and every relay in between gets its marker
+  plus the first byte of its hash in the marker's colour — the row list carries the
+  names, so the graph's labels stay two cells wide and a many-path graph stays
+  readable. Distinct depths spread evenly across the width, so forks read clearly
+  however lopsided the paths' lengths are, and each label first hunts for a spot
+  clear of the drawn lines before settling for one that overprints them.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
-  the relay chain through the shared compact path widget. ↑↓ move the selection (the
-  graph's highlight follows); a row longer than the dialog **scrolls horizontally
-  with ←→**, the whole line shifting under a ``…`` at whichever edge continues, and
-  snaps back the moment the selection moves on.
+  the relay chain through the shared compact path widget, each named hop annotated
+  with the hash byte it is addressed by (``YUL-Poly (3d)``, the trace presentation).
+  ↑↓ move the selection (the graph's highlight follows); a row longer than the
+  dialog **scrolls horizontally with ←→**, the whole line shifting under a ``…`` at
+  whichever edge continues, and snaps back the moment the selection moves on.
 
 Nothing here transmits; like the service beneath it, this is a read-model over what
 the radio already heard.
@@ -23,14 +26,14 @@ the radio already heard.
 
 from __future__ import annotations
 
-from statistics import median
+from math import ceil
 from typing import Optional
 
 from rich.text import Text
 
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
-from .atlas_screen import _NO_READING, _UNKNOWN, _scaled, _snr_rgb
+from .atlas_screen import _UNKNOWN
 from .map_render import _NODE, _SELF
 from .mapcanvas import MapCanvas, parse_hex
 from .theme import snr_style
@@ -46,15 +49,22 @@ _DST = "\x00dst"
 _HSTEP = 4
 
 #: Vertical dot separation between path lanes, and the graph's height bounds in rows.
-_LANE_STEP_DOTS = 8
-_GRAPH_MIN_H = 3
-_GRAPH_MAX_H = 10
+_LANE_STEP_DOTS = 10
+_GRAPH_MIN_H = 5
+_GRAPH_MAX_H = 14
+
+#: Dot rows the graph keeps as breathing room around the lane fan when sizing itself.
+_GRAPH_SLACK_DOTS = 18
 
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
 
 #: The widest a node label may render on the graph before it is ellipsized.
 _GRAPH_LABEL_W = 12
+
+#: Edge colours: the selected path draws white over the unused paths' gray.
+_EDGE_SELECTED = (255, 255, 255)
+_EDGE_UNUSED = (110, 110, 110)
 
 
 class MessagePathsScreen(Screen):
@@ -177,7 +187,7 @@ class MessagePathsScreen(Screen):
 
         lines.append("")
         lines.extend(self._graph_lines(width))
-        caption = Text("origin → you · edge = last-hop SNR · bright = selected path",
+        caption = Text("origin → you · white = selected path · labels = hash byte",
                        style="faint")
         lines.append(render_to_ansi(caption, width, no_wrap=True))
         lines.append("")
@@ -195,7 +205,12 @@ class MessagePathsScreen(Screen):
     # -- the rows --
 
     def _row_text(self, arrival: Arrival) -> Text:
-        """One arrival, unabridged: time, reception SNR, and its relay path."""
+        """One arrival, unabridged: time, reception SNR, and its relay path.
+
+        Hops carry the trace presentation at the graph's grain: each named hop is
+        annotated with the hash byte it is addressed by (``YUL-Poly (3d)``), unnamed
+        hops show that byte bare, so the rows and the graph's labels cross-reference.
+        """
         row = Text()
         row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
         row.append("  ")
@@ -210,7 +225,7 @@ class MessagePathsScreen(Screen):
             path_text(
                 arrival.hops, self._resolve,
                 prefix_bytes=self._prefix_bytes, self_name=self._self_name,
-                empty="direct",
+                empty="direct", show_hash=True, hash_bytes=1,
             )
         )
         if arrival.resend:
@@ -251,70 +266,83 @@ class MessagePathsScreen(Screen):
                 seen.append(arrival.hops)
         return seen
 
-    def _path_snr(self, path: tuple[str, ...]) -> Optional[float]:
-        """The median reception SNR across the arrivals that rode ``path``."""
-        readings = [
-            a.snr for a in self._arrivals if a.hops == path and a.snr is not None
-        ]
-        return median(readings) if readings else None
-
     def _graph_lines(self, width: int) -> list[str]:
-        """Draw every distinct path origin → us, the selected one bright and labelled.
+        """Draw every distinct path origin → us, the selected one white over gray.
 
         Lanes fan out from the vertical centre (first path on it, the next below,
         the next above, …); a node shared between paths averages its lanes, so a
-        common relay pulls the paths together where they actually met.
+        common relay pulls the paths together where they actually met. Columns are
+        the distinct depths, spread evenly across the width, so forks stay clear
+        however lopsided the paths' lengths are.
         """
         paths = self._paths()
         selected = self._arrivals[self._index].hops
-        offsets = [(-1) ** k * ((k + 1) // 2) for k in range(len(paths))]  # 0 -1 1 -2 2…
-        max_off = max(abs(o) for o in offsets)
+        # Lanes go to the paths that have relays (a direct path rides the centre
+        # line anyway), fanning out from the middle: 0, -1, 1, -2, 2…
+        relayed = [path for path in paths if path]
+        lane_of = {path: (-1) ** k * ((k + 1) // 2) for k, path in enumerate(relayed)}
+
+        # Positions: a node's depth is its mean relative slot along the paths
+        # through it; the distinct depths then map to evenly spaced columns
+        # (endpoints pinned to the margins). y is the mean lane, centre-pinned
+        # for the endpoints — a shared relay averages toward the middle.
+        rel: dict[str, list[float]] = {}
+        lanes: dict[str, list[int]] = {}
+        seqs = [(_SRC, *path, _DST) for path in paths]
+        for path, seq in zip(paths, seqs):
+            hops = len(seq) - 1
+            for i, node in enumerate(seq):
+                rel.setdefault(node, []).append(i / hops)
+                lanes.setdefault(node, []).append(lane_of.get(path, 0))
+        depth = {node: sum(r) / len(r) for node, r in rel.items()}
+        columns = sorted(set(depth.values()))
+        slot = {d: i / max(1, len(columns) - 1) for i, d in enumerate(columns)}
+        lane_y = {
+            node: sum(l) / len(l)
+            for node, l in lanes.items()
+            if node not in (_SRC, _DST)
+        }
+
+        # Height follows where the relays actually land after lane-averaging, so
+        # the box spends its rows on the fan, not on empty lanes.
         step = _LANE_STEP_DOTS
-        rows = max(_GRAPH_MIN_H, (2 * max_off * step + 14) // 4)
+        reach = max((abs(y) for y in lane_y.values()), default=0.0)
+        rows = max(_GRAPH_MIN_H, ceil((2 * reach * step + _GRAPH_SLACK_DOTS) / 4))
         if rows > _GRAPH_MAX_H:
             rows = _GRAPH_MAX_H
-            step = max(4, (rows * 4 - 14) // (2 * max_off))
+            step = max(4, int((rows * 4 - _GRAPH_SLACK_DOTS) / (2 * reach)))
         canvas = MapCanvas(width, rows)
         dot_w, dot_h = width * 2, rows * 4
         cy = dot_h // 2
         span = dot_w - 2 * _GRAPH_PAD_DOTS
 
-        # Positions: x by mean relative slot along the paths through a node, y by
-        # mean lane — endpoints pinned to the margins and the centre line.
-        rel: dict[str, list[float]] = {}
-        lanes: dict[str, list[int]] = {}
-        seqs = [(_SRC, *path, _DST) for path in paths]
-        for off, seq in zip(offsets, seqs):
-            hops = len(seq) - 1
-            for i, node in enumerate(seq):
-                rel.setdefault(node, []).append(i / hops)
-                lanes.setdefault(node, []).append(off)
-
         def pos(node: str) -> tuple[int, int]:
-            x = _GRAPH_PAD_DOTS + round(
-                sum(rel[node]) / len(rel[node]) * span
-            )
+            x = _GRAPH_PAD_DOTS + round(slot[depth[node]] * span)
             if node in (_SRC, _DST):
                 return x, cy
-            return x, cy + round(sum(lanes[node]) / len(lanes[node]) * step)
+            return x, cy + round(lane_y[node] * step)
 
-        # Edges, the selected path drawn last and bright so shared cells go to it.
+        # Edges: the selected path white and drawn last so shared cells go to it;
+        # the unused paths sit gray beneath.
         ordered = sorted(zip(paths, seqs), key=lambda ps: ps[0] == selected)
         for path, seq in ordered:
-            bright = 1.0 if path == selected else 0.55
+            color = _EDGE_SELECTED if path == selected else _EDGE_UNUSED
             priority = 3 if path == selected else 2
-            snr_rgb = _snr_rgb(self._path_snr(path))
             for i in range(len(seq) - 1):
-                last = i == len(seq) - 2  # the final relay → us link owns the SNR
-                color = _scaled(snr_rgb if last else _NO_READING, bright)
                 canvas.draw_line([pos(seq[i]), pos(seq[i + 1])], color, priority)
 
-        # Markers for every node; labels only along the selected path (endpoints
-        # first, so they win label collisions against mid-path relays).
+        # Markers for every node, each labelled — endpoints by name, relays by the
+        # first byte of their hash in the marker's colour. Endpoints then the
+        # selected path go first so they win collisions; every label first sweeps
+        # for a spot clear of the drawn edges, then settles for any free cell.
         for node in rel:
             glyph, color_hex = self._node_glyph(node)
             canvas.marker(*pos(node), glyph, parse_hex(color_hex))
-        for node in (_DST, _SRC, *selected):
+        labelled = [_DST, _SRC]
+        for hop in (*selected, *(h for path in paths for h in path)):
+            if hop not in labelled:
+                labelled.append(hop)
+        for node in labelled:
             label = self._node_label(node)
             if len(label) > _GRAPH_LABEL_W:
                 label = label[: _GRAPH_LABEL_W - 1] + "…"
@@ -324,9 +352,16 @@ class MessagePathsScreen(Screen):
                 else parse_hex(self._node_glyph(node)[1])
             )
             x, y = pos(node)
-            for dy in (0, 4, -4):
-                if canvas.marker_label(x, y + dy, label, rgb):
+            spots = [(x, y + dy) for dy in (0, 4, -4)]
+            placed = False
+            for sx, sy in spots:
+                if canvas.marker_label(sx, sy, label, rgb, avoid_dots=True):
+                    placed = True
                     break
+            if not placed:
+                for sx, sy in spots:
+                    if canvas.marker_label(sx, sy, label, rgb):
+                        break
         return canvas.to_ansi_lines()
 
     def _node_glyph(self, node: str) -> tuple[str, str]:
@@ -341,10 +376,9 @@ class MessagePathsScreen(Screen):
         return _NODE if named and named != node else _UNKNOWN
 
     def _node_label(self, node: str) -> str:
-        """A node's graph label: its name when known, else its short hash."""
+        """A node's graph label: endpoints by name, relays by their first hash byte."""
         if node == _DST:
             return self._self_name or "you"
         if node == _SRC:
             return self._source or "?"
-        named = self._resolve(node)
-        return named if named and named != node else node[:8]
+        return node[:2]
