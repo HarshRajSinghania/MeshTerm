@@ -508,6 +508,21 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert label.spans[-1].style == "ok"  # …and its newest cell reads as live traffic
 
 
+async def test_clearing_a_channel_reads_off_its_unread(ctx: AppContext) -> None:
+    """Clearing a channel drops its unread from the global total, not just the slot."""
+    from meshterm.ui.channels import _clear
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slot = (await read_channel_slots(device))[0]
+    ctx.chat._unread[slot.conversation.key] = 3  # as the service would after three arrivals
+    assert ctx.chat.unread_total() == 3
+
+    ctx.ui = _ScriptedUi(selects=[], texts=[], dialogs=["clear"])
+    assert await _clear(ctx, device, slot) is True
+    assert ctx.chat.unread_total() == 0
+
+
 async def test_show_key_popup_wraps_values_under_header_labels() -> None:
     """The key popup is labelled blocks, not a table, and long values wrap whole."""
     from types import SimpleNamespace

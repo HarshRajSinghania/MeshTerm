@@ -679,6 +679,8 @@ async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
     )
     if choice != "clear":
         return False
+    ctx.chat.set_active(slot.conversation.key)  # drop its unread before the slot goes away
+    ctx.chat.set_active(None)
     await device.set_channel(slot.idx, "", None)  # empty name => the slot reads as unused
     ctx.ui.note(f"[warn]cleared channel {slot.name}[/warn]")
     return True
