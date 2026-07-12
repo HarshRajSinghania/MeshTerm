@@ -12,7 +12,10 @@ histories — renders through this module, so they all share the same three rule
   bars grow *from that line*, so a silent stretch reads as a flatline, never a
   hole. When a series carries negative values (an SNR history, say) the baseline
   sits at zero's height inside the chart — positive readings rise above it,
-  negative ones hang below — rather than being nailed to the chart floor.
+  negative ones hang below — rather than being nailed to the chart floor. The one
+  deliberate break in the line is :data:`GAP`, a column that renders *fully blank*
+  down to the axis, used to notch adjacent bars apart (the Time Machine's per-day
+  charts space one day from the next this way).
 * **Two readings per cell.** Braille offers two dot columns per character cell;
   every chart uses both, so each cell shows two consecutive readings and the
   chart draws at twice the horizontal resolution of the cells it occupies.
@@ -56,6 +59,23 @@ _RIGHT_BITS = (0x80, 0x20, 0x10, 0x08)
 CellStyle = Union[str, Callable[[list[float]], str]]
 
 
+class _Gap:
+    """The type of :data:`GAP`; a private singleton, so ``value is GAP`` identifies it."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - a debugging aid only
+        return "GAP"
+
+
+#: A timeline value marking a hard gap: the column renders *fully blank* — no bar and
+#: no zero baseline — so it breaks the "grey is zero" flatline on purpose. ``None`` and
+#: ``0`` still draw the faint zero line (a silent reading is still a reading); only
+#: ``GAP`` punches a hole in it, used to notch adjacent day bars apart in the Time
+#: Machine's per-day charts so same-height neighbours never fuse into one solid block.
+GAP = _Gap()
+
+
 def chart_span(
     values: Sequence[Optional[float]], span: Optional[tuple[float, float]] = None
 ) -> tuple[float, float]:
@@ -68,13 +88,14 @@ def chart_span(
     label and the drawing can never disagree.
 
     Args:
-        values: The chart's readings (``None`` marks an empty slot).
+        values: The chart's readings (``None`` marks an empty slot; :data:`GAP` a
+            hard gap — neither carries a magnitude, so both sit out the span).
         span: An optional wider range to honour (it too is folded around zero).
 
     Returns:
         ``(lo, hi)`` with ``lo <= 0 <= hi``; ``(0.0, 0.0)`` for an empty series.
     """
-    present = [v for v in values if v is not None]
+    present = [v for v in values if v is not None and v is not GAP]
     if span is not None:
         present = [*present, *span]
     lo = min([0.0, *present])
@@ -97,11 +118,13 @@ def timeline_rows(
     cell), scaled onto :func:`chart_span`'s zero-folded range: the series' peak
     fills the space above the baseline, its floor the space below, and any
     non-zero reading lights at least one dot so a lone packet never vanishes.
-    ``None`` (no reading) and ``0`` alike draw only the faint zero baseline.
+    ``None`` (no reading) and ``0`` alike draw only the faint zero baseline;
+    :data:`GAP` draws nothing at all, breaking the baseline into a clean notch.
 
     Args:
         values: Per-slot readings, oldest first (the rightmost is "now"). An odd
             count is padded with one silent column so whole cells always render.
+            A :data:`GAP` slot renders fully blank (bar and baseline both).
         rows: How many braille rows tall the chart is (four dot rows each).
         span: A wider range to scale against (see :func:`chart_span`), so several
             charts — or a chart and its caption — can share one scale.
@@ -125,7 +148,9 @@ def timeline_rows(
 
     bars: list[Optional[tuple[int, int]]] = []
     for value in values:
-        if value is None or value == 0:
+        # GAP must short-circuit ahead of the numeric tests — it has no magnitude,
+        # so ``value == 0`` / ``value > 0`` would misfire (or raise) on the sentinel.
+        if value is GAP or value is None or value == 0:
             bars.append(None)
         elif value > 0:
             height = max(1, round(value / hi * up))
@@ -415,12 +440,15 @@ def _assemble(
     Every bar span includes the baseline row by construction, so a half-silent
     cell keeps the zero line continuous inside the lit character; a fully silent
     cell shows just the faint baseline dots on whichever row holds them; anything
-    else stays blank braille to keep the grid monospace.
+    else stays blank braille to keep the grid monospace. The baseline is decided
+    per *dot column*, not per cell, so a :data:`GAP` column can go fully blank —
+    breaking the zero line into a notch — while its cell-mate keeps its own.
 
     Args:
         bars: Per-column inclusive dot-row spans (``None`` = no bar).
         values: The readings behind the columns, aligned with ``bars`` (fed to a
-            callable ``style`` two at a time, per cell).
+            callable ``style`` two at a time, per cell); a :data:`GAP` reading
+            suppresses that column's baseline so the notch reaches the axis.
         rows: Chart height in braille rows.
         base: The zero baseline's dot row.
         style: Fixed style, or per-cell callable (see :data:`CellStyle`).
@@ -442,20 +470,26 @@ def _assemble(
         base_bit_right = _RIGHT_BITS[base - floor] if floor <= base <= floor + 3 else 0
         line = Text()
         for i in range(0, len(bars), 2):
+            # A GAP column carries no baseline, so the zero line breaks there and the
+            # notch runs clean from the top edge down to the axis border.
+            bl = 0 if values[i] is GAP else base_bit_left
+            br = 0 if values[i + 1] is GAP else base_bit_right
             left = _column_bits(bars[i], floor, _LEFT_BITS)
             right = _column_bits(bars[i + 1], floor, _RIGHT_BITS)
             if left or right:
-                mask = left | right | base_bit_left | base_bit_right
+                mask = left | right | bl | br
                 if column_styles is not None and i + 1 < len(column_styles):
                     cell_style = column_styles[i + 1] if right else column_styles[i]
                 elif callable(style):
-                    present = [v for v in values[i : i + 2] if v is not None]
+                    present = [
+                        v for v in values[i : i + 2] if v is not None and v is not GAP
+                    ]
                     cell_style = style(present) if present else baseline_style
                 else:
                     cell_style = style
                 line.append(chr(0x2800 | mask), style=cell_style)
-            elif base_bit_left:
-                line.append(chr(0x2800 | base_bit_left | base_bit_right), style=baseline_style)
+            elif bl or br:
+                line.append(chr(0x2800 | bl | br), style=baseline_style)
             else:
                 line.append(chr(0x2800))
         lines.append(line)

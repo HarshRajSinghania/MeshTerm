@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import axis_caption, axis_chart, chart_span, timeline_rows
+from .braillechart import GAP, axis_caption, axis_chart, chart_span, timeline_rows
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -319,7 +319,7 @@ def _day_axis(shown: list) -> Callable[[float], str]:
     return label_at
 
 
-def _day_columns(values: list[int], chars: int) -> list[Optional[int]]:
+def _day_columns(values: list[int], chars: int) -> list:
     """Stretch per-day counts into day-wide bars that fill the chart's width exactly.
 
     One dot column per day leaves a short history as a sliver in a wide terminal —
@@ -330,23 +330,23 @@ def _day_columns(values: list[int], chars: int) -> list[Optional[int]]:
     remainder instead, leaving the bars short of the axis border and caption
     sized for the full width (misreading as the whole chart sitting shifted left).
 
-    A day wide enough to span more than one character has its very first dot
-    column left blank — the left half of its leading braille cell — so same-height
-    neighbours still read as separate bars instead of fusing into one solid block.
-    A history deeper than the chart is wide falls back to one dot column per day
-    (no room for a full character each, so no notch), the dot-column total still
-    landing exactly on ``2 × chars``.
+    A day wide enough to span more than one character opens with a
+    :data:`~meshterm.ui.braillechart.GAP` dot column — the left half of its leading
+    braille cell, blank clean down to the axis — so same-height neighbours read as
+    separate bars instead of fusing into one solid block. A history deeper than the
+    chart is wide falls back to one dot column per day (no room for a full character
+    each, so no notch), the dot-column total still landing exactly on ``2 × chars``.
 
     Args:
         values: Per-day counts, oldest first.
         chars: The chart's width in character cells.
 
     Returns:
-        Exactly ``2 × chars`` dot-column readings, oldest first (``None`` marks a
-        day-boundary notch).
+        Exactly ``2 × chars`` dot-column readings, oldest first (a
+        :data:`~meshterm.ui.braillechart.GAP` marks a day-boundary notch).
     """
     n = max(1, len(values))
-    out: list[Optional[int]] = []
+    out: list = []
     if n <= chars:
         # Each day spans at least one whole character: split in character units so
         # every day's block starts on an even dot-column index (a fresh cell),
@@ -355,7 +355,7 @@ def _day_columns(values: list[int], chars: int) -> list[Optional[int]]:
         for i, value in enumerate(values):
             width_chars = base + (1 if i < extra else 0)
             if width_chars > 1:
-                out.append(None)
+                out.append(GAP)
                 out.extend([value] * (width_chars * 2 - 1))
             else:
                 out.extend([value] * (width_chars * 2))

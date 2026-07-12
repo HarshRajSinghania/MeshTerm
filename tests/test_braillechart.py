@@ -7,6 +7,7 @@ the rendered braille bitmasks.
 from __future__ import annotations
 
 from meshterm.ui.braillechart import (
+    GAP,
     activity_sparkline,
     axis_chart,
     chart_span,
@@ -82,6 +83,37 @@ def test_timeline_pads_an_odd_tail_column() -> None:
     rows = timeline_rows([4], rows=1)
     assert len(rows[0].plain) == 1
     assert rows[0].plain[0] == _ch(_L[4], _R[1])  # full bar + the padded column's floor
+
+
+# --- timeline_rows: GAP (a hard break in the baseline) --------------------------------
+
+
+def test_timeline_gap_breaks_the_baseline_but_zero_keeps_it() -> None:
+    """A GAP column draws nothing — not even the zero line — while a 0 keeps its dot.
+
+    The cell pairs a GAP (left) with a plain 0 (right): the left column is fully
+    blank down to the floor, the right column still shows its faint baseline dot —
+    the distinction that lets a day-boundary notch reach the axis while an empty
+    day stays a grey flatline.
+    """
+    rows = timeline_rows([GAP, 0], rows=1)
+    assert rows[0].plain[0] == _ch(_R[1])  # only the right (0) column's baseline dot
+    assert rows[0].spans and rows[0].spans[0].style == "faint"
+
+
+def test_timeline_gap_column_stays_blank_beside_a_full_bar() -> None:
+    """A GAP paired with a tall bar keeps its own column blank to the axis."""
+    rows = timeline_rows([GAP, 4], rows=1)  # left GAP, right full-height bar
+    # Right column carries the whole bar; the left (GAP) column lights no dot at all,
+    # not even the bottom baseline the bar's cell would otherwise share.
+    assert rows[0].plain[0] == _ch(_R[4])
+    assert not (ord(rows[0].plain[0]) & 0x40)  # no bottom-left dot
+
+
+def test_chart_span_ignores_gap_columns() -> None:
+    """GAP carries no magnitude, so it never widens the span."""
+    assert chart_span([GAP, 3, 7]) == (0.0, 7.0)
+    assert chart_span([GAP, GAP]) == (0.0, 0.0)
 
 
 # --- timeline_rows: negative and mixed series ------------------------------------------

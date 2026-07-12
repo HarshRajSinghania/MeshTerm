@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from meshterm.core.models import Observation, utcnow
 from meshterm.persistence.repository import Repository
+from meshterm.ui.braillechart import GAP
 from meshterm.ui.timemachine_screen import (
     TimeMachineScreen,
     _day_columns,
@@ -168,9 +169,9 @@ def test_day_columns_always_hits_the_exact_width() -> None:
 
 
 def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:
-    """A day wide enough to span several characters opens with a blank dot column."""
+    """A day wide enough to span several characters opens with a GAP dot column."""
     cols = _day_columns([2, 8, 4], 12)  # 3 days, 12 chars -> 4 chars (8 dots) each
-    assert cols[0] is None and cols[8] is None and cols[16] is None
+    assert cols[0] is GAP and cols[8] is GAP and cols[16] is GAP
     assert cols[1:8] == [2] * 7
     assert cols[9:16] == [8] * 7
     assert cols[17:24] == [4] * 7
@@ -179,7 +180,7 @@ def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:
 def test_day_columns_skips_the_notch_for_a_single_character_day() -> None:
     """A day exactly one character wide stays fully lit — nothing to space apart."""
     cols = _day_columns([5, 9], 2)  # 2 days, 2 chars -> exactly 1 char (2 dots) each
-    assert None not in cols
+    assert GAP not in cols
     assert cols == [5, 5, 9, 9]
 
 
@@ -187,7 +188,28 @@ def test_day_columns_skips_notches_when_days_outnumber_characters() -> None:
     """More days than character columns: every day is sub-character, no notches."""
     cols = _day_columns(list(range(50)), 30)  # 50 days into 30 chars (<=60 dots)
     assert len(cols) == 60
-    assert None not in cols
+    assert GAP not in cols
+
+
+def test_day_chart_notch_reaches_the_axis_but_a_zero_day_keeps_its_baseline() -> None:
+    """The notch column is blank down to the axis; a zero-value day stays a grey line.
+
+    Tall day, empty day, tall day at 4 chars each: the leading cell of each tall day
+    shows its right dot column only (the notch's left column blank all the way down),
+    and the empty day draws the faint zero baseline across its own columns.
+    """
+    from meshterm.ui.braillechart import timeline_rows
+
+    cols = _day_columns([8, 0, 8], 12)  # -> 4 chars (8 dot cols) per day
+    bottom = timeline_rows(cols, rows=2)[-1]
+    # Leading cell of the first tall day: right column filled, left (notch) blank —
+    # no bottom-left dot, so the gap runs clean to the axis border below.
+    assert not (ord(bottom.plain[0]) & 0x40)  # the notch's bottom-left dot is unlit
+    # The empty middle day (cells 4..7) draws the faint zero baseline, in grey.
+    zero_cells = bottom.plain[4:8]
+    assert all(ord(c) & 0x80 for c in zero_cells)  # each keeps its right baseline dot
+    zero_spans = [s for s in bottom.spans if 4 <= s.start < 8]
+    assert zero_spans and all(s.style == "faint" for s in zero_spans)
 
 
 # --- the pages --------------------------------------------------------------------------
