@@ -422,7 +422,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
                     buttons,
                     title="Quit MeshTerm",
                     default=len(buttons) - 1,  # highlight Quit
-                    footer_hint="Esc cancel · Enter quit",
+                    footer_hint="Enter quit · Esc cancel",
                     prompt_style="warn",
                     button_style="selected",
                     button_idle_style="muted",

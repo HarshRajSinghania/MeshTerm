@@ -125,9 +125,9 @@ class MapScreen(Screen):
         editing keys, so the typed text is always visible somewhere fixed.
         """
         if self._filter:
-            base = f"find: {self._filter}▏ · Enter frame · Bksp erase · Esc clear"
+            base = f"find: {self._filter}▏ · Enter frame · ⌫ erase · Esc clear"
         else:
-            base = "↑↓←→ pan · ⇧ fine · PgUp/PgDn zoom · Home reset · type to find · Esc"
+            base = "↑↓←→ pan · ⇧ fine · PgUp/PgDn zoom · Home reset · type to find · Esc back"
         if self._pending:
             return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
         if not self._source.available:

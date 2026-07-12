@@ -816,7 +816,7 @@ async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
         Text(""),
         Text(url, style="accent"),
     )
-    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc back")
+    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")
 
 
 async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:

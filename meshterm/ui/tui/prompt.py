@@ -332,7 +332,7 @@ class ConfirmScreen(Screen):
         title: str,
         *,
         default: bool = True,
-        footer_hint: str = "←→/Y/N choose · Enter accept · Esc cancel",
+        footer_hint: str = "←→/Y/N choose · Enter select · Esc cancel",
     ) -> None:
         """Build a confirm prompt.
 

@@ -268,7 +268,7 @@ class ScrollScreen(Screen):
         renderable: RenderableType,
         *,
         title: str = "",
-        footer_hint: str = "↑↓ PgUp/PgDn scroll · Esc back",
+        footer_hint: str = "↑↓ PgUp/PgDn scroll · Esc close",
         floating: bool = True,
     ) -> None:
         """Wrap a renderable in a dismissable, scrollable screen.

@@ -290,7 +290,7 @@ async def _pick_schedule(ctx: "AppContext", name: str):
     ]
     picked = await session.select(
         f"When should {name} get it?", items, filterable=False,
-        footer_hint="↑↓ move · Enter choose · Esc cancel",
+        footer_hint="↑↓ move · Enter select · Esc cancel",
     )
     if picked == "custom":
         while True:

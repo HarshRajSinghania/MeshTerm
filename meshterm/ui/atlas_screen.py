@@ -184,7 +184,7 @@ class AtlasScreen(Screen):
     def footer_hint(self) -> str:  # type: ignore[override]
         """Camera and find hints; the find query takes the row over while active."""
         if self._filter:
-            return f"find: {self._filter}▏ · Enter select · Bksp erase · Esc clear"
+            return f"find: {self._filter}▏ · Enter select · ⌫ erase · Esc clear"
         return "↑↓←→ pan · PgUp/PgDn zoom · Tab walk · Enter info · type to find · Esc"
 
     def handle(self, action: str, data: str = "") -> None:

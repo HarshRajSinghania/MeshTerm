@@ -98,7 +98,7 @@ class PathComposerScreen(Screen):
     :data:`~meshterm.ui.tui.screen.CANCEL`.
     """
 
-    footer_hint = "↑↓ · Enter add · type to filter · ⌫ remove · Esc"
+    footer_hint = "↑↓ move · Enter add · type to filter · ⌫ remove · Esc cancel"
 
     def __init__(
         self,

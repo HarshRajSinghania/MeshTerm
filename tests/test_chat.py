@@ -668,8 +668,9 @@ def test_chat_screen_shows_delivery_glyphs() -> None:
     # static hourglass; resolved ones show ✅ / ❌.
     assert "✅" in joined and "❌" in joined
     assert Spinner.BRAILLE[0] in joined and "⏳" not in joined
-    # A failed message advertises the retry shortcut in the footer hint.
-    assert "Ctrl-R" in screen.footer_hint
+    # A failed message advertises the retry shortcut in the footer hint (the app-wide
+    # compact ^-notation for Ctrl chords).
+    assert "^R" in screen.footer_hint
 
 
 def test_wrapped_body_hangs_under_the_first_line() -> None:

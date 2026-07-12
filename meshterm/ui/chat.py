@@ -167,7 +167,7 @@ class ChatScreen(Screen):
         """Key hint, reflecting whether a message is picked for reply (channels only)."""
         if not self._is_channel:
             if any(m.outbound and m.acked is False for m in self._messages):
-                return "Enter send · Ctrl-R retry failed · ↑↓/PgUp scroll · ^End latest · Esc back"
+                return "Enter send · ^R retry failed · ↑↓/PgUp scroll · ^End latest · Esc back"
             return "Enter send · ↑↓/PgUp scroll · ^End latest · Esc back"
         if self._selected is not None:
             return "Enter reply (@mention) · ↑↓ pick · ^End/Esc cancel"
@@ -736,7 +736,7 @@ class ChatScreen(Screen):
             message.acked = False
             self._status = f"retry failed: {exc}"
         else:
-            self._status = "" if message.acked else "still no ack — Ctrl-R to retry"
+            self._status = "" if message.acked else "still no ack — ^R to retry"
         finally:
             self._sending = False
             self._stick = True

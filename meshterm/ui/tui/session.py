@@ -550,7 +550,7 @@ class TuiSession:
         screen = ScrollScreen(
             renderable,
             title=title,
-            footer_hint=footer_hint or "↑↓ PgUp/PgDn scroll · Esc back",
+            footer_hint=footer_hint or "↑↓ PgUp/PgDn scroll · Esc close",
         )
         await self.run_screen(screen)
 

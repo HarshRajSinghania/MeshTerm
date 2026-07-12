@@ -675,7 +675,7 @@ async def open_tx_optimize(
                 items,
                 prompt="The TX window the sweep explores:",
                 default=(screen.tx_min, screen.tx_max),
-                footer_hint="↑↓ · Enter set · Esc keep",
+                footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
                 wrap=False,
             )
@@ -714,7 +714,7 @@ async def open_tx_optimize(
                 items,
                 prompt="The coarse sweep measures the window at this spacing, then refines.",
                 default=screen.step,
-                footer_hint="↑↓ · Enter set · Esc keep",
+                footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
                 wrap=False,
             )
@@ -739,7 +739,7 @@ async def open_tx_optimize(
                 items,
                 prompt=f"Each TX level is measured with this many traces, {pace:g} s apart.",
                 default=screen.samples,
-                footer_hint="↑↓ · Enter set · Esc keep",
+                footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
                 wrap=False,
             )
@@ -804,7 +804,7 @@ async def open_tx_optimize(
             [("Cancel", "cancel"), ("Apply", "apply")],
             title="Apply winner",
             default=1,
-            footer_hint="Esc cancel · Enter apply",
+            footer_hint="Enter apply · Esc cancel",
         )
         if choice != "apply":
             return

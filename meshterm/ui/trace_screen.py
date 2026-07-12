@@ -1255,7 +1255,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 items,
                 prompt="Forced hops are addressed by this many leading key bytes.",
                 default=width_bytes,
-                footer_hint="↑↓ · Enter set · Esc keep",
+                footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
                 wrap=False,
             )
@@ -1292,7 +1292,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 items,
                 prompt=f"One Trace action runs this many traces, {pace:g} s apart.",
                 default=sample_count,
-                footer_hint="↑↓ · Enter set · Esc keep",
+                footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
                 wrap=False,
             )

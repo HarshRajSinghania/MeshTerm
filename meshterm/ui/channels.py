@@ -739,7 +739,7 @@ async def _show_share(
         Text(""),
         Text(url, style="accent"),
     )
-    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc back")
+    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")
 
 
 async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
@@ -775,7 +775,7 @@ async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
             blocks.append(Text())
         blocks.append(Text(label, style="muted"))
         blocks.append(value)
-    await ctx.ui.view(Group(*blocks), title=f"Key — {slot.name}", footer_hint="Esc back")
+    await ctx.ui.view(Group(*blocks), title=f"Key — {slot.name}", footer_hint="Esc close")
 
 
 async def _open_chat(ctx: "AppContext", slot: ChannelSlot) -> None:
