@@ -22,7 +22,7 @@ transmits.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import GAP, _TICK_GAP, axis_chart, chart_span, timeline_rows
+from .braillechart import GAP, axis_chart, chart_span, timeline_rows
 from .menus import fit_cells, section_heading
 from .theme import snr_style
 from .tui.render import render_lines
@@ -368,18 +368,37 @@ def _day_centers(days: int, chars: int) -> list[int]:
     ]
 
 
-def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
-    """``(cell, label)`` axis ticks under the day bars: as many short dates as fit.
+def _thinned_picks(n: int, chars: int) -> list[int]:
+    """The day/hour indices to label: all of them, or an evenly spaced subset.
 
-    Ticks are claimed in priority order — the newest day first, the oldest day
-    second, then the rest right to left — each label centred under its own bar
-    (see :func:`_day_centers`) and keeping at least two blank cells from every
-    label already placed, so the axis packs as dense as it can and thins from the
-    middle-left outward when room runs out, never losing either end. Dates stay
-    compact: the month is written only on the oldest day and on the first of a
-    month (the calendar anchors), the rest read as bare day numbers, and the
-    newest bar reads ``today`` when it is, mirroring the node page's closing
-    ``now``.
+    A dated label is at most ``"Jul 12"`` (6 cells) and an hour label ``"18:00"``
+    (5), so a couple of cells of clearance means roughly ``chars // 8`` fit. When
+    the bars outnumber that, keep an even spread of them — first and last always
+    included, so both ends of the axis stay annotated — rather than crowding every
+    bar with a label it has no room for.
+
+    Args:
+        n: How many bars the chart draws.
+        chars: The chart's width in character cells.
+
+    Returns:
+        The bar indices to place ticks under, oldest first.
+    """
+    fit = max(2, chars // 8)
+    if n <= fit:
+        return list(range(n))
+    return sorted({round(i * (n - 1) / (fit - 1)) for i in range(fit)})
+
+
+def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
+    """``(cell, label)`` axis ticks under the day bars: short dates, thinned to fit.
+
+    One tick per day where they all fit, else an evenly spaced subset keeping both
+    ends (see :func:`_thinned_picks`); each label sits under its own bar (see
+    :func:`_day_centers`). Dates are kept compact — the month is shown only on the
+    first tick and whenever it rolls over, so most ticks read as a bare day number
+    — and the newest bar reads ``today`` when it is, mirroring the node page's
+    closing ``now``.
 
     Args:
         shown: The charted days, oldest first, each ``(iso_date, ...)``.
@@ -391,36 +410,59 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     n = len(shown)
     centers = _day_centers(n, chars)
     today = utcnow().strftime("%Y-%m-%d")
-
-    def label_for(i: int) -> str:
+    ticks: list[tuple[int, str]] = []
+    prev_month: Optional[str] = None
+    for i in _thinned_picks(n, chars):
         iso = shown[i][0]
         try:
             day = datetime.strptime(iso, "%Y-%m-%d")
         except ValueError:
-            return iso
+            ticks.append((centers[i], iso))
+            continue
+        month = day.strftime("%b")
         if i == n - 1 and iso == today:
-            return "today"
-        if i == 0 or day.day == 1:
-            return f"{day:%b} {day.day}"
-        return str(day.day)
+            label = "today"
+        elif month != prev_month:
+            label = f"{month} {day.day}"
+        else:
+            label = str(day.day)
+        prev_month = month
+        ticks.append((centers[i], label))
+    return ticks
 
-    # Claimed [start, end) label spans — the same centring and spacing arithmetic
-    # _tick_axis renders with, so everything placed here survives its backstop.
-    taken: list[tuple[int, int]] = []
 
-    def claim(i: int) -> Optional[tuple[int, str]]:
-        label = label_for(i)
-        start = max(0, min(chars - len(label), centers[i] - len(label) // 2))
-        end = start + len(label)
-        if end > chars or any(
-            start < e + _TICK_GAP and s < end + _TICK_GAP for s, e in taken
-        ):
-            return None
-        taken.append((start, end))
-        return centers[i], label
+def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
+    """``(cell, label)`` axis ticks under the hourly bars: local clock times, thinned to fit.
 
-    order = [n - 1, *([0] if n > 1 else []), *range(n - 2, 0, -1)]
-    return sorted(tick for i in order if (tick := claim(i)) is not None)
+    The hour-resolution sibling of :func:`_day_ticks` for the 24 h window: one tick
+    per hour where they fit, else an evenly spaced subset keeping both ends (see
+    :func:`_thinned_picks`), each label centred under its own bar (see
+    :func:`_day_centers`). Labels read as local ``HH:00`` clock times — the UTC hour
+    buckets rotated into the viewer's zone — and the newest bar reads ``now``,
+    mirroring the node page's closing ``now``.
+
+    Args:
+        shown: The charted hours, oldest first, each ``(hour_iso, ...)`` in UTC
+            (``YYYY-MM-DDTHH``).
+        chars: The chart's width in character cells.
+
+    Returns:
+        The ticks to pass to :func:`~meshterm.ui.braillechart.axis_chart`.
+    """
+    n = len(shown)
+    centers = _day_centers(n, chars)
+    ticks: list[tuple[int, str]] = []
+    for i in _thinned_picks(n, chars):
+        if i == n - 1:
+            ticks.append((centers[i], "now"))
+            continue
+        try:
+            hour = datetime.strptime(shown[i][0], "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+        except ValueError:
+            ticks.append((centers[i], shown[i][0]))
+            continue
+        ticks.append((centers[i], f"{hour.astimezone():%H:00}"))
+    return ticks
 
 
 def _fill_days(
@@ -457,6 +499,48 @@ def _fill_days(
         packets, nodes = by_iso.get(iso, (0, 0))
         out.append((iso, packets, nodes))
         day += timedelta(days=1)
+    return out
+
+
+def _fill_hours(
+    active: list[tuple[str, int, int]], since: datetime, now: datetime
+) -> list[tuple[str, int, int]]:
+    """Fill an hour series' gaps so a quiet hour shows as an empty bar, not a skip.
+
+    The hour-resolution sibling of :func:`_fill_days`, feeding the 24 h window's
+    charts: :meth:`~meshterm.persistence.repository.Repository.hourly_series` returns
+    only hours with traffic, so a silent hour would fuse its busy neighbours. This
+    walks every UTC clock hour of the window and emits ``(iso, 0, 0)`` for the quiet
+    ones, so the x-axis is real clock time. The range runs from the window's floor
+    (but never earlier than the first hour recorded — we don't invent emptiness from
+    before monitoring began) through the current hour.
+
+    Args:
+        active: ``(hour_iso, packets, nodes)`` for hours with activity, oldest first,
+            each ``hour_iso`` a UTC ``YYYY-MM-DDTHH``.
+        since: The window's start.
+        now: The current time (the series ends on its clock hour).
+
+    Returns:
+        ``(hour_iso, packets, nodes)`` for every UTC clock hour in range, oldest first.
+    """
+    if not active:
+        return []
+
+    def floor_hour(when: datetime) -> datetime:
+        return when.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+    by_iso = {iso: (packets, nodes) for iso, packets, nodes in active}
+    first = datetime.strptime(active[0][0], "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+    start = max(first, floor_hour(since))
+    end = max(start, floor_hour(now))
+    out: list[tuple[str, int, int]] = []
+    hour = start
+    while hour <= end:
+        iso = hour.strftime("%Y-%m-%dT%H")
+        packets, nodes = by_iso.get(iso, (0, 0))
+        out.append((iso, packets, nodes))
+        hour += timedelta(hours=1)
     return out
 
 
@@ -511,8 +595,15 @@ def _mesh_sections(
     """
     now = utcnow()
     since = now - window if window is not None else None
-    days = _fill_days(ctx.repo.daily_activity(), since, now)
-    if not days:
+    # The 24 h window charts an hour per column (its name is "24 h", not "1 day");
+    # every wider window keeps the calendar-day columns. Both feed the same bar and
+    # tick machinery — only the bucket resolution and the axis labels differ.
+    hourly = since is not None and window is not None and window <= timedelta(days=1)
+    if hourly:
+        series = _fill_hours(ctx.repo.hourly_series(since), since, now)
+    else:
+        series = _fill_days(ctx.repo.daily_activity(), since, now)
+    if not series:
         return [
             Text(),
             Text("Nothing recorded in this window.", style="muted"),
@@ -532,30 +623,34 @@ def _mesh_sections(
     # slice) and shared by every chart, so all their gutters — and thus their left edges —
     # line up. The rhythm keeps its own finer width; only the gutter is common.
     label_w = max(
-        len(str(max(d[1] for d in days))),
-        len(str(max(d[2] for d in days))),
+        len(str(max(d[1] for d in series))),
+        len(str(max(d[2] for d in series))),
         len(str(max(slots))),
     )
     chars = max(20, width - 2 * (label_w + 2))
-    shown = days[-chars * 2 :]
+    shown = series[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
-    day_ticks = _day_ticks(shown, chars)
-    out.append(_heading("Packets per day", "UTC days"))
+    ticks = _hour_ticks(shown, chars) if hourly else _day_ticks(shown, chars)
+    pkt_title, node_title = (
+        ("Packets per hour", "Nodes per hour") if hourly
+        else ("Packets per day", "Nodes per day")
+    )
+    out.append(_heading(pkt_title, "local hours" if hourly else "UTC days"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
-            max(packets), chars, label_w=label_w, ticks=day_ticks,
+            max(packets), chars, label_w=label_w, ticks=ticks,
         )
     )
 
     nodes = [d[2] for d in shown]
     out.append(Text())
-    out.append(_heading("Nodes per day", "distinct nodes heard"))
+    out.append(_heading(node_title, "distinct nodes heard"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
-            max(nodes), chars, label_w=label_w, ticks=day_ticks,
+            max(nodes), chars, label_w=label_w, ticks=ticks,
         )
     )
 

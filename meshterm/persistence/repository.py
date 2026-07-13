@@ -848,6 +848,34 @@ class Repository:
         ).fetchall()
         return [(row["day"], int(row["pkts"]), int(row["nodes"])) for row in rows]
 
+    def hourly_series(self, since: datetime) -> list[tuple[str, int, int]]:
+        """Per-clock-hour activity totals since a time, oldest first (the 24 h window feed).
+
+        The hour-resolution sibling of :meth:`daily_activity`: the same packet and
+        distinct-node counts, but grouped on the ISO-8601 ``observed_at`` prefix down
+        to the hour (``YYYY-MM-DDTHH``, a cheap string slice — position 11 is the
+        ``T``) so a day of history folds into ~24 rows however dense it is. Only hours
+        with traffic come back; the caller fills the quiet ones (see
+        :func:`~meshterm.ui.timemachine_screen._fill_hours`) so the axis is real
+        clock time.
+
+        Args:
+            since: Only observations at or after this time.
+
+        Returns:
+            ``(hour, packets, nodes)`` per active hour: ``hour`` as a UTC
+            ``YYYY-MM-DDTHH``, every observation counted, and the distinct identified
+            nodes heard (``packet`` rows excluded from the node count — no reliable
+            identity), oldest first.
+        """
+        rows = self._conn.execute(
+            "SELECT substr(observed_at, 1, 13) AS hour, COUNT(*) AS pkts, "
+            "COUNT(DISTINCT CASE WHEN kind != 'packet' THEN node END) AS nodes "
+            "FROM observations WHERE observed_at >= ? GROUP BY hour ORDER BY hour",
+            (since.isoformat(),),
+        ).fetchall()
+        return [(row["hour"], int(row["pkts"]), int(row["nodes"])) for row in rows]
+
     def hourly_activity(self, *, since: Optional[datetime] = None) -> list[int]:
         """Observation counts by UTC hour of day (0–23) across the stored history.
 

@@ -19,6 +19,7 @@ from meshterm.ui.timemachine_screen import (
     _day_centers,
     _day_columns,
     _day_ticks,
+    _hour_ticks,
     _mesh_sections,
     _node_sections,
     _snr_cell_style,
@@ -127,6 +128,28 @@ def test_hourly_activity_groups_by_utc_hour(tmp_path: Path) -> None:
     repo.close()
 
 
+def test_hourly_series_groups_by_clock_hour(tmp_path: Path) -> None:
+    """The 24 h feed folds observations into UTC clock-hour buckets: packets and nodes."""
+    repo = Repository(tmp_path / "hs.db")
+    run = repo.start_run("monitor", {}, None)
+    now = utcnow()
+    base = now.replace(minute=0, second=0, microsecond=0)  # top of the current UTC hour
+    three_h = base - timedelta(hours=3)  # top of a busy hour, three back
+    for node in ("aa" * 6, "bb" * 6):
+        repo.record_observation(run, Observation(node=node, observed_at=three_h + timedelta(minutes=5)))
+    repo.record_observation(run, Observation(node="aa" * 6, observed_at=three_h + timedelta(minutes=20)))
+    repo.record_observation(
+        run, Observation(node="cc" * 6, kind="packet", path="", observed_at=three_h + timedelta(minutes=40))
+    )
+    repo.record_observation(run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=1)))
+    series = repo.hourly_series(now - timedelta(days=1))
+    by_hour = {iso: (pkts, nodes) for iso, pkts, nodes in series}
+    assert by_hour[three_h.strftime("%Y-%m-%dT%H")] == (4, 2)  # 3 adverts + a packet row; 2 nodes
+    assert by_hour[base.strftime("%Y-%m-%dT%H")] == (1, 1)     # just this hour's lone advert
+    assert series == sorted(series)  # oldest first
+    repo.close()
+
+
 # --- the math ---------------------------------------------------------------------------
 
 
@@ -200,6 +223,22 @@ def test_fill_days_never_invents_days_before_recording_began() -> None:
     assert filled[-1][0] == "2026-07-12"  # …but still runs through today
 
 
+def test_fill_hours_shows_gap_hours_as_zero_bars() -> None:
+    """A quiet hour between busy ones is emitted with zero counts, not skipped."""
+    from datetime import datetime, timezone
+
+    from meshterm.ui.timemachine_screen import _fill_hours
+
+    active = [("2026-07-12T08", 30, 3), ("2026-07-12T11", 20, 2)]
+    since = datetime(2026, 7, 12, 6, 30, tzinfo=timezone.utc)  # floors to 06:00…
+    now = datetime(2026, 7, 12, 12, 15, tzinfo=timezone.utc)   # …but the first hour recorded wins
+    filled = _fill_hours(active, since, now)
+    assert [iso for iso, _p, _n in filled] == [f"2026-07-12T{h:02d}" for h in range(8, 13)]
+    counts = {iso: pkts for iso, pkts, _n in filled}
+    assert counts["2026-07-12T09"] == 0 and counts["2026-07-12T10"] == 0  # the gap, now visible
+    assert counts["2026-07-12T08"] == 30 and counts["2026-07-12T11"] == 20  # busy hours intact
+
+
 def test_day_centers_land_under_each_bar() -> None:
     """A day's centre cell sits within its own bar's span (so a tick points at it)."""
     chars = 60
@@ -230,20 +269,30 @@ def test_day_ticks_reprint_the_month_on_a_rollover() -> None:
     assert labels == ["Jun 29", "30", "Jul 1", "2"]
 
 
-def test_day_ticks_prioritise_the_newest_then_the_oldest_day() -> None:
-    """With room for almost nothing, the newest day wins, then the oldest.
-
-    A chart squeezed to the minimum width still labels its "now" edge first and
-    its far edge second; whatever interior days fit are claimed right to left, so
-    the freshest history stays the best annotated.
-    """
+def test_day_ticks_thin_to_fit_keeping_both_ends() -> None:
+    """More days than labels fit: an evenly spaced subset is kept, first and last included."""
     days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
-    chars = 20
+    chars = 40  # ~5 dated labels fit (chars // 8)
     ticks = _day_ticks(days, chars)
     centers = _day_centers(len(days), chars)
+    assert 2 <= len(ticks) <= 6
     cols = [cell for cell, _ in ticks]
-    assert centers[-1] in cols  # the newest day always keeps its tick
-    assert centers[0] in cols   # …and the oldest is claimed right after it
+    assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive the thinning
+
+
+def test_hour_ticks_close_on_now_and_read_clock_times() -> None:
+    """Hourly ticks label local HH:00 clock times, thinned to fit, the newest reading 'now'."""
+    import re as _re
+
+    hours = [(f"2026-07-12T{h:02d}", 1, 1) for h in range(24)]  # a full 24 hours
+    chars = 60
+    ticks = _hour_ticks(hours, chars)
+    centers = _day_centers(len(hours), chars)
+    assert ticks[-1] == (centers[-1], "now")  # the newest bar closes on 'now'
+    others = [label for _, label in ticks[:-1]]
+    assert others and all(_re.fullmatch(r"\d{2}:00", label) for label in others)  # HH:00 times
+    cols = [cell for cell, _ in ticks]
+    assert cols == sorted(cols) and all(cell in centers for cell in cols)  # aligned under bars
 
 
 def test_day_columns_widths_differ_by_at_most_one_dot_and_interleave() -> None:
@@ -265,28 +314,6 @@ def test_day_columns_widths_differ_by_at_most_one_dot_and_interleave() -> None:
     first_wide = widths.index(4)
     last_wide = len(widths) - 1 - widths[::-1].index(4)
     assert any(w == 3 for w in widths[first_wide:last_wide])  # narrow days sit between wide ones
-
-
-def test_day_ticks_pack_the_axis_keeping_both_ends() -> None:
-    """More days than labels fit: the axis packs what it can, ends always included.
-
-    Ticks are claimed newest-first, then oldest, then right to left, each keeping
-    two blank cells from its neighbours — so a crowded axis stays dense (well past
-    the old evenly-thinned handful) and any dropped days come from the interior.
-    """
-    days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
-    chars = 40
-    ticks = _day_ticks(days, chars)
-    centers = _day_centers(len(days), chars)
-    cols = [cell for cell, _ in ticks]
-    assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive
-    assert len(ticks) >= 8  # bare day numbers pack far denser than dated labels
-    # Every placed label keeps at least two blank cells from the one before it.
-    spans = []
-    for cell, label in ticks:
-        start = max(0, min(chars - len(label), cell - len(label) // 2))
-        spans.append((start, start + len(label)))
-    assert all(b_start >= a_end + 2 for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
 
 
 def test_day_columns_notch_the_boundaries_and_keep_the_first_bar_flush() -> None:
@@ -456,6 +483,17 @@ def test_mesh_page_day_axis_ticks_sit_under_dated_columns(tmp_path: Path) -> Non
     assert "today" in caption
     # Every tick has a non-blank label somewhere near it (labels centre on their tick).
     assert any(not caption[max(0, c - 3):c + 4].isspace() for c in tick_cols)
+    repo.close()
+
+
+def test_mesh_page_24h_window_charts_hours_not_days(tmp_path: Path) -> None:
+    """The 24 h window buckets by the hour — its name is '24 h', not '1 day'."""
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    body = _plain(_mesh_sections(ctx, timedelta(days=1), 90))
+    assert "Packets per hour" in body and "Nodes per hour" in body
+    assert "local hours" in body
+    assert "per day" not in body  # no day columns at this window (rhythm reads "time of day")
     repo.close()
 
 
