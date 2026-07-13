@@ -272,12 +272,34 @@ def test_day_ticks_reprint_the_month_on_a_rollover() -> None:
 def test_day_ticks_thin_to_fit_keeping_both_ends() -> None:
     """More days than labels fit: an evenly spaced subset is kept, first and last included."""
     days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
-    chars = 40  # ~5 dated labels fit (chars // 8)
+    chars = 40
     ticks = _day_ticks(days, chars)
     centers = _day_centers(len(days), chars)
-    assert 2 <= len(ticks) <= 6
+    assert 2 <= len(ticks) < len(days)  # thinned, but not down to a bare two
     cols = [cell for cell, _ in ticks]
+    assert cols == sorted(cols) and all(cell in centers for cell in cols)  # under the bars
     assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive the thinning
+
+
+def test_day_ticks_measure_real_label_widths_not_the_longest() -> None:
+    """Bare day numbers pack tighter than a longest-label budget would ever allow.
+
+    Thirty single/double-digit day labels leave room for more ticks than a fixed
+    ``"Jun 30"``-width reservation (six-plus cells apiece) would grant — the fit is
+    measured against each label's true width, so the axis is not needlessly sparse.
+    """
+    days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days, mostly 1–2 cells
+    chars = 40
+    ticks = _day_ticks(days, chars)
+    assert len(ticks) >= chars // 8 + 2  # denser than a longest-label budget's ~5
+    # No two labels overprint: each clears the previous by the axis gap.
+    from meshterm.ui.braillechart import _TICK_GAP
+
+    last_end = -_TICK_GAP
+    for cell, label in ticks:
+        start = max(0, min(chars - len(label), cell - len(label) // 2))
+        assert start >= last_end + _TICK_GAP
+        last_end = start + len(label)
 
 
 def test_hour_ticks_close_on_now_and_read_clock_times() -> None:

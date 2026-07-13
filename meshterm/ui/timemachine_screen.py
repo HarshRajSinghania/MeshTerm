@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import GAP, axis_chart, chart_span, timeline_rows
+from .braillechart import _TICK_GAP, GAP, axis_chart, chart_span, timeline_rows
 from .menus import fit_cells, section_heading
 from .theme import snr_style
 from .tui.render import render_lines
@@ -368,36 +368,91 @@ def _day_centers(days: int, chars: int) -> list[int]:
     ]
 
 
-def _thinned_picks(n: int, chars: int) -> list[int]:
-    """The day/hour indices to label: all of them, or an evenly spaced subset.
+def _even_picks(n: int, k: int) -> list[int]:
+    """``k`` bar indices out of ``n``, evenly spread with both ends included.
 
-    A dated label is at most ``"Jul 12"`` (6 cells) and an hour label ``"18:00"``
-    (5), so a couple of cells of clearance means roughly ``chars // 8`` fit. When
-    the bars outnumber that, keep an even spread of them — first and last always
-    included, so both ends of the axis stay annotated — rather than crowding every
-    bar with a label it has no room for.
+    The endpoints are always index ``0`` and ``n − 1``; the interior lands on the
+    even fractions between. Rounding can collapse two picks onto one bar when ``k``
+    approaches ``n`` on a short axis, so the result is de-duplicated and may hold
+    fewer than ``k`` — the caller treats that as "``k`` does not fit" and steps down.
+
+    Args:
+        n: How many bars the chart draws.
+        k: How many ticks to spread across them (``1 .. n``).
+
+    Returns:
+        The chosen bar indices, ascending.
+    """
+    if n <= 0:
+        return []
+    if k <= 1:
+        return [0]
+    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+
+
+def _ticks_fit(picks: list[int], labels: list[str], centers: list[int], chars: int) -> bool:
+    """Whether ``labels`` placed under ``picks`` clear each other on the axis.
+
+    Replays the exact placement :func:`~meshterm.ui.braillechart._tick_axis` runs —
+    each label centred on its bar's cell, clamped into the axis, needing
+    :data:`~meshterm.ui.braillechart._TICK_GAP` cells past the previous label's end —
+    and reports whether every one survives. Measuring the real labels (a bare ``"7"``
+    is a third the width of ``"Jul 12"``) is the point: a fixed worst-case budget per
+    label would drop ticks a variable-width axis has ample room for.
+    """
+    last_end = -_TICK_GAP
+    for i, label in zip(picks, labels):
+        cell = max(0, min(chars - 1, centers[i]))
+        start = max(0, min(chars - len(label), cell - len(label) // 2))
+        if start < last_end + _TICK_GAP:
+            return False
+        last_end = start + len(label)
+    return True
+
+
+def _fit_ticks(
+    n: int, chars: int, centers: list[int], label_of: Callable[[list[int]], list[str]]
+) -> list[tuple[int, str]]:
+    """``(cell, label)`` ticks: as many bars as the *actual* labels leave room for.
+
+    Tries every bar first, then steps the tick count down until an evenly spread
+    subset (:func:`_even_picks`) clears the collision rule (:func:`_ticks_fit`) for
+    the labels it would actually draw. Both ends stay annotated at every count.
+    Because the labels are rebuilt for each candidate set — day numbers stay bare
+    until a month rollover forces ``"Jul 1"`` — the fit tracks their true widths
+    rather than reserving the longest label's width for all of them.
 
     Args:
         n: How many bars the chart draws.
         chars: The chart's width in character cells.
+        centers: Each bar's centre cell (see :func:`_day_centers`).
+        label_of: Builds the labels for a set of picked bar indices, in context
+            (so month rollovers and the closing ``today``/``now`` land correctly).
 
     Returns:
-        The bar indices to place ticks under, oldest first.
+        The ticks to pass to :func:`~meshterm.ui.braillechart.axis_chart`.
     """
-    fit = max(2, chars // 8)
-    if n <= fit:
-        return list(range(n))
-    return sorted({round(i * (n - 1) / (fit - 1)) for i in range(fit)})
+    if n <= 0:
+        return []
+    for k in range(min(n, chars), 1, -1):
+        picks = _even_picks(n, k)
+        if len(picks) < k:
+            continue  # rounding fused two picks — this many will not fit cleanly
+        labels = label_of(picks)
+        if _ticks_fit(picks, labels, centers, chars):
+            return list(zip((centers[i] for i in picks), labels))
+    picks = [0] if n == 1 else [0, n - 1]
+    return list(zip((centers[i] for i in picks), label_of(picks)))
 
 
 def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     """``(cell, label)`` axis ticks under the day bars: short dates, thinned to fit.
 
-    One tick per day where they all fit, else an evenly spaced subset keeping both
-    ends (see :func:`_thinned_picks`); each label sits under its own bar (see
-    :func:`_day_centers`). Dates are kept compact — the month is shown only on the
-    first tick and whenever it rolls over, so most ticks read as a bare day number
-    — and the newest bar reads ``today`` when it is, mirroring the node page's
+    One tick per day where the labels all clear each other, else an evenly spaced
+    subset keeping both ends (see :func:`_fit_ticks`); each label sits under its own
+    bar (see :func:`_day_centers`). Dates are kept compact — the month is shown only
+    on the first tick and whenever it rolls over, so most ticks read as a bare day
+    number — and the newest bar reads ``today`` when it is, mirroring the node page's
     closing ``now``.
 
     Args:
@@ -410,33 +465,37 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     n = len(shown)
     centers = _day_centers(n, chars)
     today = utcnow().strftime("%Y-%m-%d")
-    ticks: list[tuple[int, str]] = []
-    prev_month: Optional[str] = None
-    for i in _thinned_picks(n, chars):
-        iso = shown[i][0]
-        try:
-            day = datetime.strptime(iso, "%Y-%m-%d")
-        except ValueError:
-            ticks.append((centers[i], iso))
-            continue
-        month = day.strftime("%b")
-        if i == n - 1 and iso == today:
-            label = "today"
-        elif month != prev_month:
-            label = f"{month} {day.day}"
-        else:
-            label = str(day.day)
-        prev_month = month
-        ticks.append((centers[i], label))
-    return ticks
+
+    def label_of(picks: list[int]) -> list[str]:
+        labels: list[str] = []
+        prev_month: Optional[str] = None
+        for i in picks:
+            iso = shown[i][0]
+            try:
+                day = datetime.strptime(iso, "%Y-%m-%d")
+            except ValueError:
+                labels.append(iso)
+                continue
+            month = day.strftime("%b")
+            if i == n - 1 and iso == today:
+                label = "today"
+            elif month != prev_month:
+                label = f"{month} {day.day}"
+            else:
+                label = str(day.day)
+            prev_month = month
+            labels.append(label)
+        return labels
+
+    return _fit_ticks(n, chars, centers, label_of)
 
 
 def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     """``(cell, label)`` axis ticks under the hourly bars: local clock times, thinned to fit.
 
     The hour-resolution sibling of :func:`_day_ticks` for the 24 h window: one tick
-    per hour where they fit, else an evenly spaced subset keeping both ends (see
-    :func:`_thinned_picks`), each label centred under its own bar (see
+    per hour where the labels fit, else an evenly spaced subset keeping both ends
+    (see :func:`_fit_ticks`), each label centred under its own bar (see
     :func:`_day_centers`). Labels read as local ``HH:00`` clock times — the UTC hour
     buckets rotated into the viewer's zone — and the newest bar reads ``now``,
     mirroring the node page's closing ``now``.
@@ -451,18 +510,24 @@ def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     """
     n = len(shown)
     centers = _day_centers(n, chars)
-    ticks: list[tuple[int, str]] = []
-    for i in _thinned_picks(n, chars):
-        if i == n - 1:
-            ticks.append((centers[i], "now"))
-            continue
-        try:
-            hour = datetime.strptime(shown[i][0], "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
-        except ValueError:
-            ticks.append((centers[i], shown[i][0]))
-            continue
-        ticks.append((centers[i], f"{hour.astimezone():%H:00}"))
-    return ticks
+
+    def label_of(picks: list[int]) -> list[str]:
+        labels: list[str] = []
+        for i in picks:
+            if i == n - 1:
+                labels.append("now")
+                continue
+            try:
+                hour = datetime.strptime(shown[i][0], "%Y-%m-%dT%H").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                labels.append(shown[i][0])
+                continue
+            labels.append(f"{hour.astimezone():%H:00}")
+        return labels
+
+    return _fit_ticks(n, chars, centers, label_of)
 
 
 def _fill_days(
