@@ -11,12 +11,13 @@ graph grows), the atlas keeps one node *in focus* — our own, to begin with —
 only its immediate neighbourhood:
 
 * the **canvas** — the majority of the screen, so the shape stays legible — draws the
-  focus toward the left (its label to the left of its marker) with its strongest
-  neighbours fanned to the right, labels rightward, edges as braille lines coloured by
-  the link's median SNR (green → amber → red, slate for links with no reading) and
-  faded by evidence age. The node the trail came from is anchored at the far **west**,
-  so walking always reads as moving right and backing up as moving left. Only as many
-  neighbours as the canvas area can carry are drawn; the weaker rest collapse into one
+  focus toward the left (its label to its left) with a deliberately sparse fan of its
+  strongest neighbours to the right, each named just to the right of its marker, edges
+  as braille lines coloured by the link's median SNR (green → amber → red, slate for
+  links with no reading) and faded by evidence age. The node the trail came from is
+  anchored at the far **west**, so walking always reads as moving right and backing up
+  as moving left. Only as many neighbours as the canvas area can carry are drawn — a
+  sparse fan reads far better than a crowded one; the weaker rest collapse into one
   ``…`` marker (which lights up as whichever collapsed row the list highlights).
 * the **link list** beneath names every neighbour as a selectable row, strongest
   observed link first: type glyph, name, hash, SNR with a quality bar, the evidence
@@ -63,8 +64,10 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 #: Horizontal / vertical dot-space margins the neighbour fan keeps clear of the canvas
-#: edge, so an outermost marker and its label have room to land.
-_PAD_X_DOTS = 18
+#: edge. The east margin is wide enough to hold a fan node's rightward label (see
+#: :meth:`AtlasScreen._label_right`), so even the fan's outermost marker has room to
+#: name itself without the label running off the edge.
+_PAD_X_DOTS = 28
 _PAD_Y_DOTS = 6
 
 #: The canvas's floor in character rows: below this the fan's shape stops reading.
@@ -74,8 +77,13 @@ _CANVAS_MIN_H = 6
 #: graph would like to be — a windowed list needs at least a few rows to scroll in.
 _LIST_MIN_ROWS = 3
 
-#: The widest a node label may render on the canvas before it is ellipsized.
+#: The widest the focus/selection label may render on the canvas before it ellipsizes.
 _LABEL_W = 16
+
+#: The widest a *fan* node's rightward label renders before it ellipsizes. Shorter than
+#: the focus/selection cap so a name always fits in the east gutter (:data:`_PAD_X_DOTS`)
+#: even on the fan's outermost marker; the list below carries the fuller name.
+_FAN_LABEL_W = 12
 
 #: The fan's angular reach on each side of due east, in radians. The whole fan stays
 #: east of the focus — neighbours to the right, labels rightward — and a smaller
@@ -83,10 +91,12 @@ _LABEL_W = 16
 #: extremes with nothing between them.
 _FAN_HALF_ANGLE = math.radians(72)
 
-#: Vertical dot spacing one fan marker (and its possible label row) needs; the canvas
-#: area divided by this is how many neighbours the graph can carry before the weaker
-#: rest collapse into the one ``…`` marker.
-_FAN_SLOT_DOTS = 6
+#: Vertical dot span one fan marker (with the row its rightward label lands in) claims;
+#: the canvas area divided by this is how many neighbours the graph draws before the
+#: weaker rest collapse into the one ``…`` marker. Deliberately roomy — a sparser fan
+#: with space to breathe reads far better than a full one, and each marker's name gets
+#: a clear row beside it rather than jostling its neighbours'.
+_FAN_SLOT_DOTS = 12
 
 #: Sentinel key for the collapsed weaker-links marker in the placed-node map. NUL can
 #: never collide with a canonical id (those are hex).
@@ -516,8 +526,12 @@ class AtlasScreen(Screen):
         canvas.marker(fx, fy, glyph, parse_hex(color_hex))
         self._label_left(canvas, fx, fy, self._label(self._focus), (255, 255, 255))
 
-        # Markers, then labels in priority order (selection first, trail-back next,
-        # then strongest-first) so the collision check drops the least important.
+        # Markers first, then labels. The selection keeps the smart two-sided
+        # placement (it reads well as-is); every other node is named to the RIGHT
+        # of its icon, the reading direction of the walk. Labels are laid
+        # most-important-first (selection, then the trail-back node, then strongest
+        # links) so the collision check drops the least important where two would
+        # overprint.
         white = (255, 255, 255)
         for other, (x, y) in placed.items():
             if other == _MORE:
@@ -526,18 +540,20 @@ class AtlasScreen(Screen):
                 continue
             glyph, color_hex = self._glyph(other)
             canvas.marker(x, y, glyph, white if other == selected else parse_hex(color_hex))
-        ordered = [n for n in (selected, back) if n is not None and n in placed]
-        ordered += [n for n in shown if n not in ordered]
-        for other in ordered:
+        if selected is not None and selected in placed:
+            x, y = placed[selected]
+            self._place_label(canvas, x, y, self._label(selected), white)
+        rightward = [n for n in (back,) if n is not None and n in placed and n != selected]
+        rightward += [n for n in shown if n != selected and n != back]
+        for other in rightward:
             x, y = placed[other]
-            rgb = white if other == selected else parse_hex(self._glyph(other)[1])
-            self._place_label(canvas, x, y, self._label(other), rgb)
+            self._label_right(canvas, x, y, self._label(other), parse_hex(self._glyph(other)[1]))
         if _MORE in placed:
             x, y = placed[_MORE]
             if selected in hidden:
-                self._place_label(canvas, x, y, self._label(selected), white)
+                self._label_right(canvas, x, y, self._label(selected), white)
             else:
-                self._place_label(canvas, x, y, f"+{len(hidden)} weaker", parse_hex(_UNKNOWN[1]))
+                self._label_right(canvas, x, y, f"+{len(hidden)} weaker", parse_hex(_UNKNOWN[1]))
 
         return canvas.to_ansi_lines()
 
@@ -607,6 +623,29 @@ class AtlasScreen(Screen):
         for dy in (0, 4, -4):
             if canvas.marker_label(x, y + dy, label, rgb):
                 return
+
+    def _label_right(
+        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
+    ) -> None:
+        """Place a node's label to the *right* of its marker, dodging by row.
+
+        Every node but the selected one (which keeps the two-sided
+        :meth:`_place_label`) is named to the right of its icon — the reading
+        direction of the walk. The label tries the marker's own row first, then a
+        row below and above to slip past a crowded neighbour; if every checked row
+        is blocked it is stamped to the right regardless, so a node is never left a
+        bare glyph. The fan's east gutter (:data:`_PAD_X_DOTS`) is sized so a
+        :data:`_FAN_LABEL_W`-capped name lands without running off the edge, even on
+        the fan's outermost marker.
+        """
+        if len(label) > _FAN_LABEL_W:
+            label = label[: _FAN_LABEL_W - 1] + "…"
+        cx, cy = x >> 1, y >> 2
+        start = cx + 2
+        for dy in (0, 1, -1, 2, -2):
+            if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):
+                return
+        canvas._place_run(start, cy, label, rgb, bold=True)
 
     def _label_left(
         self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB

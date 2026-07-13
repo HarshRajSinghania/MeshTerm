@@ -184,6 +184,29 @@ def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
     assert len(screen._rows()) == 14
 
 
+def test_atlas_fan_stays_sparse_and_collapses_the_rest() -> None:
+    """The fan is kept deliberately sparse: even a modest hub sheds its weakest links."""
+    screen = AtlasScreen(
+        session=_FakeSession(), topo=_hub_topo(8), contacts={}, self_label="us"
+    )
+    screen.note_viewport(20)
+    canvas_part = _plain(screen.render_body(80)).split("Links")[0]
+    assert "…" in canvas_part and "weaker" in canvas_part  # not all eight are drawn
+
+
+def test_atlas_labels_non_selected_nodes_to_the_right_of_their_icon() -> None:
+    """A fan node is named just to the right of its marker — the walk's reading way."""
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    screen = _screen(_topo())
+    canvas = MapCanvas(80, 12)
+    canvas.marker(40, 20, "●", (255, 255, 255))  # a marker with room to its east
+    screen._label_right(canvas, 40, 20, "Bravo", (200, 200, 200))
+    marker_cx = 40 >> 1
+    assert canvas._label_cells  # the name landed
+    assert all(cx > marker_cx for cx, _cy in canvas._label_cells)  # every cell east
+
+
 def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
     """Highlighting a weak (collapsed) row surfaces its name at the ``…`` marker."""
     screen = AtlasScreen(
