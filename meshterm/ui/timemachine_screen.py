@@ -315,26 +315,37 @@ def _node_sections(
 
 
 def _day_spans(days: int, chars: int) -> list[tuple[int, int]]:
-    """Each day's ``(start, width)`` share of the chart's ``2 × chars`` dot columns.
+    """Each day's lit-bar ``(start, width)`` within the chart's ``2 × chars`` dots.
 
     The one even split behind both the bars (:func:`_day_columns`) and their axis
-    ticks (:func:`_day_centers`): day ``i`` runs from dot ``⌊i·D/n⌋`` to
-    ``⌊(i+1)·D/n⌋`` (``D = 2 × chars``), so no two days differ by more than one
-    dot column and the wider days interleave evenly among the narrower ones
-    instead of pooling at either end. The widths always sum to exactly ``D``,
-    keeping the bars flush with the axis border and caption sized for them.
+    ticks (:func:`_day_centers`). When every bar can keep at least two dots, each
+    of the ``n − 1`` day *boundaries* pays one unclaimed notch dot and the bars
+    split the rest with a floor-edge walk, so no two differ by more than one dot
+    column and the wider days interleave evenly among the narrower ones instead
+    of pooling at either end. The notches sit strictly between days: the first
+    bar starts flush at dot 0 (the axis border is separation enough — a leading
+    blank dot would double the left margin the braille glyphs already carry)
+    and the last ends flush at the right border, so both edges read alike. A
+    denser history drops the notches and the bars simply tile all ``2 × chars``
+    dots.
 
     Args:
         days: How many day bars the chart draws.
         chars: The chart's width in character cells.
 
     Returns:
-        One ``(start dot, width in dots)`` per day, oldest first.
+        One ``(start dot, width in dots)`` per lit bar, oldest first.
     """
     dots = chars * 2
     n = max(1, days)
-    edges = [i * dots // n for i in range(n + 1)]
-    return [(edges[i], edges[i + 1] - edges[i]) for i in range(n)]
+    lit = dots - (n - 1)  # what the bars keep once each boundary pays its notch dot
+    notch = n > 1 and lit // n >= 2
+    if not notch:
+        lit = dots
+    edges = [i * lit // n for i in range(n + 1)]
+    return [
+        (edges[i] + (i if notch else 0), edges[i + 1] - edges[i]) for i in range(n)
+    ]
 
 
 def _day_centers(days: int, chars: int) -> list[int]:
@@ -460,13 +471,12 @@ def _day_columns(values: list[int], chars: int) -> list:
     leaving the bars short of the axis border and caption sized for the full
     width — misreading as the whole chart sitting shifted left).
 
-    When every day is at least three dots wide, each opens with a
-    :data:`~meshterm.ui.braillechart.GAP` dot column — its first dot, blank clean
-    down to the axis — so same-height neighbours read as separate bars instead of
-    fusing into one solid block. The oldest day keeps its notch too: it doubles as
-    the bar's one-dot clearance off the axis border, paid for inside the day's own
-    span. A deeper history (days of one or two dots) drops the notch chart-wide —
-    such a bar has no dot to spare — and the days simply abut.
+    The dots the split leaves unclaimed — one per day *boundary*, when the bars
+    are wide enough to afford them (see :func:`_day_spans`) — render as
+    :data:`~meshterm.ui.braillechart.GAP` columns, blank clean down to the axis,
+    so same-height neighbours read as separate bars instead of fusing into one
+    solid block. A deeper history (bars of one dot) has no boundary to spare and
+    the days simply abut.
 
     Args:
         values: Per-day counts, oldest first.
@@ -476,15 +486,9 @@ def _day_columns(values: list[int], chars: int) -> list:
         Exactly ``2 × chars`` dot-column readings, oldest first (a
         :data:`~meshterm.ui.braillechart.GAP` marks a day-boundary notch).
     """
-    spans = _day_spans(len(values), chars)
-    notch = min(width for _start, width in spans) >= 3
-    out: list = []
-    for value, (_start, width) in zip(values, spans):
-        if notch:
-            out.append(GAP)
-            out.extend([value] * (width - 1))
-        else:
-            out.extend([value] * width)
+    out: list = [GAP] * (chars * 2)
+    for value, (start, width) in zip(values, _day_spans(len(values), chars)):
+        out[start : start + width] = [value] * width
     return out
 
 

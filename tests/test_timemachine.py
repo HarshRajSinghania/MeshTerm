@@ -249,19 +249,22 @@ def test_day_ticks_prioritise_the_newest_then_the_oldest_day() -> None:
 def test_day_columns_widths_differ_by_at_most_one_dot_and_interleave() -> None:
     """An uneven split spreads the wider days through the chart, not to one side.
 
-    13 days over 30 chars (60 dots) can't divide evenly: days get 4 or 5 dots.
-    The widths must never differ by more than one dot column, and the wide days
-    must mix with the narrow ones instead of pooling at either end (the old
-    char-unit split put every wide day on the left, every narrow one on the right).
+    13 days over 30 chars (60 dots) pay 12 boundary notches, leaving 48 dots of
+    bar that can't divide evenly: bars get 3 or 4 dots. The widths must never
+    differ by more than one dot column, and the wide days must mix with the
+    narrow ones instead of pooling at either end (the old char-unit split put
+    every wide day on the left, every narrow one on the right).
     """
     cols = _day_columns([1] * 13, 30)
     assert len(cols) == 60
-    starts = [i for i, c in enumerate(cols) if c is GAP]  # one notch opens each day
-    widths = [b - a for a, b in zip(starts, [*starts[1:], len(cols)])]
-    assert len(widths) == 13 and set(widths) == {4, 5}
-    first_wide = widths.index(5)
-    last_wide = len(widths) - 1 - widths[::-1].index(5)
-    assert any(w == 4 for w in widths[first_wide:last_wide])  # narrow days sit between wide ones
+    notches = [i for i, c in enumerate(cols) if c is GAP]  # one per day boundary
+    assert len(notches) == 12
+    edges = [-1, *notches, len(cols)]  # each bar runs between two notches
+    widths = [b - a - 1 for a, b in zip(edges, edges[1:])]
+    assert len(widths) == 13 and set(widths) == {3, 4}
+    first_wide = widths.index(4)
+    last_wide = len(widths) - 1 - widths[::-1].index(4)
+    assert any(w == 3 for w in widths[first_wide:last_wide])  # narrow days sit between wide ones
 
 
 def test_day_ticks_pack_the_axis_keeping_both_ends() -> None:
@@ -286,13 +289,20 @@ def test_day_ticks_pack_the_axis_keeping_both_ends() -> None:
     assert all(b_start >= a_end + 2 for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
 
 
-def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:
-    """A day wide enough to span several characters opens with a GAP dot column."""
-    cols = _day_columns([2, 8, 4], 12)  # 3 days, 12 chars -> 4 chars (8 dots) each
-    assert cols[0] is GAP and cols[8] is GAP and cols[16] is GAP
-    assert cols[1:8] == [2] * 7
-    assert cols[9:16] == [8] * 7
-    assert cols[17:24] == [4] * 7
+def test_day_columns_notch_the_boundaries_and_keep_the_first_bar_flush() -> None:
+    """Notches sit strictly between days; the first bar starts at the axis itself.
+
+    The braille glyphs already carry a left margin, so a leading GAP dot would
+    read as double padding against the axis border while the right edge (bar
+    flush against the closing border) shows single — the edges must match.
+    """
+    cols = _day_columns([2, 8, 4], 12)  # 24 dots − 2 notches = 22 of bar: 7+7+8
+    assert cols[0] == 2  # flush against the axis — no leading notch
+    assert cols[:7] == [2] * 7
+    assert cols[7] is GAP
+    assert cols[8:15] == [8] * 7
+    assert cols[15] is GAP
+    assert cols[16:] == [4] * 8  # …and flush against the right border
 
 
 def test_day_columns_skips_the_notch_for_a_single_character_day() -> None:
@@ -312,20 +322,24 @@ def test_day_columns_skips_notches_when_days_outnumber_characters() -> None:
 def test_day_chart_notch_reaches_the_axis_but_a_zero_day_keeps_its_baseline() -> None:
     """The notch column is blank down to the axis; a zero-value day stays a grey line.
 
-    Tall day, empty day, tall day at 4 chars each: the leading cell of each tall day
-    shows its right dot column only (the notch's left column blank all the way down),
-    and the empty day draws the faint zero baseline across its own columns.
+    Tall day, empty day, tall day: the boundary notches (dots 7 and 15) blank
+    their whole dot column so the gap runs clean to the axis border, the first
+    bar's very first dot is lit (flush against the axis), and the empty day
+    draws the faint zero baseline across its own columns.
     """
     from meshterm.ui.braillechart import timeline_rows
 
-    cols = _day_columns([8, 0, 8], 12)  # -> 4 chars (8 dot cols) per day
+    cols = _day_columns([8, 0, 8], 12)  # 22 dots of bar (7+7+8), notches at 7 and 15
     bottom = timeline_rows(cols, rows=2)[-1]
-    # Leading cell of the first tall day: right column filled, left (notch) blank —
-    # no bottom-left dot, so the gap runs clean to the axis border below.
-    assert not (ord(bottom.plain[0]) & 0x40)  # the notch's bottom-left dot is unlit
-    # The empty middle day (cells 4..7) draws the faint zero baseline, in grey.
-    zero_cells = bottom.plain[4:8]
-    assert all(ord(c) & 0x80 for c in zero_cells)  # each keeps its right baseline dot
+    assert ord(bottom.plain[0]) & 0x40  # first bar flush: its bottom-left dot is lit
+    # Cell 3 holds the first boundary: bar dot on its left, the notch blank on its
+    # right — no bottom-right dot, so the gap runs clean to the axis border below.
+    assert not (ord(bottom.plain[3]) & 0x80)
+    # The empty middle day (dots 8..14) draws the faint zero baseline, in grey.
+    zero_cells = bottom.plain[4:7]
+    assert all(ord(c) & (0x40 | 0x80) for c in zero_cells)  # baseline dots present
+    assert ord(bottom.plain[7]) & 0x40  # the day's last baseline dot…
+    assert not (ord(bottom.plain[7]) & 0x80)  # …then the second notch, blank
     zero_spans = [s for s in bottom.spans if 4 <= s.start < 8]
     assert zero_spans and all(s.style == "faint" for s in zero_spans)
 
