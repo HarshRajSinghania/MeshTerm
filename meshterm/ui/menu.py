@@ -475,7 +475,10 @@ async def _startup(ctx: AppContext) -> bool:
         # the splash spinner so the wait reads as intentional rather than a hang.
         from datetime import datetime
 
-        footnote = f"© {datetime.now().year} Johnputer"
+        _copyright_start = 2026
+        _year = datetime.now().year
+        _span = str(_copyright_start) if _year <= _copyright_start else f"{_copyright_start}-{_year}"
+        footnote = f"Copyright (c) {_span} Jean-Pierre Martineau"
         devices = await ctx.ui.busy_startup(
             "Scanning for companion devices…",
             discover_all(ble=True),
