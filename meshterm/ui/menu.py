@@ -29,6 +29,7 @@ from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_sparkline
 from .theme import make_console
+from .widgets import battery_cell
 from .tui import (
     CANCEL,
     Choice,
@@ -133,9 +134,11 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     (``(COM5)`` / ``(BLE)``), unread-message and Watchtower badges (shown only when
     something is waiting), and the braille activity pulse counting every packet the hub
     hears at one minute per dot column — newest at the right edge, like every MeshTerm
-    timeline — stretched to fill every remaining cell of the row, so a wider terminal
-    simply shows deeper history. Separators are roomy by default and drop to a compact
-    ``·`` when that would squeeze the pulse below :data:`_SPARK_MIN_CELLS`.
+    timeline. The pulse fills the middle of the row; a battery gauge (only when the
+    companion reports a pack) is pinned to the right edge and the pulse cedes exactly the
+    cells it needs, so a wider terminal simply shows deeper history. Separators are roomy
+    by default and drop to a compact ``·`` when that would squeeze the pulse below
+    :data:`_SPARK_MIN_CELLS`.
 
     Args:
         ctx: The shared application context, read live on every repaint.
@@ -149,11 +152,19 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         single line (see ``frame.compose_base``), so a too-narrow terminal chops the
         tail rather than wrapping.
     """
-    header = _header_segments(ctx, cache, "  ·  ")
-    if width - header.cell_len < _SPARK_MIN_CELLS:
-        header = _header_segments(ctx, cache, " · ")
-    # Two dot columns per cell: every cell left of the row's edge shows two minutes.
-    room = width - header.cell_len
+    # The battery gauge is pinned to the row's right edge, so reserve its width (plus a
+    # leading separator) before the pulse claims the rest; a wider separator estimate for
+    # the fit decision is harmless slack.
+    battery = _battery_segment(ctx)
+    reserve = (cell_len("  ·  ") + battery.cell_len) if battery.cell_len else 0
+    sep = "  ·  "
+    header = _header_segments(ctx, cache, sep)
+    if width - header.cell_len - reserve < _SPARK_MIN_CELLS:
+        sep = " · "
+        header = _header_segments(ctx, cache, sep)
+        reserve = (cell_len(sep) + battery.cell_len) if battery.cell_len else 0
+    # Two dot columns per cell: every cell left of the reserved tail shows two minutes.
+    room = width - header.cell_len - reserve
     if room > 0:
         # Buckets seeded from a previous session's stored history draw grey; only
         # traffic this session actually heard pulses green.
@@ -168,7 +179,44 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
                 column_styles=styles,
             )
         )
+    if battery.cell_len:
+        # Pin the gauge flush right: once the pulse has filled `room`, the separator and
+        # gauge land against the edge. With no room for a pulse (a very narrow terminal),
+        # pad instead so the gauge still sits in the corner rather than trailing the text.
+        if room <= 0:
+            header.append(" " * max(0, width - header.cell_len - reserve))
+        header.append(sep)
+        header.append_text(battery)
     return header
+
+
+#: Seconds per animation step of the header battery gauge (the charging sweep and the
+#: low-battery blink). Matched to the session's ~1 Hz idle repaint (see the app's
+#: ``refresh_interval``) so each repaint advances the animation by one clean step rather
+#: than aliasing across skipped frames.
+_BATTERY_ANIM_S = 1.0
+
+
+def _battery_segment(ctx: AppContext) -> Text:
+    """The header's right-anchored battery gauge, or an empty Text when there is no pack.
+
+    Reads the poller's cached snapshot (:meth:`~meshterm.services.battery_service.
+    BatteryService.reading`) — never the radio — so it is safe on the render path. The
+    animation frame is derived from the wall clock, so the charging sweep and low-battery
+    blink advance on their own without the header threading a counter through.
+
+    Args:
+        ctx: The shared application context, read for the latest battery snapshot.
+
+    Returns:
+        The gauge as a Rich :class:`Text` (glyph + ``%``), or an empty one when the
+        companion reports no battery.
+    """
+    reading = ctx.battery.reading()
+    if reading is None:
+        return Text()
+    frame = int(time.monotonic() / _BATTERY_ANIM_S)
+    return battery_cell(reading.percent, charging=reading.charging, frame=frame)
 
 
 def _header_segments(ctx: AppContext, cache: dict, sep: str) -> Text:
@@ -548,6 +596,9 @@ async def _resume_monitor(ctx: AppContext) -> None:
     # The courier drains the outbox on its own paced schedule; each pass checks for a
     # connected device and skips quietly without one, exactly like the advert scheduler.
     await ctx.courier.start()
+    # The battery poller reads the pack for the header's fuel gauge; it only ever reads,
+    # and skips quietly without a device, so it too is safe to run from launch.
+    await ctx.battery.start()
     if not ctx.settings.connect_on_start:
         return
     try:

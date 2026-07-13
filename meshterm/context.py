@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .services.courier import CourierService
     from .services.monitor_service import MonitorService
     from .services.watchtower import WatchtowerService
+    from .services.battery_service import BatteryService
     from .ui.surface import Ui
 
 
@@ -103,6 +104,7 @@ class AppContext:
     _adverts: "Optional[AdvertScheduler]" = field(default=None, init=False, repr=False)
     _watchtower: "Optional[WatchtowerService]" = field(default=None, init=False, repr=False)
     _courier: "Optional[CourierService]" = field(default=None, init=False, repr=False)
+    _battery: "Optional[BatteryService]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -284,6 +286,20 @@ class AppContext:
 
             self._courier = CourierService(self)
         return self._courier
+
+    @property
+    def battery(self) -> "BatteryService":
+        """Return the session's battery poller, creating it on first use.
+
+        Created idle here; the interactive session starts it alongside the other
+        always-on services. It only ever reads the pack (best-effort, skipping quietly
+        without a device), so scripted CLI runs simply never start the loop.
+        """
+        if self._battery is None:
+            from .services.battery_service import BatteryService
+
+            self._battery = BatteryService(self)
+        return self._battery
 
     @property
     def log(self):  # type: ignore[no-untyped-def]
@@ -500,6 +516,8 @@ class AppContext:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
         if self._courier is not None:
             await self._courier.aclose()
+        if self._battery is not None:
+            await self._battery.aclose()
         if self._watchtower is not None:
             await self._watchtower.aclose()
         if self._adverts is not None:

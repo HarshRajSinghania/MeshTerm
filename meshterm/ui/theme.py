@@ -61,6 +61,13 @@ MESH_THEME = Theme(
         "snr.good": "bold #4ade80",
         "snr.ok": "bold #fbbf24",
         "snr.bad": "bold #f87171",
+        # The status-bar battery gauge, as a fuel-gauge palette: green healthy, orange at
+        # a quarter, red near empty. ``batt.dim`` is the off-beat of the critically-low
+        # blink — a dark slate the red glyph flickers to, so it pulses without vanishing.
+        "batt.high": "bold #4ade80",
+        "batt.mid": "bold #fb923c",
+        "batt.low": "bold #f87171",
+        "batt.dim": "#475569",
     }
 )
 

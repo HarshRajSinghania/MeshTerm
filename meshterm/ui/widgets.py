@@ -844,3 +844,85 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
         ("status        ", "muted"), Text.from_markup(applied),
     )
     return Panel(body, title="[accent]TX optimization[/accent]", border_style="accent", expand=False)
+
+
+# -- battery gauge --------------------------------------------------------------------------
+
+#: Unicode braille pattern base; add an 8-bit dot mask (a 2×4 cell) to get the glyph.
+_BRAILLE_BASE = 0x2800
+
+#: Dot bit per (column, row) within a braille cell — the Unicode standard layout, the same
+#: mapping the map canvas rasters with. Kept here so the one-cell battery glyph needn't reach
+#: into the canvas module for two constants.
+_BRAILLE_DOTS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
+
+#: Battery charge tiers: ``(percent floor, braille rows lit from the bottom, colour)``,
+#: highest first. The glyph is one braille cell (2×4 dots) filled from its bottom row up, so
+#: four coarse levels read as a shrinking fuel gauge: the whole cell above three-quarters,
+#: six dots above half, four above a quarter, two below it — green while healthy, orange at a
+#: quarter, red near empty (the app's ok/warn/err semantics as a gauge).
+_BATTERY_TIERS: tuple[tuple[int, int, str], ...] = (
+    (75, 4, "batt.high"),
+    (50, 3, "batt.high"),
+    (25, 2, "batt.mid"),
+    (0, 1, "batt.low"),
+)
+
+#: At or below this charge the red glyph blinks with a dim frame — a can't-miss low warning.
+_BATTERY_CRITICAL = 10
+
+#: Frames in the charging sweep: empty → four fills → round again (bottom-to-full loop).
+_CHARGE_FRAMES = 5
+
+
+def _braille_fill(rows: int) -> str:
+    """A single braille cell with its bottom ``rows`` (0–4) dot rows lit."""
+    rows = max(0, min(4, rows))
+    bits = 0
+    for row in range(4 - rows, 4):
+        bits |= _BRAILLE_DOTS[0][row] | _BRAILLE_DOTS[1][row]
+    return chr(_BRAILLE_BASE + bits)
+
+
+def _battery_tier(percent: int) -> tuple[int, str]:
+    """The ``(rows lit, colour)`` a charge level draws at (see :data:`_BATTERY_TIERS`)."""
+    for floor, rows, color in _BATTERY_TIERS:
+        if percent >= floor:
+            return rows, color
+    return 1, "batt.low"
+
+
+def battery_cell(percent: int, *, charging: bool = False, frame: int = 0) -> Text:
+    """The status-bar battery gauge: one braille cell coloured by charge, then its ``%``.
+
+    The braille cell fills from the bottom up in four coarse steps (see
+    :data:`_BATTERY_TIERS`), coloured green while healthy, orange at a quarter, red near
+    empty. Two live states animate off the caller's ``frame`` counter (advanced one step per
+    repaint tick), so the gauge moves without any per-frame plumbing:
+
+    * **Charging** overrides the fill: the cell sweeps empty-to-full on a loop, the charge
+      colour held, so a plugged-in pack visibly climbs — while the number beside it stays the
+      *true* charge, never the animation's.
+    * **Critically low** (≤ :data:`_BATTERY_CRITICAL`%, not charging) blinks the red cell to a
+      dim slate on alternate frames — an unmissable pulse in the corner.
+
+    Args:
+        percent: State of charge, 0–100 (clamped).
+        charging: Whether the pack is taking charge (drives the fill sweep).
+        frame: A monotonically advancing tick; only its phase is read, so any
+            steadily-incrementing integer animates the two live states.
+
+    Returns:
+        A Rich :class:`Text`: the coloured glyph, a space, and ``NN%`` in muted text.
+    """
+    pct = max(0, min(100, int(percent)))
+    rows, color = _battery_tier(pct)
+    if charging:
+        # The charge colour is held; only the fill sweeps, so it reads as "filling", not
+        # as the charge itself jumping around.
+        rows = frame % _CHARGE_FRAMES
+    elif pct <= _BATTERY_CRITICAL and frame % 2:
+        color = "batt.dim"
+    out = Text(_braille_fill(rows), style=color)
+    out.append(f" {pct}%", style="muted")
+    return out

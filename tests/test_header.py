@@ -7,8 +7,13 @@ from types import SimpleNamespace
 from meshterm.ui.menu import _HEADER_ACTIVITY_LEVELS, _header
 
 
-def _ctx(histogram=(), unread=0, alerts=0) -> SimpleNamespace:
-    """A minimal stand-in exposing only what the header reads (simulator path)."""
+def _ctx(histogram=(), unread=0, alerts=0, battery=None) -> SimpleNamespace:
+    """A minimal stand-in exposing only what the header reads (simulator path).
+
+    ``battery`` is the poller's cached reading (a ``percent``/``charging`` object) or
+    ``None`` for a companion with no pack — the default, so most tests see the old
+    battery-free header.
+    """
     return SimpleNamespace(
         mock=True,
         chat=SimpleNamespace(unread_total=lambda: unread),
@@ -17,6 +22,7 @@ def _ctx(histogram=(), unread=0, alerts=0) -> SimpleNamespace:
             activity_session_flags=lambda: (True,) * len(tuple(histogram)),
         ),
         watchtower=SimpleNamespace(unacked_count=lambda: alerts),
+        battery=SimpleNamespace(reading=lambda: battery),
     )
 
 
@@ -90,3 +96,27 @@ def test_header_survives_a_sliver_terminal() -> None:
     header = _header(_ctx(histogram=(9,) * 360), {}, 10)
     # No room left: no braille at all, nothing stretched past the edge.
     assert all(not (0x2800 <= ord(ch) <= 0x28FF) for ch in header.plain)
+
+
+def _spark(row: str) -> list[str]:
+    return [ch for ch in row if 0x2800 <= ord(ch) <= 0x28FF]
+
+
+def test_header_pins_the_battery_gauge_to_the_right_edge() -> None:
+    """A companion with a pack shows its charge in the corner; the pulse cedes the room."""
+    reading = SimpleNamespace(percent=87, charging=False)
+    header = _header(_ctx(histogram=(21,) * 360, battery=reading), {}, 80)
+    assert header.cell_len == 80  # still fills the row exactly, gauge included
+    assert header.plain.rstrip().endswith("87%")  # the gauge sits flush right
+    # The pulse gave up real cells to make room (fewer sparkline cells than a bare row,
+    # even counting the gauge's own full-cell glyph).
+    with_batt = len(_spark(header.plain))
+    bare = len(_spark(_header(_ctx(histogram=(21,) * 360), {}, 80).plain))
+    assert with_batt < bare
+
+
+def test_header_hides_the_gauge_without_a_battery() -> None:
+    """No pack, no gauge — the pulse keeps the whole row it always had."""
+    header = _header(_ctx(histogram=(21,) * 360, battery=None), {}, 80)
+    assert "%" not in header.plain
+    assert header.cell_len == 80
