@@ -120,7 +120,7 @@ class TuiSession:
         self._app: Optional[Application] = None
         self._input = input
         self._output = output
-        # The top-most floating "working" overlay (a ring spinner), or None when idle. It is
+        # The top-most floating "working" overlay (a skeleton card), or None when idle. It is
         # deliberately *not* on the screen stack: it hovers above every layer and is shown/
         # hidden by busy_overlay, independent of whatever screens are pushed.
         self._overlay: Optional[BusyOverlay] = None
@@ -172,9 +172,9 @@ class TuiSession:
     def _expose_overlay(self) -> None:
         """Restart the busy overlay's fade whenever a stack change re-exposes it.
 
-        A prompt pushed over an active overlay hides the ring; popping back to an empty stack
+        A prompt pushed over an active overlay hides the card; popping back to an empty stack
         re-exposes it. Restart the intro then so the black hold and fade-in replay fresh each
-        time the ring is shown, rather than snapping back at full brightness (see
+        time the card is shown, rather than snapping back at full brightness (see
         :meth:`~meshterm.ui.tui.overlay.BusyOverlay.restart`).
         """
         if self._overlay is not None and not self._stack:
@@ -564,36 +564,40 @@ class TuiSession:
         self,
         message: str = "",
         *,
+        title: str = "",
         interval: float = 0.06,
     ) -> AsyncIterator[BusyOverlay]:
-        """Float an animated ring spinner on top of everything for the duration of a block.
+        """Float a skeleton card on top of everything for the duration of a block.
 
         Wrap a slow, screen-affecting operation — most usefully a device menu navigation,
         which can otherwise sit on a blank frame while the companion answers — in::
 
-            async with session.busy_overlay("Talking to your companion…"):
+            async with session.busy_overlay("reading…", title="Nodes"):
                 await slow_work()
 
-        A background timer advances the ring, fades it in, and repaints while the block runs;
-        the overlay is always cleared and the timer cancelled on exit, even on error. The ring
-        fades in from black rather than popping in (see :attr:`BusyOverlay.brightness`), so a
-        quick operation only paints a near-black ring and it never appears suddenly. It is
-        drawn only in the gaps between screens (see :meth:`_overlay_visible`), so it announces
-        the wait without covering a prompt the user is interacting with.
+        The card stands in for the screen being fetched: a title, the one-cell working chip
+        beside the caption, and a Knight-Rider scanning-light bar. A background timer advances the chip,
+        fades the card in, and repaints while the block runs; it is always cleared and the
+        timer cancelled on exit, even on error. The card fades in from black rather than
+        popping in (see :attr:`BusyOverlay.brightness`), so a quick operation only paints a
+        near-black card and it never appears suddenly. It is drawn only in the gaps between
+        screens (see :meth:`_overlay_visible`), so it announces the wait without covering a
+        prompt the user is interacting with.
 
         Args:
-            message: An optional caption drawn beneath the ring.
+            message: An optional caption drawn beside the working chip.
+            title: An optional heading naming the screen being fetched.
             interval: Seconds between animation frames (also the fade's repaint cadence).
 
         Yields:
             The live :class:`BusyOverlay`, in case the caller wants to update its caption.
         """
         # A nested busy_overlay keeps the outer one (the outermost wait owns the screen); its
-        # own body still runs, it just doesn't install a second ring.
+        # own body still runs, it just doesn't install a second card.
         if self._overlay is not None:
             yield self._overlay
             return
-        overlay = BusyOverlay(message)
+        overlay = BusyOverlay(message, title=title)
         self._overlay = overlay
         if self._overlay_visible():
             self.invalidate()  # start the fade-in promptly, before the first tick
@@ -602,7 +606,7 @@ class TuiSession:
             while True:
                 await asyncio.sleep(interval)
                 overlay.tick()
-                # Only repaint when the ring is actually on screen, so an overlay waiting
+                # Only repaint when the card is actually on screen, so an overlay waiting
                 # behind a live prompt doesn't churn that prompt's repaints for nothing.
                 if self._overlay_visible():
                     self.invalidate()
@@ -667,7 +671,7 @@ class TuiSession:
         )
         # The busy overlay is the last float, so it draws on top of the dialog float — the
         # top of the z-order. It is a content-sized window (dont_extend_*) with no anchors, so
-        # the FloatContainer centres just its ring box over the screen rather than blanking it.
+        # the FloatContainer centres just its skeleton card over the screen rather than blanking it.
         overlay_window = Window(
             FormattedTextControl(self._render_overlay),
             always_hide_cursor=True,
@@ -759,7 +763,7 @@ class TuiSession:
     def _overlay_visible(self) -> bool:
         """Whether the busy overlay should be painted this frame.
 
-        Gated on an empty screen stack so the ring only appears in the "black screen" gaps a
+        Gated on an empty screen stack so the card only appears in the "black screen" gaps a
         device operation opens between screens (a menu navigation before the tool's first
         prompt, say) and never buries a dialog the user is meant to be reading. It also stays
         unpainted through the overlay's initial hold (:attr:`BusyOverlay.brightness` is 0), so
@@ -768,7 +772,7 @@ class TuiSession:
         return self._overlay is not None and not self._stack and self._overlay.brightness > 0
 
     def _render_overlay(self) -> ANSI:
-        """Render the busy overlay's ring (only when :meth:`_overlay_visible`)."""
+        """Render the busy overlay's skeleton card (only when :meth:`_overlay_visible`)."""
         if self._overlay is None:
             return ANSI("")
         return ANSI(self._overlay.render())

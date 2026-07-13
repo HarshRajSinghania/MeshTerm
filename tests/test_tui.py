@@ -1074,6 +1074,35 @@ def test_progress_handle_matches_rich_api() -> None:
     assert screen.render_body(60)
 
 
+def test_progress_chip_animates_between_advances() -> None:
+    """The working chip spins on tick alone, so a task that rarely advances still reads alive.
+
+    A trace advances just once, at the very end; the meter would sit motionless until then.
+    Ticking the dialog must change what it renders even with the task's count untouched.
+    """
+    screen = ProgressScreen("trace")
+    screen.add_task("tracing", total=1)  # will sit at 0/1 for the whole wait
+    before = "\n".join(screen.render_body(60))
+    screen.tick()
+    after = "\n".join(screen.render_body(60))
+    assert before != after  # the chip moved even though nothing advanced
+
+
+def test_progress_completed_task_shows_check_and_indeterminate_has_no_track() -> None:
+    """A finished task flips its chip to ✓; an unknown-total task draws no dead track."""
+    from rich.text import Text as RichText
+
+    screen = ProgressScreen("work")
+    done = screen.add_task("tracing", total=2)
+    screen.advance(done, 2)
+    indet = screen.add_task("optimizing", total=None)
+    plain = RichText.from_ansi("\n".join(screen.render_body(60))).plain
+    assert "✓ tracing" in plain
+    # The indeterminate row carries only the spinning chip + its count, never a track glyph.
+    indet_line = next(line for line in plain.splitlines() if "optimizing" in line)
+    assert "⠶" not in indet_line and "⣿" not in indet_line
+
+
 # --- session stack -----------------------------------------------------------
 
 
@@ -1162,58 +1191,96 @@ def test_session_stack_and_float_selection() -> None:
     assert not session._has_float()
 
 
-# --- ring spinner + busy overlay ---------------------------------------------
+# --- busy skeleton card ------------------------------------------------------
 
 
-def test_ring_spinner_draws_a_symmetric_styled_circle() -> None:
-    """The ring renders a hollow circle: a rim in the rim colour and a bright comet arc."""
-    from meshterm.ui.tui.ring import RingSpinner
+def test_busy_overlay_renders_title_chip_caption_and_scanner_row() -> None:
+    """A titled, captioned card shows its heading, the working chip + caption, and the LED bar."""
+    import re
 
-    ring = RingSpinner()
-    text = ring.render()
-    styles = {span.style for span in text.spans}
-    assert RingSpinner.RIM_STYLE in styles  # the resting rim
-    assert any(c in styles for c in RingSpinner.COMET_RAMP)  # the bright comet arc
-    # It really is a hollow ring: the middle row has a blank interior between its two sides.
-    middle = text.plain.split("\n")[ring.height // 2]
-    assert middle.strip() and "  " in middle.strip()
+    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_CELLS, _SCAN_GLYPH
 
-
-def test_ring_spinner_is_left_right_symmetric() -> None:
-    """The quarter-plus-mirror construction makes every row a left-right mirror of itself."""
-    from meshterm.ui.tui.ring import RingSpinner
-
-    rows = RingSpinner().render().plain.split("\n")
-    # Blank out the moving comet by comparing dot presence, not colour: mirror the lit cells.
-    for row in rows:
-        lit = [ch != " " for ch in row]
-        assert lit == lit[::-1]
+    overlay = BusyOverlay("reading from Waymarker…", title="Nodes", fade=0.0)  # full bright at once
+    ansi = overlay.render()
+    assert "Nodes" in ansi  # the heading naming the screen being fetched
+    assert "reading from Waymarker" in ansi  # the caption beside the chip
+    assert overlay.spinner.frame in ansi  # the one-cell working chip
+    # The scanning bar stands in for the content to come: one braille lamp per cell, each styled
+    # on its own, so strip ANSI before counting the run of lamps.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", ansi)
+    assert _SCAN_GLYPH * _SCAN_CELLS in plain
 
 
-def test_ring_spinner_comet_rotates_on_tick() -> None:
-    """Ticking moves the bright comet to a different set of cells (the dots chase round)."""
-    from meshterm.ui.tui.ring import RingSpinner
+def test_busy_overlay_chip_ticks_with_the_animation() -> None:
+    """The card's working chip is the reusable one-cell Spinner and advances on tick."""
+    from meshterm.ui.tui.overlay import BusyOverlay
+    from meshterm.ui.tui.spinner import Spinner
 
-    ring = RingSpinner()
-    ramp = set(RingSpinner.COMET_RAMP)
+    overlay = BusyOverlay()
+    assert isinstance(overlay.spinner, Spinner)
+    first = overlay.spinner.frame
+    overlay.tick()
+    assert overlay.spinner.frame != first
 
-    def bright_cells(t) -> set[int]:
-        return {i for span in t.spans if span.style in ramp for i in range(span.start, span.end)}
 
-    first = bright_cells(ring.render())
+def test_busy_overlay_scanner_recolours_on_tick_without_reshaping() -> None:
+    """The bar isn't static: the light moves, so ticking recolours it — but its shape holds.
+
+    Regression guard for the frozen-looking card — the chip spun but the bar sat dead-still.
+    The braille layout must stay put while the colouring (the moving light) shifts each tick.
+    """
+    import re
+
+    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_GLYPH
+
+    overlay = BusyOverlay("reading…", title="Nodes", fade=0.0)  # full bright, no fade to wait out
+
+    def lamp_rows(ansi: str) -> list[str]:
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", ansi)
+        return [line for line in plain.splitlines() if _SCAN_GLYPH in line]
+
+    before = overlay.render()
     for _ in range(3):
-        ring.tick()
-    assert bright_cells(ring.render()) != first  # the comet advanced
+        overlay.tick()
+    after = overlay.render()
+    assert after != before  # the light moved: the ANSI colouring differs
+    assert lamp_rows(after) == lamp_rows(before)  # …but the lamps never shift shape
 
 
-def test_busy_overlay_render_stacks_ring_over_caption() -> None:
-    """A captioned overlay renders the ring rows plus a final caption line."""
+def _scanner_head(overlay) -> int:  # type: ignore[no-untyped-def]
+    """The index of the brightest lamp — where the scanning light's head currently sits."""
+    glow = overlay._glow
+    return max(range(len(glow)), key=lambda i: glow[i])
+
+
+def test_busy_overlay_scanner_leaves_a_persistence_of_vision_trail() -> None:
+    """Lamps the head has passed keep glowing, fading — a comet tail, not a lone bright lamp."""
     from meshterm.ui.tui.overlay import BusyOverlay
 
-    overlay = BusyOverlay("Talking to your companion…", fade=0.0)  # full brightness at once
-    ansi = overlay.render()
-    assert "Talking to your companion" in ansi
-    assert ansi.count("\n") == overlay.spinner.height  # ring rows + one caption line
+    overlay = BusyOverlay("reading…", title="Nodes", fade=0.0)
+    for _ in range(5):  # sweep in off the left edge so a head and a tail both exist
+        overlay.tick()
+
+    head = _scanner_head(overlay)
+    glow = overlay._glow
+    assert glow[head] > 0.0  # a lit head
+    trail = [g for i, g in enumerate(glow) if i < head and g > 0.0]  # lamps behind the head
+    assert trail  # the head dragged a trail rather than leaving black behind it
+    assert max(trail) < glow[head]  # and the trail is dimmer than the head it follows
+
+
+def test_busy_overlay_scanner_bounces_off_both_ends() -> None:
+    """The head sweeps to the right edge and back to the left — the Knight-Rider ping-pong."""
+    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_CELLS
+
+    overlay = BusyOverlay(fade=0.0)
+    heads = [_scanner_head(overlay)]
+    for _ in range(80):  # long enough for at least one full there-and-back sweep
+        overlay.tick()
+        heads.append(_scanner_head(overlay))
+
+    assert max(heads) >= _SCAN_CELLS - 2  # reached the right end
+    assert min(heads) <= 1  # …and came back to the left end
 
 
 def test_busy_overlay_holds_black_then_fades_in() -> None:
@@ -1230,7 +1297,7 @@ def test_busy_overlay_holds_black_then_fades_in() -> None:
 
 def test_dim_color_scales_hex_toward_black() -> None:
     """The fade dimmer scales the hex channels and preserves attribute words like ``bold``."""
-    from meshterm.ui.tui.ring import dim_color
+    from meshterm.ui.tui.overlay import dim_color
 
     assert dim_color("#38bdf8", 1.0) == "#38bdf8"  # untouched at full brightness
     assert dim_color("#ffffff", 0.0) == "#000000"  # black at zero
@@ -1248,8 +1315,8 @@ def test_overlay_fade_restarts_when_re_exposed_after_a_prompt() -> None:
     assert overlay.brightness == 1.0
 
     screen = ScrollScreen(Text("prompt"))
-    session.push(screen)  # a prompt covers the ring
-    session.pop(screen)  # dismissed → ring re-exposed on the now-empty stack
+    session.push(screen)  # a prompt covers the card
+    session.pop(screen)  # dismissed → card re-exposed on the now-empty stack
     assert overlay.brightness == 0.0  # the fade restarted from black
 
 

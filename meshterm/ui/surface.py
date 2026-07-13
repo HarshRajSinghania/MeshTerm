@@ -94,10 +94,10 @@ class Ui:
         """Return a progress context manager exposing ``add_task``/``advance``/``update``."""
         raise NotImplementedError
 
-    def busy_overlay(self, message: str = ""):  # noqa: ANN201 - async CM, varies by backend
-        """Return an async context manager that floats a "working" spinner while its block runs.
+    def busy_overlay(self, message: str = "", *, title: str = ""):  # noqa: ANN201 - async CM, varies by backend
+        """Return an async context manager that floats a "working" skeleton while its block runs.
 
-        In the interactive menu this shows the top-most ring spinner (see
+        In the interactive menu this shows the top-most skeleton card (see
         :meth:`~meshterm.ui.tui.session.TuiSession.busy_overlay`), used to cover the lag of a
         Bluetooth operation that would otherwise leave the screen blank. In scripted CLI mode
         it does nothing (there is no full-screen surface to float over)."""
@@ -269,8 +269,10 @@ class PlainUi(Ui):
         return make_progress(self.console)
 
     @asynccontextmanager
-    async def busy_overlay(self, message: str = "") -> AsyncIterator[None]:
-        """Do nothing: the scripted CLI has no full-screen surface to float a spinner over."""
+    async def busy_overlay(
+        self, message: str = "", *, title: str = ""
+    ) -> AsyncIterator[None]:
+        """Do nothing: the scripted CLI has no full-screen surface to float a skeleton over."""
         yield
 
     def _no_prompt(self) -> RuntimeError:
@@ -484,9 +486,9 @@ class TuiUi(Ui):
         """Return a progress dialog context manager for the session."""
         return self.session.progress(title)
 
-    def busy_overlay(self, message: str = ""):  # noqa: ANN201
-        """Float the session's top-most ring spinner while the wrapped block runs."""
-        return self.session.busy_overlay(message)
+    def busy_overlay(self, message: str = "", *, title: str = ""):  # noqa: ANN201
+        """Float the session's top-most skeleton card while the wrapped block runs."""
+        return self.session.busy_overlay(message, title=title)
 
     # --- input ---------------------------------------------------------------
 

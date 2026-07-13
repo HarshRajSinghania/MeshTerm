@@ -753,8 +753,8 @@ async def open_tx_optimize(
         """Log in to the tuned node once per session, prompting only when needed.
 
         Runs *before* the in-flight dialog goes up, so the password prompt floats
-        over the idle screen and the login command itself hides behind the ring
-        spinner — the same shape as every other pre-transmission device call.
+        over the idle screen and the login command itself hides behind the skeleton
+        card — the same shape as every other pre-transmission device call.
         """
         nonlocal logged_in
         if logged_in:
@@ -927,7 +927,7 @@ async def open_tx_optimize(
         worker = screen._worker
         if worker is not None and not worker.done():
             # Esc mid-sweep: stop the search and let the optimizer's unwind restore the
-            # node's original power. The ring spinner covers that last device command.
+            # node's original power. The skeleton card covers that last device command.
             worker.cancel()
             async with ctx.ui.busy_overlay():
                 try:

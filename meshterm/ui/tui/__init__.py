@@ -23,7 +23,6 @@ from .prompt import (
     TextScreen,
     TypedConfirmDialog,
 )
-from .ring import RingSpinner
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, SelectScreen, Separator
 from .session import TuiSession
@@ -44,7 +43,6 @@ __all__ = [
     "TypedConfirmDialog",
     "ProgressScreen",
     "Spinner",
-    "RingSpinner",
     "BusyOverlay",
     "CANCEL",
 ]

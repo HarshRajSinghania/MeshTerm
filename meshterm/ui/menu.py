@@ -517,8 +517,8 @@ async def _startup(ctx: AppContext) -> bool:
             ctx.adopt_device(probed["device"])
     # Between the device splash and the first menu paint, resuming background listening opens
     # the radio — a slow, silent step that would otherwise leave the screen blank for a beat.
-    # Float the ring spinner across that gap on any real link (see _busy_over_link).
-    async with _busy_over_link(ctx):
+    # Float the skeleton card across that gap on any real link (see _busy_over_link).
+    async with _busy_over_link(ctx, title="Starting up"):
         await _resume_monitor(ctx)
     return True
 
@@ -564,8 +564,10 @@ async def _resume_monitor(ctx: AppContext) -> None:
 
 
 @asynccontextmanager
-async def _busy_over_link(ctx: AppContext) -> AsyncIterator[None]:
-    """Float the ring-spinner overlay for the wrapped block, on any real device link.
+async def _busy_over_link(
+    ctx: AppContext, *, title: str = ""
+) -> AsyncIterator[None]:
+    """Float the skeleton-card overlay for the wrapped block, on any real device link.
 
     Bluetooth is the worst offender, but serial navigation has a perceptible lag too, so the
     overlay is installed for either transport. Only the mock simulator (which has no link and
@@ -574,12 +576,25 @@ async def _busy_over_link(ctx: AppContext) -> AsyncIterator[None]:
 
     Args:
         ctx: The shared application context (read for the active transport and UI surface).
+        title: An optional heading for the card, naming the screen being fetched.
     """
     if ctx.active_transport is not None:
-        async with ctx.ui.busy_overlay():
+        async with ctx.ui.busy_overlay(_reading_caption(ctx), title=title):
             yield
     else:
         yield
+
+
+def _reading_caption(ctx: AppContext) -> str:
+    """The skeleton card's caption: "reading from <companion>…", or a bare "reading…".
+
+    Names the chosen companion when one is known this session, so the wait reads as a
+    concrete fetch from a specific device rather than an abstract stall.
+    """
+    device = ctx.selected_device
+    if device is not None and device.label:
+        return f"reading from {device.label}…"
+    return "reading…"
 
 
 async def _run_selection(ctx: AppContext, name: str) -> None:
@@ -607,9 +622,9 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
     try:
         # Opening a tool can sit on a blank frame while the companion answers (the menu has
         # been popped, its first prompt not yet pushed) — very noticeable over Bluetooth, but
-        # perceptible on serial too. Float the ring spinner through that gap so the wait reads
+        # perceptible on serial too. Float the skeleton card through that gap so the wait reads
         # as work, not a hang. The overlay only paints between screens, so prompts show through.
-        async with _busy_over_link(ctx):
+        async with _busy_over_link(ctx, title=title):
             params = await tool.prompt_params(ctx)
             if params is None:  # user cancelled a prompt
                 ctx.ui.discard()
