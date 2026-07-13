@@ -30,7 +30,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import GAP, axis_chart, chart_span, timeline_rows
+from .braillechart import GAP, _TICK_GAP, axis_chart, chart_span, timeline_rows
 from .menus import fit_cells, section_heading
 from .theme import snr_style
 from .tui.render import render_lines
@@ -314,12 +314,35 @@ def _node_sections(
 # --- the mesh page -----------------------------------------------------------------------
 
 
+def _day_spans(days: int, chars: int) -> list[tuple[int, int]]:
+    """Each day's ``(start, width)`` share of the chart's ``2 × chars`` dot columns.
+
+    The one even split behind both the bars (:func:`_day_columns`) and their axis
+    ticks (:func:`_day_centers`): day ``i`` runs from dot ``⌊i·D/n⌋`` to
+    ``⌊(i+1)·D/n⌋`` (``D = 2 × chars``), so no two days differ by more than one
+    dot column and the wider days interleave evenly among the narrower ones
+    instead of pooling at either end. The widths always sum to exactly ``D``,
+    keeping the bars flush with the axis border and caption sized for them.
+
+    Args:
+        days: How many day bars the chart draws.
+        chars: The chart's width in character cells.
+
+    Returns:
+        One ``(start dot, width in dots)`` per day, oldest first.
+    """
+    dots = chars * 2
+    n = max(1, days)
+    edges = [i * dots // n for i in range(n + 1)]
+    return [(edges[i], edges[i + 1] - edges[i]) for i in range(n)]
+
+
 def _day_centers(days: int, chars: int) -> list[int]:
     """The chart cell each day's bar is centred on, mirroring :func:`_day_columns`.
 
-    Replays the same even split ``_day_columns`` uses to spread ``days`` bars across
-    ``2 × chars`` dot columns, so a tick placed at ``centers[i]`` lands under day
-    ``i``'s bar rather than at an arbitrary fraction of the axis.
+    Reads the same :func:`_day_spans` split ``_day_columns`` draws with, so a tick
+    placed at ``centers[i]`` lands under day ``i``'s bar rather than at an
+    arbitrary fraction of the axis.
 
     Args:
         days: How many day bars the chart draws.
@@ -328,25 +351,24 @@ def _day_centers(days: int, chars: int) -> list[int]:
     Returns:
         One centre cell (``0 .. chars - 1``) per day, oldest first.
     """
-    n = max(1, days)
-    centers: list[int] = []
-    dot = 0  # running dot-column offset, two per character cell
-    base, extra = divmod(chars, n) if n <= chars else divmod(chars * 2, n)
-    for i in range(n):
-        span = (base + (1 if i < extra else 0)) * (2 if n <= chars else 1)
-        centers.append(min(chars - 1, (dot + span // 2) // 2))
-        dot += span
-    return centers
+    return [
+        min(chars - 1, (start + width // 2) // 2)
+        for start, width in _day_spans(days, chars)
+    ]
 
 
 def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
-    """``(cell, label)`` axis ticks under the day bars: short dates, thinned to fit.
+    """``(cell, label)`` axis ticks under the day bars: as many short dates as fit.
 
-    One tick per day where they all fit, else an evenly spaced subset keeping both
-    ends; each label sits under its own bar (see :func:`_day_centers`). Dates are
-    kept compact — the month is shown only on the first tick and whenever it rolls
-    over, so most ticks read as a bare day number — and the newest bar reads
-    ``today`` when it is, mirroring the node page's closing ``now``.
+    Ticks are claimed in priority order — the newest day first, the oldest day
+    second, then the rest right to left — each label centred under its own bar
+    (see :func:`_day_centers`) and keeping at least two blank cells from every
+    label already placed, so the axis packs as dense as it can and thins from the
+    middle-left outward when room runs out, never losing either end. Dates stay
+    compact: the month is written only on the oldest day and on the first of a
+    month (the calendar anchors), the rest read as bare day numbers, and the
+    newest bar reads ``today`` when it is, mirroring the node page's closing
+    ``now``.
 
     Args:
         shown: The charted days, oldest first, each ``(iso_date, ...)``.
@@ -358,31 +380,36 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     n = len(shown)
     centers = _day_centers(n, chars)
     today = utcnow().strftime("%Y-%m-%d")
-    # A dated label is at most "Jul 12" (6 cells); keep a couple of cells between them.
-    fit = max(2, chars // 8)
-    if n <= fit:
-        picks = list(range(n))
-    else:
-        picks = sorted({round(i * (n - 1) / (fit - 1)) for i in range(fit)})
-    ticks: list[tuple[int, str]] = []
-    prev_month: Optional[str] = None
-    for i in picks:
+
+    def label_for(i: int) -> str:
         iso = shown[i][0]
         try:
             day = datetime.strptime(iso, "%Y-%m-%d")
         except ValueError:
-            ticks.append((centers[i], iso))
-            continue
-        month = day.strftime("%b")
+            return iso
         if i == n - 1 and iso == today:
-            label = "today"
-        elif month != prev_month:
-            label = f"{month} {day.day}"
-        else:
-            label = str(day.day)
-        prev_month = month
-        ticks.append((centers[i], label))
-    return ticks
+            return "today"
+        if i == 0 or day.day == 1:
+            return f"{day:%b} {day.day}"
+        return str(day.day)
+
+    # Claimed [start, end) label spans — the same centring and spacing arithmetic
+    # _tick_axis renders with, so everything placed here survives its backstop.
+    taken: list[tuple[int, int]] = []
+
+    def claim(i: int) -> Optional[tuple[int, str]]:
+        label = label_for(i)
+        start = max(0, min(chars - len(label), centers[i] - len(label) // 2))
+        end = start + len(label)
+        if end > chars or any(
+            start < e + _TICK_GAP and s < end + _TICK_GAP for s, e in taken
+        ):
+            return None
+        taken.append((start, end))
+        return centers[i], label
+
+    order = [n - 1, *([0] if n > 1 else []), *range(n - 2, 0, -1)]
+    return sorted(tick for i in order if (tick := claim(i)) is not None)
 
 
 def _fill_days(
@@ -427,18 +454,19 @@ def _day_columns(values: list[int], chars: int) -> list:
 
     One dot column per day leaves a short history as a sliver in a wide terminal —
     beneath how every other MeshTerm chart spends its width — so each day repeats
-    over a share of the chart's columns instead. The share is an even split with
-    the one-off remainder spread across the oldest days, so the total always lands
-    on exactly ``2 × chars`` dot columns: a plain floor division drops the
-    remainder instead, leaving the bars short of the axis border and caption
-    sized for the full width (misreading as the whole chart sitting shifted left).
+    over its :func:`_day_spans` share of the chart's dot columns instead: an even
+    split whose widths never differ by more than one dot and whose total always
+    lands on exactly ``2 × chars`` (a plain floor division drops the remainder,
+    leaving the bars short of the axis border and caption sized for the full
+    width — misreading as the whole chart sitting shifted left).
 
-    A day wide enough to span more than one character opens with a
-    :data:`~meshterm.ui.braillechart.GAP` dot column — the left half of its leading
-    braille cell, blank clean down to the axis — so same-height neighbours read as
-    separate bars instead of fusing into one solid block. A history deeper than the
-    chart is wide falls back to one dot column per day (no room for a full character
-    each, so no notch), the dot-column total still landing exactly on ``2 × chars``.
+    When every day is at least three dots wide, each opens with a
+    :data:`~meshterm.ui.braillechart.GAP` dot column — its first dot, blank clean
+    down to the axis — so same-height neighbours read as separate bars instead of
+    fusing into one solid block. The oldest day keeps its notch too: it doubles as
+    the bar's one-dot clearance off the axis border, paid for inside the day's own
+    span. A deeper history (days of one or two dots) drops the notch chart-wide —
+    such a bar has no dot to spare — and the days simply abut.
 
     Args:
         values: Per-day counts, oldest first.
@@ -448,26 +476,15 @@ def _day_columns(values: list[int], chars: int) -> list:
         Exactly ``2 × chars`` dot-column readings, oldest first (a
         :data:`~meshterm.ui.braillechart.GAP` marks a day-boundary notch).
     """
-    n = max(1, len(values))
+    spans = _day_spans(len(values), chars)
+    notch = min(width for _start, width in spans) >= 3
     out: list = []
-    if n <= chars:
-        # Each day spans at least one whole character: split in character units so
-        # every day's block starts on an even dot-column index (a fresh cell),
-        # which is what makes "blank the leading cell's left half" well-defined.
-        base, extra = divmod(chars, n)
-        for i, value in enumerate(values):
-            width_chars = base + (1 if i < extra else 0)
-            if width_chars > 1:
-                out.append(GAP)
-                out.extend([value] * (width_chars * 2 - 1))
-            else:
-                out.extend([value] * (width_chars * 2))
-    else:
-        # More days than characters: no day gets a whole one, so no notch is drawn
-        # (nothing to space apart) — just split the dot columns themselves.
-        base, extra = divmod(chars * 2, n)
-        for i, value in enumerate(values):
-            out.extend([value] * (base + (1 if i < extra else 0)))
+    for value, (_start, width) in zip(values, spans):
+        if notch:
+            out.append(GAP)
+            out.extend([value] * (width - 1))
+        else:
+            out.extend([value] * width)
     return out
 
 

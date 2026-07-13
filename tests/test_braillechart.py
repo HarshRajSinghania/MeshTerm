@@ -195,9 +195,14 @@ def test_y_axis_labels_blanks_a_silent_chart() -> None:
     assert y_axis_labels(0, 3) == ["", "", ""]
 
 
-def test_y_axis_labels_top_row_reads_the_peak() -> None:
-    """The top row always reads the peak; lower rows are proportional."""
-    assert y_axis_labels(10, 2) == ["10", "5"]
+def test_y_axis_labels_marks_quote_the_ticked_dot() -> None:
+    """Each mark reads the value at its row's third dot — where the ┤ tick points.
+
+    peak 10 over 2 rows (8 dots): the top row's tick crosses dot 6 (a 7-dot bar,
+    10·7/8 → 9), the bottom row's dot 2 (a 3-dot bar, 10·3/8 → 4) — not the rows'
+    top-edge values (10 and 5), which sit a dot above where the glyph points.
+    """
+    assert y_axis_labels(10, 2) == ["9", "4"]
 
 
 def test_y_axis_labels_blanks_a_repeated_mark() -> None:
@@ -210,25 +215,26 @@ def test_axis_chart_mirrors_marks_on_both_gutters() -> None:
     rows = timeline_rows([9] * 8, rows=2)
     out = axis_chart(rows, 9, 4, lambda f: "now" if f >= 1.0 else "old")
     assert len(out) == 4  # 2 chart rows + bottom border + caption
-    assert out[0].plain == "9 ┤⣿⣿⣿⣿├ 9"
-    assert out[1].plain == "4 ┤⣿⣿⣿⣿├ 4"
+    assert out[0].plain == "8 ┤⣿⣿⣿⣿├ 8"  # ticked-dot values (peak 9 sizes the gutter)
+    assert out[1].plain == "3 ┤⣿⣿⣿⣿├ 3"
     assert out[2].plain.startswith("  └") and out[2].plain.endswith("┘")
 
 
 def test_y_axis_labels_signed_span_quotes_both_extremes() -> None:
-    """A signed chart's marks run from the peak down through zero toward the floor."""
-    # rows=3 over +8..-4: top edge 8, middle 4, then 0 (blanked — it is the grey line).
-    assert y_axis_labels(8, 3, lo=-4) == ["8", "4", ""]
-    # A wider signed span surfaces a negative mark on the bottom row.
-    assert y_axis_labels(6, 3, lo=-6) == ["6", "2", "-2"]
+    """A signed chart's marks quote rise heights above zero and hang depths below."""
+    # rows=3 over +8..-4 (baseline on dot 4): the top tick reads a 7-dot rise (7),
+    # the middle a 3-dot rise (3), the bottom a 3-deep hang below zero (−2).
+    assert y_axis_labels(8, 3, lo=-4) == ["7", "3", "-2"]
+    # A symmetric span pins the middle tick onto the baseline itself: blanked zero.
+    assert y_axis_labels(6, 3, lo=-6) == ["5", "", "-4"]
 
 
 def test_axis_chart_floor_frames_a_signed_chart_and_widens_the_gutter() -> None:
     """A signed floor draws negative marks and sizes the gutter for the widest one."""
     rows = timeline_rows([5, -5], rows=3, span=(-5, 5))
     out = axis_chart(rows, 5, 1, lambda f: "x", floor=-5)
-    assert out[0].plain.startswith(" 5 ┤")   # peak on top, gutter widened to two cells
-    assert out[2].plain.startswith("-2 ┤")   # a negative mark near the floor
+    assert out[0].plain.startswith(" 4 ┤")   # gutter widened to two cells by the floor
+    assert out[2].plain.startswith("-4 ┤")   # a negative mark near the floor
 
 
 def test_axis_chart_honours_a_shared_label_width() -> None:
@@ -239,7 +245,7 @@ def test_axis_chart_honours_a_shared_label_width() -> None:
     """
     rows = timeline_rows([9] * 8, rows=1)
     out = axis_chart(rows, 9, 4, lambda f: "x", label_w=3)
-    assert out[0].plain.startswith("  9 ┤")
+    assert out[0].plain.startswith("  7 ┤")
 
 
 # --- axis_chart column ticks ----------------------------------------------------------

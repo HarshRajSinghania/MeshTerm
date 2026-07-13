@@ -224,21 +224,66 @@ def test_day_ticks_shorten_dates_and_align_to_bars() -> None:
 
 
 def test_day_ticks_reprint_the_month_on_a_rollover() -> None:
-    """The month reappears the first time a new one starts, so a boundary reads clearly."""
+    """The first of a month always carries its month name, so a boundary reads clearly."""
     days = [(iso, 1, 1) for iso in ("2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02")]
     labels = [label for _, label in _day_ticks(days, 60)]
     assert labels == ["Jun 29", "30", "Jul 1", "2"]
 
 
-def test_day_ticks_thin_to_fit_keeping_both_ends() -> None:
-    """More days than labels fit: an evenly spaced subset is kept, first and last included."""
+def test_day_ticks_prioritise_the_newest_then_the_oldest_day() -> None:
+    """With room for almost nothing, the newest day wins, then the oldest.
+
+    A chart squeezed to the minimum width still labels its "now" edge first and
+    its far edge second; whatever interior days fit are claimed right to left, so
+    the freshest history stays the best annotated.
+    """
     days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
-    chars = 40  # ~5 dated labels fit (chars // 8)
+    chars = 20
     ticks = _day_ticks(days, chars)
     centers = _day_centers(len(days), chars)
-    assert 2 <= len(ticks) <= 6
     cols = [cell for cell, _ in ticks]
-    assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive the thinning
+    assert centers[-1] in cols  # the newest day always keeps its tick
+    assert centers[0] in cols   # …and the oldest is claimed right after it
+
+
+def test_day_columns_widths_differ_by_at_most_one_dot_and_interleave() -> None:
+    """An uneven split spreads the wider days through the chart, not to one side.
+
+    13 days over 30 chars (60 dots) can't divide evenly: days get 4 or 5 dots.
+    The widths must never differ by more than one dot column, and the wide days
+    must mix with the narrow ones instead of pooling at either end (the old
+    char-unit split put every wide day on the left, every narrow one on the right).
+    """
+    cols = _day_columns([1] * 13, 30)
+    assert len(cols) == 60
+    starts = [i for i, c in enumerate(cols) if c is GAP]  # one notch opens each day
+    widths = [b - a for a, b in zip(starts, [*starts[1:], len(cols)])]
+    assert len(widths) == 13 and set(widths) == {4, 5}
+    first_wide = widths.index(5)
+    last_wide = len(widths) - 1 - widths[::-1].index(5)
+    assert any(w == 4 for w in widths[first_wide:last_wide])  # narrow days sit between wide ones
+
+
+def test_day_ticks_pack_the_axis_keeping_both_ends() -> None:
+    """More days than labels fit: the axis packs what it can, ends always included.
+
+    Ticks are claimed newest-first, then oldest, then right to left, each keeping
+    two blank cells from its neighbours — so a crowded axis stays dense (well past
+    the old evenly-thinned handful) and any dropped days come from the interior.
+    """
+    days = [(f"2026-06-{d:02d}", 1, 1) for d in range(1, 31)]  # 30 days
+    chars = 40
+    ticks = _day_ticks(days, chars)
+    centers = _day_centers(len(days), chars)
+    cols = [cell for cell, _ in ticks]
+    assert cols[0] == centers[0] and cols[-1] == centers[-1]  # both ends survive
+    assert len(ticks) >= 8  # bare day numbers pack far denser than dated labels
+    # Every placed label keeps at least two blank cells from the one before it.
+    spans = []
+    for cell, label in ticks:
+        start = max(0, min(chars - len(label), cell - len(label) // 2))
+        spans.append((start, start + len(label)))
+    assert all(b_start >= a_end + 2 for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
 
 
 def test_day_columns_notches_the_first_dot_of_a_multi_character_day() -> None:

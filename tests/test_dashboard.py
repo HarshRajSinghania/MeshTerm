@@ -75,12 +75,16 @@ def test_dashboard_renders_all_four_sections() -> None:
 
 
 def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> None:
-    """'now' anchors the right edge and the peak count marks both gutters."""
+    """'now' anchors the right edge and the scale marks mirror on both gutters.
+
+    Peak 9 over 3 rows (12 dots): the top gutter's ┤ tick crosses its row's third
+    dot (an 11-dot bar → 9·11/12 ≈ 8), so the mark reads 8, not the peak itself.
+    """
     screen = _screen(histogram=[9] + [0] * (ACTIVITY_BUCKETS - 1))
     lines = _stripped(screen.render_body(80))
     top = next(line for line in lines if "┤" in line)
-    assert top.strip().startswith("9 ┤")
-    assert top.rstrip().endswith("├ 9")
+    assert top.strip().startswith("8 ┤")
+    assert top.rstrip().endswith("├ 8")
     caption = next(line for line in lines if "now" in line)
     assert caption.index("−") < caption.index("now")  # oldest left, newest right
     # The lone newest-minute burst draws against the chart's right gutter, and the

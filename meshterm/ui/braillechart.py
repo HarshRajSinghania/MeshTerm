@@ -326,20 +326,31 @@ def axis_caption(
 
 
 def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
-    """Each chart row's top-edge value, top row first, dupes and zeros blanked.
+    """Each chart row's ticked-dot value, top row first, dupes and zeros blanked.
 
-    The top row always reads the peak; lower rows read the proportional values at
-    their upper edges, but a mark that would repeat the one above (a low peak makes
-    neighbouring rows round to the same value) or read zero is left blank, so the
+    The gutter's ``┤`` tick crosses a braille row at the third dot up from the
+    row's bottom, so each mark quotes the value of a bar peaking *at that dot* —
+    the reading the tick visibly points at, not the row's top edge — using the
+    same zero-folded scaling :func:`timeline_rows` draws bars with (baseline row
+    and all). A mark that would repeat the one above (a low peak makes
+    neighbouring dots round to the same value) or read zero is left blank, so the
     scale never shows the same number twice. A signed chart passes its floor as
-    ``lo`` (``< 0``): the marks then run linearly from ``peak`` at the top down
-    through the grey zero line to ``lo`` at the bottom, so the gutter quotes both
-    extremes (an SNR band's ``+5 … −10 dB``) instead of only the positive peak.
+    ``lo`` (``< 0``): marks above the grey zero line quote rise heights, marks
+    below it hang depths, so the gutter shows both signs of a zero-crossing
+    series (an SNR band's ``+5 … −10 dB``) instead of only the positive peak.
     """
+    total = rows * 4
+    base = _baseline_row(lo, peak, total)
     labels: list[str] = []
     seen: set[int] = set()
     for i in range(rows):
-        value = round(peak - (peak - lo) * i / rows)
+        dot = (rows - 1 - i) * 4 + 2  # the dot row this row's ┤ tick crosses
+        if dot > base:
+            value = round(peak * (dot - base + 1) / (total - base))
+        elif dot < base:
+            value = round(lo * (base - dot + 1) / (base + 1))
+        else:
+            value = 0  # the tick sits on the zero baseline itself
         if peak != lo and value and value not in seen:
             labels.append(str(value))
             seen.add(value)
@@ -425,7 +436,10 @@ def axis_chart(
 
     Args:
         chart_rows: The chart's rows, as returned by :func:`timeline_rows`.
-        peak: The value the top row's mark reads (the chart's tallest bar).
+        peak: The chart's full-scale ceiling (its tallest bar's value); each
+            row's gutter mark quotes the value at the dot its tick points at
+            (see :func:`y_axis_labels`), so the peak itself sizes the gutter
+            but is not necessarily printed.
         chars: The chart's width in character cells.
         label_at: Maps a position fraction to the x-axis caption at that point
             (a continuous chart); ignored when ``ticks`` is given.
