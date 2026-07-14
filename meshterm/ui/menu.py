@@ -612,6 +612,13 @@ async def _resume_monitor(ctx: AppContext) -> None:
         await ctx.chat.start()
     except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
         pass
+    # Warm the slow session caches (contacts, the channel-slot probe) behind the menu now that
+    # the link is up, so the first Chat/Trace/Dashboard open is served from cache instead of
+    # paying those round-trips in the navigation path — one quiet wait after login rather than a
+    # stall on the first open (see DeviceState.prewarm). Only with a live link: a deferred
+    # connect (connect_on_start off) returns above and warms lazily on first use instead.
+    if ctx.is_connected:
+        ctx.devstate.prewarm()
 
 
 @asynccontextmanager

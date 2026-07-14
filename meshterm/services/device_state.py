@@ -187,6 +187,33 @@ class DeviceState:
                     self._channels = await read_channel_slots(device)
         return self._channels
 
+    # -- prewarm (fill the slow caches in the background, off the navigation path) --
+
+    def prewarm(self) -> None:
+        """Warm the slow caches (contacts, channel slots) in the background after connect.
+
+        Called once the session's link is up (see :func:`meshterm.ui.menu._resume_monitor`) so
+        the first screen that reads them — Chat, Trace, the Dashboard — is served from cache
+        instantly, rather than paying the round-trips in the navigation path where the user is
+        waiting on the screen to open. It folds the two unavoidable first reads into one quiet
+        wait behind the menu instead of surfacing them on the first open.
+
+        The work runs as a tracked background task: **sequential** (never gathered — concurrent
+        reads collide on the BLE UART; see the module note), best-effort (a failure just leaves
+        the cache cold for a normal lazy fetch later), and cancelled on :meth:`reset` /
+        :meth:`aclose`. If a getter is reached before this finishes, it awaits the *same*
+        in-flight fetch — the per-fetch locks dedupe — so prewarming never doubles a read.
+        """
+        self._spawn(self._prewarm())
+
+    async def _prewarm(self) -> None:
+        """Fetch the slow caches one after another, swallowing failures (best-effort warm)."""
+        for label, fetch in (("contacts", self.contacts), ("channel slots", self.channel_slots)):
+            try:
+                await fetch()
+            except Exception as exc:  # noqa: BLE001 - a warm miss just falls back to a lazy fetch
+                self._ctx.log.debug("devstate: prewarm of %s failed: %s", label, exc)
+
     # -- invalidation (called by the code that writes device state) ------------
 
     def invalidate_contacts(self) -> None:

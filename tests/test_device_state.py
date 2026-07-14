@@ -158,3 +158,24 @@ def test_reset_clears_everything() -> None:
     assert dev.self_info_calls == 2
     assert dev.contacts_calls == 2
     assert dev.mode_calls == 2
+
+
+def test_prewarm_fills_the_slow_caches_off_the_read_path() -> None:
+    """prewarm() warms contacts and channels in the background so the first read hits no wire."""
+    dev = FakeDevice()
+    ds = _devstate(dev)
+
+    async def run() -> None:
+        ds.prewarm()
+        await asyncio.gather(*list(ds._tasks))  # let the background warm finish
+        # Both slow caches were filled by the prewarm: contacts once, the channel probe once
+        # (idx 0 ok, idx 1 rejected).
+        assert dev.contacts_calls == 1
+        assert dev.channel_calls == 2
+        # A screen opening now is served from cache — no additional round-trips.
+        await ds.contacts()
+        await ds.channel_slots()
+        assert dev.contacts_calls == 1
+        assert dev.channel_calls == 2
+
+    asyncio.run(run())
