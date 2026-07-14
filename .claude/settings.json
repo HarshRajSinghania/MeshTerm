@@ -11,7 +11,13 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "PowerShell(git add *)",
-      "PowerShell(git commit *)"
+      "PowerShell(git commit *)",
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(python -m pytest tests/test_tui.py -q -k \"progress\")",
+      "Bash(python -m pytest tests/test_tui.py -q -k \"overlay or progress\")",
+      "PowerShell([console]::beep\\(880,150\\); Start-Sleep -Milliseconds 60; [console]::beep\\(1175,200\\))",
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -m pytest tests/test_tui.py -q -k \"busy_overlay or scanner or dim_color or overlay_fade\")",
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -m pytest -q)"
     ],
     "defaultMode": "dontAsk",
     "additionalDirectories": [
