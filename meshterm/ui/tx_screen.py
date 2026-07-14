@@ -577,14 +577,16 @@ async def open_tx_optimize(
         raise RuntimeError("the live TX sweep is only available in the menu")
     session = ctx.ui.session
     device = await ctx.device()
-    contacts = await device.get_contacts()
+    # Contacts/self-info/routing width from the session cache (see DeviceState); the live
+    # ``device`` is still held for the sweep's own transmissions below.
+    contacts = await ctx.devstate.contacts()
     resolve = trace_runner.make_node_resolver(contacts)
-    self_info = await device.get_self_info()
+    self_info = await ctx.devstate.self_info()
     device_label = str(self_info.get("name") or "this node")
     device_hash = str(self_info.get("public_key") or "") or None
 
     try:
-        width_bytes = _collapse_trace_width(int(await device.get_path_hash_mode()))
+        width_bytes = _collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
     except Exception:  # noqa: BLE001 - optional read; the 1-byte default always works
         width_bytes = 1
 

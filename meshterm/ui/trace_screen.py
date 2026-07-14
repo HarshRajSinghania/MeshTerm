@@ -949,9 +949,12 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
     record_target = target if target is not None else PATH_TRACE_TARGET
 
     device = await ctx.device()
-    contacts = await device.get_contacts()
+    # Contacts and self-info come from the session cache (see DeviceState): the contacts
+    # table is a slow round-trip on a busy node, and this screen is reached often. The live
+    # ``device`` is still held for the traces this screen actually runs.
+    contacts = await ctx.devstate.contacts()
     resolve = trace_runner.make_node_resolver(contacts)
-    self_info = await device.get_self_info()
+    self_info = await ctx.devstate.self_info()
 
     device_label = str(self_info.get("name") or LOCAL_DEVICE_LABEL)
     device_hash = str(self_info.get("public_key") or "") or None
@@ -961,7 +964,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
     # protocol default and what all stored evidence uses anyway. The user can override
     # it for the session through the screen's *Path width* action (see pick_width).
     try:
-        width_bytes = _collapse_trace_width(int(await device.get_path_hash_mode()))
+        width_bytes = _collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
     except Exception:  # noqa: BLE001 - optional read; the 1-byte default always works
         width_bytes = 1
     device_width = width_bytes  # remembered so the width dialog can mark the default

@@ -875,8 +875,7 @@ async def _routing_prefix_bytes(ctx: "AppContext") -> int:
     try:
         if not (ctx.is_connected or ctx.settings.connect_on_start):
             return 0
-        device = await ctx.device()
-        mode = await device.get_path_hash_mode()
+        mode = await ctx.devstate.path_hash_mode()
     except Exception:  # noqa: BLE001 - optional read; absence just skips highlighting
         return 0
     return (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
@@ -895,8 +894,7 @@ async def _contact_resolver(ctx: "AppContext") -> "NodeResolver":
     contacts = []
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
-            device = await ctx.device()
-            contacts = await device.get_contacts()
+            contacts = await ctx.devstate.contacts()
     except Exception:  # noqa: BLE001 - optional read; absence just leaves names stored-only
         contacts = []
     return make_node_resolver(contacts)

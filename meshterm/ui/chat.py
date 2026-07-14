@@ -781,7 +781,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         peer=conversation.peer,
         limit=_HISTORY_LIMIT,
     )
-    names = _contact_names(await device.get_contacts())
+    names = _contact_names(await ctx.devstate.contacts())
 
     async def send(text: str) -> Optional[ChatMessage]:
         if conversation.is_channel:
@@ -897,12 +897,12 @@ async def _make_paths_presenter(
 
     session = ctx.ui.session
     resolve = trace_runner.make_node_resolver(
-        await device.get_contacts(), ctx.repo.node_names()
+        await ctx.devstate.contacts(), ctx.repo.node_names()
     )
     prefix_bytes = await _routing_prefix_bytes(ctx)
     self_name: Optional[str] = None
     try:
-        self_name = str((await device.get_self_info()).get("name") or "") or None
+        self_name = str((await ctx.devstate.self_info()).get("name") or "") or None
     except Exception:  # noqa: BLE001 - a nameless self just skips the white highlight
         self_name = None
 

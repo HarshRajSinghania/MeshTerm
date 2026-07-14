@@ -233,7 +233,7 @@ async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
 async def _contacts(ctx: AppContext) -> list:
     """Fetch the device's contacts, best-effort (an unreachable radio yields none)."""
     try:
-        return await (await ctx.device()).get_contacts()
+        return await ctx.devstate.contacts()
     except Exception:  # noqa: BLE001 - the map still works from observations alone
         return []
 
@@ -243,7 +243,7 @@ async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
     from ..ui.map_render import MapMarker
 
     try:
-        info = await (await ctx.device()).get_self_info()
+        info = await ctx.devstate.self_info()
     except Exception:  # noqa: BLE001 - the map is useful without our own position
         return None
     lat, lon = _as_float(info.get("adv_lat")), _as_float(info.get("adv_lon"))

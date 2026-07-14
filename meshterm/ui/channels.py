@@ -177,11 +177,14 @@ async def manage_channels(ctx: "AppContext") -> int:
                 if slot is not None:
                     changes += await _channel_detail(ctx, device, slot, stats)
             if changes > before:
-                # A slot's occupant changed (created, re-keyed, cleared, or moved). Inbound
-                # messages carry only a slot index, which the chat service maps to a channel
-                # identity through a cache keyed by slot; refresh it now so a message on a
-                # reused/re-keyed slot is filed under the channel that's actually there and
-                # not the one that used to be — otherwise its transcript surfaces in the
+                # A slot's occupant changed (created, re-keyed, cleared, or moved). Drop the
+                # session cache's channel list so the dashboard (and anything else reading it)
+                # re-reads the new layout instead of a stale copy.
+                ctx.devstate.invalidate_channels()
+                # Inbound messages carry only a slot index, which the chat service maps to a
+                # channel identity through a cache keyed by slot; refresh it now so a message
+                # on a reused/re-keyed slot is filed under the channel that's actually there
+                # and not the one that used to be — otherwise its transcript surfaces in the
                 # wrong chat.
                 await _refresh_chat_channels(ctx)
             return True

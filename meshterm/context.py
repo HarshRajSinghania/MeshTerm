@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from .services.monitor_service import MonitorService
     from .services.watchtower import WatchtowerService
     from .services.battery_service import BatteryService
+    from .services.device_state import DeviceState
     from .ui.surface import Ui
 
 
@@ -105,6 +106,7 @@ class AppContext:
     _watchtower: "Optional[WatchtowerService]" = field(default=None, init=False, repr=False)
     _courier: "Optional[CourierService]" = field(default=None, init=False, repr=False)
     _battery: "Optional[BatteryService]" = field(default=None, init=False, repr=False)
+    _devstate: "Optional[DeviceState]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -302,6 +304,21 @@ class AppContext:
         return self._battery
 
     @property
+    def devstate(self) -> "DeviceState":
+        """Return the session's device-state cache, creating it on first use.
+
+        Holds the stable facts screens read from the companion on open (contacts, self-info,
+        path-hash mode, channel slots) so navigation doesn't re-read them from the radio every
+        time — the chief cause of slow screen transitions over Bluetooth. Created idle here;
+        each getter fetches lazily. Cleared on a reconnect (see :meth:`reconnect`).
+        """
+        if self._devstate is None:
+            from .services.device_state import DeviceState
+
+            self._devstate = DeviceState(self)
+        return self._devstate
+
+    @property
     def log(self):  # type: ignore[no-untyped-def]
         """The application logger."""
         return get_logger()
@@ -479,6 +496,11 @@ class AppContext:
                 pass
             self._device = None
 
+        # Facts cached against the connection that just dropped may be stale on the fresh link
+        # (a reboot could have changed the identity or config), so re-read them on next use.
+        if self._devstate is not None:
+            self._devstate.reset()
+
         # Open a fresh connection (raises if the device still can't be reached, leaving the
         # remembered intent in place for the next attempt), then restart whatever was running
         # before it dropped and clear the intent now that we're back.
@@ -514,6 +536,8 @@ class AppContext:
 
     async def aclose(self) -> None:
         """Stop monitoring and chat, stop the event hub, disconnect, and close the repo."""
+        if self._devstate is not None:
+            await self._devstate.aclose()
         if self._courier is not None:
             await self._courier.aclose()
         if self._battery is not None:

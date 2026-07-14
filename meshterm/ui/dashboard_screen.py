@@ -662,7 +662,6 @@ async def open_dashboard(ctx: "AppContext") -> None:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
     from ..services import trace_runner
-    from .channels import read_channel_slots
     from .surface import TuiUi
     from .timemachine_screen import _routing_prefix_bytes
 
@@ -675,10 +674,12 @@ async def open_dashboard(ctx: "AppContext") -> None:
     channels: list[tuple[str, bytes]] = []
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
-            device = await ctx.device()
-            contacts = await device.get_contacts()
-            self_name = (await device.get_self_info()).get("name") or None
-            channels = [(s.name, s.secret) for s in await read_channel_slots(device)]
+            # Through the session cache: contacts and the channel-slot probe are the two
+            # slowest reads on a screen open, so reading them once (not per dashboard open)
+            # is what keeps navigation snappy over Bluetooth.
+            contacts = await ctx.devstate.contacts()
+            self_name = (await ctx.devstate.self_info()).get("name") or None
+            channels = [(s.name, s.secret) for s in await ctx.devstate.channel_slots()]
     except Exception:  # noqa: BLE001 - the dashboard renders fine without contact names
         contacts = []
     # Contacts first, every name the recorder ever overheard as the fallback — the

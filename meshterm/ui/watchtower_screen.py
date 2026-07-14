@@ -77,8 +77,7 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
     contacts: list[Contact] = []
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
-            device = await ctx.device()
-            contacts = await device.get_contacts()
+            contacts = await ctx.devstate.contacts()
     except Exception:  # noqa: BLE001 - the log and rules render fine without contacts
         contacts = []
 

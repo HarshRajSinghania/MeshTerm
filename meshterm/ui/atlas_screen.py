@@ -866,9 +866,8 @@ async def open_atlas(ctx: "AppContext") -> None:
     self_hash: Optional[str] = None
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
-            device = await ctx.device()
-            contacts = await device.get_contacts()
-            info = await device.get_self_info()
+            contacts = await ctx.devstate.contacts()
+            info = await ctx.devstate.self_info()
             self_label = str(info.get("name") or "you")
             self_hash = str(info.get("public_key") or "") or None
     except Exception:  # noqa: BLE001 - names are a nicety; the graph renders without them

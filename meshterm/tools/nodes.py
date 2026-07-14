@@ -34,15 +34,18 @@ class NodesTool(Tool):
         from ..ui.surface import TuiUi
         from ..ui.widgets import NodesSort, nodes_table
 
-        device = await ctx.device()
-        info = await device.get_self_info()
-        contacts = await device.get_contacts()
+        # Read through the session cache: on a busy node the contacts table is a slow
+        # round-trip, and re-fetching it (plus self-info) on every menu visit is a chief cause
+        # of sluggish navigation. The cache holds them for the session and refreshes contacts
+        # in the background (see :class:`~meshterm.services.device_state.DeviceState`).
+        info = await ctx.devstate.self_info()
+        contacts = await ctx.devstate.contacts()
 
         # The path-hash prefix — the leading slice of a key a forced path addresses — is
         # ``mode + 1`` bytes wide; highlight it in every key. The mode is an optional read,
         # so fall back to no highlighting when the firmware doesn't report it.
         try:
-            mode = await device.get_path_hash_mode()
+            mode = await ctx.devstate.path_hash_mode()
         except Exception:  # noqa: BLE001 - optional read; absence just skips highlighting
             mode = None
         prefix_bytes = (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0

@@ -285,6 +285,18 @@ async def apply_ops(
             ctx.ui.note("[err]device factory-reset[/err]")
         else:  # pragma: no cover - guarded by the call sites that build ops
             ctx.ui.note(f"[err]unknown config op: {kind}[/err]")
+    # Drop any session-cached facts these ops may have changed, so the next screen re-reads
+    # the truth rather than a stale copy (see meshterm.services.device_state.DeviceState). A
+    # reboot/reconnect resets the whole cache on its own; these cover the in-place edits.
+    kinds = {op[0] for op in ops}
+    _WHOLESALE = {"restore", "import_key", "factory_reset"}
+    if kinds & _WHOLESALE:
+        ctx.devstate.reset()
+    else:
+        if "set" in kinds:
+            ctx.devstate.invalidate_config()  # self-info fields + path-hash mode
+        if "set_channel" in kinds:
+            ctx.devstate.invalidate_channels()
     return changes, artifacts
 
 
