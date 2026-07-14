@@ -22,7 +22,7 @@ transmits.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from statistics import median
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -464,7 +464,9 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     """
     n = len(shown)
     centers = _day_centers(n, chars)
-    today = utcnow().strftime("%Y-%m-%d")
+    # The day keys are local calendar days (see Repository.daily_activity), so "today"
+    # is the local date too — datetime.now() is naive local, exactly what we compare.
+    today = datetime.now().strftime("%Y-%m-%d")
 
     def label_of(picks: list[int]) -> list[str]:
         labels: list[str] = []
@@ -496,13 +498,14 @@ def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
     The hour-resolution sibling of :func:`_day_ticks` for the 24 h window: one tick
     per hour where the labels fit, else an evenly spaced subset keeping both ends
     (see :func:`_fit_ticks`), each label centred under its own bar (see
-    :func:`_day_centers`). Labels read as local ``HH:00`` clock times — the UTC hour
-    buckets rotated into the viewer's zone — and the newest bar reads ``now``,
-    mirroring the node page's closing ``now``.
+    :func:`_day_centers`). The hour keys are already local (see
+    :meth:`~meshterm.persistence.repository.Repository.hourly_series`), so a label is
+    just its key's ``HH:00``, no conversion; the newest bar reads ``now``, mirroring
+    the node page's closing ``now``.
 
     Args:
-        shown: The charted hours, oldest first, each ``(hour_iso, ...)`` in UTC
-            (``YYYY-MM-DDTHH``).
+        shown: The charted hours, oldest first, each ``(hour_iso, ...)`` a local
+            ``YYYY-MM-DDTHH``.
         chars: The chart's width in character cells.
 
     Returns:
@@ -518,13 +521,11 @@ def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
                 labels.append("now")
                 continue
             try:
-                hour = datetime.strptime(shown[i][0], "%Y-%m-%dT%H").replace(
-                    tzinfo=timezone.utc
-                )
+                hour = datetime.strptime(shown[i][0], "%Y-%m-%dT%H")
             except ValueError:
                 labels.append(shown[i][0])
                 continue
-            labels.append(f"{hour.astimezone():%H:00}")
+            labels.append(f"{hour:%H:00}")
         return labels
 
     return _fit_ticks(n, chars, centers, label_of)
@@ -553,10 +554,12 @@ def _fill_days(
     if not active:
         return []
     by_iso = {iso: (packets, nodes) for iso, packets, nodes in active}
+    # The keys are local calendar days, so bound the fill by local dates too — .date()
+    # on the raw UTC-aware since/now would floor a day early in western zones.
     first = date.fromisoformat(active[0][0])
-    floor = since.date() if since is not None else first
+    floor = since.astimezone().date() if since is not None else first
     start = max(first, floor)
-    end = max(start, now.date())
+    end = max(start, now.astimezone().date())
     out: list[tuple[str, int, int]] = []
     day = start
     while day <= end:
@@ -575,28 +578,34 @@ def _fill_hours(
     The hour-resolution sibling of :func:`_fill_days`, feeding the 24 h window's
     charts: :meth:`~meshterm.persistence.repository.Repository.hourly_series` returns
     only hours with traffic, so a silent hour would fuse its busy neighbours. This
-    walks every UTC clock hour of the window and emits ``(iso, 0, 0)`` for the quiet
+    walks every local clock hour of the window and emits ``(iso, 0, 0)`` for the quiet
     ones, so the x-axis is real clock time. The range runs from the window's floor
     (but never earlier than the first hour recorded — we don't invent emptiness from
     before monitoring began) through the current hour.
 
+    The keys are local wall-clock ``YYYY-MM-DDTHH`` (matching the SQL grouping), so the
+    walk steps a *naive* local clock: adding an hour advances the wall clock, which is
+    DST-robust — a spring-forward gap fills as an empty bar and a fall-back repeat sums
+    into one key, exactly as the grouping already did.
+
     Args:
         active: ``(hour_iso, packets, nodes)`` for hours with activity, oldest first,
-            each ``hour_iso`` a UTC ``YYYY-MM-DDTHH``.
+            each ``hour_iso`` a local ``YYYY-MM-DDTHH``.
         since: The window's start.
         now: The current time (the series ends on its clock hour).
 
     Returns:
-        ``(hour_iso, packets, nodes)`` for every UTC clock hour in range, oldest first.
+        ``(hour_iso, packets, nodes)`` for every local clock hour in range, oldest
+        first.
     """
     if not active:
         return []
 
     def floor_hour(when: datetime) -> datetime:
-        return when.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        return when.astimezone().replace(tzinfo=None, minute=0, second=0, microsecond=0)
 
     by_iso = {iso: (packets, nodes) for iso, packets, nodes in active}
-    first = datetime.strptime(active[0][0], "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+    first = datetime.strptime(active[0][0], "%Y-%m-%dT%H")
     start = max(first, floor_hour(since))
     end = max(start, floor_hour(now))
     out: list[tuple[str, int, int]] = []
@@ -677,12 +686,9 @@ def _mesh_sections(
 
     # The mesh-wide rhythm (charted below) folds the whole window into 96 fifteen-minute
     # slices, so a busy slice's tally can top any single day's — compute it up front so its
-    # peak joins the day peaks in sizing one shared y-axis gutter.
-    offset_slots = round(
-        (datetime.now().astimezone().utcoffset() or timedelta()).total_seconds() / 900
-    )
-    utc_slots = ctx.repo.quarter_hour_activity(since=since)
-    slots = [utc_slots[(s - offset_slots) % 96] for s in range(96)]
+    # peak joins the day peaks in sizing one shared y-axis gutter. The slices come back
+    # already in local time (rotated per-instant in SQL), so no offset shuffle here.
+    slots = ctx.repo.quarter_hour_activity(since=since)
 
     # The y-axis gutter is sized from the whole window's peaks (not just the visible
     # slice) and shared by every chart, so all their gutters — and thus their left edges —
@@ -701,7 +707,7 @@ def _mesh_sections(
         ("Packets per hour", "Nodes per hour") if hourly
         else ("Packets per day", "Nodes per day")
     )
-    out.append(_heading(pkt_title, "local hours" if hourly else "UTC days"))
+    out.append(_heading(pkt_title, "local hours" if hourly else "local days"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
@@ -720,9 +726,9 @@ def _mesh_sections(
     )
 
     # The node page's rhythm chart, mesh-wide and four times finer: when does this *mesh*
-    # talk? The 96 fifteen-minute slices (grouped by UTC in SQL, rotated into local time
-    # above) keep their own 48-cell width but share the day charts' gutter, so this chart's
-    # left edge lines up with the two above it.
+    # talk? The 96 fifteen-minute slices (grouped in local time by SQL) keep their own
+    # 48-cell width but share the day charts' gutter, so this chart's left edge lines up
+    # with the two above it.
     out.append(Text())
     out.append(_heading("Rhythm", "packets by local time of day · 15-min slices"))
     out.extend(

@@ -833,16 +833,21 @@ class Repository:
     def daily_activity(self) -> list[tuple[str, int, int]]:
         """Per-day activity totals across the whole stored history, oldest first.
 
-        Days are UTC calendar days (``observed_at`` is stored as UTC ISO-8601, so the
-        grouping is a cheap string prefix); the Time Machine labels them as such.
+        Days are **local** calendar days: ``observed_at`` is stored as UTC ISO-8601,
+        but SQLite's ``datetime(…, 'localtime')`` rotates each timestamp into the
+        machine's zone (per-instant, so DST-correct) before the day prefix is sliced,
+        so a bar breaks at local midnight — not at the UTC-offset hour. Read the same
+        database in another zone and the days re-bucket to wherever you are, which is
+        the point: history is shown in the viewer's local time.
 
         Returns:
-            ``(day, packets, nodes)`` per day with any activity: the day as
+            ``(day, packets, nodes)`` per day with any activity: the day as a local
             ``YYYY-MM-DD``, every stored observation counted, and the distinct
             identified nodes heard (``packet`` rows excluded — no reliable identity).
         """
         rows = self._conn.execute(
-            "SELECT substr(observed_at, 1, 10) AS day, COUNT(*) AS pkts, "
+            "SELECT substr(datetime(observed_at, 'localtime'), 1, 10) AS day, "
+            "COUNT(*) AS pkts, "
             "COUNT(DISTINCT CASE WHEN kind != 'packet' THEN node END) AS nodes "
             "FROM observations GROUP BY day ORDER BY day"
         ).fetchall()
@@ -852,24 +857,28 @@ class Repository:
         """Per-clock-hour activity totals since a time, oldest first (the 24 h window feed).
 
         The hour-resolution sibling of :meth:`daily_activity`: the same packet and
-        distinct-node counts, but grouped on the ISO-8601 ``observed_at`` prefix down
-        to the hour (``YYYY-MM-DDTHH``, a cheap string slice — position 11 is the
-        ``T``) so a day of history folds into ~24 rows however dense it is. Only hours
+        distinct-node counts, grouped down to the hour. ``observed_at`` is stored as
+        UTC, so SQLite's ``datetime(…, 'localtime')`` rotates each timestamp into the
+        machine's zone before the ``YYYY-MM-DDTHH`` key is sliced — the buckets break
+        on local hour boundaries in every zone, half-hour offsets included, not on UTC
+        edges. A day of history folds into ~24 rows however dense it is. Only hours
         with traffic come back; the caller fills the quiet ones (see
         :func:`~meshterm.ui.timemachine_screen._fill_hours`) so the axis is real
-        clock time.
+        clock time. The ``since`` filter stays on the raw UTC column — the window is
+        an absolute span; only the labelling is local.
 
         Args:
             since: Only observations at or after this time.
 
         Returns:
-            ``(hour, packets, nodes)`` per active hour: ``hour`` as a UTC
+            ``(hour, packets, nodes)`` per active hour: ``hour`` as a local
             ``YYYY-MM-DDTHH``, every observation counted, and the distinct identified
             nodes heard (``packet`` rows excluded from the node count — no reliable
             identity), oldest first.
         """
         rows = self._conn.execute(
-            "SELECT substr(observed_at, 1, 13) AS hour, COUNT(*) AS pkts, "
+            "SELECT replace(substr(datetime(observed_at, 'localtime'), 1, 13), ' ', 'T') "
+            "AS hour, COUNT(*) AS pkts, "
             "COUNT(DISTINCT CASE WHEN kind != 'packet' THEN node END) AS nodes "
             "FROM observations WHERE observed_at >= ? GROUP BY hour ORDER BY hour",
             (since.isoformat(),),
@@ -877,22 +886,25 @@ class Repository:
         return [(row["hour"], int(row["pkts"]), int(row["nodes"])) for row in rows]
 
     def hourly_activity(self, *, since: Optional[datetime] = None) -> list[int]:
-        """Observation counts by UTC hour of day (0–23) across the stored history.
+        """Observation counts by local hour of day (0–23) across the stored history.
 
         The whole-mesh Rhythm chart's feed: every stored observation counted into
-        the hour-of-day it arrived, grouped in SQL off a cheap string slice of the
-        ISO-8601 ``observed_at`` (position 12 is where ``HH`` starts), so the cost
-        stays 24 rows however deep the history grows. The caller rotates the
-        histogram into local hours — one current-offset rotation, which is honest
-        enough for a rhythm chart even across a DST boundary.
+        the hour-of-day it arrived. ``observed_at`` is stored as UTC, so SQLite's
+        ``datetime(…, 'localtime')`` rotates each timestamp into the machine's zone
+        (per-instant, so DST-correct) before the ``HH`` slice, giving a histogram
+        already in local hours — no caller rotation needed. The cost stays 24 rows
+        however deep the history grows.
 
         Args:
             since: Only observations at or after this time, if given.
 
         Returns:
-            24 counts, index = UTC hour.
+            24 counts, index = local hour.
         """
-        sql = "SELECT substr(observed_at, 12, 2) AS hh, COUNT(*) AS n FROM observations"
+        sql = (
+            "SELECT substr(datetime(observed_at, 'localtime'), 12, 2) AS hh, "
+            "COUNT(*) AS n FROM observations"
+        )
         params: list[Any] = []
         if since is not None:
             sql += " WHERE observed_at >= ?"
@@ -907,25 +919,26 @@ class Repository:
         return counts
 
     def quarter_hour_activity(self, *, since: Optional[datetime] = None) -> list[int]:
-        """Observation counts by UTC quarter-hour of day (0–95) across the history.
+        """Observation counts by local quarter-hour of day (0–95) across the history.
 
         The finer sibling of :meth:`hourly_activity` — four slices an hour instead of
         one — feeding the whole-mesh Rhythm chart at its full 15-minute resolution. The
-        slice index is ``HH * 4 + MM // 15``, computed in SQL off the same cheap ISO-8601
-        substrings (``HH`` at position 12, ``MM`` at position 15), so the cost stays 96
-        rows however deep the history grows. The caller rotates the histogram into local
-        time (one current-offset rotation, in 15-minute units).
+        slice index is ``HH * 4 + MM // 15``, computed in SQL off the ``HH``/``MM``
+        substrings of ``datetime(…, 'localtime')`` (``observed_at`` is stored as UTC,
+        rotated per-instant into the machine's zone before slicing, so DST-correct), so
+        the histogram lands in local time with no caller rotation. The cost stays 96
+        rows however deep the history grows.
 
         Args:
             since: Only observations at or after this time, if given.
 
         Returns:
-            96 counts, index = UTC quarter-hour slice of the day.
+            96 counts, index = local quarter-hour slice of the day.
         """
         sql = (
-            "SELECT CAST(substr(observed_at, 12, 2) AS INTEGER) * 4 "
-            "+ CAST(substr(observed_at, 15, 2) AS INTEGER) / 15 AS slot, COUNT(*) AS n "
-            "FROM observations"
+            "SELECT CAST(substr(datetime(observed_at, 'localtime'), 12, 2) AS INTEGER) "
+            "* 4 + CAST(substr(datetime(observed_at, 'localtime'), 15, 2) AS INTEGER) "
+            "/ 15 AS slot, COUNT(*) AS n FROM observations"
         )
         params: list[Any] = []
         if since is not None:

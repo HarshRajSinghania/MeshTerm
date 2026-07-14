@@ -110,8 +110,8 @@ def test_daily_activity_counts_packets_and_nodes(tmp_path: Path) -> None:
     repo.close()
 
 
-def test_hourly_activity_groups_by_utc_hour(tmp_path: Path) -> None:
-    """The rhythm feed lands each observation in its UTC hour, windowed on demand."""
+def test_hourly_activity_groups_by_local_hour(tmp_path: Path) -> None:
+    """The rhythm feed lands each observation in its local hour, windowed on demand."""
     repo = Repository(tmp_path / "hh.db")
     run = repo.start_run("monitor", {}, None)
     base = utcnow().replace(hour=5, minute=0, second=0, microsecond=0)
@@ -122,14 +122,18 @@ def test_hourly_activity_groups_by_utc_hour(tmp_path: Path) -> None:
     repo.record_observation(
         run, Observation(node="aa" * 6, observed_at=base.replace(hour=17))
     )
+    # Each UTC instant is rotated into the machine's zone before bucketing; derive the
+    # expected local hours the same way so the test holds in any zone.
+    early, late = base.astimezone().hour, base.replace(hour=17).astimezone().hour
     counts = repo.hourly_activity()
-    assert counts[5] == 3 and counts[17] == 1 and sum(counts) == 4
+    assert counts[early] == 3 and counts[late] == 1 and sum(counts) == 4
+    # The window filter is on the raw UTC column, so only the 17:00 UTC obs survives.
     assert sum(repo.hourly_activity(since=base.replace(hour=6))) == 1
     repo.close()
 
 
 def test_hourly_series_groups_by_clock_hour(tmp_path: Path) -> None:
-    """The 24 h feed folds observations into UTC clock-hour buckets: packets and nodes."""
+    """The 24 h feed folds observations into local clock-hour buckets: packets and nodes."""
     repo = Repository(tmp_path / "hs.db")
     run = repo.start_run("monitor", {}, None)
     now = utcnow()
@@ -144,8 +148,11 @@ def test_hourly_series_groups_by_clock_hour(tmp_path: Path) -> None:
     repo.record_observation(run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=1)))
     series = repo.hourly_series(now - timedelta(days=1))
     by_hour = {iso: (pkts, nodes) for iso, pkts, nodes in series}
-    assert by_hour[three_h.strftime("%Y-%m-%dT%H")] == (4, 2)  # 3 adverts + a packet row; 2 nodes
-    assert by_hour[base.strftime("%Y-%m-%dT%H")] == (1, 1)     # just this hour's lone advert
+    # Keys are local wall-clock hours, so form the expected keys via the same rotation.
+    three_h_key = three_h.astimezone().strftime("%Y-%m-%dT%H")
+    base_key = base.astimezone().strftime("%Y-%m-%dT%H")
+    assert by_hour[three_h_key] == (4, 2)  # 3 adverts + a packet row; 2 nodes
+    assert by_hour[base_key] == (1, 1)     # just this hour's lone advert
     assert series == sorted(series)  # oldest first
     repo.close()
 
@@ -195,13 +202,15 @@ def test_day_columns_always_hits_the_exact_width() -> None:
 
 def test_fill_days_shows_gap_days_as_zero_bars() -> None:
     """A quiet day between busy ones is emitted with zero counts, not skipped."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from meshterm.ui.timemachine_screen import _fill_days
 
+    # The day keys are local calendar days, so bound the fill by local wall-clock
+    # instants (naive → .astimezone() reads them as local) — zone-independent.
     active = [("2026-07-02", 50, 5), ("2026-07-05", 80, 8)]
-    now = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
-    filled = _fill_days(active, datetime(2026, 7, 1, tzinfo=timezone.utc), now)
+    now = datetime(2026, 7, 6, 12).astimezone()
+    filled = _fill_days(active, datetime(2026, 7, 1).astimezone(), now)
     assert [iso for iso, _p, _n in filled] == [
         "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06",
     ]
@@ -212,26 +221,28 @@ def test_fill_days_shows_gap_days_as_zero_bars() -> None:
 
 def test_fill_days_never_invents_days_before_recording_began() -> None:
     """A window floor earlier than the first recorded day clamps to that day, not the floor."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from meshterm.ui.timemachine_screen import _fill_days
 
     active = [("2026-07-10", 10, 1)]
-    now = datetime(2026, 7, 12, tzinfo=timezone.utc)
-    filled = _fill_days(active, datetime(2026, 6, 12, tzinfo=timezone.utc), now)  # a 30 d floor
+    now = datetime(2026, 7, 12, 12).astimezone()
+    filled = _fill_days(active, datetime(2026, 6, 12).astimezone(), now)  # a 30 d floor
     assert filled[0][0] == "2026-07-10"   # not the 2026-06-12 floor
     assert filled[-1][0] == "2026-07-12"  # …but still runs through today
 
 
 def test_fill_hours_shows_gap_hours_as_zero_bars() -> None:
     """A quiet hour between busy ones is emitted with zero counts, not skipped."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from meshterm.ui.timemachine_screen import _fill_hours
 
+    # Hour keys are local wall-clock, so bound the fill by local instants (naive →
+    # .astimezone() reads them as local), keeping the test zone-independent.
     active = [("2026-07-12T08", 30, 3), ("2026-07-12T11", 20, 2)]
-    since = datetime(2026, 7, 12, 6, 30, tzinfo=timezone.utc)  # floors to 06:00…
-    now = datetime(2026, 7, 12, 12, 15, tzinfo=timezone.utc)   # …but the first hour recorded wins
+    since = datetime(2026, 7, 12, 6, 30).astimezone()  # floors to 06:00…
+    now = datetime(2026, 7, 12, 12, 15).astimezone()   # …but the first hour recorded wins
     filled = _fill_hours(active, since, now)
     assert [iso for iso, _p, _n in filled] == [f"2026-07-12T{h:02d}" for h in range(8, 13)]
     counts = {iso: pkts for iso, pkts, _n in filled}

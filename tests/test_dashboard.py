@@ -8,7 +8,7 @@ covered in ``test_braillechart``.)
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from meshterm.core.events import MeshEvent
@@ -309,14 +309,19 @@ def test_recent_observations_rehydrate_the_packet_payload_class(tmp_path: Path) 
 
 
 def test_quarter_hour_activity_buckets_by_15_minute_slice(tmp_path: Path) -> None:
-    """Observations fall into 96 quarter-hour-of-day slots (``HH * 4 + MM // 15``)."""
+    """Observations fall into 96 quarter-hour-of-day slots (``HH * 4 + MM // 15``).
+
+    The slots are local time-of-day, so the observations are stamped at local
+    wall-clock instants (naive → ``.astimezone()``) — the slice index then matches
+    each ``HH:MM`` directly, in any runner zone.
+    """
     repo = Repository(tmp_path / "q.db")
     run = repo.start_run("monitor", {}, None)
 
     def at(hh: int, mm: int) -> Observation:
         return Observation(
             node="n", name="n", kind="advert",
-            observed_at=datetime(2026, 7, 8, hh, mm, tzinfo=timezone.utc),
+            observed_at=datetime(2026, 7, 8, hh, mm).astimezone(),
         )
 
     for hh, mm in [(0, 0), (0, 44), (17, 55), (17, 59)]:
