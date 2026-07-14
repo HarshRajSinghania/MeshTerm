@@ -35,8 +35,8 @@ whatever you make it, and nothing transmits until you say so. An action list dri
   alternatives). Adopt one directly — or probe them all, one measured trace per
   candidate, persisted as ``path_candidates`` rows and ranked reliability-first, with
   the winner offered for adoption. Evidence proposes, measurement decides, you dispose.
-* **Path width** floats a small dialog picking the per-hop path-hash width (1, 2, 4,
-  or 8 bytes — the leading key slice forced hops are addressed by). It seeds from the
+* **Path width** floats a small dialog picking the per-hop path-hash width (1, 2, or
+  4 bytes — the leading key slice forced hops are addressed by). It seeds from the
   device's routing width; changing it re-renders a standing forced path at the new
   width and shapes every spec the composer and explorer emit after it.
 * **Sample count** floats a dialog picking how many traces one Trace action runs
@@ -1317,7 +1317,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         nonlocal width_bytes
         sample = (target_hash or device_hash or "").lower().removeprefix("0x")
         items: list = []
-        for w in (1, 2, 4, 8):
+        for w in (1, 2, 4):
             title = Text(f"{w} byte{'s' if w > 1 else ' '}")
             if sample:
                 title.append("  ")
