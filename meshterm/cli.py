@@ -28,9 +28,43 @@ from .tools import all_tools
 from .tools.base import Tool, ToolResult
 from .ui.theme import make_console
 
+def _unframe_help_panels() -> None:
+    """Render Typer's help/error sections as coloured headings instead of boxed panels.
+
+    Typer's rich help gives us the colour we want — yellow usage, cyan options, green
+    switches — but wraps each Options/Commands/Error section in a rounded :class:`Panel`,
+    the boxed framing scripted output is meant to be free of. There's no constant to drop
+    that box, so we swap the ``Panel`` the help formatter calls for a thin stand-in that
+    keeps the colour and the section title (as a bold heading, indigo like the app accent,
+    red for errors) but no border — the same heading-over-content shape tool results use
+    (see :func:`~meshterm.ui.surface._deframe`). The inner tables are already box-less.
+    """
+    import typer.rich_utils as rich_utils
+    from rich.console import Group
+    from rich.text import Text
+
+    def _bare_panel(
+        renderable: object,
+        *,
+        title: object = None,
+        border_style: str = "",
+        **_: object,
+    ) -> Group:
+        style = "bold red" if border_style == "red" else "bold #818cf8"
+        heading = Text(str(title), style=style) if title else Text("")
+        return Group(Text(""), heading, renderable)  # type: ignore[list-item]
+
+    rich_utils.Panel = _bare_panel  # type: ignore[assignment,misc]
+
+
+_unframe_help_panels()
+
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
+    # Rich help for its colour (usage, option flags, metavars), but with the boxed
+    # section panels flattened to plain headings by _unframe_help_panels() above — a
+    # splash of colour, none of the framing.
     rich_markup_mode="rich",
     help="MeshTerm — a modern toolkit for tuning and exploring your MeshCore mesh",
 )

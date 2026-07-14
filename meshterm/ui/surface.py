@@ -20,7 +20,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Optional
 
+from rich import box
 from rich.console import Console, Group, RenderableType
+from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 from .tui.session import TuiSession
@@ -236,8 +239,70 @@ class Ui:
         raise NotImplementedError
 
 
+def _heading(title: "str | Text") -> Text:
+    """Render a Panel's or Table's hoisted title as an accent heading line.
+
+    The ``accent`` theme style (bold indigo) is the one bit of emphasis that earns its
+    keep here: it marks where each block starts so a scripted run stays scannable, without
+    reaching for the interactive menu's framing. It must stay a bare theme name — Rich
+    can't combine the ``bold`` keyword with a named style in one string — but ``accent``
+    already carries bold, so nothing is lost.
+    """
+    text = title if isinstance(title, Text) else Text.from_markup(str(title))
+    text.style = "accent"
+    return text
+
+
+def _deframe(renderable: RenderableType) -> list[RenderableType]:
+    """Strip a renderable's chrome for direct terminal output.
+
+    The scripted CLI prints straight to the terminal, with no result window to hold the
+    output, so a tool's heavy Rich framing — a :class:`Panel`'s border, a :class:`Table`'s
+    full box and centered title — is chrome between the reader and the data. This lightens
+    it to the middle ground: enough styling to stay legible, none of the interactive menu's
+    weight. A Panel becomes its title as a plain heading above its (also de-framed) body; a
+    Table keeps just a single rule under its header (:data:`~rich.box.SIMPLE_HEAD`) so the
+    columns still read, and hoists its title to the same plain heading; a :class:`Group` is
+    de-framed member by member. Everything else passes through untouched.
+
+    The tables and panels are built fresh for each scripted run and discarded after
+    printing, so mutating them in place (clearing ``box``/``title``) is safe here.
+
+    Args:
+        renderable: A renderable a tool handed to :meth:`PlainUi.show` or :meth:`view`.
+
+    Returns:
+        The frame-light renderables to print, in order.
+    """
+    if isinstance(renderable, Panel):
+        out: list[RenderableType] = []
+        if renderable.title:
+            out.append(_heading(renderable.title))
+        out.extend(_deframe(renderable.renderable))
+        return out
+    if isinstance(renderable, Table):
+        out = []
+        if renderable.title:
+            out.append(_heading(renderable.title))
+            renderable.title = None
+        renderable.box = box.SIMPLE_HEAD
+        out.append(renderable)
+        return out
+    if isinstance(renderable, Group):
+        out = []
+        for child in renderable.renderables:
+            out.extend(_deframe(child))
+        return out
+    return [renderable]
+
+
 class PlainUi(Ui):
-    """CLI surface: print directly to the console; interactive prompts are unsupported."""
+    """CLI surface: print directly to the console; interactive prompts are unsupported.
+
+    Output is de-framed on the way out (see :func:`_deframe`): a scripted run prints
+    to the bare terminal, so a tool's Panels and boxed Tables are lightened to plain
+    headings and header-ruled columns — legible and easy to scan, without the framing.
+    """
 
     def __init__(self, console: Console) -> None:
         """Bind the surface to a Rich console.
@@ -248,9 +313,10 @@ class PlainUi(Ui):
         self.console = console
 
     def show(self, *renderables: RenderableType) -> None:
-        """Print each renderable to the console immediately."""
+        """Print each renderable to the console immediately, de-framed (see :func:`_deframe`)."""
         for renderable in renderables:
-            self.console.print(renderable)
+            for item in _deframe(renderable):
+                self.console.print(item)
 
     def note(self, markup: str) -> None:
         """Print a markup line to the console immediately."""
@@ -259,8 +325,9 @@ class PlainUi(Ui):
     async def view(
         self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
     ) -> None:
-        """Print the renderable immediately (there is no windowing in CLI mode)."""
-        self.console.print(renderable)
+        """Print the renderable immediately, de-framed (there is no windowing in CLI mode)."""
+        for item in _deframe(renderable):
+            self.console.print(item)
 
     def progress(self, title: str = "Working"):  # noqa: ANN201
         """Return the Rich progress bar used for scripted runs."""
