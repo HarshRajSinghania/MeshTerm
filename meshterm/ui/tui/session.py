@@ -330,16 +330,74 @@ class TuiSession:
         Like :meth:`select`, but drawn without the header/footer status bars and centered
         under ``banner`` — the startup device picker's presentation. Type-to-filter is off:
         the device list is short and fixed, so stray keys never narrow it. An optional
-        ``footnote`` (e.g. a copyright notice) sits muted below the box.
+        ``footnote`` (e.g. a copyright notice) sits muted below the box. When any row opts
+        into removal (a :attr:`~meshterm.ui.tui.select.Choice.deletable` row), a "Del remove"
+        atom joins the footer — but only while the highlight is actually on such a row, so the
+        removal key advertises itself exactly where it acts (see
+        :attr:`~meshterm.ui.tui.select.SelectScreen.footer_hint`).
         """
+        delete_hint = (
+            "Del remove"
+            if any(isinstance(it, Choice) and it.deletable for it in items)
+            else ""
+        )
         screen = SelectScreen(
-            title, items, default=default, footer_hint=footer_hint, filterable=False
+            title,
+            items,
+            default=default,
+            footer_hint=footer_hint,
+            delete_hint=delete_hint,
+            filterable=False,
         )
         screen.chrome = False
         screen.banner = banner
         screen.footnote = footnote
         result = await self.run_screen(screen)
         return None if result is CANCEL else result
+
+    async def confirm_startup(
+        self,
+        prompt: "str | Text",
+        *,
+        title: str = "",
+        confirm_label: str = "Remove",
+        banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
+        footer_hint: str = "←→ choose · Enter select · Esc cancel",
+    ) -> bool:
+        """Confirm a destructive splash action with a Cancel/verb dialog (chromeless).
+
+        The startup-splash sibling of :meth:`button_dialog`: the same platform-dialog layout
+        — the safe *Cancel* on the left and the committing verb on the right and default, so
+        Enter commits and Esc backs out — but drawn without the status bars and centered under
+        ``banner``, so it reads as part of the device-selection flow it floats over. Themed
+        cautionary (warn prompt and border), since it only ever gates a removal.
+
+        Args:
+            prompt: The question shown above the buttons.
+            title: Short heading shown in the dialog's border.
+            confirm_label: Label for the committing button (e.g. ``"Remove"``).
+            banner: Wordmark rows drawn above the box (as on the other startup splashes).
+            footnote: Muted line drawn below the box.
+            footer_hint: Footer key hint.
+
+        Returns:
+            ``True`` only when the user chose the committing button; ``False`` on Cancel/Esc.
+        """
+        screen = ButtonDialog(
+            prompt,
+            [("Cancel", False), (confirm_label, True)],
+            title=title,
+            default=1,
+            footer_hint=footer_hint,
+            prompt_style="warn",
+            border_style="warn",
+        )
+        screen.chrome = False
+        screen.banner = banner
+        screen.footnote = footnote
+        result = await self.run_screen(screen)
+        return result is True
 
     async def notify_startup(
         self,
@@ -439,6 +497,45 @@ class TuiSession:
             The entered PIN, or ``None`` if the user pressed Esc to cancel.
         """
         screen = PinDialog(device_name, error=error, help_text=help_text)
+        screen.chrome = False
+        screen.banner = banner
+        screen.footnote = footnote
+        result = await self.run_screen(screen)
+        return None if result is CANCEL else result
+
+    async def prompt_text_startup(
+        self,
+        title: str,
+        *,
+        prompt: str = "",
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        banner: Optional[Any] = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Ask for a line of text on the chromeless startup splash (e.g. a TCP host:port).
+
+        Drawn like :meth:`prompt_pin_startup` — a bordered :class:`TextScreen` centered under
+        ``banner`` with no status bars — so entering a network address reads as part of the
+        same device-selection flow. ``validate`` blocks submission on a bad value the same way
+        the in-menu text prompt does.
+
+        Args:
+            title: Short heading shown in the dialog's border.
+            prompt: The instruction shown inside the box, above the field.
+            default: Prefilled text.
+            validate: Optional validator run on Enter; a returned string blocks submission.
+            help_text: A muted hint under the field.
+            banner: Wordmark rows drawn above the box (as on the other startup splashes).
+            footnote: Muted line drawn below the box.
+
+        Returns:
+            The entered text, or ``None`` if the user pressed Esc to cancel.
+        """
+        screen = TextScreen(
+            title, prompt=prompt, default=default, validate=validate, help_text=help_text
+        )
         screen.chrome = False
         screen.banner = banner
         screen.footnote = footnote

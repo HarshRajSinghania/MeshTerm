@@ -150,6 +150,20 @@ class ConfigTool(Tool):
         def _share_cmd() -> None:
             run_tool_command(self, {"ops": [("share",)]})
 
+        @config_app.command(
+            "advert-cadence",
+            help="Set how often this node auto-advertises in the background (0 = off)",
+        )
+        def _advert_cadence_cmd(
+            hours: int = typer.Argument(
+                ..., min=0, help="Cadence in hours between background adverts (0 disables)"
+            ),
+            flood: bool = typer.Option(
+                False, "--flood", help="Set the flood cadence (else the zero-hop / direct one)"
+            ),
+        ) -> None:
+            run_tool_command(self, {"ops": [("advert_cadence", flood, hours)]})
+
         @config_app.command("export-key", help="Export the private key (sensitive)")
         def _export_key_cmd(
             out: Optional[Path] = typer.Option(None, "--out", help="Write to file instead of stdout"),

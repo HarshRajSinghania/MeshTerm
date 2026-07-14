@@ -124,6 +124,36 @@ def test_select_non_filterable_ignores_typing() -> None:
     assert len(screen._rows()) == 2  # nothing was filtered out
 
 
+def test_select_delete_hint_follows_the_highlight() -> None:
+    """The 'Del remove' atom shows only while the cursor sits on a deletable row."""
+    screen = SelectScreen(
+        "pick",
+        [Choice("keep", 1), Choice("drop", 2, deletable=True)],
+        footer_hint="↑↓ move · Enter select · Esc quit",
+        delete_hint="Del remove",
+        filterable=False,
+        wrap=False,
+    )
+    # On the non-deletable row, the footer is the plain base hint.
+    assert "Del remove" not in screen.footer_hint
+    screen.handle("down")  # move onto the deletable row
+    # The atom appears, spliced before the trailing Esc clause (Esc stays last).
+    assert screen.footer_hint == "↑↓ move · Enter select · Del remove · Esc quit"
+    screen.handle("up")  # back to the plain row
+    assert "Del remove" not in screen.footer_hint
+    # The box is always sized for the fullest footer, so it never widens on the move.
+    assert "Del remove" in screen.sizing_footer_hint
+
+
+def test_select_no_delete_hint_leaves_footer_fixed() -> None:
+    """Without a delete_hint, a deletable row doesn't touch the footer."""
+    screen = SelectScreen(
+        "pick", [Choice("drop", 1, deletable=True)], footer_hint="↑↓ move · Esc quit"
+    )
+    assert screen.footer_hint == "↑↓ move · Esc quit"
+    assert screen.sizing_footer_hint == "↑↓ move · Esc quit"
+
+
 def test_select_escape_cancels() -> None:
     """Esc resolves the sentinel rather than a value."""
     assert _run(_menu(), "escape") is CANCEL
@@ -784,8 +814,11 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
         for it in captured["items"]
         if isinstance(it, Choice)
     ]
-    assert len(rows) == 3  # two devices plus a trailing Quit row (like the main menu)
-    assert rows[-1].strip() == "Quit"
+    # Two devices plus the trailing action rows (add a network device, then Quit).
+    assert len(rows) == 4
+    assert "Add a network device…" in rows[-2]
+    assert rows[-2].strip().endswith("· experimental")  # the row is flagged experimental
+    assert rows[-1].strip().endswith("Quit")
     device_rows = rows[:2]
     assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows))
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
@@ -836,6 +869,153 @@ def test_device_picker_names_and_sorts_known_devices(tmp_path) -> None:
     # rune for the companion advertised over BLE.
     assert _SERIAL_ICON in top.plain
     assert any(_BLE_ICON in row.plain for row in device_rows)
+
+
+def test_device_picker_reinjects_remembered_tcp_device(tmp_path) -> None:
+    """A remembered TCP companion reappears in the picker even though it can't be scanned for."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import tcp_device
+    from meshterm.ui.device_picker import _TCP_ICON, prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    store.remember(tcp_device("192.168.1.50", 5000), node_name="WifiNode")
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None  # skip past the smoke test
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    # Nothing discovered this session, yet the remembered network device is rebuilt into the list.
+    asyncio.run(prompt_device(_Ui(), [], store, _never))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    device_rows = [r for r in rows if hasattr(r, "plain") and "WifiNode" in r.plain]
+    assert device_rows, "the remembered TCP device should be listed"
+    top = device_rows[0]
+    assert "192.168.1.50:5000" in top.plain  # its host:port sits in the address column
+    assert _TCP_ICON in top.plain  # marked with the network TYPE glyph
+
+
+def test_device_picker_adds_network_device(tmp_path) -> None:
+    """The 'add a network device' row prompts for host:port and confirms the TCP companion."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui.device_picker import _ADD_TCP, prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    probed: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            # Choose the "add a network device" action row.
+            return next(it.value for it in items if isinstance(it, Choice) and it.value is _ADD_TCP)
+
+        async def prompt_text_startup(self, title, *, prompt="", default="", validate=None,
+                                      help_text="", banner=None, footnote=None):
+            assert validate("192.168.1.50:5000") is True  # the validator accepts a good endpoint
+            return "192.168.1.50:5000"
+
+        async def busy_startup(self, message, coro, *, title="", banner=None, footnote=None):
+            return await coro
+
+    async def verify(device, pin=None):
+        probed["target"] = device.target
+        return {"adv_name": "WifiNode"}  # a genuine companion answers
+
+    chosen = asyncio.run(prompt_device(_Ui(), [], store, verify))
+    assert chosen is not None and chosen.is_tcp and chosen.target == "192.168.1.50:5000"
+    assert probed["target"] == "192.168.1.50:5000"
+    # The confirmed network device is remembered forever, with the node name it reported.
+    remembered = store.load()
+    assert remembered is not None and remembered.is_tcp and remembered.node_name == "WifiNode"
+
+
+def test_device_picker_removes_network_device_on_delete(tmp_path) -> None:
+    """Delete on a network row confirms, forgets it, and it's gone from the re-drawn list."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import tcp_device
+    from meshterm.ui.device_picker import _QUIT, prompt_device
+    from meshterm.ui.tui import DeleteRequest
+
+    store = DeviceStore(tmp_path / "devices.json")
+    store.remember(tcp_device("192.168.1.50", 5000), node_name="WifiNode")
+
+    seen_rows: list[list] = []
+    confirmed_prompts: list = []
+
+    class _Ui:
+        def __init__(self) -> None:
+            self._passes = 0
+
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            names = [it.label.plain for it in items
+                     if isinstance(it, Choice) and hasattr(it.label, "plain")]
+            seen_rows.append(names)
+            self._passes += 1
+            if self._passes == 1:
+                # First pass: the network row is present and marked deletable — press Delete.
+                row = next(it for it in items if isinstance(it, Choice)
+                           and getattr(it.value, "is_tcp", False))
+                assert row.deletable
+                return DeleteRequest(row.value)
+            # Second pass (after the removal): leave the picker.
+            return _QUIT
+
+        async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
+                                  banner=None, footnote=None):
+            confirmed_prompts.append(prompt)
+            return True  # the user confirms the removal
+
+    async def _never(_device, _pin=None):
+        raise AssertionError("verify should not run when a row is deleted, not chosen")
+
+    result = asyncio.run(prompt_device(_Ui(), [], store, _never))
+    assert result is None  # quit on the second pass
+    # The confirm named the device and its endpoint.
+    assert confirmed_prompts and "WifiNode" in confirmed_prompts[0]
+    assert "192.168.1.50:5000" in confirmed_prompts[0]
+    # It was there on the first draw and gone on the second, and the store forgot it.
+    assert any("WifiNode" in name for name in seen_rows[0])
+    assert not any("WifiNode" in name for name in seen_rows[1])
+    assert store.load() is None
+
+
+def test_device_picker_keeps_network_device_when_removal_cancelled(tmp_path) -> None:
+    """Cancelling the Delete confirm leaves the remembered network device untouched."""
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import tcp_device
+    from meshterm.ui.device_picker import _QUIT, prompt_device
+    from meshterm.ui.tui import DeleteRequest
+
+    store = DeviceStore(tmp_path / "devices.json")
+    store.remember(tcp_device("192.168.1.50", 5000), node_name="WifiNode")
+
+    class _Ui:
+        def __init__(self) -> None:
+            self._passes = 0
+
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            self._passes += 1
+            if self._passes == 1:
+                row = next(it for it in items if isinstance(it, Choice)
+                           and getattr(it.value, "is_tcp", False))
+                return DeleteRequest(row.value)
+            return _QUIT
+
+        async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
+                                  banner=None, footnote=None):
+            return False  # the user backs out (Cancel / Esc)
+
+    async def _never(_device, _pin=None):
+        raise AssertionError("verify should not run")
+
+    asyncio.run(prompt_device(_Ui(), [], store, _never))
+    # Nothing was forgotten — the device is still remembered.
+    remembered = store.load()
+    assert remembered is not None and remembered.node_name == "WifiNode"
 
 
 class _PickerUi:

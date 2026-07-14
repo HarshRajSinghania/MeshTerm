@@ -230,7 +230,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # wider than the terminal and never narrower than the title/hint it must show.
     probe = max(10, min(cols - 6, 100))
     measured = max((_ansi_width(line) for line in screen.render_body(probe)), default=10)
-    inner_w = max(measured, cell_len(screen.title), cell_len(screen.footer_hint))
+    # Size to the fullest the footer can get, not this frame's — a screen whose hint grows
+    # as the highlight moves (a select's per-row "Del remove") reports that width here, so
+    # the box is reserved for it up front and never widens mid-navigation.
+    sizing_footer = getattr(screen, "sizing_footer_hint", screen.footer_hint)
+    inner_w = max(measured, cell_len(screen.title), cell_len(sizing_footer))
     inner_w = max(10, min(inner_w, cols - 6))
 
     # Pin the banner to a fixed vertical anchor that depends only on the terminal height and

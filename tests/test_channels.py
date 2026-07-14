@@ -815,3 +815,21 @@ async def test_cli_import_rejects_bad_link(ctx: AppContext) -> None:
     tool = ChannelsTool()
     with pytest.raises(typer.BadParameter):
         await tool.run(ctx, {"cli_action": "import", "index": 5, "url": "https://nope"})
+
+
+async def test_cli_clear_removes_the_channel_from_its_slot(ctx: AppContext) -> None:
+    """`clear` empties a configured slot; `list` no longer sees it."""
+    tool = ChannelsTool()
+    await tool.run(ctx, {"cli_action": "add", "index": 1, "name": "Ops", "secret": None})
+    assert any(s.idx == 1 for s in await read_channel_slots(await ctx.device()))
+
+    result = await tool.run(ctx, {"cli_action": "clear", "index": 1})
+    assert result.summary == {"index": 1, "cleared": True}
+    assert not any(s.idx == 1 for s in await read_channel_slots(await ctx.device()))
+
+
+async def test_cli_clear_of_an_empty_slot_is_a_no_op(ctx: AppContext) -> None:
+    """Clearing an already-empty slot reports nothing cleared rather than erroring."""
+    tool = ChannelsTool()
+    result = await tool.run(ctx, {"cli_action": "clear", "index": 7})
+    assert result.summary == {"index": 7, "cleared": False}

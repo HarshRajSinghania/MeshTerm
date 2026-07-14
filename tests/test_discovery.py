@@ -154,6 +154,67 @@ def test_ble_and_serial_stable_ids_never_collide() -> None:
     assert _ble().stable_id != DiscoveredDevice("COM5", serial_number="SN1").stable_id
 
 
+# -- TCP transport -------------------------------------------------------------
+
+
+def test_tcp_device_identity_and_labels() -> None:
+    """A TCP device reports host:port as its target, a stable tcp: id, and a network label."""
+    from meshterm.core.discovery import tcp_device
+
+    dev = tcp_device("192.168.1.50", 5000, name="WifiNode")
+    assert dev.is_tcp and dev.transport == "tcp"
+    assert dev.target == "192.168.1.50:5000"  # the connection identifier is host:port
+    assert dev.stable_id == "tcp:192.168.1.50:5000"
+    assert dev.confidence == "board" and dev.is_likely_lora  # a named endpoint is confident
+    assert dev.vendor_label == ""  # a network endpoint exposes no maker
+    assert dev.label == "WifiNode (192.168.1.50:5000)"
+
+
+def test_tcp_stable_ids_never_collide_with_other_transports() -> None:
+    """A TCP endpoint can't map to the same remembered device as a BLE/serial one."""
+    from meshterm.core.discovery import tcp_device
+
+    tcp = tcp_device("10.0.0.5", 5000)
+    assert tcp.stable_id != _ble().stable_id
+    assert tcp.stable_id != DiscoveredDevice("COM5", serial_number="SN1").stable_id
+
+
+def test_parse_tcp_endpoint_forms() -> None:
+    """A bare host takes the default port; host:port and bracketed IPv6 parse explicitly."""
+    from meshterm.core.discovery import DEFAULT_TCP_PORT, parse_tcp_endpoint
+
+    assert parse_tcp_endpoint("192.168.1.50") == ("192.168.1.50", DEFAULT_TCP_PORT)
+    assert parse_tcp_endpoint("meshcore.local:6000") == ("meshcore.local", 6000)
+    assert parse_tcp_endpoint("[::1]:5000") == ("::1", 5000)
+    assert parse_tcp_endpoint("  10.0.0.5 : 7000 ".replace(" ", "")) == ("10.0.0.5", 7000)
+
+
+def test_parse_tcp_endpoint_rejects_bad_values() -> None:
+    """An empty host or a non-numeric / out-of-range port raises a user-facing error."""
+    from meshterm.core.discovery import parse_tcp_endpoint
+
+    for bad in ("", "   ", "host:notaport", "host:0", "host:70000"):
+        with pytest.raises(ValueError):
+            parse_tcp_endpoint(bad)
+
+
+def test_tcp_device_store_round_trip(tmp_path: Path) -> None:
+    """A remembered TCP device persists its transport, host, and port, matched by stable_id."""
+    from meshterm.core.discovery import tcp_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    dev = tcp_device("192.168.1.50", 5000, name="WifiNode")
+    store.remember(dev, node_name="WifiNode")
+
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.is_tcp and loaded.transport == "tcp"
+    assert loaded.host == "192.168.1.50" and loaded.tcp_port == 5000
+    assert loaded.target == "192.168.1.50:5000"
+    assert loaded.node_name == "WifiNode"
+    assert loaded.matches(dev)
+
+
 async def test_discover_ble_filters_to_meshcore(monkeypatch: pytest.MonkeyPatch) -> None:
     """The BLE scan keeps only MeshCore-named adverts and maps them to devices."""
     from types import SimpleNamespace
@@ -288,6 +349,28 @@ def test_device_store_remembers_every_confirmed_device(tmp_path: Path) -> None:
     assert set(store.load_all()) == {"sn:SN1", "sn:SN2"}
 
 
+def test_device_store_forget_removes_and_reassigns_default(tmp_path: Path) -> None:
+    """``forget`` drops a record and hands the default to the newest survivor (or clears it)."""
+    store = DeviceStore(tmp_path / "devices.json")
+    first = DiscoveredDevice("COM5", serial_number="SN1", product="Wio")
+    second = DiscoveredDevice("COM6", serial_number="SN2", product="Heltec")
+    store.remember(first, node_name="Base")
+    store.remember(second, node_name="Roamer")  # the newer default
+
+    # Forgetting the current default reassigns it to the remaining (older) device.
+    assert store.forget("sn:SN2") is True
+    assert set(store.load_all()) == {"sn:SN1"}
+    assert store.load().stable_id == "sn:SN1"
+
+    # Forgetting an unknown id is a no-op that reports it did nothing.
+    assert store.forget("sn:absent") is False
+
+    # Forgetting the last device empties the registry and clears the default.
+    assert store.forget("sn:SN1") is True
+    assert store.load_all() == {}
+    assert store.load() is None
+
+
 def test_device_store_migrates_old_flat_format(tmp_path: Path) -> None:
     """A pre-registry flat record still reads back as a one-entry registry."""
     path = tmp_path / "devices.json"
@@ -376,6 +459,36 @@ def test_ble_device_store_round_trip(tmp_path: Path) -> None:
     assert loaded.address == dev.address and loaded.target == dev.address
     assert loaded.node_name == "Roamer"
     assert loaded.matches(dev)
+
+
+def test_resolve_prefers_explicit_tcp() -> None:
+    """An explicit --tcp selects the TCP transport, normalizing a bare host's default port."""
+    res = resolve_device([], None, explicit_tcp="192.168.1.50")
+    assert res.transport == "tcp" and res.source == "tcp"
+    assert res.target == "192.168.1.50:5000"  # default port applied
+    assert res.device is not None and res.device.stable_id == "tcp:192.168.1.50:5000"
+
+
+def test_resolve_tcp_wins_over_ble_and_port() -> None:
+    """--tcp outranks --ble and --port when more than one is (somehow) supplied."""
+    res = resolve_device(
+        [], None, explicit_tcp="10.0.0.5:5000", explicit_ble="AA:BB", explicit_port="COM5"
+    )
+    assert res.transport == "tcp" and res.target == "10.0.0.5:5000"
+
+
+def test_resolve_uses_tcp_profile() -> None:
+    """A TCP profile's host:port is used when no explicit override is given."""
+    profile = DeviceProfile(name="wifi", transport="tcp", host="10.0.0.9", tcp_port=6000)
+    res = resolve_device([], None, profile=profile)
+    assert res.transport == "tcp" and res.source == "profile"
+    assert res.target == "10.0.0.9:6000"
+
+
+def test_resolve_bad_tcp_endpoint_raises() -> None:
+    """A malformed --tcp value raises a clean selection error rather than a raw ValueError."""
+    with pytest.raises(DeviceSelectionError):
+        resolve_device([], None, explicit_tcp="host:notaport")
 
 
 def test_resolve_ambiguous_raises(tmp_path: Path) -> None:

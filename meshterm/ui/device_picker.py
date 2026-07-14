@@ -27,9 +27,14 @@ from rich.text import Text
 from .. import copyright_notice
 from ..core.connection import DeviceAuthenticationError, DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
-from ..core.discovery import DiscoveredDevice
+from ..core.discovery import (
+    DEFAULT_TCP_PORT,
+    DiscoveredDevice,
+    parse_tcp_endpoint,
+    tcp_device,
+)
 from .logo import load_logo
-from .tui import Choice, Separator
+from .tui import Choice, DeleteRequest, Separator
 
 if TYPE_CHECKING:
     from .surface import Ui
@@ -46,6 +51,10 @@ Verify = Callable[[DiscoveredDevice, Optional[str]], Awaitable[Optional[dict]]]
 #: device, which the caller treats as "exit the program".
 _QUIT = object()
 
+#: The "add a network device" row's value. Selecting it opens a host:port prompt (TCP
+#: companions aren't discoverable, so they're named by hand) and smoke-tests the result.
+_ADD_TCP = object()
+
 #: TYPE-column glyphs marking how a device connects. Kept as module constants so the splash's
 #: look can be retuned without touching the row-building logic. ``ᛒ`` is the *Bjarkan* rune the
 #: Bluetooth logo is drawn from — rendered white on the Bluetooth blue (see the ``bluetooth``
@@ -53,6 +62,10 @@ _QUIT = object()
 #: ``🔌`` is a plain plug for a wired serial link.
 _BLE_ICON = "ᛒ"
 _SERIAL_ICON = "🔌"
+
+#: TYPE-column glyph for a TCP companion — a globe, marking a device reached over the network
+#: rather than a wired or Bluetooth link. Two cells like the serial plug, so it aligns the same.
+_TCP_ICON = "🌐"
 
 #: Half-block glyphs that taper the Bluetooth badge: ``▐`` fills a cell's right half (so it
 #: hugs the rune's left edge) and ``▌`` its left half (hugging the right edge). Drawn in the
@@ -72,6 +85,8 @@ def _type_cell(device: DiscoveredDevice) -> Text:
     lining up with the Bluetooth rune (which the badge's left half-block already nudges in a
     cell) rather than hugging the column's left edge.
     """
+    if device.is_tcp:
+        return Text(" " + _TCP_ICON)
     if not device.is_ble:
         return Text(" " + _SERIAL_ICON)
     cell = Text()
@@ -88,6 +103,8 @@ def _pad(text: str, width: int) -> str:
 
 def _hardware_name(device: DiscoveredDevice) -> str:
     """The device's product name without its trailing ``(port)`` (that is its own column)."""
+    if device.is_tcp:
+        return device.name or device.product or device.description or "Network device"
     if device.is_ble:
         return device.name or device.product or device.description or "Bluetooth device"
     name = device.product or device.description or device.vendor_label or "Serial device"
@@ -214,11 +231,17 @@ async def _smoke_test(
             return None
 
         if info is None:
-            reason = (
-                "It may be out of range, powered off, already connected elsewhere, or busy."
-                if chosen.is_ble
-                else "It may be a different kind of serial device, powered off, or busy."
-            )
+            if chosen.is_tcp:
+                reason = (
+                    "Check the host and port — it may be unreachable, powered off, already "
+                    "connected elsewhere, or busy."
+                )
+            elif chosen.is_ble:
+                reason = (
+                    "It may be out of range, powered off, already connected elsewhere, or busy."
+                )
+            else:
+                reason = "It may be a different kind of serial device, powered off, or busy."
             await ui.notify_startup(
                 Text.from_markup(
                     f"[warn]{name} {where} didn't answer as a MeshCore device.[/warn]\n"
@@ -256,34 +279,26 @@ async def prompt_device(
 
     Returns:
         The chosen, confirmed :class:`DiscoveredDevice`, or ``None`` if the user chose to
-        leave the picker without selecting one — by pressing Esc, choosing the Quit row, or
-        having no devices to pick — which the caller treats as a request to exit.
+        leave the picker without selecting one — by pressing Esc or choosing the Quit row —
+        which the caller treats as a request to exit.
     """
-    if not devices:
-        await ui.notify_startup(
-            Text.from_markup(
-                "[warn]No companion devices detected.[/warn]\n"
-                "Plug one in over USB or power on a Bluetooth companion nearby, pass "
-                "[accent]--port[/accent]/[accent]--ble[/accent], or run with "
-                "[accent]--mock[/accent]."
-            ),
-            title="Select a companion device",
-            banner=load_logo(),
-            footnote=copyright_notice(),
-        )
-        return None
-
-    remembered = store.load()
-    # The full registry (not just the single last device) so *every* confirmed companion can
-    # be named, highlighted, and sorted to the top — keyed by stable_id.
-    registry = store.load_all()
-    # Preselect the remembered "last known good" device when it is currently attached.
-    default = next((d for d in devices if remembered and remembered.matches(d)), None)
-
+    scanned = list(devices)
     while True:
+        remembered = store.load()
+        # The full registry (not just the single last device) so *every* confirmed companion
+        # can be named, highlighted, and sorted to the top — keyed by stable_id. Reloaded each
+        # pass so an add or a removal is reflected the next time the list is drawn.
+        registry = store.load_all()
+        # A TCP companion isn't discoverable, so a previously confirmed one only reappears if we
+        # rebuild it from its remembered endpoint and fold it into the list alongside the
+        # scanned devices (the scan never produces it).
+        listed = scanned + _remembered_tcp_devices(scanned, registry)
+        # Preselect the remembered "last known good" device when it is currently attached/in range.
+        default = next((d for d in listed if remembered and remembered.matches(d)), None)
+
         chosen = await ui.select_startup(
             "Select a companion device",
-            _build_items(devices, remembered, registry),
+            _build_items(listed, remembered, registry),
             default=default,
             banner=load_logo(),
             footnote=copyright_notice(),
@@ -293,9 +308,23 @@ async def prompt_device(
         if chosen is None or chosen is _QUIT:
             return None
 
+        if chosen is _ADD_TCP:
+            # Name a network companion by hand and smoke-test it. On success it's returned like
+            # any picked device; on cancel/failure we loop back to the list.
+            added = await _add_network_device(ui, store, registry, verify)
+            if added is not None:
+                return added
+            continue
+
+        if isinstance(chosen, DeleteRequest):
+            # Delete was pressed on a removable (network) row: confirm, forget, and re-draw
+            # the list — the row's disappearance is the visible feedback.
+            await _remove_network_device(ui, store, registry, chosen.value)
+            continue
+
         name = _display_name(chosen, registry)
-        # "over Bluetooth" reads better than an address; a serial device names its port.
-        where = "over Bluetooth" if chosen.is_ble else f"on {chosen.port}"
+        # A human phrase for the transport: an address/endpoint reads worse than a plain word.
+        where = _where_phrase(chosen)
         # Smoke-test the choice in place (prompting for a PIN and retrying if it needs one).
         # ``None`` means the smoke test failed and already showed the user why — pick again.
         info = await _smoke_test(ui, chosen, name, where, verify)
@@ -308,6 +337,122 @@ async def prompt_device(
             chosen, node_name=_node_name_from(info), hardware_model=_model_from(info)
         )
         return chosen
+
+
+def _where_phrase(device: DiscoveredDevice) -> str:
+    """A human phrase for a device's transport, woven into the smoke-test spinner line."""
+    if device.is_tcp:
+        return f"at {device.target}"
+    if device.is_ble:
+        return "over Bluetooth"
+    return f"on {device.port}"
+
+
+def _remembered_tcp_devices(
+    discovered: list[DiscoveredDevice], registry: dict[str, RememberedDevice]
+) -> list[DiscoveredDevice]:
+    """Rebuild the confirmed TCP companions from the registry as :class:`DiscoveredDevice`.
+
+    TCP companions don't advertise, so the scan never finds them; this reconstructs each
+    remembered one from its stored ``host:port`` (carrying its known node name for the DEVICE
+    column) so it reappears in the picker. Any that happen to already be in ``discovered``
+    (e.g. re-run within a session) are skipped so they aren't listed twice.
+    """
+    seen = {d.stable_id for d in discovered}
+    rebuilt: list[DiscoveredDevice] = []
+    for record in registry.values():
+        if not record.is_tcp or not record.host or not record.tcp_port:
+            continue
+        device = tcp_device(record.host, record.tcp_port, name=record.node_name)
+        if device.stable_id not in seen:
+            rebuilt.append(device)
+    return rebuilt
+
+
+async def _add_network_device(
+    ui: "Ui",
+    store: DeviceStore,
+    registry: dict[str, RememberedDevice],
+    verify: Verify,
+) -> Optional[DiscoveredDevice]:
+    """Collect a ``host:port``, smoke-test the network companion there, and remember it.
+
+    A network (TCP) companion is named by hand — it isn't attached and doesn't advertise — so
+    this opens a text prompt on the splash, parses the endpoint (a bare host defaults its
+    port), and runs the same smoke test the discovered transports use. On success the device
+    is remembered forever and returned; on a cancelled prompt or a failed test the caller
+    re-opens the device list.
+
+    Args:
+        ui: The interactive surface for the prompt, spinner, and notices.
+        store: The confirmed-device registry, updated once the device answers.
+        registry: The current registry, for naming the smoke-test spinner line.
+        verify: The smoke-test callback (see :data:`Verify`).
+
+    Returns:
+        The confirmed TCP :class:`DiscoveredDevice`, or ``None`` to return to the device list.
+    """
+    def _validate(text: str) -> object:
+        try:
+            parse_tcp_endpoint(text)
+        except ValueError as exc:
+            return str(exc)
+        return True
+
+    entered = await ui.prompt_text_startup(
+        "Add a network device",
+        prompt="Enter the companion's network address:",
+        validate=_validate,
+        help_text=f"host or host:port — the port defaults to {DEFAULT_TCP_PORT}",
+        banner=load_logo(),
+        footnote=copyright_notice(),
+    )
+    if entered is None:
+        return None  # cancelled → back to the device list
+    host, port = parse_tcp_endpoint(entered)  # already validated above
+    device = tcp_device(host, port)
+    name = _display_name(device, registry)
+    info = await _smoke_test(ui, device, name, _where_phrase(device), verify)
+    if info is None:
+        return None  # not a reachable companion — the smoke test already explained why
+    store.remember(
+        device, node_name=_node_name_from(info), hardware_model=_model_from(info)
+    )
+    return device
+
+
+async def _remove_network_device(
+    ui: "Ui",
+    store: DeviceStore,
+    registry: dict[str, RememberedDevice],
+    device: DiscoveredDevice,
+) -> None:
+    """Confirm and forget a remembered network (TCP) device, dropping it from the picker.
+
+    Removal is offered only on network rows: a TCP companion is listed solely from its
+    remembered endpoint, so forgetting it is what makes it leave the picker — a scanned serial
+    or BLE device would just reappear on the next scan. Opens a cautionary Cancel/Remove
+    confirm on the splash; on Remove the record is pruned from the store, on Cancel/Esc nothing
+    changes. Either way the caller re-opens the list, so the row's absence is the feedback.
+
+    Args:
+        ui: The interactive surface for the confirm dialog.
+        store: The confirmed-device registry to prune.
+        registry: The current registry, for naming the device in the prompt.
+        device: The network device the user asked to remove.
+    """
+    if not device.is_tcp:
+        return  # defensive: only network rows opt into deletion (see _build_items)
+    name = _display_name(device, registry)
+    confirmed = await ui.confirm_startup(
+        f"Remove {name} ({device.target}) from the device list?",
+        title="Remove network device",
+        confirm_label="Remove",
+        banner=load_logo(),
+        footnote=copyright_notice(),
+    )
+    if confirmed:
+        store.forget(device.stable_id)
 
 
 def _order(
@@ -335,20 +480,30 @@ def _build_items(
     The row for each device leads with its display name (the remembered node's name when
     known, else the hardware name), followed by its connection target, a TYPE glyph marking
     the transport, and the HARDWARE column (the remembered firmware model, else the USB
-    vendor); columns are padded to a shared width so they align. Confirmed companions sort to the top (most-recent first), wear their name in white
-    and a bright tag; the remembered default is starred. A trailing Quit row (like the menu's)
-    lets the user exit from here.
+    vendor); columns are padded to a shared width so they align. Confirmed companions sort to
+    the top (most-recent first), wear their name in white and a bright tag; the remembered
+    default is starred. Trailing rows let the user name a network device by hand and quit here.
     """
+    if not devices:
+        # Nothing attached or in range — but a TCP companion can still be reached by hand, so
+        # show a muted note over the same action rows rather than a dead-end.
+        note = Separator("    no companion devices detected — add a network device, or quit")
+        return [note, *_action_rows()]
     devices = _order(devices, registry)
     known: set[str] = set(registry)
 
     name_w = max(cell_len(_display_name(d, registry)) for d in devices)
     name_w = max(name_w, len("DEVICE"))
-    # The middle column holds a serial port or a BLE address; label it for whichever kinds
-    # are present so a Bluetooth address never sits under a bare "PORT" heading.
-    port_label = "PORT"
-    if any(d.is_ble for d in devices):
-        port_label = "ADDRESS" if all(d.is_ble for d in devices) else "PORT / ADDRESS"
+    # The middle column holds a serial port, a BLE address, or a TCP host:port; label it for
+    # whichever kinds are present so a non-serial endpoint never sits under a bare "PORT"
+    # heading (a BLE address and a network host:port both read as an "address").
+    has_serial = any(not d.is_ble and not d.is_tcp for d in devices)
+    has_address = any(d.is_ble or d.is_tcp for d in devices)
+    port_label = (
+        "PORT / ADDRESS" if has_serial and has_address
+        else "ADDRESS" if has_address
+        else "PORT"
+    )
     port_w = max(cell_len(_where(d)) for d in devices)
     port_w = max(port_w, len(port_label))
     # The TYPE column holds a small transport badge (at most 3 cells); its heading is wider,
@@ -395,15 +550,37 @@ def _build_items(
         if is_known:
             row.append("  ")
             row.append("· MeshCore device", style="ok")
+        elif device.is_tcp:
+            row.append("  ")
+            row.append("· network companion", style="muted")
         elif device.is_ble:
             row.append("  ")
             row.append("· Bluetooth companion", style="muted")
         elif device.confidence == "bridge":
             row.append("  ")
             row.append("· serial adapter", style="muted")
-        items.append(Choice(title=row, value=device))
-    # A trailing Quit row, mirroring the main menu, so exiting is an explicit choice as well
-    # as an Esc away — the leading spaces line it up under the device-name column.
-    items.append(Separator(" "))
-    items.append(Choice(title="  Quit", value=_QUIT))
+        # Only a network device opts into Delete-to-remove: it's listed solely from its
+        # remembered endpoint, so forgetting it is the only way it leaves the picker. A scanned
+        # serial/BLE device would just reappear, so Delete stays inert on those rows.
+        items.append(Choice(title=row, value=device, deletable=device.is_tcp))
+    items.extend(_action_rows())
     return items
+
+
+def _action_rows() -> list:
+    """The trailing splash rows: name a network device by hand, then quit.
+
+    A network (TCP) companion doesn't advertise and isn't attached, so it can't be scanned
+    for — the "add a network device" row opens a host:port prompt to name one. It's flagged
+    experimental (TCP companion support is still settling), with the tag in the cautionary
+    hue so it reads as a caveat rather than a description. The Quit row mirrors the main menu.
+    The leading spaces line both up under the device-name column.
+    """
+    add_row = Text()
+    add_row.append(f"  {_TCP_ICON} Add a network device…")
+    add_row.append("  · experimental", style="warn")
+    return [
+        Separator(" "),
+        Choice(title=add_row, value=_ADD_TCP),
+        Choice(title="  🚪 Quit", value=_QUIT),
+    ]

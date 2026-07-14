@@ -28,10 +28,15 @@ class Choice:
             zero-argument callable resolved fresh on every repaint, so a row can track state
             that changes while the list is open.
         value: Value returned when the row is chosen.
+        deletable: Whether pressing Delete on this row asks to remove it. When set, Delete
+            resolves the list with a :class:`DeleteRequest` wrapping this row's value instead
+            of choosing it, so the caller can run a remove flow and re-open the list. Off by
+            default, so an ordinary list ignores Delete.
     """
 
     title: Union[str, Text, Callable[[], Union[str, Text]]]
     value: Any
+    deletable: bool = False
 
     @property
     def label(self) -> Union[str, Text]:
@@ -39,9 +44,40 @@ class Choice:
         return self.title() if callable(self.title) else self.title
 
 
+@dataclass
+class DeleteRequest:
+    """A request, raised from a select list, to remove the highlighted row.
+
+    Pressing Delete on a :class:`Choice` marked ``deletable`` resolves the select with this
+    wrapper rather than the row's value itself, so the caller can tell "the user wants to
+    remove this" apart from "the user chose this" — typically running a confirm-then-forget
+    flow and re-opening the list.
+
+    Attributes:
+        value: The :attr:`Choice.value` of the row the user asked to remove.
+    """
+
+    value: Any
+
+
 def _plain(label: Union[str, Text]) -> str:
     """The plain-text form of a row label, for filtering (a :class:`Text` keeps its ``plain``)."""
     return label.plain if isinstance(label, Text) else label
+
+
+def _splice_hint(base: str, segment: str) -> str:
+    """Insert ``segment`` into a footer hint just before its trailing ``Esc`` clause.
+
+    Keeps the hint grammar's "Esc last" rule when a per-row hint (e.g. ``Del remove`` on a
+    deletable row) is added while the cursor sits on it: the segment lands as its own ``·``
+    atom right before the final ``· Esc …``, rather than after it. A hint with no ``Esc``
+    clause simply gains the segment at the end.
+    """
+    marker = " · Esc"
+    idx = base.rfind(marker)
+    if idx == -1:
+        return f"{base} · {segment}"
+    return f"{base[:idx]} · {segment}{base[idx:]}"
 
 
 @dataclass
@@ -77,6 +113,7 @@ class SelectScreen(Screen):
         prompt: str = "",
         default: Any = None,
         footer_hint: Optional[str] = None,
+        delete_hint: str = "",
         filterable: bool = True,
         wrap: bool = True,
     ) -> None:
@@ -90,6 +127,10 @@ class SelectScreen(Screen):
             default: A choice value to pre-highlight, if present.
             footer_hint: Footer key hint; defaults to one that mentions type-to-filter only
                 when ``filterable`` (a fixed list shouldn't advertise a filter it ignores).
+            delete_hint: A key-hint atom (e.g. ``"Del remove"``) surfaced in the footer only
+                while the highlighted row is :attr:`Choice.deletable` — so the removal key
+                advertises itself exactly when it would act, and stays hidden on rows it can't
+                touch. Empty (the default) leaves the footer fixed.
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
                 the startup device picker) where type-to-filter would only get in the way.
             wrap: Whether the highlight wraps around the ends (Down from the last row jumps
@@ -104,7 +145,8 @@ class SelectScreen(Screen):
                 if filterable
                 else "↑↓ move · Enter select · Esc back"
             )
-        self.footer_hint = footer_hint
+        self._footer_base = footer_hint
+        self._delete_hint = delete_hint
         self._prompt = prompt
         self._filterable = filterable
         self._wrap = wrap
@@ -185,6 +227,41 @@ class SelectScreen(Screen):
             else:
                 self._index = at_or_before[-2] if len(at_or_before) >= 2 else 0
 
+    def _current_choice(self) -> Optional[Choice]:
+        """The choice the highlight currently sits on, or ``None`` when the list is empty."""
+        choices = self._choices()
+        if not choices:
+            return None
+        return choices[max(0, min(self._index, len(choices) - 1))]
+
+    @property
+    def footer_hint(self) -> str:
+        """The footer key hint, gaining the :attr:`_delete_hint` atom on a deletable row.
+
+        Fixed to the base hint unless a ``delete_hint`` was supplied *and* the highlighted
+        row opted into removal — then the atom is spliced in just before the trailing ``Esc``
+        clause (see :func:`_splice_hint`), so the removal key shows up on the bottom border
+        precisely while the cursor is on a row it can act on.
+        """
+        base = self._footer_base
+        current = self._current_choice()
+        if self._delete_hint and current is not None and current.deletable:
+            return _splice_hint(base, self._delete_hint)
+        return base
+
+    @property
+    def sizing_footer_hint(self) -> str:
+        """The fullest the footer can get, for stable box sizing (see :attr:`footer_hint`).
+
+        The delete-hint atom is always folded in here, so a compositor that sizes a box to
+        the footer width (the startup splash's :func:`~meshterm.ui.tui.frame.compose_startup`)
+        reserves room for it up front — the box then never widens the moment the highlight
+        lands on a deletable row.
+        """
+        if self._delete_hint:
+            return _splice_hint(self._footer_base, self._delete_hint)
+        return self._footer_base
+
     # --- rendering -----------------------------------------------------------
 
     @property
@@ -194,9 +271,13 @@ class SelectScreen(Screen):
         The widest of the prompt, title, footer, and every row (with room for the pointer),
         so a short menu is a tidy popup rather than a full-width banner. The compositor still
         caps this to the space available, and this is only read for a *floating* select — the
-        full-screen base menu is laid out by ``compose_base`` and ignores it.
+        full-screen base menu is laid out by ``compose_base`` and ignores it. The footer is
+        measured at its fullest — with the delete-hint atom folded in — so a deletable row
+        surfacing that hint never widens the box mid-navigation.
         """
-        widths = [cell_len(self.title), cell_len(self.footer_hint), cell_len(self._prompt)]
+        footer = _splice_hint(self._footer_base, self._delete_hint) if self._delete_hint \
+            else self._footer_base
+        widths = [cell_len(self.title), cell_len(footer), cell_len(self._prompt)]
         for item in self._items:
             label = item.title if isinstance(item, Separator) else _plain(item.label)
             widths.append(cell_len(label) + 2)  # + the "❯ " / "  " pointer column
@@ -286,6 +367,11 @@ class SelectScreen(Screen):
         elif action == "enter":
             if choices:
                 self.resolve(choices[self._index].value)
+        elif action == "delete":
+            # Delete asks to remove the highlighted row, but only where the row opted in
+            # (e.g. a remembered network device in the picker); elsewhere it's inert.
+            if choices and choices[self._index].deletable:
+                self.resolve(DeleteRequest(choices[self._index].value))
         elif action == "escape":
             super().handle("escape")
         elif action == "backspace" and self._filterable:

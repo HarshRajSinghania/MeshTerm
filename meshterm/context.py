@@ -65,6 +65,9 @@ class AppContext:
             overriding the profile.
         ble_override: Explicit Bluetooth address (from ``--ble`` or the interactive picker),
             selecting the BLE transport. Takes precedence over ``port_override``.
+        tcp_override: Explicit network address ``host:port`` (from ``--tcp`` or the
+            interactive picker), selecting the TCP transport. Takes precedence over
+            ``ble_override`` and ``port_override``.
         ble_pin: Optional BLE pairing PIN for the chosen Bluetooth device.
         json_output: Whether tools should emit machine-readable output.
         selected_device: The discovered device chosen for this session, when known, so it
@@ -87,6 +90,7 @@ class AppContext:
     mock: bool = False
     port_override: Optional[str] = None
     ble_override: Optional[str] = None
+    tcp_override: Optional[str] = None
     ble_pin: Optional[str] = None
     json_output: bool = False
     selected_device: Optional[DiscoveredDevice] = None
@@ -95,6 +99,7 @@ class AppContext:
     _active_port: Optional[str] = field(default=None, init=False, repr=False)
     _active_transport: Optional[str] = field(default=None, init=False, repr=False)
     _active_address: Optional[str] = field(default=None, init=False, repr=False)
+    _active_endpoint: Optional[str] = field(default=None, init=False, repr=False)
     unpair_on_exit: bool = field(default=False, init=False, repr=False)
     #: Set by the config editor just before it sends a reboot command, so the session's
     #: disconnect watcher can label the ensuing (expected) link drop as a reboot in
@@ -142,11 +147,11 @@ class AppContext:
         """The serial port the current connection is open on, if any (``None`` for --mock/BLE).
 
         Set when a real *serial* connection is opened so the reconnect flow knows which OS
-        port to wait on. ``None`` for the simulator and for BLE connections (which have no
+        port to wait on. ``None`` for the simulator and for BLE/TCP connections (which have no
         serial port). Falls back to an explicit ``--port`` override when a connection hasn't
         recorded one yet.
         """
-        if self.mock or self.active_transport == "ble":
+        if self.mock or self.active_transport in ("ble", "tcp"):
             return None
         return self._active_port or self.port_override
 
@@ -163,17 +168,32 @@ class AppContext:
         return self._active_address or self.ble_override
 
     @property
+    def active_endpoint(self) -> Optional[str]:
+        """The network ``host:port`` of the current TCP connection, if any (``None`` otherwise).
+
+        Set when a real *TCP* connection is opened, so the reconnect flow and header can name
+        the endpoint. ``None`` for the simulator and for serial/BLE connections. Falls back to
+        an explicit ``--tcp`` override when a connection hasn't recorded one yet.
+        """
+        if self.mock or self.active_transport != "tcp":
+            return None
+        return self._active_endpoint or self.tcp_override
+
+    @property
     def active_transport(self) -> Optional[str]:
-        """The transport of the current/selected connection: ``"serial"``, ``"ble"``, or ``None``.
+        """The transport of the current/selected connection: ``"serial"``, ``"ble"``, ``"tcp"``,
+        or ``None``.
 
         ``None`` for the simulator. For a real device it reflects the open connection when
         one exists, otherwise the transport implied by the pending selection (an explicit
-        ``--ble`` selects BLE), defaulting to serial.
+        ``--tcp`` selects TCP, ``--ble`` selects BLE), defaulting to serial.
         """
         if self.mock:
             return None
         if self._active_transport is not None:
             return self._active_transport
+        if self.tcp_override:
+            return "tcp"
         return "ble" if self.ble_override else "serial"
 
     async def link_alive(self) -> bool:
@@ -348,6 +368,9 @@ class AppContext:
         self._active_transport = getattr(device, "transport", "serial")
         self._active_port = getattr(device, "_port", None)
         self._active_address = getattr(device, "_address", None)
+        self._active_endpoint = getattr(device, "endpoint", None) if (
+            self._active_transport == "tcp"
+        ) else None
 
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
@@ -371,7 +394,24 @@ class AppContext:
             self._active_transport = None
             self._active_port = None
             self._active_address = None
+            self._active_endpoint = None
             await self._device.connect()
+            return self._device
+
+        # A network endpoint (an explicit ``--tcp``, a TCP profile, a device picked at startup,
+        # or the remembered TCP default) is opened directly by host:port — TCP companions
+        # aren't discoverable, so this remembered/explicit endpoint is the only way to reach one.
+        tcp_host, tcp_port = self._resolve_tcp_endpoint()
+        if tcp_host and tcp_port:
+            self._device = make_device(
+                mock=False, port=None, transport="tcp", host=tcp_host, tcp_port=tcp_port
+            )
+            self._active_transport = "tcp"
+            self._active_endpoint = f"{tcp_host}:{tcp_port}"
+            self._active_port = None
+            self._active_address = None
+            await self._device.connect()
+            await self._remember_connected()
             return self._device
 
         # A Bluetooth endpoint (an explicit ``--ble``, a BLE profile, a device picked at
@@ -400,6 +440,7 @@ class AppContext:
             self._active_transport = "ble"
             self._active_address = ble_address
             self._active_port = None
+            self._active_endpoint = None
             await self._device.connect()
             await self._remember_connected()
             return self._device
@@ -417,9 +458,53 @@ class AppContext:
         self._active_transport = "serial"
         self._active_port = resolution.port
         self._active_address = None
+        self._active_endpoint = None
         await self._device.connect()
         await self._remember_connected()
         return self._device
+
+    def _resolve_tcp_endpoint(self) -> tuple[Optional[str], Optional[int]]:
+        """Return the ``(host, port)`` to open over TCP, or ``(None, None)`` for other transports.
+
+        Resolves a network endpoint in priority order — an explicit ``--tcp``, a TCP
+        :class:`~meshterm.core.config.DeviceProfile`, then the remembered TCP default — so a
+        network companion is honored wherever a serial/Bluetooth one would be. A malformed
+        endpoint yields ``(None, None)`` (the session then falls through to the other
+        transports rather than crashing on a typo).
+        """
+        from .core.discovery import parse_tcp_endpoint
+        from .core.selection import DeviceSelectionError
+
+        # An explicit ``--tcp`` or TCP profile is authoritative — a malformed value is the
+        # user's typo, so surface the parse error as a clean, actionable message rather than
+        # silently falling through to another transport.
+        explicit_endpoint = self.tcp_override or (
+            self.profile.tcp_endpoint
+            if self.profile is not None and self.profile.is_tcp
+            else None
+        )
+        if explicit_endpoint:
+            try:
+                return parse_tcp_endpoint(explicit_endpoint)
+            except ValueError as exc:
+                raise DeviceSelectionError(str(exc)) from exc
+        # A remembered TCP default only applies when nothing else was selected explicitly, and
+        # a corrupt stored value must never crash startup — fall through to the other transports.
+        explicit_other = bool(self.port_override) or bool(self.ble_override) or (
+            self.profile is not None
+            and (bool(self.profile.port) or bool(self.profile.address))
+        )
+        if explicit_other:
+            return None, None
+        remembered = self.device_store.load()
+        if remembered is not None and remembered.is_tcp and remembered.target:
+            try:
+                host, port = parse_tcp_endpoint(remembered.target)
+            except ValueError:
+                return None, None
+            self.selected_device = None  # remembered, not freshly discovered this session
+            return host, port
+        return None, None
 
     def _resolve_ble_endpoint(self) -> tuple[Optional[str], Optional[str]]:
         """Return the ``(address, pin)`` to open over Bluetooth, or ``(None, None)`` for serial.

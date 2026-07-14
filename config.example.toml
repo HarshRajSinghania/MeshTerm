@@ -1,11 +1,12 @@
 # MeshTerm configuration.
 # Copy to ~/.meshterm/config.toml (or pass --db / --port on the CLI).
 #
-# Profiles are optional. With no profile, no --port, and no --ble, MeshTerm discovers
-# attached serial devices and nearby Bluetooth companions, lets you pick one (interactively)
-# or uses the single one present, and remembers the last device that connected as the default
-# for next time. Define profiles below only to give your hardware stable aliases
-# (e.g. --profile yagi, or --profile handheld for a Bluetooth device).
+# Profiles are optional. With no profile, no --port/--ble/--tcp, MeshTerm discovers attached
+# serial devices and nearby Bluetooth companions, lets you pick one (interactively) or uses the
+# single one present, and remembers the last device that connected as the default for next time.
+# A network (TCP) companion isn't discoverable — name it with --tcp host:port, a TCP profile, or
+# the picker's "add a network device" prompt. Define profiles below only to give your hardware
+# stable aliases (e.g. --profile yagi, --profile handheld for Bluetooth, --profile wifi for TCP).
 
 default_profile = "s3"
 trace_cooldown_s = 1.0
@@ -45,3 +46,14 @@ address = "AA:BB:CC:DD:EE:FF"
 # transport = "ble"
 # ble_pin = "123456"   # only if your device requires a pairing PIN
 description = "Pocket handheld over Bluetooth"
+
+# A network (TCP) companion — a WiFi board, or a meshcored-style proxy — reachable at a
+# host:port. Give it a `host` (and optional `tcp_port`, default 5000); a bare `host` already
+# implies TCP, so the `transport = "tcp"` line is optional. A TCP companion isn't discoverable,
+# so a profile (or --tcp host:port, or the picker's "add a network device" prompt) is how you
+# reach one.
+[profiles.wifi]
+host = "192.168.1.50"
+# tcp_port = 5000
+# transport = "tcp"
+description = "Basestation over WiFi"

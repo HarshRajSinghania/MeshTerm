@@ -17,7 +17,14 @@
       "Bash(python -m pytest tests/test_tui.py -q -k \"overlay or progress\")",
       "PowerShell([console]::beep\\(880,150\\); Start-Sleep -Milliseconds 60; [console]::beep\\(1175,200\\))",
       "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -m pytest tests/test_tui.py -q -k \"busy_overlay or scanner or dim_color or overlay_fade\")",
-      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -m pytest -q)"
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -m pytest -q)",
+      "Bash(python -c ' *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python -c ' *)",
+      "Bash(python -m pytest tests/test_channels.py -q)",
+      "Bash(git commit -m ' *)",
+      "Bash(.venv/Scripts/python.exe -m meshterm --mock trace --target Alice --profile yagi)",
+      "Bash(echo \"=== EXIT: $? ===\")"
     ],
     "defaultMode": "dontAsk",
     "additionalDirectories": [

@@ -79,6 +79,8 @@ class ChannelsTool(Tool):
             return await self._cli_import(ctx, params)
         if action == "share":
             return await self._cli_share(ctx, params)
+        if action == "clear":
+            return await self._cli_clear(ctx, params)
         return await self._cli_list(ctx)
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
@@ -157,6 +159,26 @@ class ChannelsTool(Tool):
         self._print_share(ctx, slot.name, slot.secret)
         return ToolResult(summary={"index": idx, "shared": True})
 
+    async def _cli_clear(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Clear a channel slot, removing the channel from the device.
+
+        The scriptable face of the channel manager's *Clear this slot*: an empty name
+        makes the firmware read the slot as unused. The ``--yes`` gate lives on the CLI
+        command (a private channel's key is lost with the slot unless it's saved
+        elsewhere), mirroring the interactive flow's danger confirmation.
+        """
+        from ..ui.channels import read_channel_slots
+
+        device = await ctx.device()
+        idx = int(params["index"])
+        slot = next((s for s in await read_channel_slots(device) if s.idx == idx), None)
+        if slot is None:
+            ctx.ui.note(f"[muted]slot {idx} is already empty[/muted]")
+            return ToolResult(summary={"index": idx, "cleared": False})
+        await device.set_channel(idx, "", None)  # empty name => the slot reads as unused
+        ctx.ui.note(f"[warn]cleared channel {slot.name} on slot {idx}[/warn]")
+        return ToolResult(summary={"index": idx, "cleared": True})
+
     @staticmethod
     def _print_share(ctx: AppContext, name: str, secret: bytes) -> None:
         """Render a channel's QR code and share URL into the output surface."""
@@ -215,5 +237,21 @@ class ChannelsTool(Tool):
             index: int = typer.Argument(..., help="Channel slot index"),
         ) -> None:
             run_tool_command(self, {"cli_action": "share", "index": index})
+
+        @channels_app.command("clear", help="Clear a channel slot (removes it from the device)")
+        def _clear_cmd(
+            index: int = typer.Argument(..., help="Channel slot index"),
+            yes: bool = typer.Option(
+                False, "--yes", help="Confirm removing the channel from this slot"
+            ),
+        ) -> None:
+            if not yes:
+                typer.secho(
+                    "Refusing: clearing a slot removes the channel (a private channel's "
+                    "key is lost unless you have it saved). Re-run with --yes to confirm.",
+                    fg="red",
+                )
+                raise typer.Exit(1)
+            run_tool_command(self, {"cli_action": "clear", "index": index})
 
         app.add_typer(channels_app, name=self.name)

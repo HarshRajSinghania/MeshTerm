@@ -10,6 +10,8 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from meshterm.core.courier_store import DONE_CAP, QUEUED, CourierStore
 from meshterm.core.models import ChatMessage, Contact, utcnow
 from meshterm.core.watch_store import WatchStore
@@ -208,6 +210,122 @@ async def test_attempt_now_forces_a_send(tmp_path: Path) -> None:
     )
     assert await service.attempt_now(entry.ident) == "delivered"
     assert await service.attempt_now(entry.ident) == "gone"  # already settled
+
+
+# --- the scripted CLI actions -------------------------------------------------------------
+
+
+class _NoteUi:
+    """A UI surface that just collects notes and shown renderables."""
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+        self.shown: list[object] = []
+
+    def note(self, markup: str) -> None:
+        self.notes.append(markup)
+
+    def show(self, *renderables: object) -> None:
+        self.shown.extend(renderables)
+
+
+class _StubCourier:
+    """A courier service whose ``attempt_now`` returns a canned outcome."""
+
+    def __init__(self, store: CourierStore, outcome: str) -> None:
+        self._store = store
+        self._outcome = outcome
+
+    async def attempt_now(self, ident: int) -> str:
+        message = self._store.get(ident)
+        if message is None or message.status != QUEUED:
+            return "gone"
+        if self._outcome == "delivered":
+            self._store.mark_delivered(ident)
+        return self._outcome
+
+
+class _ToolCtx:
+    """Minimal context for the courier tool's scripted CLI actions (no device needed)."""
+
+    def __init__(self, tmp_path: Path, *, outcome: str = "delivered") -> None:
+        self.courier_store = CourierStore(tmp_path / "courier.json")
+        self.ui = _NoteUi()
+        self.courier = _StubCourier(self.courier_store, outcome)
+
+
+async def test_cli_list_renders_waiting_and_finished(tmp_path: Path) -> None:
+    """`courier list` shows the outbox without needing a device."""
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path)
+    ctx.courier_store.queue(NODE, "YUL", "still waiting")
+    done = ctx.courier_store.queue(NODE, "YUL", "landed")
+    ctx.courier_store.mark_delivered(done.ident)
+
+    result = await CourierTool().run(ctx, {"cli_action": "list"})
+    assert result.summary == {"entries": 2}
+    assert ctx.ui.shown  # a table was rendered
+
+
+async def test_cli_list_empty_notes_and_counts_zero(tmp_path: Path) -> None:
+    """An empty outbox reports zero entries and shows no table."""
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path)
+    result = await CourierTool().run(ctx, {"cli_action": "list"})
+    assert result.summary == {"entries": 0}
+    assert ctx.ui.shown == []
+
+
+async def test_cli_cancel_removes_a_waiting_entry(tmp_path: Path) -> None:
+    """`courier cancel` drops a waiting entry; a second cancel is a no-op."""
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path)
+    entry = ctx.courier_store.queue(NODE, "YUL", "nope")
+    tool = CourierTool()
+
+    result = await tool.run(ctx, {"cli_action": "cancel", "id": entry.ident})
+    assert result.summary == {"id": entry.ident, "cancelled": True}
+    assert ctx.courier_store.get(entry.ident) is None
+
+    again = await tool.run(ctx, {"cli_action": "cancel", "id": entry.ident})
+    assert again.summary == {"id": entry.ident, "cancelled": False}
+
+
+async def test_cli_send_forces_one_attempt(tmp_path: Path) -> None:
+    """`courier send` forces one delivery attempt and reports the outcome."""
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path, outcome="delivered")
+    entry = ctx.courier_store.queue(NODE, "YUL", "hello")
+    result = await CourierTool().run(ctx, {"cli_action": "send", "id": entry.ident})
+    assert result.summary == {"id": entry.ident, "outcome": "delivered"}
+
+
+async def test_cli_send_unknown_entry_errors(tmp_path: Path) -> None:
+    """Sending a non-existent entry is a clean device-command error, not a crash."""
+    from meshterm.core.connection import DeviceCommandError
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path)
+    with pytest.raises(DeviceCommandError):
+        await CourierTool().run(ctx, {"cli_action": "send", "id": 999})
+
+
+async def test_cli_clear_drops_finished_only(tmp_path: Path) -> None:
+    """`courier clear` removes finished entries and leaves the waiting queue."""
+    from meshterm.tools.courier import CourierTool
+
+    ctx = _ToolCtx(tmp_path)
+    ctx.courier_store.queue(NODE, "YUL", "still here")
+    done = ctx.courier_store.queue(NODE, "YUL", "gone soon")
+    ctx.courier_store.mark_delivered(done.ident)
+
+    result = await CourierTool().run(ctx, {"cli_action": "clear"})
+    assert result.summary == {"cleared": 1}
+    assert [m.text for m in ctx.courier_store.entries()] == ["still here"]
 
 
 # --- the clock parser ---------------------------------------------------------------------

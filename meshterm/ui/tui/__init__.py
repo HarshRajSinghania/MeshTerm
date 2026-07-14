@@ -24,7 +24,7 @@ from .prompt import (
     TypedConfirmDialog,
 )
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
-from .select import Choice, SelectScreen, Separator
+from .select import Choice, DeleteRequest, SelectScreen, Separator
 from .session import TuiSession
 from .spinner import Spinner
 
@@ -35,6 +35,7 @@ __all__ = [
     "BusyScreen",
     "SelectScreen",
     "Choice",
+    "DeleteRequest",
     "Separator",
     "TextScreen",
     "ConfirmScreen",

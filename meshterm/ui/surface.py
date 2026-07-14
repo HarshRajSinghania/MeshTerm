@@ -136,6 +136,18 @@ class Ui:
         """Choose one item on a chromeless startup splash; ``None`` if skipped."""
         raise NotImplementedError
 
+    async def confirm_startup(
+        self,
+        prompt: "str | Text",
+        *,
+        title: str = "",
+        confirm_label: str = "Remove",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> bool:
+        """Confirm a destructive action on the startup splash; ``True`` only if committed."""
+        raise NotImplementedError
+
     async def notify_startup(
         self,
         renderable: RenderableType,
@@ -169,6 +181,20 @@ class Ui:
         footnote: Optional[str] = None,
     ) -> Optional[str]:
         """Ask for a Bluetooth companion's pairing PIN on the startup splash; ``None`` if cancelled."""
+        raise NotImplementedError
+
+    async def prompt_text_startup(
+        self,
+        title: str,
+        *,
+        prompt: str = "",
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Ask for a line of text on a chromeless startup splash; ``None`` if cancelled."""
         raise NotImplementedError
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
@@ -371,6 +397,18 @@ class PlainUi(Ui):
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
+    async def confirm_startup(
+        self,
+        prompt: "str | Text",
+        *,
+        title: str = "",
+        confirm_label: str = "Remove",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> bool:
+        """Unsupported in scripted CLI mode — the picker splash is interactive-only."""
+        raise self._no_prompt()
+
     async def notify_startup(
         self,
         renderable: RenderableType,
@@ -408,6 +446,20 @@ class PlainUi(Ui):
         The scripted path can't pop a dialog, so a PIN-protected device is handled by the
         clean ``DeviceAuthenticationError`` message (pass ``--ble-pin``) rather than a prompt.
         """
+        raise self._no_prompt()
+
+    async def prompt_text_startup(
+        self,
+        title: str,
+        *,
+        prompt: str = "",
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Unsupported in scripted CLI mode — a network endpoint comes from ``--tcp`` instead."""
         raise self._no_prompt()
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:
@@ -588,6 +640,24 @@ class TuiUi(Ui):
             title, items, default=default, banner=banner, footnote=footnote
         )
 
+    async def confirm_startup(
+        self,
+        prompt: "str | Text",
+        *,
+        title: str = "",
+        confirm_label: str = "Remove",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> bool:
+        """Delegate to the session's chromeless startup confirm dialog."""
+        return await self.session.confirm_startup(
+            prompt,
+            title=title,
+            confirm_label=confirm_label,
+            banner=banner,
+            footnote=footnote,
+        )
+
     async def notify_startup(
         self,
         renderable: RenderableType,
@@ -627,6 +697,28 @@ class TuiUi(Ui):
         """Delegate to the session's startup PIN dialog."""
         return await self.session.prompt_pin_startup(
             device_name, error=error, help_text=help_text, banner=banner, footnote=footnote
+        )
+
+    async def prompt_text_startup(
+        self,
+        title: str,
+        *,
+        prompt: str = "",
+        default: str = "",
+        validate: Optional[Validator] = None,
+        help_text: str = "",
+        banner: Any = None,
+        footnote: Optional[str] = None,
+    ) -> Optional[str]:
+        """Delegate to the session's chromeless startup text dialog."""
+        return await self.session.prompt_text_startup(
+            title,
+            prompt=prompt,
+            default=default,
+            validate=validate,
+            help_text=help_text,
+            banner=banner,
+            footnote=footnote,
         )
 
     async def reorder(self, title: str, labels: list[str]) -> list[int]:

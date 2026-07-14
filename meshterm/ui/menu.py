@@ -283,6 +283,7 @@ def _device_label(ctx: AppContext, cache: dict) -> tuple[str, str]:
         ctx.active_transport,
         ctx.active_port,
         ctx.active_address,
+        ctx.active_endpoint,
     )
     if cache.get("key") == key:
         return cache["value"]
@@ -300,6 +301,8 @@ def _device_label(ctx: AppContext, cache: dict) -> tuple[str, str]:
         name = record.label
     if ctx.active_transport == "ble":
         where = "BLE"
+    elif ctx.active_transport == "tcp":
+        where = ctx.active_endpoint or "TCP"
     else:
         where = ctx.active_port or (sel.port if sel is not None else "") or ""
     cache["key"], cache["value"] = key, (name, where)
@@ -551,12 +554,18 @@ async def _startup(ctx: AppContext) -> bool:
         if chosen is None:
             return False  # the user quit at the splash — exit without opening the menu
         ctx.selected_device = chosen
-        if chosen.is_ble:
+        if chosen.is_tcp:
+            ctx.tcp_override = chosen.target
+            ctx.ble_override = None
+            ctx.port_override = None
+        elif chosen.is_ble:
             ctx.ble_override = chosen.address
+            ctx.tcp_override = None
             ctx.port_override = None
         else:
             ctx.port_override = chosen.port
             ctx.ble_override = None
+            ctx.tcp_override = None
         if probed.get("device_id") == chosen.stable_id:
             ctx.adopt_device(probed["device"])
     # Between the device splash and the first menu paint, resuming background listening opens
@@ -853,8 +862,9 @@ async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
     from ..core.connection import serial_port_present
 
     while True:
-        # Serial: wait for the port to re-appear before touching the radio. BLE (and an
-        # unknown/deferred serial port): skip the wait and just retry the reconnect itself.
+        # Serial: wait for the port to re-appear before touching the radio. BLE/TCP (and an
+        # unknown/deferred serial port): skip the wait and just retry the reconnect itself —
+        # ``create_ble``/``create_tcp`` connect by address/endpoint and fail fast when absent.
         if ctx.active_transport == "serial":
             port = ctx.active_port
             if port is not None and not serial_port_present(port):

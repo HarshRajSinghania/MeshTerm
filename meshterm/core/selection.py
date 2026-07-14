@@ -13,7 +13,14 @@ from typing import Optional
 
 from .config import DeviceProfile
 from .device_store import RememberedDevice
-from .discovery import TRANSPORT_BLE, TRANSPORT_SERIAL, DiscoveredDevice
+from .discovery import (
+    TRANSPORT_BLE,
+    TRANSPORT_SERIAL,
+    TRANSPORT_TCP,
+    DiscoveredDevice,
+    parse_tcp_endpoint,
+    tcp_device,
+)
 
 
 class DeviceSelectionError(ValueError):
@@ -35,9 +42,9 @@ class Resolution:
         device: The matching discovered device, when enumeration knows it (so the caller
             can remember it on a successful connection). ``None`` for an explicit
             target that is not currently enumerable.
-        source: Where the choice came from (``"port"``, ``"ble"``, ``"profile"``,
+        source: Where the choice came from (``"port"``, ``"ble"``, ``"tcp"``, ``"profile"``,
             ``"remembered"``, or ``"only"``), for logging and messaging.
-        transport: ``"serial"`` or ``"ble"`` — which connection layer opens the device.
+        transport: ``"serial"``, ``"ble"``, or ``"tcp"`` — the connection layer for the device.
     """
 
     port: str
@@ -58,6 +65,27 @@ def _find_by_target(
     return next((d for d in devices if d.target == target or d.port == target), None)
 
 
+def _resolve_tcp(
+    endpoint: str, devices: list[DiscoveredDevice], source: str
+) -> "Resolution":
+    """Build a TCP :class:`Resolution` from a ``host[:port]`` string.
+
+    The endpoint is normalized (a bare host gains the default port) so the resulting target
+    matches how a remembered TCP device stores itself. A TCP companion isn't discoverable, so
+    any matching ``devices`` entry would only be a remembered one injected by the caller.
+
+    Raises:
+        DeviceSelectionError: If ``endpoint`` isn't a valid ``host[:port]``.
+    """
+    try:
+        host, port = parse_tcp_endpoint(endpoint)
+    except ValueError as exc:
+        raise DeviceSelectionError(str(exc)) from exc
+    target = f"{host}:{port}"
+    match = _find_by_target(devices, target) or tcp_device(host, port)
+    return Resolution(target, match, source, TRANSPORT_TCP)
+
+
 def _format_device_list(devices: list[DiscoveredDevice]) -> str:
     """Render discovered devices as an indented, human-readable bullet list."""
     if not devices:
@@ -65,7 +93,7 @@ def _format_device_list(devices: list[DiscoveredDevice]) -> str:
     lines = []
     for d in devices:
         flag = " [likely LoRa]" if d.is_likely_lora else ""
-        kind = "BLE" if d.is_ble else "serial"
+        kind = "TCP" if d.is_tcp else "BLE" if d.is_ble else "serial"
         lines.append(
             f"  • {d.target} ({kind}) — {d.product or d.description or 'device'}{flag}"
         )
@@ -78,17 +106,19 @@ def resolve_device(
     *,
     explicit_port: Optional[str] = None,
     explicit_ble: Optional[str] = None,
+    explicit_tcp: Optional[str] = None,
     profile: Optional[DeviceProfile] = None,
 ) -> Resolution:
     """Decide which companion to connect to without prompting.
 
     Resolution priority:
 
-    1. ``explicit_ble`` (an explicit ``--ble`` Bluetooth address).
-    2. ``explicit_port`` (an explicit ``--port``).
-    3. ``profile.port`` (an explicitly chosen profile with a port).
-    4. The remembered "last known good" device, if it is currently attached/in range.
-    5. The single attached device, if exactly one is present.
+    1. ``explicit_tcp`` (an explicit ``--tcp`` network address).
+    2. ``explicit_ble`` (an explicit ``--ble`` Bluetooth address).
+    3. ``explicit_port`` (an explicit ``--port``).
+    4. A TCP profile's ``host:port``, or a serial profile's ``port``.
+    5. The remembered "last known good" device, if it is currently attached/in range.
+    6. The single attached device, if exactly one is present.
 
     Otherwise a :class:`DeviceSelectionError` is raised listing the candidates.
 
@@ -97,14 +127,19 @@ def resolve_device(
         remembered: The remembered default, if any.
         explicit_port: A serial port supplied on the command line.
         explicit_ble: A Bluetooth address supplied on the command line.
+        explicit_tcp: A network ``host[:port]`` supplied on the command line.
         profile: A device profile supplied on the command line.
 
     Returns:
         A :class:`Resolution` naming the chosen target and transport.
 
     Raises:
-        DeviceSelectionError: If no device can be chosen unambiguously.
+        DeviceSelectionError: If no device can be chosen unambiguously, or an explicit TCP
+            endpoint could not be parsed.
     """
+    if explicit_tcp:
+        return _resolve_tcp(explicit_tcp, devices, "tcp")
+
     if explicit_ble:
         return Resolution(
             explicit_ble, _find_by_target(devices, explicit_ble), "ble", TRANSPORT_BLE
@@ -113,6 +148,9 @@ def resolve_device(
     if explicit_port:
         match = _find_by_target(devices, explicit_port)
         return Resolution(explicit_port, match, "port", TRANSPORT_SERIAL)
+
+    if profile is not None and profile.is_tcp and profile.tcp_endpoint:
+        return _resolve_tcp(profile.tcp_endpoint, devices, "profile")
 
     if profile is not None and profile.port:
         match = _find_by_target(devices, profile.port)

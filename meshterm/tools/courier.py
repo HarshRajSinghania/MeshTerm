@@ -8,9 +8,11 @@ message goes out when its node is next heard — or at its scheduled time — as
 direct message with acknowledgement tracking and polite exponential backoff, and the
 outcome lights the header's Watchtower badge.
 
-On the CLI it stays a scriptable one-shot: ``courier <node> <text…> [--at HH:MM]``
-queues the message (reading the contact list to address it — nothing is transmitted)
-and the next interactive session's courier delivers it.
+On the CLI the same outbox is scriptable through subcommands: ``queue`` adds a message
+(reading the contact list to address it — nothing is transmitted) for the next
+interactive session's courier to deliver, ``send`` forces one delivery attempt right now,
+and ``list`` / ``cancel`` / ``clear`` inspect and prune the outbox — the scriptable face
+of the outbox screen's own Send-now, Cancel, and Clear-finished actions.
 """
 
 from __future__ import annotations
@@ -54,6 +56,29 @@ class CourierTool(Tool):
         return None
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Dispatch a scripted CLI action (the menu path lives in :meth:`prompt_params`).
+
+        Args:
+            ctx: Shared application context.
+            params: A ``cli_action`` naming the outbox action, plus its arguments.
+
+        Returns:
+            A :class:`ToolResult` describing the action's outcome.
+        """
+        action = params.get("cli_action", "queue")
+        if action == "list":
+            return await self._cli_list(ctx)
+        if action == "send":
+            return await self._cli_send(ctx, params)
+        if action == "cancel":
+            return await self._cli_cancel(ctx, params)
+        if action == "clear":
+            return await self._cli_clear(ctx)
+        return await self._cli_queue(ctx, params)
+
+    # -- CLI --------------------------------------------------------------------
+
+    async def _cli_queue(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Queue one message from the CLI (transmits nothing).
 
         Args:
@@ -101,23 +126,146 @@ class CourierTool(Tool):
             summary={"queued": message.ident, "node": contact.name, "at": params.get("at")}
         )
 
+    async def _cli_list(self, ctx: AppContext) -> ToolResult:
+        """Print the outbox — waiting entries then finished ones — as a table.
+
+        A read-only view over the stored outbox: it needs no device, so it works the same
+        whether or not a radio is attached (the scriptable face of the outbox screen).
+        """
+        from rich.table import Table
+        from rich.text import Text
+
+        from ..core.courier_store import DELIVERED, QUEUED
+        from ..core.models import utcnow
+        from ..ui.courier_screen import _local_stamp, _shorten
+        from ..ui.widgets import _age_seconds, format_ago
+
+        entries = ctx.courier_store.entries()
+        if not entries:
+            ctx.ui.note("[muted]the outbox is empty[/muted]")
+            return ToolResult(summary={"entries": 0})
+
+        table = Table(title="Courier outbox", border_style="muted", expand=False)
+        table.add_column("ID", justify="right")
+        table.add_column("STATE")
+        table.add_column("NODE")
+        table.add_column("MESSAGE")
+        table.add_column("WHEN")
+        now = utcnow()
+        for m in entries:
+            if m.status == QUEUED:
+                state = Text("⏳ waiting", style="warn")
+                if m.not_before is not None and now < m.not_before:
+                    when = f"scheduled {_local_stamp(m.not_before)}"
+                else:
+                    when = "when next heard"
+            elif m.status == DELIVERED:
+                state = Text("✓ delivered", style="ok")
+                when = f"delivered {format_ago(_age_seconds(m.finished or m.created))}"
+            else:
+                state = Text("✗ gave up", style="err")
+                when = f"gave up {format_ago(_age_seconds(m.finished or m.created))}"
+            table.add_row(
+                str(m.ident),
+                state,
+                Text(m.node_name, style="brand"),
+                _shorten(m.text),
+                Text(when, style="muted"),
+            )
+        ctx.ui.show(table)
+        return ToolResult(summary={"entries": len(entries)})
+
+    async def _cli_send(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Force one delivery attempt for a waiting entry, right now.
+
+        The scriptable ``Send now`` — one forced attempt through the same courier the
+        outbox screen uses, skipping the "wait until the node is heard" eligibility check.
+        """
+        ident = int(params["id"])
+        if ctx.courier_store.get(ident) is None:
+            raise DeviceCommandError(f"no outbox entry #{ident}")
+        outcome = await ctx.courier.attempt_now(ident)
+        notes = {
+            "delivered": "[ok]✓ delivered[/ok] — acknowledged by the node",
+            "no ack": "[warn]sent, but no acknowledgement[/warn] — it stays queued for retry",
+            "gave up": "[err]✗ gave up[/err] — the retry budget is spent",
+            "unknown contact": (
+                "[warn]the device's contacts don't know this node yet[/warn] — it stays queued"
+            ),
+            "busy": "[muted]another delivery is in flight — try again in a moment[/muted]",
+            "gone": "[muted]that entry is no longer waiting[/muted]",
+        }
+        ctx.ui.note(notes.get(outcome, outcome))
+        return ToolResult(summary={"id": ident, "outcome": outcome})
+
+    async def _cli_cancel(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
+        """Remove a waiting entry from the outbox (finished ones use ``clear``)."""
+        ident = int(params["id"])
+        if ctx.courier_store.cancel(ident):
+            ctx.ui.note(f"[warn]cancelled outbox entry #{ident}[/warn]")
+            return ToolResult(summary={"id": ident, "cancelled": True})
+        ctx.ui.note(f"[muted]no waiting entry #{ident} to cancel[/muted]")
+        return ToolResult(summary={"id": ident, "cancelled": False})
+
+    async def _cli_clear(self, ctx: AppContext) -> ToolResult:
+        """Drop every finished (delivered / given-up) entry, leaving the queue untouched."""
+        before = len(ctx.courier_store.entries())
+        ctx.courier_store.clear_done()
+        cleared = before - len(ctx.courier_store.entries())
+        if cleared:
+            ctx.ui.note(
+                f"[ok]cleared {cleared} finished "
+                f"entr{'y' if cleared == 1 else 'ies'}[/ok]"
+            )
+        else:
+            ctx.ui.note("[muted]no finished entries to clear[/muted]")
+        return ToolResult(summary={"cleared": cleared})
+
     def register_cli(self, app: typer.Typer) -> None:
-        """Register the ``courier`` subcommand.
+        """Register the ``courier`` subcommand group.
 
         Args:
             app: The Typer application.
         """
         from ..cli import run_tool_command
 
-        @app.command(name=self.name, help=self.help)
-        def _courier(
+        courier_app = typer.Typer(
+            help=self.help, no_args_is_help=True, rich_markup_mode="rich"
+        )
+
+        @courier_app.command("queue", help="Queue a message for delivery when the node is next heard")
+        def _queue_cmd(
             node: str = typer.Argument(..., help="The recipient contact's name"),
             text: list[str] = typer.Argument(..., help="The message to queue"),
             at: Optional[str] = typer.Option(
                 None, "--at", help="Hold until this local time (HH:MM, next occurrence)"
             ),
         ) -> None:
-            tool_params: dict[str, Any] = {"node": node, "text": " ".join(text)}
+            tool_params: dict[str, Any] = {
+                "cli_action": "queue", "node": node, "text": " ".join(text)
+            }
             if at is not None:
                 tool_params["at"] = at
             run_tool_command(self, tool_params)
+
+        @courier_app.command("list", help="Show the outbox — waiting and finished entries")
+        def _list_cmd() -> None:
+            run_tool_command(self, {"cli_action": "list"})
+
+        @courier_app.command("send", help="Force one delivery attempt for a waiting entry now")
+        def _send_cmd(
+            id: int = typer.Argument(..., help="Outbox entry id (from `courier list`)"),
+        ) -> None:
+            run_tool_command(self, {"cli_action": "send", "id": id})
+
+        @courier_app.command("cancel", help="Remove a waiting entry from the outbox")
+        def _cancel_cmd(
+            id: int = typer.Argument(..., help="Outbox entry id (from `courier list`)"),
+        ) -> None:
+            run_tool_command(self, {"cli_action": "cancel", "id": id})
+
+        @courier_app.command("clear", help="Drop finished (delivered / given-up) entries")
+        def _clear_cmd() -> None:
+            run_tool_command(self, {"cli_action": "clear"})
+
+        app.add_typer(courier_app, name=self.name)

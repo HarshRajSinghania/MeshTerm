@@ -435,6 +435,57 @@ async def test_ble_profile_opens_bluetooth_transport(tmp_path: Path, monkeypatch
         ctx.repo.close()
 
 
+async def test_tcp_profile_opens_network_transport(tmp_path: Path, monkeypatch) -> None:
+    """A TCP profile makes ``device()`` build a network connection by host:port."""
+    from meshterm.core import connection as conn
+    from meshterm.core.config import DeviceProfile
+
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "tcp.db")
+    ctx = AppContext(
+        console=Console(file=io.StringIO()),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+        profile=DeviceProfile(name="wifi", transport="tcp", host="192.168.1.50", tcp_port=5000),
+    )
+
+    built: dict = {}
+
+    class _FakeTcp:
+        transport = "tcp"
+
+        def __init__(self, **kw):
+            built.update(kw)
+            self._port = None
+            self._address = None
+            self.endpoint = f"{kw.get('host')}:{kw.get('tcp_port')}"
+
+        async def connect(self):
+            pass
+
+        async def get_self_info(self):
+            return {"name": "WifiNode"}
+
+    def fake_make_device(**kw):
+        assert kw["transport"] == "tcp"
+        return _FakeTcp(**kw)
+
+    monkeypatch.setattr(conn, "make_device", fake_make_device)
+    import meshterm.context as context_mod
+
+    monkeypatch.setattr(context_mod, "make_device", fake_make_device)
+    try:
+        device = await ctx.device()
+        assert device.transport == "tcp"
+        assert built["host"] == "192.168.1.50" and built["tcp_port"] == 5000
+        assert ctx.active_transport == "tcp"
+        assert ctx.active_endpoint == "192.168.1.50:5000"
+        assert ctx.active_port is None and ctx.active_address is None
+    finally:
+        ctx.repo.close()
+
+
 async def test_reconnect_leaves_idle_services_idle(tmp_path: Path) -> None:
     """Reconnect only restores what was live: idle services stay idle afterward."""
     ctx = _make_ctx(tmp_path)

@@ -20,7 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .discovery import TRANSPORT_BLE, TRANSPORT_SERIAL, DiscoveredDevice
+from .discovery import (
+    TRANSPORT_BLE,
+    TRANSPORT_SERIAL,
+    TRANSPORT_TCP,
+    DiscoveredDevice,
+)
 from .models import utcnow
 
 
@@ -31,11 +36,11 @@ class RememberedDevice:
     Attributes:
         stable_id: The device's :attr:`DiscoveredDevice.stable_id` at connect time.
         port: The serial port it was last seen on (informational; may have changed). Blank
-            for a BLE device.
+            for a BLE/TCP device.
         label: A friendly label for display in prompts and tables.
         last_connected: ISO-8601 timestamp of the last successful connection.
         node_name: The device's own mesh node name, learned at connect time (may be empty).
-        transport: ``"serial"`` or ``"ble"`` — how this device was last reached.
+        transport: ``"serial"``, ``"ble"``, or ``"tcp"`` — how this device was last reached.
         address: The Bluetooth address, for a BLE device (blank otherwise), so it can be
             reconnected directly without re-scanning.
         hardware_model: The firmware's own model string (e.g. ``"Seeed Tracker T1000-E"``),
@@ -43,6 +48,10 @@ class RememberedDevice:
             the model — a BLE companion advertises none — so it's remembered here to fill the
             hardware column even when the device is merely attached, not connected. May be empty
             for a serial device confirmed by an older firmware that predates the query.
+        host: The network host, for a TCP device (blank otherwise), so it can be reconnected
+            directly. A TCP companion isn't discoverable, so this remembered endpoint is the
+            *only* way it reappears in the picker.
+        tcp_port: The TCP port, for a TCP device (0 otherwise).
     """
 
     stable_id: str
@@ -53,6 +62,8 @@ class RememberedDevice:
     transport: str = TRANSPORT_SERIAL
     address: str = ""
     hardware_model: str = ""
+    host: str = ""
+    tcp_port: int = 0
 
     @property
     def is_ble(self) -> bool:
@@ -60,8 +71,16 @@ class RememberedDevice:
         return self.transport == TRANSPORT_BLE
 
     @property
+    def is_tcp(self) -> bool:
+        """Whether this remembered device was reached over a TCP network connection."""
+        return self.transport == TRANSPORT_TCP
+
+    @property
     def target(self) -> str:
-        """The connection target: the BLE address for a BLE device, else the serial port."""
+        """The connection target: ``host:port`` for TCP, the BLE address for Bluetooth, else
+        the serial port."""
+        if self.is_tcp:
+            return f"{self.host}:{self.tcp_port}"
         return self.address or self.port if self.is_ble else self.port
 
     def matches(self, device: DiscoveredDevice) -> bool:
@@ -127,8 +146,10 @@ class DeviceStore:
                 transport=entry.get("transport", TRANSPORT_SERIAL),
                 address=entry.get("address", ""),
                 hardware_model=entry.get("hardware_model", ""),
+                host=entry.get("host", ""),
+                tcp_port=int(entry.get("tcp_port", 0) or 0),
             )
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError):
             return None
 
     def load(self) -> Optional[RememberedDevice]:
@@ -185,10 +206,40 @@ class DeviceStore:
             transport=device.transport,
             address=device.address or "",
             hardware_model=hardware_model,
+            host=device.host or "",
+            tcp_port=device.tcp_port or 0,
         )
         self._write(registry, device.stable_id)
 
-    def _write(self, registry: dict[str, RememberedDevice], last: str) -> None:
+    def forget(self, stable_id: str) -> bool:
+        """Drop a remembered device from the registry.
+
+        The inverse of :meth:`remember`: removes the record keyed by ``stable_id`` so the
+        device is no longer listed as a confirmed companion. Used by the device picker's
+        Delete action to prune a network (TCP) companion the user no longer wants — a TCP
+        device is listed *only* from its remembered endpoint, so forgetting it is what makes
+        it leave the picker. If the forgotten device was the most-recently-connected default,
+        that pointer is handed to the newest surviving record (or cleared when none remain),
+        so the next startup still preselects a sensible device.
+
+        Args:
+            stable_id: The :attr:`RememberedDevice.stable_id` of the device to forget.
+
+        Returns:
+            ``True`` if a record was removed, ``False`` if none matched.
+        """
+        registry, last = self._read()
+        if stable_id not in registry:
+            return False
+        del registry[stable_id]
+        if last == stable_id:
+            last = max(
+                registry, key=lambda k: registry[k].last_connected, default=None
+            )
+        self._write(registry, last)
+        return True
+
+    def _write(self, registry: dict[str, RememberedDevice], last: Optional[str]) -> None:
         """Persist the registry, marking ``last`` as the most recently connected device."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -202,6 +253,8 @@ class DeviceStore:
                     "transport": record.transport,
                     "address": record.address,
                     "hardware_model": record.hardware_model,
+                    "host": record.host,
+                    "tcp_port": record.tcp_port,
                 }
                 for stable_id, record in registry.items()
             },

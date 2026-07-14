@@ -84,6 +84,11 @@ def main_callback(
     ble_pin: Optional[str] = typer.Option(
         None, "--ble-pin", help="BLE pairing PIN, if the Bluetooth companion requires one"
     ),
+    tcp: Optional[str] = typer.Option(
+        None,
+        "--tcp",
+        help="Network address host[:port] of a TCP companion (selects the TCP transport)",
+    ),
     mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator"),
     db_path: Optional[Path] = typer.Option(None, "--db", help="SQLite database path"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
@@ -97,6 +102,7 @@ def main_callback(
         port: Explicit serial port, overriding the profile.
         ble: Explicit Bluetooth address, selecting the BLE transport.
         ble_pin: Optional BLE pairing PIN for the Bluetooth companion.
+        tcp: Explicit network address ``host[:port]``, selecting the TCP transport.
         mock: Whether to use the simulator instead of real hardware.
         db_path: Override the database location.
         json_output: Request machine-readable output from tools.
@@ -123,9 +129,12 @@ def main_callback(
         mock=mock,
         port_override=port,
         ble_override=ble,
+        tcp_override=tcp,
         ble_pin=ble_pin,
         json_output=json_output,
-        explicit_selection=profile is not None or port is not None or ble is not None,
+        explicit_selection=(
+            profile is not None or port is not None or ble is not None or tcp is not None
+        ),
     )
     _state = app_ctx
     ctx.call_on_close(app_ctx.repo.close)
