@@ -425,7 +425,7 @@ class Device(ABC):
         target: str,
         *,
         path: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: Optional[float] = None,
     ) -> TraceResult:
         """Run a single path trace to ``target`` and return per-hop SNR.
 
@@ -436,7 +436,10 @@ class Device(ABC):
                 the connection resolves one from the contact's learned route (the
                 firmware itself never routes a trace — an explicit path is all it
                 walks), falling back to path-less only for unknown targets.
-            timeout: Seconds to wait for the trace reply.
+            timeout: Seconds to wait for the trace reply. ``None`` (the default) sizes the
+                wait to the route: a trace has to travel the whole path out and back, so a
+                long walk is given proportionally longer to come home
+                (:func:`~meshterm.services.trace_runner.trace_timeout`).
 
         Returns:
             A :class:`TraceResult`; ``success`` is ``False`` on timeout.
@@ -1467,11 +1470,11 @@ class MeshCoreDevice(Device):
         target: str,
         *,
         path: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: Optional[float] = None,
     ) -> TraceResult:
         from meshcore import EventType  # local import keeps mock path dependency-free
 
-        from ..services.trace_runner import path_hash_flags
+        from ..services.trace_runner import path_hash_flags, trace_timeout
 
         mc = self._require()
         tag = random.randint(0, 0xFFFFFFFF)
@@ -1494,6 +1497,14 @@ class MeshCoreDevice(Device):
             resolved = await self._trace_path_to_contact(mc, target)
             if resolved is not None:
                 path_bytes, flags = resolved
+
+        # Size the reply-wait to the route unless the caller pinned it. ``path_bytes`` is
+        # the whole walk — out plus the mirrored return leg — so its entry count (each
+        # ``1 << flags`` bytes wide) is the number of relay transmissions the packet makes
+        # before the reply reaches us. A path-less flood leaves the count unknown (0).
+        if timeout is None:
+            hops_walked = len(path_bytes) // (1 << flags) if path_bytes else 0
+            timeout = trace_timeout(hops_walked)
         await mc.commands.send_trace(auth_code=0, tag=tag, flags=flags, path=path_bytes)
         event = await mc.wait_for_event(
             EventType.TRACE_DATA,
@@ -2510,7 +2521,7 @@ class MockDevice(Device):
         target: str,
         *,
         path: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: Optional[float] = None,
     ) -> TraceResult:
         await asyncio.sleep(0.05)  # mimic radio latency so progress bars are visible
         forced = [h for h in path.split(",") if h.strip()] if path else None

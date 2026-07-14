@@ -262,6 +262,65 @@ async def test_mock_device_blank_path_traces() -> None:
     assert any(r.success and r.hops for r in results)
 
 
+def test_trace_timeout_scales_with_hops() -> None:
+    """The reply-wait grows one allowance per hop, within its documented bounds."""
+    from meshterm.services.trace_runner import (
+        TRACE_TIMEOUT_BASE_S,
+        TRACE_TIMEOUT_CEILING_S,
+        TRACE_TIMEOUT_FLOOD_S,
+        TRACE_TIMEOUT_PER_HOP_S,
+        trace_timeout,
+    )
+
+    # An unknown hop count (a path-less flood) can't be sized, so it falls back to the
+    # flat historical budget.
+    assert trace_timeout(0) == TRACE_TIMEOUT_FLOOD_S
+    assert trace_timeout(-3) == TRACE_TIMEOUT_FLOOD_S
+
+    # Each hop adds exactly one per-hop allowance on top of the fixed base...
+    assert trace_timeout(1) == TRACE_TIMEOUT_BASE_S + TRACE_TIMEOUT_PER_HOP_S
+    assert trace_timeout(5) == TRACE_TIMEOUT_BASE_S + 5 * TRACE_TIMEOUT_PER_HOP_S
+    # ...so a longer walk is always given longer to come home than a shorter one...
+    assert trace_timeout(8) > trace_timeout(3)
+    # ...until the ceiling caps a route that would otherwise scale without end.
+    assert trace_timeout(10_000) == TRACE_TIMEOUT_CEILING_S
+
+
+async def test_run_trace_sizes_wait_to_the_forced_route() -> None:
+    """A forced path's reply-wait is sized to its hop count, not a flat default.
+
+    The real device must hand ``wait_for_event`` the route-scaled budget so a long walk
+    isn't cut off before its reply can travel out and back.
+    """
+    from meshterm.core.connection import MeshCoreDevice
+    from meshterm.services.trace_runner import trace_timeout
+
+    seen: dict[str, float] = {}
+
+    class _Commands:
+        async def send_trace(self, *, auth_code, tag, flags, path):  # noqa: ANN001, ANN201
+            return None
+
+    class _MC:
+        commands = _Commands()
+
+        async def wait_for_event(self, event_type, *, attribute_filters=None, timeout=None):  # noqa: ANN001, ANN201
+            seen["timeout"] = timeout
+            return None  # a miss: run_trace returns a clean failure, no further calls
+
+    device = MeshCoreDevice(port="COM-test")
+    device._mc = _MC()
+
+    # Five single-byte hops → a five-hop walk (the spec is already the mirrored round trip).
+    result = await device.run_trace("Alice", path="3d,f2,3d,f2,3d")
+    assert result.success is False
+    assert seen["timeout"] == trace_timeout(5)
+
+    # An explicit timeout still wins over the auto-scaling.
+    await device.run_trace("Alice", path="3d,f2,3d,f2,3d", timeout=2.0)
+    assert seen["timeout"] == 2.0
+
+
 def test_trace_edges_endpoints_are_our_device() -> None:
     """The first edge originates at us and the last edge returns to us (#3/#4)."""
     from meshterm.core.models import Hop
