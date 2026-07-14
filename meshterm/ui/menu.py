@@ -521,18 +521,14 @@ async def _startup(ctx: AppContext) -> bool:
         baudrate = ctx.profile.baudrate if ctx.profile else 115200
         # Enumerate serial ports (instant) and scan for BLE companions (a few seconds), behind
         # the splash spinner so the wait reads as intentional rather than a hang.
-        from datetime import datetime
+        from .. import copyright_notice
 
-        _copyright_start = 2026
-        _year = datetime.now().year
-        _span = str(_copyright_start) if _year <= _copyright_start else f"{_copyright_start}-{_year}"
-        footnote = f"Copyright (c) {_span} Jean-Pierre Martineau"
         devices = await ctx.ui.busy_startup(
             "Scanning for companion devices…",
             discover_all(ble=True),
             title="Select a companion device",
             banner=load_logo(),
-            footnote=footnote,
+            footnote=copyright_notice(),
         )
         # The smoke test opens the radio; on success we keep that live connection and reuse
         # it for the session rather than reopening (boards often reset on each open).

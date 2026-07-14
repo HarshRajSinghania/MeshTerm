@@ -19,12 +19,12 @@ device; anything else sends the user back to the list to choose another.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from rich.cells import cell_len
 from rich.text import Text
 
+from .. import copyright_notice
 from ..core.connection import DeviceAuthenticationError, DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
 from ..core.discovery import DiscoveredDevice
@@ -79,11 +79,6 @@ def _type_cell(device: DiscoveredDevice) -> Text:
     cell.append(_BLE_ICON, style="bluetooth")
     cell.append(_BADGE_RIGHT, style="bluetooth.edge")
     return cell
-
-
-def _copyright() -> str:
-    """The splash's muted copyright line, dated to the current year."""
-    return f"© {datetime.now().year} Johnputer"
 
 
 def _pad(text: str, width: int) -> str:
@@ -159,7 +154,6 @@ async def _smoke_test(
     name: str,
     where: str,
     verify: Verify,
-    footnote: Optional[str],
 ) -> Optional[dict]:
     """Smoke-test ``chosen`` behind the splash spinner, collecting a Bluetooth PIN if needed.
 
@@ -175,8 +169,6 @@ async def _smoke_test(
         name: Its display name, woven into the spinner line and the PIN prompt.
         where: A human phrase for its transport ("over Bluetooth" / "on COM5").
         verify: The smoke-test callback (see :data:`Verify`); called with the PIN to try.
-        footnote: The splash footnote to keep drawn under the box (``None`` after the copyright
-            is retired).
 
     Returns:
         The device's self-info dict once it answers, or ``None`` — after showing the relevant
@@ -193,7 +185,7 @@ async def _smoke_test(
                 verify(chosen, pin),
                 title="Checking companion",
                 banner=load_logo(),
-                footnote=footnote,
+                footnote=copyright_notice(),
             )
         except DeviceAuthenticationError:
             # The device answered the scan but won't connect until it's bonded (or the last PIN
@@ -203,7 +195,7 @@ async def _smoke_test(
                 error=pin_error,
                 help_text="The 6-digit code shown on the device or in the MeshCore app",
                 banner=load_logo(),
-                footnote=footnote,
+                footnote=copyright_notice(),
             )
             if entered is None:
                 return None  # the user gave up → back to the device list
@@ -217,7 +209,7 @@ async def _smoke_test(
             notice.append(str(exc), style="warn")
             notice.append("\nChoose another device.")
             await ui.notify_startup(
-                notice, title="Can't connect yet", banner=load_logo(), footnote=footnote
+                notice, title="Can't connect yet", banner=load_logo(), footnote=copyright_notice()
             )
             return None
 
@@ -235,7 +227,7 @@ async def _smoke_test(
                 ),
                 title="Not a MeshCore device",
                 banner=load_logo(),
-                footnote=footnote,
+                footnote=copyright_notice(),
             )
             return None
 
@@ -277,7 +269,7 @@ async def prompt_device(
             ),
             title="Select a companion device",
             banner=load_logo(),
-            footnote=_copyright(),
+            footnote=copyright_notice(),
         )
         return None
 
@@ -288,32 +280,25 @@ async def prompt_device(
     # Preselect the remembered "last known good" device when it is currently attached.
     default = next((d for d in devices if remembered and remembered.matches(d)), None)
 
-    # The copyright is a first-impression splash flourish: show it until the user commits to a
-    # device, then drop it for good — even if the smoke test fails and they return to re-pick.
-    footnote: Optional[str] = _copyright()
-
     while True:
         chosen = await ui.select_startup(
             "Select a companion device",
             _build_items(devices, remembered, registry),
             default=default,
             banner=load_logo(),
-            footnote=footnote,
+            footnote=copyright_notice(),
         )
         # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
         # caller as ``None`` so it can exit the program instead of continuing device-less.
         if chosen is None or chosen is _QUIT:
             return None
-        # The user has committed to a device; retire the copyright from every screen after
-        # this point (the smoke-test spinner, any failure notice, and the re-opened picker).
-        footnote = None
 
         name = _display_name(chosen, registry)
         # "over Bluetooth" reads better than an address; a serial device names its port.
         where = "over Bluetooth" if chosen.is_ble else f"on {chosen.port}"
         # Smoke-test the choice in place (prompting for a PIN and retrying if it needs one).
         # ``None`` means the smoke test failed and already showed the user why — pick again.
-        info = await _smoke_test(ui, chosen, name, where, verify, footnote)
+        info = await _smoke_test(ui, chosen, name, where, verify)
         if info is None:
             continue
 

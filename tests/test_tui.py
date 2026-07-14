@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from meshterm import copyright_notice
 from meshterm.ui.tui import frame, glow
 from meshterm.ui.tui.glow import apply_corner_glow
 from meshterm.ui.tui.progress import ProgressScreen
@@ -470,15 +471,20 @@ def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
 
 
-def test_compose_startup_shows_footnote_below_box() -> None:
-    """A footnote (e.g. a copyright) is drawn, muted and centered, below the box."""
+def test_compose_startup_shows_footnote_under_logo() -> None:
+    """A footnote (e.g. a copyright) is drawn muted, immediately under the logo and
+    right-aligned to the logo's right edge, so the two read as one signed block."""
     screen = SelectScreen("pick", [Choice("a", 1)])
     screen.chrome = False
-    screen.footnote = "© 2026 Johnputer"
+    screen.banner = ["A" * 40, "B" * 40]  # a wide wordmark to hang the note off
+    screen.footnote = "note-xyz"
     lines = Text.from_ansi(frame.compose_startup(screen, 80, 20)).plain.split("\n")
-    note = next(ln for ln in lines if "Homestead" in ln)
-    assert note.strip() == "© 2026 Johnputer"  # its own line
-    assert note.startswith("   ")  # centered, not flush-left
+    logo_rows = [i for i, ln in enumerate(lines) if set(ln.strip()) in ({"A"}, {"B"})]
+    note_row = next(i for i, ln in enumerate(lines) if "note-xyz" in ln)
+    assert lines[note_row].strip() == "note-xyz"  # its own line, nothing else on it
+    assert note_row == logo_rows[-1] + 1  # immediately under the logo, no gap
+    # Right edges align: the note ends at the same column the logo ends.
+    assert len(lines[note_row].rstrip()) == len(lines[logo_rows[-1]].rstrip())
 
 
 def test_compose_startup_box_is_horizontally_centered() -> None:
@@ -770,8 +776,8 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     asyncio.run(prompt_device(_Ui(), devices, store, _never))
     # The banner (wordmark) is passed through so the splash can draw it.
     assert captured["banner"] and any("█" in row for row in captured["banner"])
-    # A copyright footnote rides along for the splash to render below the box.
-    assert "Homestead" in captured["footnote"]
+    # A copyright footnote rides along for the splash to render beside the logo.
+    assert captured["footnote"] == copyright_notice()
     # Each device row's port sits at the same column, proving the name column is padded.
     rows = [
         it.label.plain if hasattr(it.label, "plain") else it.label
@@ -872,8 +878,8 @@ def test_device_picker_smoke_tests_and_reprompts(tmp_path) -> None:
     assert store.is_known(devices[0])
 
 
-def test_device_picker_drops_copyright_after_first_selection(tmp_path) -> None:
-    """The copyright shows on the opening splash, then never again — even on a re-pick."""
+def test_device_picker_shows_copyright_on_every_splash(tmp_path) -> None:
+    """The copyright rides along the logo on every splash — picker, spinner, and notices."""
     from meshterm.core.device_store import DeviceStore
     from meshterm.core.discovery import DiscoveredDevice
     from meshterm.ui.device_picker import prompt_device
@@ -901,10 +907,10 @@ def test_device_picker_drops_copyright_after_first_selection(tmp_path) -> None:
         return results.pop(0)
 
     asyncio.run(prompt_device(_Ui(), devices, store, verify))
-    # Only the very first splash carries the copyright; the busy spinner, the failure
-    # notice, and the re-opened picker all drop it.
-    assert footnotes[0][0] == "select" and "Homestead" in footnotes[0][1]
-    assert all(footnote is None for _kind, footnote in footnotes[1:])
+    # Every splash draws the logo, so every splash carries the copyright beside it — the
+    # opening picker, the smoke-test spinner, the failure notice, and the re-opened picker.
+    assert len(footnotes) > 1
+    assert all(footnote == copyright_notice() for _kind, footnote in footnotes)
 
 
 def test_device_picker_prompts_and_retries_ble_pin(tmp_path) -> None:

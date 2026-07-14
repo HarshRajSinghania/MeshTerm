@@ -220,6 +220,12 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     banner_h = len(banner)
     gap = 1 if banner else 0  # the blank line under the banner
 
+    # The logo's own left margin and width, so the footnote below can hang off its right edge
+    # (the wordmark is centered as one block, so every row shares this margin).
+    raw_banner = screen.banner or []
+    logo_w = max((cell_len(Text.from_ansi(row).plain) for row in raw_banner), default=0)
+    logo_right = max(0, (cols - logo_w) // 2) + logo_w
+
     # Size the box to its widest real row (probe at a generous width, then measure), never
     # wider than the terminal and never narrower than the title/hint it must show.
     probe = max(10, min(cols - 6, 100))
@@ -235,11 +241,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # once the device list has populated (the box only ever grows downward); the brief small
     # states sit slightly high, the conventional optical placement for dialogs.
     top = max(0, rows * 2 // 5 - banner_h - gap)
-    footnote_h = 2 if screen.footnote else 0  # a blank spacer line plus the note itself
+    footnote_h = 1 if screen.footnote else 0  # the note sits directly under the logo
     # Rows left for the box below the fixed banner block: the panel border is 2 rows.
-    below = rows - top - banner_h - gap
+    below = rows - top - banner_h - footnote_h - gap
     body_lines = screen.render_body(inner_w)
-    budget = below - 2 - footnote_h
+    budget = below - 2
     vpad = _breathing_room(len(body_lines), budget)
     viewport = max(1, min(len(body_lines), budget - 2 * vpad))
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
@@ -261,13 +267,16 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # Glow before centering, while the box still starts at column 0 of its own lines.
     panel_lines = _center(apply_corner_glow(render_lines(panel, inner_w + 4)), cols)
 
-    # A small muted line (e.g. a copyright notice) sits a blank row below the box.
+    # A small muted line (e.g. a copyright notice) sits immediately under the logo, its right
+    # edge hung off the logo's right edge so the two read as one signed block.
     footnote_lines: list[str] = []
     if screen.footnote:
         note = Text.from_markup(f"[muted]{screen.footnote}[/muted]")
-        footnote_lines = [""] + _center(render_lines(note, cell_len(screen.footnote)), cols)
+        rendered = render_lines(note, cell_len(screen.footnote))
+        pad = max(0, logo_right - cell_len(screen.footnote))
+        footnote_lines = [" " * pad + line for line in rendered]
 
-    block = banner + ([""] * gap) + panel_lines + footnote_lines
+    block = banner + footnote_lines + ([""] * gap) + panel_lines
     lines = [""] * top + block
     if len(lines) > rows:
         lines = lines[:rows]
