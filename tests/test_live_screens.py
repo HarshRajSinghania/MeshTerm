@@ -586,6 +586,61 @@ async def test_trace_screen_path_mode_arms_from_the_previous_walk() -> None:
     assert len(screen._traces) == 1
 
 
+def test_reverse_is_a_path_mode_only_action() -> None:
+    """A target route is a symmetric boomerang, so only path mode offers Reverse.
+
+    In path mode the row sits in the build-path group, between Compose and the
+    trace-settings, so the whole "define the path" cluster reads together.
+    """
+    target, _ = _trace_screen(mode="target")
+    assert "reverse" not in target._actions
+    assert "Reverse path" not in _plain(target.render_body(100))
+
+    walk, _ = _trace_screen(mode="path")
+    assert "reverse" in walk._actions
+    body = _plain(walk.render_body(100))
+    assert body.index("Compose path") < body.index("Reverse path") < body.index("Path width")
+
+
+async def test_reverse_flips_a_path_walk_and_restarts_the_run() -> None:
+    """Reverse flips the hop order and clears the forward run, like any path change."""
+    screen, _ = _trace_screen(mode="path")
+    screen._path_spec = "3d,f2,27"
+    screen.start_trace()
+    await screen._worker
+    assert screen._traces  # a forward reading stands
+    screen._index = screen._actions.index("reverse")
+    screen.handle("enter")
+    assert screen._path_spec == "27,f2,3d"  # end-for-end
+    assert screen._traces == []  # the forward aggregates cleared
+    assert screen._total_traces == 1  # the session count survives the restart
+    assert "Us → 27 → f2 → 3d → Us" in screen._planned_route().plain
+
+
+def test_reverse_adopts_and_flips_the_visible_auto_walk() -> None:
+    """With only the auto walk showing, Reverse pins its mirror as the path to walk."""
+    screen, _ = _trace_screen(
+        mode="path", auto_spec=lambda: "3d,f2", auto_source="last walk"
+    )
+    assert screen._path_spec == ""  # nothing composed yet; the plan is auto
+    screen._index = screen._actions.index("reverse")
+    screen.handle("enter")
+    assert screen._path_spec == "f2,3d"  # the shown auto walk, flipped and pinned
+    assert "Us → f2 → 3d → Us" in screen._planned_route().plain
+
+
+def test_reverse_is_inert_without_a_reversible_path() -> None:
+    """No path (or a single hop, its own mirror) leaves nothing to flip."""
+    screen, _ = _trace_screen(mode="path")  # no spec, no auto walk
+    assert "Reverse path — compose a path first" in _plain(screen.render_body(100))
+    screen._index = screen._actions.index("reverse")
+    screen.handle("enter")
+    assert screen._path_spec == ""
+    screen._path_spec = "3d"  # a lone hop reverses to itself
+    screen.handle("enter")
+    assert screen._path_spec == "3d"
+
+
 async def test_adopting_a_new_path_restarts_the_measurement() -> None:
     """A different spec clears the aggregates and log, like a freshly opened screen.
 

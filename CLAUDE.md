@@ -95,7 +95,7 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·
   📤 send now · 📨 courier/queue · 💬 chat · 🔔 notify · 🔕 mute (notifications off) ·
-  📱 QR · 🔗 link · ↻ re-read · ↕ reorder ·
+  📱 QR · 🔗 link · ↻ re-read · ↕ reorder · ⇄ reverse (flip a path's direction) ·
   ⌨ command line · 🚪 quit. Packet-class icons (feed/viewer lane): 📢 advert ·
   📊 telemetry · 📦 packet · 💬 message · ✅ ack.
 

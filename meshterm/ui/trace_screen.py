@@ -22,6 +22,13 @@ whatever you make it, and nothing transmits until you say so. An action list dri
   repeater you hold admin credentials for, the composer can also *fetch that repeater's
   neighbour table* over the mesh (login required; firmware ignores guests):
   second-vantage evidence, persisted and folded straight back into the suggestions.
+* **Reverse path** (Trace path only — a target-mode route is a symmetric boomerang,
+  so flipping it changes nothing) reverses the walk's hop order: ``us → a → b → c``
+  becomes ``us → c → b → a``. Radio links rarely read the same both ways, so this
+  measures the route you built in the opposite direction. It adopts the reversed spec
+  like any path change (the forward run's aggregates clear) and leaves Trace idle —
+  nothing auto-fires — so you flip, then trace; reverse again to go back. The stored
+  history keeps both directions.
 * **Explore paths** (Trace target only — candidates need a destination) explores
   scenarios: ranked candidate routes to the target straight from the topology evidence
   (the device's own learned route, the direct shot, and the strongest observed
@@ -223,12 +230,13 @@ class TraceScreen(Screen):
     One screen serves both trace features; ``mode`` decides which. ``"target"`` traces
     a pinned destination over a symmetric (mirrored) route and offers *Explore paths*;
     ``"path"`` walks a hand-composed route with no target at all — no Explore (ranked
-    candidates need a destination), no device routing, and Trace stays inert until a
-    path exists to walk (composed here, or auto-resolved from the last stored walk).
+    candidates need a destination), no device routing, but a *Reverse path* that flips
+    the asymmetric walk end-for-end, and Trace stays inert until a path exists to walk
+    (composed here, or auto-resolved from the last stored walk).
 
-    Adopting a different path — composed, explored, or re-rendered at a new width —
-    restarts the measurement: the aggregates, per-hop medians, and trace log all
-    described the old route, so they clear as if the screen had just opened.
+    Adopting a different path — composed, explored, reversed, or re-rendered at a new
+    width — restarts the measurement: the aggregates, per-hop medians, and trace log
+    all described the old route, so they clear as if the screen had just opened.
 
     ↑/↓ move the cursor over the action rows and Enter commits the selected one — the
     cursor opens on Trace, so plain Enter still just traces. The results (per-hop
@@ -332,9 +340,12 @@ class TraceScreen(Screen):
         self._spinner = Spinner()
         self._worker: Optional[asyncio.Task] = None
         self._flight: Optional[TracingDialog] = None
-        # The action rows, in display order. Explore needs a destination to rank
-        # candidates for, so path mode drops it; the cursor opens on Trace either way.
-        actions = ["compose"] + (["explore"] if mode == "target" else [])
+        # The action rows, in display order. The build-path group leads: Compose,
+        # then Explore (target mode) or Reverse (path mode). Explore needs a
+        # destination to rank candidates for, so path mode drops it; and only a path
+        # walk is asymmetric enough to flip end-for-end, so only it offers Reverse.
+        # The cursor opens on Trace either way.
+        actions = ["compose", "explore"] if mode == "target" else ["compose", "reverse"]
         actions += ["width", "samples", "trace", "back"]
         self._actions: tuple[str, ...] = tuple(actions)
         self._index = self._actions.index("trace")
@@ -484,6 +495,8 @@ class TraceScreen(Screen):
             # (empty on first open) stored spec, so opening Compose always resumes
             # from the visible route.
             self._open_flow(self._compose_path, seed=self._effective_spec()[0])
+        elif key == "reverse":
+            self._reverse_path()
         elif key == "explore" and self._explore is not None:
             self._open_flow(self._explore)
         elif key == "back":
@@ -526,6 +539,35 @@ class TraceScreen(Screen):
 
         asyncio.ensure_future(run())
 
+    def _reverse_path(self) -> None:
+        """Flip the walked path end-for-end and re-arm on the reversed direction.
+
+        A path walk is the one asymmetric trace: ``us → a → b → c → us`` and
+        ``us → c → b → a → us`` cross the same links the opposite way, and radio
+        links rarely read the same in both — so reversing the hop order lets one
+        route be measured out and back. It adopts the reversed spec exactly like any
+        other path change: the aggregates and log described the forward run, so they
+        clear, and Trace stays idle until the user commits it (nothing auto-fires).
+        Reverse again to walk it the original way; the stored history keeps both
+        directions for side-by-side comparison.
+
+        A no-op when there is nothing to flip: no path, or a single hop (its own
+        mirror), or already mid-trace/mid-dialog.
+        """
+        if self._dialog_open or self._running:
+            return
+        spec, _ = self._effective_spec()
+        tokens = [h.strip() for h in spec.split(",") if h.strip()]
+        if len(tokens) < 2:
+            return
+        reversed_spec = ",".join(reversed(tokens))
+        if reversed_spec == self._path_spec:
+            return
+        self._path_spec = reversed_spec
+        self._traces.clear()
+        self._status = ""
+        self._session.invalidate()
+
     # --- rendering -----------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
@@ -556,9 +598,9 @@ class TraceScreen(Screen):
                 self._cursor = len(lines)
             lines.append(render_to_ansi(text, width))
             # Set the next group apart: after the build-path group (Explore in target
-            # mode; Compose itself in path mode, which has no Explore) and after the
+            # mode, Reverse in path mode — whichever closes it) and after the
             # trace-settings group.
-            if key in ("explore", "samples") or (key == "compose" and self._mode == "path"):
+            if key in ("explore", "reverse", "samples"):
                 lines.append("")
         tail = self._tail_lines(stats, current, width)
         if tail:
@@ -607,6 +649,12 @@ class TraceScreen(Screen):
         if key == "compose":
             text.append("✎ ", style="brand")
             text.append("Compose path")
+        elif key == "reverse":
+            text.append("⇄ ", style="accent")
+            if self._effective_spec()[0]:
+                text.append("Reverse path — trace it the other way")
+            else:
+                text.append("Reverse path — compose a path first", style="muted")
         elif key == "explore":
             text.append("⚡ ", style="warn")
             text.append("Explore paths")
