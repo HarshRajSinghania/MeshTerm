@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import typer
 from rich.table import Table
@@ -34,6 +34,9 @@ from ..ui.menus import fit_cells
 from ..ui.tui import Choice, Separator
 from ..ui.widgets import channel_glyph
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:
+    from ..ui.channels import ChannelSlot
 
 #: How many recent messages ``chat history`` prints by default.
 _HISTORY_LIMIT = 50
@@ -113,9 +116,14 @@ class ChatTool(Tool):
             The chosen :class:`~meshterm.core.models.Conversation`, or ``None`` if
             cancelled.
         """
-        device = await ctx.device()
-        channels = await _read_channels(device)
-        contacts = await device.get_contacts()
+        # Through the session cache: this picker runs on every Chat open, and its two reads —
+        # the channel-slot probe and the contacts table — are the two slowest round-trips on a
+        # companion. Reading them from the device each time is what made opening Chat stall for
+        # seconds (the cached chat screen behind it never got the chance to help). The cache
+        # holds channels until the channel editor writes a slot and refreshes contacts in the
+        # background (see :class:`~meshterm.services.device_state.DeviceState`).
+        channels = _channels_from_slots(await ctx.devstate.channel_slots())
+        contacts = await ctx.devstate.contacts()
         # A stable snapshot orders the rows (so the list doesn't reshuffle under the cursor),
         # while a self-refreshing view feeds each row's live preview (see _LiveLasts).
         lasts = ctx.repo.last_chat_messages()
@@ -379,6 +387,48 @@ def _enable_receive_debug() -> None:
         log = logging.getLogger(name)
         log.setLevel(logging.DEBUG)
         log.addHandler(handler)
+
+
+def _channels_from_slots(slots: list["ChannelSlot"]) -> list[Conversation]:
+    """Turn cached channel slots into channel conversations, always offering Public (slot 0).
+
+    The picker reads its channels through the session cache
+    (:meth:`~meshterm.services.device_state.DeviceState.channel_slots`) so it reuses the one
+    slow slot probe instead of re-walking every slot on each Chat open; this maps that cached
+    :class:`~meshterm.ui.channels.ChannelSlot` list onto the picker's
+    :class:`~meshterm.core.models.Conversation` rows. Channel 0 (the default public channel) is
+    synthesised when the firmware reports no slot for it, so there is always somewhere to chat —
+    the same guarantee :func:`_read_channels` (the CLI path) makes.
+
+    Args:
+        slots: The configured channel slots, from the session cache.
+
+    Returns:
+        One :class:`~meshterm.core.models.Conversation` per slot, with Public prepended when
+        slot 0 is absent.
+    """
+    conversations = [
+        Conversation(
+            label=slot.name,
+            is_channel=True,
+            channel_idx=slot.idx,
+            channel_id=channel_identity(slot.name, slot.secret),
+            secret=slot.secret,
+        )
+        for slot in slots
+    ]
+    if not any(c.channel_idx == 0 for c in conversations):
+        conversations.insert(
+            0,
+            Conversation(
+                label="Public",
+                is_channel=True,
+                channel_idx=0,
+                channel_id="slot:0",
+                secret=DEFAULT_PUBLIC_SECRET,
+            ),
+        )
+    return conversations
 
 
 async def _read_channels(device: Device) -> list[Conversation]:

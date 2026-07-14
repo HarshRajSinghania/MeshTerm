@@ -152,7 +152,12 @@ async def manage_channels(ctx: "AppContext") -> int:
     highlight: Optional[object] = None
 
     while True:
-        slots = await read_channel_slots(device)
+        # Through the session cache — the slot probe walks every index and is one of the
+        # slowest reads on a screen open, so a screen opened after this one (or this one after
+        # another) reuses the one probe. A local copy so the mutation helpers below can work a
+        # working list; each mutation invalidates the cache (see below), so the next loop
+        # re-probes the fresh layout rather than trusting the stale copy.
+        slots = list(await ctx.devstate.channel_slots())
         title, items = _menu_items(ctx, slots, capacity, stats)
 
         async def handle(choice: object) -> bool:

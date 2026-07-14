@@ -59,8 +59,10 @@ class TxOptimizeTool(Tool):
         """
         from ..ui.admin_picker import pick_admin_node
 
-        device = await ctx.device()
-        contacts = await device.get_contacts()
+        # Through the session cache: this two-picker entry flow runs on every open, and the
+        # contacts table is a slow read on a busy node (see
+        # :class:`~meshterm.services.device_state.DeviceState`).
+        contacts = await ctx.devstate.contacts()
         admin = await pick_admin_node(
             ctx,
             contacts,

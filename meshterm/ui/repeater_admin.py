@@ -84,7 +84,11 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     session = ctx.ui.session
 
     device = await ctx.device()
-    contacts = await device.get_contacts()
+    # Through the session cache — opening this screen shouldn't re-read the (slow) contacts
+    # table when another screen already has (see
+    # :class:`~meshterm.services.device_state.DeviceState`); the device handle below is still
+    # needed for the admin login and the CLI session that follow.
+    contacts = await ctx.devstate.contacts()
     node = await pick_admin_node(
         ctx,
         contacts,

@@ -130,8 +130,11 @@ class TraceTool(Tool):
         from ..ui.tui import Choice, Separator
         from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
-        device = await ctx.device()
-        contacts = await device.get_contacts()
+        # Through the session cache: this picker runs on every Trace open, and the contacts
+        # table is a slow round-trip on a busy node — re-reading it here (in front of the
+        # already-cached trace screen) is what kept opening Trace feeling like a stall. See
+        # the note in the ``nodes`` tool and :class:`~meshterm.services.device_state.DeviceState`.
+        contacts = await ctx.devstate.contacts()
         recent = _recent_targets(ctx.repo.traced_targets(), contacts)
 
         if not contacts and not recent:
