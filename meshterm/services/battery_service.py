@@ -13,14 +13,17 @@ Two device facts shape what it can report:
   the reading is turned into a state-of-charge estimate against a single-cell LiPo
   discharge curve (:func:`battery_percent`). Devices with no battery gauge answer with no
   usable level; those are reported as *absent* so the header shows nothing for them.
-* Firmware exposes **no charging flag at all**. Charging is therefore *inferred* from the
-  terminal voltage — but a single-cell LiPo sags tens of millivolts under each LoRa
+* The companion protocol exposes **no charging flag at all**. Charging is therefore *inferred*
+  from the terminal voltage — but a single-cell LiPo sags tens of millivolts under each LoRa
   transmission and springs back when the radio idles, so the raw sample trend is mostly load
   noise, not charge. The inference reads it robustly (the median of the sample window's older
   half against its newer half, which discards those transient spikes) and calls charge only
   on a large, *sustained* rise, dropping straight back the moment the pack goes flat. It is
-  still an estimate — the best the firmware allows — but one a discharging or resting pack no
-  longer trips.
+  still an estimate — the best the companion protocol allows — but one a discharging or
+  resting pack no longer trips. Where a device *does* expose a firmware charging flag over the
+  standard BLE Battery Level Status characteristic (no MeshCore build does today), that ground
+  truth is preferred and the inference only fills in for the rest — see
+  :meth:`~meshterm.core.connection.Device.get_hw_charging`.
 """
 
 from __future__ import annotations
@@ -197,10 +200,15 @@ class BatteryService:
             return
         now = time.monotonic()
         self._history.append((now, mv))
+        # Prefer a firmware-reported charging flag when the device exposes one (the standard
+        # BLE Battery Level Status characteristic); only where it can't — every MeshCore device
+        # today — fall back to inferring charge from the voltage trend.
+        hw_charging = await device.get_hw_charging()
+        charging = hw_charging if hw_charging is not None else self._charging(now)
         self._reading = BatteryReading(
             millivolts=mv,
             percent=battery_percent(mv),
-            charging=self._charging(now),
+            charging=charging,
         )
 
     def _charging(self, now: float) -> bool:

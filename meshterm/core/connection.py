@@ -58,6 +58,45 @@ _MOCK_MONITOR_INTERVAL_S = 0.05
 #: safety net for firmware that doesn't reliably push ``MESSAGES_WAITING`` (seconds).
 _MESSAGE_POLL_INTERVAL_S = 3.0
 
+#: Standard Bluetooth GATT Battery Service and its Battery Level Status characteristic (GATT
+#: Specification Supplement, "Battery Level Status", 0x2BED — added in Battery Service 1.1).
+#: Where a companion exposes these, the status characteristic carries a *firmware-reported*
+#: charging flag — a ground truth the MeshCore companion protocol itself never provides (it
+#: reports only a battery voltage). MeshCore firmware does not implement them today: its BLE
+#: profile is just the Nordic UART pipe plus DFU, confirmed by dumping the GATT table. So this
+#: path lies dormant behind a fail-safe fallback and lights up automatically only if a future
+#: device ships the service. See :func:`charging_from_battery_level_status`.
+_BATTERY_SERVICE_UUID = "0000180f-0000-1000-8000-00805f9b34fb"
+_BATTERY_LEVEL_STATUS_UUID = "00002bed-0000-1000-8000-00805f9b34fb"
+
+
+def charging_from_battery_level_status(data: bytes) -> Optional[bool]:
+    """Decode the charging state from a GATT *Battery Level Status* value (0x2BED).
+
+    Per the Bluetooth GATT Specification Supplement the characteristic opens with a 1-byte
+    flags field followed by a 16-bit little-endian *Power State* word; the two bits at offset
+    5 are the **Charge State** enum — 0 unknown, 1 charging, 2 discharging (active), 3
+    discharging (inactive). The fields after the word (identifier, battery level, additional
+    status) are optional and unread here, so only the first three bytes are required.
+
+    Args:
+        data: The raw characteristic value as read over GATT.
+
+    Returns:
+        ``True`` when the pack reports it is charging, ``False`` when it reports discharging,
+        or ``None`` when the value is too short or the state is *unknown* — in which case the
+        caller should fall back to the voltage-trend inference.
+    """
+    if len(data) < 3:
+        return None
+    power_state = int.from_bytes(data[1:3], "little")
+    charge_state = (power_state >> 5) & 0b11
+    if charge_state == 1:
+        return True
+    if charge_state in (2, 3):
+        return False
+    return None
+
 #: Per-``get_msg`` timeout in the message pump, so a missing device reply can't wedge the
 #: drain loop (seconds).
 _MESSAGE_GET_TIMEOUT_S = 5.0
@@ -546,6 +585,18 @@ class Device(ABC):
             ``used_kb``/``total_kb``. Empty when the read is unsupported.
         """
 
+    async def get_hw_charging(self) -> Optional[bool]:
+        """Return a firmware-reported charging flag, or ``None`` when the device has none.
+
+        The companion protocol carries only a battery voltage, so almost every device answers
+        ``None`` and callers fall back to inferring charge from the voltage trend (see
+        :meth:`~meshterm.services.battery_service.BatteryService._charging`). A transport that
+        can read a real charging flag — a BLE device exposing the standard Battery Level Status
+        characteristic (0x2BED) — overrides this to return it. Best-effort by contract: it
+        never raises and never meaningfully blocks, so a caller may await it every poll.
+        """
+        return None
+
     @abstractmethod
     async def get_stats(self) -> dict:
         """Return the firmware's core/radio/packet statistics, merged into one dict.
@@ -779,6 +830,9 @@ class MeshCoreDevice(Device):
         # the first response and one caller silently gets the other's channel. Holding this lock
         # keeps at most one channel read outstanding, so the response is unambiguously ours.
         self._channel_read_lock = asyncio.Lock()
+        #: Set once we've noted a device exposing the standard BLE Battery Service, so the
+        #: "using its charging flag" log fires a single time per session rather than each poll.
+        self._logged_bas = False
 
     @property
     def transport(self) -> str:
@@ -1829,6 +1883,36 @@ class MeshCoreDevice(Device):
     async def get_battery(self) -> dict:  # noqa: D102 - inherited docstring
         event = self._ok(await self._require().commands.get_bat())
         return dict(getattr(event, "payload", {}) or {})
+
+    async def get_hw_charging(self) -> Optional[bool]:  # noqa: D102 - inherited docstring
+        # BLE only, and only when a device exposes the standard Battery Level Status
+        # characteristic — no MeshCore firmware does today, so this returns None on every
+        # current device and the battery poller falls back to its voltage-trend inference. It
+        # reaches the raw bleak client the way the forced-teardown path does (through
+        # ``connection_manager.connection``) and is wrapped whole: any failure — attribute
+        # path moved, service absent, read refused, short value — is a quiet None, never a
+        # disrupted poll.
+        if self._transport != "ble" or self._mc is None:
+            return None
+        try:
+            client = self._mc.connection_manager.connection.client
+            service = client.services.get_service(_BATTERY_SERVICE_UUID)
+            if service is None:
+                return None
+            char = service.get_characteristic(_BATTERY_LEVEL_STATUS_UUID)
+            if char is None or "read" not in getattr(char, "properties", ()):
+                return None
+            value = await client.read_gatt_char(char)
+        except Exception as exc:  # noqa: BLE001 - a best-effort probe must never disrupt polling
+            _log.debug("hardware charging read failed: %s", exc)
+            return None
+        if not self._logged_bas:
+            self._logged_bas = True
+            _log.info(
+                "device exposes a standard BLE Battery Service (0x180F); using its "
+                "charging flag over the voltage-trend inference — verify the reading"
+            )
+        return charging_from_battery_level_status(bytes(value))
 
     async def get_stats(self) -> dict:  # noqa: D102 - inherited docstring
         mc = self._require()

@@ -8,8 +8,10 @@ charging inference are all assertable without a device or a terminal.
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
+from meshterm.core.connection import charging_from_battery_level_status
 from meshterm.services.battery_service import (
     _BATTERY_PRESENT_FLOOR_MV,
     POLL_S,
@@ -85,15 +87,22 @@ def test_battery_cell_charging_sweeps_bottom_to_full_holding_the_percent() -> No
 # --- the poller ---------------------------------------------------------------------------
 
 
-def _service(levels) -> BatteryService:
-    """A ``BatteryService`` over a fake context whose device answers ``levels`` in turn."""
+def _service(levels, hw_charging=None) -> BatteryService:
+    """A ``BatteryService`` over a fake context whose device answers ``levels`` in turn.
+
+    ``hw_charging`` is what the device's firmware charging flag reports each poll — ``None``
+    (the default, and every real MeshCore device) means "no flag", so the poller infers.
+    """
     seq = list(levels)
 
     async def get_battery() -> dict:
         return {"level": seq.pop(0)} if seq else {}
 
+    async def get_hw_charging():
+        return hw_charging
+
     async def device() -> SimpleNamespace:
-        return SimpleNamespace(get_battery=get_battery)
+        return SimpleNamespace(get_battery=get_battery, get_hw_charging=get_hw_charging)
 
     ctx = SimpleNamespace(
         is_connected=True,
@@ -175,3 +184,53 @@ def test_battery_poller_charging_ignores_load_sag_and_flat_or_falling_packs() ->
     svc._history.clear()
     svc._history.extend(_history_of(now, [3800, 3900]))
     assert svc._charging(now) is False
+
+
+# --- the standard BLE charging flag (GATT Battery Level Status, 0x2BED) --------------------
+
+
+def _level_status(charge_state: int, *, flags: int = 0, extra: bytes = b"") -> bytes:
+    """A Battery Level Status value: flags byte, the Power State word, then optional tail."""
+    power_state = (charge_state & 0b11) << 5
+    return bytes([flags]) + power_state.to_bytes(2, "little") + extra
+
+
+def test_charging_flag_decodes_the_charge_state_field() -> None:
+    """The 2-bit Charge State enum maps to charging / not / unknown per the GSS."""
+    assert charging_from_battery_level_status(_level_status(1)) is True   # charging
+    assert charging_from_battery_level_status(_level_status(2)) is False  # discharging (active)
+    assert charging_from_battery_level_status(_level_status(3)) is False  # discharging (inactive)
+    assert charging_from_battery_level_status(_level_status(0)) is None   # unknown → infer
+
+
+def test_charging_flag_reads_only_the_power_state_word() -> None:
+    """Other Power State bits and the optional identifier/level tail don't sway the verdict."""
+    # Battery present + wired external power + charging, with identifier & level bytes trailing.
+    value = _level_status(1, flags=0b011, extra=b"\xab\xcd\x50")
+    assert charging_from_battery_level_status(value) is True
+    # A short value (no room for the Power State word) is unknown, never a guess.
+    assert charging_from_battery_level_status(b"\x00") is None
+    assert charging_from_battery_level_status(b"") is None
+
+
+def test_battery_poller_prefers_the_hardware_charging_flag_over_inference() -> None:
+    """A firmware charging flag wins over the voltage-trend guess, in both directions."""
+    now = time.monotonic()
+    rising = [3700, 3712, 3724, 3736, 3748, 3760, 3772, 3784]
+
+    # Baseline: with no hardware flag the rising trend is *inferred* as charging.
+    svc = _service([3900], hw_charging=None)
+    svc._history.extend(_history_of(now, rising))
+    asyncio.run(svc._poll())
+    assert svc.reading().charging is True
+
+    # Same rising trend, but the hardware reports NOT charging → the flag overrides the guess.
+    svc = _service([3900], hw_charging=False)
+    svc._history.extend(_history_of(now, rising))
+    asyncio.run(svc._poll())
+    assert svc.reading().charging is False
+
+    # And a hardware "charging" wins with no trend at all, where inference would say not.
+    svc = _service([3900], hw_charging=True)
+    asyncio.run(svc._poll())
+    assert svc.reading().charging is True
