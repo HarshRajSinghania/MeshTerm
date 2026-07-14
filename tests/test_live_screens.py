@@ -362,6 +362,30 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
     assert body.count("3d") >= 2
 
 
+async def test_compose_seeds_from_the_visible_route_not_the_empty_spec() -> None:
+    """Opening Compose resumes from the route on screen, not the stored spec.
+
+    On first open nothing has been composed, but the screen already shows the
+    auto-resolved plan; the composer must open seeded with that plan's hops so the
+    user edits the route they see rather than starting from a blank path.
+    """
+    asked: list[str] = []
+
+    async def compose(current: str):  # noqa: ANN001
+        asked.append(current)
+        return None  # observe the seed only; leave the (auto) plan untouched
+
+    screen, _ = _trace_screen(
+        mode="path", compose_path=compose,
+        auto_spec=lambda: "3d,f2", auto_source="last walk",
+    )
+    screen._index = screen._actions.index("compose")
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert asked == ["3d,f2"]  # seeded from the visible auto plan, not ""
+    assert screen._path_spec == ""  # None keeps the plan auto (nothing pinned)
+
+
 async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
     """Committing Explore paths runs the flow; adopting sets the spec, None keeps it."""
 

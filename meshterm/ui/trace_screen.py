@@ -479,14 +479,18 @@ class TraceScreen(Screen):
         elif key == "samples":
             self._open_flow(self._pick_samples)
         elif key == "compose":
-            self._open_flow(self._compose_path)
+            # Seed the composer with the route the screen is showing — the composed
+            # spec if one stands, else the auto-resolved plan — not the bare
+            # (empty on first open) stored spec, so opening Compose always resumes
+            # from the visible route.
+            self._open_flow(self._compose_path, seed=self._effective_spec()[0])
         elif key == "explore" and self._explore is not None:
             self._open_flow(self._explore)
         elif key == "back":
             self.cancel()
             self.resolve(None)
 
-    def _open_flow(self, flow: PathFlow) -> None:
+    def _open_flow(self, flow: PathFlow, seed: Optional[str] = None) -> None:
         """Float a path-picking flow over the screen (one at a time, not mid-trace).
 
         The composer, the scenario explorer, and the width picker all resolve the
@@ -496,6 +500,11 @@ class TraceScreen(Screen):
 
         Args:
             flow: The dialog flow to run with the current spec.
+            seed: The spec handed to the flow, when it should differ from the stored
+                one — the composer seeds from the *visible* route (the auto plan when
+                no spec stands), so it never opens blank over a shown route. The
+                adopt test still compares against the stored spec, so re-confirming an
+                auto plan verbatim simply pins it, exactly like adopting it by hand.
         """
         if self._dialog_open or self._running:
             return
@@ -503,7 +512,7 @@ class TraceScreen(Screen):
 
         async def run() -> None:
             try:
-                spec = await flow(self._path_spec)
+                spec = await flow(self._path_spec if seed is None else seed)
                 if spec is not None and spec.strip() != self._path_spec:
                     # A different spec is a different measurement: the aggregates,
                     # per-hop medians, and log all belong to the old route, so the
