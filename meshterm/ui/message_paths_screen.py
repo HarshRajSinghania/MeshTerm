@@ -8,11 +8,13 @@ detail read together:
 * a **graph** up top draws every distinct path the message took as braille lines:
   the currently selected path white, the unused paths gray beneath it. The origin
   sits at the left, we sit at the right, and every relay in between gets its marker
-  plus the first byte of its hash in the marker's colour — the row list carries the
-  names, so the graph's labels stay two cells wide and a many-path graph stays
-  readable. Distinct depths spread evenly across the width, so forks read clearly
-  however lopsided the paths' lengths are, and each label first hunts for a spot
-  clear of the drawn lines before settling for one that overprints them.
+  plus the first byte of its hash — set straight above or below the marker, in the
+  mesh name's own colour, so the byte reads as that node and never crowds the line
+  running through it. The row list carries the full names, so the graph's labels
+  stay two cells wide and a many-path graph stays readable. Distinct depths spread
+  evenly across the width, so forks read clearly however lopsided the paths' lengths
+  are; each label fans outward from the centre line and first hunts for a spot clear
+  of the drawn lines before settling for one that overprints them.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
   the relay chain through the shared compact path widget, each named hop annotated
   with the hash byte it is addressed by (``YUL-Poly (3d)``, the trace presentation).
@@ -35,8 +37,8 @@ from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
 from .atlas_screen import _UNKNOWN
 from .map_render import _NODE, _SELF
-from .mapcanvas import MapCanvas, parse_hex
-from .theme import snr_style
+from .mapcanvas import RGB, MapCanvas, parse_hex
+from .theme import name_style, snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
 from .widgets import NodeResolver, path_text
@@ -49,12 +51,21 @@ _DST = "\x00dst"
 _HSTEP = 4
 
 #: Vertical dot separation between path lanes, and the graph's height bounds in rows.
-_LANE_STEP_DOTS = 10
+_LANE_STEP_DOTS = 12
 _GRAPH_MIN_H = 5
-_GRAPH_MAX_H = 14
+_GRAPH_MAX_H = 15
 
-#: Dot rows the graph keeps as breathing room around the lane fan when sizing itself.
-_GRAPH_SLACK_DOTS = 18
+#: Dots reserved beyond the outermost lane at each end of the fan — a label row for
+#: that lane's marker, plus a little air. The box is sized and centred on the fan's
+#: real extent (which is rarely symmetric), so it spends its rows on the paths rather
+#: than on a mirrored half that stays empty.
+_GRAPH_END_DOTS = 8
+
+#: The dot row within a character cell a horizontal edge line is aimed at — the
+#: upper-middle of the cell's 2×4 pixel grid (rows 0..3 top-down), where a one-dot
+#: line reads as running through the glyph rather than hugging its bottom edge. Every
+#: node's y is snapped onto this row (see ``pos``) so same-lane runs stay level there.
+_CELL_MID_DOT = 1
 
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
@@ -65,6 +76,22 @@ _GRAPH_LABEL_W = 12
 #: Edge colours: the selected path draws white over the unused paths' gray.
 _EDGE_SELECTED = (255, 255, 255)
 _EDGE_UNUSED = (110, 110, 110)
+
+
+def _mid_row(y_dot: int) -> int:
+    """Snap a dot row onto the upper-middle dot of its character cell.
+
+    A braille cell is four dot rows tall; a horizontal line drawn on the top or
+    bottom row hugs the glyph's edge and reads as sitting too high or too low.
+    Snapping every node's y to :data:`_CELL_MID_DOT` keeps markers — and the level
+    runs between same-lane nodes — centred in the cell's pixel space.
+    """
+    return round((y_dot - _CELL_MID_DOT) / 4) * 4 + _CELL_MID_DOT
+
+
+def _name_rgb(name: str) -> RGB:
+    """The RGB of a name's stable palette hue (``theme.name_style`` minus its bold)."""
+    return parse_hex(name_style(name).split()[-1])
 
 
 class MessagePathsScreen(Screen):
@@ -303,24 +330,36 @@ class MessagePathsScreen(Screen):
             if node not in (_SRC, _DST)
         }
 
-        # Height follows where the relays actually land after lane-averaging, so
-        # the box spends its rows on the fan, not on empty lanes.
+        # Height follows where the relays actually land after lane-averaging — and how
+        # far the fan reaches *each* way, which is rarely symmetric (lanes fan 0, −1, +1,
+        # −2, …). Sizing to the real up/down reach and centring the endpoints' lane-0
+        # line on it keeps the box off the empty half a mirrored block would leave.
         step = _LANE_STEP_DOTS
-        reach = max((abs(y) for y in lane_y.values()), default=0.0)
-        rows = max(_GRAPH_MIN_H, ceil((2 * reach * step + _GRAPH_SLACK_DOTS) / 4))
+        ups = -min([0.0, *lane_y.values()])   # lanes rising above the lane-0 line
+        downs = max([0.0, *lane_y.values()])  # …and dropping below it
+
+        def sized(step: int) -> tuple[int, int]:
+            return (round(ups * step) + _GRAPH_END_DOTS,
+                    round(downs * step) + _GRAPH_END_DOTS)
+
+        top, bot = sized(step)
+        rows = max(_GRAPH_MIN_H, ceil((top + bot) / 4))
         if rows > _GRAPH_MAX_H:
             rows = _GRAPH_MAX_H
-            step = max(4, int((rows * 4 - _GRAPH_SLACK_DOTS) / (2 * reach)))
+            reach = ups + downs
+            if reach:
+                step = max(4, int((rows * 4 - 2 * _GRAPH_END_DOTS) / reach))
+            top, bot = sized(step)
         canvas = MapCanvas(width, rows)
         dot_w, dot_h = width * 2, rows * 4
-        cy = dot_h // 2
+        cy = _mid_row(top)
         span = dot_w - 2 * _GRAPH_PAD_DOTS
 
         def pos(node: str) -> tuple[int, int]:
             x = _GRAPH_PAD_DOTS + round(slot[depth[node]] * span)
             if node in (_SRC, _DST):
                 return x, cy
-            return x, cy + round(lane_y[node] * step)
+            return x, _mid_row(cy + round(lane_y[node] * step))
 
         # Edges: the selected path white and drawn last so shared cells go to it;
         # the unused paths sit gray beneath.
@@ -346,21 +385,27 @@ class MessagePathsScreen(Screen):
             label = self._node_label(node)
             if len(label) > _GRAPH_LABEL_W:
                 label = label[: _GRAPH_LABEL_W - 1] + "…"
-            rgb = (
-                (255, 255, 255)
-                if node == _DST
-                else parse_hex(self._node_glyph(node)[1])
-            )
+            rgb = self._label_rgb(node)
             x, y = pos(node)
-            spots = [(x, y + dy) for dy in (0, 4, -4)]
-            placed = False
-            for sx, sy in spots:
-                if canvas.marker_label(sx, sy, label, rgb, avoid_dots=True):
-                    placed = True
-                    break
+            if node in (_SRC, _DST):
+                # Endpoints ride the canvas edges, where a centred name would fall
+                # off it, so their label sits beside the marker (one clean cell of
+                # gap) — an x-offset where the relays take a y-offset.
+                if not canvas.marker_label(x, y, label, rgb, avoid_dots=True):
+                    canvas.marker_label(x, y, label, rgb)
+                continue
+            # Relays label straight above or below the marker — never beside it, so
+            # the hash byte never crowds the line running through the node. The side
+            # away from the centre line is tried first, so labels fan outward into
+            # the clear; a spot clear of the drawn lines wins over one that overprints.
+            rows_out = (y - 4, y + 4) if y <= cy else (y + 4, y - 4)
+            placed = any(
+                canvas.place_label(x, sy, label, rgb, bold=True, avoid_dots=True)
+                for sy in rows_out
+            )
             if not placed:
-                for sx, sy in spots:
-                    if canvas.marker_label(sx, sy, label, rgb):
+                for sy in rows_out:
+                    if canvas.place_label(x, sy, label, rgb, bold=True):
                         break
         return canvas.to_ansi_lines()
 
@@ -382,3 +427,23 @@ class MessagePathsScreen(Screen):
         if node == _SRC:
             return self._source or "?"
         return node[:2]
+
+    def _label_rgb(self, node: str) -> RGB:
+        """The colour a node's graph label is drawn in.
+
+        The marker keeps its type colour (a star for us, a dot for a named node), but
+        the label beside/under it takes the node's *name* hue — the same per-name
+        palette the rows and the rest of the app colour that node by — so the hash
+        byte reads as the mesh name it stands for. Us is the pure-white ``you``; a
+        node with no name to key a hue on falls back to its marker's own colour.
+        """
+        if node == _DST:
+            return (255, 255, 255)
+        if node == _SRC:
+            if self._source and self._source == self._self_name:
+                return (255, 255, 255)
+            return _name_rgb(self._source) if self._source else parse_hex(_UNKNOWN[1])
+        named = self._resolve(node)
+        if named and named != node:
+            return _name_rgb(named)
+        return parse_hex(self._node_glyph(node)[1])

@@ -82,9 +82,12 @@ class MapCanvas:
         ]
         self._prio = [[-1] * self.cell_w for _ in range(self.cell_h)]
         # Overlay: (cx, cy) -> (char, rgb, bold). Occupied tracks cells claimed by labels /
-        # markers so later labels can avoid them.
+        # markers so later labels can avoid them; label_cells is the labels alone, so the
+        # anti-stacking margin can guard against text piling up without also forbidding a
+        # label from sitting immediately above or below a (single-glyph) marker.
         self._overlay: dict[tuple[int, int], tuple[str, RGB, bool]] = {}
         self._occupied: set[tuple[int, int]] = set()
+        self._label_cells: set[tuple[int, int]] = set()
 
     # -- primitives -------------------------------------------------------------
 
@@ -217,7 +220,14 @@ class MapCanvas:
         return all(self._bits[cy][mx] == 0 for mx in range(start_cx, start_cx + length))
 
     def place_label(
-        self, x: float, y: float, text: str, color: RGB, *, bold: bool = False
+        self,
+        x: float,
+        y: float,
+        text: str,
+        color: RGB,
+        *,
+        bold: bool = False,
+        avoid_dots: bool = False,
     ) -> bool:
         """Write a centered basemap label at dot ``(x, y)`` if it fits without collision.
 
@@ -227,6 +237,10 @@ class MapCanvas:
             text: Label text.
             color: Text colour.
             bold: Whether to embolden (used for the most important places).
+            avoid_dots: Also reject the spot when braille dots already sit under the
+                run, so a caller can sweep for a placement clear of the drawn lines
+                before settling for one that overprints them (as :meth:`marker_label`
+                does for its side placements).
 
         Returns:
             ``True`` if placed, ``False`` if it fell off-canvas or overlapped existing text.
@@ -237,6 +251,8 @@ class MapCanvas:
         cx = int(x) >> 1
         cy = int(y) >> 2
         start = cx - len(text) // 2
+        if avoid_dots and not self._dot_free(start, cy, len(text)):
+            return False
         return self._place_run(start, cy, text, color, bold=bold, checked=True)
 
     def _place_run(
@@ -251,12 +267,13 @@ class MapCanvas:
     ) -> bool:
         """Write ``text`` starting at cell ``(start_cx, cy)``.
 
-        With ``checked`` the run is skipped entirely if any target cell (or a one-cell
-        margin on every side, including the rows directly above and below) is already
-        claimed or off-canvas; otherwise it is forced and simply clipped to the canvas.
-        The vertical margin keeps text from stacking flush across rows, which is what
-        otherwise lets dense areas silt up into a solid block of labels. Returns whether
-        anything was placed.
+        With ``checked`` the run is skipped entirely if it would run off-canvas, overprint
+        or touch any claimed cell on its own row, or stack flush against another label on
+        the row directly above or below; otherwise it is forced and simply clipped to the
+        canvas. The same-row margin keeps a label off its neighbours (markers included);
+        the vertical margin guards only against *label* stacking — which is what otherwise
+        lets dense areas silt up into a solid block of text — so a label may still sit
+        immediately above or below a single-glyph marker. Returns whether anything was placed.
         """
         if not (0 <= cy < self.cell_h):
             return False
@@ -265,9 +282,11 @@ class MapCanvas:
             if start_cx < 0 or start_cx + len(text) > self.cell_w:
                 return False
             margin = range(start_cx - 1, start_cx + len(text) + 1)
+            if any((mx, cy) in self._occupied for mx in margin):
+                return False
             if any(
-                (mx, my) in self._occupied
-                for my in (cy - 1, cy, cy + 1)
+                (mx, my) in self._label_cells
+                for my in (cy - 1, cy + 1)
                 for mx in margin
             ):
                 return False
@@ -277,6 +296,7 @@ class MapCanvas:
             if 0 <= mx < self.cell_w:
                 self._overlay[(mx, cy)] = (ch, color, bold)
                 self._occupied.add((mx, cy))
+                self._label_cells.add((mx, cy))
                 placed = True
         return placed
 
