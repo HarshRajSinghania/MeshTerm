@@ -102,6 +102,18 @@ class ChatService:
         if key is not None:
             self._unread.pop(key, None)
 
+    def clear_unread(self, key: str) -> None:
+        """Drop a conversation's unread count without making it the active thread.
+
+        Used when a channel is muted: the channel's outstanding unread is zeroed (per the
+        mute UX) while the currently-open conversation, if any, is left untouched — unlike
+        :meth:`set_active`, which also re-points the active thread.
+
+        Args:
+            key: The conversation key to clear.
+        """
+        self._unread.pop(key, None)
+
     async def refresh_channels(self) -> None:
         """Rebuild the slot-index -> channel-identity map from the device's channel table.
 
@@ -265,15 +277,26 @@ class ChatService:
     def _store_inbound(
         self, run_id: int, message: Message, channel_id: Optional[str]
     ) -> None:
-        """Persist an inbound message under a resolved identity and bump its unread count."""
+        """Persist an inbound message under a resolved identity and bump its unread count.
+
+        The transcript is always recorded; the unread bump is skipped for the open
+        conversation (the user is already reading it) and for a *muted* channel (its new
+        messages don't raise the unread badge — see :class:`~meshterm.core.mute_store.MuteStore`).
+        A muted channel is still written to history, so opening it later shows everything.
+        """
         chat = ChatMessage.from_message(message, channel_id=channel_id)
         self._session_count += 1
-        if chat.key != self._active:
+        if chat.key != self._active and not self._is_muted(chat):
             self._unread[chat.key] = self._unread.get(chat.key, 0) + 1
         try:
             self._ctx.repo.record_chat_message(chat, run_id=run_id)
         except Exception as exc:  # noqa: BLE001 - never let logging break the subscription
             self._ctx.log.debug("chat: failed to record message: %s", exc)
+
+    def _is_muted(self, chat: ChatMessage) -> bool:
+        """Whether this message belongs to a channel the user has muted notifications for."""
+        store = getattr(self._ctx, "mute_store", None)
+        return bool(chat.is_channel and store is not None and store.is_muted(chat.channel_id))
 
     async def _deliver_direct(self, contact: Contact, text: str):
         """Transmit a direct message, softly retrying until it is acknowledged.

@@ -16,6 +16,7 @@ from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.config import DeviceProfile, Settings
 from .core.courier_store import CourierStore
+from .core.mute_store import MuteStore
 from .core.remote_store import RemoteStore
 from .core.watch_store import WatchStore
 from .core.connection import Device, make_device
@@ -56,6 +57,9 @@ class AppContext:
             log (defaults to ``<config_dir>/watchtower.json`` when not injected).
         courier_store: Store for the Courier's outbox — queued, delivered, and
             given-up messages (defaults to ``<config_dir>/courier.json``).
+        mute_store: Store for muted channel notifications — the channels whose new
+            messages don't raise the unread badge (defaults to
+            ``<config_dir>/mutes.json`` when not injected).
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -78,6 +82,7 @@ class AppContext:
     remote_store: Optional[RemoteStore] = None
     watch_store: Optional[WatchStore] = None
     courier_store: Optional[CourierStore] = None
+    mute_store: Optional[MuteStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -119,6 +124,8 @@ class AppContext:
             self.watch_store = WatchStore(self.settings.config_dir / "watchtower.json")
         if self.courier_store is None:
             self.courier_store = CourierStore(self.settings.config_dir / "courier.json")
+        if self.mute_store is None:
+            self.mute_store = MuteStore(self.settings.config_dir / "mutes.json")
 
     @property
     def profile_name(self) -> Optional[str]:

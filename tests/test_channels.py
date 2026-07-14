@@ -630,6 +630,129 @@ async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> N
     assert summary == "Slot 3 · 1 message · 1 unread · last message now"
 
 
+# -- muting channel notifications ---------------------------------------------
+
+
+def test_mute_store_round_trips_and_persists(tmp_path: Path) -> None:
+    """A muted channel is remembered across store reloads; unmuting forgets it."""
+    from meshterm.core.mute_store import MuteStore
+
+    path = tmp_path / "mutes.json"
+    store = MuteStore(path)
+    assert store.is_muted("wardriving-id") is False
+    assert store.is_muted(None) is False  # an unresolved channel is never muted
+
+    store.set_muted("wardriving-id", True)
+    assert store.is_muted("wardriving-id") is True
+    assert MuteStore(path).is_muted("wardriving-id") is True  # survived a reload from disk
+
+    store.set_muted("wardriving-id", False)
+    assert store.is_muted("wardriving-id") is False
+    assert MuteStore(path).muted() == set()  # the unmute persisted too
+
+
+async def test_muting_suppresses_unread_but_still_records(ctx: AppContext) -> None:
+    """A muted channel's inbound message lands in history but never bumps the unread badge."""
+    from meshterm.core.events import MeshEvent
+    from meshterm.core.models import Message
+
+    device = await ctx.device()
+    await device.set_channel(0, "#wardriving", None)  # public, key derived from the name
+    slot = (await read_channel_slots(device))[0]
+    ctx.mute_store.set_muted(slot.identity, True)
+
+    await ctx.chat.start()
+    try:
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="auto beacon", channel=0, is_channel=True))
+        )
+        await ctx.chat._queue.join()
+        # Muted: no unread accrued anywhere, but the transcript is all there.
+        assert ctx.chat.unread(slot.conversation.key) == 0
+        assert ctx.chat.unread_total() == 0
+        stored = ctx.repo.recent_chat_messages(is_channel=True, channel_id=slot.identity)
+        assert [m.text for m in stored] == ["auto beacon"]
+    finally:
+        await ctx.chat.stop()
+
+
+async def test_unmuted_channel_still_bumps_unread(ctx: AppContext) -> None:
+    """The control case: an ordinary (unmuted) channel does raise the unread badge."""
+    from meshterm.core.events import MeshEvent
+    from meshterm.core.models import Message
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slot = (await read_channel_slots(device))[0]
+
+    await ctx.chat.start()
+    try:
+        ctx.events.publish(
+            MeshEvent.message_event(Message(text="hey", channel=0, is_channel=True))
+        )
+        await ctx.chat._queue.join()
+        assert ctx.chat.unread(slot.conversation.key) == 1
+    finally:
+        await ctx.chat.stop()
+
+
+async def test_toggle_mute_zeros_unread_and_persists(ctx: AppContext) -> None:
+    """Muting through the detail toggle flips the store and clears the channel's unread."""
+    from meshterm.ui.channels import _is_muted, _toggle_mute
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slot = (await read_channel_slots(device))[0]
+    ctx.chat._unread[slot.conversation.key] = 4  # as the service would after four arrivals
+    assert ctx.chat.unread_total() == 4
+
+    _toggle_mute(ctx, slot)  # mute
+    assert _is_muted(ctx, slot) is True
+    assert ctx.chat.unread(slot.conversation.key) == 0  # muting zeroed it
+    assert ctx.chat.unread_total() == 0
+
+    _toggle_mute(ctx, slot)  # unmute
+    assert _is_muted(ctx, slot) is False
+
+
+async def test_muted_channel_row_shows_bell_not_unread(ctx: AppContext) -> None:
+    """A muted channel's list row carries the 🔕 glyph in place of an unread badge."""
+    from meshterm.ui.channels import _LiveStats, _menu_items
+    from meshterm.ui.tui import Choice
+
+    device = await ctx.device()
+    await device.set_channel(0, "#wardriving", None)
+    slots = await read_channel_slots(device)
+    slot = slots[0]
+    ctx.chat._unread[slot.conversation.key] = 3  # stale unread that muting must not display
+    ctx.mute_store.set_muted(slot.identity, True)
+
+    _, items = _menu_items(ctx, slots, 8, _LiveStats(ctx))
+    row = next(it for it in items if isinstance(it, Choice) and it.value == 0)
+    plain = row.label.plain
+    assert "🔕" in plain
+    assert "● 3" not in plain  # the mute glyph replaces the unread badge
+
+
+async def test_detail_mute_row_reflects_state(ctx: AppContext) -> None:
+    """The detail's notifications row reads 'Mute' when on and 'Unmute' once muted."""
+    from meshterm.ui.channels import _detail_items
+    from meshterm.ui.tui import Choice
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slot = (await read_channel_slots(device))[0]
+
+    def mute_label() -> str:
+        items = _detail_items(ctx, slot)
+        row = next(it for it in items if isinstance(it, Choice) and it.value == "mute")
+        return row.label.plain
+
+    assert "🔕 Mute notifications" in mute_label()
+    ctx.mute_store.set_muted(slot.identity, True)
+    assert "🔔 Unmute notifications" in mute_label()
+
+
 # -- the tool against the simulator -------------------------------------------
 
 

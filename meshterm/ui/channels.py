@@ -2,11 +2,18 @@
 
 This is the user-facing channel-management experience for the ``channels`` tool: a live
 list of the device's channel slots with, for each, a detail view that shows the sharable
-QR code and key, renames or re-keys it, opens it in chat, or clears it. New channels are
-created four ways — a fresh private channel (random key), a public ``#`` channel (key
-derived from the name), joining by pasting a key, or importing a scanned ``meshcore://``
-link. Every change is written to the device immediately (like a phone app), so the list you
-see always reflects the radio.
+QR code and key, renames or re-keys it, opens it in chat, mutes its notifications, or clears
+it. New channels are created four ways — a fresh private channel (random key), a public ``#``
+channel (key derived from the name), joining by pasting a key, or importing a scanned
+``meshcore://`` link. Every change is written to the device immediately (like a phone app), so
+the list you see always reflects the radio.
+
+Muting is the one per-channel setting that is a local *preference* rather than device
+configuration: a muted channel's new messages stop raising the unread badge (its inbound
+messages no longer accrue unread, and muting zeros whatever it had), while still being
+recorded to history. The mute lives in :class:`~meshterm.core.mute_store.MuteStore`, keyed by
+the channel's intrinsic identity so it follows the channel across slot moves, and the list
+row shows a ``🔕`` in its (then always-empty) unread lane to mark it.
 
 The list is laid out like the config editor: fixed, column-aligned lanes under one header
 line — the openness glyph and name, unread badge, total messages, last-message age, and a
@@ -75,6 +82,7 @@ _BACK = "__back__"
 _QR = "qr"
 _KEY = "key"
 _CHAT = "chat"
+_MUTE = "mute"
 _EDIT = "edit"
 _CLEAR = "clear"
 
@@ -316,6 +324,29 @@ def _slot_label(slot: ChannelSlot) -> str:
     return f"{channel_glyph(slot.name, slot.secret)} {slot.name}"
 
 
+# --- notifications -------------------------------------------------------------
+
+
+def _is_muted(ctx: "AppContext", slot: ChannelSlot) -> bool:
+    """Whether this channel's new-message notifications are muted (see :class:`MuteStore`)."""
+    return ctx.mute_store.is_muted(slot.identity)
+
+
+def _toggle_mute(ctx: "AppContext", slot: ChannelSlot) -> None:
+    """Flip a channel's notification mute, zeroing its unread the moment it is muted.
+
+    Muting is a remembered per-channel preference (keyed by the channel's intrinsic
+    identity, so it follows the channel across slot moves) that stops its new messages from
+    raising the unread badge. Muting also clears whatever unread it had accrued this session,
+    so the badge drops immediately rather than lingering until the next open — the reverse
+    (unmuting) simply lets future messages start counting again.
+    """
+    now_muted = not _is_muted(ctx, slot)
+    ctx.mute_store.set_muted(slot.identity, now_muted)
+    if now_muted:
+        ctx.chat.clear_unread(slot.conversation.key)
+
+
 # --- message statistics --------------------------------------------------------
 
 
@@ -419,17 +450,22 @@ def _slot_text(
     :func:`_lanes_header` line. Colour stays light and purposeful: the name is the row's
     focus in the base colour, the descriptive lanes are muted, the unread ``●`` badge is
     red with its count in warn (the conversation picker's language), and the sparkline
-    draws in the ok green over a faint flatline. The row is always a Rich
-    :class:`~rich.text.Text` so those spans
-    survive under the select screen's row highlight.
+    draws in the ok green over a faint flatline. A muted channel shows a muted ``🔕`` in
+    the unread lane instead of a count — muting zeros its unread and stops it accruing, so
+    that lane is always free to carry the state. The row is always a Rich
+    :class:`~rich.text.Text` so those spans survive under the select screen's row highlight.
     """
     st = stats.get(slot.identity)
+    muted = _is_muted(ctx, slot)
     unread = ctx.chat.unread(slot.conversation.key)
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(f"{channel_glyph(slot.name, slot.secret)} ")  # ＃ / 🌐 / 🔒 (2 cells) + gap
     text.append(fit_cells(slot.name, name_w))
     text.append("  ")
-    if unread:
+    if muted:
+        text.append("🔕", style="muted")  # 2 cells; pad the rest of the lane
+        text.append(" " * (_BADGE_WIDTH - 2))
+    elif unread:
         text.append("●", style="err")
         text.append(f" {unread}".ljust(_BADGE_WIDTH - 1), style="warn")
     else:
@@ -492,14 +528,18 @@ def _menu_items(
 
 
 def _detail_summary(ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats) -> str:
-    """One line of vital signs for the detail screen: slot, totals, unread, last activity."""
+    """One line of vital signs for the detail screen: slot, totals, unread, mute, last activity."""
     st = stats.get(slot.identity)
     unread = ctx.chat.unread(slot.conversation.key)
+    muted = _is_muted(ctx, slot)
     if st is None or not st.total:
-        return f"Slot {slot.idx} · no messages recorded yet"
+        base = f"Slot {slot.idx} · no messages recorded yet"
+        return f"{base} · muted" if muted else base
     parts = [f"Slot {slot.idx}", f"{st.total} message{'' if st.total == 1 else 's'}"]
     if unread:
         parts.append(f"{unread} unread")
+    if muted:
+        parts.append("muted")
     if st.last_at is not None:
         parts.append(f"last message {format_ago(_age_seconds(st.last_at))}")
     return " · ".join(parts)
@@ -510,19 +550,34 @@ def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
 
     The Device actions presentation (menu-style lanes, no header line — these are commands,
     not tabular data), padded in display cells so the double-width emoji can't skew the
-    description column. Open-in-chat carries the channel's live unread badge, and the one
-    destructive row keeps an err-tinted label so it reads as such.
+    description column. Open-in-chat carries the channel's live unread badge, the
+    notifications row reads as a toggle whose glyph and verb reflect the current mute state
+    (an immediate action, so no trailing ``…``), and the one destructive row keeps an
+    err-tinted label so it reads as such.
     """
     unread = ctx.chat.unread(slot.conversation.key)
     chat_label = Text("💬 Open in chat")
     if unread:
         chat_label.append("  ●", style="err")
         chat_label.append(f" {unread}", style="warn")
+    if _is_muted(ctx, slot):
+        mute_row = (
+            "🔔 Unmute notifications",
+            "Show new messages here in the unread badge",
+            _MUTE,
+        )
+    else:
+        mute_row = (
+            "🔕 Mute notifications",
+            "Hide new messages here from the unread badge",
+            _MUTE,
+        )
     items = menu_rows(
         [
             ("📱 Show QR code", "Share this channel as a scannable code", _QR),
             ("🔑 Show key", "The name, key, hash, and share link", _KEY),
             (chat_label, "Read and send messages on this channel", _CHAT),
+            mute_row,
             ("✎ Rename / change key…", "Edit the name or paste a different key", _EDIT),
             (
                 Text("🗑 Clear this slot…", style="err"),
@@ -561,6 +616,10 @@ async def _channel_detail(
             await _show_key(ctx, slot)
         elif choice == _CHAT:
             await _open_chat(ctx, slot)
+        elif choice == _MUTE:
+            # A preference, not a slot-config change: toggle in place and loop back to the
+            # detail (whose rows re-render to the new state) without counting a channel change.
+            _toggle_mute(ctx, slot)
         elif choice == _EDIT and await _edit(ctx, device, slot):
             return 1
         elif choice == _CLEAR and await _clear(ctx, device, slot):
