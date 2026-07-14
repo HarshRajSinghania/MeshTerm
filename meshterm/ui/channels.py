@@ -36,6 +36,7 @@ from rich.console import Group
 from rich.text import Text
 
 from ..core.channels import (
+    CHANNEL_SLOT_EMPTY_RUN,
     CHANNEL_SLOT_PROBE_CAP,
     MAX_CHANNELS,
     channel_hash,
@@ -144,9 +145,12 @@ async def manage_channels(ctx: "AppContext") -> int:
     device = await ctx.device()
     # The firmware's slot count is fixed for the session, so discover it once (a read-only
     # probe) rather than assuming a hard-coded 8; it drives the free-slot check and the
-    # used/total display below. A device that can't report any slots falls back to the
-    # standard count so the manager stays usable instead of showing zero capacity.
-    capacity = await device.channel_capacity() or MAX_CHANNELS
+    # used/total display below. Read through the session cache: on firmware that never
+    # rejects an out-of-range index the probe walks every slot (slow), and the count never
+    # changes for a connection, so it is warmed once (prewarm/first open) and reused on every
+    # later open. A device that can't report any slots falls back to the standard count so the
+    # manager stays usable instead of showing zero capacity.
+    capacity = await ctx.devstate.channel_capacity() or MAX_CHANNELS
     stats = _LiveStats(ctx)
     changes = 0
     highlight: Optional[object] = None
@@ -259,9 +263,13 @@ async def _refresh_chat_channels(ctx: "AppContext") -> None:
 async def read_channel_slots(device: Device) -> list[ChannelSlot]:
     """Probe the channel slots and return the configured ones, in index order.
 
-    The scan runs up to :data:`CHANNEL_SLOT_PROBE_CAP` and stops as soon as the firmware
-    rejects a slot index, so it reads exactly the slots the device actually has regardless
-    of its capacity.
+    The scan stops as soon as the firmware rejects a slot index, so it reads exactly the
+    slots a well-behaved device has regardless of its capacity. Firmware that never rejects
+    an out-of-range index (it answers every slot with an empty payload instead of raising)
+    would otherwise walk all :data:`CHANNEL_SLOT_PROBE_CAP` slots on every read; a run of
+    :data:`CHANNEL_SLOT_EMPTY_RUN` consecutive empty slots ends the scan on such firmware.
+    That is safe because the manager packs channels from slot 0 up, so an unbroken empty run
+    that long means every configured channel has already been seen (see the constant's note).
 
     Args:
         device: The connected device to query.
@@ -270,12 +278,14 @@ async def read_channel_slots(device: Device) -> list[ChannelSlot]:
         One :class:`ChannelSlot` per configured slot (an empty slot is skipped).
     """
     slots: list[ChannelSlot] = []
+    empty_run = 0
     for idx in range(CHANNEL_SLOT_PROBE_CAP):
         try:
             payload = await device.get_channel(idx)
         except Exception:  # noqa: BLE001 - firmware may not support channel reads
             break
         if payload and payload.get("channel_name"):
+            empty_run = 0
             slots.append(
                 ChannelSlot(
                     idx=idx,
@@ -283,6 +293,10 @@ async def read_channel_slots(device: Device) -> list[ChannelSlot]:
                     secret=bytes(payload.get("channel_secret") or b"\x00" * 16),
                 )
             )
+        else:
+            empty_run += 1
+            if empty_run >= CHANNEL_SLOT_EMPTY_RUN:
+                break  # off the end of a never-rejecting firmware; nothing more to find
     return slots
 
 

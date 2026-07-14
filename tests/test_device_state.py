@@ -24,6 +24,7 @@ class FakeDevice:
         self.self_info_calls = 0
         self.mode_calls = 0
         self.channel_calls = 0
+        self.capacity_calls = 0
 
     async def get_contacts(self) -> list:
         self.contacts_calls += 1
@@ -43,6 +44,11 @@ class FakeDevice:
         if idx == 0:
             return {"channel_name": "public", "channel_secret": b"\x00" * 16}
         raise RuntimeError("out of range")
+
+    async def channel_capacity(self) -> int:
+        # A fixed hardware constant; the cache must read it exactly once for the session.
+        self.capacity_calls += 1
+        return 8
 
 
 def _devstate(device: FakeDevice) -> DeviceState:
@@ -150,32 +156,49 @@ def test_reset_clears_everything() -> None:
     ds = _devstate(dev)
 
     async def run() -> None:
-        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode()
+        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode(); await ds.channel_capacity()
         ds.reset()
-        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode()
+        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode(); await ds.channel_capacity()
 
     asyncio.run(run())
     assert dev.self_info_calls == 2
     assert dev.contacts_calls == 2
     assert dev.mode_calls == 2
+    assert dev.capacity_calls == 2  # capacity is a hardware constant, but a reconnect re-reads it
+
+
+def test_channel_capacity_is_fetched_once_and_served_from_cache() -> None:
+    """Capacity is a hardware constant: probed once, then reused for the session."""
+    dev = FakeDevice()
+    ds = _devstate(dev)
+
+    async def run() -> None:
+        for _ in range(3):
+            assert await ds.channel_capacity() == 8
+
+    asyncio.run(run())
+    assert dev.capacity_calls == 1
 
 
 def test_prewarm_fills_the_slow_caches_off_the_read_path() -> None:
-    """prewarm() warms contacts and channels in the background so the first read hits no wire."""
+    """prewarm() warms contacts, channels, and capacity so the first read hits no wire."""
     dev = FakeDevice()
     ds = _devstate(dev)
 
     async def run() -> None:
         ds.prewarm()
         await asyncio.gather(*list(ds._tasks))  # let the background warm finish
-        # Both slow caches were filled by the prewarm: contacts once, the channel probe once
-        # (idx 0 ok, idx 1 rejected).
+        # Every slow cache was filled by the prewarm: contacts once, the channel probe once
+        # (idx 0 ok, idx 1 rejected), and the capacity probe once.
         assert dev.contacts_calls == 1
         assert dev.channel_calls == 2
+        assert dev.capacity_calls == 1
         # A screen opening now is served from cache — no additional round-trips.
         await ds.contacts()
         await ds.channel_slots()
+        await ds.channel_capacity()
         assert dev.contacts_calls == 1
         assert dev.channel_calls == 2
+        assert dev.capacity_calls == 1
 
     asyncio.run(run())

@@ -17,6 +17,8 @@ from meshterm.context import AppContext
 from meshterm.core.admin_store import AdminStore
 from meshterm.core.channels import (
     CHANNEL_SECRET_BYTES,
+    CHANNEL_SLOT_EMPTY_RUN,
+    CHANNEL_SLOT_PROBE_CAP,
     DEFAULT_PUBLIC_SECRET,
     channel_hash,
     decrypt_channel_text,
@@ -257,10 +259,65 @@ async def test_channel_capacity_is_probed_not_assumed(ctx: AppContext) -> None:
 
 
 async def test_channel_capacity_tracks_a_larger_ceiling(ctx: AppContext) -> None:
-    """Firmware with more slots is discovered as such — no hard-coded 8 anywhere."""
+    """Firmware with more slots is discovered as such — no hard-coded 8 anywhere.
+
+    This is exactly why the empty-run bound is *not* applied to capacity discovery: a larger
+    firmware whose upper slots are empty must still be found by reaching its rejection, not
+    guessed short from a run of empties.
+    """
     device = await ctx.device()
     device._max_channels = 12  # simulate a firmware build with a larger slot table
     assert await device.channel_capacity() == 12
+
+
+async def test_read_channel_slots_bounds_a_never_rejecting_probe() -> None:
+    """On firmware that answers every slot (never rejecting an index), the configured-slot
+    scan stops after a run of empty slots instead of walking all CHANNEL_SLOT_PROBE_CAP."""
+
+    class NeverRejects:
+        """A device that reports two channels then empty slots forever, never raising."""
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        async def get_channel(self, idx: int):
+            self.reads += 1
+            if idx in (0, 1):
+                return {"channel_name": f"c{idx}", "channel_secret": b"\x00" * 16}
+            return None  # an empty slot — and it will never reject a higher index
+
+    device = NeverRejects()
+    slots = await read_channel_slots(device)  # type: ignore[arg-type]
+    assert [s.name for s in slots] == ["c0", "c1"]  # both real channels found
+    # Stopped after the two channels plus one run of empties — not the full 64-slot walk.
+    assert device.reads == 2 + CHANNEL_SLOT_EMPTY_RUN
+    assert device.reads < CHANNEL_SLOT_PROBE_CAP
+
+
+async def test_read_channel_slots_scans_past_gaps_within_capacity() -> None:
+    """A cleared middle slot (a gap) never truncates the scan: channels above it are still read.
+
+    The empty-run bound only ends the scan after a full stock-capacity's worth of consecutive
+    empties, which a within-capacity gap can never reach — so a channel sitting above a gap on
+    never-rejecting firmware is still found.
+    """
+
+    class NeverRejects:
+        def __init__(self, occupied: dict[int, str]) -> None:
+            self.occupied = occupied
+            self.reads = 0
+
+        async def get_channel(self, idx: int):
+            self.reads += 1
+            name = self.occupied.get(idx)
+            if name is None:
+                return None
+            return {"channel_name": name, "channel_secret": b"\x00" * 16}
+
+    # Channels at slots 0 and 7 with 1..6 empty (a 6-slot gap, one short of the stop run).
+    device = NeverRejects({0: "low", 7: "high"})
+    slots = await read_channel_slots(device)  # type: ignore[arg-type]
+    assert [s.idx for s in slots] == [0, 7]  # the gap did not end the scan early
 
 
 async def test_apply_order_relays_channels_into_new_positions(ctx: AppContext) -> None:

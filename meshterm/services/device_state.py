@@ -2,16 +2,20 @@
 
 Opening a screen used to re-read the same stable facts from the companion every time —
 the contacts table, the node's own self-info, the path-hash routing width, the configured
-channel slots. Over Bluetooth each of those is a full request→reply round-trip, and the two
-big ones dominate: ``get_contacts`` on a busy node (hundreds of contacts) and the channel
-probe (:func:`~meshterm.ui.channels.read_channel_slots`, which walks every slot index) each
-measured in *seconds* on real hardware. Firing them on every navigation is what made moving
-between screens feel like it stalled.
+channel slots, the channel-slot capacity. Over Bluetooth each of those is a full
+request→reply round-trip, and the channel-slot reads dominate: ``get_contacts`` on a busy
+node (hundreds of contacts), the slot probe (:func:`~meshterm.ui.channels.read_channel_slots`)
+and the capacity probe (:meth:`~meshterm.core.connection.Device.channel_capacity`) each walk
+the slot table one index at a time and are measured in *seconds* on firmware that never
+rejects an out-of-range index. Firing them on every navigation is what made moving between
+screens feel like it stalled.
 
 None of that data actually changes mid-navigation:
 
 * **self-info** and **path-hash mode** change only when the config editor writes them;
 * **channel slots** change only when the channel editor saves one;
+* **channel-slot capacity** is a fixed firmware build constant — it never changes at all
+  within a connection, so it is simply held for the session and only dropped on a reconnect;
 * **contacts** grow as the mesh advertises, but a minute-stale list is harmless — the app
   already resolves names from recorded history too.
 
@@ -76,11 +80,13 @@ class DeviceState:
         self._self_info: Optional[dict] = None
         self._path_hash_mode: Optional[int] = None
         self._channels: Optional[list["ChannelSlot"]] = None
+        self._channel_capacity: Optional[int] = None
         # One lock per slow fetch so overlapping first-access callers (two screens opened in
         # quick succession) collapse onto a single round-trip instead of each firing their own.
         self._contacts_lock = asyncio.Lock()
         self._self_info_lock = asyncio.Lock()
         self._channels_lock = asyncio.Lock()
+        self._capacity_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
 
     # -- contacts (stale-while-revalidate) --------------------------------------
@@ -187,16 +193,39 @@ class DeviceState:
                     self._channels = await read_channel_slots(device)
         return self._channels
 
+    async def channel_capacity(self) -> int:
+        """Return the device's channel-slot capacity, discovered once and held for the session.
+
+        The capacity is a fixed firmware build constant, so it is probed once and reused. The
+        probe (:meth:`~meshterm.core.connection.Device.channel_capacity`) reads slots upward
+        until the firmware rejects an index; on firmware that *never* rejects one it walks up
+        to :data:`~meshterm.core.channels.CHANNEL_SLOT_PROBE_CAP` slots — one of the slowest
+        reads on a screen open, and paid on *every* open of the channel manager before this
+        cache. Unlike the configured-slot list it cannot be safely bounded by a run of empty
+        slots (it must reach a larger firmware's real ceiling), so it is bounded by caching:
+        held until :meth:`reset` (a reconnect re-reads it) rather than invalidated on a channel
+        edit, since editing a channel never changes how many slots the hardware has.
+
+        Returns:
+            The number of addressable channel slots the firmware exposes.
+        """
+        if self._channel_capacity is None:
+            async with self._capacity_lock:
+                if self._channel_capacity is None:
+                    device = await self._ctx.device()
+                    self._channel_capacity = await device.channel_capacity()
+        return self._channel_capacity
+
     # -- prewarm (fill the slow caches in the background, off the navigation path) --
 
     def prewarm(self) -> None:
-        """Warm the slow caches (contacts, channel slots) in the background after connect.
+        """Warm the slow caches (contacts, channel slots, capacity) in the background after connect.
 
         Called once the session's link is up (see :func:`meshterm.ui.menu._resume_monitor`) so
-        the first screen that reads them — Chat, Trace, the Dashboard — is served from cache
-        instantly, rather than paying the round-trips in the navigation path where the user is
-        waiting on the screen to open. It folds the two unavoidable first reads into one quiet
-        wait behind the menu instead of surfacing them on the first open.
+        the first screen that reads them — Chat, Trace, the Dashboard, the channel manager — is
+        served from cache instantly, rather than paying the round-trips in the navigation path
+        where the user is waiting on the screen to open. It folds the unavoidable first reads
+        into one quiet wait behind the menu instead of surfacing them on the first open.
 
         The work runs as a tracked background task: **sequential** (never gathered — concurrent
         reads collide on the BLE UART; see the module note), best-effort (a failure just leaves
@@ -208,7 +237,11 @@ class DeviceState:
 
     async def _prewarm(self) -> None:
         """Fetch the slow caches one after another, swallowing failures (best-effort warm)."""
-        for label, fetch in (("contacts", self.contacts), ("channel slots", self.channel_slots)):
+        for label, fetch in (
+            ("contacts", self.contacts),
+            ("channel slots", self.channel_slots),
+            ("channel capacity", self.channel_capacity),
+        ):
             try:
                 await fetch()
             except Exception as exc:  # noqa: BLE001 - a warm miss just falls back to a lazy fetch
@@ -253,6 +286,9 @@ class DeviceState:
         self.invalidate_self_info()
         self.invalidate_path_hash_mode()
         self.invalidate_channels()
+        # Capacity is a hardware constant (not touched by channel edits, so it has no per-write
+        # invalidator), but a reconnect may be to a different device — drop it too.
+        self._channel_capacity = None
         for task in list(self._tasks):
             task.cancel()
         self._tasks.clear()

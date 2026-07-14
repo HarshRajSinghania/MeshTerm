@@ -65,6 +65,20 @@ MAX_CHANNELS = 8
 #: never rejects an out-of-range index (so the probe can't loop forever).
 CHANNEL_SLOT_PROBE_CAP = 64
 
+#: A run of this many consecutive *empty* slots ends a *configured-channel* scan (see
+#: :func:`meshterm.ui.channels.read_channel_slots`) on firmware that never rejects an
+#: out-of-range index — some builds answer every index with an empty payload instead of
+#: raising, so the scan would otherwise walk all :data:`CHANNEL_SLOT_PROBE_CAP` slots on
+#: every read. The channel manager packs channels from slot 0 up within the stock
+#: :data:`MAX_CHANNELS` slots, so no real layout leaves this many empty slots *before* its
+#: last channel — an unbroken run this long means the scan has passed the configured
+#: channels. Firmware that *does* reject an out-of-range index still ends the scan at its
+#: true ceiling first. (Deliberately not applied to
+#: :meth:`meshterm.core.connection.Device.channel_capacity`, which must report a larger
+#: rejecting firmware's real slot count and so has to reach the rejection, not guess from a
+#: run of empties; its cost is bounded by caching it for the session instead.)
+CHANNEL_SLOT_EMPTY_RUN = MAX_CHANNELS
+
 #: The default public channel every MeshCore device ships with on slot 0.
 DEFAULT_PUBLIC_NAME = "public"
 
