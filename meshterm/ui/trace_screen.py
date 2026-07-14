@@ -546,8 +546,11 @@ class TraceScreen(Screen):
             if selected:
                 self._cursor = len(lines)
             lines.append(render_to_ansi(text, width))
-            if key in ("explore", "samples"):
-                lines.append("")  # set the next group apart
+            # Set the next group apart: after the build-path group (Explore in target
+            # mode; Compose itself in path mode, which has no Explore) and after the
+            # trace-settings group.
+            if key in ("explore", "samples") or (key == "compose" and self._mode == "path"):
+                lines.append("")
         tail = self._tail_lines(stats, current, width)
         if tail:
             # The results scroll in a window beneath the pinned controls (see
