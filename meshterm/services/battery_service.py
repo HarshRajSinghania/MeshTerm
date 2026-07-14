@@ -14,9 +14,13 @@ Two device facts shape what it can report:
   discharge curve (:func:`battery_percent`). Devices with no battery gauge answer with no
   usable level; those are reported as *absent* so the header shows nothing for them.
 * Firmware exposes **no charging flag at all**. Charging is therefore *inferred* from the
-  terminal voltage trending upward across the recent sample window — the only dynamic
-  signal available. It is an estimate, held steady through the flat stretches (a charger's
-  constant-voltage phase, or an idle pack) so the gauge doesn't flap.
+  terminal voltage — but a single-cell LiPo sags tens of millivolts under each LoRa
+  transmission and springs back when the radio idles, so the raw sample trend is mostly load
+  noise, not charge. The inference reads it robustly (the median of the sample window's older
+  half against its newer half, which discards those transient spikes) and calls charge only
+  on a large, *sustained* rise, dropping straight back the moment the pack goes flat. It is
+  still an estimate — the best the firmware allows — but one a discharging or resting pack no
+  longer trips.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
+from statistics import median
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -40,12 +45,22 @@ POLL_S = 20.0
 #: single cell is treated as *no battery present* and the gauge is hidden.
 _BATTERY_PRESENT_FLOOR_MV = 1500
 
-#: Recent-samples window (seconds) the charging trend is measured over, and the rise across
-#: it that flips the estimate to *charging* (or, as a fall, to *not charging*). Between the
-#: two the last verdict is held, so a flat voltage — charger in constant-voltage phase, or a
-#: resting pack — doesn't make the gauge flicker between the two states.
+#: Recent-samples window (seconds) the charging trend is measured over.
 _TREND_WINDOW_S = 180.0
-_CHARGING_RISE_MV = 15
+
+#: Fewest samples the trend needs before it will call charging either way — about two minutes
+#: at :data:`POLL_S`, enough to span the window and give each half a meaningful median. Below
+#: this the verdict is simply *not charging*.
+_TREND_MIN_SAMPLES = 6
+
+#: Smoothed rise (millivolts: the newer half's median terminal voltage minus the older half's)
+#: that *starts* a charging verdict, and the smaller rise it must stay above to *hold* one.
+#: The start threshold clears the median-smoothed load-noise floor by a wide margin, so a
+#: discharging or resting pack never trips it; the hold threshold lets a genuine, still-climbing
+#: charge ride through the poll jitter without flicker, while a pack gone flat — topped off, or
+#: unplugged — falls below it and drops straight back to *not charging*.
+_CHARGING_RISE_ON_MV = 25
+_CHARGING_RISE_HOLD_MV = 8
 
 #: How many samples to retain — the trend window plus a little slack at the poll cadence.
 _TREND_SAMPLES = int(_TREND_WINDOW_S / POLL_S) + 2
@@ -94,8 +109,8 @@ class BatteryReading:
     Attributes:
         millivolts: The pack's terminal voltage, as the firmware reported it.
         percent: The state-of-charge estimate (see :func:`battery_percent`).
-        charging: Whether the pack appears to be taking charge (inferred from a rising
-            terminal voltage — the firmware exposes no charging flag).
+        charging: Whether the pack appears to be taking charge (inferred from a sustained
+            rise in terminal voltage — the firmware exposes no charging flag).
     """
 
     millivolts: int
@@ -191,10 +206,16 @@ class BatteryService:
     def _charging(self, now: float) -> bool:
         """Infer whether the pack is charging from its recent terminal-voltage trend.
 
-        The firmware exposes no charging flag, so this is the best available signal: a
-        clear rise across the window means charge is going in, a clear fall means it is
-        coming out, and a flat stretch holds the previous verdict (so a charger's
-        constant-voltage phase or a resting pack doesn't make the gauge flap).
+        The firmware exposes no charging flag, so the trend is the only signal — but a
+        single-cell LiPo's terminal voltage sags tens of millivolts under each transmission
+        and springs back when the radio idles, so the raw trend is mostly load noise.
+        Charging is read *robustly*: the median voltage of the window's older half is compared
+        against the median of its newer half, which discards those transient sag/recovery
+        spikes, and only a large, *sustained* rise counts as charge going in. The verdict
+        carries hysteresis — hard to start (:data:`_CHARGING_RISE_ON_MV`), then held while the
+        pack is still clearly climbing (:data:`_CHARGING_RISE_HOLD_MV`) — so a genuine charge
+        doesn't flicker, while a pack gone flat (topped off, or unplugged) drops straight back
+        to *not charging*.
 
         Args:
             now: The current monotonic time (the just-taken sample's timestamp).
@@ -202,13 +223,10 @@ class BatteryService:
         Returns:
             The charging estimate for this reading.
         """
-        last = self._reading.charging if self._reading is not None else False
-        recent = [(t, mv) for t, mv in self._history if now - t <= _TREND_WINDOW_S]
-        if len(recent) < 2:
-            return last
-        rise = recent[-1][1] - recent[0][1]
-        if rise >= _CHARGING_RISE_MV:
-            return True
-        if rise <= -_CHARGING_RISE_MV:
+        charging = self._reading.charging if self._reading is not None else False
+        recent = [mv for t, mv in self._history if now - t <= _TREND_WINDOW_S]
+        if len(recent) < _TREND_MIN_SAMPLES:
             return False
-        return last
+        mid = len(recent) // 2
+        rise = median(recent[mid:]) - median(recent[:mid])
+        return rise >= (_CHARGING_RISE_HOLD_MV if charging else _CHARGING_RISE_ON_MV)

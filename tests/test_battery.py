@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from meshterm.services.battery_service import (
     _BATTERY_PRESENT_FLOOR_MV,
-    _CHARGING_RISE_MV,
+    POLL_S,
     BatteryService,
     battery_percent,
 )
@@ -122,19 +122,56 @@ def test_battery_poller_hides_a_device_with_no_pack() -> None:
     assert svc.reading() is None
 
 
-def test_battery_poller_infers_charging_from_the_voltage_trend() -> None:
-    """A clear rise reads as charging, a clear fall as not, a flat stretch holds the verdict."""
+def _history_of(now: float, mvs: list[int]) -> list[tuple[float, int]]:
+    """``(time, mv)`` samples one poll apart, oldest first, the last landing at ``now``."""
+    n = len(mvs)
+    return [(now - (n - 1 - i) * POLL_S, mv) for i, mv in enumerate(mvs)]
+
+
+def test_battery_poller_calls_charging_only_on_a_strong_sustained_rise() -> None:
+    """A large, sustained climb reads as charging; a gentle one only holds a verdict already set."""
     svc = _service([])
     now = 1000.0
-    svc._history.extend([(now - 120, 3700), (now, 3700 + _CHARGING_RISE_MV)])
-    assert svc._charging(now) is True  # rising → charging
 
+    # A clear, sustained rise from a cold (not-charging) start crosses the ON threshold.
+    svc._history.extend(_history_of(now, [3700, 3712, 3724, 3736, 3748, 3760, 3772, 3784]))
+    assert svc._charging(now) is True
+
+    # A gentle climb (over the hold floor, under the start floor) will not *start* a verdict…
+    svc._reading = SimpleNamespace(charging=False)
+    svc._history.clear()
+    svc._history.extend(_history_of(now, [3900, 3902, 3904, 3915, 3917, 3919]))
+    assert svc._charging(now) is False
+    # …but it *holds* one already in flight, so a real charge doesn't flicker on poll jitter.
+    svc._reading = SimpleNamespace(charging=True)
+    assert svc._charging(now) is True
+
+
+def test_battery_poller_charging_ignores_load_sag_and_flat_or_falling_packs() -> None:
+    """A transient TX sag, a flat pack, and a falling pack all read as *not charging*."""
+    svc = _service([])
+    now = 1000.0
+
+    # A single deep TX sag at the window's start would fool a raw first-to-last diff into
+    # seeing a +60 mV "rise"; the median of each half discards the spike, so it does not.
+    svc._reading = SimpleNamespace(charging=False)
+    svc._history.extend(_history_of(now, [3740, 3802, 3798, 3801, 3800, 3799, 3802, 3800]))
+    assert svc._charging(now) is False
+
+    # A pack held flat (topped off, or unplugged) drops a charging verdict back off.
     svc._reading = SimpleNamespace(charging=True)
     svc._history.clear()
-    svc._history.extend([(now - 120, 3900), (now, 3900 - _CHARGING_RISE_MV)])
-    assert svc._charging(now) is False  # falling → not charging
+    svc._history.extend(_history_of(now, [3800, 3801, 3800, 3799, 3800, 3801]))
+    assert svc._charging(now) is False
 
+    # A clear discharge never reads as charging.
     svc._reading = SimpleNamespace(charging=True)
     svc._history.clear()
-    svc._history.extend([(now - 60, 3800), (now, 3803)])
-    assert svc._charging(now) is True  # flat → holds the last verdict
+    svc._history.extend(_history_of(now, [3900, 3890, 3880, 3870, 3860, 3850]))
+    assert svc._charging(now) is False
+
+    # Too little history to span the window is *not charging*, whatever the last verdict.
+    svc._reading = SimpleNamespace(charging=True)
+    svc._history.clear()
+    svc._history.extend(_history_of(now, [3800, 3900]))
+    assert svc._charging(now) is False
