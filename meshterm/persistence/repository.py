@@ -175,6 +175,38 @@ class NeighbourLink:
 
 
 @dataclass(slots=True)
+class DiscoveredPath:
+    """One record-holding walk in the trophy case (a discipline's leaderboard).
+
+    Records are kept per ``(category, width_bytes)`` — the per-hop hash width bounds
+    both a walk's maximum length (the transmitted path field is 64 bytes) and its
+    collision odds, so boards at different widths measure different games.
+
+    Attributes:
+        id: Primary key (the handle deletion takes).
+        category: The category id the record was set in (``grand_tour``, …).
+        width_bytes: The per-hop path-hash width the walk was transmitted at.
+        spec: The transmitted spec — comma-separated hex hashes, in walk order.
+        route: Canonical node ids aligned with the spec's hops, for stable display
+            resolution (a 1-byte spec hop is too ambiguous to re-resolve later).
+        score: The category score (its unit is the category's: km, nodes, dB, km²).
+        stats: The walk's measured statistics (hop count, distinct nodes, km, …).
+        app_version: The MeshTerm version that discovered it, for future migrations.
+        discovered_at: When the record-setting walk came home (UTC).
+    """
+
+    id: int
+    category: str
+    width_bytes: int
+    spec: str
+    route: tuple[str, ...]
+    score: float
+    stats: dict
+    app_version: str
+    discovered_at: datetime
+
+
+@dataclass(slots=True)
 class RunRecord:
     """A summary row from the ``runs`` table.
 
@@ -413,8 +445,9 @@ class Repository:
         This feeds the target picker's *Recently traced* section, so the list is
         deliberately short and recency-ordered: an all-time tally only ever grows,
         burying current work under stale names (``--mock`` targets included).
-        Target-less path walks (recorded under :data:`~meshterm.core.models.
-        PATH_TRACE_TARGET`) are excluded — they aren't destinations one can pick.
+        Target-less walks — the hand-composed ones recorded under
+        :data:`~meshterm.core.models.PATH_TRACE_TARGET` — are excluded: they aren't
+        destinations one can pick.
 
         Args:
             limit: Maximum number of distinct targets to return.
@@ -636,6 +669,192 @@ class Repository:
             ),
         )
         self._conn.commit()
+
+    # -- discovered paths (trophy-case records) ----------------------------------
+
+    def record_discovery(
+        self,
+        category: str,
+        width_bytes: int,
+        spec: str,
+        route: tuple[str, ...] | list[str],
+        *,
+        score: float,
+        stats: dict,
+        app_version: str,
+        keep: int = 5,
+        ascending: bool = False,
+    ) -> Optional[int]:
+        """Offer one walk to a category leaderboard; store it only if it places.
+
+        The leaderboard invariant lives here so every caller shares it: a walk enters
+        the ``(category, width_bytes)`` board when it beats the standing entries (or
+        the board isn't full), an identical spec only ever keeps its *best* score
+        (re-walking a known route never duplicates a row), and the board is pruned
+        back to ``keep`` rows on the way out.
+
+        Args:
+            category: The category id the walk is offered to.
+            width_bytes: The per-hop hash width the walk was transmitted at.
+            spec: The transmitted spec (comma-separated hex hashes).
+            route: Canonical node ids aligned with the spec's hops.
+            score: The category score of this walk.
+            stats: JSON-serializable walk statistics.
+            app_version: The running MeshTerm version, stamped on the row.
+            keep: Board size (rows kept per category and width).
+            ascending: ``True`` for categories where *lower* scores win
+                (Thin thread hunts the weakest surviving link).
+
+        Returns:
+            The stored row's id when the walk placed (a fresh row or an improved
+            re-walk), or ``None`` when it didn't make the board.
+        """
+        def beats(challenger: float, standing: float) -> bool:
+            return challenger < standing if ascending else challenger > standing
+
+        existing = self._conn.execute(
+            "SELECT id, score FROM discovered_paths "
+            "WHERE category = ? AND width_bytes = ? AND spec = ?",
+            (category, width_bytes, spec),
+        ).fetchone()
+        if existing is not None:
+            # A known route: keep the row (and its discovery date) unless this walk
+            # genuinely bettered its own record.
+            if not beats(score, float(existing["score"])):
+                return None
+            self._conn.execute(
+                "UPDATE discovered_paths SET score = ?, stats_json = ?, "
+                "app_version = ?, discovered_at = ? WHERE id = ?",
+                (
+                    score,
+                    json.dumps(stats),
+                    app_version,
+                    utcnow().isoformat(),
+                    existing["id"],
+                ),
+            )
+            self._conn.commit()
+            return int(existing["id"])
+        cursor = self._conn.execute(
+            "INSERT INTO discovered_paths "
+            "(category, width_bytes, spec, route_json, score, stats_json, "
+            "app_version, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                category,
+                width_bytes,
+                spec,
+                json.dumps(list(route)),
+                score,
+                json.dumps(stats),
+                app_version,
+                utcnow().isoformat(),
+            ),
+        )
+        new_id = int(cursor.lastrowid)
+        # Prune the board back to ``keep``: worst scores go, oldest first among ties,
+        # so the walk that set a mark holds it against an equal latecomer.
+        order = "ASC" if not ascending else "DESC"  # worst-first for deletion
+        overflow = self._conn.execute(
+            "SELECT id FROM discovered_paths WHERE category = ? AND width_bytes = ? "
+            f"ORDER BY score {order}, id DESC",
+            (category, width_bytes),
+        ).fetchall()
+        doomed = [row["id"] for row in overflow[: max(0, len(overflow) - keep)]]
+        if doomed:
+            self._conn.executemany(
+                "DELETE FROM discovered_paths WHERE id = ?", [(i,) for i in doomed]
+            )
+        self._conn.commit()
+        return None if new_id in doomed else new_id
+
+    def discoveries(
+        self, category: Optional[str] = None, *, width_bytes: Optional[int] = None
+    ) -> list[DiscoveredPath]:
+        """Return stored trophy-case records, optionally narrowed.
+
+        Rows come back unranked (grouped by category, newest first within one) — the
+        service layer owns each category's score direction and sorts for display.
+
+        Args:
+            category: Only this category's records, or ``None`` for all.
+            width_bytes: Only records at this hash width, or ``None`` for all.
+
+        Returns:
+            The matching :class:`DiscoveredPath` rows.
+        """
+        clauses, params = ["1=1"], []
+        if category is not None:
+            clauses.append("category = ?")
+            params.append(category)
+        if width_bytes is not None:
+            clauses.append("width_bytes = ?")
+            params.append(width_bytes)
+        rows = self._conn.execute(
+            "SELECT * FROM discovered_paths WHERE " + " AND ".join(clauses) +
+            " ORDER BY category, id DESC",
+            params,
+        ).fetchall()
+        out: list[DiscoveredPath] = []
+        for row in rows:
+            try:
+                when = datetime.fromisoformat(row["discovered_at"])
+            except (TypeError, ValueError):
+                when = utcnow()
+            try:
+                route = tuple(json.loads(row["route_json"]))
+            except (TypeError, ValueError):
+                route = ()
+            try:
+                stats = json.loads(row["stats_json"]) or {}
+            except (TypeError, ValueError):
+                stats = {}
+            out.append(
+                DiscoveredPath(
+                    id=int(row["id"]),
+                    category=row["category"],
+                    width_bytes=int(row["width_bytes"]),
+                    spec=row["spec"],
+                    route=route,
+                    score=float(row["score"]),
+                    stats=stats,
+                    app_version=row["app_version"],
+                    discovered_at=when,
+                )
+            )
+        return out
+
+    def delete_discovery(self, discovery_id: int) -> bool:
+        """Delete one trophy-case record by id; ``True`` when a row actually went."""
+        cursor = self._conn.execute(
+            "DELETE FROM discovered_paths WHERE id = ?", (discovery_id,)
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_discoveries(
+        self, category: Optional[str] = None, *, width_bytes: Optional[int] = None
+    ) -> int:
+        """Delete trophy-case records wholesale, optionally narrowed; returns the count.
+
+        Args:
+            category: Only this category's records, or ``None`` for every category.
+            width_bytes: Only records at this hash width, or ``None`` for all widths.
+
+        Returns:
+            How many records were deleted.
+        """
+        clauses, params = ["1=1"], []
+        if category is not None:
+            clauses.append("category = ?")
+            params.append(category)
+        if width_bytes is not None:
+            clauses.append("width_bytes = ?")
+            params.append(width_bytes)
+        cursor = self._conn.execute(
+            "DELETE FROM discovered_paths WHERE " + " AND ".join(clauses), params
+        )
+        self._conn.commit()
+        return cursor.rowcount
 
     # -- observations (passive monitoring) --------------------------------------
 

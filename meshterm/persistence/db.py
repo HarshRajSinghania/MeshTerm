@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -96,6 +96,25 @@ CREATE TABLE IF NOT EXISTS neighbour_reports (
     fetched_at TEXT    NOT NULL
 );
 
+-- One record-holding walk in the trophy case (v11), scored from a trace that came
+-- home (see services/records). Records live per
+-- (category, width_bytes) because the per-hop hash width bounds both the walk's maximum
+-- length (the path field is 64 bytes) and its collision odds — a 1-byte record is not
+-- comparable to a 4-byte one. Standalone rows (no run_id): the walks' traces are already
+-- persisted under their own runs, and a record must outlive history pruning. app_version
+-- stamps the discoverer so future schema/scoring migrations can tell eras apart.
+CREATE TABLE IF NOT EXISTS discovered_paths (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    category      TEXT    NOT NULL,
+    width_bytes   INTEGER NOT NULL,
+    spec          TEXT    NOT NULL,   -- the transmitted hex spec, comma-separated
+    route_json    TEXT    NOT NULL,   -- canonical walked node ids, aligned with spec
+    score         REAL    NOT NULL,
+    stats_json    TEXT    NOT NULL,
+    app_version   TEXT    NOT NULL,
+    discovered_at TEXT    NOT NULL
+);
+
 -- One packet overheard while passively monitoring the mesh (advert/telemetry/...).
 CREATE TABLE IF NOT EXISTS observations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_traces_run ON traces(run_id);
 CREATE INDEX IF NOT EXISTS idx_trace_hops_trace ON trace_hops(trace_id);
 CREATE INDEX IF NOT EXISTS idx_tx_samples_run ON tx_samples(run_id);
 CREATE INDEX IF NOT EXISTS idx_neighbour_reports_pair ON neighbour_reports(repeater, neighbour);
+CREATE INDEX IF NOT EXISTS idx_discovered_paths_cat ON discovered_paths(category, width_bytes);
 CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
 CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);
