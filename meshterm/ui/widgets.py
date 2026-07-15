@@ -37,7 +37,9 @@ from ..core.models import (
     TxOptResult,
     utcnow,
 )
-from .map_render import _NODE, _REPEATER, _SELF
+from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
+from .mapcanvas import RGB, parse_hex
+from .pathgraph import DST_NODE, GlyphOf, LabelOf, LabelRgbOf, SRC_NODE
 from .theme import name_style, snr_style
 
 if TYPE_CHECKING:
@@ -388,6 +390,78 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
     """
     raw = value.lower().removeprefix("0x")
     return raw[: hash_bytes * 2] if hash_bytes else raw
+
+
+#: The pure-white our-own-node hue, matching the ``you`` style — an endpoint that is us
+#: (and any relay resolving to our own name) takes it over its palette colour.
+_SELF_RGB: RGB = (255, 255, 255)
+
+
+def _name_rgb(name: str) -> RGB:
+    """The RGB of a name's stable palette hue (``theme.name_style`` minus its bold)."""
+    return parse_hex(name_style(name).split()[-1])
+
+
+def route_graph_style(
+    *,
+    resolve: NodeResolver,
+    self_name: Optional[str],
+    source: Optional[str],
+) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
+    """Build the per-node callbacks that draw a route on THE route graph (``pathgraph``).
+
+    The shared presentation the Message paths dialog and the Trophy case both draw their
+    graphs with: the two endpoints carry node names, every relay in between its marker
+    plus the first byte of its hash, and each label takes its node's own name hue (us the
+    pure-white ``you``) so a byte reads as the mesh name it stands for. It maps the graph's
+    two endpoint sentinels — :data:`~meshterm.ui.pathgraph.SRC_NODE` on the left,
+    :data:`~meshterm.ui.pathgraph.DST_NODE` (always us) on the right — plus every relay
+    hash, to a glyph, a label, and a label colour.
+
+    Args:
+        resolve: Maps a relay's hash to a friendly name when one is known.
+        self_name: Our own node's name — the right endpoint's label, drawn white.
+        source: The left endpoint's display name (a message's origin, or us for a walk
+            that starts at home — pass ``self_name`` to draw both ends as us). ``None``
+            reads as an unknown ``?`` origin.
+
+    Returns:
+        The ``(glyph_of, label_of, label_rgb_of)`` triple to hand to
+        :func:`~meshterm.ui.pathgraph.render_path_graph`.
+    """
+    src_is_self = bool(source) and source == self_name
+
+    def glyph_of(node: str) -> tuple[str, str]:
+        """Us a star, a named node a dot, an unidentified node a ring."""
+        if node == DST_NODE:
+            return _SELF
+        if node == SRC_NODE:
+            return _SELF if src_is_self else (_NODE if source else _UNKNOWN)
+        named = resolve(node)
+        return _NODE if named and named != node else _UNKNOWN
+
+    def label_of(node: str) -> Optional[str]:
+        """Endpoints by name, relays by their first hash byte."""
+        if node == DST_NODE:
+            return self_name or "you"
+        if node == SRC_NODE:
+            return source or "?"
+        return node[:2]
+
+    def label_rgb_of(node: str) -> RGB:
+        """A label's colour: its node's name hue, us pure white, an unknown its ring."""
+        if node == DST_NODE:
+            return _SELF_RGB
+        if node == SRC_NODE:
+            if src_is_self:
+                return _SELF_RGB
+            return _name_rgb(source) if source else parse_hex(_UNKNOWN[1])
+        named = resolve(node)
+        if named and named != node:
+            return _name_rgb(named)
+        return parse_hex(glyph_of(node)[1])
+
+    return glyph_of, label_of, label_rgb_of
 
 
 def _route_text(

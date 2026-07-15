@@ -11,6 +11,7 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   through THE path widget. A discipline holding records at more than one hash width tags
   each row with its width, since the widths are genuinely different games;
 * opening a record floats :class:`RecordDialog` — every stat the walk was measured by,
+  the walk drawn on THE route graph (the Message paths dialog's shape, us at both ends),
   the full route and spec, and when/by which app version it was set. From there
   *Trace this path* reopens Trace path with the record's route prefilled, so a claim
   worth re-testing is one Enter from the air again;
@@ -31,10 +32,11 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category
 from .menus import back_rows, section_heading
+from .pathgraph import PathLayer, render_path_graph
 from .theme import snr_style
 from .tui.render import render_hanging, render_to_ansi
 from .tui.screen import Screen
-from .widgets import NodeResolver, path_text
+from .widgets import NodeResolver, path_text, route_graph_style
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -43,15 +45,20 @@ if TYPE_CHECKING:
 #: prose reads the same however wide the terminal is.
 _DESC_WRAP = 64
 
+#: The colour a record's single walk draws in on the route graph. It is the only path
+#: on the canvas, so it needs no colour to set it apart — white just reads as "the walk".
+_WALK_EDGE = (255, 255, 255)
+
 
 class RecordDialog(Screen):
     """One record's full story, floating over the screen beneath.
 
-    Every stat the walk was measured by, the route in full (wrapped, never
-    truncated), and the record's provenance — when it was set and by which app
+    Every stat the walk was measured by, the walk drawn on THE route graph (us at both
+    ends, the same shape the Message paths dialog draws) over the route in full (wrapped,
+    never truncated), and the record's provenance — when it was set and by which app
     version. Two actions besides Back: *Trace this path* reopens Trace path with the
-    record's route prefilled (propagation shifts; a record is a claim worth
-    re-testing), and *Delete…* removes this one record behind a confirm.
+    record's route prefilled (propagation shifts; a record is a claim worth re-testing),
+    and *Delete…* removes this one record behind a confirm.
     """
 
     def __init__(
@@ -113,8 +120,36 @@ class RecordDialog(Screen):
         row.append_text(value)
         return row
 
+    def _graph_lines(self, width: int) -> list[str]:
+        """Draw the walked route as one path on THE route graph — us at both ends.
+
+        A scored walk leaves home and comes back, so it draws us (left) → its relays →
+        us (right) as a single white path through the shared fan-lane widget
+        (:func:`~meshterm.ui.pathgraph.render_path_graph`), the same shape the Message
+        paths dialog draws a delivery over. Nodes the walk passed through more than once
+        — a boomerang's mirrored return leg — collapse to their first appearance: the
+        depth-ordered graph can only seat a node once, and the route line below still
+        carries every hop, revisits and all.
+        """
+        seen: set[str] = set()
+        hops: list[str] = []
+        for node in self._record.route:
+            if node not in seen:
+                seen.add(node)
+                hops.append(node)
+        glyph_of, label_of, label_rgb_of = route_graph_style(
+            resolve=self._resolve,
+            self_name=self._device_label,
+            source=self._device_label,
+        )
+        return render_path_graph(
+            [PathLayer(hops=tuple(hops), color=_WALK_EDGE, priority=3)],
+            width,
+            glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+        )
+
     def render_body(self, width: int) -> list[str]:
-        """Score and stats lanes, the full route, provenance, then the actions."""
+        """Stats lanes, the route graph, the full route, provenance, then the actions."""
         record, category = self._record, self._category
         stats = record.stats
         lines: list[str] = []
@@ -162,6 +197,11 @@ class RecordDialog(Screen):
             lines.append(render_to_ansi(
                 self._lane("round trip", Text(f"{rtt:.0f} ms")), width, no_wrap=True
             ))
+
+        lines.append("")
+        lines.extend(self._graph_lines(width))
+        caption = Text("you → … → you · labels = hash byte", style="faint")
+        lines.append(render_to_ansi(caption, width, no_wrap=True))
 
         lines.append("")
         route = path_text(

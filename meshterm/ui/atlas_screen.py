@@ -51,7 +51,7 @@ from ..core.models import (
     utcnow,
 )
 from ..services.topology import Link, MeshTopology
-from .map_render import _NODE, _REPEATER, _SELF
+from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
 from .theme import name_style, snr_style
@@ -122,9 +122,6 @@ _SNR_STOPS: tuple[tuple[float, RGB], ...] = (
 
 #: Edge colour for a link with no SNR reading at all (e.g. known only from a route).
 _NO_READING: RGB = (100, 116, 139)
-
-#: Marker style for a node no contact matches — heard of, never identified.
-_UNKNOWN = ("○", "#94a3b8")
 
 #: One-letter tags for the evidence classes backing a link, matching the path
 #: composer's: T(race), R(oute), P(acket log), N(eighbour table).

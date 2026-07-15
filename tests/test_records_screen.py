@@ -59,6 +59,24 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     assert "Back" in body
 
 
+def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
+    """The walk is drawn on THE route graph — us starred at both ends, over a caption."""
+    body = _plain(_dialog(_record()).render_body(60))
+    assert body.count("★") == 2  # our node marks both endpoints of the round trip
+    assert "labels = hash byte" in body  # the graph's caption
+    assert any("⠀" <= ch <= "⣿" for ch in body)  # braille edges are drawn
+
+
+def test_record_graph_collapses_a_revisited_route_to_distinct_nodes() -> None:
+    """A boomerang that doubles back seats each node once — the depth graph can't stack a
+    node on itself — so the revisiting route draws the same graph as its distinct one."""
+    looping = _dialog(_record(route=(HUB_ID, FAR_ID, HUB_ID)))
+    distinct = _dialog(_record(route=(HUB_ID, FAR_ID)))
+    assert looping._graph_lines(60) == distinct._graph_lines(60)
+    graph = _plain(looping._graph_lines(60))
+    assert "3d" in graph and "f2" in graph  # both distinct relays labelled, neither piled
+
+
 def test_record_dialog_title_names_the_discipline_and_rank() -> None:
     """The title uses the plain discipline name and the board standing."""
     assert _dialog(_record(), rank=3).title == "Record — Most nodes #3"

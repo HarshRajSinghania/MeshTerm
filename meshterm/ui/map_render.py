@@ -53,10 +53,12 @@ class MapMarker:
 # Marker palette, shared across the whole app. The basemap is blue (water), green (parks) and
 # warm amber (roads), so markers use the hues a map never contains — pink/violet — to stand
 # out against it. Ordinary nodes are the loudest (bright pink); repeaters recede a step (a
-# calmer violet); our own node stays the fixed yellow star.
+# calmer violet); our own node stays the fixed yellow star; a node heard of but never
+# identified is a muted grey ring.
 _SELF = ("★", "#facc15")
 _REPEATER = ("▲", "#a78bfa")
 _NODE = ("●", "#f472b6")
+_UNKNOWN = ("○", "#94a3b8")
 
 
 # -- basemap styling ----------------------------------------------------------

@@ -32,16 +32,11 @@ from rich.text import Text
 
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
-from .atlas_screen import _UNKNOWN
-from .map_render import _NODE, _SELF
-from .mapcanvas import RGB, parse_hex
-from .pathgraph import DST_NODE as _DST
-from .pathgraph import SRC_NODE as _SRC
 from .pathgraph import PathLayer, render_path_graph
-from .theme import name_style, snr_style
+from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
-from .widgets import NodeResolver, path_text
+from .widgets import NodeResolver, path_text, route_graph_style
 
 #: Cells one ←/→ press shifts the selected row by.
 _HSTEP = 4
@@ -49,11 +44,6 @@ _HSTEP = 4
 #: Edge colours: the selected path draws white over the unused paths' gray.
 _EDGE_SELECTED = (255, 255, 255)
 _EDGE_UNUSED = (110, 110, 110)
-
-
-def _name_rgb(name: str) -> RGB:
-    """The RGB of a name's stable palette hue (``theme.name_style`` minus its bold)."""
-    return parse_hex(name_style(name).split()[-1])
 
 
 class MessagePathsScreen(Screen):
@@ -261,8 +251,9 @@ class MessagePathsScreen(Screen):
         The shared route-graph widget does the layout (lanes fanned from the centre
         in first-heard order, shared relays averaged together); this just maps each
         distinct path to a :class:`~meshterm.ui.pathgraph.PathLayer` — the selected
-        one white on top, the rest gray beneath — and hands it the per-node glyph,
-        hash-byte label, and name-hue callbacks.
+        one white on top, the rest gray beneath — and hands it the shared route-graph
+        callbacks (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named,
+        relays marked and labelled by their first hash byte in the node's own hue.
         """
         selected = self._arrivals[self._index].hops
         layers = [
@@ -273,49 +264,10 @@ class MessagePathsScreen(Screen):
             )
             for path in self._paths()
         ]
-        return render_path_graph(
-            layers,
-            width,
-            glyph_of=self._node_glyph,
-            label_of=self._node_label,
-            label_rgb_of=self._label_rgb,
+        glyph_of, label_of, label_rgb_of = route_graph_style(
+            resolve=self._resolve, self_name=self._self_name, source=self._source,
         )
-
-    def _node_glyph(self, node: str) -> tuple[str, str]:
-        """The graph marker for a node: us a star, named nodes dots, unknowns rings."""
-        if node == _DST:
-            return _SELF
-        if node == _SRC:
-            if self._source and self._self_name and self._source == self._self_name:
-                return _SELF
-            return _NODE if self._source else _UNKNOWN
-        named = self._resolve(node)
-        return _NODE if named and named != node else _UNKNOWN
-
-    def _node_label(self, node: str) -> str:
-        """A node's graph label: endpoints by name, relays by their first hash byte."""
-        if node == _DST:
-            return self._self_name or "you"
-        if node == _SRC:
-            return self._source or "?"
-        return node[:2]
-
-    def _label_rgb(self, node: str) -> RGB:
-        """The colour a node's graph label is drawn in.
-
-        The marker keeps its type colour (a star for us, a dot for a named node), but
-        the label beside/under it takes the node's *name* hue — the same per-name
-        palette the rows and the rest of the app colour that node by — so the hash
-        byte reads as the mesh name it stands for. Us is the pure-white ``you``; a
-        node with no name to key a hue on falls back to its marker's own colour.
-        """
-        if node == _DST:
-            return (255, 255, 255)
-        if node == _SRC:
-            if self._source and self._source == self._self_name:
-                return (255, 255, 255)
-            return _name_rgb(self._source) if self._source else parse_hex(_UNKNOWN[1])
-        named = self._resolve(node)
-        if named and named != node:
-            return _name_rgb(named)
-        return parse_hex(self._node_glyph(node)[1])
+        return render_path_graph(
+            layers, width,
+            glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+        )
