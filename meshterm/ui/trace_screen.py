@@ -69,7 +69,7 @@ previous-route line.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
@@ -108,10 +108,13 @@ _BAR_SNR_MAX = 10.0
 SAMPLE_CHOICES = (1, 2, 3, 5, 8)
 
 #: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
-#: the result to ``on_trace`` when it lands. Provided by the session openers, which close
-#: over the device, repository, and settings so the screen stays free of persistence
-#: concerns.
-TraceOnce = Callable[[str, Callable[[TraceResult], None]], Awaitable[None]]
+#: the result — plus any trophy-case disciplines the walk just placed in, as short
+#: ``"Title — score"`` labels — to ``on_trace`` when it lands. Provided by the session
+#: openers, which close over the device, repository, and settings so the screen stays
+#: free of persistence and scoring concerns.
+TraceOnce = Callable[
+    [str, Callable[[TraceResult, Sequence[str]], None]], Awaitable[None]
+]
 
 #: A path picker flow: takes the current spec, runs its own dialogs over the screen, and
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
@@ -267,6 +270,7 @@ class TraceScreen(Screen):
         previous: Optional[TraceResult] = None,
         auto_spec: Callable[[], str] = lambda: "",
         auto_source: str = "",
+        initial_spec: str = "",
     ) -> None:
         """Create the screen (nothing transmits until the user commits Trace).
 
@@ -305,6 +309,9 @@ class TraceScreen(Screen):
             auto_source: Short provenance of the auto route (e.g. ``device route``,
                 ``last trace · Jul 09 14:32``) for the route line and summary, so
                 the screen never claims a route the radio wasn't given.
+            initial_spec: A forced path to open armed on, instead of idle on the auto
+                route — how *Trace this path* from the trophy case reopens a record's
+                exact route, ready to walk again. Empty (the default) opens on auto.
         """
         super().__init__()
         self.title = f"Trace — {target}" if mode == "target" else "Trace path"
@@ -326,7 +333,11 @@ class TraceScreen(Screen):
         self._previous = previous
         self._auto_spec = auto_spec
         self._auto_source = auto_source
-        self._path_spec = ""
+        self._path_spec = initial_spec.strip()
+        #: The trophy-case disciplines the latest run placed in, as a ready-to-show
+        #: "★ new record · …" line — set when a walk scores, cleared when a run starts
+        #: or the path changes. Surfaced under the run's aggregates.
+        self._record_note = ""
         #: Traces aggregated on screen — the current route's run. Adopting a
         #: different path clears it (old numbers describe the old route).
         self._traces: list[TraceResult] = []
@@ -372,6 +383,7 @@ class TraceScreen(Screen):
             return
         self._running = True
         self._status = ""
+        self._record_note = ""  # this run earns its own records
         self._spinner.reset()
         self._worker = asyncio.ensure_future(self._run_trace())
         self._session.invalidate()
@@ -429,10 +441,22 @@ class TraceScreen(Screen):
             self._spinner.tick()
             self._session.invalidate()
 
-    def _on_trace(self, result: TraceResult) -> None:
-        """Append the landed trace, echo it on the dialog, and repaint."""
+    def _on_trace(self, result: TraceResult, placed: Sequence[str] = ()) -> None:
+        """Append the landed trace, note any records it set, echo it, and repaint.
+
+        Args:
+            result: The trace that just landed.
+            placed: The trophy-case disciplines this walk placed in, as short
+                ``"Title — score"`` labels (empty when it set nothing). A run that
+                sets nothing on a later trace leaves an earlier trace's note standing.
+        """
         self._traces.append(result)
         self._total_traces += 1
+        if placed:
+            if len(placed) == 1:
+                self._record_note = f"new record · {placed[0]}"
+            else:
+                self._record_note = f"{len(placed)} new records · " + " · ".join(placed)
         if self._flight is not None:
             self._flight.last = result
         self._session.invalidate()
@@ -533,6 +557,7 @@ class TraceScreen(Screen):
                     self._path_spec = spec.strip()
                     self._traces.clear()
                     self._status = ""
+                    self._record_note = ""  # the note described the old route's run
             finally:
                 self._dialog_open = False
                 self._session.invalidate()
@@ -799,6 +824,9 @@ class TraceScreen(Screen):
         hops = self._displayed_hop_count(current)
         if hops is not None:
             summary.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
+        if self._record_note:
+            summary.append("\n★ ", style="accent")
+            summary.append(self._record_note, style="accent")
         return summary
 
     def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
@@ -945,7 +973,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     return await _open_session(ctx, target)
 
 
-async def open_trace_path(ctx: "AppContext") -> int:
+async def open_trace_path(ctx: "AppContext", spec: str = "") -> int:
     """Open the live *Trace path* screen and run it until dismissed.
 
     The hand-routed feature: how far can a route I build carry? There is no target —
@@ -955,6 +983,9 @@ async def open_trace_path(ctx: "AppContext") -> int:
 
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
+        spec: A forced path to open armed on (comma-separated hex hops), instead of idle
+            on the last stored walk — how the trophy case's *Trace this path* reopens a
+            record's route. Empty (the default) opens on history.
 
     Returns:
         The number of traces run while the screen was open.
@@ -962,10 +993,12 @@ async def open_trace_path(ctx: "AppContext") -> int:
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    return await _open_session(ctx, None)
+    return await _open_session(ctx, None, initial_spec=spec)
 
 
-async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
+async def _open_session(
+    ctx: "AppContext", target: Optional[str], *, initial_spec: str = ""
+) -> int:
     """Wire and run one live trace session (both features share this plumbing).
 
     Wires the screen to the radio, the database, and the observed-topology services:
@@ -980,6 +1013,9 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         ctx: The shared application context (must be running the interactive TUI surface).
         target: The trace destination (contact name or key prefix), or ``None`` for a
             target-less path walk.
+        initial_spec: A forced path (comma-separated hex hops) to open the path screen
+            armed on, instead of idle on history — the trophy case's *Trace this path*
+            hand-off. Ignored in target mode (only path walks arm on a bare spec).
 
     Returns:
         The number of traces run while the screen was open.
@@ -1600,11 +1636,76 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             return None
         return adopted.candidate.spec
 
-    async def trace_once(path_spec: str, on_trace: Callable[[TraceResult], None]) -> None:
+    # -- trophy case: score every walk that comes home ---------------------------------
+    # A trace is a walk (it starts and ends at us — a Trace path route directly, a
+    # Trace target boomerang just the same), so every successful reply is scored against
+    # the six trophy-case disciplines and offered to their boards. See services/records.
+
+    def _as_float(value) -> Optional[float]:  # noqa: ANN001
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    _lat, _lon = _as_float(self_info.get("adv_lat")), _as_float(self_info.get("adv_lon"))
+    self_pos = (_lat, _lon) if _lat is not None and _lon is not None and (_lat or _lon) else None
+
+    def build_positions(topo: MeshTopology) -> dict[str, tuple[float, float]]:
+        """Node positions by canonical id: advert history first, contacts over it."""
+        positions: dict[str, tuple[float, float]] = {}
+        for heard in ctx.repo.heard_nodes():
+            if heard.node and heard.lat is not None and heard.lon is not None:
+                positions[heard.node] = (heard.lat, heard.lon)
+        for contact in contacts:
+            cid = topo.canonical(contact.public_key or contact.key_prefix)
+            if cid is not None and contact.lat is not None and contact.lon is not None and (
+                contact.lat or contact.lon
+            ):
+                positions[cid] = (contact.lat, contact.lon)
+        return positions
+
+    def offer_records(result: TraceResult) -> list[str]:
+        """Score a walk home and offer it to every board; return the ones it placed.
+
+        Returns the placed disciplines as short ``"Title — score"`` labels for the
+        screen's inline note. Defensive by design — a scoring hiccup must never break
+        a trace — so any failure yields no records rather than propagating.
+        """
+        from .. import __version__
+        from ..services.records import CATEGORY_BY_ID, walk_from_trace, walk_scores
+
+        try:
+            topo = fresh_topology()
+            derived = walk_from_trace(
+                result, canonical=topo.canonical,
+                positions=build_positions(topo), self_pos=self_pos,
+            )
+            if derived is None:
+                return []
+            spec, route, stats = derived
+            placed: list[str] = []
+            for cid, score in walk_scores(stats).items():
+                cat = CATEGORY_BY_ID[cid]
+                row_id = ctx.repo.record_discovery(
+                    cid, width_bytes, spec, route,
+                    score=score, stats=stats.as_dict(),
+                    app_version=__version__, ascending=cat.ascending,
+                )
+                if row_id is not None:
+                    placed.append(f"{cat.title} — {cat.format_score(score)}")
+            return placed
+        except Exception:  # noqa: BLE001 - scoring must never break a trace
+            return []
+
+    async def trace_once(
+        path_spec: str, on_trace: Callable[[TraceResult, Sequence[str]], None]
+    ) -> None:
         """Run one persisted trace: one transmission, its own ``runs`` row.
 
         The screen calls this once per sample; multi-trace runs are paced there, so
-        the repeaters never see a burst regardless of the chosen count.
+        the repeaters never see a burst regardless of the chosen count. A walk that
+        comes home is scored into the trophy case, and any records it set are handed
+        to the screen with the result.
         """
         spec = path_spec.strip() or auto_spec()
         path = trace_runner.parse_trace_path(spec, contacts) if spec else None
@@ -1620,7 +1721,8 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
             ctx.repo.finish_run(run_id, "error", {"error": str(exc) or type(exc).__name__})
             raise
         ctx.repo.record_trace(run_id, result)
-        on_trace(result)
+        placed = offer_records(result) if result.success else []
+        on_trace(result, placed)
         ctx.repo.finish_run(
             run_id,
             "ok",
@@ -1629,6 +1731,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
                 "success": result.success,
                 "min_snr": result.min_snr,
                 "rtt_ms": result.round_trip_ms,
+                "records": placed or None,
             },
         )
 
@@ -1650,6 +1753,7 @@ async def _open_session(ctx: "AppContext", target: Optional[str]) -> int:
         previous=previous,
         auto_spec=auto_spec,
         auto_source=auto_source,
+        initial_spec=initial_spec if mode == "path" else "",
     )
     try:
         await session.run_screen(screen)

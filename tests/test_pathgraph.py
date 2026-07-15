@@ -66,7 +66,7 @@ def test_distinct_layers_draw_in_their_own_colours() -> None:
 
 
 def test_labels_follow_the_callback_only_self_named() -> None:
-    """A ``None`` label leaves the marker bare — the Pathfinder's relay mode."""
+    """A ``None`` label leaves the marker bare — a caller's unnamed-relay mode."""
     layers = [PathLayer(("ab", "cd"), WHITE, 4)]
     lines = _render(
         layers,

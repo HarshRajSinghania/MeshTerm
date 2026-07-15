@@ -11,12 +11,11 @@ right endpoint marker:
   line, the next below, the next above, …); a node shared between paths averages its
   lanes, so a common relay pulls the paths together where they actually met;
 * **shared cells** go to the highest-priority layer (drawn last), so e.g. the Message
-  paths dialog's selected path reads white over the unused grey, and the Pathfinder's
-  current attempt reads white over the session's green over the all-time yellow;
+  paths dialog's selected path reads white over the unused grey;
 * **labels** sit straight above or below their marker — the side away from the centre
   line first, a spot clear of the drawn lines preferred — and endpoints try the same
   vertical placements before falling back beside the marker. A caller that wants a
-  node unlabelled (the Pathfinder names only our own node) returns ``None`` for it.
+  node unlabelled returns ``None`` for it.
 
 Everything renders onto a :class:`~meshterm.ui.mapcanvas.MapCanvas`; the caller supplies
 the per-node glyph/label/colour callbacks, so the widget stays free of contact-list and
