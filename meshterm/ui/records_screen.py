@@ -10,9 +10,12 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   ranked best-first — dated, scored in the discipline's own unit, with the walked route
   through THE path widget. A discipline holding records at more than one hash width tags
   each row with its width, since the widths are genuinely different games;
-* opening a record floats :class:`RecordDialog` — every stat the walk was measured by,
-  the walk drawn on THE route graph (the Message paths dialog's shape, us at both ends),
-  the full route and spec, and when/by which app version it was set. From there
+* opening a record floats :class:`RecordDialog` — every stat the walk was measured by
+  (the far point named with the node it reached), the walk drawn two ways: on THE route
+  graph (the Message paths dialog's shape, us at both ends) and, beside the stats, as the
+  enclosed area it swept on a braille mini-map (us and every positioned hop, coloured node
+  pins, no labels); then the full route and spec, and when/by which app version it was
+  set. The card scrolls (PgUp/PgDn/Home/End) when it outgrows the terminal. From there
   *Trace this path* reopens Trace path with the record's route prefilled, so a claim
   worth re-testing is one Enter from the air again;
 * deletion comes in three grains: one record, one discipline (every width), or
@@ -24,19 +27,28 @@ Nothing here transmits: it reads the boards the trace tools filled.
 from __future__ import annotations
 
 import textwrap
-from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from rich.text import Text
 
+from ..core.geo import haversine_km
 from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
-from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category
+from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
+from .mapcanvas import RGB, MapCanvas
 from .menus import back_rows, section_heading
 from .pathgraph import PathLayer, render_path_graph
-from .theme import snr_style
+from .theme import name_style, snr_style
 from .tui.render import render_hanging, render_to_ansi
 from .tui.screen import Screen
-from .widgets import NodeResolver, path_text, route_graph_style
+from .widgets import (
+    NodeResolver,
+    node_marker,
+    path_text,
+    route_graph_style,
+    self_marker,
+)
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -49,16 +61,55 @@ _DESC_WRAP = 64
 #: on the canvas, so it needs no colour to set it apart — white just reads as "the walk".
 _WALK_EDGE = (255, 255, 255)
 
+#: The area drawing's two body colours: a dim slate wash for the enclosed interior, and a
+#: near-white outline for the walked loop itself (the coloured node markers ride on top).
+_AREA_FILL: RGB = (71, 85, 105)
+_AREA_EDGE: RGB = (226, 232, 240)
+
+#: The area drawing's cell box, to the right of the stats: a width that scales with the
+#: dialog but stays inside these bounds, and a floor of columns below which it is dropped
+#: (the stats reclaim the full width) rather than squeezed into illegibility.
+_POLY_MIN_W = 14
+_POLY_MAX_W = 22
+_SIDE_BY_SIDE_MIN = 44
+
+
+@dataclass(frozen=True, slots=True)
+class WalkVertex:
+    """One positioned point of a walk's circuit, projected onto the local km plane.
+
+    Our own node sits at the origin and every hop is placed relative to it (east/north
+    kilometres), so the vertices draw the same shape the area was scored over. Each
+    carries its own map marker so the drawing pins nodes in the shared palette.
+
+    Attributes:
+        x: Kilometres east of our node.
+        y: Kilometres north of our node.
+        glyph: The node-type marker to pin at this point.
+        color: The marker's truecolour.
+        is_self: Whether this vertex is our own node (the yellow star at the origin).
+    """
+
+    x: float
+    y: float
+    glyph: str
+    color: RGB
+    is_self: bool
+
 
 class RecordDialog(Screen):
     """One record's full story, floating over the screen beneath.
 
-    Every stat the walk was measured by, the walk drawn on THE route graph (us at both
-    ends, the same shape the Message paths dialog draws) over the route in full (wrapped,
-    never truncated), and the record's provenance — when it was set and by which app
-    version. Two actions besides Back: *Trace this path* reopens Trace path with the
-    record's route prefilled (propagation shifts; a record is a claim worth re-testing),
-    and *Delete…* removes this one record behind a confirm.
+    Every stat the walk was measured by — the far point named with the node it reached —
+    with the walk's enclosed area drawn beside them on a braille mini-map (us at the
+    origin, every positioned hop pinned in its map colour, no labels) when the terminal has
+    the room; below, the walk on THE route graph (us at both ends, the same shape the
+    Message paths dialog draws), the route in full (wrapped, never truncated), and the
+    record's provenance — when it was set and by which app version. The card scrolls
+    (PgUp/PgDn/Home/End) when it outgrows the frame, while the arrows drive the actions.
+    Two actions besides Back: *Trace this path* reopens Trace path with the record's route
+    prefilled (propagation shifts; a record is a claim worth re-testing), and *Delete…*
+    removes this one record behind a confirm.
     """
 
     def __init__(
@@ -70,6 +121,8 @@ class RecordDialog(Screen):
         resolve: NodeResolver,
         device_label: str,
         device_hash: Optional[str],
+        far_label: Optional[str] = None,
+        shape: Optional[Sequence[WalkVertex]] = None,
     ) -> None:
         """Build the dialog for one stored record.
 
@@ -80,18 +133,27 @@ class RecordDialog(Screen):
             resolve: Maps node ids to friendly names.
             device_label: Our node's name, bracketing the route.
             device_hash: Our public key, annotated at the record's width.
+            far_label: The farthest node's name, shown beside its distance; ``None`` when
+                no positioned hop was named.
+            shape: The walk's positioned circuit, projected for the area drawing; ``None``
+                below the three points a polygon needs.
         """
         super().__init__()
         self.title = f"Record — {category.title} #{rank}"
-        self.footer_hint = "↑↓ move · Enter commit · Esc back"
+        self.footer_hint = "↑↓ move · PgUp/PgDn scroll · Enter commit · Esc back"
         self._record = record
         self._category = category
         self._resolve = resolve
         self._device_label = device_label
         self._device_hash = device_hash
+        self._far_label = far_label
+        self._shape = list(shape) if shape else None
         self._actions = ("trace", "delete", "back")
         self._index = 0
         self._cursor: Optional[int] = None
+        # The card opens at the top, reading down; the arrows drive (and follow) the action
+        # cursor, while PgUp/PgDn/Home/End scroll the body free of it (see cursor_line).
+        self._follow = False
 
     @property
     def dialog_width(self) -> int:
@@ -99,11 +161,25 @@ class RecordDialog(Screen):
         return 62
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the cursor, commit the selected action, or dismiss."""
+        """Move the action cursor, scroll the card, commit the selection, or dismiss."""
         if action == "up":
+            self._follow = True
             self._index = (self._index - 1) % len(self._actions)
         elif action == "down":
+            self._follow = True
             self._index = (self._index + 1) % len(self._actions)
+        elif action in ("pageup", "ctrl_pageup"):
+            self._follow = False
+            self.scroll_pages(-1)
+        elif action in ("pagedown", "space", "ctrl_pagedown"):
+            self._follow = False
+            self.scroll_pages(1)
+        elif action in ("home", "ctrl_home"):
+            self._follow = False
+            self.scroll_to_top()
+        elif action in ("end", "ctrl_end"):
+            self._follow = False
+            self.scroll_to_bottom()
         elif action == "enter":
             key = self._actions[self._index]
             self.resolve(None if key == "back" else key)
@@ -111,8 +187,8 @@ class RecordDialog(Screen):
             self.resolve(None)
 
     def cursor_line(self) -> Optional[int]:
-        """Keep the selected action row visible if the dialog ever scrolls."""
-        return self._cursor
+        """Keep the selected action visible while arrowing; scroll free once paging."""
+        return self._cursor if self._follow else None
 
     def _lane(self, label: str, value: Text) -> Text:
         """One label/value stat lane (label lane fixed so values align)."""
@@ -148,55 +224,118 @@ class RecordDialog(Screen):
             glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
         )
 
-    def render_body(self, width: int) -> list[str]:
-        """Stats lanes, the route graph, the full route, provenance, then the actions."""
+    def _stat_lanes(self) -> list[Text]:
+        """Every stat the walk was measured by, as label/value lanes (score → round trip).
+
+        Which lanes appear varies by discipline — a walk with no positions has no distance,
+        far point, or area — so callers size to the returned list rather than a fixed count.
+        The far-point lane carries the reached node's name when one is known.
+        """
         record, category = self._record, self._category
         stats = record.stats
-        lines: list[str] = []
+        lanes: list[Text] = []
 
         score = category.format_score(record.score)
         if category.id == "long_haul" and not stats.get("km_complete", True):
             score = "≥ " + score
-        lines.append(render_to_ansi(
-            self._lane("score", Text(score, style="accent bold")), width, no_wrap=True
-        ))
+        lanes.append(self._lane("score", Text(score, style="accent bold")))
 
         hops = stats.get("hop_count", len(record.route))
         distinct = stats.get("distinct_nodes", len(set(record.route)))
-        shape = Text(f"{hops} hop{'s' if hops != 1 else ''}")
-        shape.append(f" · {distinct} distinct node{'s' if distinct != 1 else ''}",
-                     style="muted")
+        walk = Text(f"{hops} hop{'s' if hops != 1 else ''}")
+        walk.append(f" · {distinct} distinct node{'s' if distinct != 1 else ''}",
+                    style="muted")
         if stats.get("repeats"):
-            shape.append(" · revisits", style="muted")
-        lines.append(render_to_ansi(self._lane("walk", shape), width, no_wrap=True))
+            walk.append(" · revisits", style="muted")
+        lanes.append(self._lane("walk", walk))
 
         km = stats.get("km_travelled")
         if km:
             value = Text(f"{'≥ ' if not stats.get('km_complete', True) else ''}{km:.1f} km")
-            lines.append(render_to_ansi(
-                self._lane("distance", value), width, no_wrap=True
-            ))
+            lanes.append(self._lane("distance", value))
         far = stats.get("far_km")
         if far is not None:
-            lines.append(render_to_ansi(
-                self._lane("far point", Text(f"{far:.1f} km")), width, no_wrap=True
-            ))
+            value = Text(f"{far:.1f} km")
+            if self._far_label:
+                value.append("  ")
+                value.append(self._far_label, style=name_style(self._far_label))
+            lanes.append(self._lane("far point", value))
         area = stats.get("area_km2")
         if area is not None:
-            lines.append(render_to_ansi(
-                self._lane("area", Text(f"{area:.1f} km²")), width, no_wrap=True
-            ))
+            lanes.append(self._lane("area", Text(f"{area:.1f} km²")))
         snr = stats.get("min_snr")
         if snr is not None:
-            lines.append(render_to_ansi(
-                self._lane("weakest", Text(f"{snr:+.1f} dB", style=snr_style(snr))),
-                width, no_wrap=True,
+            lanes.append(self._lane(
+                "weakest", Text(f"{snr:+.1f} dB", style=snr_style(snr))
             ))
         rtt = stats.get("rtt_ms")
         if rtt is not None:
-            lines.append(render_to_ansi(
-                self._lane("round trip", Text(f"{rtt:.0f} ms")), width, no_wrap=True
-            ))
+            lanes.append(self._lane("round trip", Text(f"{rtt:.0f} ms")))
+        return lanes
+
+    def _compose_stats(self, lanes: list[Text], width: int) -> list[str]:
+        """Lay the stat lanes out, the area drawing pinned to their right when it fits.
+
+        With a drawable walk and room to spare, the polygon takes a fixed cell box on the
+        right and the lanes are cropped to the column beside it; too narrow, or no shape,
+        and the lanes reclaim the whole width and the drawing is dropped.
+        """
+        if not self._shape or width < _SIDE_BY_SIDE_MIN:
+            return [render_to_ansi(lane, width, no_wrap=True) for lane in lanes]
+        poly_w = min(_POLY_MAX_W, max(_POLY_MIN_W, width // 3))
+        left_w = width - poly_w - 2
+        poly = self._shape_lines(poly_w, len(lanes))
+        out: list[str] = []
+        for i, lane in enumerate(lanes):
+            row = lane.copy()
+            row.no_wrap = True
+            row.truncate(left_w, overflow="ellipsis", pad=True)
+            row.append("  ")
+            if i < len(poly):
+                row.append_text(Text.from_ansi(poly[i]))
+            out.append(render_to_ansi(row, width, no_wrap=True))
+        return out
+
+    def _shape_lines(self, cell_w: int, cell_h: int) -> list[str]:
+        """Draw the walk's enclosed area on a braille canvas: fill, loop, coloured pins.
+
+        The projected circuit (us at the origin, every positioned hop around it) is scaled
+        to the cell box preserving true proportions — braille dots are square, so equal x/y
+        scaling keeps the geography honest — then filled as a shaded region, outlined as the
+        walked loop, and pinned with each node's map marker. No labels: the pins carry the
+        node types and the stats beside them carry the numbers.
+        """
+        verts = self._shape or []
+        canvas = MapCanvas(cell_w, cell_h)
+        xs = [v.x for v in verts]
+        ys = [v.y for v in verts]
+        span_x = (max(xs) - min(xs)) or 1e-6
+        span_y = (max(ys) - min(ys)) or 1e-6
+        pad = 2.0
+        avail_w = max(1.0, canvas.dot_w - 1 - 2 * pad)
+        avail_h = max(1.0, canvas.dot_h - 1 - 2 * pad)
+        scale = min(avail_w / span_x, avail_h / span_y)
+        origin_x = pad + (avail_w - span_x * scale) / 2
+        origin_y = pad + (avail_h - span_y * scale) / 2
+        min_x, max_y = min(xs), max(ys)
+        # Flip y so north points up: the northernmost point lands at the top dot row.
+        ring = [
+            (origin_x + (v.x - min_x) * scale, origin_y + (max_y - v.y) * scale)
+            for v in verts
+        ]
+        closed = ring + ring[:1]
+        canvas.fill_polygon([closed], _AREA_FILL, priority=0)
+        canvas.draw_line(closed, _AREA_EDGE, priority=1)
+        for v, (dx, dy) in zip(verts, ring):
+            canvas.marker(int(round(dx)), int(round(dy)), v.glyph, v.color)
+        return canvas.to_ansi_lines()
+
+    def render_body(self, width: int) -> list[str]:
+        """Stats lanes, the route graph, the full route, provenance, then the actions."""
+        record = self._record
+        lines: list[str] = []
+
+        lines.extend(self._compose_stats(self._stat_lanes(), width))
 
         lines.append("")
         lines.extend(self._graph_lines(width))
@@ -288,6 +427,70 @@ async def open_records(ctx: "AppContext") -> dict:
 
     lat, lon = _as_float(self_info.get("adv_lat")), _as_float(self_info.get("adv_lon"))
     self_pos = (lat, lon) if lat is not None and lon is not None and (lat or lon) else None
+
+    # Node positions and types for a record's area drawing, gathered live the same way the
+    # trace tools gather them to score a walk: adverts we've heard, contacts over them. A
+    # record stores canonical ids, so match those the resolver's way (a prefix either side).
+    node_entries: list[tuple[str, Optional[tuple[float, float]], Optional[int]]] = []
+    for heard in ctx.repo.heard_nodes():
+        if not heard.node:
+            continue
+        pos = (heard.lat, heard.lon) if heard.has_location else None
+        node_entries.append((heard.node.lower().removeprefix("0x"), pos, heard.node_type))
+    for contact in contacts:
+        ident = (contact.public_key or contact.key_prefix or "").lower().removeprefix("0x")
+        if not ident:
+            continue
+        pos = (contact.lat, contact.lon) if (
+            contact.has_location and (contact.lat or contact.lon)
+        ) else None
+        node_entries.append((ident, pos, contact.node_type))
+
+    def node_geo(node_id: str) -> tuple[Optional[tuple[float, float]], Optional[int]]:
+        """A route node's best-known position and type across the heard/contact entries."""
+        needle = node_id.lower().removeprefix("0x")
+        pos: Optional[tuple[float, float]] = None
+        ntype: Optional[int] = None
+        for ident, epos, etype in node_entries:
+            if not (ident.startswith(needle) or needle.startswith(ident)):
+                continue
+            if pos is None:
+                pos = epos
+            if ntype is None:
+                ntype = etype
+            if pos is not None and ntype is not None:
+                break
+        return pos, ntype
+
+    def walk_drawing(
+        record: DiscoveredPath,
+    ) -> tuple[Optional[str], Optional[list[WalkVertex]]]:
+        """The farthest node's name and the walk's projected polygon (or ``None`` each).
+
+        Mirrors the scoring geometry (see :mod:`~meshterm.services.records`): our node at
+        the plane's origin, every positioned hop projected onto the same local km plane in
+        walk order, the farthest hop named. A polygon needs three points — us plus two
+        positioned hops — so a sparser walk yields no drawing but still names its far point.
+        """
+        if self_pos is None:
+            return None, None
+        glyph, color = self_marker()
+        verts = [WalkVertex(0.0, 0.0, glyph, color, True)]
+        far_label: Optional[str] = None
+        far_dist = -1.0
+        for node_id in record.route:
+            pos, ntype = node_geo(node_id)
+            if pos is None:
+                continue
+            east, north = _local_xy(self_pos, pos)
+            hop_glyph, hop_color = node_marker(ntype)
+            verts.append(WalkVertex(east, north, hop_glyph, hop_color, False))
+            dist = haversine_km(self_pos[0], self_pos[1], pos[0], pos[1])
+            if dist > far_dist:
+                far_dist = dist
+                name = resolve(node_id)
+                far_label = name if name and name != node_id else None
+        return far_label, (verts if len(verts) >= 3 else None)
 
     def ranked(category: Category) -> list[DiscoveredPath]:
         """One discipline's records, ranked best-first across every hash width."""
@@ -418,9 +621,11 @@ async def open_records(ctx: "AppContext") -> dict:
                 ctx.repo.delete_discoveries()
             continue
         _verb, category, rank, record = picked
+        far_label, shape = walk_drawing(record)
         action = await session.run_screen(RecordDialog(
             record, category, rank,
             resolve=resolve, device_label=device_label, device_hash=device_hash,
+            far_label=far_label, shape=shape,
         ))
         if action == "trace":
             await open_trace_path(ctx, spec=record.spec)

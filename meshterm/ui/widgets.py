@@ -599,6 +599,24 @@ _NODE_GLYPHS: dict[int, tuple[str, str]] = {
 }
 _DEFAULT_GLYPH: tuple[str, str] = (_NODE[0], _NODE[1])
 
+
+def node_marker(node_type: Optional[int]) -> tuple[str, RGB]:
+    """The map-palette glyph and truecolour for a node type, as a ``(glyph, rgb)`` pair.
+
+    The shared node-type marks (``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` plain
+    node) in the map's own colours, minted here for a braille raster the way
+    :data:`_NODE_GLYPHS` mints them for a Rich row — so a spatial drawing pins its nodes
+    in the exact glyphs and hues the map and the nodes list use. An unknown type falls
+    back to the plain node mark.
+    """
+    glyph, color = _NODE_GLYPHS.get(node_type or -1, _DEFAULT_GLYPH)
+    return glyph, parse_hex(color)
+
+
+def self_marker() -> tuple[str, RGB]:
+    """Our own node's map marker — the yellow ``★`` — as a ``(glyph, rgb)`` pair."""
+    return _SELF[0], parse_hex(_SELF[1])
+
 # A heat-map gradient for a contact's name, hottest (most recently heard) to coldest: white
 # → yellow → orange → red → grey. Each stop pairs an age anchor (log10 of seconds since heard)
 # with an RGB colour; :func:`_recency_style` interpolates continuously between them, so the
