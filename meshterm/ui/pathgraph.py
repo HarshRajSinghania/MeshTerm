@@ -53,9 +53,6 @@ _CELL_MID_DOT = 1
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
 
-#: The widest a node label may render on the graph before it is ellipsized.
-_GRAPH_LABEL_W = 12
-
 #: A node's graph marker: the glyph and its ``#rrggbb`` colour (the shared node-glyph
 #: tuples from :mod:`~meshterm.ui.map_render` / :mod:`~meshterm.ui.widgets` fit as-is).
 GlyphOf = Callable[[str], tuple[str, str]]
@@ -115,8 +112,8 @@ def render_path_graph(
         width: Canvas width in character cells.
         glyph_of: Marker glyph + colour per node id (endpoints keyed by
             :data:`SRC_NODE` / :data:`DST_NODE`).
-        label_of: Label text per node id (``None``/``""`` = bare marker). Labels
-            longer than the widget's budget are ellipsized.
+        label_of: Label text per node id (``None``/``""`` = bare marker). A label is
+            kept whole unless it is wider than the canvas, when it is ellipsized to fit.
         label_rgb_of: Label colour per node id.
         min_rows: The fewest canvas rows to draw, however flat the fan.
         max_rows: The most canvas rows to spend; a taller fan compresses its lane
@@ -218,8 +215,13 @@ def render_path_graph(
         label = label_of(node)
         if not label:
             continue
-        if len(label) > _GRAPH_LABEL_W:
-            label = label[: _GRAPH_LABEL_W - 1] + "…"
+        # A name only shortens when it is wider than the whole canvas — there is
+        # physically nowhere for the extra cells to go. Anything that fits the width is
+        # kept whole and handed to the placement pass below, which slides an endpoint's
+        # label inward (or drops a crowded relay's) rather than pre-clipping a name that
+        # would have fit.
+        if len(label) > width:
+            label = label[: max(1, width - 1)] + "…"
         rgb = label_rgb_of(node)
         x, y = pos(node)
         # An endpoint hugs a canvas edge, where a run centred on its marker falls

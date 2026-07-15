@@ -78,7 +78,7 @@ def test_labels_follow_the_callback_only_self_named() -> None:
 
 
 def test_endpoint_labels_may_leave_the_marker_row() -> None:
-    """Endpoints now place like relays: the label lands even off the centre row."""
+    """Endpoints place like relays: a long name lands whole, even off the centre row."""
     layers = [PathLayer(tuple(f"{i:02x}" for i in range(6)), WHITE, 4)]
     lines = _render(
         layers,
@@ -87,5 +87,22 @@ def test_endpoint_labels_may_leave_the_marker_row() -> None:
         else None,
     )
     plain = _ANSI.sub("", "\n".join(lines))
-    # The name is wider than the label budget: it must appear, ellipsized.
-    assert "VeryLongSta…" in plain
+    # The name fits the 60-cell canvas, so it is kept whole — no fixed label budget clips it.
+    assert "VeryLongStationName" in plain
+    assert "…" not in plain
+
+
+def test_labels_ellipsize_only_when_wider_than_the_canvas() -> None:
+    """A name shortens only when it physically cannot fit — wider than the whole canvas."""
+    name = "x" * 30
+    lines = render_path_graph(
+        [PathLayer(("aa",), WHITE, 4)],
+        20,
+        glyph_of=_glyph,
+        label_of=lambda node: name if node in (SRC_NODE, DST_NODE) else None,
+        label_rgb_of=lambda _node: WHITE,
+    )
+    plain = _ANSI.sub("", "\n".join(lines))
+    assert name not in plain  # the full 30-cell name cannot fit a 20-cell canvas
+    assert "…" in plain  # so it is ellipsized to what fits
+    assert all(len(_ANSI.sub("", ln)) <= 20 for ln in lines)  # never overruns the width
