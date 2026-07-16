@@ -60,6 +60,27 @@ def test_path_text_lights_the_hash_prefix() -> None:
     assert "77" in brand  # the addressed prefix stands out within the hash
 
 
+def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
+    """An unnamed hop stands in its own hash at the mode width, muted, plus its byte."""
+    text = path_text(
+        ["e839f2ab"], _resolve, prefix_bytes=3,
+        show_hash=True, hash_bytes=1, hash_as_name=True,
+    )
+    assert text.plain == "e839f2 (e8)"  # mode width identity, then the addressed byte
+    styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
+    assert styles.get("e839f2") == "muted"  # greyed — colour is the "this is a name" cue
+    assert not any(str(s.style) == "brand" for s in text.spans)  # no prefix lit
+
+
+def test_path_text_hash_as_name_drops_the_byte_when_it_is_the_whole_hash() -> None:
+    """When the mode width is one byte, the identity already is the byte — no ``(e8)``."""
+    text = path_text(
+        ["e839f2ab"], _resolve, prefix_bytes=1,
+        show_hash=True, hash_bytes=1, hash_as_name=True,
+    )
+    assert text.plain == "e8"
+
+
 def test_path_text_trace_flavour_annotates_hashes_and_brackets_us() -> None:
     """show_hash appends the addressed hash to names; None hops are our device."""
     text = path_text(

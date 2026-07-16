@@ -1377,6 +1377,42 @@ def test_session_stack_and_float_selection() -> None:
     assert not session._has_float()
 
 
+def test_session_stacks_every_dialog_over_one_full_frame_background() -> None:
+    """A dialog over a dialog: both float over the single background, neither full-frame.
+
+    The old compositor drew only the top float and rendered the second-from-top as the
+    full-frame base — so opening a confirm over a popup stretched that popup to fill the
+    frame. Now the background is the deepest full-frame screen and every floating layer
+    above it stays its own centered box.
+    """
+    session = TuiSession()
+    channels = SelectScreen("Channels", [Choice("Ops", 1)])  # a tool's own floating list
+    detail = SelectScreen("Ops (private)", [Choice("Clear", "clr")])  # its item popup
+    confirm = ButtonDialog("Clear Ops?", [("Cancel", 0), ("Clear", 1)], border_style="err")
+    for screen in (channels, detail, confirm):
+        session.push(screen)
+
+    # The bottom (all-floating) screen is the one full-frame background; the detail popup
+    # and the confirm both float over it — the detail is no longer promoted to the base.
+    assert session._base_screen() is channels
+    assert session._float_layers() == [detail, confirm]
+
+    session.pop(confirm)
+    assert session._float_layers() == [detail]  # detail stays a float, not full-frame
+    assert session._base_screen() is channels
+
+
+def test_session_background_is_the_topmost_full_frame_screen() -> None:
+    """A non-floating screen (a map, a scroll window) is the background under any dialogs."""
+    session = TuiSession()
+    full = ScrollScreen(Text("map"), title="map")  # floating=False
+    dialog = ButtonDialog("go?", [("No", 0), ("Yes", 1)])
+    session.push(full)
+    session.push(dialog)
+    assert session._base_screen() is full
+    assert session._float_layers() == [dialog]
+
+
 # --- busy skeleton card ------------------------------------------------------
 
 

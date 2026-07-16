@@ -18,8 +18,9 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   set. The card scrolls (PgUp/PgDn/Home/End) when it outgrows the terminal. From there
   *Trace this path* reopens Trace path with the record's route prefilled, so a claim
   worth re-testing is one Enter from the air again;
-* deletion comes in three grains: one record, one discipline (every width), or
-  everything (the last two behind a confirm — the wholesale one typed).
+* deletion comes in three grains, each behind a red data-loss dialog: one record
+  behind a Cancel/Delete confirm, and — the bulk grains — one discipline (every width)
+  or everything, each gated behind typing ``delete``.
 
 Nothing here transmits: it reads the boards the trace tools filled.
 """
@@ -116,7 +117,7 @@ class RecordDialog(Screen):
     (PgUp/PgDn/Home/End) when it outgrows the frame, while the arrows drive the actions.
     Two actions besides Back: *Trace this path* reopens Trace path with the record's route
     prefilled (propagation shifts; a record is a claim worth re-testing), and *Delete…*
-    removes this one record behind a confirm.
+    removes this one record behind a red Cancel/Delete data-loss confirm.
     """
 
     def __init__(
@@ -635,14 +636,14 @@ async def open_records(ctx: "AppContext") -> dict:
         if picked in (CANCEL, None, "__back__"):
             return None
         category = CATEGORY_BY_ID[str(picked)]
-        sure = await ctx.ui.dialog(
-            f"Delete every {category.title} record, at every hash width?",
-            [("Cancel", False), ("Delete", True)],
+        count = len(ctx.repo.discoveries(category.id))
+        if await session.typed_confirm(
+            f"This deletes all {count} {category.title} "
+            f"record{'s' if count != 1 else ''} — every hash width. "
+            "They can only be re-earned by walking them again.",
+            "delete",
             title="Delete discipline records",
-            default=1,
-            danger=True,
-        )
-        if sure:
+        ):
             ctx.repo.delete_discoveries(category.id)
 
     while True:
@@ -712,7 +713,7 @@ async def open_records(ctx: "AppContext") -> dict:
                 [("Cancel", False), ("Delete", True)],
                 title="Delete record",
                 default=1,
-                danger=True,
+                destructive=True,
             )
             if sure:
                 ctx.repo.delete_discovery(record.id)

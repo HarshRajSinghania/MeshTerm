@@ -16,7 +16,9 @@ detail read together:
   many-path graph stays readable.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
   the relay chain through the shared compact path widget, each named hop annotated
-  with the hash byte it is addressed by (``YUL-Poly (3d)``, the trace presentation).
+  with the hash byte it is addressed by (``YUL-Poly (3d)``, the trace presentation);
+  an unknown relay stands in its own hash at the device's path-hash width, muted grey
+  and annotated with that byte (``e839f2 (e8)``).
   ↑↓ move the selection (the graph's highlight follows); a row longer than the
   dialog **scrolls horizontally with ←→**, the whole line shifting under a ``…`` at
   whichever edge continues, and snaps back the moment the selection moves on.
@@ -73,7 +75,8 @@ class MessagePathsScreen(Screen):
                 channel frame) rather than merely by time — the summary line warns
                 when they weren't.
             resolve: Maps a hop hash to a friendly name when known.
-            prefix_bytes: Path-hash width to light in unnamed hops' hashes.
+            prefix_bytes: The device's path-hash width — how many bytes of an unnamed
+                hop's hash stand in for its (unknown) name.
             self_name: Our own node's name (the graph's right endpoint, white).
             summary: The one-line evidence summary shown under the quoted text.
             source: Display name of the message's origin — the sender parsed from a
@@ -194,8 +197,10 @@ class MessagePathsScreen(Screen):
         """One arrival, unabridged: time, reception SNR, and its relay path.
 
         Hops carry the trace presentation at the graph's grain: each named hop is
-        annotated with the hash byte it is addressed by (``YUL-Poly (3d)``), unnamed
-        hops show that byte bare, so the rows and the graph's labels cross-reference.
+        annotated with the hash byte it is addressed by (``YUL-Poly (3d)``); an unnamed
+        hop, having no name to show, stands in its own hash at the device's path-hash
+        width — muted grey, since colour is the "this is a name" signal — annotated with
+        that same byte (``e839f2 (e8)``), so the rows and the graph's labels cross-reference.
         """
         row = Text()
         row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
@@ -211,7 +216,7 @@ class MessagePathsScreen(Screen):
             path_text(
                 arrival.hops, self._resolve,
                 prefix_bytes=self._prefix_bytes, self_name=self._self_name,
-                empty="direct", show_hash=True, hash_bytes=1,
+                empty="direct", show_hash=True, hash_bytes=1, hash_as_name=True,
             )
         )
         if arrival.resend:

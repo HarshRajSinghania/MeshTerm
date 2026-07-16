@@ -231,12 +231,15 @@ class Ui:
         default: int = 0,
         keys: Optional[dict[str, Any]] = None,
         danger: bool = False,
+        destructive: bool = False,
     ) -> Any:
         """Show a centered button dialog; return the chosen value or ``None`` on Esc.
 
-        The general choose-one popup (a prompt above a row of buttons). ``danger`` themes
-        the prompt and border in the cautionary style for destructive or disruptive
-        choices. Buttons follow the platform-dialog convention: the safe way out sits on
+        The general choose-one popup (a prompt above a row of buttons). Two escalating
+        cautionary tiers theme the prompt and border: ``danger`` (amber) for a disruptive
+        choice — discarding edits, a reboot — and ``destructive`` (the reserved error red)
+        for irreversible data loss, so a delete confirm reads red like its typed-confirm
+        sibling. Buttons follow the platform-dialog convention: the safe way out sits on
         the left and the committing action on the right, which is also the sensible
         ``default`` so Enter commits it while Esc always backs out.
         """
@@ -517,6 +520,7 @@ class PlainUi(Ui):
         default: int = 0,
         keys: Optional[dict[str, Any]] = None,
         danger: bool = False,
+        destructive: bool = False,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -758,16 +762,19 @@ class TuiUi(Ui):
         default: int = 0,
         keys: Optional[dict[str, Any]] = None,
         danger: bool = False,
+        destructive: bool = False,
     ) -> Any:
-        """Delegate to the session's button dialog, themed cautionary when ``danger``."""
+        """Delegate to the session's button dialog, themed cautionary when ``danger``,
+        or in the reserved error red when ``destructive`` (irreversible data loss)."""
+        tier = "err" if destructive else "warn" if danger else ""
         return await self.session.button_dialog(
             prompt,
             buttons,
             title=title,
             default=default,
             keys=keys,
-            prompt_style="warn" if danger else "",
-            border_style="warn" if danger else "accent",
+            prompt_style=tier,
+            border_style=tier or "accent",
         )
 
     async def typed_confirm(

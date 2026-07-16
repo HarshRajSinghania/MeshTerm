@@ -376,7 +376,7 @@ class _ScriptedUi:
     async def text(self, title: str, *, default: str = "", validate=None, help_text: str = "", password: bool = False):  # noqa: ANN001, ANN201
         return self._texts.pop(0)
 
-    async def dialog(self, prompt, buttons, *, title: str = "", default: int = 0, keys=None, danger: bool = False):  # noqa: ANN001, ANN201
+    async def dialog(self, prompt, buttons, *, title: str = "", default: int = 0, keys=None, danger: bool = False, destructive: bool = False):  # noqa: ANN001, ANN201
         return self._dialogs.pop(0)
 
 

@@ -67,6 +67,24 @@ def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
     assert "Waymarker (a1)" in body
 
 
+def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
+    """An unnamed relay stands in its own hash at the device's path-hash width, muted
+    grey and annotated with its addressed byte — not the bare one-byte prefix, lit."""
+    now = utcnow()
+    arrivals = [
+        Arrival(when=now, hops=("3d63",), snr=4.0),  # selected: a named relay
+        Arrival(when=now + timedelta(seconds=2), hops=("e839f2ab",), snr=-2.0),
+    ]
+    screen = _screen(arrivals, prefix_bytes=3)  # 3-byte routing → e839f2
+    lines = screen.render_body(76)
+    row = next(ln for ln in lines if "e839f2" in _plain([ln]))
+    assert "e839f2 (e8)" in _plain([row])  # mode-width identity, then the byte
+    assert "38;2;148;163;184" in row  # muted grey over the hash
+    assert "38;2;94;234;212" not in row  # never the brand highlight
+    graph = _plain(lines).split("origin →")[0]
+    assert "e8" in graph  # the row's byte still cross-references the graph label
+
+
 def test_paths_screen_colours_selected_path_by_snr_over_gray() -> None:
     """The selected path's edges take its arrival's SNR hue; the unused path stays gray."""
     screen = _screen(_arrivals())  # selected arrival's SNR is +4.0 dB → the "ok" band

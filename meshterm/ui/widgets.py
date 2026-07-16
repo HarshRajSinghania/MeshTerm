@@ -248,6 +248,7 @@ def path_text(
     hash_bytes: Optional[int] = None,
     device_hash: Optional[str] = None,
     dim_from: Optional[int] = None,
+    hash_as_name: bool = False,
 ) -> Text:
     """Render a hop sequence compactly on one line — THE path widget.
 
@@ -261,7 +262,12 @@ def path_text(
     row. The trace-flavoured options: ``show_hash`` annotates each named hop with the
     hash it is addressed by (``Alice (3d63)``), a ``None`` hop is our own device at a
     route's endpoints, and ``dim_from`` fades the tail a caller wants read as automatic
-    (a boomerang's mirrored return leg). An empty path reads as ``empty``.
+    (a boomerang's mirrored return leg). ``hash_as_name`` reframes an *unnamed* hop as
+    its own identity — the hash at the path-hash-mode (``prefix_bytes``) width, muted
+    grey with no prefix lit (colour is the "this is a name" signal, and there is no
+    name), annotated with its addressed byte like a named hop (``e839f2 (e8)``) — where
+    the default instead lights the compact addressed hash. An empty path reads as
+    ``empty``.
 
     Args:
         hops: The hops in propagation order — hex hashes, with ``None`` marking our
@@ -279,6 +285,9 @@ def path_text(
             ``show_hash`` is on.
         dim_from: Render hops at/after this index — and the arrows into them — faint
             (a planned route's return leg); ``None`` dims nothing.
+        hash_as_name: Present each unnamed hop as its identity hash — muted grey at the
+            ``prefix_bytes`` width, annotated with its addressed byte (``hash_bytes``)
+            like a named hop — rather than the compact prefix-lit addressed hash.
 
     Returns:
         A one-line :class:`Text`. Space tighter than the path is the caller's call,
@@ -297,7 +306,7 @@ def path_text(
             _path_node(
                 hop, resolve, prefix_bytes=prefix_bytes, self_name=self_name,
                 show_hash=show_hash, hash_bytes=hash_bytes, device_hash=device_hash,
-                dim=dim,
+                dim=dim, hash_as_name=hash_as_name,
             )
         )
     return text
@@ -313,6 +322,7 @@ def _path_node(
     hash_bytes: Optional[int],
     device_hash: Optional[str],
     dim: bool,
+    hash_as_name: bool = False,
 ) -> Text:
     """One node of :func:`path_text` (see there for the rendering rules)."""
     note_style = "faint" if dim else "muted"
@@ -337,6 +347,18 @@ def _path_node(
     shown = _shorten_hash(hop, hash_bytes)
     if dim:
         return Text(shown, style="faint")
+    if hash_as_name:
+        # No name: the hash is the node's identity. Show it at the path-hash-mode
+        # width, fully muted (prefix_bytes=0 lights nothing — colour is the "this is
+        # a name" signal, and there is no name), then annotate it with the byte it
+        # was addressed by, exactly as a named hop is — unless that byte already *is*
+        # the whole shown hash. So a 3-byte mode reads ``e839f2 (e8)`` and still
+        # cross-references a byte-labelled route graph.
+        identity = _shorten_hash(hop, prefix_bytes or None)
+        text = highlighted_hash(identity, 0)
+        if show_hash and shown and shown != identity:
+            text.append(f" ({shown})", style=note_style)
+        return text
     return highlighted_hash(shown, prefix_bytes)
 
 

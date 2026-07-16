@@ -79,8 +79,11 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 - Modal popups over the pushed backdrop (never full-screen replacements).
 - Buttons are reverse-video chips (`  Label  `, `selected` style): safe way out on the
   left, the committing verb on the right **and default**, so Enter commits and Esc backs
-  out. Destructive dialogs pass `danger=True`; irreversible ones gate behind
-  `typed_confirm`.
+  out. Two escalating caution tiers theme the frame: `danger=True` (amber) for a
+  disruptive choice — discard edits, reboot, show private key — and `destructive=True`
+  (the reserved red) for irreversible **data loss**, so a delete confirm reads red like
+  its `typed_confirm` sibling. Bulk or irreversible deletions gate behind `typed_confirm`
+  (also red); a single-record delete is a red Cancel/Delete confirm.
 - Confirms are Cancel/Verb button dialogs, not Yes/No. Prompt lines that ask for input
   end with a colon.
 - Dialog `title` is short; the question/instruction goes in `prompt`.

@@ -132,8 +132,17 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
             if choice == _QUEUE:
                 await _queue_flow(ctx, contacts)
             elif choice == _CLEAR:
-                store.clear_done()
-                cursor = None  # the row itself disappears
+                done = store.done_count()
+                if await ctx.ui.dialog(
+                    f"Clear {done} finished "
+                    f"{'entry' if done == 1 else 'entries'} from the history?",
+                    [("Cancel", False), ("Clear", True)],
+                    title="Clear finished",
+                    default=1,
+                    destructive=True,
+                ):
+                    store.clear_done()
+                    cursor = None  # the row itself disappears
             elif isinstance(choice, tuple) and choice[0] == "msg":
                 await _entry_actions(ctx, int(choice[1]))
         finally:

@@ -85,6 +85,11 @@ _KEY_ACTIONS: dict[Any, str] = {
 #: terminals (TODO: thread through ``settings`` and the config editor).
 _RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
 
+#: How many stacked dialog layers the layout can float over the background at once. A fixed
+#: pool of centered-box floats (see :meth:`TuiSession._build_app`), sized well past the deepest
+#: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
+_MAX_DIALOG_LAYERS = 8
+
 
 class _WidthExtendedOutput:
     """A prompt_toolkit ``Output`` proxy that reports one extra terminal column.
@@ -371,7 +376,8 @@ class TuiSession:
         — the safe *Cancel* on the left and the committing verb on the right and default, so
         Enter commits and Esc backs out — but drawn without the status bars and centered under
         ``banner``, so it reads as part of the device-selection flow it floats over. Themed
-        cautionary (warn prompt and border), since it only ever gates a removal.
+        as data loss (the reserved red prompt and border), since it only ever gates forgetting
+        a remembered device — the splash sibling of a ``destructive`` :meth:`button_dialog`.
 
         Args:
             prompt: The question shown above the buttons.
@@ -390,8 +396,8 @@ class TuiSession:
             title=title,
             default=1,
             footer_hint=footer_hint,
-            prompt_style="warn",
-            border_style="warn",
+            prompt_style="err",
+            border_style="err",
         )
         screen.chrome = False
         screen.banner = banner
@@ -614,8 +620,26 @@ class TuiSession:
             button_idle_style=button_idle_style,
             border_style=border_style,
         )
-        result = await self.run_screen(screen)
+        result = await self._run_dialog_screen(screen)
         return None if result is CANCEL else result
+
+    async def _run_dialog_screen(self, screen: Screen) -> Any:
+        """Run a floating dialog, guaranteeing it draws as a centered box, not full-frame.
+
+        On an empty stack a lone floating screen is drawn *as* the background — framed
+        chrome filling the terminal, no popup — so a blank base is pushed beneath it first
+        (the trick the reconnect dialog and the message popup already use) and popped once
+        it closes. With a background already present the dialog simply floats over it.
+        """
+        backdrop: Optional[ScrollScreen] = None
+        if not self._stack:
+            backdrop = ScrollScreen("", floating=False, footer_hint="")
+            self.push(backdrop)
+        try:
+            return await self.run_screen(screen)
+        finally:
+            if backdrop is not None:
+                self.pop(backdrop)
 
     async def typed_confirm(
         self, warning: str, word: str, *, title: str = "Are you sure?"
@@ -626,7 +650,9 @@ class TuiSession:
         collapses its result to a plain bool: ``True`` only when the user typed the word,
         ``False`` when they backed out with Esc.
         """
-        result = await self.run_screen(TypedConfirmDialog(warning, word, title=title))
+        result = await self._run_dialog_screen(
+            TypedConfirmDialog(warning, word, title=title)
+        )
         return result is True
 
     async def autocomplete(
@@ -639,7 +665,7 @@ class TuiSession:
         validate: Optional[Validator] = None,
     ) -> Optional[str]:
         """Show a free-text prompt with suggestions; return text or ``None`` if cancelled."""
-        result = await self.run_screen(
+        result = await self._run_dialog_screen(
             AutocompleteScreen(
                 title, choices, prompt=prompt, default=default, validate=validate
             )
@@ -653,33 +679,22 @@ class TuiSession:
         ("✓ flood advertisement sent") doesn't warrant a full result window, so it floats
         as a small dialog over whatever screen is beneath — Enter (OK) or Esc dismisses
         it. The border takes the message's strongest tone (see :func:`_message_border`),
-        so an error pops red while a success stays in the standard accent.
-
-        When the screen stack is empty — a tool run straight from the main menu, which is
-        popped while the tool executes — a blank base frame is pushed first, because a
-        lone floating screen is otherwise drawn *as* the base (full-frame, no popup); the
-        same trick the reconnect dialog uses.
+        so an error pops red while a success stays in the standard accent. It delegates to
+        :meth:`button_dialog`, which floats it over a blank base when the stack is empty (a
+        tool run straight from the menu, which is popped while the tool executes).
 
         Args:
             message: The outcome to show — a pre-styled :class:`Text` (note markup
                 survives into the dialog) or a plain string.
             title: Optional dialog heading (typically the tool or action name).
         """
-        backdrop: Optional[ScrollScreen] = None
-        if not self._stack:
-            backdrop = ScrollScreen("", floating=False, footer_hint="")
-            self.push(backdrop)
-        try:
-            await self.button_dialog(
-                message,
-                [("OK", "ok")],
-                title=title,
-                footer_hint="Enter OK",
-                border_style=_message_border(message),
-            )
-        finally:
-            if backdrop is not None:
-                self.pop(backdrop)
+        await self.button_dialog(
+            message,
+            [("OK", "ok")],
+            title=title,
+            footer_hint="Enter OK",
+            border_style=_message_border(message),
+        )
 
     async def scroll(
         self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""
@@ -803,10 +818,26 @@ class TuiSession:
         """Construct the prompt_toolkit application, layout, and key bindings."""
         base_control = FormattedTextControl(self._render_base, focusable=True)
         base_window = Window(base_control, always_hide_cursor=True)
-        float_window = Window(
-            FormattedTextControl(self._render_float), always_hide_cursor=True
-        )
-        # The busy overlay is the last float, so it draws on top of the dialog float — the
+        # One centered-box float per stacked dialog layer, bottom-to-top: each renders the
+        # k-th screen floating above the background (see :meth:`_float_layers`), so a dialog
+        # opened over an existing popup draws *over* it — both at their own size — instead of
+        # the lower one being stretched to fill the frame. A generous fixed pool covers any
+        # realistic nesting; the ConditionalContainer hides the layers not in use this frame.
+        dialog_floats = [
+            Float(
+                ConditionalContainer(
+                    Window(
+                        FormattedTextControl(
+                            lambda i=i: self._render_float_layer(i)
+                        ),
+                        always_hide_cursor=True,
+                    ),
+                    filter=Condition(lambda i=i: len(self._float_layers()) > i),
+                )
+            )
+            for i in range(_MAX_DIALOG_LAYERS)
+        ]
+        # The busy overlay is the last float, so it draws on top of every dialog float — the
         # top of the z-order. It is a content-sized window (dont_extend_*) with no anchors, so
         # the FloatContainer centres just its skeleton card over the screen rather than blanking it.
         overlay_window = Window(
@@ -818,9 +849,7 @@ class TuiSession:
         root = FloatContainer(
             content=base_window,
             floats=[
-                Float(
-                    ConditionalContainer(float_window, filter=Condition(self._has_float))
-                ),
+                *dialog_floats,
                 Float(
                     ConditionalContainer(
                         overlay_window, filter=Condition(self._overlay_visible)
@@ -876,17 +905,40 @@ class TuiSession:
         viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
         return cols - 4, viewport
 
+    def _base_index(self) -> int:
+        """Stack index of the full-frame background screen.
+
+        The background is the top-most *non-floating* screen — a menu, map, or list that
+        fills the frame — and every floating dialog above it is drawn as a centered box
+        over it (see :meth:`_float_layers`). When the whole stack is floating (a tool
+        whose own primary screen is a floating select, e.g. Channels), the bottom screen
+        is the background: it is the one the dialogs above it should float over.
+        """
+        for i in range(len(self._stack) - 1, -1, -1):
+            if not getattr(self._stack[i], "floating", False):
+                return i
+        return 0
+
     def _base_screen(self) -> Optional[Screen]:
-        """The screen drawn as the background (parent of a floating dialog, else the top)."""
+        """The screen drawn as the full-frame background, or ``None`` when the stack is empty."""
         if not self._stack:
             return None
-        if self._has_float() and len(self._stack) >= 2:
-            return self._stack[-2]
-        return self._stack[-1]
+        return self._stack[self._base_index()]
+
+    def _float_layers(self) -> list[Screen]:
+        """The floating dialogs stacked above the background, bottom-to-top.
+
+        Each is drawn as its own centered box over the ones beneath — so opening a dialog
+        over an existing popup leaves that popup at its own size rather than stretching it
+        to fill the frame (the single-float compositor's old failing).
+        """
+        if not self._stack:
+            return []
+        return self._stack[self._base_index() + 1:]
 
     def _has_float(self) -> bool:
-        """Whether the top screen should be drawn as a centered dialog over the base."""
-        return len(self._stack) >= 2 and bool(getattr(self.top, "floating", False))
+        """Whether any dialog floats over the background this frame."""
+        return bool(self._float_layers())
 
     def _render_base(self) -> ANSI:
         """Render the persistent frame around the background screen."""
@@ -904,12 +956,13 @@ class TuiSession:
         footer = self.top.footer_hint if self.top else base.footer_hint
         return ANSI(frame.compose_base(self._header(cols), base, footer, cols, rows))
 
-    def _render_float(self) -> ANSI:
-        """Render the top screen as a centered dialog (only when floating)."""
-        if not self._has_float() or self.top is None:
+    def _render_float_layer(self, index: int) -> ANSI:
+        """Render the ``index``-th floating dialog (bottom-to-top) as a centered box."""
+        layers = self._float_layers()
+        if index >= len(layers):
             return ANSI("")
         cols, rows = self._size()
-        return ANSI(frame.compose_dialog(self.top, cols, rows))
+        return ANSI(frame.compose_dialog(layers[index], cols, rows))
 
     def _overlay_visible(self) -> bool:
         """Whether the busy overlay should be painted this frame.

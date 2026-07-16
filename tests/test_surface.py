@@ -129,6 +129,39 @@ async def test_message_dialog_floats_over_a_blank_backdrop_end_to_end() -> None:
         await asyncio.wait_for(session.run(main()), timeout=5)
 
 
+async def test_confirm_floats_over_an_existing_popup_end_to_end() -> None:
+    """A confirm opened over a floating detail popup renders and resolves — the render
+    loop runs the multi-layer float pool for real (base + detail + confirm), the case
+    the old single-float compositor stretched the detail to full-frame.
+    """
+    from prompt_toolkit.input.defaults import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from meshterm.ui.tui.screen import ScrollScreen
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+
+        async def main() -> None:
+            base = ScrollScreen(Text("channels"), title="Channels")  # full-frame background
+            detail = SelectScreen("Ops", [Choice("Clear", "clr")])  # a floating popup
+            session.push(base)
+            session.push(detail)
+            # Two layers float over the one background while the confirm is up.
+            assert session._base_screen() is base
+            inp.send_text("\r")  # Enter commits the confirm's default (Delete)
+            confirmed = await session.button_dialog(
+                "Clear Ops?", [("Cancel", 0), ("Clear", 1)], default=1, border_style="err"
+            )
+            assert confirmed == 1
+            assert session._float_layers() == [detail]  # confirm gone, detail still afloat
+            session.pop(detail)
+            session.pop(base)
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+
 # -- the message dialog's border tone -----------------------------------------------
 
 
@@ -143,3 +176,46 @@ def test_message_border_echoes_the_strongest_tone() -> None:
     assert _message_border(ok) == "accent"
     assert _message_border(both) == "err"
     assert _message_border("plain string") == "accent"
+
+
+# -- the button dialog's caution tiers ----------------------------------------------
+
+
+class _ButtonRecordingSession:
+    """Records the styling kwargs :meth:`TuiUi.dialog` hands the button dialog."""
+
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] = {}
+
+    async def button_dialog(self, prompt: str, buttons: list, **kwargs: Any) -> Any:
+        self.kwargs = kwargs
+        return buttons[-1][1]
+
+
+async def _dialog_styles(**kw: Any) -> dict[str, Any]:
+    session = _ButtonRecordingSession()
+    ui = TuiUi(session)  # type: ignore[arg-type]
+    await ui.dialog("Delete this record?", [("Cancel", False), ("Delete", True)], **kw)
+    return session.kwargs
+
+
+async def test_dialog_destructive_tier_borders_red() -> None:
+    """A data-loss dialog draws in the reserved error red — prompt and border."""
+    styles = await _dialog_styles(destructive=True)
+    assert styles["border_style"] == "err"
+    assert styles["prompt_style"] == "err"
+
+
+async def test_dialog_danger_tier_stays_amber() -> None:
+    """A merely-disruptive dialog keeps the amber caution tone, never the deletion red."""
+    styles = await _dialog_styles(danger=True)
+    assert styles["border_style"] == "warn"
+    assert styles["prompt_style"] == "warn"
+
+
+async def test_dialog_plain_is_neutral_and_destructive_outranks_danger() -> None:
+    """No flag is the neutral accent frame; destructive wins over danger when both are set."""
+    plain = await _dialog_styles()
+    assert plain["border_style"] == "accent" and plain["prompt_style"] == ""
+    both = await _dialog_styles(danger=True, destructive=True)
+    assert both["border_style"] == "err" and both["prompt_style"] == "err"

@@ -161,6 +161,10 @@ class CourierStore:
         """How many messages are waiting in the outbox."""
         return len(self.pending())
 
+    def done_count(self) -> int:
+        """How many finished (delivered / given-up) entries the history holds."""
+        return sum(1 for m in self._load() if m.status != QUEUED)
+
     # --- attempt bookkeeping -----------------------------------------------------------
 
     def note_attempt(self, ident: int, *, when: Optional[datetime] = None) -> None:
