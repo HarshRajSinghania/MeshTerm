@@ -896,9 +896,9 @@ async def _make_paths_presenter(
     from .timemachine_screen import _routing_prefix_bytes
 
     session = ctx.ui.session
-    resolve = trace_runner.make_node_resolver(
-        await ctx.devstate.contacts(), ctx.repo.node_names()
-    )
+    contacts = await ctx.devstate.contacts()
+    resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
+    type_of = trace_runner.make_node_type_resolver(contacts)
     prefix_bytes = await _routing_prefix_bytes(ctx)
     self_name: Optional[str] = None
     try:
@@ -954,7 +954,7 @@ async def _make_paths_presenter(
             MessagePathsScreen(
                 message, arrivals, matched=matched, resolve=resolve,
                 prefix_bytes=prefix_bytes, self_name=self_name, summary=summary,
-                source=source or None,
+                source=source or None, type_of=type_of,
             )
         )
 

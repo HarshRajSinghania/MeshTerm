@@ -402,11 +402,28 @@ def _name_rgb(name: str) -> RGB:
     return parse_hex(name_style(name).split()[-1])
 
 
+def name_rgb(name: str) -> RGB:
+    """The truecolour of a node name's stable palette hue, for a braille canvas.
+
+    The public face of :func:`_name_rgb` — the same hue :func:`~meshterm.ui.theme.name_style`
+    paints a name in, as an ``(r, g, b)`` tuple a raster can plot. A caller colouring node
+    markers by their mesh name (the trophy case's area drawing) mints them through here.
+    """
+    return _name_rgb(name)
+
+
+#: Maps a relay hash to its node type (see the ``NODE_TYPE_*`` constants), or ``None`` when
+#: the type is unknown — the hook that lets the route graph mark a repeater ``▲`` and not
+#: just a generic ``●``. Endpoint sentinels are never passed to it.
+TypeOf = Callable[[str], Optional[int]]
+
+
 def route_graph_style(
     *,
     resolve: NodeResolver,
     self_name: Optional[str],
     source: Optional[str],
+    type_of: Optional[TypeOf] = None,
 ) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
     """Build the per-node callbacks that draw a route on THE route graph (``pathgraph``).
 
@@ -424,6 +441,10 @@ def route_graph_style(
         source: The left endpoint's display name (a message's origin, or us for a walk
             that starts at home — pass ``self_name`` to draw both ends as us). ``None``
             reads as an unknown ``?`` origin.
+        type_of: Maps a relay's hash to its node type, so a relay draws its own map marker
+            (``▲`` repeater, ``■`` room, ``◉`` sensor) in the shared palette instead of a
+            generic dot. ``None``, or a hash whose type it can't resolve, keeps the old
+            named-dot / unknown-ring fallback.
 
     Returns:
         The ``(glyph_of, label_of, label_rgb_of)`` triple to hand to
@@ -432,11 +453,15 @@ def route_graph_style(
     src_is_self = bool(source) and source == self_name
 
     def glyph_of(node: str) -> tuple[str, str]:
-        """Us a star, a named node a dot, an unidentified node a ring."""
+        """Us a star, a typed relay its map marker, a named node a dot, else a ring."""
         if node == DST_NODE:
             return _SELF
         if node == SRC_NODE:
             return _SELF if src_is_self else (_NODE if source else _UNKNOWN)
+        if type_of is not None:
+            node_type = type_of(node)
+            if node_type is not None:
+                return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
         named = resolve(node)
         return _NODE if named and named != node else _UNKNOWN
 
@@ -780,9 +805,17 @@ def _sort_header(label: str, column: str, sort: NodesSort) -> str:
     return f"[bold #22d3ee]{label} {triangle}[/]"
 
 
-def _nodes_legend() -> Text:
-    """A one-line glyph legend covering every node type (plus us), whatever's listed."""
-    legend = Text("  ")  # a small indent to sit under the table body
+def node_type_legend(indent: str = "") -> Text:
+    """The one-line key to the node-type marks: ``★ you  ▲ repeater  ● node  …``.
+
+    Every glyph in its shared map colour (see :data:`_NODE_GLYPHS`), each named muted after
+    it. THE legend for any surface that draws typed node markers — the nodes list under its
+    table, the route graph under its fan — so one glyph means one thing app-wide.
+
+    Args:
+        indent: Leading spaces to sit the legend under a table or graph body.
+    """
+    legend = Text(indent)
     legend.append(_SELF[0], style=_SELF[1])
     legend.append(" you", style="muted")
     for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
@@ -791,6 +824,11 @@ def _nodes_legend() -> Text:
         legend.append(glyph, style=color)
         legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
     return legend
+
+
+def _nodes_legend() -> Text:
+    """The node-type legend, indented to sit under the nodes table body."""
+    return node_type_legend(indent="  ")
 
 
 def nodes_table(

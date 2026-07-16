@@ -179,6 +179,21 @@ def test_traced_targets_excludes_path_walks(repo: Repository) -> None:
     assert latest is not None and latest.target == PATH_TRACE_TARGET
 
 
+def test_target_trace_counts_tallies_successes_and_totals(repo: Repository) -> None:
+    """Per target, (successes, total) over every trace — failures included, path walks not."""
+    run = repo.start_run("trace", {})
+    repo.record_trace(run, _make_trace("Alice", ("r", 1.0), success=True))
+    repo.record_trace(run, _make_trace("Alice", success=False))
+    repo.record_trace(run, _make_trace("Alice", ("r", 2.0), success=True))
+    repo.record_trace(run, _make_trace("Bob", ("r", 1.0), success=True))
+    repo.record_trace(run, _make_trace(PATH_TRACE_TARGET, ("r", 3.0), success=True))
+
+    counts = repo.target_trace_counts()
+    assert counts["Alice"] == (2, 3)  # two of three came home
+    assert counts["Bob"] == (1, 1)
+    assert PATH_TRACE_TARGET not in counts  # path walks name no target
+
+
 # -- latest_trace edge cases -----------------------------------------------
 
 

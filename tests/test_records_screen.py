@@ -75,9 +75,23 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
 def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
     """The walk is drawn on THE route graph — us starred at both ends, over a caption."""
     body = _plain(_dialog(_record()).render_body(60))
-    assert body.count("★") == 2  # our node marks both endpoints of the round trip
+    graph = body[: body.index("labels = hash byte")]
+    assert graph.count("★") == 2  # our node marks both endpoints of the round trip
     assert "labels = hash byte" in body  # the graph's caption
     assert any("⠀" <= ch <= "⣿" for ch in body)  # braille edges are drawn
+
+
+def test_record_dialog_shows_the_node_type_legend() -> None:
+    """The standard node-type key sits under the graph, so its markers read."""
+    body = _plain(_dialog(_record()).render_body(60))
+    assert "★ you" in body and "▲ repeater" in body and "◉ sensor" in body
+
+
+def test_record_graph_marks_a_repeater_relay_with_its_triangle() -> None:
+    """A relay whose type is a repeater draws ▲, not the generic ● dot."""
+    dialog = _dialog(_record(), type_of=lambda h: 2 if h == HUB_ID else None)
+    graph = _plain(dialog._graph_lines(60))
+    assert "▲" in graph  # the repeater relay, in its map glyph
 
 
 def test_record_graph_collapses_a_revisited_route_to_distinct_nodes() -> None:
@@ -126,8 +140,16 @@ def test_record_dialog_down_moves_to_delete() -> None:
 def test_record_dialog_names_the_far_point() -> None:
     """The reached node's name rides beside the far-point distance."""
     body = _plain(_dialog(_record(), far_label="Far").render_body(60))
-    assert "far point  1.5 km" in body
-    assert "far point  1.5 km  Far" in body
+    assert re.search(r"far point\s+1\.5 km\s+Far", body)
+
+
+def test_record_dialog_shows_reliability_when_the_far_node_has_history() -> None:
+    """The reliability lane reads the % and its sample count; absent without history."""
+    with_rate = _plain(_dialog(_record(), reliability=(0.875, 7, 8)).render_body(60))
+    assert re.search(r"reliability\s+88%", with_rate)
+    assert "7/8" in with_rate
+    without = _plain(_dialog(_record()).render_body(60))
+    assert "reliability" not in without
 
 
 def test_record_dialog_draws_the_enclosed_area_beside_the_stats() -> None:

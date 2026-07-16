@@ -7,10 +7,11 @@ detail read together:
 
 * a **graph** up top draws every distinct path the message took through the shared
   route-graph widget (:mod:`~meshterm.ui.pathgraph`): the currently selected path
-  white, the unused paths gray beneath it. The origin sits at the left, we sit at
-  the right, and every relay in between gets its marker plus the first byte of its
-  hash — set straight above or below the marker, in the mesh name's own colour, so
-  the byte reads as that node and never crowds the line running through it. The row
+  coloured by its reception SNR (the SNR palette), the unused paths gray beneath it.
+  The origin sits at the left, we sit at the right, and every relay in between gets its
+  own node-type marker (``▲`` repeater, …) plus the first byte of its hash — set straight
+  above or below the marker, in the mesh name's own colour, so the byte reads as that node
+  and never crowds the line running through it. A node-type key sits under the fan. The row
   list carries the full names, so the graph's labels stay two cells wide and a
   many-path graph stays readable.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
@@ -33,15 +34,16 @@ from rich.text import Text
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
 from .pathgraph import PathLayer, render_path_graph
-from .theme import snr_style
+from .theme import snr_rgb, snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
-from .widgets import NodeResolver, path_text, route_graph_style
+from .widgets import NodeResolver, TypeOf, node_type_legend, path_text, route_graph_style
 
 #: Cells one ←/→ press shifts the selected row by.
 _HSTEP = 4
 
-#: Edge colours: the selected path draws white over the unused paths' gray.
+#: Edge colours: the selected path draws in its arrival's SNR hue (white when it carried no
+#: reading) over the unused paths' gray.
 _EDGE_SELECTED = (255, 255, 255)
 _EDGE_UNUSED = (110, 110, 110)
 
@@ -60,6 +62,7 @@ class MessagePathsScreen(Screen):
         self_name: Optional[str],
         summary: str,
         source: Optional[str] = None,
+        type_of: Optional[TypeOf] = None,
     ) -> None:
         """Build the dialog over one message's matched arrivals.
 
@@ -76,6 +79,8 @@ class MessagePathsScreen(Screen):
             source: Display name of the message's origin — the sender parsed from a
                 channel message, us for an outbound one, the peer for a direct chat
                 (``None`` reads as an unknown ``?`` origin).
+            type_of: Maps a relay hash to its node type, so the graph marks a repeater
+                ``▲`` (etc.) instead of a generic dot; ``None`` keeps the plain dots.
         """
         super().__init__()
         self.title = "Message paths"
@@ -87,6 +92,7 @@ class MessagePathsScreen(Screen):
         self._self_name = self_name
         self._summary = summary
         self._source = source
+        self._type_of = type_of
         self._index = 0
         #: Cells the selected row is shifted left by (reset whenever ↑↓ move), and
         #: how far it *can* shift, measured against the width of the last render.
@@ -166,9 +172,10 @@ class MessagePathsScreen(Screen):
 
         lines.append("")
         lines.extend(self._graph_lines(width))
-        caption = Text("origin → you · white = selected path · labels = hash byte",
+        caption = Text("origin → you · colour = SNR of selected · labels = hash byte",
                        style="faint")
         lines.append(render_to_ansi(caption, width, no_wrap=True))
+        lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
         lines.append("")
         for i, arrival in enumerate(self._arrivals):
             if i == self._index:
@@ -246,26 +253,31 @@ class MessagePathsScreen(Screen):
         return seen
 
     def _graph_lines(self, width: int) -> list[str]:
-        """Draw every distinct path origin → us, the selected one white over gray.
+        """Draw every distinct path origin → us, the selected one in its SNR hue over gray.
 
         The shared route-graph widget does the layout (lanes fanned from the centre
         in first-heard order, shared relays averaged together); this just maps each
         distinct path to a :class:`~meshterm.ui.pathgraph.PathLayer` — the selected
-        one white on top, the rest gray beneath — and hands it the shared route-graph
-        callbacks (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named,
-        relays marked and labelled by their first hash byte in the node's own hue.
+        one on top coloured by the selected arrival's reception SNR (the SNR palette,
+        white when it carried no reading), the rest gray beneath — and hands it the shared
+        route-graph callbacks (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints
+        named, relays their own map marker where the type is known, each labelled by its
+        first hash byte in the node's own hue.
         """
-        selected = self._arrivals[self._index].hops
+        arrival = self._arrivals[self._index]
+        selected = arrival.hops
+        selected_color = snr_rgb(arrival.snr) if arrival.snr is not None else _EDGE_SELECTED
         layers = [
             PathLayer(
                 hops=path,
-                color=_EDGE_SELECTED if path == selected else _EDGE_UNUSED,
+                color=selected_color if path == selected else _EDGE_UNUSED,
                 priority=3 if path == selected else 2,
             )
             for path in self._paths()
         ]
         glyph_of, label_of, label_rgb_of = route_graph_style(
             resolve=self._resolve, self_name=self._self_name, source=self._source,
+            type_of=self._type_of,
         )
         return render_path_graph(
             layers, width,

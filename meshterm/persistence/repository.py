@@ -462,6 +462,27 @@ class Repository:
         ).fetchall()
         return [row["target"] for row in rows]
 
+    def target_trace_counts(self) -> dict[str, tuple[int, int]]:
+        """Per trace target, its ``(successes, total)`` across every stored trace.
+
+        The substrate for a route's observed reliability: unlike a walk's route, a target
+        is on every trace row — timed-out attempts included — so a target's success rate is
+        the one delivery figure the history can honestly answer (a failed trace records no
+        path, only the target it was aimed at). Keyed by the raw target string the trace
+        was filed under (a contact name or a hex hash); the caller matches its node against
+        those keys. The hand-composed path walks filed under
+        :data:`~meshterm.core.models.PATH_TRACE_TARGET` are excluded — they name no target.
+
+        Returns:
+            ``target → (successes, total)`` for every distinct non-path-walk target.
+        """
+        rows = self._conn.execute(
+            "SELECT target, SUM(success) AS ok, COUNT(*) AS n FROM traces "
+            "WHERE target != ? GROUP BY target",
+            (PATH_TRACE_TARGET,),
+        ).fetchall()
+        return {row["target"]: (int(row["ok"] or 0), int(row["n"])) for row in rows}
+
     def trace_paths(self, *, limit: int = 2000) -> list[TracedPath]:
         """Return the walked paths of recent successful traces, newest first.
 

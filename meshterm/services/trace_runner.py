@@ -77,6 +77,41 @@ def make_node_resolver(
     return resolve
 
 
+def make_node_type_resolver(
+    contacts: Optional[list[Contact]],
+) -> Callable[[Optional[str]], Optional[int]]:
+    """Build a resolver that names a hop's *node type* from its key-prefix hash.
+
+    The type counterpart to :func:`make_node_resolver`: it maps a trace/relay hash to the
+    contact's advertised node type (a ``NODE_TYPE_*`` constant), so a route graph can mark
+    a repeater with its own glyph rather than a generic dot. Matches the hash against each
+    contact's key the same prefix-either-way way the name resolver does; a hash we can't
+    place, or a contact with no type, resolves to ``None``.
+
+    Args:
+        contacts: Known contacts to resolve against.
+
+    Returns:
+        A callable taking a hop hash and returning its node type, or ``None`` when unknown.
+    """
+    entries: list[tuple[str, int]] = []
+    for c in contacts or []:
+        ident = (c.public_key or c.key_prefix or "").lower().removeprefix("0x")
+        if ident and c.node_type is not None:
+            entries.append((ident, c.node_type))
+
+    def type_of(label: Optional[str]) -> Optional[int]:
+        if not label:
+            return None
+        needle = label.lower().removeprefix("0x")
+        for ident, node_type in entries:
+            if ident.startswith(needle) or needle.startswith(ident):
+                return node_type
+        return None
+
+    return type_of
+
+
 def parse_trace_path(spec: str, contacts: Optional[list[Contact]] = None) -> str:
     """Parse a user path spec into the hex path string ``send_trace`` expects.
 

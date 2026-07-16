@@ -79,6 +79,24 @@ def test_recent_targets_folds_hex_to_names_and_dedupes() -> None:
     assert _recent_targets(stored, contacts) == ["Alice", "cafe", "beefbeef"]
 
 
+def test_node_type_resolver_matches_hop_hash_to_contact_type() -> None:
+    """A relay's hash resolves to its contact's node type (prefix-matched either way)."""
+    from meshterm.core.models import NODE_TYPE_REPEATER
+
+    type_of = trace_runner.make_node_type_resolver(
+        [
+            Contact(name="Repeater", public_key="3d63c6" + "00" * 26,
+                    key_prefix="3d63c6429436", node_type=NODE_TYPE_REPEATER),
+            Contact(name="Typeless", public_key="a1b2c3" + "00" * 26,
+                    key_prefix="a1b2c3d4"),
+        ]
+    )
+    assert type_of("3d63") == NODE_TYPE_REPEATER   # a short hash prefixes the full key
+    assert type_of("a1b2") is None                 # known contact, but no advertised type
+    assert type_of("ffff") is None                 # unknown node
+    assert type_of(None) is None                   # our own device, passed through
+
+
 def test_path_hash_flags_power_of_two_only() -> None:
     """Trace flags encode the hash width as 1 << s, so only 1/2/4/8 bytes map."""
     assert trace_runner.path_hash_flags(1) == 0
