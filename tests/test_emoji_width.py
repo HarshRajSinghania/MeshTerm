@@ -21,6 +21,8 @@ from meshterm.ui.tui import emoji_width as ew
 # One confirmed narrow glyph, plus one the same terminal draws two wide, used throughout.
 _WAVE = "👋"  # the confirmed lone-codepoint emoji this terminal draws in one cell
 _DISH = "📡"  # a menu icon the terminal draws two wide — must never be narrowed
+_CA = "🇨🇦"  # a flag: two Regional Indicators; prompt_toolkit miscounts it as four cells
+_CN = "🇨🇳"  # a second flag sharing the "C" indicator — the whole category must be handled
 
 
 def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
@@ -59,6 +61,24 @@ def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
     assert cache["Bob 👋"] == 5
 
 
+def test_flags_measure_two_cells_in_both_authorities() -> None:
+    """A country flag is a Regional Indicator pair: prompt_toolkit's wcwidth calls it four
+    cells, Rich and the terminal draw it as one two-cell glyph. Narrowing the indicators as a
+    category makes every flag sum to two in both authorities — no per-country allowlist entry,
+    and flags sharing an indicator (🇨🇦 / 🇨🇳) are all fixed at once."""
+    # Only the lone-emoji allowlist is passed; flags are handled by category, not by listing.
+    cell_len = ew._make_cell_len(frozenset(_WAVE))
+    cache = ew._make_pt_cache(frozenset(_WAVE))
+
+    for flag in (_CA, _CN):
+        assert cell_len(flag) == 2
+        assert cache[flag] == 2  # was 4 unpatched: two indicators at wcwidth 2 each
+
+    # A flag rides a chat line without dragging the border: "eh? 🇨🇦" measures its plain
+    # cells plus the flag's two.
+    assert cell_len("eh 🇨🇦") == len("eh ") + 2
+
+
 def _snapshot() -> tuple:
     """Capture the mutable width state :func:`calibrate` patches, to restore afterwards."""
     return (cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED)
@@ -81,8 +101,10 @@ def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> N
         ew.calibrate(force_width=1)
         assert cells.cell_len(_WAVE) == 1
         assert cells.cell_len(_DISH) == 2  # unlisted icon stays wide
+        assert cells.cell_len(_CA) == 2  # flag handled by category, no allowlist entry
         assert get_cwidth(_WAVE) == 1  # pt now places the border a cell earlier
         assert get_cwidth(_DISH) == 2
+        assert get_cwidth(_CA) == 2  # was 4 unpatched
     finally:
         _restore(snap)
 

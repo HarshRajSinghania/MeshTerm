@@ -43,6 +43,14 @@ is an explicit allowlist (:data:`_DEFAULT_NARROW_LONE`, extended without a code 
 ``MESHTERM_NARROW_EMOJI``), and — because it is the panel border *prompt_toolkit* places,
 not Rich — narrowing a lone emoji patches *both* width authorities, where the VS16 fix only
 needed Rich (prompt_toolkit never promoted a VS16 sequence in the first place).
+
+Country **flags** (``🇨🇦``, ``🇺🇸``) are the same "width 1" story but need no allowlist,
+because for them there *is* a rule: a flag is a grapheme pair of Regional Indicator Symbols
+(see :func:`_is_regional_indicator`), which the terminal — and Rich — draw as one two-cell
+glyph, while prompt_toolkit's wcwidth counts each indicator as two and so measures the flag
+as *four* (a two-column notch, worse than a lone emoji's one). Since the indicators are
+shared across flags, they can only be handled as a whole category, never one country at a
+time; narrowing every indicator to one cell makes any flag sum to two in both authorities.
 """
 
 from __future__ import annotations
@@ -72,6 +80,20 @@ _DEFAULT_NARROW_LONE = "👋"
 
 #: Set once :func:`calibrate` has run so repeated calls are cheap no-ops.
 _CALIBRATED = False
+
+
+def _is_regional_indicator(char: str) -> bool:
+    """Whether ``char`` is a single Regional Indicator Symbol — a country flag's building block.
+
+    The two-letter flags (``🇨🇦``, ``🇺🇸``) are a grapheme pair drawn from this block
+    (U+1F1E6–U+1F1FF). wcwidth counts each indicator as two, so prompt_toolkit measures a flag
+    as *four* cells, while Rich and the terminal draw the pair as one two-cell glyph. Narrowing
+    every indicator to one makes any flag sum to two in both authorities, so a chat row with a
+    flag frames flush. This is a whole category, not a per-country entry: the indicators are
+    shared across flags (``🇨🇦`` and ``🇨🇳`` both start with ``C``), so they can only be
+    handled as a block — listing one flag would half-fix its neighbours and skip the rest.
+    """
+    return len(char) == 1 and 0x1F1E6 <= ord(char) <= 0x1F1FF
 
 
 def _narrow_lone_set() -> frozenset[str]:
@@ -263,6 +285,8 @@ def _make_cell_len(narrow: frozenset[str]) -> Callable[[str, str], int]:
     * **Curated lone emoji** — a single codepoint in ``narrow`` (``👋`` and friends) that Rich
       would call two but this terminal draws in one is counted as one, so a chat row carrying
       it pads to a flush right border instead of a column-short notch.
+    * **Flag indicators** — a Regional Indicator (:func:`_is_regional_indicator`) counts as one,
+      so a country flag sums to two (Rich already agrees here; this keeps the two loops in step).
 
     Everything else keeps its ``get_character_cell_size`` value, so a lone emoji the terminal
     *does* draw two wide (a menu icon like ``📡``, never placed in ``narrow``) is left alone.
@@ -276,7 +300,10 @@ def _make_cell_len(narrow: frozenset[str]) -> Callable[[str, str], int]:
         for char in text:
             if char in _ZERO_WIDTH:
                 continue
-            total += 1 if char in narrow else get_size(char, unicode_version)
+            if char in narrow or _is_regional_indicator(char):
+                total += 1
+            else:
+                total += get_size(char, unicode_version)
         return total
 
     return _cell_len
@@ -289,9 +316,10 @@ def _make_pt_cache(narrow: frozenset[str]) -> "object":
     composed frame into its screen buffer stepping a cursor by ``get_cwidth`` (backed by
     ``_CHAR_SIZES_CACHE``), so unless it too measures ``👋`` as one, it positions the border a
     column past where the terminal draws the narrow glyph — the notch survives even with Rich
-    corrected. The subclass returns one for a listed lone glyph and defers everything else to
-    the stock ``wcwidth`` logic; because the base ``__missing__`` sums per character through
-    the cache, a whole chat line ``"Bob 👋 hi"`` inherits the one-cell ``👋`` for free.
+    corrected. The subclass returns one for a listed lone glyph (or a flag's Regional Indicator)
+    and defers everything else to the stock ``wcwidth`` logic; because the base ``__missing__``
+    sums per character through the cache, a whole chat line ``"Bob 👋 hi"`` inherits the one-cell
+    ``👋`` for free, and a flag ``"🇨🇦"`` sums its two one-cell indicators to a flush two.
     """
     import prompt_toolkit.utils as ptu
 
@@ -299,7 +327,7 @@ def _make_pt_cache(narrow: frozenset[str]) -> "object":
 
     class _NarrowLoneCache(base_cache_cls):  # type: ignore[valid-type, misc]
         def __missing__(self, string: str) -> int:
-            if string in narrow:
+            if string in narrow or _is_regional_indicator(string):
                 self[string] = 1
                 return 1
             return super().__missing__(string)
@@ -312,21 +340,18 @@ def _install_terminal_widths(narrow: frozenset[str]) -> None:
 
     Rich's ``cell_len`` delegates to the module-level ``_cell_len``; replacing that (and
     clearing the memoised wrapper) steers every downstream caller — panels, tables, text —
-    through :func:`_make_cell_len`. prompt_toolkit is patched *only* when there are lone emoji
-    to narrow: a VS16-only correction needs nothing from it (it never promoted the sequence),
-    but a lone-emoji correction does, because pt is what places the border (see
-    :func:`_make_pt_cache`). Both run at :func:`calibrate` time, before a frame is drawn, so no
-    stale two-cell measurement or ``Char`` is ever painted.
+    through :func:`_make_cell_len`. prompt_toolkit is patched too, because it is what places the
+    border (see :func:`_make_pt_cache`): a lone emoji or a flag both need it, and even an empty
+    ``narrow`` still leaves the flag-indicator category to correct, so the cache is always
+    swapped. Both run at :func:`calibrate` time, before a frame is drawn, so no stale two-cell
+    measurement or ``Char`` is ever painted.
     """
+    import prompt_toolkit.utils as ptu
     import rich.cells as cells
 
     cells.cached_cell_len.cache_clear()
     cells._cell_len = _make_cell_len(narrow)
-
-    if narrow:
-        import prompt_toolkit.utils as ptu
-
-        ptu._CHAR_SIZES_CACHE = _make_pt_cache(narrow)
+    ptu._CHAR_SIZES_CACHE = _make_pt_cache(narrow)
 
 
 __all__ = ["calibrate"]
