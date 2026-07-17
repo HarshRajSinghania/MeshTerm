@@ -100,7 +100,6 @@ class Settings:
     Attributes:
         config_dir: Directory holding the config file and database.
         db_path: SQLite database location.
-        output_dir: Where generated visualizations are written.
         default_profile: Profile used when ``--profile`` is omitted.
         profiles: Mapping of profile name to :class:`DeviceProfile`.
         trace_cooldown_s: Minimum delay between transmit bursts (duty-cycle safety).
@@ -129,7 +128,6 @@ class Settings:
 
     config_dir: Path = field(default_factory=default_config_dir)
     db_path: Optional[Path] = None
-    output_dir: Optional[Path] = None
     default_profile: Optional[str] = None
     profiles: dict[str, DeviceProfile] = field(default_factory=dict)
     trace_cooldown_s: float = 1.0
@@ -143,8 +141,6 @@ class Settings:
         """Derive dependent paths that were not explicitly provided."""
         if self.db_path is None:
             self.db_path = self.config_dir / "meshterm.db"
-        if self.output_dir is None:
-            self.output_dir = self.config_dir / "output"
 
     def resolve_profile(self, name: Optional[str]) -> Optional[DeviceProfile]:
         """Look up a profile by name, falling back to the default profile.
@@ -205,7 +201,6 @@ class Settings:
         return cls(
             config_dir=config_dir,
             db_path=Path(data["db_path"]) if data.get("db_path") else None,
-            output_dir=Path(data["output_dir"]) if data.get("output_dir") else None,
             default_profile=data.get("default_profile"),
             profiles=profiles,
             trace_cooldown_s=float(data.get("trace_cooldown_s", 1.0)),

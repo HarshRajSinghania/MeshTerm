@@ -18,7 +18,6 @@ direct_message_soft_retries = 2
 # once per session start (0 = keep everything forever).
 history_days = 365
 # db_path = "C:/Users/you/meshterm/meshterm.db"
-# output_dir = "C:/Users/you/meshterm/output"
 
 # One [profiles.<name>] block per physical companion device.
 [profiles.s3]

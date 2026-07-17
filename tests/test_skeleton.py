@@ -523,27 +523,6 @@ def test_trace_target_snr_matches_target_hop_not_position() -> None:
     assert trace_target_snr(TraceResult(target="f2", success=False), "f2") is None
 
 
-def test_tx_plot_writes_html(tmp_path: Path) -> None:
-    """The Plotly renderer produces a self-contained HTML file."""
-    import asyncio
-
-    from meshterm.services import tx_optimizer
-    from meshterm.viz.tx_plot import render_tx_optimization
-
-    async def _build():
-        device, admin, target, path = await _setup_link()
-        return await tx_optimizer.optimize_tx_power(
-            device, target.name, admin, path,
-            samples_per_level=4, coarse_step=4, refine=False, verify=False, cooldown_s=0,
-        )
-
-    result = asyncio.run(_build())
-    path = render_tx_optimization(result, tmp_path)
-    assert path.exists()
-    assert path.suffix == ".html"
-    assert path.stat().st_size > 1000  # plotly.js inlined → non-trivial size
-
-
 class _Event:
     def __init__(self, payload: dict) -> None:
         self.payload = payload

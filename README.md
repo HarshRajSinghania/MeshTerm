@@ -215,7 +215,6 @@ tools/        Pluggable "menu options"; each self-registers and gets logging for
 services/     Background algorithms (monitor, trace, tx search, courier, watchtower) — no UI
 persistence/  SQLite schema, repository, structured logging
 ui/           Rich theme/widgets + the full-screen TUI (screens, dialogs, map, chat)
-viz/          Plotly renderers -> interactive HTML
 ```
 
 Adding a feature means subclassing `Tool`, decorating it with `@register`, and
@@ -260,7 +259,6 @@ respective project for the authoritative terms):
 | [Typer](https://typer.tiangolo.com/) | Scripted CLI (subcommands mirror the menu) | MIT |
 | [Rich](https://github.com/Textualize/rich) | Console rendering | MIT |
 | [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | Full-screen interactive TUI | BSD-3-Clause |
-| [Plotly](https://plotly.com/python/) | Self-contained interactive HTML charts | MIT |
 | [Segno](https://github.com/heuer/segno) | Pure-Python QR codes (channel share links) | BSD-3-Clause |
 | [tomli](https://github.com/hukkin/tomli) / [tomli-w](https://github.com/hukkin/tomli-w) | TOML config read/write | MIT |
 

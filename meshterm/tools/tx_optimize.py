@@ -11,8 +11,8 @@ and the live sweep screen (:mod:`meshterm.ui.tx_screen`) takes it from there, ar
 idle: route, range, step, and samples are adjusted in place, nothing transmits until
 Sweep is committed, levels land in a bar chart as they are measured, and the apply
 decision is made *after* the sweep, over the evidence. On the CLI it stays a scriptable
-one-shot with the full flag set (``--path``, range, step, samples, ``--apply``, the HTML
-chart), and progress streams like a trace.
+one-shot with the full flag set (``--path``, range, step, samples, ``--apply``), and
+progress streams like a trace.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from ..core.connection import DeviceCommandError
 from ..core.models import Contact
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
-from ..viz.tx_plot import render_tx_optimization
 from .base import Tool, ToolResult, register
 
 #: Trace count per TX level — kept to single digits so the radio's duty cycle stays sane
@@ -246,12 +245,6 @@ class TxOptimizeTool(Tool):
         ctx.ui.show(tx_opt_table(result))
         ctx.ui.show(tx_opt_summary(result))
 
-        artifacts: list[str] = []
-        if params.get("viz", True):
-            assert ctx.settings.output_dir is not None
-            path_out = render_tx_optimization(result, ctx.settings.output_dir)
-            artifacts.append(str(path_out))
-
         if no_result:
             restored = (
                 f" Restored TX to {result.original_tx}." if result.original_tx is not None else ""
@@ -281,7 +274,6 @@ class TxOptimizeTool(Tool):
                 "levels_measured": len(result.levels),
             },
             message=message,
-            artifacts=artifacts,
         )
 
     async def _resolve_password(
@@ -337,11 +329,10 @@ class TxOptimizeTool(Tool):
                 None, "--password", help="Admin password (else remembered/prompted)"
             ),
             apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner"),
-            viz: bool = typer.Option(True, "--viz/--no-viz", help="Generate HTML chart"),
         ) -> None:
             tool_params: dict[str, Any] = {
                 "path": path, "samples": samples, "step": step,
-                "apply": apply, "viz": viz,
+                "apply": apply,
             }
             if tx_min is not None:
                 tool_params["tx_min"] = tx_min
