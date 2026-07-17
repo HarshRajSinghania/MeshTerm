@@ -1480,63 +1480,65 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     assert session._float_layers() == [dialog]
 
 
-def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
-    """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
-    emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
-    must not trip the check (that they seemed to was the earlier misdiagnosis)."""
-    from meshterm.ui.tui.session import _has_wide_glyph
+def test_narrow_emoji_predicate_splits_emoji_from_cjk_and_marks() -> None:
+    """The width model is aligned to the terminal for exactly one class of glyph: an emoji the
+    terminal draws in one cell while wcwidth calls it two. CJK/fullwidth glyphs (drawn two cells
+    wide) and the width-1 marks and braille must stay out of it — that split is what keeps the
+    alignment from breaking CJK layout or double-counting a node mark."""
+    from meshterm.ui.tui.glyphwidth import is_narrow_emoji
 
-    assert _has_wide_glyph("👋")
-    assert _has_wide_glyph("Bob 👋 waved")
-    assert _has_wide_glyph("clock 🕒 sync")
-    assert _has_wide_glyph("⚡ explore")  # a width-2 icon still counts
-    assert not _has_wide_glyph("plain ascii row")
-    assert not _has_wide_glyph("★ ▲ ● ■ ◉ ○")  # node-type marks: width 1
-    assert not _has_wide_glyph("⠿⣿⡇ chart")  # braille: width 1
-    assert not _has_wide_glyph("✓ ✗ ⚠ … done")  # status marks: width 1
+    assert is_narrow_emoji("👋")  # waving hand — the reported case
+    assert is_narrow_emoji("🕒")
+    assert is_narrow_emoji("⚡")  # a BMP pictograph icon, still width-2
+    assert not is_narrow_emoji("日")  # CJK: genuinely two cells, leave it
+    assert not is_narrow_emoji("Ａ")  # fullwidth Latin: two cells
+    assert not is_narrow_emoji("▲")  # node-type mark: one cell everywhere
+    assert not is_narrow_emoji("⠿")  # braille: one cell
+    assert not is_narrow_emoji("A")  # plain ascii
+    assert not is_narrow_emoji("👋🏽")  # multi-codepoint cluster: left to its parts
 
 
-def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
-    """prompt_toolkit paints differentially with a *relative* cursor — sound only while every
-    glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji in a chat line)
-    leaves the row's cursor model off; a later paint that skips the unchanged emoji then strands
-    stale cells to its right. So a composed frame carrying such a glyph drops pt's cached frame,
-    upgrading the next paint to a full erase_down + redraw. A frame of only width-1 glyphs keeps
-    the fast differential paint — this holds wherever the glyph is, floating dialog or not."""
-    import types
+def test_aligning_emoji_width_agrees_with_the_terminal() -> None:
+    """Aligning teaches both width authorities the terminal's truth — an emoji is one cell.
+    prompt_toolkit's get_cwidth (behind every Char.width, so the differential cursor) and Rich's
+    cell_len (behind every layout and border) both then measure an emoji at one, while CJK stays
+    two and marks stay one. With all three parties agreeing, the differential paint never drifts
+    and no whole-frame repaint is needed."""
+    from prompt_toolkit.utils import get_cwidth
+    from rich.cells import cell_len
 
-    from prompt_toolkit.data_structures import Size
-    from prompt_toolkit.layout.screen import Char
-    from prompt_toolkit.layout.screen import Screen as PtScreen
+    from meshterm.ui.tui.glyphwidth import align_emoji_cell_width
 
-    def _fake_app(last: PtScreen) -> types.SimpleNamespace:
-        return types.SimpleNamespace(
-            renderer=types.SimpleNamespace(_last_screen=last),
-            output=types.SimpleNamespace(get_size=lambda: Size(rows=10, columns=60)),
-            invalidate=lambda: None,
-        )
+    align_emoji_cell_width()  # idempotent; also applied by every TuiSession
 
-    def _filled() -> PtScreen:
-        screen = PtScreen()
-        for row in range(3):
-            for x in range(10):
-                screen.data_buffer[row][x] = Char("A")
-        return screen
+    assert get_cwidth("👋") == 1 and cell_len("👋") == 1
+    assert get_cwidth("🕒") == 1 and cell_len("🕒") == 1
+    assert get_cwidth("日") == 2 and cell_len("日") == 2  # CJK unchanged
+    assert get_cwidth("▲") == 1 and cell_len("▲") == 1  # mark unchanged
 
-    # An emoji anywhere in the composed frame drops the remembered frame, so the next paint is a
-    # full erase_down + redraw that leaves nothing stale behind.
-    session = TuiSession()
-    session._app = _fake_app(_filled())
-    session._emit("Bob 👋 says hi")
-    assert session._app.renderer._last_screen is None
 
-    # A frame of only width-1 glyphs — plain text, node marks, chart braille — keeps the
-    # efficient differential paint.
-    session = TuiSession()
-    last = _filled()
-    session._app = _fake_app(last)
-    session._emit("★ you  ▲ repeater  ● node  ⠿ chart")
-    assert session._app.renderer._last_screen is last
+def test_emoji_row_borders_sit_flush_after_alignment() -> None:
+    """The ragged-border artifact: a bordered row with an emoji rendered one cell short, so its
+    right border sat a column in with a blank beside it. Once Rich measures the emoji at one
+    cell it pads the row to full width and the border is flush — every panel line is exactly the
+    panel width, whether it carries no emoji, one, or two."""
+    from io import StringIO
+
+    from rich.cells import cell_len
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from meshterm.ui.tui.glyphwidth import align_emoji_cell_width
+
+    align_emoji_cell_width()
+    width = 30
+    for message in ["plain ascii row", "Bob 👋 hi", "two 👋 and 🕒 icons"]:
+        console = Console(width=width, file=StringIO(), color_system=None, highlight=False)
+        with console.capture() as capture:
+            console.print(Panel(Text(message), width=width), end="")
+        for line in capture.get().splitlines():
+            assert cell_len(line) == width, f"{line!r} is not flush at {width}"
 
 
 def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:
