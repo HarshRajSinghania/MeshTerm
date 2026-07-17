@@ -51,6 +51,10 @@ _EDGE_UNUSED = (110, 110, 110)
 class MessagePathsScreen(Screen):
     """A floating dialog: one message's arrivals as a path graph over a row list."""
 
+    #: The path graph is braille, which the terminal may render wider than modelled, so a
+    #: scroll reflushes the box to scrub any smeared border cell (see :attr:`Screen.smears`).
+    smears = True
+
     def __init__(
         self,
         message: ChatMessage,

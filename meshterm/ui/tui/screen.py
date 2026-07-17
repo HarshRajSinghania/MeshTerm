@@ -48,6 +48,13 @@ class Screen:
             base screen. Ignored while ``chrome`` is ``True``.
         footnote: A short line drawn muted and centered *below* a chromeless base screen's
             box (e.g. a copyright notice). Ignored while ``chrome`` is ``True``.
+        smears: Whether this screen paints braille or other glyphs the terminal may render
+            wider than prompt_toolkit models (a route graph's fan lanes, the node-type
+            marks). Such a glyph's double-width fallback can smear a static cell — a dialog
+            border — that the differential renderer never rewrites, so the session reflushes
+            the frame after a scroll (see :meth:`~meshterm.ui.tui.session.TuiSession._reflush_frame`)
+            to scrub the leftover. A full-frame braille screen that already cleans its own
+            edge (the map, via :meth:`consume_edge_scrub`) leaves this ``False``.
     """
 
     title: str = ""
@@ -57,6 +64,7 @@ class Screen:
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
     footnote: Optional[str] = None
+    smears: bool = False
 
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""

@@ -90,6 +90,16 @@ _RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
 
+#: Scroll/pan actions after which a :attr:`~meshterm.ui.tui.screen.Screen.smears` screen
+#: reflushes the frame (see :meth:`TuiSession._reflush_frame`) — every key that can move
+#: wide-glyph content, so a leftover fragment is scrubbed the moment its row shifts.
+_REFLUSH_ACTIONS = frozenset({
+    "up", "down", "pageup", "pagedown", "home", "end",
+    "ctrl_home", "ctrl_end", "ctrl_pageup", "ctrl_pagedown",
+    "left", "right", "ctrl_left", "ctrl_right",
+    "shift_up", "shift_down", "shift_left", "shift_right", "space",
+})
+
 
 class _WidthExtendedOutput:
     """A prompt_toolkit ``Output`` proxy that reports one extra terminal column.
@@ -251,14 +261,15 @@ class TuiSession:
         if renderer is not None and hasattr(renderer, "_last_screen"):
             renderer._last_screen = None
 
-    def _scrub_right_columns(self, count: int) -> None:
-        """Force prompt_toolkit to repaint the rightmost ``count`` columns on the next diff.
+    def _scrub_columns(self, start: int, stop: int) -> None:
+        """Force prompt_toolkit to repaint terminal columns ``[start, stop)`` on the next diff.
 
         Overwrites those cells in pt's remembered last frame with a sentinel that can't equal
         any real content, so the differential renderer treats them as changed and redraws
-        them — scrubbing a double-width fallback glyph that smeared over the panel's right
-        edge, without the whole-frame flicker of dropping the entire cached frame. Touches a
-        pt internal, so it fails soft if the structure ever moves.
+        them — scrubbing a double-width fallback glyph that smeared over a *static* edge (the
+        map's panel border, a floating dialog's), without the whole-frame flicker of dropping
+        the entire cached frame. Touches a pt internal, so it fails soft if the structure ever
+        moves.
         """
         renderer = getattr(self._app, "renderer", None)
         last = getattr(renderer, "_last_screen", None)
@@ -268,13 +279,33 @@ class TuiSession:
             from prompt_toolkit.layout.screen import Char
 
             buffer = last.data_buffer
-            cols, _ = self._size()
             sentinel = Char("￿")  # a non-character; never equals real cell content
-            for x in range(max(0, cols - count), cols):
+            for x in range(max(0, start), stop):
                 for row in list(buffer.keys()):
                     buffer[row][x] = sentinel
         except Exception:  # noqa: BLE001 - a cosmetic scrub must never break rendering
             pass
+
+    def _scrub_right_columns(self, count: int) -> None:
+        """Scrub the terminal's rightmost ``count`` columns — a full-frame panel's edge."""
+        cols, _ = self._size()
+        self._scrub_columns(cols - count, cols)
+
+    def _reflush_frame(self) -> None:
+        """Force the next paint to rewrite every cell in place — no erase, no flicker.
+
+        Fills pt's remembered last frame with a sentinel so the differential renderer reads
+        every cell as changed and redraws it (and erase-to-end-of-lines each row's tail),
+        overwriting a double-width fallback glyph's smeared halves wherever they landed. A
+        screen that draws braille or other glyphs the terminal may paint wider than pt models
+        (a route-graph dialog — see :attr:`~meshterm.ui.tui.screen.Screen.smears`) reflushes
+        after a scroll, the way the map scrubs its edge after a pan. Unlike
+        :meth:`request_full_repaint` this keeps the cached frame, so pt overwrites in place
+        rather than erasing first — no blank flash. Scrubbing the whole frame sidesteps the
+        centred box's geometry entirely: the smear is cleaned wherever it sits.
+        """
+        cols, _ = self._size()
+        self._scrub_columns(0, cols)
 
     # --- async prompt helpers ------------------------------------------------
 
@@ -1057,9 +1088,19 @@ class TuiSession:
         return kb
 
     def _dispatch(self, action: str, data: str = "") -> None:
-        """Forward an action to the top screen and repaint."""
-        if self.top is not None:
-            self.top.handle(action, data)
+        """Forward an action to the top screen and repaint.
+
+        A screen that paints braille or other glyphs the terminal may render wider than
+        prompt_toolkit models (a route-graph dialog, :attr:`~meshterm.ui.tui.screen.Screen.
+        smears`) can leave a smeared fragment on a static cell — a dialog border — that the
+        differential renderer never rewrites. After a scroll moves the offending row away,
+        reflush the frame so the leftover is scrubbed (see :meth:`_reflush_frame`).
+        """
+        top = self.top
+        if top is not None:
+            top.handle(action, data)
+            if action in _REFLUSH_ACTIONS and getattr(top, "smears", False):
+                self._reflush_frame()
         self.invalidate()
 
 

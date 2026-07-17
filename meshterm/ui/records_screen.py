@@ -120,6 +120,10 @@ class RecordDialog(Screen):
     removes this one record behind a red Cancel/Delete data-loss confirm.
     """
 
+    #: The braille mini-map and route graph can render wider than modelled, so a scroll
+    #: reflushes the box to scrub any smeared border cell (see :attr:`Screen.smears`).
+    smears = True
+
     def __init__(
         self,
         record: DiscoveredPath,

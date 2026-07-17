@@ -1480,6 +1480,60 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     assert session._float_layers() == [dialog]
 
 
+def test_scrolling_a_smear_prone_screen_reflushes_the_whole_frame() -> None:
+    """A braille screen force-rewrites every cell on scroll, so a wide-glyph smear on any
+    static cell (a dialog border) is scrubbed — where a plain screen keeps the fast diff."""
+    import types
+
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.layout.screen import Char
+    from prompt_toolkit.layout.screen import Screen as PtScreen
+
+    def _fake_app(last: PtScreen) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            renderer=types.SimpleNamespace(_last_screen=last),
+            output=types.SimpleNamespace(get_size=lambda: Size(rows=10, columns=60)),
+            invalidate=lambda: None,
+        )
+
+    class _Braille(ScrollScreen):
+        smears = True
+
+    def _filled() -> PtScreen:
+        screen = PtScreen()
+        for row in range(10):
+            for x in range(60):
+                screen.data_buffer[row][x] = Char("A")
+        return screen
+
+    # A smear-prone screen: a scroll fills the remembered frame with the scrub sentinel, so
+    # the next diff rewrites every cell in place (no cell is left for the smear to hide in).
+    session = TuiSession()
+    last = _filled()
+    session._app = _fake_app(last)
+    session.push(_Braille(Text("x")))
+    session._dispatch("down")
+    assert all(last.data_buffer[r][x].char == "￿" for r in range(10) for x in range(60))
+
+    # A plain screen keeps the efficient differential paint — the frame is left untouched.
+    session = TuiSession()
+    last = _filled()
+    session._app = _fake_app(last)
+    session.push(ScrollScreen(Text("x")))  # smears defaults False
+    session._dispatch("down")
+    assert last.data_buffer[0][0].char == "A"
+
+
+def test_smear_prone_route_graph_dialogs_opt_into_the_reflush() -> None:
+    """The braille route-graph dialogs declare ``smears`` so a scroll scrubs their borders."""
+    from meshterm.ui.message_paths_screen import MessagePathsScreen
+    from meshterm.ui.packet_viewer import PacketViewer
+    from meshterm.ui.records_screen import RecordDialog
+
+    assert PacketViewer.smears and MessagePathsScreen.smears and RecordDialog.smears
+    assert Screen.smears is False  # the default: plain screens keep the fast diff
+
+
 def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:
     """``text(floating=True)`` floats as a centered popup even on an empty stack.
 
