@@ -139,3 +139,35 @@ def test_packet_viewer_shows_full_raw_field_labels() -> None:
     })
     body = _plain(_viewer(entry).render_body(80))
     assert "battery_millivolts" in body  # the 18-char key is not clipped to 8
+
+
+def test_packet_viewer_draws_a_relayed_packets_route_graph() -> None:
+    """A packet that crossed relays gets THE route graph — braille edges, caption, legend."""
+    entry = PacketEntry(when=utcnow(), kind="packet", path="3d63,a1b2")
+    body = _plain(_viewer(entry).render_body(80))
+    assert "origin → you" in body                     # the graph caption
+    assert "★ you" in body and "▲ repeater" in body   # the node-type legend
+    assert any("⠀" <= ch <= "⣿" for ch in body)       # braille edges are drawn
+    assert "3d" in body and "a1" in body              # each relay labelled by its hash byte
+
+
+def test_packet_viewer_skips_the_graph_for_a_direct_packet() -> None:
+    """A packet with no relays says so in the via row and draws no (pointless) two-node graph."""
+    entry = PacketEntry(when=utcnow(), kind="packet", path="")
+    body = _plain(_viewer(entry).render_body(80))
+    assert "direct — no relays" in body
+    assert "origin → you" not in body
+    assert not any("⠀" <= ch <= "⣿" for ch in body)
+
+
+def test_packet_viewer_graph_names_a_known_origin_else_a_question_mark() -> None:
+    """The graph's left endpoint is the resolved origin name, or ``?`` when the frame named none."""
+    known = PacketEntry(when=utcnow(), kind="packet", node="c0ffee", path="3d63")
+    body = _plain(
+        PacketViewer([known], 0, resolve=lambda h: "Base" if h == "c0ffee" else "").render_body(80)
+    )
+    assert "Base" in body  # the origin, resolved to its contact name
+
+    nameless = PacketEntry(when=utcnow(), kind="packet", path="3d63")
+    body2 = _plain(_viewer(nameless).render_body(80))
+    assert "?" in body2  # an origin-less flood draws a plain "?" endpoint

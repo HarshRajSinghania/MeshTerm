@@ -40,7 +40,7 @@ from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
 from .menus import back_rows, section_heading
 from .pathgraph import PathLayer, render_path_graph
-from .theme import name_style, snr_rgb, snr_style
+from .theme import name_style, snr_style
 from .tui.render import render_hanging, render_to_ansi
 from .tui.screen import Screen
 from .widgets import (
@@ -111,8 +111,8 @@ class RecordDialog(Screen):
     history, the far point named with the node it reached — with the walk's enclosed area
     drawn beside them on a braille mini-map (us at the origin, every positioned hop pinned
     in its own name hue, no labels) when the terminal has the room; below, the walk on THE
-    route graph (us at both ends, coloured by its weakest link, relays wearing their map
-    marker over a node-type key), the route in full (wrapped, never truncated), and the
+    route graph (us at both ends, relays wearing their map marker over a node-type key),
+    the route in full (wrapped, never truncated), and the
     record's provenance — when it was set and by which app version. The card scrolls
     (PgUp/PgDn/Home/End) when it outgrows the frame, while the arrows drive the actions.
     Two actions besides Back: *Trace this path* reopens Trace path with the record's route
@@ -216,14 +216,13 @@ class RecordDialog(Screen):
         """Draw the walked route as one path on THE route graph — us at both ends.
 
         A scored walk leaves home and comes back, so it draws us (left) → its relays →
-        us (right) as a single path through the shared fan-lane widget
+        us (right) as a single white path through the shared fan-lane widget
         (:func:`~meshterm.ui.pathgraph.render_path_graph`), the same shape the Message
-        paths dialog draws a delivery over. The path is coloured by the walk's weakest link
-        (the SNR palette), so the loop reads red when a hop barely carried; relays wear
-        their own map marker (``▲`` repeater, …) where the type is known. Nodes the walk
-        passed through more than once — a boomerang's mirrored return leg — collapse to
-        their first appearance: the depth-ordered graph can only seat a node once, and the
-        route line below still carries every hop, revisits and all.
+        paths dialog draws a delivery over. Relays wear their own map marker (``▲``
+        repeater, …) where the type is known. Nodes the walk passed through more than once
+        — a boomerang's mirrored return leg — collapse to their first appearance: the
+        depth-ordered graph can only seat a node once, and the route line below still
+        carries every hop, revisits and all.
         """
         seen: set[str] = set()
         hops: list[str] = []
@@ -237,10 +236,8 @@ class RecordDialog(Screen):
             source=self._device_label,
             type_of=self._type_of,
         )
-        min_snr = self._record.stats.get("min_snr")
-        color = snr_rgb(min_snr) if min_snr is not None else _WALK_EDGE
         return render_path_graph(
-            [PathLayer(hops=tuple(hops), color=color, priority=3)],
+            [PathLayer(hops=tuple(hops), color=_WALK_EDGE, priority=3)],
             width,
             glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
         )

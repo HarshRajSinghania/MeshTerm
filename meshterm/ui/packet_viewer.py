@@ -6,9 +6,12 @@ class — and every row can open into the same viewer: a centered dialog over th
 that lays the packet out in full, flavoured by kind. An advert shows the node's
 identity, type, and location; telemetry shows the node and its reported values; an
 RX-logged packet shows its parsed class and route plus the relay path it rode in on —
-and, for an overheard channel-text frame naming a channel we hold the key for, the
-decrypted text too (see :func:`~meshterm.core.channels.decrypt_channel_text`), even
-though the radio itself never decoded it for us; a message shows the sender, the
+as a ``via`` chain and, when it actually crossed a relay, as THE route graph
+(:mod:`~meshterm.ui.pathgraph`): origin → relays → us, the same fan-lane picture the
+Message paths dialog and the Trophy case draw — and, for an overheard channel-text frame
+naming a channel we hold the key for, the decrypted text too (see
+:func:`~meshterm.core.channels.decrypt_channel_text`), even though the radio itself never
+decoded it for us; a message shows the sender, the
 conversation, and the text; an ack shows its code. Common to all: the timestamp, the
 node (name coloured by the app-wide palette, hash in the hash widget), reception
 quality on the shared SNR bar, and any leftover raw field the flavoured layout doesn't
@@ -34,11 +37,20 @@ from rich.text import Text
 from ..core.channels import decrypt_channel_text
 from ..core.models import NODE_TYPE_LABELS, Observation
 from ..services.trace_runner import NodeResolver
+from .pathgraph import PathLayer, render_path_graph
 from .theme import name_style, snr_style
 from .trace_screen import snr_bar
-from .tui.render import render_lines
+from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
-from .widgets import _age_seconds, format_ago, highlighted_hash, path_text
+from .widgets import (
+    TypeOf,
+    _age_seconds,
+    format_ago,
+    highlighted_hash,
+    node_type_legend,
+    path_text,
+    route_graph_style,
+)
 
 #: Friendly gloss for a raw packet's parsed payload class (mirrors the meshcore
 #: library's own ``PAYLOAD_TYPENAMES``), shown on a ``packet`` entry's "class" row.
@@ -57,8 +69,8 @@ _PAYLOAD_GLOSS = {
     "CONTROL": "control",
 }
 
-#: Raw-payload fields already folded into a flavoured row elsewhere in :meth:`_rows`
-#: (frame plumbing parsed into "class"/"route", the channel crypto handled by
+#: Raw-payload fields already folded into a flavoured row elsewhere (frame plumbing
+#: parsed into "class"/"route", the channel crypto handled by
 #: :meth:`PacketViewer._decrypt_rows`, or an advert field duplicating ``node``/
 #: ``lat``/``lon``/etc.) — skipped so the generic dump doesn't repeat them.
 _RAW_ROW_SKIP = frozenset({
@@ -92,6 +104,11 @@ KIND_ICONS = {
     "ack": "✅",
 }
 DEFAULT_ICON = "❔"
+
+#: The colour a relayed packet's route draws in on THE route graph. It is the only path
+#: on the canvas, so white just reads as "the route the packet rode" (the Trophy case's
+#: single-walk convention).
+_ROUTE_EDGE = (255, 255, 255)
 
 
 @dataclass(slots=True)
@@ -236,6 +253,7 @@ class PacketViewer(Screen):
         on_navigate: Optional[Callable[[PacketEntry], None]] = None,
         channels: Sequence[tuple[str, bytes]] = (),
         source: Optional[Callable[[], Sequence[PacketEntry]]] = None,
+        type_of: Optional[TypeOf] = None,
     ) -> None:
         """Open the viewer over a packet list.
 
@@ -256,6 +274,9 @@ class PacketViewer(Screen):
                 keypress and re-locates the packet being viewed by identity, so packets
                 that arrive while the dialog is open become reachable (``↑`` walks up
                 into them) instead of the view being frozen at its opening snapshot.
+            type_of: Maps a relay hash to its node type, so a relayed packet's route
+                graph marks a repeater ``▲`` (etc.) instead of a generic dot; ``None``
+                keeps the plain named-dot / unknown-ring fallback.
         """
         super().__init__()
         self._entries = list(entries)
@@ -266,6 +287,7 @@ class PacketViewer(Screen):
         self._on_navigate = on_navigate
         self._channels = channels
         self._source = source
+        self._type_of = type_of
         #: The packet currently shown, tracked by identity so a live prepend to the
         #: source (which shifts every index) never slides the view onto another packet.
         self._current: Optional[PacketEntry] = (
@@ -355,34 +377,66 @@ class PacketViewer(Screen):
     # --- rendering -------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Lay the current entry out as labelled rows, flavoured by its kind."""
+        """Lay the current entry out as labelled rows, flavoured by its kind.
+
+        A relayed ``packet`` slots THE route graph (:mod:`~meshterm.ui.pathgraph`) between
+        its parsed detail (heard/from/class/via) and its extras (location/text/raw): the
+        via row names each hop precisely, the graph shows the same relay chain as a shape —
+        origin at the left, us at the right. The two label/value grids around it share one
+        label-lane width so their rows still line up across the picture.
+        """
         # Fold in any packets that arrived since the last paint, keeping the view on the
         # same packet, so the title's ``n/total`` and the reachable range stay current.
         self._sync()
         entry = self._entries[self._index]
-        rows = self._rows(entry)
-        # The label lane is one fixed width for the whole grid so wrapped values align with
-        # their own block (the app-wide hanging-indent rule), never with column zero. Size it
-        # to the widest label actually present — a raw payload field's full name included, so
-        # none is clipped — plus a one-cell gutter, but never so wide it leaves the value
-        # column under 20 cells (a pathological key then ellipsises instead of crushing it).
+        head, tail = self._head_rows(entry), self._tail_rows(entry)
+        label_w = self._label_width(head + tail, width)
+
+        lines = self._grid_lines(head, width, label_w)
+        graph = self._graph_lines(entry, width)
+        if graph:
+            lines.append("")
+            lines.extend(graph)
+            caption = Text("origin → you · labels = hash byte", style="faint")
+            lines.append(render_to_ansi(caption, width, no_wrap=True))
+            lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+            if tail:
+                lines.append("")
+        lines.extend(self._grid_lines(tail, width, label_w))
+        self._scroll_total = max(1, len(lines))
+        return lines
+
+    @staticmethod
+    def _label_width(rows: list[tuple[str, RenderableType]], width: int) -> int:
+        """The shared label-lane width so wrapped values hang under their own block.
+
+        One fixed width for every grid on the card (the app-wide hanging-indent rule), never
+        column zero — sized to the widest label present (a raw payload field's full name
+        included, so none is clipped) plus a one-cell gutter, but never so wide it leaves the
+        value column under 20 cells (a pathological key then ellipsises instead of crushing it).
+        """
         widest = max((len(label) for label, _ in rows), default=0)
-        label_w = max(10, min(widest + 1, width - 20))
+        return max(10, min(widest + 1, width - 20))
+
+    @staticmethod
+    def _grid_lines(
+        rows: list[tuple[str, RenderableType]], width: int, label_w: int
+    ) -> list[str]:
+        """Render one label/value grid to ANSI lines (empty rows → no lines)."""
+        if not rows:
+            return []
         grid = Table(
             box=None, show_header=False, show_edge=False, pad_edge=False,
             padding=(0, 0), expand=False,
         )
         grid.add_column(width=label_w, no_wrap=True)
         grid.add_column(overflow="fold", max_width=max(20, width - label_w))
-
         for label, value in rows:
             grid.add_row(Text(label, style="muted"), value)
-        lines = render_lines(grid, width)
-        self._scroll_total = max(1, len(lines))
-        return lines
+        return render_lines(grid, width)
 
-    def _rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
-        """The labelled rows for one entry: the common core plus its kind's extras."""
+    def _head_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
+        """The rows above the route graph: the common core plus a packet's parsed frame."""
         rows: list[tuple[str, RenderableType]] = []
 
         secs = _age_seconds(entry.when)
@@ -406,6 +460,11 @@ class PacketViewer(Screen):
             rows.append(("snr", self._reception(entry)))
         if entry.kind == "packet":
             rows.extend(self._packet_rows(entry))
+        return rows
+
+    def _tail_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
+        """The rows below the route graph: location, the message/ack fields, the raw dump."""
+        rows: list[tuple[str, RenderableType]] = []
         if entry.lat is not None and entry.lon is not None:
             rows.append(("location", Text(f"{entry.lat:.5f}, {entry.lon:.5f}")))
 
@@ -417,6 +476,44 @@ class PacketViewer(Screen):
 
         rows.extend(self._raw_rows(entry))
         return rows
+
+    def _graph_lines(self, entry: PacketEntry, width: int) -> list[str]:
+        """Draw a relayed packet's origin → relays → us route on THE route graph.
+
+        Only a ``packet`` frame that actually crossed a relay draws one — a direct
+        arrival's ``via`` row (``direct — no relays``) already says all there is to say, so
+        a two-node graph would waste the height. The relay chain is the packet's path
+        (originator-nearest first), the left endpoint the origin when the frame named one
+        (an advert's ``adv_key``; other classes arrive origin-less, drawn ``?``), the right
+        endpoint always us — the same fan-lane widget the Message paths dialog and the
+        Trophy case draw, in a single white path.
+        """
+        if entry.kind != "packet":
+            return []
+        hops = tuple(hop for hop in (entry.path or "").split(",") if hop)
+        if not hops:
+            return []
+        glyph_of, label_of, label_rgb_of = route_graph_style(
+            resolve=self._resolve, self_name=self._self_name,
+            source=self._graph_source(entry), type_of=self._type_of,
+        )
+        return render_path_graph(
+            [PathLayer(hops=hops, color=_ROUTE_EDGE, priority=3)],
+            width, glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+        )
+
+    def _graph_source(self, entry: PacketEntry) -> Optional[str]:
+        """The origin's display name for the graph's left endpoint, or ``None`` if unknown.
+
+        The naming rule the ``from`` row follows (a resolved contact wins, then the name the
+        frame carried), but a nameless origin returns ``None`` so the graph draws a plain
+        ``?`` endpoint rather than passing a bare hash off as a named node.
+        """
+        if entry.node:
+            resolved = self._resolve(entry.node)
+            if resolved and resolved != entry.node:
+                return resolved
+        return entry.name or None
 
     def _reception(self, entry: PacketEntry) -> Text:
         """SNR (with the shared quality bar) and RSSI on one line."""

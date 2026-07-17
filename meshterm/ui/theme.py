@@ -176,18 +176,3 @@ def snr_style(snr: float | None) -> str:
     if snr >= -5:
         return "snr.ok"
     return "snr.bad"
-
-
-#: The truecolour behind each :func:`snr_style` band, matching its ``snr.*`` theme hue, for
-#: rasters that plot SNR directly (the route graph colouring a path by its link quality).
-_SNR_RGB: dict[str, tuple[int, int, int]] = {
-    "snr.good": (74, 222, 128),   # #4ade80
-    "snr.ok": (251, 191, 36),     # #fbbf24
-    "snr.bad": (248, 113, 113),   # #f87171
-    "muted": (148, 163, 184),     # #94a3b8
-}
-
-
-def snr_rgb(snr: float | None) -> tuple[int, int, int]:
-    """The ``(r, g, b)`` of an SNR reading's quality band (see :func:`snr_style`)."""
-    return _SNR_RGB[snr_style(snr)]

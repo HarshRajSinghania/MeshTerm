@@ -49,7 +49,7 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     assert "Alice" in body and "Homestead" in body  # origin and us, on the graph
     assert body.count("via") == 2  # one row per arrival
     assert "❯" in body
-    assert "colour = SNR of selected" in body  # the graph caption
+    assert "white = selected path" in body  # the graph caption
     assert "★ you" in body and "▲ repeater" in body  # the node-type legend
     assert screen.cursor_line() is not None
 
@@ -85,15 +85,15 @@ def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
     assert "e8" in graph  # the row's byte still cross-references the graph label
 
 
-def test_paths_screen_colours_selected_path_by_snr_over_gray() -> None:
-    """The selected path's edges take its arrival's SNR hue; the unused path stays gray."""
-    screen = _screen(_arrivals())  # selected arrival's SNR is +4.0 dB → the "ok" band
+def test_paths_screen_draws_selected_path_white_over_gray() -> None:
+    """The selected path's edges render white; the unused path's edges gray."""
+    screen = _screen(_arrivals())
     raw = "\n".join(screen.render_body(76)).split("origin →")[0]
-    assert "38;2;251;191;36" in raw  # snr.ok amber — the selected path, by SNR
+    assert "38;2;255;255;255" in raw  # the selected path, white
     assert "38;2;110;110;110" in raw  # the other path, gray beneath it
-    screen.handle("down")  # select the weaker arrival (−2.0 dB, still "ok")
+    screen.handle("down")  # move the selection to the other path
     raw2 = "\n".join(screen.render_body(76)).split("origin →")[0]
-    assert "38;2;251;191;36" in raw2  # the newly selected path recolours
+    assert "38;2;255;255;255" in raw2 and "38;2;110;110;110" in raw2
 
 
 def test_paths_screen_marks_a_repeater_relay_with_its_triangle() -> None:

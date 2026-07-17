@@ -50,7 +50,7 @@ from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import ACTIVITY_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
 from .menus import fit_cells
-from .widgets import path_text
+from .widgets import TypeOf, path_text
 from .packet_viewer import (
     KIND_STYLES,
     PacketEntry,
@@ -136,6 +136,7 @@ class DashboardScreen(Screen):
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
         channels: Sequence[tuple[str, bytes]] = (),
+        type_of: Optional[TypeOf] = None,
     ) -> None:
         """Create the dashboard over its data feeds.
 
@@ -153,6 +154,8 @@ class DashboardScreen(Screen):
             channels: The device's configured channels, as ``(name, secret)`` pairs,
                 handed to each opened :class:`~meshterm.ui.packet_viewer.PacketViewer`
                 so it can attempt to decrypt an overheard channel-text packet.
+            type_of: Maps a relay hash to its node type, handed to the packet viewer so a
+                relayed packet's route graph marks a repeater ``▲`` (etc.) over a dot.
         """
         super().__init__()
         self.title = "Dashboard — mesh overview"
@@ -165,6 +168,7 @@ class DashboardScreen(Screen):
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._channels = channels
+        self._type_of = type_of
         #: The trailing window of observations (stored seed + live), oldest first.
         self._window: deque[Observation] = deque(window, maxlen=4000)
         #: The feed: latest events of every class as data, newest first — rendered
@@ -293,7 +297,7 @@ class DashboardScreen(Screen):
             list(self._feed), self._selected,
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
             self_name=self._self_name, on_navigate=follow,
-            channels=self._channels,
+            channels=self._channels, type_of=self._type_of,
             # The live feed itself (newest first), so the viewer keeps up with packets
             # that arrive while it is open instead of freezing at this snapshot.
             source=lambda: list(self._feed),
@@ -685,6 +689,7 @@ async def open_dashboard(ctx: "AppContext") -> None:
     # Contacts first, every name the recorder ever overheard as the fallback — the
     # app-wide rule that a node we can name never renders as a bare hash.
     resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
+    type_of = trace_runner.make_node_type_resolver(contacts)
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
     window = ctx.repo.recent_observations(since=utcnow() - ACTIVITY_WINDOW)
@@ -699,6 +704,7 @@ async def open_dashboard(ctx: "AppContext") -> None:
         prefix_bytes=prefix_bytes,
         self_name=self_name,
         channels=channels,
+        type_of=type_of,
     )
 
     unsubscribe = ctx.events.subscribe(screen.on_event)
