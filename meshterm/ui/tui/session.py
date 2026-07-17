@@ -12,12 +12,10 @@ and pop it — the push/await/pop model behind every prompt.
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Optional
 
 from prompt_toolkit.application import Application
-from prompt_toolkit.data_structures import Size
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
@@ -73,47 +71,10 @@ _KEY_ACTIONS: dict[Any, str] = {
 }
 
 
-#: Reclaim the terminal's final column. Some terminals (and prompt_toolkit's size probe on
-#: them) report the window one column narrower than it really is, so the frame is drawn to
-#: ``columns - 1`` and the true last column sits unused — visibly selectable to the right of
-#: the border. When this is on, :class:`_WidthExtendedOutput` tells both the renderer and the
-#: frame compositor the window is one column wider, and that final column gets drawn.
-#:
-#: This is a gate, not a certainty: it is *correct* only when the probe under-reports. On a
-#: terminal whose width probe is already right, the extra column falls off the real screen and
-#: the frame would wrap and tear, so it can be switched off with ``MESHTERM_FULL_WIDTH=0``.
-#: Kept as an env-var gate for now so it can graduate to a user setting once confirmed across
-#: terminals (TODO: thread through ``settings`` and the config editor).
-_RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
-
 #: How many stacked dialog layers the layout can float over the background at once. A fixed
 #: pool of centered-box floats (see :meth:`TuiSession._build_app`), sized well past the deepest
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
-
-
-class _WidthExtendedOutput:
-    """A prompt_toolkit ``Output`` proxy that reports one extra terminal column.
-
-    Wraps the real output and forwards everything untouched *except* :meth:`get_size`, which
-    adds a column. Because the whole render pipeline — prompt_toolkit's differential renderer
-    and MeshTerm's own frame compositor (via :meth:`TuiSession._size`) — keys off
-    ``output.get_size()``, this single override makes both use the reclaimed column in
-    lock-step. See :data:`_RECLAIM_LAST_COLUMN` for when this is right (and when it isn't).
-    """
-
-    def __init__(self, inner: Any) -> None:
-        """Wrap ``inner`` (the concrete prompt_toolkit output for the real terminal)."""
-        self._inner = inner
-
-    def get_size(self) -> Size:
-        """The wrapped size with one column added, so the last column is claimed."""
-        size = self._inner.get_size()
-        return Size(rows=size.rows, columns=size.columns + 1)
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward every other attribute/method straight to the wrapped output."""
-        return getattr(self._inner, name)
 
 
 def _message_border(message: "Text | str") -> str:
@@ -921,22 +882,8 @@ class TuiSession:
             mouse_support=False,
             refresh_interval=1.0,  # keep the live monitor counter in the header ticking
             input=self._input,
-            output=self._resolve_output(),
+            output=self._output,
         )
-
-    def _resolve_output(self) -> Any:
-        """The output the app renders to — optionally widened to reclaim the last column.
-
-        Only the *real* terminal (``self._output is None``, so prompt_toolkit would build its
-        own output) is wrapped, and only when :data:`_RECLAIM_LAST_COLUMN` is on: a test that
-        supplies its own output keeps the exact size it set, so headless rendering stays
-        deterministic. See :class:`_WidthExtendedOutput` for what the wrap does.
-        """
-        if self._output is not None or not _RECLAIM_LAST_COLUMN:
-            return self._output
-        from prompt_toolkit.output.defaults import create_output
-
-        return _WidthExtendedOutput(create_output())
 
     # --- rendering -----------------------------------------------------------
 
