@@ -1480,9 +1480,12 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     assert session._float_layers() == [dialog]
 
 
-def test_scrolling_a_smear_prone_screen_reflushes_the_whole_frame() -> None:
-    """A braille screen force-rewrites every cell on scroll, so a wide-glyph smear on any
-    static cell (a dialog border) is scrubbed — where a plain screen keeps the fast diff."""
+def test_scrolling_a_floating_dialog_forces_a_full_repaint() -> None:
+    """A floating dialog leaves the frame around it (and its own border) static between
+    frames, so a wide-glyph smear pushed onto those cells would linger under the differential
+    paint. Scrolling one drops pt's cached frame, so the next paint clears the whole terminal
+    and redraws from the origin — the only reset that re-syncs the cursor. A full-frame base
+    with no float keeps the efficient differential paint (its body heals a smear itself)."""
     import types
 
     from prompt_toolkit.data_structures import Size
@@ -1496,9 +1499,6 @@ def test_scrolling_a_smear_prone_screen_reflushes_the_whole_frame() -> None:
             invalidate=lambda: None,
         )
 
-    class _Braille(ScrollScreen):
-        smears = True
-
     def _filled() -> PtScreen:
         screen = PtScreen()
         for row in range(10):
@@ -1506,32 +1506,22 @@ def test_scrolling_a_smear_prone_screen_reflushes_the_whole_frame() -> None:
                 screen.data_buffer[row][x] = Char("A")
         return screen
 
-    # A smear-prone screen: a scroll fills the remembered frame with the scrub sentinel, so
-    # the next diff rewrites every cell in place (no cell is left for the smear to hide in).
+    # A dialog floating over a base: a scroll drops the remembered frame so the next paint
+    # does a full erase_down + redraw, scrubbing anything a smear left on the static frame.
+    session = TuiSession()
+    session._app = _fake_app(_filled())
+    session.push(ScrollScreen(Text("base"), floating=False))
+    session.push(ScrollScreen(Text("dialog")))  # floats over the base
+    session._dispatch("down")
+    assert session._app.renderer._last_screen is None
+
+    # A full-frame base with nothing floating over it keeps the fast differential paint.
     session = TuiSession()
     last = _filled()
     session._app = _fake_app(last)
-    session.push(_Braille(Text("x")))
+    session.push(ScrollScreen(Text("base"), floating=False))
     session._dispatch("down")
-    assert all(last.data_buffer[r][x].char == "￿" for r in range(10) for x in range(60))
-
-    # A plain screen keeps the efficient differential paint — the frame is left untouched.
-    session = TuiSession()
-    last = _filled()
-    session._app = _fake_app(last)
-    session.push(ScrollScreen(Text("x")))  # smears defaults False
-    session._dispatch("down")
-    assert last.data_buffer[0][0].char == "A"
-
-
-def test_smear_prone_route_graph_dialogs_opt_into_the_reflush() -> None:
-    """The braille route-graph dialogs declare ``smears`` so a scroll scrubs their borders."""
-    from meshterm.ui.message_paths_screen import MessagePathsScreen
-    from meshterm.ui.packet_viewer import PacketViewer
-    from meshterm.ui.records_screen import RecordDialog
-
-    assert PacketViewer.smears and MessagePathsScreen.smears and RecordDialog.smears
-    assert Screen.smears is False  # the default: plain screens keep the fast diff
+    assert session._app.renderer._last_screen is last
 
 
 def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:

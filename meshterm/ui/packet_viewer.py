@@ -241,9 +241,6 @@ class PacketViewer(Screen):
     """
 
     grow_only = True
-    #: A relayed packet's route graph is braille, which the terminal may render wider than
-    #: modelled — so a paging/scroll reflushes the box to scrub any smeared border cell.
-    smears = True
 
     def __init__(
         self,
