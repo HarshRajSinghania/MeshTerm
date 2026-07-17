@@ -76,8 +76,9 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from .admin_picker import pick_admin_node
+    from .admin_picker import admin_picker_rows, pick_admin_node
     from .surface import TuiUi
+    from .tui import SelectScreen
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("repeater admin is only available in the menu")
@@ -89,16 +90,23 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     # :class:`~meshterm.services.device_state.DeviceState`); the device handle below is still
     # needed for the admin login and the CLI session that follow.
     contacts = await ctx.devstate.contacts()
-    node = await pick_admin_node(
-        ctx,
-        contacts,
-        title="Repeater admin — node to manage",
-        prompt="The remote node to set up (you need its admin password):",
-    )
+    pick_title = "Repeater admin — node to manage"
+    pick_prompt = "The remote node to set up (you need its admin password):"
+    node = await pick_admin_node(ctx, contacts, title=pick_title, prompt=pick_prompt)
     if node is None:
         return None
-    if not await _login(ctx, device, node):
-        return None
+    # The picker was popped when it returned. Redraw it as a static backdrop and keep it
+    # pushed across the login, so the password prompt (and any rejection) floats over the
+    # node list the pick came from — the picked node still highlighted — rather than over a
+    # blank frame. The backdrop takes no input; the dialog above it owns the keyboard.
+    items, _candidates = admin_picker_rows(ctx, contacts)
+    backdrop = SelectScreen(pick_title, items, prompt=pick_prompt, default=node.name, wrap=False)
+    session.push(backdrop)
+    try:
+        if not await _login(ctx, device, node):
+            return None
+    finally:
+        session.pop(backdrop)
     return await _admin_session(ctx, device, node)
 
 
@@ -116,7 +124,9 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
             f"Admin password for {node.name}",
             prompt="The node ignores admin commands without a login.",
             password=True,
-            floating=True,  # a modal step between the node picker and the admin menu
+            # Floats over the picker backdrop the caller keeps pushed; the flag is the
+            # belt-and-suspenders so it never fills the frame even if that backdrop is absent.
+            floating=True,
         )
         if not password:
             return False

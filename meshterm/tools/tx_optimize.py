@@ -308,9 +308,9 @@ class TxOptimizeTool(Tool):
                 f"no admin password for {admin_node.name!r}; pass --password or run once "
                 "interactively to store it."
             )
-        entered = await ctx.ui.text(
-            f"Admin password for {admin_node.name}:", password=True, floating=True
-        )
+        # This resolver only runs on the scripted CLI path (the menu logs in inside the pushed
+        # sweep screen), so the surface here is PlainUi — no screen stack, no floating.
+        entered = await ctx.ui.text(f"Admin password for {admin_node.name}:", password=True)
         if not entered:
             raise DeviceCommandError("an admin password is required to tune a remote node.")
         return entered

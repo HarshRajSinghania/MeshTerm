@@ -20,23 +20,25 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 
-async def pick_admin_node(
-    ctx: "AppContext",
-    contacts: list[Contact],
-    *,
-    title: str,
-    prompt: str,
-) -> Optional[Contact]:
-    """Pick a remote node to administer, credentialed and infrastructure nodes first.
+def admin_picker_rows(
+    ctx: "AppContext", contacts: list[Contact]
+) -> tuple[list, list[Contact]]:
+    """Build the admin-node picker's grouped rows and the contacts they map to.
+
+    Shared so the pick and any later redraw are guaranteed identical: :func:`pick_admin_node`
+    runs these rows, and a caller can rebuild the same list as a static backdrop to float a
+    follow-up dialog (the admin login) over the very list the node was picked from. Rows carry
+    ``value = contact.name``, so a picked name (or a backdrop's ``default``) resolves through
+    ``candidates``.
 
     Args:
-        ctx: Shared application context (for the UI surface and the admin store).
+        ctx: Shared application context (for the admin store, which sorts remembered nodes up).
         contacts: The device's known contacts.
-        title: The select screen's heading (names the calling feature).
-        prompt: One line above the list saying what the pick is for.
 
     Returns:
-        The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
+        ``(rows, candidates)`` — the select rows (grouped, with the exit group) and the
+        offerable contacts (those holding a key). ``candidates`` is empty when nothing is
+        offerable; ``rows`` is then just the exit group.
     """
     from .menus import back_rows, section_heading
     from .tui import Choice
@@ -44,9 +46,7 @@ async def pick_admin_node(
 
     candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
     if not candidates:
-        ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
-        await ctx.ui.present(title=title)
-        return None
+        return list(back_rows()), candidates
 
     def row(contact: Contact) -> Choice:
         glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
@@ -75,6 +75,32 @@ async def pick_admin_node(
         items.append(section_heading("Other contacts"))
         items.extend(row(c) for c in sorted(others, key=recency))
     items.extend(back_rows())
+    return items, candidates
+
+
+async def pick_admin_node(
+    ctx: "AppContext",
+    contacts: list[Contact],
+    *,
+    title: str,
+    prompt: str,
+) -> Optional[Contact]:
+    """Pick a remote node to administer, credentialed and infrastructure nodes first.
+
+    Args:
+        ctx: Shared application context (for the UI surface and the admin store).
+        contacts: The device's known contacts.
+        title: The select screen's heading (names the calling feature).
+        prompt: One line above the list saying what the pick is for.
+
+    Returns:
+        The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
+    """
+    items, candidates = admin_picker_rows(ctx, contacts)
+    if not candidates:
+        ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
+        await ctx.ui.present(title=title)
+        return None
 
     choice = await ctx.ui.select(title, items, prompt=prompt, wrap=False)
     if choice is None:

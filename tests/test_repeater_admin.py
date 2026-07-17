@@ -3,9 +3,18 @@ remote CLI, and the command-line screen's readline behavior."""
 
 from __future__ import annotations
 
+import asyncio
+import io
 from pathlib import Path
 
+import pytest
+from rich.console import Console
+
+from meshterm.context import AppContext
+from meshterm.core.admin_store import AdminStore
+from meshterm.core.config import Settings
 from meshterm.core.connection import MockDevice
+from meshterm.core.device_store import DeviceStore
 from meshterm.core.models import Contact
 from meshterm.core.remote_config import (
     REPEATER_SETTINGS,
@@ -15,7 +24,14 @@ from meshterm.core.remote_config import (
     validate_value,
 )
 from meshterm.core.remote_store import HISTORY_CAP, RemoteStore
+from meshterm.persistence.repository import Repository
 from meshterm.ui.remote_cli import RemoteCliScreen
+from meshterm.ui.repeater_admin import open_repeater_admin
+from meshterm.ui.surface import TuiUi
+from meshterm.ui.tui.prompt import TextScreen
+from meshterm.ui.tui.screen import CANCEL
+from meshterm.ui.tui.select import SelectScreen
+from meshterm.ui.tui.session import TuiSession
 
 NODE = Contact(name="Yagi-Repeater", public_key="a1" * 32, key_prefix="a1b2c3d4")
 
@@ -130,6 +146,80 @@ async def test_mock_remote_cli_round_trips_settings() -> None:
     assert reply is not None and "unknown" in reply.lower()
     assert "simulator" in (await device.send_remote_command(NODE, "ver"))
     await device.disconnect()
+
+
+# --- the login flow: the password floats over the node picker, never a blank frame ----
+
+
+@pytest.fixture()
+def tui_ctx(tmp_path: Path) -> AppContext:
+    """A mock-backed context wired to a headless TUI session (no prompt_toolkit app)."""
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "admin.db")
+    ctx = AppContext(
+        console=Console(file=io.StringIO()),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+        mock=True,
+    )
+    ctx.ui = TuiUi(TuiSession())
+    yield ctx
+    ctx.repo.close()
+
+
+async def _step_until(predicate, *, limit: int = 200):
+    """Yield to the event loop until ``predicate()`` is truthy; return it (or its last value)."""
+    value = predicate()
+    for _ in range(limit):
+        if value:
+            return value
+        await asyncio.sleep(0)
+        value = predicate()
+    return value
+
+
+async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
+    """The admin-login password prompt floats over the picker, not an erased background.
+
+    Regression: ``_login`` ran on an empty stack (the picker was popped when it returned),
+    so ``session.text`` pushed a *blank* base and the password box floated over an erased
+    frame. ``open_repeater_admin`` now redraws the node picker as a static backdrop and keeps
+    it pushed across the login, so the base under the floating prompt is the picker — the
+    picked node still highlighted — never a blank frame.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    pick_title = "Repeater admin — node to manage"
+
+    task = asyncio.ensure_future(open_repeater_admin(ctx))
+    try:
+        picker = await _step_until(
+            lambda: session.top
+            if isinstance(session.top, SelectScreen) and session.top.title == pick_title
+            else None
+        )
+        assert picker is not None, "the node picker never opened"
+
+        picker.resolve("Yagi-Repeater")  # pick the repeater to administer
+        prompt = await _step_until(
+            lambda: session._float_layers()[0] if session._has_float() else None
+        )
+        assert isinstance(prompt, TextScreen)  # the password box floats
+
+        base = session._base_screen()
+        assert isinstance(base, SelectScreen) and base.title == pick_title  # the picker backdrop
+        assert base is not picker  # a fresh redraw kept as the backdrop, not the popped picker
+        current = base._current_choice()  # the picked node stays highlighted behind the prompt
+        assert current is not None and current.value == "Yagi-Repeater"
+
+        prompt.resolve(CANCEL)  # Esc — abandon the login
+        result = await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+    assert result is None  # cancelling the password bows the flow out
 
 
 # --- the command-line screen -----------------------------------------------------------
