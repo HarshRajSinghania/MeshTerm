@@ -1480,12 +1480,29 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     assert session._float_layers() == [dialog]
 
 
-def test_scrolling_a_floating_dialog_forces_a_full_repaint() -> None:
-    """A floating dialog leaves the frame around it (and its own border) static between
-    frames, so a wide-glyph smear pushed onto those cells would linger under the differential
-    paint. Scrolling one drops pt's cached frame, so the next paint clears the whole terminal
-    and redraws from the origin — the only reset that re-syncs the cursor. A full-frame base
-    with no float keeps the efficient differential paint (its body heals a smear itself)."""
+def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
+    """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
+    emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
+    must not trip the check (that they seemed to was the earlier misdiagnosis)."""
+    from meshterm.ui.tui.session import _has_wide_glyph
+
+    assert _has_wide_glyph("👋")
+    assert _has_wide_glyph("Bob 👋 waved")
+    assert _has_wide_glyph("clock 🕒 sync")
+    assert _has_wide_glyph("⚡ explore")  # a width-2 icon still counts
+    assert not _has_wide_glyph("plain ascii row")
+    assert not _has_wide_glyph("★ ▲ ● ■ ◉ ○")  # node-type marks: width 1
+    assert not _has_wide_glyph("⠿⣿⡇ chart")  # braille: width 1
+    assert not _has_wide_glyph("✓ ✗ ⚠ … done")  # status marks: width 1
+
+
+def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
+    """prompt_toolkit paints differentially with a *relative* cursor — sound only while every
+    glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji in a chat line)
+    leaves the row's cursor model off; a later paint that skips the unchanged emoji then strands
+    stale cells to its right. So a composed frame carrying such a glyph drops pt's cached frame,
+    upgrading the next paint to a full erase_down + redraw. A frame of only width-1 glyphs keeps
+    the fast differential paint — this holds wherever the glyph is, floating dialog or not."""
     import types
 
     from prompt_toolkit.data_structures import Size
@@ -1501,26 +1518,24 @@ def test_scrolling_a_floating_dialog_forces_a_full_repaint() -> None:
 
     def _filled() -> PtScreen:
         screen = PtScreen()
-        for row in range(10):
-            for x in range(60):
+        for row in range(3):
+            for x in range(10):
                 screen.data_buffer[row][x] = Char("A")
         return screen
 
-    # A dialog floating over a base: a scroll drops the remembered frame so the next paint
-    # does a full erase_down + redraw, scrubbing anything a smear left on the static frame.
+    # An emoji anywhere in the composed frame drops the remembered frame, so the next paint is a
+    # full erase_down + redraw that leaves nothing stale behind.
     session = TuiSession()
     session._app = _fake_app(_filled())
-    session.push(ScrollScreen(Text("base"), floating=False))
-    session.push(ScrollScreen(Text("dialog")))  # floats over the base
-    session._dispatch("down")
+    session._emit("Bob 👋 says hi")
     assert session._app.renderer._last_screen is None
 
-    # A full-frame base with nothing floating over it keeps the fast differential paint.
+    # A frame of only width-1 glyphs — plain text, node marks, chart braille — keeps the
+    # efficient differential paint.
     session = TuiSession()
     last = _filled()
     session._app = _fake_app(last)
-    session.push(ScrollScreen(Text("base"), floating=False))
-    session._dispatch("down")
+    session._emit("★ you  ▲ repeater  ● node  ⠿ chart")
     assert session._app.renderer._last_screen is last
 
 

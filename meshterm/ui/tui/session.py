@@ -24,6 +24,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, Float, FloatContainer, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
 from rich.text import Text
 
@@ -90,15 +91,17 @@ _RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
 
-#: Movement/scroll actions after which a floating dialog forces a full repaint (see
-#: :meth:`TuiSession._dispatch`) — every key that can shift the dialog's body, so a
-#: wide-glyph smear pushed onto the static frame around it is cleared as its row moves.
-_SCROLL_ACTIONS = frozenset({
-    "up", "down", "pageup", "pagedown", "home", "end",
-    "ctrl_home", "ctrl_end", "ctrl_pageup", "ctrl_pagedown",
-    "left", "right", "ctrl_left", "ctrl_right",
-    "shift_up", "shift_down", "shift_left", "shift_right", "space",
-})
+def _has_wide_glyph(text: str) -> bool:
+    """Whether ``text`` holds a glyph prompt_toolkit reserves two cells for.
+
+    A width-2 glyph is where the terminal and the renderer can disagree: an emoji (``👋``)
+    that the terminal draws in a *single* cell is the common case here — pt reserves two,
+    the terminal advances one, and from that point the row's cursor model is off. Node-type
+    marks (``▲●■``) and chart braille are width-1 everywhere, so they never trip this. The
+    ``>= 0x1100`` guard skips the ASCII/Latin bulk of a frame before the width lookup, which
+    matters because this runs over the whole composed frame on every repaint.
+    """
+    return any(ord(ch) >= 0x1100 and get_cwidth(ch) == 2 for ch in text)
 
 
 class _WidthExtendedOutput:
@@ -1003,6 +1006,28 @@ class TuiSession:
         """Whether any dialog floats over the background this frame."""
         return bool(self._float_layers())
 
+    def _emit(self, text: str) -> ANSI:
+        """Wrap a composed frame as prompt_toolkit :class:`ANSI`, forcing a full repaint
+        when it holds a glyph the terminal may draw narrower than pt reserves for it.
+
+        prompt_toolkit paints differentially: it rewrites only the cells that changed since
+        the last frame, and it steps the cursor *relative* to its own width model. That is
+        sound only while every glyph is one cell wide. A width-2 glyph the terminal draws in
+        a single cell (an emoji in a chat line, a menu icon) leaves the terminal's cursor one
+        column left of pt's model for the rest of that row; on the next paint, any cell to the
+        emoji's right that pt repositions to — because the emoji itself didn't change and was
+        skipped — lands one column off, and the stale cell it should have overwritten lingers.
+        So when a frame carries such a glyph, drop pt's cached frame (:meth:`_invalidate_last_frame`)
+        so the next paint is a full ``erase_down`` + redraw: every cell is rewritten
+        contiguously, letting the terminal's own cursor advance keep the row aligned, and
+        nothing stale survives. Frames with only width-1 glyphs keep the fast differential
+        paint. This is checked per frame, so it covers a scroll, a resize, or a timer tick
+        alike — wherever the glyph is (a full-frame chat, a floating dialog, the overlay).
+        """
+        if _has_wide_glyph(text):
+            self._invalidate_last_frame()
+        return ANSI(text)
+
     def _render_base(self) -> ANSI:
         """Render the persistent frame around the background screen."""
         cols, rows = self._size()
@@ -1015,9 +1040,9 @@ class TuiSession:
         # A chromeless base (the startup splash) forgoes the header/footer bars and is
         # centered under its banner instead of stretched across the terminal.
         if not base.chrome:
-            return ANSI(frame.compose_startup(base, cols, rows))
+            return self._emit(frame.compose_startup(base, cols, rows))
         footer = self.top.footer_hint if self.top else base.footer_hint
-        return ANSI(frame.compose_base(self._header(cols), base, footer, cols, rows))
+        return self._emit(frame.compose_base(self._header(cols), base, footer, cols, rows))
 
     def _render_float_layer(self, index: int) -> ANSI:
         """Render the ``index``-th floating dialog (bottom-to-top) as a centered box."""
@@ -1025,7 +1050,7 @@ class TuiSession:
         if index >= len(layers):
             return ANSI("")
         cols, rows = self._size()
-        return ANSI(frame.compose_dialog(layers[index], cols, rows))
+        return self._emit(frame.compose_dialog(layers[index], cols, rows))
 
     def _overlay_visible(self) -> bool:
         """Whether the busy overlay should be painted this frame.
@@ -1042,7 +1067,7 @@ class TuiSession:
         """Render the busy overlay's skeleton card (only when :meth:`_overlay_visible`)."""
         if self._overlay is None:
             return ANSI("")
-        return ANSI(self._overlay.render())
+        return self._emit(self._overlay.render())
 
     # --- input ---------------------------------------------------------------
 
@@ -1074,24 +1099,13 @@ class TuiSession:
     def _dispatch(self, action: str, data: str = "") -> None:
         """Forward an action to the top screen and repaint.
 
-        A floating dialog draws a small box over a static background: the frame around it and
-        the box's own border don't change frame-to-frame, so prompt_toolkit's differential
-        paint never rewrites them. If a glyph in the dialog body is one the terminal renders
-        wider than pt models (a route graph's braille lanes or node-type marks, a chart's
-        braille), it desyncs the terminal cursor and pushes stray cells onto that static
-        frame — where they linger, because pt believes those cells are unchanged. After a
-        scroll, drop pt's cached frame so the next paint clears the whole terminal and
-        redraws from a clean slate: an ``erase_down`` from the origin, the one reset that
-        re-syncs the cursor (see :meth:`_invalidate_last_frame`). A full-frame screen with no
-        float keeps the fast differential paint — its body redraws wholesale as it scrolls,
-        so a smear there heals itself (the map scrubs only its static edge, via
-        :meth:`consume_edge_scrub`).
+        The repaint keeps prompt_toolkit's fast differential paint; a frame carrying a glyph
+        the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
+        full repaint at compose time — see :meth:`_emit`.
         """
         top = self.top
         if top is not None:
             top.handle(action, data)
-            if action in _SCROLL_ACTIONS and self._has_float():
-                self._invalidate_last_frame()
         self.invalidate()
 
 
