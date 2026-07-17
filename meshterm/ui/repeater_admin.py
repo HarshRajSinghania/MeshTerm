@@ -116,6 +116,7 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
             f"Admin password for {node.name}",
             prompt="The node ignores admin commands without a login.",
             password=True,
+            floating=True,  # a modal step between the node picker and the admin menu
         )
         if not password:
             return False

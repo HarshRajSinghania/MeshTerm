@@ -671,49 +671,60 @@ async def open_records(ctx: "AppContext") -> dict:
                 value=("del_all", None, 0, None),
             ))
         items.extend(back_rows(("back", None, 0, None)))
-        picked = await session.run_screen(
-            SelectScreen(
-                "Trophy case",
-                items,
-                footer_hint="↑↓ move · Enter open · Esc back",
-                wrap=False,
-            )
+        browser = SelectScreen(
+            "Trophy case",
+            items,
+            footer_hint="↑↓ move · Enter open · Esc back",
+            wrap=False,
         )
+        picked = await session.run_screen(browser)
         if picked is CANCEL or picked is None or picked[0] == "back":
             return {"records": total}
-        verb = picked[0]
-        if verb == "del_cat":
-            await delete_category_flow()
-            continue
-        if verb == "del_all":
-            if not total:
-                continue
-            if await session.typed_confirm(
-                f"This deletes all {total} records — every discipline, every width. "
-                "They can only be re-earned by walking them again.",
-                "delete",
-                title="Delete all records",
-            ):
-                ctx.repo.delete_discoveries()
-            continue
-        _verb, category, rank, record = picked
-        far_label, far_id, shape = walk_drawing(record)
-        action = await session.run_screen(RecordDialog(
-            record, category, rank,
-            resolve=resolve, device_label=device_label, device_hash=device_hash,
-            far_label=far_label, shape=shape,
-            reliability=walk_reliability(far_id, far_label),
-            type_of=lambda node_id: node_geo(node_id)[1],
-        ))
-        if action == "trace":
-            await open_trace_path(ctx, spec=record.spec)
-        elif action == "delete":
-            sure = await ctx.ui.dialog(
-                f"Delete this {category.title} record?",
-                [("Cancel", False), ("Delete", True)],
-                title="Delete record",
-                default=1,
-                destructive=True,
-            )
-            if sure:
-                ctx.repo.delete_discovery(record.id)
+        # Every pick opens a dialog that belongs *over* the trophy case — the discipline
+        # picker, the delete confirms, a record's floating story. run_screen just popped the
+        # browser, so re-push it as the static backdrop: it stays drawn full-frame behind the
+        # dialog (which, run over the bare stack, would otherwise draw over a blank frame — or,
+        # alone and floating, become the frame). This is the device picker's trick
+        # (confirm_startup) and what RecordDialog's "floating over the screen beneath" assumes.
+        session.push(browser)
+        trace_spec: Optional[str] = None
+        try:
+            verb = picked[0]
+            if verb == "del_cat":
+                await delete_category_flow()
+            elif verb == "del_all":
+                if total and await session.typed_confirm(
+                    f"This deletes all {total} records — every discipline, every width. "
+                    "They can only be re-earned by walking them again.",
+                    "delete",
+                    title="Delete all records",
+                ):
+                    ctx.repo.delete_discoveries()
+            else:
+                _verb, category, rank, record = picked
+                far_label, far_id, shape = walk_drawing(record)
+                action = await session.run_screen(RecordDialog(
+                    record, category, rank,
+                    resolve=resolve, device_label=device_label, device_hash=device_hash,
+                    far_label=far_label, shape=shape,
+                    reliability=walk_reliability(far_id, far_label),
+                    type_of=lambda node_id: node_geo(node_id)[1],
+                ))
+                if action == "trace":
+                    trace_spec = record.spec
+                elif action == "delete":
+                    sure = await ctx.ui.dialog(
+                        f"Delete this {category.title} record?",
+                        [("Cancel", False), ("Delete", True)],
+                        title="Delete record",
+                        default=1,
+                        destructive=True,
+                    )
+                    if sure:
+                        ctx.repo.delete_discovery(record.id)
+        finally:
+            session.pop(browser)
+        # Tracing a path is a full hand-off to the Trace screen, not a dialog over the
+        # trophy case, so it runs only once the browser backdrop is down.
+        if trace_spec is not None:
+            await open_trace_path(ctx, spec=trace_spec)

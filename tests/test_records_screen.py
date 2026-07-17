@@ -7,12 +7,27 @@ are all assertable without a terminal.
 
 from __future__ import annotations
 
+import asyncio
+import io
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
-from meshterm.persistence.repository import DiscoveredPath
+import pytest
+from rich.console import Console
+
+from meshterm.context import AppContext
+from meshterm.core.admin_store import AdminStore
+from meshterm.core.config import Settings
+from meshterm.core.device_store import DeviceStore
+from meshterm.persistence.repository import DiscoveredPath, Repository
 from meshterm.services.records import CATEGORY_BY_ID
-from meshterm.ui.records_screen import RecordDialog, WalkVertex
+from meshterm.ui.records_screen import RecordDialog, WalkVertex, open_records
+from meshterm.ui.surface import TuiUi
+from meshterm.ui.tui.prompt import TypedConfirmDialog
+from meshterm.ui.tui.screen import CANCEL
+from meshterm.ui.tui.select import SelectScreen
+from meshterm.ui.tui.session import TuiSession
 from meshterm.ui.widgets import node_marker, self_marker
 
 HUB_ID, FAR_ID = "3d63c6429436", "f2c24f54551e"
@@ -197,3 +212,119 @@ def test_record_dialog_arrows_follow_the_action_cursor() -> None:
     assert dialog._follow
     dialog.render_body(60)  # the frame renders before reading the cursor
     assert dialog.cursor_line() is not None
+
+
+# --- the browser loop: dialogs float over the trophy case, never a blank frame ------
+
+
+@pytest.fixture()
+def tui_ctx(tmp_path: Path) -> AppContext:
+    """A mock-backed context wired to a headless TUI session (no prompt_toolkit app)."""
+    settings = Settings(config_dir=tmp_path, db_path=tmp_path / "records.db")
+    ctx = AppContext(
+        console=Console(file=io.StringIO()),
+        settings=settings,
+        repo=Repository(settings.db_path),
+        device_store=DeviceStore(tmp_path / "devices.json"),
+        admin_store=AdminStore(tmp_path / "admin.json"),
+        mock=True,
+    )
+    ctx.ui = TuiUi(TuiSession())
+    yield ctx
+    ctx.repo.close()
+
+
+async def _step_until(predicate, *, limit: int = 200):
+    """Yield to the event loop until ``predicate()`` is truthy; return it (or its last value)."""
+    value = predicate()
+    for _ in range(limit):
+        if value:
+            return value
+        await asyncio.sleep(0)
+        value = predicate()
+    return value
+
+
+def _trophy_case(session, *, other_than=None):
+    """The trophy-case browser on top of the stack, if it is the frontmost screen."""
+    top = session.top
+    if isinstance(top, SelectScreen) and top.title == "Trophy case" and top is not other_than:
+        return top
+    return None
+
+
+async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
+    """The trophy case stays drawn full-frame behind the "Delete all records" confirm.
+
+    Regression: the browser was run *then popped* before the confirm opened, so the confirm
+    floated over a blank frame — the background "cleared". Re-pushing the browser as the
+    backdrop keeps it the full-frame base while the red typed-delete gate floats over it.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    ctx.repo.record_discovery(
+        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
+        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+    )
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None, "the trophy case list never opened"
+
+        browser.resolve(("del_all", None, 0, None))  # choose "Delete all records"
+        confirm = await _step_until(
+            lambda: session._float_layers()[0] if session._has_float() else None
+        )
+        assert isinstance(confirm, TypedConfirmDialog)  # the red typed-delete gate
+        assert session._base_screen() is browser  # the browser is still the full-frame base
+
+        confirm.resolve(CANCEL)  # Esc — back out without deleting
+        again = await _step_until(lambda: _trophy_case(session, other_than=browser))
+        assert again is not None, "the browser never reopened after the confirm"
+        again.resolve(("back", None, 0, None))  # leave the trophy case
+        result = await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+    assert result == {"records": 1}  # backed out — the record still stands
+
+
+async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx) -> None:
+    """Picking a discipline to delete floats a popup over the browser, not a full-screen list.
+
+    The discipline picker is a floating :class:`SelectScreen`; with the browser kept on the
+    stack it draws as a centered popup over the visible trophy case (``_base_screen`` stays
+    the browser) instead of replacing the whole frame.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    ctx.repo.record_discovery(
+        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
+        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+    )
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None
+
+        browser.resolve(("del_cat", None, 0, None))  # "Delete a discipline's records…"
+        picker = await _step_until(
+            lambda: session._float_layers()[0] if session._has_float() else None
+        )
+        assert isinstance(picker, SelectScreen)  # a floating popup, not the frame
+        assert picker.title == "Delete a discipline's records"
+        assert session._base_screen() is browser  # the browser stays behind it
+
+        picker.resolve(CANCEL)  # Esc — abandon the pick
+        again = await _step_until(lambda: _trophy_case(session, other_than=browser))
+        assert again is not None
+        again.resolve(("back", None, 0, None))
+        result = await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+    assert result == {"records": 1}

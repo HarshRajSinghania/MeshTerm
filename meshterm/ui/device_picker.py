@@ -296,9 +296,12 @@ async def prompt_device(
         # Preselect the remembered "last known good" device when it is currently attached/in range.
         default = next((d for d in listed if remembered and remembered.matches(d)), None)
 
+        # Build the rows once so the same list can be redrawn as the backdrop behind a
+        # removal confirm (so it floats over the picker rather than replacing it).
+        items = _build_items(listed, remembered, registry)
         chosen = await ui.select_startup(
             "Select a companion device",
-            _build_items(listed, remembered, registry),
+            items,
             default=default,
             banner=load_logo(),
             footnote=copyright_notice(),
@@ -318,8 +321,11 @@ async def prompt_device(
 
         if isinstance(chosen, DeleteRequest):
             # Delete was pressed on a removable (network) row: confirm, forget, and re-draw
-            # the list — the row's disappearance is the visible feedback.
-            await _remove_network_device(ui, store, registry, chosen.value)
+            # the list — the row's disappearance is the visible feedback. The list is passed
+            # through so the confirm floats over it (the row it removes stays highlighted).
+            await _remove_network_device(
+                ui, store, registry, chosen.value, backdrop_items=items
+            )
             continue
 
         name = _display_name(chosen, registry)
@@ -426,20 +432,26 @@ async def _remove_network_device(
     store: DeviceStore,
     registry: dict[str, RememberedDevice],
     device: DiscoveredDevice,
+    *,
+    backdrop_items: list,
 ) -> None:
     """Confirm and forget a remembered network (TCP) device, dropping it from the picker.
 
     Removal is offered only on network rows: a TCP companion is listed solely from its
     remembered endpoint, so forgetting it is what makes it leave the picker — a scanned serial
-    or BLE device would just reappear on the next scan. Opens a cautionary Cancel/Remove
-    confirm on the splash; on Remove the record is pruned from the store, on Cancel/Esc nothing
-    changes. Either way the caller re-opens the list, so the row's absence is the feedback.
+    or BLE device would just reappear on the next scan. Opens the reserved-red Cancel/Remove
+    confirm as a modal popup floating over the device list (``backdrop_items``, with the row
+    being removed left highlighted), so it reads as a dialog on top of the picker rather than a
+    splash that replaces it. On Remove the record is pruned from the store, on Cancel/Esc
+    nothing changes. Either way the caller re-opens the list, so the row's absence is the
+    feedback.
 
     Args:
         ui: The interactive surface for the confirm dialog.
         store: The confirmed-device registry to prune.
         registry: The current registry, for naming the device in the prompt.
         device: The network device the user asked to remove.
+        backdrop_items: The picker's rows, redrawn behind the floating confirm.
     """
     if not device.is_tcp:
         return  # defensive: only network rows opt into deletion (see _build_items)
@@ -450,6 +462,8 @@ async def _remove_network_device(
         confirm_label="Remove",
         banner=load_logo(),
         footnote=copyright_notice(),
+        backdrop_items=backdrop_items,
+        backdrop_default=device,
     )
     if confirmed:
         store.forget(device.stable_id)

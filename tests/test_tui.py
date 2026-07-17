@@ -965,8 +965,13 @@ def test_device_picker_removes_network_device_on_delete(tmp_path) -> None:
             return _QUIT
 
         async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
-                                  banner=None, footnote=None):
+                                  banner=None, footnote=None, backdrop_items=None,
+                                  backdrop_default=None):
             confirmed_prompts.append(prompt)
+            # The confirm floats over the picker: it's handed the rows to redraw behind it,
+            # with the row being removed pre-highlighted.
+            assert backdrop_items is not None
+            assert getattr(backdrop_default, "is_tcp", False)
             return True  # the user confirms the removal
 
     async def _never(_device, _pin=None):
@@ -1006,7 +1011,8 @@ def test_device_picker_keeps_network_device_when_removal_cancelled(tmp_path) -> 
             return _QUIT
 
         async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
-                                  banner=None, footnote=None):
+                                  banner=None, footnote=None, backdrop_items=None,
+                                  backdrop_default=None):
             return False  # the user backs out (Cancel / Esc)
 
     async def _never(_device, _pin=None):
@@ -1016,6 +1022,46 @@ def test_device_picker_keeps_network_device_when_removal_cancelled(tmp_path) -> 
     # Nothing was forgotten — the device is still remembered.
     remembered = store.load()
     assert remembered is not None and remembered.node_name == "WifiNode"
+
+
+def test_confirm_startup_floats_red_over_the_picker_backdrop() -> None:
+    """The removal confirm floats as a red popup over a redrawn picker, not a full splash."""
+    from meshterm.core.discovery import tcp_device
+
+    session = TuiSession()
+    device = tcp_device("192.168.1.50", 5000, name="WifiNode")
+    items = [Choice("WifiNode (192.168.1.50:5000)", device, deletable=True)]
+
+    async def main() -> None:
+        task = asyncio.ensure_future(
+            session.confirm_startup(
+                "Remove WifiNode?",
+                title="Remove network device",
+                banner=["MESHTERM"],
+                backdrop_items=items,
+                backdrop_default=device,
+            )
+        )
+        # Let confirm_startup push the backdrop list and float the confirm over it.
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        base = session._base_screen()
+        floats = session._float_layers()
+        # The picker is redrawn as the chromeless base; the confirm floats over it (not a
+        # full-screen splash that replaces the list).
+        assert isinstance(base, SelectScreen) and base.chrome is False
+        assert len(floats) == 1
+        dialog = floats[0]
+        assert isinstance(dialog, ButtonDialog)
+        assert dialog.border_style == "err"  # the reserved data-loss red
+
+        dialog.resolve(True)  # commit the removal
+        result = await task
+        assert result is True
+        assert session._stack == []  # the backdrop is torn down with the dialog
+
+    asyncio.run(main())
 
 
 class _PickerUi:
@@ -1411,6 +1457,58 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     session.push(dialog)
     assert session._base_screen() is full
     assert session._float_layers() == [dialog]
+
+
+def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:
+    """``text(floating=True)`` floats as a centered popup even on an empty stack.
+
+    A mid-flow modal — a remote-admin password, between the node picker and the admin menu —
+    must float like the button dialogs, so a blank base is slipped beneath it rather than
+    letting the prompt fill the frame the way a tool's primary entry screen does.
+    """
+    session = TuiSession()
+
+    async def main() -> None:
+        task = asyncio.ensure_future(
+            session.text("Password", password=True, floating=True)
+        )
+        for _ in range(5):
+            await asyncio.sleep(0)
+            if session._has_float():
+                break
+        floats = session._float_layers()
+        assert len(floats) == 1 and isinstance(floats[0], TextScreen)
+        assert session._base_screen() is not floats[0]  # a blank base sits beneath it
+
+        floats[0].resolve("hunter2")
+        assert await task == "hunter2"
+        assert session._stack == []  # the blank base is torn down with the prompt
+
+    asyncio.run(main())
+
+
+def test_default_text_prompt_is_the_full_frame_base() -> None:
+    """A default ``text`` prompt on an empty stack *is* the frame — a tool's primary entry.
+
+    The Trace target's typed fallback stands in for the select picker, so it fills the frame
+    rather than floating over a blank base (the floating popup is opt-in, see above).
+    """
+    session = TuiSession()
+
+    async def main() -> None:
+        task = asyncio.ensure_future(session.text("Target node"))
+        for _ in range(5):
+            await asyncio.sleep(0)
+            if session.top is not None:
+                break
+        assert isinstance(session.top, TextScreen)
+        assert not session._has_float()  # no float — the prompt is the background
+        assert session._base_screen() is session.top
+
+        session.top.resolve("YUL")
+        assert await task == "YUL"
+
+    asyncio.run(main())
 
 
 # --- busy skeleton card ------------------------------------------------------

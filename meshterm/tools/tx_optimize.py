@@ -309,7 +309,7 @@ class TxOptimizeTool(Tool):
                 "interactively to store it."
             )
         entered = await ctx.ui.text(
-            f"Admin password for {admin_node.name}:", password=True
+            f"Admin password for {admin_node.name}:", password=True, floating=True
         )
         if not entered:
             raise DeviceCommandError("an admin password is required to tune a remote node.")

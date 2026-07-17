@@ -144,8 +144,14 @@ class Ui:
         confirm_label: str = "Remove",
         banner: Any = None,
         footnote: Optional[str] = None,
+        backdrop_items: Optional[list] = None,
+        backdrop_default: Any = None,
     ) -> bool:
-        """Confirm a destructive action on the startup splash; ``True`` only if committed."""
+        """Confirm a destructive action on the startup splash; ``True`` only if committed.
+
+        ``backdrop_items`` (the picker's rows) floats the confirm over a redrawn device list;
+        ``backdrop_default`` pre-highlights the row it acts on.
+        """
         raise NotImplementedError
 
     async def notify_startup(
@@ -210,11 +216,15 @@ class Ui:
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        floating: bool = False,
     ) -> Optional[str]:
         """Prompt for a line of text; return it or ``None`` if cancelled.
 
         Keep ``title`` short (it heads the popup's border) and put the question/instruction
         in ``prompt`` (drawn above the field), so a text popup reads like the button dialogs.
+        ``floating`` forces the prompt to draw as a centered popup even with nothing beneath
+        it (a mid-flow modal such as a remote-admin password) instead of filling the frame;
+        surfaces without a screen stack ignore it.
         """
         raise NotImplementedError
 
@@ -408,6 +418,8 @@ class PlainUi(Ui):
         confirm_label: str = "Remove",
         banner: Any = None,
         footnote: Optional[str] = None,
+        backdrop_items: Optional[list] = None,
+        backdrop_default: Any = None,
     ) -> bool:
         """Unsupported in scripted CLI mode — the picker splash is interactive-only."""
         raise self._no_prompt()
@@ -478,12 +490,15 @@ class PlainUi(Ui):
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        floating: bool = False,
     ) -> Optional[str]:
         """Prompt on the terminal (line editor / getpass), re-asking until valid.
 
         A few tools (e.g. a remote-admin password) can legitimately prompt from a scripted
         run when no flag was supplied, so this stays functional on the CLI. An in-body
         ``prompt`` (used by the interactive popups) is printed once as a lead-in line here.
+        ``floating`` is a full-screen-popup nicety with no meaning on the plain terminal, so
+        it is accepted and ignored.
 
         Returns:
             The entered string, or ``None`` on EOF / interrupt.
@@ -652,14 +667,18 @@ class TuiUi(Ui):
         confirm_label: str = "Remove",
         banner: Any = None,
         footnote: Optional[str] = None,
+        backdrop_items: Optional[list] = None,
+        backdrop_default: Any = None,
     ) -> bool:
-        """Delegate to the session's chromeless startup confirm dialog."""
+        """Delegate to the session's startup confirm dialog (floated over the picker)."""
         return await self.session.confirm_startup(
             prompt,
             title=title,
             confirm_label=confirm_label,
             banner=banner,
             footnote=footnote,
+            backdrop_items=backdrop_items,
+            backdrop_default=backdrop_default,
         )
 
     async def notify_startup(
@@ -738,6 +757,7 @@ class TuiUi(Ui):
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        floating: bool = False,
     ) -> Optional[str]:
         """Delegate to the session's text screen."""
         return await self.session.text(
@@ -747,6 +767,7 @@ class TuiUi(Ui):
             validate=validate,
             help_text=help_text,
             password=password,
+            floating=floating,
         )
 
     async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:

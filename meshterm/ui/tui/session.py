@@ -368,16 +368,26 @@ class TuiSession:
         confirm_label: str = "Remove",
         banner: Optional[Any] = None,
         footnote: Optional[str] = None,
+        backdrop_items: Optional[list] = None,
+        backdrop_default: Any = None,
+        backdrop_title: str = "Select a companion device",
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
     ) -> bool:
         """Confirm a destructive splash action with a Cancel/verb dialog (chromeless).
 
         The startup-splash sibling of :meth:`button_dialog`: the same platform-dialog layout
         — the safe *Cancel* on the left and the committing verb on the right and default, so
-        Enter commits and Esc backs out — but drawn without the status bars and centered under
-        ``banner``, so it reads as part of the device-selection flow it floats over. Themed
-        as data loss (the reserved red prompt and border), since it only ever gates forgetting
-        a remembered device — the splash sibling of a ``destructive`` :meth:`button_dialog`.
+        Enter commits and Esc backs out. Themed as data loss (the reserved red prompt and
+        border), since it only ever gates forgetting a remembered device — the splash sibling
+        of a ``destructive`` :meth:`button_dialog`.
+
+        When ``backdrop_items`` is given, the device list they describe is redrawn as the
+        chromeless base and the red confirm *floats over it* as a centred box (a modal popup
+        over the pushed backdrop, the way every other dialog behaves) — so removing a device
+        reads as a popup on top of the picker rather than a splash that replaces it. The
+        ``backdrop_default`` row is pre-highlighted so the confirm reads as being about it.
+        Without ``backdrop_items`` the confirm draws as its own chromeless splash under
+        ``banner`` (the fallback for a caller with no list to float over).
 
         Args:
             prompt: The question shown above the buttons.
@@ -385,12 +395,16 @@ class TuiSession:
             confirm_label: Label for the committing button (e.g. ``"Remove"``).
             banner: Wordmark rows drawn above the box (as on the other startup splashes).
             footnote: Muted line drawn below the box.
+            backdrop_items: The picker's rows to redraw behind the confirm; ``None`` falls
+                back to a standalone chromeless confirm splash.
+            backdrop_default: The row value to pre-highlight in the backdrop list.
+            backdrop_title: Heading for the backdrop list (the picker's own title).
             footer_hint: Footer key hint.
 
         Returns:
             ``True`` only when the user chose the committing button; ``False`` on Cancel/Esc.
         """
-        screen = ButtonDialog(
+        dialog = ButtonDialog(
             prompt,
             [("Cancel", False), (confirm_label, True)],
             title=title,
@@ -399,11 +413,31 @@ class TuiSession:
             prompt_style="err",
             border_style="err",
         )
-        screen.chrome = False
-        screen.banner = banner
-        screen.footnote = footnote
-        result = await self.run_screen(screen)
-        return result is True
+        if backdrop_items is None:
+            # No list to float over: draw the confirm as its own chromeless splash.
+            dialog.chrome = False
+            dialog.banner = banner
+            dialog.footnote = footnote
+            return await self.run_screen(dialog) is True
+        # Keep the picker on screen as the chromeless base and float the red confirm over it,
+        # so the removal confirm sits *on top of* the device list it acts on. The backdrop is
+        # a static redraw of the same rows (it never takes a key — the dialog above owns input).
+        backdrop = SelectScreen(
+            backdrop_title,
+            backdrop_items,
+            default=backdrop_default,
+            footer_hint="↑↓ move · Enter select · Esc quit",
+            delete_hint="Del remove",
+            filterable=False,
+        )
+        backdrop.chrome = False
+        backdrop.banner = banner
+        backdrop.footnote = footnote
+        self.push(backdrop)
+        try:
+            return await self.run_screen(dialog) is True
+        finally:
+            self.pop(backdrop)
 
     async def notify_startup(
         self,
@@ -567,18 +601,27 @@ class TuiSession:
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        floating: bool = False,
     ) -> Optional[str]:
-        """Show a text prompt; return the string or ``None`` if cancelled."""
-        result = await self.run_screen(
-            TextScreen(
-                title,
-                prompt=prompt,
-                default=default,
-                validate=validate,
-                help_text=help_text,
-                password=password,
-            )
+        """Show a text prompt; return the string or ``None`` if cancelled.
+
+        ``floating`` guarantees the prompt draws as a centered popup even on an empty stack
+        — a modal step mid-flow (a remote-admin password) rather than a tool's full-frame
+        entry screen. It then floats over a blank base the way :meth:`button_dialog` and
+        :meth:`typed_confirm` do (see :meth:`_run_dialog_screen`); with a screen already
+        beneath it there is no difference, so leave it ``False`` for a prompt that is itself
+        a tool's primary screen (the Trace target's typed fallback).
+        """
+        screen = TextScreen(
+            title,
+            prompt=prompt,
+            default=default,
+            validate=validate,
+            help_text=help_text,
+            password=password,
         )
+        runner = self._run_dialog_screen if floating else self.run_screen
+        result = await runner(screen)
         return None if result is CANCEL else result
 
     async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
