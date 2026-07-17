@@ -24,9 +24,10 @@ ordinary differential painting stays synced and nothing lingers — no whole-fra
 compositing tricks. CJK and fullwidth glyphs, which terminals *do* draw two cells wide, are
 left at two; node-type marks and braille are already one cell everywhere and are untouched.
 
-Correcting the width in the one place the whole pipeline reads it, rather than per screen.
-Gated by ``MESHTERM_NARROW_EMOJI`` (default on); set it to ``0`` on a terminal that genuinely
-draws emoji two cells wide, where the alignment would instead *introduce* a one-cell error.
+This is the sibling of :class:`~meshterm.ui.tui.session._WidthExtendedOutput`: both correct a
+width assumption the terminal breaks, in the one place the whole pipeline reads it. Gated by
+``MESHTERM_NARROW_EMOJI`` (default on); set it to ``0`` on a terminal that genuinely draws
+emoji two cells wide, where the alignment would instead *introduce* a one-cell error.
 """
 
 from __future__ import annotations
