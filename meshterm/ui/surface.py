@@ -757,6 +757,7 @@ class TuiUi(Ui):
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        byte_limit: Optional[int] = None,
         floating: bool = False,
     ) -> Optional[str]:
         """Delegate to the session's text screen."""
@@ -767,6 +768,7 @@ class TuiUi(Ui):
             validate=validate,
             help_text=help_text,
             password=password,
+            byte_limit=byte_limit,
             floating=floating,
         )
 

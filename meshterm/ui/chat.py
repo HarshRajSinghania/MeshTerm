@@ -26,7 +26,12 @@ from ..core.channels import split_channel_sender
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import name_style, snr_style
-from .tui.prompt import _LineEditor
+from .tui.prompt import (
+    CHANNEL_BYTE_LIMIT,
+    DM_BYTE_LIMIT,
+    _LineEditor,
+    byte_counter,
+)
 from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner
@@ -53,22 +58,6 @@ _FAILED = ("✗", "err")
 
 #: Seconds between spinner frames on a message that is still awaiting its ack.
 _SPINNER_INTERVAL = 0.12
-
-#: How many UTF-8 bytes a single outgoing message may carry, by conversation kind. MeshCore's
-#: LoRa payload caps a direct message at 150 bytes and an (unscoped) channel broadcast at 130;
-#: over the limit the companion would silently drop the packet, so we block the send instead
-#: and show the running byte budget in the compose bar.
-_DM_BYTE_LIMIT = 150
-_CHANNEL_BYTE_LIMIT = 130
-
-#: Byte-counter thresholds (bytes *remaining*) at which its color escalates, plus the two
-#: mid-band hues. The theme's ``warn``/``err`` sit too close together (an amber that reads
-#: orange, then red), so the counter names a truer yellow and orange directly to keep the
-#: green→yellow→orange→red fuel gauge visibly stepped.
-_BYTES_TIGHT, _BYTES_LOW = 20, 10
-_BYTES_YELLOW = "bold #fde047"
-_BYTES_ORANGE = "bold #ff9500"
-
 
 def _sender_hue(sender: str) -> str:
     """The stable per-sender colour a name is drawn in, keyed on the name's characters.
@@ -224,7 +213,7 @@ class ChatScreen(Screen):
 
     def _byte_limit(self) -> int:
         """The UTF-8 byte ceiling for a message in this conversation (channel vs direct)."""
-        return _CHANNEL_BYTE_LIMIT if self._is_channel else _DM_BYTE_LIMIT
+        return CHANNEL_BYTE_LIMIT if self._is_channel else DM_BYTE_LIMIT
 
     def _used_bytes(self) -> int:
         """UTF-8 byte length of the current compose buffer — what counts against the limit."""
@@ -244,28 +233,8 @@ class ChatScreen(Screen):
         return None
 
     def _byte_counter(self, limit: int) -> Text:
-        """The inline ``used/limit`` budget; only ``used`` is colored by how much is left.
-
-        Green with room to spare, yellow within :data:`_BYTES_TIGHT` bytes, orange within
-        :data:`_BYTES_LOW`, and red once the limit is met or exceeded — so the number reads as
-        a fuel gauge while the ``/limit`` suffix stays muted (it never changes).
-        """
-        used = self._used_bytes()
-        counter = Text()
-        counter.append(str(used), style=self._byte_style(limit - used))
-        counter.append(f"/{limit}", style="muted")
-        return counter
-
-    @staticmethod
-    def _byte_style(remaining: int) -> str:
-        """Map bytes remaining to the counter's escalating color (green→yellow→orange→red)."""
-        if remaining <= 0:
-            return "err"  # at or over the limit — the send is blocked
-        if remaining <= _BYTES_LOW:
-            return _BYTES_ORANGE
-        if remaining <= _BYTES_TIGHT:
-            return _BYTES_YELLOW
-        return "ok"
+        """The inline ``used/limit`` budget — the shared compose gauge (:func:`byte_counter`)."""
+        return byte_counter(self._used_bytes(), limit)
 
     def _name(self, peer: Optional[str]) -> Optional[str]:
         """Resolve a sender key prefix to a contact name (exact, then prefix match)."""

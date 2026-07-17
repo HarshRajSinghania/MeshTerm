@@ -617,6 +617,27 @@ def test_text_screen_edits_and_validates() -> None:
     assert _run(screen, "enter") == "ok"
 
 
+def test_text_screen_byte_limit_gauges_and_blocks_an_oversize_entry() -> None:
+    """A byte-limited field shows the shared used/limit gauge and blocks Enter over the cap."""
+    import re
+
+    screen = TextScreen("msg?", byte_limit=10)
+    for ch in "hello":
+        screen.handle("text", ch)
+    body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(40)))
+    assert "5/10" in body  # the gauge reads used/limit
+    for ch in " world":  # 11 bytes total, over the 10-byte cap
+        screen.handle("text", ch)
+    screen.future = _Fut()
+    screen.handle("enter")
+    assert not screen.future.done()  # the over-limit entry is blocked
+    assert "Too long by 1 byte" in screen._error
+    # Trimming back within budget lets it submit.
+    for _ in range(2):
+        screen.handle("backspace")
+    assert _run(screen, "enter") == "hello wor"
+
+
 def test_line_editor_word_motion() -> None:
     """Ctrl+Left/Right hop by word — to the current word's start, else the previous/next."""
     from meshterm.ui.tui.prompt import _LineEditor

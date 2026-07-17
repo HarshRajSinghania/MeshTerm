@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,12 @@ from meshterm.core.courier_store import DONE_CAP, QUEUED, CourierStore
 from meshterm.core.models import ChatMessage, Contact, utcnow
 from meshterm.core.watch_store import WatchStore
 from meshterm.services.courier import FRESH_S, MAX_ATTEMPTS, CourierService
-from meshterm.ui.courier_screen import parse_clock
+from meshterm.ui.courier_screen import (
+    CANCEL_SCHEDULE,
+    WHEN_HEARD,
+    _pick_schedule,
+    parse_clock,
+)
 
 NODE = "3d" * 6
 CONTACT = Contact(name="YUL", public_key="3d" * 32)
@@ -341,3 +347,51 @@ def test_parse_clock_finds_the_next_occurrence() -> None:
     assert parse_clock("7h30", now) is not None
     assert parse_clock("25:00", now) is None
     assert parse_clock("soonish", now) is None
+
+
+# --- the schedule picker ------------------------------------------------------------------
+
+
+class _StubScheduleSession:
+    """Scripts the when-to-send picker: ``choose`` maps the offered rows to a selection."""
+
+    def __init__(self, choose) -> None:
+        self._choose = choose
+
+    async def select(self, title, items, **kwargs):
+        return self._choose(items)
+
+    async def text(self, *args, **kwargs):  # pragma: no cover - unused on these paths
+        return ""
+
+
+class _ScheduleCtx:
+    def __init__(self, session) -> None:
+        self.ui = SimpleNamespace(session=session)
+
+
+async def test_pick_schedule_when_next_heard_returns_no_schedule() -> None:
+    """Picking *When it's next heard* returns ``None`` (queue with no hold), not a cancel.
+
+    Regression: the row once carried the value ``None``, which ``session.select`` also
+    returns on Esc, so choosing it read as a cancel and the message was never queued.
+    """
+    ctx = _ScheduleCtx(_StubScheduleSession(lambda items: items[0].value))
+    result = await _pick_schedule(ctx, "YUL")
+    assert result is None
+    assert result is not CANCEL_SCHEDULE
+    assert WHEN_HEARD is not None  # the row's own sentinel, distinct from Esc's None
+
+
+async def test_pick_schedule_esc_cancels_the_queueing() -> None:
+    """Esc on the picker (``select`` returns ``None``) backs out without queueing anything."""
+    ctx = _ScheduleCtx(_StubScheduleSession(lambda items: None))
+    assert await _pick_schedule(ctx, "YUL") is CANCEL_SCHEDULE
+
+
+async def test_pick_schedule_a_fixed_delay_holds_until_its_time() -> None:
+    """A concrete offset row (e.g. In 1 h) comes back as its aware future datetime."""
+    ctx = _ScheduleCtx(_StubScheduleSession(lambda items: items[1].value))  # In 1 h
+    result = await _pick_schedule(ctx, "YUL")
+    assert result is not None and result is not CANCEL_SCHEDULE
+    assert result > utcnow()

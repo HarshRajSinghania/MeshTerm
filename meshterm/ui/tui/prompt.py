@@ -13,12 +13,52 @@ from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
-from .render import render_lines
+from .render import render_lines, right_aligned_tail
 from .screen import Screen
 from .spinner import Spinner
 
 #: A validator returns ``True`` when the input is acceptable, or an error message to show.
 Validator = Callable[[str], "bool | str"]
+
+#: MeshCore's LoRa payload caps a direct message at 150 UTF-8 bytes and an (unscoped)
+#: channel broadcast at 130; past the cap the companion silently drops the packet. Every
+#: compose bar that feeds one of those sends — the chat input, the courier's message entry —
+#: counts bytes against these and blocks over the limit rather than losing the packet.
+DM_BYTE_LIMIT = 150
+CHANNEL_BYTE_LIMIT = 130
+
+#: Byte-counter thresholds (bytes *remaining*) at which its colour escalates, plus the two
+#: mid-band hues. The theme's ``warn``/``err`` sit too close together (an amber that reads
+#: orange, then red), so the counter names a truer yellow and orange directly to keep the
+#: green→yellow→orange→red fuel gauge visibly stepped.
+_BYTES_TIGHT, _BYTES_LOW = 20, 10
+_BYTES_YELLOW = "bold #fde047"
+_BYTES_ORANGE = "bold #ff9500"
+
+
+def byte_style(remaining: int) -> str:
+    """Map bytes remaining to the counter's escalating colour (green→yellow→orange→red)."""
+    if remaining <= 0:
+        return "err"  # at or over the limit — the send is blocked
+    if remaining <= _BYTES_LOW:
+        return _BYTES_ORANGE
+    if remaining <= _BYTES_TIGHT:
+        return _BYTES_YELLOW
+    return "ok"
+
+
+def byte_counter(used: int, limit: int) -> Text:
+    """The inline ``used/limit`` budget; only ``used`` is coloured by how much is left.
+
+    Green with room to spare, yellow within :data:`_BYTES_TIGHT` bytes, orange within
+    :data:`_BYTES_LOW`, and red once the limit is met or exceeded — so the number reads as a
+    fuel gauge while the ``/limit`` suffix stays muted (it never changes). The shared gauge
+    the chat compose bar and the courier's message field both draw.
+    """
+    counter = Text()
+    counter.append(str(used), style=byte_style(limit - used))
+    counter.append(f"/{limit}", style="muted")
+    return counter
 
 
 def _center(content: Text, width: int) -> Text:
@@ -186,6 +226,7 @@ class TextScreen(Screen):
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        byte_limit: Optional[int] = None,
         footer_hint: str = "Enter accept · Esc cancel",
     ) -> None:
         """Build a text prompt.
@@ -200,6 +241,10 @@ class TextScreen(Screen):
                 error and blocks submission.
             help_text: Optional muted hint shown under the field.
             password: When ``True``, mask the entered text.
+            byte_limit: When set, the field carries the shared UTF-8 byte gauge
+                (:func:`byte_counter`) pinned bottom-right and blocks submission once the
+                text exceeds it — for a field that feeds a size-capped packet (a direct
+                message, a courier entry). Left ``None`` for an unbounded field.
             footer_hint: Footer key hint.
         """
         super().__init__()
@@ -210,6 +255,7 @@ class TextScreen(Screen):
         self._validate = validate
         self._help = help_text
         self._password = password
+        self._byte_limit = byte_limit
         self._error = ""
 
     @property
@@ -220,23 +266,37 @@ class TextScreen(Screen):
         comfortable field minimum — so a short prompt is a tidy box, not a banner stretched
         across the terminal. The compositor still caps this to the width available.
         """
+        # A byte gauge rides the field's right edge, so the field lane needs room for the
+        # text, its cursor, and the counter ("150/150" ≈ 8 cells) without them colliding.
+        field_slack = 12 if self._byte_limit is not None else 4
         inner = max(
             cell_len(self._prompt),
             cell_len(self.title),
             cell_len(self._help),
             cell_len(self.footer_hint),
-            cell_len(self._editor.text) + 4,  # the field plus its cursor and a little slack
+            cell_len(self._editor.text) + field_slack,
             36,  # a comfortable minimum so a short field isn't a cramped sliver
         )
         return inner + 8  # panel padding + border, plus horizontal breathing room
 
+    def _used_bytes(self) -> int:
+        """UTF-8 byte length of the field — what counts against ``byte_limit``."""
+        return len(self._editor.text.encode("utf-8"))
+
     def render_body(self, width: int) -> list[str]:
-        """Render the optional prompt, the field, any help text, and a validation error."""
+        """Render the optional prompt, the field (+ byte gauge), help, and any error."""
         parts: list[RenderableType] = []
         if self._prompt:
             parts.append(Text(self._prompt))
             parts.append(Text(""))
-        parts.append(self._editor.render(mask=self._password))
+        field = self._editor.render(mask=self._password)
+        if self._byte_limit is not None:
+            # The gauge pins to the field's right edge — a steady fuel gauge in the corner,
+            # exactly as the chat compose bar draws it (both via ``byte_counter``).
+            field = right_aligned_tail(
+                field, byte_counter(self._used_bytes(), self._byte_limit), width
+            )
+        parts.append(field)
         if self._help:
             parts.append(Text(self._help, style="muted"))
         if self._error:
@@ -244,9 +304,14 @@ class TextScreen(Screen):
         return render_lines(Group(*parts), width)
 
     def handle(self, action: str, data: str = "") -> None:
-        """Edit the buffer, submit on Enter (if valid), or cancel on Esc."""
+        """Edit the buffer, submit on Enter (if valid and within budget), or cancel on Esc."""
         if action == "enter":
             value = self._editor.text
+            if self._byte_limit is not None:
+                over = self._used_bytes() - self._byte_limit
+                if over > 0:
+                    self._error = f"Too long by {over} byte{'s' if over != 1 else ''} — trim to send."
+                    return
             if self._validate is not None:
                 result = self._validate(value)
                 if result is not True:

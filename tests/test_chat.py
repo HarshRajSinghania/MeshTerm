@@ -599,24 +599,23 @@ def test_byte_counter_stays_bottom_right_when_the_compose_wraps() -> None:
 
 def test_byte_style_escalates_as_budget_runs_out() -> None:
     """The used-byte color steps green → yellow → orange → red as fewer bytes remain."""
-    from meshterm.ui.chat import _BYTES_ORANGE, _BYTES_YELLOW
+    from meshterm.ui.tui.prompt import _BYTES_ORANGE, _BYTES_YELLOW, byte_style
 
-    style = ChatScreen._byte_style
-    assert style(80) == "ok"  # plenty left → green
-    assert style(20) == _BYTES_YELLOW  # within the tight band → yellow
-    assert style(10) == _BYTES_ORANGE  # within the low band → orange
-    assert style(0) == "err"  # limit reached → red
-    assert style(-5) == "err"  # over the limit → still red
+    assert byte_style(80) == "ok"  # plenty left → green
+    assert byte_style(20) == _BYTES_YELLOW  # within the tight band → yellow
+    assert byte_style(10) == _BYTES_ORANGE  # within the low band → orange
+    assert byte_style(0) == "err"  # limit reached → red
+    assert byte_style(-5) == "err"  # over the limit → still red
 
 
 def test_channel_byte_limit_is_lower_than_direct() -> None:
     """A channel broadcast has a tighter byte budget than a direct message."""
-    from meshterm.ui.chat import _CHANNEL_BYTE_LIMIT, _DM_BYTE_LIMIT
+    from meshterm.ui.tui.prompt import CHANNEL_BYTE_LIMIT, DM_BYTE_LIMIT
 
     direct = _screen(_StubSession(), send=None)
     channel = _channel_screen([])
-    assert direct._byte_limit() == _DM_BYTE_LIMIT == 150
-    assert channel._byte_limit() == _CHANNEL_BYTE_LIMIT == 130
+    assert direct._byte_limit() == DM_BYTE_LIMIT == 150
+    assert channel._byte_limit() == CHANNEL_BYTE_LIMIT == 130
 
 
 def test_overflow_counts_multibyte_characters_by_byte() -> None:

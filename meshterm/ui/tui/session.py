@@ -601,6 +601,7 @@ class TuiSession:
         validate: Optional[Validator] = None,
         help_text: str = "",
         password: bool = False,
+        byte_limit: Optional[int] = None,
         floating: bool = False,
     ) -> Optional[str]:
         """Show a text prompt; return the string or ``None`` if cancelled.
@@ -611,6 +612,9 @@ class TuiSession:
         :meth:`typed_confirm` do (see :meth:`_run_dialog_screen`); with a screen already
         beneath it there is no difference, so leave it ``False`` for a prompt that is itself
         a tool's primary screen (the Trace target's typed fallback).
+
+        ``byte_limit`` puts the shared UTF-8 byte gauge on the field and blocks submission
+        past it — for a field that feeds a size-capped packet (see :class:`TextScreen`).
         """
         screen = TextScreen(
             title,
@@ -619,6 +623,7 @@ class TuiSession:
             validate=validate,
             help_text=help_text,
             password=password,
+            byte_limit=byte_limit,
         )
         runner = self._run_dialog_screen if floating else self.run_screen
         result = await runner(screen)

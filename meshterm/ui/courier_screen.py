@@ -24,7 +24,7 @@ from rich.text import Text
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
 from .menus import back_rows, section_heading
-from .tui import Choice, Separator
+from .tui import DM_BYTE_LIMIT, Choice, Separator
 from .watchtower_screen import contact_watch_key
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -263,6 +263,7 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     text = await session.text(
         f"Message for {contact.name}",
         prompt="Delivered as a normal direct message when its moment comes.",
+        byte_limit=DM_BYTE_LIMIT,
     )
     if not text:
         return
@@ -282,14 +283,25 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
 #: Sentinel: the schedule picker was cancelled (distinct from "no schedule").
 CANCEL_SCHEDULE = object()
 
+#: Sentinel: "send when it's next heard" — the no-schedule choice. It carries its own
+#: value (never ``None``) because :meth:`session.select` already returns ``None`` for a
+#: cancel; sharing that value made picking this row read as a cancel and silently drop the
+#: message instead of queueing it.
+WHEN_HEARD = object()
+
 
 async def _pick_schedule(ctx: "AppContext", name: str):
-    """Float the when-to-send picker; return an aware UTC time, ``None``, or cancel."""
+    """Float the when-to-send picker; return an aware UTC time, ``None``, or cancel.
+
+    ``None`` means "no schedule — send on the next sign of life" (the explicit
+    *When it's next heard* row); an aware UTC datetime holds until then;
+    :data:`CANCEL_SCHEDULE` means the user backed out and nothing should queue.
+    """
     session = ctx.ui.session
     now = utcnow()
     tomorrow_7 = parse_clock("07:00", now)
     items = [
-        Choice("When it's next heard  (recommended)", None),
+        Choice("When it's next heard  (recommended)", WHEN_HEARD),
         Choice("In 1 h", now + timedelta(hours=1)),
         Choice("In 3 h", now + timedelta(hours=3)),
         Choice("In 8 h", now + timedelta(hours=8)),
@@ -300,6 +312,12 @@ async def _pick_schedule(ctx: "AppContext", name: str):
         f"When should {name} get it?", items, filterable=False,
         footer_hint="↑↓ move · Enter select · Esc cancel",
     )
+    if picked is None:
+        # Esc on the picker cancels the queueing; "when next heard" is its own explicit
+        # row (WHEN_HEARD below), so backing out never silently queues something.
+        return CANCEL_SCHEDULE
+    if picked is WHEN_HEARD:
+        return None  # no schedule constraint — delivered on the next pass
     if picked == "custom":
         while True:
             typed = await session.text(
@@ -311,10 +329,6 @@ async def _pick_schedule(ctx: "AppContext", name: str):
             when = parse_clock(typed)
             if when is not None:
                 return when
-    if picked is None:
-        # Esc on the picker cancels the queueing; "when next heard" is the explicit
-        # first row, so backing out never silently queues something.
-        return CANCEL_SCHEDULE
     return picked
 
 
