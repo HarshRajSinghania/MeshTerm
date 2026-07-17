@@ -33,12 +33,23 @@ decide the width for :data:`_PROBE` in layers, most trustworthy first:
 If the chosen width is 1, we patch Rich's string-measuring function so every panel,
 table, and text widget — menus and chat bubbles alike — lines up. On non-interactive
 runs (tests, piped output, scripted CLI) we do nothing and keep Rich's defaults.
+
+The same "width 1" verdict also narrows a small, curated set of *lone* emoji — single
+codepoints like ``👋`` that carry no variation selector yet are still drawn in one cell
+here. Unlike a VS16 sequence there is no structural tell (a trailing ``U+FE0F``) and no
+rule separating them from the lone emoji this terminal draws two wide (``📡``, ``💬``):
+the split is the font's, not the codepoint's, and a cursor probe can't see it. So the set
+is an explicit allowlist (:data:`_DEFAULT_NARROW_LONE`, extended without a code change via
+``MESHTERM_NARROW_EMOJI``), and — because it is the panel border *prompt_toolkit* places,
+not Rich — narrowing a lone emoji patches *both* width authorities, where the VS16 fix only
+needed Rich (prompt_toolkit never promoted a VS16 sequence in the first place).
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from typing import Callable
 
 #: Codepoints that never occupy a cell on their own: zero-width joiner and the
 #: emoji-presentation variation selector. Skipping them means a base glyph is
@@ -50,8 +61,29 @@ _ZERO_WIDTH = ("‍", "️")
 #: exactly the terminal whose borders Rich currently misaligns.
 _PROBE = "☀️"
 
+#: Lone-codepoint emoji this terminal draws in a single cell even though wcwidth and Rich
+#: both call them two — the residual of the VS16 story for glyphs that carry no variation
+#: selector (``👋`` is the one confirmed here). There is no rule separating these from the
+#: emoji the same terminal draws two wide (``📡``, ``💬``, the menu icons): the split is the
+#: font's glyph, not the codepoint, and it cannot be probed (a cursor probe reads the PTY,
+#: not the renderer — see the module docstring). So this is a curated allowlist, seeded with
+#: the confirmed glyph and extended — no code change — through ``MESHTERM_NARROW_EMOJI``.
+_DEFAULT_NARROW_LONE = "👋"
+
 #: Set once :func:`calibrate` has run so repeated calls are cheap no-ops.
 _CALIBRATED = False
+
+
+def _narrow_lone_set() -> frozenset[str]:
+    """The lone-codepoint emoji to measure as one cell (see :data:`_DEFAULT_NARROW_LONE`).
+
+    ``MESHTERM_NARROW_EMOJI`` overrides the default outright: set it to the full list of
+    glyphs you have confirmed this terminal draws narrow (e.g. ``MESHTERM_NARROW_EMOJI=👋🤙``),
+    or to the empty string to turn lone-emoji narrowing off entirely. Only consulted once the
+    renderer is judged to draw emoji narrow in the first place (see :func:`calibrate`), so on a
+    terminal that draws emoji two cells wide the whole allowlist is inert and nothing regresses.
+    """
+    return frozenset(os.environ.get("MESHTERM_NARROW_EMOJI", _DEFAULT_NARROW_LONE))
 
 
 def calibrate(*, force_width: int | None = None) -> None:
@@ -71,10 +103,12 @@ def calibrate(*, force_width: int | None = None) -> None:
     _CALIBRATED = True
 
     width = force_width if force_width is not None else _decide_vs16_width()
-    # width 1 -> the renderer paints VS16 emoji narrow, so stop Rich promoting.
-    # width 2 (or unknown/None) -> Rich's default already matches; leave it alone.
+    # width 1 -> the renderer draws emoji narrow: stop Rich promoting VS16 sequences and
+    # narrow the curated lone-codepoint emoji this terminal also draws in one cell.
+    # width 2 (or unknown/None) -> Rich's default already matches; leave everything alone
+    # (narrowing here would instead pull a correctly-wide emoji's border a column short).
     if width == 1:
-        _install_no_vs16_promotion()
+        _install_terminal_widths(_narrow_lone_set())
 
 
 def _decide_vs16_width() -> int | None:
@@ -218,26 +252,81 @@ def _posix_probe_width(probe: str, timeout: float = 0.3) -> int | None:
 # --- the patch ----------------------------------------------------------------
 
 
-def _install_no_vs16_promotion() -> None:
-    """Make Rich measure strings without the VS16 "promote narrow base to 2" step.
+def _make_cell_len(narrow: frozenset[str]) -> Callable[[str, str], int]:
+    """Build Rich's ``_cell_len`` replacement: the terminal's true width for every string.
 
-    Rich's ``cell_len`` delegates to the module-level ``_cell_len``; replacing that
-    (and clearing the memoised wrapper) redirects every downstream caller — panels,
-    tables, text — through the terminal-aligned measurement in one shot.
+    Two corrections fold into the one measuring loop the whole render pipeline reads:
+
+    * **VS16 promotion** — a variation selector (:data:`_ZERO_WIDTH`) is skipped, so a narrow
+      base (``☀`` = 1) is measured on its own instead of promoted to two by a trailing
+      ``U+FE0F``. This is the general emoji-presentation fix (see the module docstring).
+    * **Curated lone emoji** — a single codepoint in ``narrow`` (``👋`` and friends) that Rich
+      would call two but this terminal draws in one is counted as one, so a chat row carrying
+      it pads to a flush right border instead of a column-short notch.
+
+    Everything else keeps its ``get_character_cell_size`` value, so a lone emoji the terminal
+    *does* draw two wide (a menu icon like ``📡``, never placed in ``narrow``) is left alone.
     """
     import rich.cells as cells
 
     get_size = cells.get_character_cell_size
 
-    def _cell_len_no_promotion(text: str, unicode_version: str = "auto") -> int:
-        return sum(
-            get_size(char, unicode_version)
-            for char in text
-            if char not in _ZERO_WIDTH
-        )
+    def _cell_len(text: str, unicode_version: str = "auto") -> int:
+        total = 0
+        for char in text:
+            if char in _ZERO_WIDTH:
+                continue
+            total += 1 if char in narrow else get_size(char, unicode_version)
+        return total
+
+    return _cell_len
+
+
+def _make_pt_cache(narrow: frozenset[str]) -> "object":
+    """Build a prompt_toolkit char-width cache that measures every ``narrow`` glyph as one.
+
+    prompt_toolkit is the authority that *places the panel's right border*: it lays the
+    composed frame into its screen buffer stepping a cursor by ``get_cwidth`` (backed by
+    ``_CHAR_SIZES_CACHE``), so unless it too measures ``👋`` as one, it positions the border a
+    column past where the terminal draws the narrow glyph — the notch survives even with Rich
+    corrected. The subclass returns one for a listed lone glyph and defers everything else to
+    the stock ``wcwidth`` logic; because the base ``__missing__`` sums per character through
+    the cache, a whole chat line ``"Bob 👋 hi"`` inherits the one-cell ``👋`` for free.
+    """
+    import prompt_toolkit.utils as ptu
+
+    base_cache_cls = type(ptu._CHAR_SIZES_CACHE)
+
+    class _NarrowLoneCache(base_cache_cls):  # type: ignore[valid-type, misc]
+        def __missing__(self, string: str) -> int:
+            if string in narrow:
+                self[string] = 1
+                return 1
+            return super().__missing__(string)
+
+    return _NarrowLoneCache()
+
+
+def _install_terminal_widths(narrow: frozenset[str]) -> None:
+    """Redirect both width authorities through the terminal-aligned measurement, in one shot.
+
+    Rich's ``cell_len`` delegates to the module-level ``_cell_len``; replacing that (and
+    clearing the memoised wrapper) steers every downstream caller — panels, tables, text —
+    through :func:`_make_cell_len`. prompt_toolkit is patched *only* when there are lone emoji
+    to narrow: a VS16-only correction needs nothing from it (it never promoted the sequence),
+    but a lone-emoji correction does, because pt is what places the border (see
+    :func:`_make_pt_cache`). Both run at :func:`calibrate` time, before a frame is drawn, so no
+    stale two-cell measurement or ``Char`` is ever painted.
+    """
+    import rich.cells as cells
 
     cells.cached_cell_len.cache_clear()
-    cells._cell_len = _cell_len_no_promotion
+    cells._cell_len = _make_cell_len(narrow)
+
+    if narrow:
+        import prompt_toolkit.utils as ptu
+
+        ptu._CHAR_SIZES_CACHE = _make_pt_cache(narrow)
 
 
 __all__ = ["calibrate"]
