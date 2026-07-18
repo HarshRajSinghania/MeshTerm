@@ -23,16 +23,24 @@ sent to the device is one walk that ends within our earshot):
 
 Interaction, following the reorder screen's cursor-over-rows-and-actions pattern:
 
-* ↑/↓ move over suggestions and the action rows; Enter on a suggestion appends it.
+* ↑/↓ move over suggestions and the action rows; Enter on a suggestion inserts it
+  at the route's insertion cursor.
+* ←/→ slide that insertion cursor along the editable leg's joining arrows — drawn
+  as a reverse-video ``→`` — so a hop can be spliced in (to the cursor's right) or
+  removed (⌫, to its left) anywhere in the route, not just at the end. It opens on
+  the last arrow, where inserting is appending — the classic flow unchanged. The
+  suggestion list follows: it always proposes next hops from the node left of the
+  cursor.
 * Typing filters the suggestions by name or hash — and when the typed text is itself
   even-length hex, an *add custom hop* row appears, so a node we have never observed
   (or a bare hash from another tool) can be forced into the route.
-* Backspace erases the filter first; with the filter empty it removes the last hop.
-* When the path's tail is a repeater we hold admin credentials for, a *fetch
+* Backspace erases the filter first; with the filter empty it removes the hop left
+  of the cursor.
+* When the cursor stands after a repeater we hold admin credentials for, a *fetch
   neighbours* row asks that repeater over the mesh for its own neighbour table —
   fresh second-vantage evidence exactly where composing ran out of it. The dialog
   resolves :class:`FetchNeighbours` and the owning flow fetches, refreshes the
-  topology, and reopens the composer mid-thought (hops preserved).
+  topology, and reopens the composer mid-thought (hops and cursor preserved).
 * Enter on **Use this path** commits the composed spec; Esc cancels with no change.
 * A walk that crosses some link twice in the same direction shows a yellow ⚠ note
   under the preview: still walkable, but no longer a *trail*, so the trophy case
@@ -95,10 +103,12 @@ class FetchNeighbours:
 
     The dialog itself never touches the radio; it resolves this marker and the owning
     flow performs the login + fetch, refreshes the topology, and reopens the composer
-    with :attr:`PathComposerScreen.hops` re-seeded.
+    with :attr:`PathComposerScreen.hops` and :attr:`PathComposerScreen.cursor`
+    re-seeded.
 
     Attributes:
-        node: Canonical id of the repeater to query (the path's tail when committed).
+        node: Canonical id of the repeater to query (the insertion cursor's anchor
+            when committed).
     """
 
     node: str
@@ -120,7 +130,7 @@ class PathComposerScreen(Screen):
     """
 
     grow_only = True
-    footer_hint = "↑↓ move · Enter add · type to filter · ⌫ remove · Esc cancel"
+    footer_hint = "↑↓ move · ←→ cursor · Enter add · type to filter · ⌫ remove · Esc cancel"
 
     def __init__(
         self,
@@ -133,6 +143,7 @@ class PathComposerScreen(Screen):
         target_label: Optional[str] = None,
         device_hash: Optional[str] = None,
         hops: Optional[list[str]] = None,
+        cursor: Optional[int] = None,
         fetch_nodes: frozenset[str] = frozenset(),
     ) -> None:
         """Build the composer.
@@ -154,6 +165,8 @@ class PathComposerScreen(Screen):
                 exactly like the trace screen's route line.
             hops: Canonical ids of already-composed hops (reopening the dialog resumes
                 where the user left off).
+            cursor: Arrow index the insertion cursor resumes at (reopening after a
+                fetch); ``None`` parks it at the path's end, the append position.
             fetch_nodes: Canonical ids whose live neighbour table can be fetched
                 (repeater contacts with a public key); when the path's tail is one of
                 them, the *fetch neighbours* row appears.
@@ -168,6 +181,12 @@ class PathComposerScreen(Screen):
         self._topology = topology
         self._width_bytes = width_bytes
         self._hops: list[str] = list(hops or [])
+        #: The insertion cursor: which joining arrow of the editable leg it sits on.
+        #: Arrow k stands between display node k (us at 0, else hop k) and its
+        #: successor — an insert lands at hops index k, ⌫ removes hop k-1.
+        self._cursor = (
+            len(self._hops) if cursor is None else max(0, min(cursor, len(self._hops)))
+        )
         self._fetch_nodes = fetch_nodes
         self._entry = ""
         self._index = 0
@@ -179,6 +198,11 @@ class PathComposerScreen(Screen):
         """The composed hops so far (for re-seeding after a fetch)."""
         return list(self._hops)
 
+    @property
+    def cursor(self) -> int:
+        """The insertion cursor's arrow index (for re-seeding after a fetch)."""
+        return self._cursor
+
     # --- state -----------------------------------------------------------------
 
     @property
@@ -186,27 +210,35 @@ class PathComposerScreen(Screen):
         """Whether the return leg is the pinned target's mirror (target mode)."""
         return self._target_id is not None
 
-    def _tail(self) -> str:
-        """The node the path currently ends at (us until a hop is added)."""
-        return self._hops[-1] if self._hops else self._topology.self_id
+    def _anchor(self) -> str:
+        """The node just left of the insertion cursor (us while the cursor is home).
+
+        Suggestions, the fetch row, and the *Next hop from* heading all follow this
+        anchor — an insert continues the walk from here, wherever the cursor stands.
+        """
+        return self._hops[self._cursor - 1] if self._cursor else self._topology.self_id
 
     def _suggestions(self) -> list:
         """The current suggestion rows, filtered by the typed entry.
 
         Target mode excludes the target (the path implicitly turns at it) and every
         used hop (revisiting one on the outbound leg is never useful — the mirror
-        already recrosses it). Path mode only excludes ourselves and the tail: a
-        return leg legitimately reuses outbound repeaters.
+        already recrosses it). Path mode only excludes ourselves and the cursor's
+        two neighbours (either would make the inserted hop a self-loop): a return
+        leg legitimately reuses outbound repeaters.
 
         Returns:
             The (possibly filtered) :class:`~meshterm.services.topology.HopSuggestion`
-            list for the path's tail, capped at :data:`_MAX_SUGGESTIONS`.
+            list for the insertion cursor's anchor, capped at :data:`_MAX_SUGGESTIONS`.
         """
         if self._mirrored:
             exclude = frozenset({self._topology.self_id, self._target_id, *self._hops})
         else:
-            exclude = frozenset({self._topology.self_id, self._tail()})
-        suggestions = self._topology.next_hops(self._tail(), exclude=exclude)
+            after = self._hops[self._cursor] if self._cursor < len(self._hops) else None
+            exclude = frozenset(
+                {self._topology.self_id, self._anchor()} | ({after} if after else set())
+            )
+        suggestions = self._topology.next_hops(self._anchor(), exclude=exclude)
         needle = self._entry.lower()
         if needle:
             suggestions = [
@@ -229,11 +261,11 @@ class PathComposerScreen(Screen):
         if custom:
             rows.append(("custom", custom))
         rows.extend(("hop", s) for s in self._suggestions())
-        # Standing on a repeater we hold credentials for, its live neighbour table is
-        # one keypress away — placed with the suggestions, because that is what it
-        # extends: "don't see the node you need? ask the repeater what it hears."
-        if self._tail() in self._fetch_nodes:
-            rows.append(("fetch", self._tail()))
+        # The cursor standing after a repeater we hold credentials for, its live
+        # neighbour table is one keypress away — placed with the suggestions, because
+        # that is what it extends: "don't see the node you need? ask the repeater."
+        if self._anchor() in self._fetch_nodes:
+            rows.append(("fetch", self._anchor()))
         rows.append(("action", _USE))
         if self._mirrored:  # a path walk has no target for the device to route to
             rows.append(("action", _AUTO))
@@ -315,7 +347,8 @@ class PathComposerScreen(Screen):
         resolved and dimmed right alongside it (``dim_from``) — the dimming reads
         as "this half isn't yours to compose". Path mode shows every composed hop
         in full colour (they are all yours) between our own node at both ends,
-        with only the final landing back on us dimmed.
+        with only the final landing back on us dimmed. The insertion cursor rides
+        the arrow it stands on (``cursor_arrow``), a reverse-video ``→``.
         """
         entries: list[Optional[str]] = [None]
         entries.extend(self._path_entry(hop) for hop in self._hops)
@@ -329,6 +362,7 @@ class PathComposerScreen(Screen):
             show_hash=True, hash_bytes=self._width_bytes,
             device_hash=self._device_hash or None,
             dim_from=(2 if self._mirrored else 1) + len(self._hops),
+            cursor_arrow=self._cursor,
         )
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -401,7 +435,7 @@ class PathComposerScreen(Screen):
             lines.append(render_to_ansi(Text(f"/{self._entry}", style="warn"), width))
         else:
             heading = Text("Next hop from ", style="muted")
-            heading.append_text(self._node_text(self._tail()))
+            heading.append_text(self._node_text(self._anchor()))
             heading.append(" — strongest first", style="muted")
             lines.extend(render_lines(heading, width))
 
@@ -429,13 +463,13 @@ class PathComposerScreen(Screen):
         win = max(3, self._scroll_viewport - len(lines))
         at = next(p for p, (row, _line) in enumerate(entries) if row == self._index)
         top, count = self._list.fit(len(entries), win, at)
-        self._cursor = None
+        self._cursor_row = None
         if top > 0:
             lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
         for pos in range(top, top + count):
             row, line = entries[pos]
             if row == self._index:
-                self._cursor = len(lines)
+                self._cursor_row = len(lines)
             lines.append(line)
         below = len(entries) - top - count
         if below > 0:
@@ -445,24 +479,27 @@ class PathComposerScreen(Screen):
 
     def cursor_line(self) -> Optional[int]:
         """The body line of the highlighted row, so the session keeps it visible."""
-        return getattr(self, "_cursor", None)
+        return getattr(self, "_cursor_row", None)
 
     # --- input ---------------------------------------------------------------------
 
+    def _insert_hop(self, node: str) -> None:
+        """Splice a hop in at the insertion cursor, which advances past it."""
+        self._hops.insert(self._cursor, node)
+        self._cursor += 1
+        self._entry = ""
+        self._index = 0
+
     def _commit_row(self) -> None:
-        """Apply the highlighted row: append a hop or run an action."""
+        """Apply the highlighted row: insert a hop at the cursor or run an action."""
         rows = self._rows()
         if not rows:
             return
         kind, payload = rows[self._index]
         if kind == "custom":
-            self._hops.append(str(payload))
-            self._entry = ""
-            self._index = 0
+            self._insert_hop(str(payload))
         elif kind == "hop":
-            self._hops.append(payload.node)  # type: ignore[union-attr]
-            self._entry = ""
-            self._index = 0
+            self._insert_hop(payload.node)  # type: ignore[union-attr]
         elif kind == "fetch":
             self.resolve(FetchNeighbours(node=str(payload)))
         elif payload == _USE:
@@ -475,7 +512,7 @@ class PathComposerScreen(Screen):
             super().handle("escape")
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the cursor, edit the entry, add/remove hops, or commit/cancel."""
+        """Move the cursors, edit the entry, add/remove hops, or commit/cancel."""
         rows = self._rows()
         if action == "up" and rows:
             self._index = (self._index - 1) % len(rows)
@@ -489,13 +526,20 @@ class PathComposerScreen(Screen):
             self._index = 0
         elif action in ("end", "ctrl_end"):
             self._index = max(0, len(rows) - 1)
+        elif action == "left" and self._cursor:
+            self._cursor -= 1  # the anchor moved: suggestions re-seat below
+            self._index = 0
+        elif action == "right" and self._cursor < len(self._hops):
+            self._cursor += 1
+            self._index = 0
         elif action == "enter":
             self._commit_row()
         elif action == "backspace":
             if self._entry:
                 self._entry = self._entry[:-1]
-            elif self._hops:
-                self._hops.pop()
+            elif self._cursor:
+                self._hops.pop(self._cursor - 1)
+                self._cursor -= 1
             self._index = 0
         elif action == "text" and data.isprintable() and data not in ("/",):
             self._entry += data

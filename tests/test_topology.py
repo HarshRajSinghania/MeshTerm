@@ -290,7 +290,7 @@ async def test_probe_paths_defaults_to_one_trace_per_candidate() -> None:
 # --- path composer ---------------------------------------------------------------------
 
 
-def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True):  # noqa: ANN001
+def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True, cursor=None):  # noqa: ANN001
     """A composer over ``topo`` — pinned on Far (target mode) or target-less."""
     pinned = (
         dict(
@@ -307,6 +307,7 @@ def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True):  # noqa: A
         topology=topo,
         width_bytes=1,
         hops=list(hops or []),
+        cursor=cursor,
         fetch_nodes=fetch_nodes,
         **pinned,
     )
@@ -358,13 +359,70 @@ def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:
     assert screen._hops == []
 
 
+def test_composer_cursor_inserts_and_deletes_mid_path() -> None:
+    """←/→ walk the insertion cursor; adds splice in at it and ⌫ removes to its left."""
+    screen = _composer(
+        _topo(), hops=["27d4396a2967", "f2c24f54551e"], target=False
+    )
+    assert screen.cursor == 2  # opens on the last arrow: inserting is appending
+    screen.handle("right")
+    assert screen.cursor == 2  # clamped at the end…
+    screen.handle("left")
+    screen.handle("left")
+    screen.handle("left")
+    assert screen.cursor == 0  # …and at home
+    for ch in "beef":  # insert at home: the hop lands before the seeded ones
+        screen.handle("text", ch)
+    screen.handle("enter")
+    assert screen._hops == ["beef", "27d4396a2967", "f2c24f54551e"]
+    assert screen.cursor == 1  # the cursor rode past what it inserted
+    screen.handle("backspace")  # ⌫ takes the hop left of the cursor and follows it
+    assert screen._hops == ["27d4396a2967", "f2c24f54551e"] and screen.cursor == 0
+    # A reopen (the fetch-neighbours round trip) resumes at the seeded position.
+    assert _composer(_topo(), hops=["27d4396a2967"], cursor=1).cursor == 1
+    assert _composer(_topo(), hops=["27d4396a2967"], cursor=99).cursor == 1  # clamped
+
+
+def test_composer_suggestions_follow_the_cursor_anchor() -> None:
+    """The heading and list re-seat on the node left of the cursor as it moves."""
+    import re
+
+    walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
+    screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"], target=False)
+
+    def body() -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
+
+    assert "Next hop from Hub" in body()  # cursor at the end: the anchor is the tail
+    screen.handle("left")
+    assert "Next hop from Us" in body()
+    # Inserting the cursor's right neighbour would self-loop — Hub is not proposed.
+    assert all(s.node != "3d63c6429436" for s in screen._suggestions())
+
+
+def test_composer_preview_draws_the_cursor_on_its_arrow() -> None:
+    """One reverse-video arrow marks the insertion point, and it rides the cursor."""
+    screen = _composer(_topo(), hops=["3d63c6429436"], target=False)
+
+    def cursor_at() -> list[int]:
+        text = screen._route_preview()
+        return [s.start for s in text.spans if str(s.style) == "selected"]
+
+    (end,) = cursor_at()  # exactly one cursor arrow
+    screen.handle("left")
+    (home,) = cursor_at()
+    assert home < end  # the block slid left along the preview
+
+
 def test_composer_warns_when_the_walk_repeats_a_link() -> None:
     """Riding a link twice the same way shows the yellow not-a-trail note; fixing it clears."""
+    clean = _composer(_topo(), hops=["3d63c6429436", "f2c24f54551e"], target=False)
+    assert "not a trail" not in _rows_plain(clean)
     screen = _composer(
-        _topo(), hops=["3d63c6429436", "f2c24f54551e"], target=False
+        _topo(),
+        hops=["3d63c6429436", "f2c24f54551e"] * 2,  # …→ 3d → f2 ridden again
+        target=False,
     )
-    assert "not a trail" not in _rows_plain(screen)
-    screen._hops += ["3d63c6429436", "f2c24f54551e"]  # …→ 3d → f2 ridden again
     body = _rows_plain(screen)
     assert "⚠" in body and "not a trail" in body and "records ignore" in body
     screen.handle("backspace")  # drop the second f2: the repeat is gone
@@ -470,7 +528,7 @@ async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim
     screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"], target=False)
     # No pinned target: the tail (Hub) hears Far, so Far is a plain hop suggestion.
     assert any(s.node == "f2c24f54551e" for s in screen._suggestions())
-    screen._hops.append("f2c24f54551e")
+    screen.handle("enter")  # the sole suggestion: Far joins the walk
     # A return leg may legitimately reuse an outbound repeater (only the tail is barred).
     assert any(s.node == "3d63c6429436" for s in screen._suggestions())
     # Out via Hub, home directly off Far: nothing is appended or mirrored.

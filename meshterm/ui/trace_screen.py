@@ -1392,7 +1392,8 @@ async def _open_session(
 
         Runs the composer in a loop: a :class:`FetchNeighbours` resolution performs the
         fetch, rebuilds the topology with the new evidence, and reopens the composer
-        exactly where the user stood (same hops, refreshed suggestions).
+        exactly where the user stood (same hops and insertion cursor, refreshed
+        suggestions).
         """
         if mode == "target" and target_hash is None:
             await unaddressable()
@@ -1418,6 +1419,7 @@ async def _open_session(
             seed = ids[: ids.index(target_id)]  # a stale hand walk: keep the outbound
         else:
             seed = ids
+        seed_cursor: Optional[int] = None  # first open parks the cursor at the end
         while True:
             # Nodes whose neighbour table can be asked for: repeater contacts with a
             # public key to log in against (our own node has nothing new to tell us).
@@ -1437,6 +1439,7 @@ async def _open_session(
                 target_hash=target_hash,
                 target_label=target_label,
                 hops=seed,
+                cursor=seed_cursor,
                 fetch_nodes=frozenset(fetchable),
             )
             result = await session.run_screen(screen)
@@ -1444,6 +1447,7 @@ async def _open_session(
                 return None
             if isinstance(result, FetchNeighbours):
                 seed = screen.hops  # resume mid-thought after the fetch
+                seed_cursor = screen.cursor
                 repeater = fetchable.get(result.node)
                 if repeater is not None and await fetch_neighbours_via(
                     repeater, result.node

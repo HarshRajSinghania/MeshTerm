@@ -101,3 +101,15 @@ def test_path_text_dims_the_tail_from_dim_from() -> None:
     assert ("us", "faint") in styles  # the landing back on us is faint
     assert any(run.startswith("Alice") and style == "faint" for run, style in styles)
     assert any(run.startswith("YUL") and style != "faint" for run, style in styles)
+
+
+def test_path_text_cursor_arrow_reads_as_a_reverse_block() -> None:
+    """The composer's insertion cursor: that one arrow renders as a selected block."""
+    text = path_text(["aa", "77", "3d"], _resolve, cursor_arrow=1)
+    assert text.plain == "Alice → 77 → YUL"  # spacing survives the split append
+    styles = [(text.plain[s.start : s.end], str(s.style)) for s in text.spans]
+    assert styles.count(("→", "selected")) == 1  # only arrow 1, between 77 and YUL
+    assert (" → ", "muted") in styles  # the other arrow stays plain
+    # The cursor wins over dim_from: the arrow into a dimmed tail still reads selected.
+    dimmed = path_text([None, "aa", None], _resolve, self_name="us", dim_from=2, cursor_arrow=1)
+    assert any(str(s.style) == "selected" for s in dimmed.spans)

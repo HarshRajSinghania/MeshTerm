@@ -249,6 +249,7 @@ def path_text(
     device_hash: Optional[str] = None,
     dim_from: Optional[int] = None,
     hash_as_name: bool = False,
+    cursor_arrow: Optional[int] = None,
 ) -> Text:
     """Render a hop sequence compactly on one line — THE path widget.
 
@@ -288,6 +289,11 @@ def path_text(
         hash_as_name: Present each unnamed hop as its identity hash — muted grey at the
             ``prefix_bytes`` width, annotated with its addressed byte (``hash_bytes``)
             like a named hop — rather than the compact prefix-lit addressed hash.
+        cursor_arrow: Draw this joining arrow (0-based: arrow *j* joins rendered hops
+            *j* and *j+1*) as an insertion cursor — the ``→`` glyph in the
+            reverse-video ``selected`` block, winning over ``dim_from`` — where the
+            path composer edits its route. ``None`` (everywhere else) draws every
+            arrow plain.
 
     Returns:
         A one-line :class:`Text`. Space tighter than the path is the caller's call,
@@ -301,7 +307,12 @@ def path_text(
     for i, hop in enumerate(shown):
         dim = dim_from is not None and i >= dim_from
         if i:
-            text.append(" → ", style="faint" if dim else "muted")
+            if cursor_arrow is not None and i - 1 == cursor_arrow:
+                text.append(" ")
+                text.append("→", style="selected")
+                text.append(" ")
+            else:
+                text.append(" → ", style="faint" if dim else "muted")
         text.append_text(
             _path_node(
                 hop, resolve, prefix_bytes=prefix_bytes, self_name=self_name,
