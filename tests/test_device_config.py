@@ -83,6 +83,23 @@ def test_highlighted_hash_highlights_path_hash_prefix() -> None:
     assert text.plain[highlighted[0].start : highlighted[0].end] == "aabbcc"
 
 
+def test_highlighted_hash_truncates_on_a_byte_boundary() -> None:
+    """A key too long for the budget keeps whole leading bytes (an even digit count) plus
+    an ellipsis, padding to the exact width — a half-byte digit never shows."""
+    from meshterm.ui.widgets import highlighted_hash
+
+    pub = "ab" * 32  # 64 hex digits
+    # An even budget: width - 1 is odd, so the last (half-byte) digit is dropped and the
+    # freed cell pads out — 14 digits (7 bytes) shown, not 15.
+    text = highlighted_hash(pub, prefix_bytes=1, width=16)
+    assert len(text.plain) == 16  # the lane still spans the full budget
+    visible = text.plain.rstrip().rstrip("…")
+    assert visible == "ab" * 7 and len(visible) % 2 == 0
+    assert "…" in text.plain
+    # An odd budget already lands on a boundary: width - 1 = 14 digits, no padding.
+    assert highlighted_hash(pub, prefix_bytes=1, width=15).plain == "ab" * 7 + "…"
+
+
 def _nodes_names(counts, sort: str, prefix_bytes: int = 3):
     """Render a nodes table for ``sort`` and return (table, name-column plain text)."""
     from meshterm.core.models import Contact

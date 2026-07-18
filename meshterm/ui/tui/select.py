@@ -85,13 +85,16 @@ class Separator:
     """A non-selectable row between choices.
 
     Attributes:
-        title: The row's text.
-        style: Theme style the row is drawn in. Section headings pass ``"accent"`` so
-            they read as highlighted landmarks; the default ``"muted"`` fits the
-            structural rows (blank spacers, column-header lines, inline notes).
+        title: The row's text — a plain string drawn uniformly in :attr:`style`, or a Rich
+            :class:`~rich.text.Text` carrying its own spans (for a column header that lights
+            just its active sort column, say), rendered as-authored with ``style`` ignored.
+        style: Theme style a *string* title is drawn in. Section headings pass ``"accent"``
+            so they read as highlighted landmarks; the default ``"muted"`` fits the
+            structural rows (blank spacers, column-header lines, inline notes). A ``Text``
+            title styles itself, so this is unused for one.
     """
 
-    title: str
+    title: Union[str, Text]
     style: str = "muted"
 
 
@@ -279,8 +282,8 @@ class SelectScreen(Screen):
             else self._footer_base
         widths = [cell_len(self.title), cell_len(footer), cell_len(self._prompt)]
         for item in self._items:
-            label = item.title if isinstance(item, Separator) else _plain(item.label)
-            widths.append(cell_len(label) + 2)  # + the "❯ " / "  " pointer column
+            label = item.title if isinstance(item, Separator) else item.label
+            widths.append(cell_len(_plain(label)) + 2)  # + the "❯ " / "  " pointer column
         return max(widths, default=20) + 8
 
     def render_body(self, width: int) -> list[str]:
@@ -307,7 +310,11 @@ class SelectScreen(Screen):
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
         for item in rows:
             if isinstance(item, Separator):
-                sep = render_to_ansi(Text(item.title, style=item.style), width)
+                # A Text title carries its own spans (a two-colour column header); a plain
+                # string is drawn uniformly in the separator's style.
+                title = item.title
+                heading = title if isinstance(title, Text) else Text(title, style=item.style)
+                sep = render_to_ansi(heading, width)
                 self._sticky_headers.append((len(lines), sep))
                 lines.append(sep)
                 continue

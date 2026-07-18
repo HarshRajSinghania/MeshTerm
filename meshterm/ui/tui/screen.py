@@ -154,7 +154,8 @@ class Screen:
         Args:
             action: One of ``up``, ``down``, ``pageup``, ``pagedown``, ``home``, ``end``,
                 ``ctrl_home``, ``ctrl_end``, ``ctrl_pageup``, ``ctrl_pagedown``, ``left``,
-                ``right``, ``ctrl_left``, ``ctrl_right``, ``shift_up``, ``shift_down``,
+                ``right``, ``ctrl_left``, ``ctrl_right``, ``ctrl_up``, ``ctrl_down``,
+                ``shift_up``, ``shift_down``,
                 ``shift_left``, ``shift_right``, ``enter``, ``escape``, ``backspace``,
                 ``delete``, ``space``, ``tab``, or ``text`` (with ``data`` set to the character).
             data: The typed character when ``action`` is ``text``.

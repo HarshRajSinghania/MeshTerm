@@ -22,6 +22,7 @@ from meshterm.ui.timemachine_screen import (
     _hour_ticks,
     _mesh_sections,
     _node_sections,
+    _self_sections,
     _snr_cell_style,
     bucket_medians,
     bucketize,
@@ -554,12 +555,13 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     """Picker rows lane up under the header; unknown nodes read as heat-coloured names."""
     from meshterm.core.models import HeardNode
     from meshterm.ui.timemachine_screen import _picker_header, _picker_row
+    from meshterm.ui.widgets import NodesSort
 
     node = HeardNode(
         node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
         last_rssi=None, last_seen=utcnow(),
     )
-    row = _picker_row(node, node.name, 10, 2)
+    row = _picker_row(node, node.name, 10, 2, 16)
     plain = row.plain
     assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
     # A just-heard mystery node reads hot (white), not placeholder-grey.
@@ -570,10 +572,210 @@ def test_picker_row_lanes_align_under_the_header() -> None:
         span.style == "brand" and span.start == hash_at and span.end == hash_at + 4
         for span in row.spans
     )
-    # Header labels land over their lanes (+2 covers the select pointer column).
-    header = _picker_header(10)
-    assert header.index("HASH") == plain.index("3d" * 6) + 2
+    # Header labels land over their lanes (+2 covers the select pointer column); the lanes
+    # now read NAME · HEARD · PKTS · HASH, with the hash closing the row.
+    header = _picker_header(10, NodesSort.from_name("heard")).plain
     assert header.index("NAME") == plain.index("unknown") + 2
+    assert header.index("HASH") == plain.index("3d" * 6) + 2
+    assert header.index("HEARD") < header.index("PKTS") < header.index("HASH")
+
+
+def test_picker_header_marks_the_active_sort_column() -> None:
+    """The sort column carries a direction triangle; toggling flips ▲/▼, and only it."""
+    from meshterm.ui.timemachine_screen import _picker_header
+    from meshterm.ui.widgets import NodesSort
+
+    heard_desc = _picker_header(12, NodesSort("heard", ascending=False)).plain
+    assert "HEARD ▼" in heard_desc and "▲" not in heard_desc
+    # Ascending flips the same column's glyph without touching the others.
+    assert "HEARD ▲" in _picker_header(12, NodesSort("heard", ascending=True)).plain
+    # A different active column moves the mark; packets opens descending.
+    packets = _picker_header(12, NodesSort.from_name("packets")).plain
+    assert "PKTS ▼" in packets and "HEARD" in packets and "HEARD ▼" not in packets
+    # The hash column is sortable now too, so it carries the mark when it's active.
+    hash_sorted = _picker_header(12, NodesSort("hash", ascending=True)).plain
+    assert "HASH ▲" in hash_sorted and "PKTS ▲" not in hash_sorted
+
+
+def test_picker_header_highlights_only_the_active_sort_column() -> None:
+    """The active column's label and its triangle are lit cyan; the other lanes stay muted."""
+    from meshterm.ui.timemachine_screen import _PICK_SORT_ACTIVE, _picker_header
+    from meshterm.ui.widgets import NodesSort
+
+    header = _picker_header(12, NodesSort.from_name("packets"))
+    lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _PICK_SORT_ACTIVE]
+    # Exactly the active PKTS lane (label + triangle) carries the highlight.
+    assert any("PKTS" in seg and "▼" in seg for seg in lit)
+    assert not any(any(other in seg for other in ("NAME", "HEARD", "HASH")) for seg in lit)
+
+
+def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
+    """Build a rendered picker over ``listed`` and return it (rows sized to ``width``)."""
+    from meshterm.ui.timemachine_screen import (
+        _PICKER_SORT_COLUMNS,
+        _PICKER_SORT_OPENS_ASCENDING,
+        TimeMachinePickerScreen,
+    )
+    from meshterm.ui.widgets import NodesSort
+
+    default_sort = NodesSort.from_name(
+        "heard", _PICKER_SORT_COLUMNS, _PICKER_SORT_OPENS_ASCENDING
+    )
+    screen = TimeMachinePickerScreen(
+        listed=listed,
+        prefix_bytes=prefix_bytes,
+        sort=sort if sort is not None else default_sort,
+        prompt="",
+        **({"type_of": type_of} if type_of is not None else {}),
+        **({"resolve_key": resolve_key} if resolve_key is not None else {}),
+    )
+    screen.render_body(width)
+    return screen
+
+
+def _picker_order(screen) -> list:
+    """The node ids the picker currently lists, in display order (skipping the overview rows)."""
+    from meshterm.ui.timemachine_screen import MESH, SELF
+
+    return [c.value[0] for c in screen._choices() if c.value not in (MESH, SELF)]
+
+
+def _heard_nodes() -> list:
+    """Three heard nodes with distinct names, counts, and ages for the sort tests."""
+    from meshterm.core.models import HeardNode
+
+    now = utcnow()
+
+    def node(node_id: str, name: str, count: int, mins: int) -> "HeardNode":
+        return HeardNode(
+            node=node_id, name=name, count=count, median_snr=None, best_snr=None,
+            last_rssi=None, last_seen=now - timedelta(minutes=mins),
+        )
+
+    # Carla is freshest, Alice busiest, Bob oldest — so every column disagrees on order.
+    return [
+        (node("aa" * 6, "Alice", 90, 30), "Alice"),
+        (node("bb" * 6, "Bob", 5, 90), "Bob"),
+        (node("cc" * 6, "Carla", 40, 2), "Carla"),
+    ]
+
+
+def test_picker_ctrl_arrows_sort_by_column_and_direction() -> None:
+    """Ctrl+←/→ pick the column (natural direction); Ctrl+↑/↓ force asc/desc."""
+    listed = _heard_nodes()
+    screen = _picker(listed)
+
+    # Opens most-recently-heard first: Carla (2m), Alice (30m), Bob (90m).
+    assert _picker_order(screen) == ["cc" * 6, "aa" * 6, "bb" * 6]
+
+    # Ctrl+→ from heard lands on packets, opening descending: Alice 90, Carla 40, Bob 5.
+    screen.handle("ctrl_right")
+    screen.render_body(80)
+    assert screen._sort.column == "packets" and screen._sort.ascending is False
+    assert _picker_order(screen) == ["aa" * 6, "cc" * 6, "bb" * 6]
+
+    # Ctrl+↑ forces ascending on packets: Bob 5, Carla 40, Alice 90.
+    screen.handle("ctrl_up")
+    screen.render_body(80)
+    assert screen._sort.ascending is True
+    assert _picker_order(screen) == ["bb" * 6, "cc" * 6, "aa" * 6]
+
+    # Ctrl+← steps back to heard; Ctrl+↓ makes it descending (oldest first): Bob, Alice, Carla.
+    screen.handle("ctrl_left")
+    screen.handle("ctrl_down")
+    screen.render_body(80)
+    assert screen._sort.column == "heard" and screen._sort.ascending is False
+    assert _picker_order(screen) == ["bb" * 6, "aa" * 6, "cc" * 6]
+
+
+def test_picker_ctrl_arrows_reach_a_hash_sort() -> None:
+    """A fourth column in the ring sorts by node id; Ctrl+↓ flips it f→0."""
+    listed = _heard_nodes()  # ids sort aa < bb < cc, disagreeing with every other column
+    screen = _picker(listed)
+
+    screen.handle("ctrl_right")  # heard -> packets
+    screen.handle("ctrl_right")  # packets -> hash, opening ascending (0 → f)
+    screen.render_body(80)
+    assert screen._sort.column == "hash" and screen._sort.ascending is True
+    assert _picker_order(screen) == ["aa" * 6, "bb" * 6, "cc" * 6]
+
+    screen.handle("ctrl_down")  # descending: f → 0
+    screen.render_body(80)
+    assert _picker_order(screen) == ["cc" * 6, "bb" * 6, "aa" * 6]
+
+
+def test_picker_glyph_reflects_resolved_node_type() -> None:
+    """A node with no stored type takes its contact's type for the leading glyph."""
+    from meshterm.core.models import NODE_TYPE_REPEATER
+    from meshterm.ui.timemachine_screen import MESH, SELF
+    from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+
+    listed = _heard_nodes()  # every node's stored node_type is None
+    repeater = listed[0][0].node  # Alice's id — the one the resolver knows as a repeater
+
+    screen = _picker(listed, type_of=lambda node: NODE_TYPE_REPEATER if node == repeater else None)
+    glyphs = {
+        c.value[0]: c.label.plain[0]
+        for c in screen._choices()
+        if c.value not in (MESH, SELF)
+    }
+    # The resolved repeater takes ▲; a node the resolver can't place keeps the plain-node ●.
+    assert glyphs[repeater] == _NODE_GLYPHS[NODE_TYPE_REPEATER][0]
+    assert glyphs[listed[1][0].node] == _DEFAULT_GLYPH[0]
+
+
+def test_picker_stored_node_type_wins_over_the_resolver() -> None:
+    """A stored advert type drives the glyph even when the contact resolver disagrees."""
+    from datetime import timedelta
+
+    from meshterm.core.models import NODE_TYPE_REPEATER, NODE_TYPE_SENSOR, HeardNode
+    from meshterm.ui.timemachine_screen import MESH, SELF
+    from meshterm.ui.widgets import _NODE_GLYPHS
+
+    sensor = HeardNode(
+        node="ab" * 6, name="Probe", count=3, median_snr=None, best_snr=None,
+        last_rssi=None, last_seen=utcnow() - timedelta(minutes=1), node_type=NODE_TYPE_SENSOR,
+    )
+    screen = _picker([(sensor, "Probe")], type_of=lambda _node: NODE_TYPE_REPEATER)
+    glyph = next(
+        c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF)
+    )
+    assert glyph == _NODE_GLYPHS[NODE_TYPE_SENSOR][0]
+
+
+def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
+    """A re-sort rides the highlight to the same node and leaves an active filter in place."""
+    listed = _heard_nodes()
+    screen = _picker(listed)
+
+    # Highlight Bob (choices: mesh, You, Carla, Alice, Bob under heard order).
+    screen._index = 4
+    assert screen._current_choice().value[0] == "bb" * 6
+
+    # Filter to Bob, then sort by name: the highlight and the filter both survive.
+    screen._filter = "bob"
+    screen.handle("ctrl_left")  # heard -> name
+    screen.render_body(80)
+    assert screen._sort.column == "name"
+    assert screen._filter == "bob"
+    assert screen._current_choice().value[0] == "bb" * 6
+
+
+def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
+    """Columns anchor left: the name lane hugs its content and stays put as the window
+    widens, and the freed width flows to the hash lane so more of each key shows."""
+    from meshterm.ui.timemachine_screen import _PICK_LEAD
+
+    screen = _picker(_heard_nodes(), width=72)
+    # The widest name here is the "unknown" fallback (7 cells); the lane sizes to it.
+    name_w, hash_w = screen._name_w, screen._hash_w
+    assert name_w == len("unknown")
+    assert hash_w == 72 - _PICK_LEAD - name_w
+    # Widen the terminal: the name lane does not move, the hash lane takes the extra width.
+    screen.render_body(120)
+    assert screen._name_w == name_w
+    assert screen._hash_w == 120 - _PICK_LEAD - name_w
+    assert screen._hash_w > hash_w
 
 
 def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
@@ -595,3 +797,168 @@ def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
     assert "30 d" in screen.title
     screen.render_body(80)
     assert len(calls) == 2
+
+
+# --- the own-node page ------------------------------------------------------------------
+
+
+def _activity_repo(tmp_path: Path) -> Repository:
+    """A repository seeded with our own outbound life: traces (homed, timed-out, one path
+    walk), channel + direct messages (some acked, one inbound), and a tx-power sample."""
+    from meshterm.core.models import (
+        PATH_TRACE_TARGET,
+        ChatMessage,
+        Hop,
+        TraceResult,
+    )
+
+    repo = Repository(tmp_path / "self.db")
+    now = utcnow()
+    trun = repo.start_run("trace", {}, None)
+
+    def trace(target: str, ok: bool, snrs: list, mins: int) -> "TraceResult":
+        return TraceResult(
+            target=target, success=ok,
+            hops=[Hop(index=i, node=None, snr=s) for i, s in enumerate(snrs)],
+            round_trip_ms=120.0 if ok else None, tx_power=20,
+            path_hash_bytes=1, timestamp=now - timedelta(minutes=mins),
+        )
+
+    repo.record_trace(trun, trace("YUL-A", True, [5.0, 8.0], 40))       # min 5.0, 2 hops
+    repo.record_trace(trun, trace("YUL-A", True, [2.0], 30))            # min 2.0, 1 hop
+    repo.record_trace(trun, trace("YUL-B", True, [-3.0, 1.0, 4.0], 20))  # min -3.0, 3 hops
+    repo.record_trace(trun, trace("YUL-B", False, [], 15))             # timed out, no SNR
+    repo.record_trace(trun, trace(PATH_TRACE_TARGET, True, [6.0], 10))   # path walk: no target
+
+    crun = repo.start_run("chat", {}, None)
+
+    def msg(outbound, is_channel, peer, acked, mins, channel_id=None):
+        return ChatMessage(
+            text="hi", outbound=outbound, is_channel=is_channel, channel_id=channel_id,
+            channel_idx=0 if is_channel else None, peer=peer, peer_name=peer,
+            snr=None, acked=acked, created_at=now - timedelta(minutes=mins),
+        )
+
+    repo.record_chat_message(msg(True, True, None, None, 35, channel_id="public"), run_id=crun)
+    repo.record_chat_message(msg(True, True, None, None, 25, channel_id="public"), run_id=crun)
+    repo.record_chat_message(msg(True, False, "aa" * 6, True, 22))    # dm sent, acked
+    repo.record_chat_message(msg(True, False, "bb" * 6, False, 18))   # dm sent, not acked
+    repo.record_chat_message(msg(True, False, "aa" * 6, None, 12))    # dm sent, ack pending
+    repo.record_chat_message(msg(False, False, "aa" * 6, None, 8), run_id=crun)  # inbound: excluded
+
+    repo._conn.execute(
+        "INSERT INTO tx_samples "
+        "(run_id, target, tx_power, median_min_snr, success_rate, samples, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (trun, "YUL-A", 20, 3.0, 0.8, 5, (now - timedelta(minutes=20)).isoformat()),
+    )
+    repo._conn.commit()
+    return repo
+
+
+def test_self_transmissions_unions_traces_and_outbound_messages(tmp_path: Path) -> None:
+    """The own-node timeline is every trace + outbound message, oldest first; inbound excluded."""
+    repo = _activity_repo(tmp_path)
+    stamps = repo.self_transmissions()
+    assert len(stamps) == 5 + 5  # 5 traces + 5 outbound messages (the lone inbound excluded)
+    assert stamps == sorted(stamps)  # oldest first
+    window = repo.self_transmissions(since=utcnow() - timedelta(minutes=21))
+    assert 0 < len(window) < len(stamps)  # only the recent tail
+    repo.close()
+
+
+def test_self_trace_reach_carries_outcomes(tmp_path: Path) -> None:
+    """Reach rows are oldest-first ``(when, success, min_snr, hop_count)``; a timeout has no SNR."""
+    repo = _activity_repo(tmp_path)
+    reach = repo.self_trace_reach()
+    assert len(reach) == 5
+    assert [r[0] for r in reach] == sorted(r[0] for r in reach)
+    homed = [r for r in reach if r[1]]
+    timed_out = [r for r in reach if not r[1]]
+    assert len(homed) == 4 and len(timed_out) == 1
+    assert timed_out[0][2] is None  # nothing came back to measure
+    assert min(r[2] for r in homed) == -3.0  # the YUL-B path's bottleneck
+    repo.close()
+
+
+def test_self_activity_ledger_tallies(tmp_path: Path) -> None:
+    """The ledger counts traces, distinct targets (path walk excluded), messages, acks, tx."""
+    repo = _activity_repo(tmp_path)
+    led = repo.self_activity_ledger()
+    assert led.trace_total == 5 and led.trace_ok == 4
+    assert led.trace_targets == 2  # YUL-A + YUL-B; the (path) walk names no target
+    assert led.msg_channel == 2 and led.msg_dm == 3
+    assert led.dm_acked == 1 and led.dm_ackable == 2  # 2 dm sends had a verdict; 1 acked
+    assert led.dm_peers == 2  # aa + bb
+    assert led.tx_samples == 1
+    # The window filter trims every table together.
+    recent = repo.self_activity_ledger(since=utcnow() - timedelta(minutes=16))
+    assert recent.trace_total < led.trace_total
+    repo.close()
+
+
+def test_self_sections_render_the_page_and_empty_window(tmp_path: Path) -> None:
+    """The own-node page shows Activity/Reach/Rhythm/Ledger; an empty window coaches widening."""
+    repo = _activity_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    text = _plain(_self_sections(ctx, timedelta(days=1), 72), 72)
+    assert "Activity" in text and "Reach" in text
+    assert "Rhythm" in text and "Ledger" in text
+    assert "4 of 5 traces home" in text
+    assert "2 channel · 3 direct" in text
+    # A window tighter than the most recent transmission is empty and says so.
+    empty = _plain(_self_sections(ctx, timedelta(minutes=1), 72), 72)
+    assert "Nothing sent in this window." in empty
+    repo.close()
+
+
+def test_self_row_leads_the_node_list_as_a_lane() -> None:
+    """The own-node lane shows our name + (you), faint — for heard/pkts, and our key hash."""
+    from meshterm.ui.timemachine_screen import _self_picker_row
+
+    named = _self_picker_row(
+        "YUL-Johputer", "3d" * 32, name_w=30, prefix_bytes=1, hash_w=30
+    ).plain
+    assert named.startswith("★")
+    assert "YUL-Johputer" in named and "(you)" in named
+    assert "—" in named  # heard and packets have nothing to show for us
+    assert "3d3d" in named  # our key hash, its routing prefix lit
+    # No reachable device: a bare "you" name and a "?" hash, no "(you)" tag.
+    anon = _self_picker_row(None, None, name_w=30, prefix_bytes=0, hash_w=30).plain
+    assert "you" in anon and "(you)" not in anon
+    assert anon.rstrip().endswith("?")
+
+
+def test_picker_lists_you_first_in_the_node_block() -> None:
+    """Our node leads the node list (after the mesh row) and stays first whatever the sort."""
+    from meshterm.ui.timemachine_screen import MESH, SELF
+
+    screen = _picker(_heard_nodes(), width=72)
+    choices = screen._choices()
+    # The mesh overview leads; our own node is the first node, ahead of every heard node.
+    assert choices[0].value == MESH
+    assert choices[1].value == SELF
+    # A re-sort reorders only the heard block; our node stays first in it.
+    screen.handle("ctrl_right")
+    screen.render_body(72)
+    choices = screen._choices()
+    assert choices[0].value == MESH and choices[1].value == SELF
+
+
+def test_picker_hash_lane_shows_a_heard_nodes_full_key_when_a_contact_holds_it() -> None:
+    """A heard node stored as a 12-hex prefix shows its whole key when a contact carries it,
+    so a wide screen reveals more than the twelve stored digits (its stored id still selects)."""
+    from meshterm.core.models import HeardNode
+
+    stored = "3d63c6429436"  # the 12-hex prefix the observations keep
+    full = stored + "ab" * 26  # the whole public key a contact holds
+    node = HeardNode(
+        node=stored, name="Rep", count=7, median_snr=None, best_snr=None,
+        last_rssi=None, last_seen=utcnow(),
+    )
+    screen = _picker([(node, "Rep")], resolve_key=lambda n: full if n == stored else n, width=100)
+    # The heard row (after the mesh, header, and self rows) shows well past the stored prefix.
+    row = next(c for c in screen._choices() if c.value == (stored, "Rep"))
+    assert stored + "ab" * 10 in row.label.plain  # 32 hex shown — far more than the stored 12
+    # Its value still carries the stored 12-hex id, so the page query it opens is unchanged.
+    assert row.value == (stored, "Rep")

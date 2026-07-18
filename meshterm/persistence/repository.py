@@ -20,6 +20,7 @@ from ..core.models import (
     Hop,
     NeighbourInfo,
     Observation,
+    SelfActivity,
     TraceResult,
     TxLevelResult,
     utcnow,
@@ -1192,6 +1193,127 @@ class Repository:
             except (TypeError, ValueError, IndexError):
                 continue  # a malformed stray timestamp simply isn't counted
         return counts
+
+    def self_transmissions(self, *, since: Optional[datetime] = None) -> list[datetime]:
+        """Timestamps of everything this station put on the air, oldest first.
+
+        The own-node counterpart of :meth:`node_observations`: our node is never in the
+        reception history — we don't overhear ourselves — so its Time Machine volume and
+        rhythm are drawn from what we *sent* instead. Every trace we launched and every
+        message we sent unions into one transmission timeline. Both tables stamp their
+        rows in UTC ISO-8601 (``created_at``), the same form observations carry, so the
+        timeline drops straight into the bucketing the node page's charts already use.
+
+        Args:
+            since: Only transmissions at or after this time, if given.
+
+        Returns:
+            Transmission timestamps (trace launches + sent messages), oldest first.
+        """
+        sql = "SELECT created_at FROM traces"
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE created_at >= ?"
+            params.append(since.isoformat())
+        sql += " UNION ALL SELECT created_at FROM messages WHERE outbound = 1"
+        if since is not None:
+            sql += " AND created_at >= ?"
+            params.append(since.isoformat())
+        stamps: list[datetime] = []
+        for row in self._conn.execute(sql, params).fetchall():
+            try:
+                stamps.append(datetime.fromisoformat(row["created_at"]))
+            except (TypeError, ValueError):
+                continue  # a malformed stray timestamp simply isn't charted
+        stamps.sort()
+        return stamps
+
+    def self_trace_reach(
+        self, *, since: Optional[datetime] = None
+    ) -> list[tuple[datetime, bool, Optional[float], Optional[int]]]:
+        """Per-trace reach outcomes, oldest first: ``(when, came_home, min_snr, hop_count)``.
+
+        The measurement behind the own-node page's Reach section. Every trace row is one
+        probe of how far we get out: whether it came home, the bottleneck SNR of the path
+        it walked (``min_snr`` — the reach's weakest link), and how many hops it crossed.
+        Timed-out attempts are kept — a run of failures is itself a reach story — but carry
+        no SNR (nothing came back to measure), so the SNR band draws only the ones that did.
+
+        Args:
+            since: Only traces at or after this time, if given.
+
+        Returns:
+            ``(created_at, success, min_snr, hop_count)`` per trace, oldest first.
+        """
+        sql = "SELECT created_at, success, min_snr, hop_count FROM traces"
+        params: list[Any] = []
+        if since is not None:
+            sql += " WHERE created_at >= ?"
+            params.append(since.isoformat())
+        sql += " ORDER BY created_at"
+        out: list[tuple[datetime, bool, Optional[float], Optional[int]]] = []
+        for row in self._conn.execute(sql, params).fetchall():
+            try:
+                when = datetime.fromisoformat(row["created_at"])
+            except (TypeError, ValueError):
+                continue  # a malformed stray timestamp simply isn't charted
+            out.append((when, bool(row["success"]), row["min_snr"], row["hop_count"]))
+        return out
+
+    def self_activity_ledger(self, *, since: Optional[datetime] = None) -> SelfActivity:
+        """Roll-up tallies of this station's outbound life (see :class:`SelfActivity`).
+
+        One aggregate pass each over the traces, messages, and tx-sample tables — every
+        count the own-node page's Ledger line prints, filtered to the window. Hand-composed
+        path walks (filed under :data:`PATH_TRACE_TARGET`) still count among the traces we
+        launched, but are excluded from the distinct-target tally: they aim at no target.
+
+        Args:
+            since: Only activity at or after this time, if given.
+
+        Returns:
+            The populated :class:`SelfActivity`.
+        """
+        window = ""
+        param: list[Any] = []
+        if since is not None:
+            window = " AND created_at >= ?"
+            param = [since.isoformat()]
+
+        traces = self._conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(success), 0) AS ok, "
+            "COUNT(DISTINCT CASE WHEN target != ? THEN target END) AS targets "
+            "FROM traces WHERE 1 = 1" + window,
+            [PATH_TRACE_TARGET, *param],
+        ).fetchone()
+
+        msgs = self._conn.execute(
+            "SELECT "
+            "COALESCE(SUM(is_channel), 0) AS chan, "
+            "COALESCE(SUM(1 - is_channel), 0) AS dm, "
+            "COALESCE(SUM(CASE WHEN is_channel = 0 AND acked = 1 THEN 1 END), 0) AS acked, "
+            "COALESCE(SUM(CASE WHEN is_channel = 0 AND acked IS NOT NULL THEN 1 END), 0) "
+            "  AS ackable, "
+            "COUNT(DISTINCT CASE WHEN is_channel = 0 THEN peer END) AS peers "
+            "FROM messages WHERE outbound = 1" + window,
+            list(param),
+        ).fetchone()
+
+        tx = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM tx_samples WHERE 1 = 1" + window, list(param)
+        ).fetchone()
+
+        return SelfActivity(
+            trace_total=int(traces["n"]),
+            trace_ok=int(traces["ok"]),
+            trace_targets=int(traces["targets"]),
+            msg_channel=int(msgs["chan"]),
+            msg_dm=int(msgs["dm"]),
+            dm_acked=int(msgs["acked"]),
+            dm_ackable=int(msgs["ackable"]),
+            dm_peers=int(msgs["peers"]),
+            tx_samples=int(tx["n"]),
+        )
 
     def first_seen(
         self, *, since: Optional[datetime] = None

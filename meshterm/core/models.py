@@ -419,6 +419,42 @@ class HeardNode:
 
 
 @dataclass(slots=True)
+class SelfActivity:
+    """The Time Machine's own-node ledger: what this station *did*, not what it heard.
+
+    Our own node is the one subject the reception history can't describe — we never
+    overhear ourselves — so its Time Machine page is built from the outbound record
+    instead: the traces we launched and the messages we sent. This carries the roll-up
+    tallies that page prints, over one history window (see
+    :meth:`~meshterm.persistence.repository.Repository.self_activity_ledger`).
+
+    Attributes:
+        trace_total: Traces launched in the window (timed-out attempts included).
+        trace_ok: How many of those came home (``success = 1``).
+        trace_targets: Distinct destinations aimed at, hand-composed path walks
+            (filed under :data:`PATH_TRACE_TARGET`) excluded — they name no target.
+        msg_channel: Channel messages sent (``outbound = 1``, ``is_channel = 1``).
+        msg_dm: Direct messages sent (``outbound = 1``, ``is_channel = 0``).
+        dm_acked: Direct messages sent that were acknowledged (``acked = 1``).
+        dm_ackable: Direct messages sent whose ack was tracked at all (``acked``
+            non-null) — the denominator the ack rate is honest over, since a channel
+            broadcast is never acked and an in-flight DM has no verdict yet.
+        dm_peers: Distinct contacts we sent a direct message to.
+        tx_samples: TX-power optimization samples recorded (each a robust reach probe).
+    """
+
+    trace_total: int = 0
+    trace_ok: int = 0
+    trace_targets: int = 0
+    msg_channel: int = 0
+    msg_dm: int = 0
+    dm_acked: int = 0
+    dm_ackable: int = 0
+    dm_peers: int = 0
+    tx_samples: int = 0
+
+
+@dataclass(slots=True)
 class Hop:
     """A single hop in a path trace.
 

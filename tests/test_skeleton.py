@@ -97,6 +97,22 @@ def test_node_type_resolver_matches_hop_hash_to_contact_type() -> None:
     assert type_of(None) is None                   # our own device, passed through
 
 
+def test_key_resolver_expands_a_stored_prefix_to_the_full_key() -> None:
+    """A heard node's stored 12-hex prefix resolves to the contact's whole public key."""
+    full = "3d63c6429436" + "ab" * 26  # 64 hex
+    resolve = trace_runner.make_key_resolver(
+        [
+            Contact(name="Repeater", public_key=full, key_prefix="3d63c6429436"),
+            Contact(name="Keyless", public_key="", key_prefix="a1b2c3d4"),
+        ]
+    )
+    assert resolve("3d63c6429436") == full   # the stored prefix begins the contact's key
+    assert resolve("3d63") == full           # any shorter slice of it, too
+    assert resolve("ffffffffffff") == "ffffffffffff"  # no contact: the prefix stands
+    assert resolve("a1b2c3d4") == "a1b2c3d4"          # contact has no full key to expand to
+    assert resolve(None) is None
+
+
 def test_path_hash_flags_power_of_two_only() -> None:
     """Trace flags encode the hash width as 1 << s, so only 1/2/4/8 bytes map."""
     assert trace_runner.path_hash_flags(1) == 0

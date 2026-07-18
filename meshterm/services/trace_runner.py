@@ -112,6 +112,40 @@ def make_node_type_resolver(
     return type_of
 
 
+def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
+    """Build a resolver that expands a node's stored key-prefix hash to its full public key.
+
+    The recorder's observations identify a node only by a short key-prefix hash — the slice
+    heard on the air — but a contact the device holds carries the node's whole public key.
+    This maps that stored prefix back to the full key, so a display can show as much of the
+    key as fits rather than stopping at the twelve stored hex digits. A prefix no contact's
+    key begins with resolves to itself, leaving the stored hash to stand.
+
+    Args:
+        contacts: Known contacts to resolve against.
+
+    Returns:
+        A callable taking a stored key prefix and returning the full public key of the
+        contact whose key begins with it, or the prefix unchanged when none matches.
+    """
+    keys = [
+        pub
+        for c in contacts or []
+        if (pub := (c.public_key or "").lower().removeprefix("0x"))
+    ]
+
+    def resolve(label: Optional[str]) -> Optional[str]:
+        if not label:
+            return label
+        needle = label.lower().removeprefix("0x")
+        for pub in keys:
+            if pub.startswith(needle):
+                return pub
+        return label
+
+    return resolve
+
+
 def parse_trace_path(spec: str, contacts: Optional[list[Contact]] = None) -> str:
     """Parse a user path spec into the hex path string ``send_trace`` expects.
 

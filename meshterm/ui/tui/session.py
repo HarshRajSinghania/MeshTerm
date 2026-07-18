@@ -63,6 +63,8 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.ControlPageDown: "ctrl_pagedown",
     Keys.ControlLeft: "ctrl_left",
     Keys.ControlRight: "ctrl_right",
+    Keys.ControlUp: "ctrl_up",
+    Keys.ControlDown: "ctrl_down",
     Keys.Enter: "enter",
     Keys.Escape: "escape",
     Keys.Backspace: "backspace",

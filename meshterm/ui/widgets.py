@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
@@ -376,9 +376,10 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
         value: The key as hex, optionally ``0x``-prefixed and mixed-case.
         prefix_bytes: Number of leading bytes the current path-hash mode addresses; ``0``
             (or negative) leaves the whole key un-highlighted.
-        width: Display budget in cells; a longer key shows ``width - 1`` digits plus an
-            ellipsis, a shorter one is right-padded to the budget so lanes stay aligned.
-            ``None`` shows the key whole, unpadded.
+        width: Display budget in cells; a longer key is truncated to the whole leading
+            bytes that fit in ``width - 1`` cells (an even digit count — a hash reads in
+            bytes, two hex digits each) plus an ellipsis, a shorter one is right-padded to
+            the budget so lanes stay aligned. ``None`` shows the key whole, unpadded.
 
     Returns:
         A styled :class:`Text` of the key (exactly ``width`` cells when given).
@@ -388,7 +389,13 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
     pad = 0
     ellipsis = False
     if width is not None and len(raw) > width:
-        raw, ellipsis = raw[: max(0, width - 1)], True
+        # Truncate on a byte boundary: keep an even number of hex digits, the ellipsis
+        # taking the next cell and any odd cell left over padding out, so a mid-byte digit
+        # never shows and the lane still spans exactly ``width``.
+        kept = max(0, width - 1)
+        kept -= kept % 2
+        raw, ellipsis = raw[:kept], True
+        pad = width - kept - 1
     elif width is not None:
         pad = width - len(raw)
     text = Text()
@@ -758,26 +765,44 @@ _SORT_OPENS_ASCENDING: dict[str, bool] = {"name": True, "heard": True, "packets"
 class NodesSort:
     """Which column the node list is sorted by, and in which direction.
 
-    ``column`` is one of :data:`_SORT_COLUMNS`; ``ascending`` sorts the column's underlying
+    ``column`` is one of :attr:`columns`; ``ascending`` sorts the column's underlying
     metric low-to-high — name A→Z, *age* (so ascending = most recently heard first), packet
     count low-to-high. The interactive screen mutates this in place as the user presses the
     arrows.
+
+    The sort *ring* is per-instance: :attr:`columns` and :attr:`opens_ascending` default to
+    the Nodes list's three (:data:`_SORT_COLUMNS`), but the Time Machine picker passes a
+    wider set — it adds a sortable ``hash`` column — so the same model drives both without a
+    module-global column list that one screen would have to share with the other.
     """
 
     column: str = "name"
     ascending: bool = True
+    columns: tuple[str, ...] = _SORT_COLUMNS
+    opens_ascending: dict[str, bool] = field(default_factory=lambda: _SORT_OPENS_ASCENDING)
 
     @classmethod
-    def from_name(cls, name: str) -> "NodesSort":
-        """Build a sort for ``name``, opening in that column's natural direction."""
-        column = name if name in _SORT_COLUMNS else "name"
-        return cls(column, _SORT_OPENS_ASCENDING[column])
+    def from_name(
+        cls,
+        name: str,
+        columns: tuple[str, ...] = _SORT_COLUMNS,
+        opens_ascending: Optional[dict[str, bool]] = None,
+    ) -> "NodesSort":
+        """Build a sort for ``name`` over ``columns``, opening in that column's natural direction.
+
+        Falls back to the ring's first column when ``name`` isn't one of ``columns`` (so a
+        stale saved key can't wedge the sort). ``opens_ascending`` defaults to the Nodes
+        list's directions when omitted.
+        """
+        opens = opens_ascending if opens_ascending is not None else _SORT_OPENS_ASCENDING
+        column = name if name in columns else columns[0]
+        return cls(column, opens[column], columns, opens)
 
     def move(self, delta: int) -> None:
         """Step the active column ``delta`` places (wrapping), adopting its natural direction."""
-        index = (_SORT_COLUMNS.index(self.column) + delta) % len(_SORT_COLUMNS)
-        self.column = _SORT_COLUMNS[index]
-        self.ascending = _SORT_OPENS_ASCENDING[self.column]
+        index = (self.columns.index(self.column) + delta) % len(self.columns)
+        self.column = self.columns[index]
+        self.ascending = self.opens_ascending[self.column]
 
 
 def _ordered_contacts(
