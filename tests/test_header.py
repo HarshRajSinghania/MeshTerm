@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from meshterm.ui.menu import _HEADER_ACTIVITY_LEVELS, _header
+from meshterm.ui.menu import _header
 
 
 def _ctx(histogram=(), unread=0, alerts=0, battery=None) -> SimpleNamespace:
@@ -67,16 +67,18 @@ def test_header_wider_terminal_shows_deeper_history() -> None:
     assert burst_cells(_header(_ctx(histogram=histogram), {}, 120).plain)
 
 
-def test_header_thresholds_step_the_bar_heights() -> None:
-    """The documented 1/3/8/21 shoulders map counts to 1–4 dots."""
-    assert _HEADER_ACTIVITY_LEVELS == (1, 3, 8, 21)
-    histogram = (21, 8, 3, 1) + (0,) * 356
+def test_header_scales_to_the_window_peak() -> None:
+    """The pulse scales to its window's busiest minute, not a fixed threshold ladder.
+
+    A 16/12/8/4 ramp against its own peak of 16 climbs one dot per step, so the four
+    newest minutes read heights 1,2,3,4 left→right in the row's final two cells — the
+    same relative scaling the dashboard's tall activity chart draws with.
+    """
+    histogram = (16, 12, 8, 4) + (0,) * 356
     header = _header(_ctx(histogram=histogram), {}, 80).plain
     spark = [ch for ch in header if 0x2800 <= ord(ch) <= 0x28FF]
     left = (0x00, 0x40, 0x44, 0x46, 0x47)
     right = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
-    # Flipped for display, the four newest minutes read 1,3,8,21 left→right in the
-    # row's final two cells: heights (1,2) then (3,4).
     assert spark[-2:] == [chr(0x2800 | left[1] | right[2]), chr(0x2800 | left[3] | right[4])]
 
 

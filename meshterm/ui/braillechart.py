@@ -41,7 +41,6 @@ Beyond timelines, the module owns the app's two other braille conventions:
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from typing import Callable, Optional, Sequence, Union
 
 from rich.text import Text
@@ -163,25 +162,40 @@ def timeline_rows(
 
 def activity_sparkline(
     histogram: Sequence[int],
-    levels: tuple[int, ...],
     buckets: int,
     *,
+    peak: Optional[float] = None,
     style: str = "ok",
     column_styles: Optional[Sequence[str]] = None,
 ) -> Text:
     """A one-row activity sparkline over a newest-first histogram, "now" rightmost.
 
-    Bar heights are absolute, stepped at ``levels`` (the count a bucket must reach
-    for each extra dot), so the same traffic always draws the same bar regardless
-    of what else is on screen and a lone packet never vanishes. The histogram
-    arrives newest-first — the natural order the monitor and repository keep — and
-    is reversed here, so the current bucket lands on the right edge and traffic
-    slides *left* as it ages, like every other MeshTerm timeline.
+    Bar heights scale to a *peak* the way :func:`timeline_rows` scales a chart: the
+    peak bucket fills all four dot rows and the rest draw in proportion, so the
+    sparkline reads its shape against a ceiling rather than a fixed threshold ladder.
+    Any non-zero bucket still lights at least one dot, so a lone packet never
+    vanishes; a silent bucket (and an all-silent window) draws only the faint zero
+    baseline. The histogram arrives newest-first — the natural order the monitor and
+    repository keep — and is reversed here, so the current bucket lands on the right
+    edge and traffic slides *left* as it ages, like every other MeshTerm timeline.
+
+    ``peak`` is the scaling ceiling, and it is how several sparklines drawn together
+    share one scale. Left ``None``, each sparkline self-scales to *its own* window's
+    busiest bucket — right for a chart that stands alone (the header pulse, alone on
+    its row). Passed a value, every sparkline handed the same one shares a scale, so
+    their bar heights are directly comparable — how the channel manager draws a whole
+    column of per-channel rows against the busiest channel on screen. The caller
+    computes that shared peak from the same data all the rows draw from (see the
+    channel manager's ``_LiveStats.peak``) and hands each row the one value; there is
+    deliberately no hidden cross-instance state here, so the scale is a pure function
+    of what each call is given.
 
     Args:
         histogram: Per-bucket counts, newest first; padded/cropped to ``buckets``.
-        levels: Ascending count thresholds for bar heights 1..4.
         buckets: How many buckets to draw (half this many characters).
+        peak: The bucket count that fills the column; ``None`` self-scales to the
+            drawn window's busiest bucket. Zero (or an all-silent window) is a
+            flatline. A shared peak below a bucket's own count clamps to full height.
         style: Style for lit cells.
         column_styles: Optional per-bucket styles aligned with ``histogram``
             (newest first, reversed here alongside it), overriding ``style`` —
@@ -191,14 +205,20 @@ def activity_sparkline(
         A styled Rich :class:`Text` of ``buckets / 2`` braille characters.
     """
     window = (tuple(histogram) + (0,) * buckets)[:buckets]
+    # The window's own peak when the caller names none; a one-row chart is four dot
+    # rows tall, so a bucket at the peak fills all four (see timeline_rows' up=total).
+    scale = peak if peak is not None else max(window, default=0)
     per_column: Optional[list[str]] = None
     if column_styles is not None:
         padded = (list(column_styles) + [style] * buckets)[:buckets]
         per_column = list(reversed(padded))
     bars: list[Optional[tuple[int, int]]] = []
     for count in reversed(window):
-        height = bisect_right(levels, count)
-        bars.append((0, height - 1) if height else None)
+        if count <= 0 or scale <= 0:
+            bars.append(None)
+        else:
+            height = min(4, max(1, round(count / scale * 4)))
+            bars.append((0, height - 1))
     return _assemble(
         bars, [float(c) for c in reversed(window)], 1, 0, style, "faint", per_column
     )[0]

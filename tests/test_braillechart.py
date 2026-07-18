@@ -166,24 +166,38 @@ def test_timeline_per_cell_style_callable_sees_the_cells_readings() -> None:
 
 def test_sparkline_puts_now_on_the_right() -> None:
     """A newest-first histogram renders with the current bucket at the right edge."""
-    # Newest bucket maxed, everything older silent: only the final cell's *right*
-    # dot column lights (with the floor dot keeping the left column's baseline).
-    text = activity_sparkline((21, 0, 0, 0), (1, 3, 8, 21), 4)
+    # Newest bucket the sole traffic, so it is the self-scaled peak and fills the
+    # column: only the final cell's *right* dot column lights (with the floor dot
+    # keeping the left column's baseline).
+    text = activity_sparkline((21, 0, 0, 0), 4)
     assert text.plain == _BASE + _ch(_R[4], 0x40)
 
 
-def test_sparkline_thresholds_step_the_bar_heights() -> None:
-    """The level shoulders map counts to 1–4 dots, oldest to the left."""
-    # Newest-first (1, 3, 8, 21) reads 21,8,3,1 left→right once flipped.
-    text = activity_sparkline((1, 3, 8, 21), (1, 3, 8, 21), 4)
-    assert text.plain == _ch(_L[4], _R[3]) + _ch(_L[2], _R[1])
+def test_sparkline_scales_to_the_window_peak() -> None:
+    """With no shared peak, the busiest bucket fills the column and the rest scale to it."""
+    # Newest-first (16, 12, 8, 4) is a full/¾/½/¼ ramp against its own peak of 16;
+    # flipped for display it climbs 1→4 dots left→right toward now.
+    text = activity_sparkline((16, 12, 8, 4), 4)
+    assert text.plain == _ch(_L[1], _R[2]) + _ch(_L[3], _R[4])
+
+
+def test_sparkline_shares_a_peak_across_instances() -> None:
+    """A passed peak scales the bars to one ceiling, so quiet windows read short.
+
+    The same bucket draws a taller bar when it *is* the window's peak than when a
+    louder sibling's peak is scaled in — the channel manager's shared-scale column.
+    """
+    solo = activity_sparkline((8, 0), 2)  # self-scaled: 8 is its own peak → full height
+    shared = activity_sparkline((8, 0), 2, peak=32)  # 8 against 32 → a quarter, one dot
+    assert solo.plain == _ch(0x40, _R[4])  # right column full (4 dots), left on baseline
+    assert shared.plain == _ch(0x40, _R[1])  # right column a single dot
 
 
 def test_sparkline_pads_and_crops_to_the_window() -> None:
     """A short histogram pads with silence; a long one crops to the newest buckets."""
-    padded = activity_sparkline((21,), (1, 3, 8, 21), 6)
+    padded = activity_sparkline((21,), 6)
     assert padded.plain == _BASE * 2 + _ch(_R[4], 0x40)
-    cropped = activity_sparkline((0, 0, 21, 21, 9, 9), (1, 3, 8, 21), 2)
+    cropped = activity_sparkline((0, 0, 21, 21, 9, 9), 2)
     assert cropped.plain == _BASE  # only the two newest (silent) buckets survive
 
 

@@ -114,13 +114,6 @@ def _silence_console_logging() -> Iterator[None]:
             logger.addHandler(handler)
 
 
-#: Packet counts a one-minute bucket must reach for each extra dot of the header
-#: indicator's bar height. Higher-shouldered than the channel sparkline's thresholds
-#: because this counts *every* packet the hub hears (adverts, telemetry, messages,
-#: acks), not one conversation: 1 packet lights a dot, 3 light two, 8 light three,
-#: and 21 or more max the column out.
-_HEADER_ACTIVITY_LEVELS = (1, 3, 8, 21)
-
 #: The fewest sparkline cells the header aims to keep. When the fixed segments with
 #: roomy "  ·  " separators would leave less than this, the header re-lays itself with
 #: the compact " · " so a 72-column terminal still shows a readable stretch of pulse.
@@ -171,10 +164,12 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         styles = [
             "ok" if live else "muted" for live in ctx.monitor.activity_session_flags()
         ]
+        # No shared peak: alone on its row, the pulse self-scales to its own window's
+        # busiest minute (whatever slice of history the room fits), like the dashboard's
+        # tall activity chart against its window peak.
         header.append_text(
             activity_sparkline(
                 ctx.monitor.activity_histogram(),
-                _HEADER_ACTIVITY_LEVELS,
                 room * 2,
                 column_styles=styles,
             )
