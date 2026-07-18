@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -73,6 +74,42 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.ControlR: "retry",
     Keys.ControlP: "paths",
 }
+
+#: The plain navigation actions that have a Ctrl-chord sibling, for the right-Ctrl rescue
+#: in :meth:`TuiSession._dispatch` (see :func:`_right_ctrl_down`).
+_CTRL_CHORDS: dict[str, str] = {
+    "up": "ctrl_up",
+    "down": "ctrl_down",
+    "left": "ctrl_left",
+    "right": "ctrl_right",
+    "home": "ctrl_home",
+    "end": "ctrl_end",
+    "pageup": "ctrl_pageup",
+    "pagedown": "ctrl_pagedown",
+}
+
+
+def _right_ctrl_down() -> bool:
+    """Whether the right Ctrl key is physically held right now (Windows; ``False`` elsewhere).
+
+    The rescue behind right-Ctrl chords. Keyboard layouts that claim the right Ctrl key as a
+    character-group modifier — the Canadian Multilingual Standard uses it to reach a third
+    character level — can deliver a right-Ctrl'd arrow to the console as a *bare* arrow, no
+    ctrl flag left for prompt_toolkit to map, so only the left Ctrl ever steered a sortable
+    list. This probes the physical key state (``GetAsyncKeyState``) instead of trusting the
+    stripped event modifiers: if an arrow reached our dispatch, our terminal had focus, so a
+    right Ctrl held at that instant is the user chording it. Non-Windows platforms report
+    ``False`` — a VT terminal encodes the ctrl modifier side-agnostically itself, and there
+    is no per-side key state to consult anyway.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000)  # VK_RCONTROL
+    except Exception:  # noqa: BLE001 - a failed probe just leaves the plain action
+        return False
 
 
 #: Reclaim the terminal's final column. Some terminals (and prompt_toolkit's size probe on
@@ -1101,10 +1138,17 @@ class TuiSession:
     def _dispatch(self, action: str, data: str = "") -> None:
         """Forward an action to the top screen and repaint.
 
+        A plain navigation action arriving while the right Ctrl key is physically held is
+        promoted to its Ctrl chord first (see :func:`_right_ctrl_down`) — a no-op when the
+        console already reported the chord, and the rescue when a layout-claimed right Ctrl
+        stripped it.
+
         The repaint keeps prompt_toolkit's fast differential paint; a frame carrying a glyph
         the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
         full repaint at compose time — see :meth:`_emit`.
         """
+        if action in _CTRL_CHORDS and _right_ctrl_down():
+            action = _CTRL_CHORDS[action]
         top = self.top
         if top is not None:
             top.handle(action, data)

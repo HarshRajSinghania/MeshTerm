@@ -1505,6 +1505,32 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
     assert session._float_layers() == [dialog]
 
 
+def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> None:
+    """A bare navigation key arriving while the physical right Ctrl is down becomes its
+    Ctrl chord — the rescue for layouts (Canadian Multilingual Standard) that claim right
+    Ctrl as a character modifier and strip the ctrl flag from the console's arrow event.
+    Actions with no Ctrl sibling pass through untouched, as does everything once the key
+    is released."""
+    from meshterm.ui.tui import session as session_mod
+
+    session = TuiSession()
+    seen: list[str] = []
+
+    class Probe(ScrollScreen):
+        def handle(self, action: str, data: str = "") -> None:
+            seen.append(action)
+
+    session.push(Probe(Text("x")))
+
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: True)
+    session._dispatch("left")
+    session._dispatch("home")
+    session._dispatch("enter")  # no ctrl sibling: untouched even while held
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: False)
+    session._dispatch("left")
+    assert seen == ["ctrl_left", "ctrl_home", "enter", "left"]
+
+
 def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
     """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
     emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
