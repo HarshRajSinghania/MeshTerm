@@ -59,8 +59,12 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.models import Conversation
-from ..persistence.repository import ACTIVITY_BUCKETS
-from .braillechart import activity_sparkline
+from ..persistence.repository import (
+    ACTIVITY_BUCKETS,
+    ACTIVITY_DRAWN_BUCKETS,
+    ACTIVITY_WINDOW,
+)
+from .braillechart import activity_peak, activity_sparkline
 from .menus import back_rows, fit_cells, menu_rows, section_heading
 from .qr import qr_text
 from .tui import CANCEL, Choice, SelectScreen, Separator
@@ -350,6 +354,16 @@ def _toggle_mute(ctx: "AppContext", slot: ChannelSlot) -> None:
 # --- message statistics --------------------------------------------------------
 
 
+#: Seconds one activity bucket spans (five minutes), so the shared scaling peak's
+#: recency half-life reads in real time (see :func:`~meshterm.ui.braillechart.activity_peak`).
+_ACTIVITY_BUCKET_SECONDS = ACTIVITY_WINDOW.total_seconds() / ACTIVITY_BUCKETS
+
+#: Floor for the shared channel-activity peak: with every channel quiet, a lone message
+#: draws against at least this many per bucket, so a single stray stays a small nub
+#: rather than filling its column. Low, since channel chatter is sparse to begin with.
+_ACTIVITY_FLOOR = 2.0
+
+
 class _LiveStats:
     """A self-refreshing view of every channel's stored-message statistics.
 
@@ -366,6 +380,7 @@ class _LiveStats:
         self._ctx = ctx
         self._ttl = ttl
         self._cache: Optional[dict[str, "ChannelStats"]] = None
+        self._peak: Optional[float] = None
         self._at = 0.0
 
     def _snapshot(self) -> dict[str, "ChannelStats"]:
@@ -376,6 +391,7 @@ class _LiveStats:
                 self._cache = self._ctx.repo.channel_stats()
             except Exception:  # noqa: BLE001 - keep the last good snapshot on a read error
                 self._cache = self._cache or {}
+            self._peak = None  # derived from the snapshot; recompute on the next read
             self._at = now
         return self._cache
 
@@ -383,21 +399,28 @@ class _LiveStats:
         """Return the stats for one channel identity, refreshing once the TTL lapses."""
         return self._snapshot().get(channel_id)
 
-    def peak(self, buckets: int) -> int:
-        """The busiest bucket across *every* channel, the shared sparkline scale.
+    def peak(self) -> float:
+        """The shared sparkline scale across *every* channel, cached per snapshot.
 
-        Read live through the same cache/TTL as :meth:`get`, over each channel's
-        trailing ``buckets`` window. Handing this one value to every row's
-        :func:`~meshterm.ui.braillechart.activity_sparkline` scales the whole activity
-        column against the loudest channel on screen, so the rows' bar heights are
-        comparable at a glance — a quiet channel reads as short beside a busy one
-        instead of each self-scaling to its own ceiling. Zero when the window is
-        silent everywhere, which the sparkline draws as a flatline.
+        A steady ceiling over the pooled per-channel histograms (see
+        :func:`~meshterm.ui.braillechart.activity_peak`): recency-weighted so it glides
+        as chatter ages, outlier-robust so one busy burst doesn't flatten the column,
+        and floored so a lull's stray message stays a nub. Handing this one value to
+        every row's :func:`~meshterm.ui.braillechart.activity_sparkline` scales the whole
+        activity column against the busiest channel on screen, so the rows' bar heights
+        are comparable at a glance instead of each self-scaling to its own ceiling.
+
+        Read live through the same cache/TTL as :meth:`get`, and memoised alongside that
+        snapshot so a full slot table doesn't recompute the pooled peak once per row.
         """
-        return max(
-            (max(st.histogram[:buckets], default=0) for st in self._snapshot().values()),
-            default=0,
-        )
+        snapshot = self._snapshot()
+        if self._peak is None:
+            self._peak = activity_peak(
+                *(st.histogram for st in snapshot.values()),
+                bucket_seconds=_ACTIVITY_BUCKET_SECONDS,
+                floor=_ACTIVITY_FLOOR,
+            )
+        return self._peak
 
 
 #: Widest the name lane grows (longer names are ellipsized so the lanes stay put).
@@ -408,15 +431,17 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
-def _activity_sparkline(histogram: "tuple[int, ...]", peak: int) -> Text:
+def _activity_sparkline(histogram: "tuple[int, ...]", peak: float) -> Text:
     """The channel's braille activity sparkline over the trailing two hours, now at the right.
 
-    The shared :func:`~meshterm.ui.braillechart.activity_sparkline` over the repository
-    histogram's :data:`ACTIVITY_BUCKETS` five-minute buckets, scaled to ``peak`` — the
-    busiest bucket across every channel (see :meth:`_LiveStats.peak`) — so the whole
-    activity column shares one scale and the rows' bars are comparable at a glance.
+    The shared :func:`~meshterm.ui.braillechart.activity_sparkline` over the newest
+    :data:`ACTIVITY_DRAWN_BUCKETS` five-minute buckets of the repository histogram,
+    scaled to ``peak`` — the shared ceiling across every channel (see
+    :meth:`_LiveStats.peak`) — so the whole activity column shares one scale and the
+    rows' bars are comparable at a glance. The histogram runs deeper than is drawn; the
+    tail past the drawn buckets shapes ``peak`` but isn't charted.
     """
-    return activity_sparkline(histogram, ACTIVITY_BUCKETS, peak=peak)
+    return activity_sparkline(histogram, ACTIVITY_DRAWN_BUCKETS, peak=peak)
 
 
 # --- menus -------------------------------------------------------------------
@@ -498,9 +523,7 @@ def _slot_text(
     text.append("  ")
     # The shared peak across all channels, so every row's sparkline uses one scale.
     text.append_text(
-        _activity_sparkline(
-            st.histogram if st is not None else (), stats.peak(ACTIVITY_BUCKETS)
-        )
+        _activity_sparkline(st.histogram if st is not None else (), stats.peak())
     )
     return text
 

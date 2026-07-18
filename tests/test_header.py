@@ -68,11 +68,11 @@ def test_header_wider_terminal_shows_deeper_history() -> None:
 
 
 def test_header_scales_to_the_window_peak() -> None:
-    """The pulse scales to its window's busiest minute, not a fixed threshold ladder.
+    """The pulse scales relative to a peak, not a fixed threshold ladder.
 
-    A 16/12/8/4 ramp against its own peak of 16 climbs one dot per step, so the four
-    newest minutes read heights 1,2,3,4 left→right in the row's final two cells — the
-    same relative scaling the dashboard's tall activity chart draws with.
+    A 16/12/8/4 ramp climbs one dot per step against the robust ceiling ``activity_peak``
+    computes for it (~14.7 here — a recency-weighted, floored 90th percentile), so the
+    four newest minutes read heights 1,2,3,4 left→right in the row's final two cells.
     """
     histogram = (16, 12, 8, 4) + (0,) * 356
     header = _header(_ctx(histogram=histogram), {}, 80).plain

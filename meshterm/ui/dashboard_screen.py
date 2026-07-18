@@ -47,7 +47,7 @@ from rich.text import Text
 from ..core.channels import split_channel_sender
 from ..core.events import EventKind, MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
-from ..persistence.repository import ACTIVITY_WINDOW
+from ..persistence.repository import OBSERVATION_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
 from .menus import fit_cells
 from .widgets import TypeOf, path_text
@@ -217,7 +217,7 @@ class DashboardScreen(Screen):
 
     def _prune(self) -> None:
         """Drop window observations that aged past the trailing window."""
-        cutoff = utcnow() - ACTIVITY_WINDOW
+        cutoff = utcnow() - OBSERVATION_WINDOW
         while self._window and self._window[0].observed_at < cutoff:
             self._window.popleft()
 
@@ -692,7 +692,7 @@ async def open_dashboard(ctx: "AppContext") -> None:
     type_of = trace_runner.make_node_type_resolver(contacts)
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
-    window = ctx.repo.recent_observations(since=utcnow() - ACTIVITY_WINDOW)
+    window = ctx.repo.recent_observations(since=utcnow() - OBSERVATION_WINDOW)
     screen = DashboardScreen(
         session=session,
         resolve=resolve,

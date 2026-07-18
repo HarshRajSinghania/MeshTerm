@@ -28,15 +28,28 @@ from ..core.models import (
 from . import db
 
 
-#: The trailing window a channel's recent-activity view is computed over. Two hours is
-#: "what's happening right now" territory: the activity sparkline reads as a live pulse of
-#: the mesh rather than a long-term traffic log (the MSGS lane covers all-time volume).
-ACTIVITY_WINDOW = timedelta(hours=2)
+#: The trailing window the dashboard's live observation stats and packet feed prune to
+#: — "what's happening right now" territory, labelled "reception over 2 h" on the RF
+#: health card. Distinct from the deeper channel-activity window below: this bounds a
+#: live view, that one only feeds a scaling peak.
+OBSERVATION_WINDOW = timedelta(hours=2)
 
-#: How many equal time buckets the activity window is split into — one per column of the
-#: channel manager's braille sparkline (two columns per braille cell, so 24 buckets fill
-#: its twelve characters). At a two-hour window each bucket spans five minutes.
-ACTIVITY_BUCKETS = 24
+#: The trailing window a channel's activity histogram is computed over. Six hours is
+#: deeper than the sparkline draws (see :data:`ACTIVITY_DRAWN_BUCKETS`) on purpose: the
+#: extra history is what the shared scaling peak decays over, so it glides rather than
+#: snaps as a busy stretch ages out (see :func:`~meshterm.ui.braillechart.activity_peak`).
+#: All-time volume still lives in the MSGS lane; this stays a live-pulse window.
+ACTIVITY_WINDOW = timedelta(hours=6)
+
+#: How many equal time buckets the window is split into — at six hours, five minutes each
+#: (matching the drawn cadence). The histogram carries all of them for the scaling peak;
+#: only the newest :data:`ACTIVITY_DRAWN_BUCKETS` are actually charted.
+ACTIVITY_BUCKETS = 72
+
+#: How many of the histogram's newest buckets the channel sparkline draws — two hours at
+#: five minutes each, two columns per braille cell, so 24 buckets fill its twelve
+#: characters. The rest of :data:`ACTIVITY_BUCKETS` feeds the scaling peak but isn't shown.
+ACTIVITY_DRAWN_BUCKETS = 24
 
 
 def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
@@ -107,7 +120,10 @@ class ChannelStats:
         histogram: The window's messages split into :data:`ACTIVITY_BUCKETS` equal time
             buckets, *newest first* — bucket 0 is the current five minutes, the order
             :func:`~meshterm.ui.braillechart.activity_sparkline` expects (it flips the
-            window so "now" draws at the right edge). ``recent`` is always its sum.
+            window so "now" draws at the right edge). ``recent`` is always its sum. The
+            sparkline charts only the newest :data:`ACTIVITY_DRAWN_BUCKETS`; the deeper
+            tail feeds the shared scaling peak (see
+            :func:`~meshterm.ui.braillechart.activity_peak`).
     """
 
     total: int
@@ -1562,10 +1578,11 @@ class Repository:
         Backs the channel manager's list lanes: each configured channel's row shows its
         total message count, the age of its last message, and an activity sparkline over
         the trailing :data:`ACTIVITY_WINDOW` — whose :data:`ACTIVITY_BUCKETS`-column
-        histogram is built here. Two passes, each grouped/filtered in SQL so the cost
-        tracks message volume, not channel count: an aggregate for the all-time totals,
-        then the window's individual timestamps, bucketed in Python (the window holds at
-        most two hours of chatter, so the row set stays small).
+        histogram is built here (the sparkline draws its newest
+        :data:`ACTIVITY_DRAWN_BUCKETS`; the rest feeds the shared scaling peak). Two
+        passes, each grouped/filtered in SQL so the cost tracks message volume, not
+        channel count: an aggregate for the all-time totals, then the window's individual
+        timestamps, bucketed in Python (a few hours of chatter, so the row set stays small).
 
         Timestamps are compared as strings: every ``created_at`` is written by
         ``utcnow().isoformat()`` (a fixed-width UTC ISO-8601 form), so lexicographic order

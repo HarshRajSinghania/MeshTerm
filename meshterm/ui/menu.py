@@ -26,8 +26,9 @@ from .. import __version__
 from ..context import AppContext
 from ..persistence.logging import get_logger
 from ..tools import all_tools
+from ..services.monitor_service import ACTIVITY_BUCKET_S
 from .surface import TuiUi
-from .braillechart import activity_sparkline
+from .braillechart import activity_peak, activity_sparkline
 from .theme import make_console
 from .widgets import battery_cell
 from .tui import (
@@ -119,6 +120,11 @@ def _silence_console_logging() -> Iterator[None]:
 #: the compact " · " so a 72-column terminal still shows a readable stretch of pulse.
 _SPARK_MIN_CELLS = 24
 
+#: Floor for the header pulse's scaling ceiling (see :func:`~meshterm.ui.braillechart.
+#: activity_peak`): a lone packet in a long-silent window draws against at least this
+#: many packets-per-minute, so a single stray reads as a small nub, not a full column.
+_HEADER_ACTIVITY_FLOOR = 3.0
+
 
 def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
@@ -164,13 +170,20 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         styles = [
             "ok" if live else "muted" for live in ctx.monitor.activity_session_flags()
         ]
-        # No shared peak: alone on its row, the pulse self-scales to its own window's
-        # busiest minute (whatever slice of history the room fits), like the dashboard's
-        # tall activity chart against its window peak.
+        # Scale to a steady ceiling over the monitor's *full* six-hour history — deeper
+        # than the row draws — not the drawn window's bare maximum: a recency-weighted,
+        # outlier-robust, floored peak (see activity_peak), so the pulse doesn't lurch as
+        # a busy minute scrolls off the edge and a lone packet in a lull stays a nub.
+        histogram = ctx.monitor.activity_histogram()
         header.append_text(
             activity_sparkline(
-                ctx.monitor.activity_histogram(),
+                histogram,
                 room * 2,
+                peak=activity_peak(
+                    histogram,
+                    bucket_seconds=ACTIVITY_BUCKET_S,
+                    floor=_HEADER_ACTIVITY_FLOOR,
+                ),
                 column_styles=styles,
             )
         )

@@ -179,16 +179,16 @@ def activity_sparkline(
     repository keep — and is reversed here, so the current bucket lands on the right
     edge and traffic slides *left* as it ages, like every other MeshTerm timeline.
 
-    ``peak`` is the scaling ceiling, and it is how several sparklines drawn together
-    share one scale. Left ``None``, each sparkline self-scales to *its own* window's
-    busiest bucket — right for a chart that stands alone (the header pulse, alone on
-    its row). Passed a value, every sparkline handed the same one shares a scale, so
-    their bar heights are directly comparable — how the channel manager draws a whole
-    column of per-channel rows against the busiest channel on screen. The caller
-    computes that shared peak from the same data all the rows draw from (see the
-    channel manager's ``_LiveStats.peak``) and hands each row the one value; there is
-    deliberately no hidden cross-instance state here, so the scale is a pure function
-    of what each call is given.
+    ``peak`` is the scaling ceiling. Left ``None``, each sparkline self-scales to *its
+    own* drawn window's busiest bucket — the plain, jumpy relative scale. Passed a
+    value, that value is the ceiling, which does two things: it lets several sparklines
+    handed the *same* one share a scale so their bar heights are directly comparable
+    (a whole column of per-channel rows against the busiest channel on screen), and it
+    lets the caller substitute a *steadier* ceiling than the bare window maximum.
+    :func:`activity_peak` builds that steady, shared ceiling — a recency-weighted,
+    outlier-robust, floored peak over a deeper history than is drawn — and both the
+    header pulse and the channel manager pass its result here. The scale is otherwise a
+    pure function of what each call is given: no hidden cross-instance state lives here.
 
     Args:
         histogram: Per-bucket counts, newest first; padded/cropped to ``buckets``.
@@ -222,6 +222,96 @@ def activity_sparkline(
     return _assemble(
         bars, [float(c) for c in reversed(window)], 1, 0, style, "faint", per_column
     )[0]
+
+
+#: Default half-life, in minutes, of :func:`activity_peak`'s recency weighting: a
+#: bucket this many minutes old counts half as much toward the ceiling as the current
+#: one, so an aging burst releases its grip on the scale smoothly (over minutes) rather
+#: than snapping the instant it scrolls off the drawn window. One figure drives every
+#: activity surface, so the pulse "feels" the same whether its buckets are one minute
+#: (the header) or five (the channel rows) wide.
+ACTIVITY_HALF_LIFE_MIN = 30.0
+
+#: Default percentile :func:`activity_peak` reads its ceiling at, in place of the raw
+#: maximum: a lone freak-busy bucket sits *above* this and clips to full height instead
+#: of redefining the whole scale, so one outlier minute doesn't flatten every other bar.
+#: High enough that ordinary sustained traffic still reaches the top.
+ACTIVITY_PERCENTILE = 90.0
+
+
+def _percentile(values: Sequence[float], p: float) -> float:
+    """The linear-interpolated ``p``-th percentile of ``values`` (``0.0`` when empty).
+
+    The two ranks either side of the fractional position blended together — NumPy's
+    default convention — so a small sample moves the mark smoothly instead of in
+    whole-element jumps.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (p / 100.0) * (len(ordered) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
+
+
+def activity_peak(
+    *histograms: Sequence[int],
+    bucket_seconds: float,
+    half_life_min: float = ACTIVITY_HALF_LIFE_MIN,
+    percentile: float = ACTIVITY_PERCENTILE,
+    floor: float = 0.0,
+) -> float:
+    """A steady scaling ceiling for :func:`activity_sparkline`, from newest-first counts.
+
+    Relative-to-peak scaling reads its shape well but is jumpy: the plain window
+    maximum lurches whenever the busiest bucket enters or ages out of view, and a lone
+    packet in a quiet window fills the column because it *is* the maximum. This folds
+    three dampers into one ceiling, each acting on a different axis, so a whole column
+    of sparklines — or one that slides bucket by bucket — stays legible:
+
+    * **Recency.** Each bucket's contribution is discounted by its age
+      (``count * decay ** age``), ``decay`` set from ``half_life_min`` and the bucket
+      width, so a burst weighs full when it happens and fades over minutes as it ages:
+      the ceiling *glides* down rather than snapping when the burst leaves the drawn
+      window. Handing this a deeper history than is drawn (the header's six hours, the
+      channel pool's) is what gives it the room to glide.
+    * **Robustness.** The ceiling is a high ``percentile`` of those weighted counts,
+      not their maximum, so a single freak-busy bucket sits above it and clips to full
+      height instead of shrinking every other bar to redefine the scale.
+    * **Floor.** The result never drops below ``floor``, so a stray packet in a
+      long-silent window draws a small nub against a meaningful scale instead of
+      shouting at full height. It is also the scale when everything is silent.
+
+    Several histograms pool into one ceiling — every visible channel's, say — so a
+    column of rows shares one scale and their bars stay directly comparable (each
+    bucket is weighted by its own age, consistent across the histograms since bucket
+    ``i`` is the same age in every one). The result is a pure function of the counts
+    handed in: no hidden cross-frame state, so it is deterministic and decays on its
+    own as the data does. Pass it to each sparkline's ``peak``.
+
+    Args:
+        histograms: One or more newest-first count series (bucket 0 is "now"); their
+            non-zero buckets pool into the ceiling.
+        bucket_seconds: How many seconds one bucket spans, so ``half_life_min`` reads
+            in real time whatever the bucket width.
+        half_life_min: Age, in minutes, at which a bucket's weight halves.
+        percentile: The percentile of weighted counts the ceiling reads (0–100).
+        floor: The lowest the ceiling may fall to (also the all-silent scale).
+
+    Returns:
+        The scaling ceiling, ``>= floor``.
+    """
+    decay = 0.5 ** ((bucket_seconds / 60.0) / half_life_min) if half_life_min > 0 else 0.0
+    weighted = [
+        count * decay**age
+        for histogram in histograms
+        for age, count in enumerate(histogram)
+        if count > 0
+    ]
+    return max(float(floor), _percentile(weighted, percentile))
 
 
 #: The meter's fill glyphs, ``(full step, half step)``, by profile. A *full-height*

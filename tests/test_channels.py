@@ -477,12 +477,12 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
 
 
 def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> None:
-    """Per-channel stats count all messages, the trailing-2h slice, and the last time."""
+    """Per-channel stats count all messages, the trailing-window slice, and the last time."""
     from datetime import timedelta
 
     from meshterm.core.models import ChatMessage, utcnow
 
-    stale = utcnow() - timedelta(days=30)  # outside the two-hour activity window
+    stale = utcnow() - timedelta(days=30)  # outside the activity window
     fresh = utcnow() - timedelta(minutes=2)
     for text, when in (("old a", stale), ("old b", stale), ("new", fresh)):
         ctx.repo.record_chat_message(
@@ -503,8 +503,9 @@ def test_channel_stats_aggregates_totals_window_and_recency(ctx: AppContext) -> 
     assert ops.last_at is not None
     assert abs((ops.last_at - fresh).total_seconds()) < 1
     # The histogram spans the window newest-first: the 2-minute-old message lands in the
-    # "now" (first) bucket and the 30-day-old ones land nowhere.
-    assert len(ops.histogram) == 24
+    # "now" (first) bucket and the 30-day-old ones land nowhere. It carries the full
+    # window (deeper than the sparkline draws) so the shared scaling peak has history.
+    assert len(ops.histogram) == 72
     assert ops.histogram[0] == 1 and sum(ops.histogram) == 1
 
 
