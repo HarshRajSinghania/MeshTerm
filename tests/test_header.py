@@ -71,8 +71,8 @@ def test_header_scales_to_the_window_peak() -> None:
     """The pulse scales relative to a peak, not a fixed threshold ladder.
 
     A 16/12/8/4 ramp climbs one dot per step against the robust ceiling ``activity_peak``
-    computes for it (~14.7 here — a recency-weighted, floored 90th percentile), so the
-    four newest minutes read heights 1,2,3,4 left→right in the row's final two cells.
+    computes for it (~14.8 here — a floored 90th percentile of the counts), so the four
+    newest minutes read heights 1,2,3,4 left→right in the row's final two cells.
     """
     histogram = (16, 12, 8, 4) + (0,) * 356
     header = _header(_ctx(histogram=histogram), {}, 80).plain

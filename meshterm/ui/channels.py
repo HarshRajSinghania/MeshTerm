@@ -59,11 +59,7 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.models import Conversation
-from ..persistence.repository import (
-    ACTIVITY_BUCKETS,
-    ACTIVITY_DRAWN_BUCKETS,
-    ACTIVITY_WINDOW,
-)
+from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
 from .braillechart import activity_peak, activity_sparkline
 from .menus import back_rows, fit_cells, menu_rows, section_heading
 from .qr import qr_text
@@ -354,10 +350,6 @@ def _toggle_mute(ctx: "AppContext", slot: ChannelSlot) -> None:
 # --- message statistics --------------------------------------------------------
 
 
-#: Seconds one activity bucket spans (five minutes), so the shared scaling peak's
-#: recency half-life reads in real time (see :func:`~meshterm.ui.braillechart.activity_peak`).
-_ACTIVITY_BUCKET_SECONDS = ACTIVITY_WINDOW.total_seconds() / ACTIVITY_BUCKETS
-
 #: Floor for the shared channel-activity peak: with every channel quiet, a lone message
 #: draws against at least this many per bucket, so a single stray stays a small nub
 #: rather than filling its column. Low, since channel chatter is sparse to begin with.
@@ -403,10 +395,10 @@ class _LiveStats:
         """The shared sparkline scale across *every* channel, cached per snapshot.
 
         A steady ceiling over the pooled per-channel histograms (see
-        :func:`~meshterm.ui.braillechart.activity_peak`): recency-weighted so it glides
-        as chatter ages, outlier-robust so one busy burst doesn't flatten the column,
-        and floored so a lull's stray message stays a nub. Handing this one value to
-        every row's :func:`~meshterm.ui.braillechart.activity_sparkline` scales the whole
+        :func:`~meshterm.ui.braillechart.activity_peak`): outlier-robust so one busy
+        burst doesn't flatten the column, floored so a lull's stray message stays a nub,
+        and steadied by pooling a window deeper than the rows draw. Handing this one
+        value to every row's :func:`~meshterm.ui.braillechart.activity_sparkline` scales the whole
         activity column against the busiest channel on screen, so the rows' bar heights
         are comparable at a glance instead of each self-scaling to its own ceiling.
 
@@ -417,7 +409,6 @@ class _LiveStats:
         if self._peak is None:
             self._peak = activity_peak(
                 *(st.histogram for st in snapshot.values()),
-                bucket_seconds=_ACTIVITY_BUCKET_SECONDS,
                 floor=_ACTIVITY_FLOOR,
             )
         return self._peak

@@ -36,8 +36,9 @@ OBSERVATION_WINDOW = timedelta(hours=2)
 
 #: The trailing window a channel's activity histogram is computed over. Six hours is
 #: deeper than the sparkline draws (see :data:`ACTIVITY_DRAWN_BUCKETS`) on purpose: the
-#: extra history is what the shared scaling peak decays over, so it glides rather than
-#: snaps as a busy stretch ages out (see :func:`~meshterm.ui.braillechart.activity_peak`).
+#: extra history deepens the pool the shared scaling peak takes its percentile over, so
+#: the ceiling glides rather than snaps as a busy stretch ages out of the drawn window
+#: (see :func:`~meshterm.ui.braillechart.activity_peak`).
 #: All-time volume still lives in the MSGS lane; this stays a live-pulse window.
 ACTIVITY_WINDOW = timedelta(hours=6)
 

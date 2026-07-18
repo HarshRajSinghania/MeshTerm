@@ -16,8 +16,6 @@ from meshterm.ui.braillechart import (
     y_axis_labels,
 )
 
-_INF = float("inf")  # half_life → no decay, so a peak test isolates percentile/floor/pool
-
 #: Dot bits for a column filled bottom-up to height 0–4 (left / right column).
 _L = (0x00, 0x40, 0x44, 0x46, 0x47)
 _R = (0x00, 0x80, 0xA0, 0xB0, 0xB8)
@@ -209,38 +207,30 @@ def test_sparkline_pads_and_crops_to_the_window() -> None:
 
 def test_activity_peak_reads_a_percentile_not_the_max() -> None:
     """One freak-busy bucket sits above the ceiling instead of defining it."""
-    # Ten steady buckets of 10 and a lone spike of 1000; no decay, so the ceiling is
-    # purely the 90th percentile of the counts — the steady level, not the spike.
-    peak = activity_peak(
-        (1000,) + (10,) * 10, bucket_seconds=60, half_life_min=_INF, percentile=90
-    )
-    assert peak == 10.0
+    # Ten steady buckets of 10 and a lone spike of 1000: the ceiling is the 90th
+    # percentile of the counts — the steady level, not the spike.
+    assert activity_peak((1000,) + (10,) * 10, percentile=90) == 10.0
 
 
-def test_activity_peak_weights_recent_buckets_over_old() -> None:
-    """The same burst weighs less toward the ceiling the older it is (recency)."""
-    # A one-minute half-life halves a bucket's weight each minute: a fresh 20-burst sets
-    # the ceiling at 20, the same burst two minutes back at a quarter of that.
-    now = activity_peak((20, 0, 0), bucket_seconds=60, half_life_min=1.0)
-    aged = activity_peak((0, 0, 20), bucket_seconds=60, half_life_min=1.0)
-    assert now == 20.0
-    assert aged == 5.0  # two half-lives → 20 × ¼
+def test_activity_peak_ignores_bucket_age() -> None:
+    """A burst weighs the same however old it is: recency no longer enters the ceiling."""
+    # The magnitude-decay recency term was removed (it starved the ceiling to the floor
+    # over a deep pool), so a 20-burst sets the same ceiling now or three buckets back.
+    assert activity_peak((20, 0, 0)) == activity_peak((0, 0, 20)) == 20.0
 
 
 def test_activity_peak_floors_a_quiet_window() -> None:
     """The floor holds the ceiling up so a lull's stray packet stays a nub, not a column."""
-    assert activity_peak((0, 0, 0), bucket_seconds=60, floor=3.0) == 3.0  # silent → floor
-    lone = activity_peak((1,), bucket_seconds=60, half_life_min=_INF, floor=3.0)
+    assert activity_peak((0, 0, 0), floor=3.0) == 3.0  # silent → floor
+    lone = activity_peak((1,), floor=3.0)
     assert lone == 3.0  # a single packet scales against the floor, not against itself
 
 
 def test_activity_peak_pools_several_histograms_into_one_ceiling() -> None:
     """Pooled channels share a scale: a quiet channel reads short beside a busy one."""
-    pooled = activity_peak(
-        (10,) * 10, (1,), bucket_seconds=300, half_life_min=_INF, percentile=90
-    )
+    pooled = activity_peak((10,) * 10, (1,), percentile=90)
     assert pooled == 10.0  # the busy channel's level sets the shared ceiling…
-    solo = activity_peak((1,), bucket_seconds=300, half_life_min=_INF, percentile=90)
+    solo = activity_peak((1,), percentile=90)
     assert solo == 1.0  # …where the quiet one alone would have set just 1
 
 

@@ -26,7 +26,6 @@ from .. import __version__
 from ..context import AppContext
 from ..persistence.logging import get_logger
 from ..tools import all_tools
-from ..services.monitor_service import ACTIVITY_BUCKET_S
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
 from .theme import make_console
@@ -171,19 +170,15 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
             "ok" if live else "muted" for live in ctx.monitor.activity_session_flags()
         ]
         # Scale to a steady ceiling over the monitor's *full* six-hour history — deeper
-        # than the row draws — not the drawn window's bare maximum: a recency-weighted,
-        # outlier-robust, floored peak (see activity_peak), so the pulse doesn't lurch as
-        # a busy minute scrolls off the edge and a lone packet in a lull stays a nub.
+        # than the row draws — not the drawn window's bare maximum: an outlier-robust,
+        # floored peak (see activity_peak), so the pulse doesn't lurch as a busy minute
+        # scrolls off the edge and a lone packet in a lull stays a nub.
         histogram = ctx.monitor.activity_histogram()
         header.append_text(
             activity_sparkline(
                 histogram,
                 room * 2,
-                peak=activity_peak(
-                    histogram,
-                    bucket_seconds=ACTIVITY_BUCKET_S,
-                    floor=_HEADER_ACTIVITY_FLOOR,
-                ),
+                peak=activity_peak(histogram, floor=_HEADER_ACTIVITY_FLOOR),
                 column_styles=styles,
             )
         )
