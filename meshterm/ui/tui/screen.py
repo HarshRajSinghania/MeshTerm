@@ -37,10 +37,11 @@ class Screen:
         floating: Whether the session should draw this screen as a centered dialog over
             the dimmed screen beneath it (deeper layers float; the base does not).
         grow_only: Whether a floating dialog may only ever grow. Its box is sized to the
-            tallest body it has shown, not the current one, so a screen whose body height
-            swings as its content changes (the packet viewer paging between packets) keeps
+            tallest body — and, for a natural-width dialog, the widest — it has shown, not
+            the current one, so a screen whose content swings as it changes (the packet
+            viewer paging between packets, the path composer's shifting suggestions) keeps
             a steady, centred box — blank-padded when the current body is shorter — instead
-            of resizing on every page.
+            of resizing on every change.
         chrome: Whether, as the base screen, this layer is wrapped in the session's
             persistent header/footer frame. A startup splash sets this ``False`` so the
             session instead centers it under the :attr:`banner` with no status bars.
@@ -71,11 +72,12 @@ class Screen:
         # clamp to the content without every caller threading the sizes through.
         self._scroll_total = 1
         self._scroll_viewport = 1
-        # A grow-only screen's high-water body height: the tallest body it has rendered
-        # into a dialog, so its box can be held at that size once reached (see
-        # :meth:`ratchet_viewport`). Zero until the first paint; irrelevant while not
-        # :attr:`grow_only`.
+        # A grow-only screen's high-water body height and natural width: the tallest and
+        # widest it has rendered into a dialog, so its box can be held at that size once
+        # reached (see :meth:`ratchet_viewport` / :meth:`ratchet_width`). Zero until the
+        # first paint; irrelevant while not :attr:`grow_only`.
         self._viewport_floor = 0
+        self._width_floor = 0
 
     # --- rendering -----------------------------------------------------------
 
@@ -102,6 +104,19 @@ class Screen:
             return body_h
         self._viewport_floor = max(self._viewport_floor, body_h)
         return self._viewport_floor
+
+    def ratchet_width(self, natural: int) -> int:
+        """The natural width a :attr:`grow_only` dialog is sized to: its running maximum.
+
+        The width-side twin of :meth:`ratchet_viewport`, applied by the frame to a
+        dialog's requested ``dialog_width`` before the terminal cap — so a grow-only
+        box holds its widest extent as its content narrows, but a shrinking terminal
+        still clips it. Full-cap dialogs (no ``dialog_width``) never reach here.
+        """
+        if not self.grow_only:
+            return natural
+        self._width_floor = max(self._width_floor, natural)
+        return self._width_floor
 
     def cursor_line(self) -> Optional[int]:
         """Return a body line that must stay visible, or ``None`` for free scrolling.

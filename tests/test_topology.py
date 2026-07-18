@@ -371,6 +371,19 @@ def test_composer_warns_when_the_walk_repeats_a_link() -> None:
     assert "not a trail" not in _rows_plain(screen)
 
 
+def test_composer_dialog_only_ever_grows() -> None:
+    """The box ratchets in both dimensions, so it never twitches as the path changes."""
+    screen = _composer(_topo(), hops=[], target=False)
+    assert screen.grow_only is True
+    # ratchet_viewport / ratchet_width are the grow-only contract: rise, never drop.
+    assert screen.ratchet_viewport(6) == 6
+    assert screen.ratchet_viewport(14) == 14  # a longer suggestion list enlarges the box
+    assert screen.ratchet_viewport(4) == 14   # a shorter one after keeps the taller box
+    assert screen.ratchet_width(40) == 40
+    assert screen.ratchet_width(64) == 64     # a longer route preview widens the box
+    assert screen.ratchet_width(40) == 64     # narrower content after keeps the wider box
+
+
 def test_composer_target_mode_warning_covers_the_mirrored_return() -> None:
     """The check runs over the whole boomerang — a repeated outbound stretch fires it."""
     clean = _composer(_topo(), hops=["3d63c6429436"])

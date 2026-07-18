@@ -12,6 +12,7 @@ import asyncio
 
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.cells import cell_len
 from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
@@ -485,6 +486,30 @@ def test_grow_only_dialog_box_holds_its_tallest_size() -> None:
     assert grown > small       # a taller body enlarges the box
     screen.n = 2
     assert _box_height(screen) == grown  # a shorter body after keeps the larger box
+
+
+def _box_width(screen: Screen) -> int:
+    """The column width of the dialog box ``compose_dialog`` draws for ``screen``."""
+    out = Text.from_ansi(frame.compose_dialog(screen, 80, 40)).plain
+    return max(cell_len(line.rstrip()) for line in out.split("\n"))
+
+
+def test_grow_only_dialog_box_holds_its_widest_size() -> None:
+    """A grow-only dialog's natural width ratchets too: it widens but never narrows."""
+    screen = _GrowScreen()
+    screen.dialog_width = 30
+    narrow = _box_width(screen)
+    screen.dialog_width = 60
+    wide = _box_width(screen)
+    assert wide > narrow           # a wider body enlarges the box
+    screen.dialog_width = 30
+    assert _box_width(screen) == wide  # a narrower one after keeps the wider box
+    # An ordinary dialog keeps sizing to each width as it comes.
+    plain = ScrollScreen(Text("x"), title="d")
+    plain.dialog_width = 60
+    wide = _box_width(plain)
+    plain.dialog_width = 30
+    assert _box_width(plain) < wide
 
 
 def test_compose_startup_is_chromeless_and_shows_banner() -> None:

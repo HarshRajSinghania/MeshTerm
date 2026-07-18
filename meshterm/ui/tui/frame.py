@@ -292,10 +292,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
 def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int, list[str]]:
     """Size a floating dialog: ``(outer_width, vpad, viewport, body_lines)``."""
     # Most dialogs stretch to a generous cap; a screen may instead request a natural width
-    # (a short confirm sized to its content), still bounded to the terminal.
+    # (a short confirm sized to its content), still bounded to the terminal. A grow-only
+    # screen's natural width ratchets like its height, so the box never narrows either.
     cap = min(cols - 6, 100)
     natural = getattr(screen, "dialog_width", None)
-    max_w = cap if natural is None else max(24, min(cap, natural))
+    max_w = cap if natural is None else max(24, min(cap, screen.ratchet_width(natural)))
     # Rows the box may spend between its borders — on body lines and breathing room alike.
     budget = max(3, rows - 6)
     # Record the budget as the provisional viewport before the body renders, so a

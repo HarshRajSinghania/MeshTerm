@@ -111,8 +111,15 @@ class PathComposerScreen(Screen):
     hops, the target, then the mirrored return; in path mode the composed walk
     verbatim), :data:`AUTO_SPEC` for device routing (target mode only), or
     :data:`~meshterm.ui.tui.screen.CANCEL`.
+
+    The dialog only ever grows (see :attr:`~meshterm.ui.tui.screen.Screen.grow_only`):
+    every added hop widens the route preview and each new tail swaps in a different
+    suggestion set, so a size-to-content box would twitch on every keystroke. Instead
+    the box holds its tallest and widest extent for the composing session, like the
+    packet viewer.
     """
 
+    grow_only = True
     footer_hint = "↑↓ move · Enter add · type to filter · ⌫ remove · Esc cancel"
 
     def __init__(
