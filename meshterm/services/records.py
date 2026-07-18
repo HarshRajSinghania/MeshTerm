@@ -16,6 +16,13 @@ route, and its :class:`WalkStats`; :func:`walk_scores` scores those stats agains
 discipline at once (a walk found while tracing one thing still counts everywhere it
 places). The UI owns the radio and the database; nothing here transmits or persists.
 
+One eligibility rule gates every board: a record walk must be a *trail* — a walk that
+never crosses the same link twice in the same direction (see
+:func:`first_repeated_edge`). Repeating a link would let any scoring subpath be stitched
+in again for free score, so :func:`walk_scores` disqualifies such a walk outright.
+Recrossing a link the *other* way stays legal: a Trace target boomerang retraces every
+link backwards by design, and radio links genuinely differ by direction.
+
 Records live per ``(category, width_bytes)`` because the per-hop hash width bounds both a
 walk's maximum length (the transmitted path field is :data:`MAX_PATH_BYTES`) and its
 collision odds — a 1-byte board and a 4-byte board are different games.
@@ -39,6 +46,33 @@ MAX_PATH_BYTES = 64
 def max_hops(width_bytes: int) -> int:
     """The most hops a spec can carry at ``width_bytes`` per hop (64-byte field)."""
     return MAX_PATH_BYTES // max(1, width_bytes)
+
+
+def first_repeated_edge(nodes: Sequence[str]) -> Optional[tuple[str, str]]:
+    """The first link a walk crosses twice in the same direction, or ``None``.
+
+    The trophy case's no-cheat rule, shared by the arbiter and every screen that
+    warns about it: a record walk must be a *trail* (graph theory's name for a walk
+    with no repeated edge — here the directed edge ``a → b``, so ``a → b … b → a``
+    stays a trail while ``a → b … a → b`` does not). The walk's implicit endpoints
+    at our own node need not be passed in: the arcs touching us can't repeat unless
+    we relay through ourselves mid-walk.
+
+    Args:
+        nodes: The walked hops in order — spec tokens or canonical ids, compared
+            case-insensitively; blank entries are ignored.
+
+    Returns:
+        The ``(a, b)`` pair of the first link walked twice (as given, lowercased),
+        or ``None`` when the walk is a trail.
+    """
+    walked = [n.strip().lower() for n in nodes if n and n.strip()]
+    seen: set[tuple[str, str]] = set()
+    for pair in zip(walked, walked[1:]):
+        if pair in seen:
+            return pair
+        seen.add(pair)
+    return None
 
 
 # --------------------------------------------------------------------------- scoring
@@ -285,9 +319,16 @@ def compute_walk_stats(
 def walk_scores(stats: WalkStats) -> dict[str, float]:
     """Score a walk against every category (the every-board-at-once rule).
 
+    A walk that repeats a directed link isn't a trail (see
+    :func:`first_repeated_edge`) and is disqualified from every board at once — the
+    arbiter's enforcement of the no-cheat rule, so no caller has to remember it.
+
     Returns:
-        ``category id → score`` for each category the walk can compete in.
+        ``category id → score`` for each category the walk can compete in; empty
+        for a disqualified walk.
     """
+    if first_repeated_edge(stats.node_ids) is not None:
+        return {}
     out: dict[str, float] = {}
     for category in CATEGORIES:
         value = category.score(stats)

@@ -328,3 +328,46 @@ async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx)
             task.cancel()
 
     assert result == {"records": 1}
+
+
+async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(
+    tui_ctx, monkeypatch
+) -> None:
+    """After the Trace path hand-off, ``open_records`` returns instead of reopening.
+
+    The anti-deep-stack rule: trophy case → Trace this path → (trace screen closes)
+    must land on the main menu, not back in the browser — otherwise bouncing between
+    the boards and the trace screens piles up states the user has to Esc through.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    ctx.repo.record_discovery(
+        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
+        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+    )
+    walked: list[str] = []
+
+    async def fake_trace_path(ctx_, spec=""):  # noqa: ANN001
+        walked.append(spec)
+        return 0
+
+    monkeypatch.setattr("meshterm.ui.trace_screen.open_trace_path", fake_trace_path)
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None
+        record = ctx.repo.discoveries("grand_tour")[0]
+        browser.resolve(("open", CATEGORY_BY_ID["grand_tour"], 1, record))
+        dialog = await _step_until(
+            lambda: session._float_layers()[0] if session._has_float() else None
+        )
+        assert isinstance(dialog, RecordDialog)
+        dialog.resolve("trace")  # "Trace this path"
+        result = await task  # …and the flow returns; no browser re-entry to unwind
+    finally:
+        if not task.done():
+            task.cancel()
+
+    assert walked == ["3d,f2"]  # the record's spec went straight to Trace path
+    assert result == {"records": 1}

@@ -22,6 +22,8 @@ whatever you make it, and nothing transmits until you say so. An action list dri
   repeater you hold admin credentials for, the composer can also *fetch that repeater's
   neighbour table* over the mesh (login required; firmware ignores guests):
   second-vantage evidence, persisted and folded straight back into the suggestions.
+  Committing the composer parks the action cursor on Trace — compose, then plain
+  Enter walks it — while backing out with Esc leaves the cursor where it was.
 * **Reverse path** (Trace path only — a target-mode route is a symmetric boomerang,
   so flipping it changes nothing) reverses the walk's hop order: ``us → a → b → c``
   becomes ``us → c → b → a``. Radio links rarely read the same both ways, so this
@@ -47,7 +49,13 @@ whatever you make it, and nothing transmits until you say so. An action list dri
   number of traces. While they fly, a floating *tracing* dialog (spinner, progress,
   Abort) sits over the screen — replies stream into the log behind it, and Esc in the
   dialog cancels without leaving the screen; traces already recorded are kept. The
-  screen keeps aggregating every trace of the session into its medians.
+  screen keeps aggregating every trace of the session into its medians. A walk that
+  crosses some link twice in the same direction first confirms on an amber
+  Cancel/Trace dialog — such a walk isn't a *trail*, so the trophy case ignores it
+  (the no-cheat rule; see :mod:`~meshterm.services.records`) — and a run that places
+  on the boards floats a *New record* dialog once it settles: Close (the default)
+  stays on the screen, Trophy case unwinds the whole session and opens the boards,
+  so leaving them lands on the main menu.
 * **Back** leaves the screen, exactly like Esc.
 
 Layout, top to bottom: the walked route (live when a reply has landed, else the route
@@ -78,6 +86,7 @@ from rich.text import Text
 
 from ..core.models import PATH_TRACE_TARGET, TraceResult, TraceStats
 from ..services import trace_runner
+from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
 from .menus import back_rows
@@ -106,6 +115,12 @@ _BAR_SNR_MAX = 10.0
 #: The sample counts the Sample count dialog offers: how many traces one Trace action
 #: runs, paced between transmissions.
 SAMPLE_CHOICES = (1, 2, 3, 5, 8)
+
+#: What the trace screen resolves with when the new-record dialog's *Trophy case*
+#: button is chosen. The session opener catches it and opens the trophy case only
+#: after the screen has fully unwound, so leaving the trophy case afterwards lands
+#: on the main menu instead of re-entering a stack of trace screens.
+OPEN_TROPHY_CASE = "records"
 
 #: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
 #: the result — plus any trophy-case disciplines the walk just placed in, as short
@@ -334,10 +349,11 @@ class TraceScreen(Screen):
         self._auto_spec = auto_spec
         self._auto_source = auto_source
         self._path_spec = initial_spec.strip()
-        #: The trophy-case disciplines the latest run placed in, as a ready-to-show
-        #: "★ new record · …" line — set when a walk scores, cleared when a run starts
-        #: or the path changes. Surfaced under the run's aggregates.
-        self._record_note = ""
+        #: The trophy-case disciplines the current run has placed in, keyed by
+        #: discipline title so an improving multi-sample run keeps only its latest
+        #: ``"Title — score"`` label per board. Cleared when a run starts; drained
+        #: into the floating new-record dialog once the run settles.
+        self._run_placed: dict[str, str] = {}
         #: Traces aggregated on screen — the current route's run. Adopting a
         #: different path clears it (old numbers describe the old route).
         self._traces: list[TraceResult] = []
@@ -383,7 +399,7 @@ class TraceScreen(Screen):
             return
         self._running = True
         self._status = ""
-        self._record_note = ""  # this run earns its own records
+        self._run_placed.clear()  # this run earns its own records
         self._spinner.reset()
         self._worker = asyncio.ensure_future(self._run_trace())
         self._session.invalidate()
@@ -433,6 +449,13 @@ class TraceScreen(Screen):
             self._running = False
             self._progress = None
             self._session.invalidate()
+            if self._run_placed and not (self.future is not None and self.future.done()):
+                # The run placed on the boards: float the new-record dialog once the
+                # tracing dialog is down. A separate task, because an aborted run
+                # reaches here already cancelled and couldn't await a dialog itself;
+                # a run whose screen is already resolving (Esc mid-run) skips it —
+                # a popup must never chase the user out of the screen.
+                asyncio.ensure_future(self._announce_records())
 
     async def _animate(self) -> None:
         """Advance the in-flight spinner and repaint on a steady cadence, until cancelled."""
@@ -442,24 +465,60 @@ class TraceScreen(Screen):
             self._session.invalidate()
 
     def _on_trace(self, result: TraceResult, placed: Sequence[str] = ()) -> None:
-        """Append the landed trace, note any records it set, echo it, and repaint.
+        """Append the landed trace, bank any records it set, echo it, and repaint.
 
         Args:
             result: The trace that just landed.
             placed: The trophy-case disciplines this walk placed in, as short
-                ``"Title — score"`` labels (empty when it set nothing). A run that
-                sets nothing on a later trace leaves an earlier trace's note standing.
+                ``"Title — score"`` labels (empty when it set nothing). They bank
+                into the run's tally — announced in one dialog when the run settles
+                (see :meth:`_announce_records`), a later improvement replacing the
+                earlier label on the same board.
         """
         self._traces.append(result)
         self._total_traces += 1
-        if placed:
-            if len(placed) == 1:
-                self._record_note = f"new record · {placed[0]}"
-            else:
-                self._record_note = f"{len(placed)} new records · " + " · ".join(placed)
+        for label in placed:
+            self._run_placed[label.split(" — ")[0]] = label
         if self._flight is not None:
             self._flight.last = result
         self._session.invalidate()
+
+    async def _announce_records(self) -> None:
+        """Float the new-record dialog for everything the settled run placed.
+
+        One dialog per run, however many samples scored: each placed discipline reads
+        as its own ``★ Title — score`` line. Platform-dialog shape — *Trophy case* on
+        the left, *Close* on the right and default — so Enter simply dismisses and Esc
+        closes. Choosing Trophy case resolves the whole screen with
+        :data:`OPEN_TROPHY_CASE`: the session opener then opens the trophy case only
+        *after* this screen (and everything stacked over it) has unwound, so backing
+        out of the trophy case lands on the main menu, never a pile of trace screens.
+        """
+        if self._dialog_open:
+            return
+        self._dialog_open = True
+        try:
+            labels = list(self._run_placed.values())
+            self._run_placed.clear()
+            prompt = Text()
+            for i, label in enumerate(labels):
+                if i:
+                    prompt.append("\n")
+                prompt.append("★ ", style="accent")
+                prompt.append(label, style="accent")
+            choice = await self._session.button_dialog(
+                prompt,
+                [("Trophy case", OPEN_TROPHY_CASE), ("Close", None)],
+                title="New record" if len(labels) == 1 else f"{len(labels)} new records",
+                default=1,
+                footer_hint="←→ choose · Enter select · Esc close",
+            )
+        finally:
+            self._dialog_open = False
+            self._session.invalidate()
+        if choice == OPEN_TROPHY_CASE:
+            self.cancel()
+            self.resolve(OPEN_TROPHY_CASE)
 
     def cancel(self) -> None:
         """Cancel any in-flight trace run (already-recorded traces are kept)."""
@@ -508,7 +567,11 @@ class TraceScreen(Screen):
             # back to device routing.
             if self._mode == "path" and not self._effective_spec()[0]:
                 return
-            self.start_trace()
+            edge = first_repeated_edge(self._spec_tokens())
+            if edge is not None:
+                self._confirm_ineligible(edge)
+            else:
+                self.start_trace()
         elif key == "width":
             self._open_flow(self._pick_width)
         elif key == "samples":
@@ -517,8 +580,11 @@ class TraceScreen(Screen):
             # Seed the composer with the route the screen is showing — the composed
             # spec if one stands, else the auto-resolved plan — not the bare
             # (empty on first open) stored spec, so opening Compose always resumes
-            # from the visible route.
-            self._open_flow(self._compose_path, seed=self._effective_spec()[0])
+            # from the visible route. Committing the composer parks the cursor on
+            # Trace (see _open_flow): compose, then plain Enter walks it.
+            self._open_flow(
+                self._compose_path, seed=self._effective_spec()[0], focus_trace=True
+            )
         elif key == "reverse":
             self._reverse_path()
         elif key == "explore" and self._explore is not None:
@@ -527,7 +593,9 @@ class TraceScreen(Screen):
             self.cancel()
             self.resolve(None)
 
-    def _open_flow(self, flow: PathFlow, seed: Optional[str] = None) -> None:
+    def _open_flow(
+        self, flow: PathFlow, seed: Optional[str] = None, focus_trace: bool = False
+    ) -> None:
         """Float a path-picking flow over the screen (one at a time, not mid-trace).
 
         The composer, the scenario explorer, and the width picker all resolve the
@@ -542,6 +610,10 @@ class TraceScreen(Screen):
                 no spec stands), so it never opens blank over a shown route. The
                 adopt test still compares against the stored spec, so re-confirming an
                 auto plan verbatim simply pins it, exactly like adopting it by hand.
+            focus_trace: Whether committing the flow (any non-``None`` resolution,
+                even the unchanged spec) should park the action cursor on Trace —
+                the composer's hand-back, so plain Enter walks what was just built.
+                Backing out with Esc leaves the cursor where it was.
         """
         if self._dialog_open or self._running:
             return
@@ -550,6 +622,8 @@ class TraceScreen(Screen):
         async def run() -> None:
             try:
                 spec = await flow(self._path_spec if seed is None else seed)
+                if spec is not None and focus_trace:
+                    self._index = self._actions.index("trace")
                 if spec is not None and spec.strip() != self._path_spec:
                     # A different spec is a different measurement: the aggregates,
                     # per-hop medians, and log all belong to the old route, so the
@@ -557,7 +631,6 @@ class TraceScreen(Screen):
                     self._path_spec = spec.strip()
                     self._traces.clear()
                     self._status = ""
-                    self._record_note = ""  # the note described the old route's run
             finally:
                 self._dialog_open = False
                 self._session.invalidate()
@@ -745,6 +818,52 @@ class TraceScreen(Screen):
         spec = self._auto_spec()
         return spec, bool(spec)
 
+    def _spec_tokens(self) -> list[str]:
+        """The effective spec's hop hashes in walk order (empty = path-less trace)."""
+        spec, _ = self._effective_spec()
+        return [t.strip() for t in spec.split(",") if t.strip()]
+
+    def _confirm_ineligible(self, edge: tuple[str, str]) -> None:
+        """Float the amber not-a-trail confirm before walking a record-ineligible path.
+
+        The walk about to fly crosses ``edge`` twice in the same direction, so it
+        isn't a trail and the trophy case will ignore whatever it scores (the
+        no-cheat rule — see :func:`~meshterm.services.records.first_repeated_edge`).
+        Walking it is still perfectly fine, so the dialog only makes the
+        disqualification explicit: Cancel backs out, Trace — on the right and the
+        default, like every committing verb — transmits anyway.
+        """
+        if self._dialog_open or self._running:
+            return
+        self._dialog_open = True
+
+        async def run() -> None:
+            try:
+                prompt = Text("This walk crosses ", style="warn")
+                prompt.append_text(
+                    _link_text(edge[0], edge[1], self._device_label, self._resolve)
+                )
+                prompt.append(" twice in the same direction, ", style="warn")
+                prompt.append(
+                    "so it isn't a trail — records will ignore it. Trace anyway?",
+                    style="warn",
+                )
+                choice = await self._session.button_dialog(
+                    prompt,
+                    [("Cancel", None), ("Trace", "trace")],
+                    title="Not eligible for records",
+                    default=1,
+                    footer_hint="←→ choose · Enter select · Esc cancel",
+                    border_style="warn",
+                )
+            finally:
+                self._dialog_open = False
+                self._session.invalidate()
+            if choice == "trace":
+                self.start_trace()
+
+        asyncio.ensure_future(run())
+
     def _planned_route(self) -> Optional[Text]:
         """The route the next Trace walks as a preview, or ``None`` without one.
 
@@ -824,9 +943,6 @@ class TraceScreen(Screen):
         hops = self._displayed_hop_count(current)
         if hops is not None:
             summary.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
-        if self._record_note:
-            summary.append("\n★ ", style="accent")
-            summary.append(self._record_note, style="accent")
         return summary
 
     def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
@@ -1756,7 +1872,14 @@ async def _open_session(
         initial_spec=initial_spec if mode == "path" else "",
     )
     try:
-        await session.run_screen(screen)
+        result = await session.run_screen(screen)
     finally:
         screen.cancel()
+    if result == OPEN_TROPHY_CASE:
+        # The new-record dialog's hand-off: the trace screen (and every prompt over
+        # it) is already down, so the trophy case opens over a clean stack and Esc
+        # from it unwinds straight to the main menu — never back into this session.
+        from .records_screen import open_records
+
+        await open_records(ctx)
     return screen._total_traces

@@ -34,6 +34,9 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
   resolves :class:`FetchNeighbours` and the owning flow fetches, refreshes the
   topology, and reopens the composer mid-thought (hops preserved).
 * Enter on **Use this path** commits the composed spec; Esc cancels with no change.
+* A walk that crosses some link twice in the same direction shows a yellow ⚠ note
+  under the preview: still walkable, but no longer a *trail*, so the trophy case
+  will ignore it (the no-cheat rule — see :mod:`~meshterm.services.records`).
 
 Nodes and the route preview render through the shared path widget
 (:func:`~meshterm.ui.widgets.path_text`, trace flavour) — ``Name (hash)`` with names
@@ -51,6 +54,7 @@ from typing import Optional
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..services.records import first_repeated_edge
 from ..services.topology import MeshTopology, _is_hex, render_custom_spec, render_forced_spec
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
@@ -75,6 +79,14 @@ _CANCEL = "cancel"
 #: suggestion: T(race), R(oute — the firmware's learned out_path), P(acket log),
 #: N(eighbour table fetched from a repeater).
 _SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P", "neighbour": "N"}
+
+#: The inline no-cheat warning, shown under the route preview while the composed walk
+#: crosses some link twice in the same direction — repeating a stretch would let its
+#: score be farmed, so the trophy case disqualifies such a walk (it is no longer a
+#: *trail*, graph theory's walk-with-no-repeated-edge; see
+#: :func:`~meshterm.services.records.first_repeated_edge`). Composing one stays legal —
+#: the warning only says the walk can't set records.
+_NOT_A_TRAIL = "⚠ repeats a link — not a trail, so records ignore this walk"
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +247,18 @@ class PathComposerScreen(Screen):
             )
         return render_custom_spec(tuple(self._hops), self._width_bytes)
 
+    def _walk_nodes(self) -> list[str]:
+        """The whole walk the current composition transmits, as canonical ids.
+
+        Target mode is the symmetric boomerang (outbound hops, the target, the
+        mirrored return); path mode is the composed hops verbatim. This is what the
+        record-eligibility check runs over — the mirror halves matter, because a
+        repeated outbound stretch repeats on the return leg too.
+        """
+        if self._mirrored:
+            return [*self._hops, str(self._target_id), *reversed(self._hops)]
+        return list(self._hops)
+
     # --- rendering ---------------------------------------------------------------
 
     def _path_entry(self, node: str) -> Optional[str]:
@@ -346,6 +370,8 @@ class PathComposerScreen(Screen):
         """Natural outer width hugging the widest row (compositor still caps it)."""
         widths = [cell_len(self.title), cell_len(self.footer_hint)]
         widths.append(cell_len(self._route_preview().plain))
+        if first_repeated_edge(self._walk_nodes()) is not None:
+            widths.append(cell_len(_NOT_A_TRAIL))
         for kind, payload in self._rows():
             widths.append(cell_len(self._row_text(kind, payload).plain) + 2)
         return max(widths, default=20) + 8
@@ -361,6 +387,8 @@ class PathComposerScreen(Screen):
         self._index = max(0, min(self._index, len(rows) - 1))
 
         lines = render_lines(self._route_preview(), width)
+        if first_repeated_edge(self._walk_nodes()) is not None:
+            lines.extend(render_lines(Text(_NOT_A_TRAIL, style="warn"), width))
         lines.append("")
         if self._entry:
             lines.append(render_to_ansi(Text(f"/{self._entry}", style="warn"), width))

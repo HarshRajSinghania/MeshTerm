@@ -358,6 +358,30 @@ def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:
     assert screen._hops == []
 
 
+def test_composer_warns_when_the_walk_repeats_a_link() -> None:
+    """Riding a link twice the same way shows the yellow not-a-trail note; fixing it clears."""
+    screen = _composer(
+        _topo(), hops=["3d63c6429436", "f2c24f54551e"], target=False
+    )
+    assert "not a trail" not in _rows_plain(screen)
+    screen._hops += ["3d63c6429436", "f2c24f54551e"]  # …→ 3d → f2 ridden again
+    body = _rows_plain(screen)
+    assert "⚠" in body and "not a trail" in body and "records ignore" in body
+    screen.handle("backspace")  # drop the second f2: the repeat is gone
+    assert "not a trail" not in _rows_plain(screen)
+
+
+def test_composer_target_mode_warning_covers_the_mirrored_return() -> None:
+    """The check runs over the whole boomerang — a repeated outbound stretch fires it."""
+    clean = _composer(_topo(), hops=["3d63c6429436"])
+    assert "not a trail" not in _rows_plain(clean)  # the plain boomerang is a trail
+    screen = _composer(
+        _topo(),
+        hops=["3d63c6429436", "27d4396a2967", "3d63c6429436", "27d4396a2967"],
+    )
+    assert "not a trail" in _rows_plain(screen)
+
+
 async def test_composer_fetch_row_resolves_a_fetch_request() -> None:
     """Standing on a fetchable repeater, Enter on the fetch row hands off to the owner."""
     import asyncio

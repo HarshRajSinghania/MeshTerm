@@ -12,6 +12,7 @@ from meshterm.persistence.repository import Repository
 from meshterm.services.records import (
     CATEGORY_BY_ID,
     compute_walk_stats,
+    first_repeated_edge,
     max_hops,
     walk_from_trace,
     walk_scores,
@@ -94,6 +95,30 @@ def test_max_hops_follows_the_64_byte_path_field() -> None:
     assert max_hops(1) == 64
     assert max_hops(2) == 32
     assert max_hops(4) == 16
+
+
+# --- the no-cheat rule (a record walk must be a trail) -------------------------------
+
+
+def test_first_repeated_edge_flags_only_a_same_direction_recross() -> None:
+    """a→b twice breaks the trail; the boomerang's b→a return leg never does."""
+    assert first_repeated_edge(("a", "b", "c")) is None
+    # A target boomerang retraces every link backwards by design: still a trail.
+    assert first_repeated_edge(("a", "b", "t", "b", "a")) is None
+    assert first_repeated_edge(("a", "b", "a", "b")) == ("a", "b")
+    assert first_repeated_edge(("A ", "b", "a", "B")) == ("a", "b")  # case/space folded
+    assert first_repeated_edge(()) is None
+
+
+def test_walk_scores_disqualify_a_non_trail_from_every_board() -> None:
+    """Riding a link twice the same way pumps km and hops for free — every board says no."""
+    stats = compute_walk_stats(
+        (HUB_ID, FAR_ID, HUB_ID, FAR_ID),  # Hub→Far ridden twice
+        _result(8.0, 6.0, 7.0, 5.0, 9.0).hops, rtt_ms=100.0,
+        positions=POSITIONS, self_pos=SELF_POS,
+    )
+    assert stats.km_travelled > 0  # it would have scored…
+    assert walk_scores(stats) == {}  # …but the arbiter disqualifies it outright
 
 
 # --- deriving a walk from a trace ---------------------------------------------------

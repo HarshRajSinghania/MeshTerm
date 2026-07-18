@@ -15,7 +15,7 @@ import pytest
 from meshterm.core.models import Hop, TraceResult, TraceStats, TxLevelResult, TxOptResult, utcnow
 from meshterm.ui.braillechart import _METER_SLIM
 from meshterm.ui.theme import snr_style
-from meshterm.ui.trace_screen import _BAR_WIDTH, TraceScreen, snr_bar
+from meshterm.ui.trace_screen import _BAR_WIDTH, OPEN_TROPHY_CASE, TraceScreen, snr_bar
 from meshterm.ui.tx_screen import TxSweepScreen
 
 # The slim meter's fill glyphs (the SNR bar draws through the shared braille meter).
@@ -28,6 +28,10 @@ class _FakeSession:
     def __init__(self) -> None:
         self.repaints = 0
         self.stack: list = []
+        #: Every button_dialog floated, as ``(prompt, buttons, kwargs)``; the next
+        #: one resolves with ``dialog_answer`` (``None`` = the Esc/idle-cancel path).
+        self.dialogs: list = []
+        self.dialog_answer = None
 
     def invalidate(self) -> None:
         self.repaints += 1
@@ -40,6 +44,10 @@ class _FakeSession:
             self.stack.pop()
         elif screen in self.stack:
             self.stack.remove(screen)
+
+    async def button_dialog(self, prompt, buttons, **kwargs):  # noqa: ANN001
+        self.dialogs.append((prompt, buttons, kwargs))
+        return self.dialog_answer
 
 
 def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceResult:
@@ -472,6 +480,151 @@ async def test_trace_screen_back_row_resolves_like_escape() -> None:
     screen.handle("down")  # Trace → Back
     screen.handle("enter")
     assert screen.future.result() is None
+
+
+async def test_composer_commit_parks_the_cursor_on_trace() -> None:
+    """Committing the composer hands the cursor to Trace, so plain Enter walks it."""
+
+    async def compose(current):  # noqa: ANN001
+        return "3d,f2,3d"
+
+    screen, _ = _trace_screen(compose_path=compose)
+    screen._index = screen._actions.index("compose")
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert screen._actions[screen._index] == "trace"
+
+    # The hand-back is the composer's alone: the width flow keeps the cursor put.
+    async def width(current):  # noqa: ANN001
+        return "3d63,f2c2,3d63"
+
+    other, _ = _trace_screen(pick_width=width)
+    other._index = other._actions.index("width")
+    other.handle("enter")
+    await asyncio.sleep(0)
+    assert other._actions[other._index] == "width"
+
+
+async def test_composer_escape_leaves_the_cursor_where_it_was() -> None:
+    """Backing out of the composer with Esc moves nothing."""
+
+    async def compose(current):  # noqa: ANN001
+        return None  # the composer's Esc resolution
+
+    screen, _ = _trace_screen(compose_path=compose)
+    screen._index = screen._actions.index("compose")
+    screen.handle("enter")
+    await asyncio.sleep(0)
+    assert screen._actions[screen._index] == "compose"
+
+
+# --- the no-cheat rule on Trace ------------------------------------------------------
+
+
+async def _settle(screen) -> None:  # noqa: ANN001
+    """Let a just-committed dialog task run, then any trace worker it started."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+    if screen._worker is not None:
+        await screen._worker
+
+
+async def test_ineligible_walk_gates_trace_behind_an_amber_confirm() -> None:
+    """A same-direction link recross floats Cancel/Trace and cancels cleanly."""
+    ran: list[str] = []
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        ran.append(path_spec)
+        on_trace(_trace(5.0))
+
+    screen, session = _trace_screen(trace=trace, mode="path")
+    screen._path_spec = "3d,f2,3d,f2"  # rides 3d → f2 twice the same way
+    screen._index = screen._actions.index("trace")
+    screen.handle("enter")  # dialog_answer None = Cancel/Esc
+    await _settle(screen)
+    prompt, buttons, kwargs = session.dialogs[0]
+    assert [label for label, _ in buttons] == ["Cancel", "Trace"]
+    assert kwargs["default"] == 1  # Trace on the right and default: Enter commits it
+    assert kwargs["border_style"] == "warn"  # the amber caution tier
+    assert "trail" in prompt.plain  # the graph-theory name reaches the user
+    assert ran == []  # cancelled: nothing transmitted
+
+    session.dialog_answer = "trace"
+    screen.handle("enter")
+    await _settle(screen)
+    assert ran == ["3d,f2,3d,f2"]  # confirmed: the walk still flies
+
+
+async def test_eligible_walk_traces_without_a_confirm() -> None:
+    """An out-and-back walk recrosses links the other way only — no dialog, no nag."""
+    screen, session = _trace_screen(mode="path")
+    screen._path_spec = "3d,f2,3d"
+    screen._index = screen._actions.index("trace")
+    screen.handle("enter")
+    await screen._worker
+    assert session.dialogs == []
+    assert len(screen._traces) == 1
+
+
+# --- the new-record dialog -----------------------------------------------------------
+
+
+async def test_record_run_floats_the_new_record_dialog() -> None:
+    """A run that placed floats one dialog; Close (the default) keeps the screen up."""
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        on_trace(_trace(5.0), ["Most nodes — 4 nodes"])
+
+    screen, session = _trace_screen(trace=trace)
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.start_trace()
+    await screen._worker
+    await _settle(screen)  # the announcement task floats after the run settles
+    prompt, buttons, kwargs = session.dialogs[0]
+    assert "Most nodes — 4 nodes" in prompt.plain
+    assert [label for label, _ in buttons] == ["Trophy case", "Close"]
+    assert kwargs["default"] == 1  # Close is the default: Enter simply dismisses
+    assert kwargs["title"] == "New record"
+    assert not screen.future.done()  # Close/Esc: the screen stays up
+    assert screen._run_placed == {}  # announced once, not again on the next run
+
+
+async def test_record_dialog_trophy_case_hands_the_screen_off() -> None:
+    """Choosing Trophy case resolves the screen with the hand-off sentinel."""
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        on_trace(_trace(5.0), ["Most nodes — 4 nodes", "Longest distance — 12.4 km"])
+
+    screen, session = _trace_screen(trace=trace, samples=2)
+    session.dialog_answer = OPEN_TROPHY_CASE
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.start_trace()
+    await screen._worker
+    await _settle(screen)
+    _prompt, _buttons, kwargs = session.dialogs[0]
+    assert kwargs["title"] == "2 new records"  # one dialog for the whole run
+    assert len(session.dialogs) == 1  # however many samples scored
+    assert screen.future.result() == OPEN_TROPHY_CASE
+
+
+async def test_escaping_mid_run_skips_the_record_dialog() -> None:
+    """Esc while records are banked leaves quietly — no popup chases the user out."""
+    release = asyncio.Event()
+
+    async def trace(path_spec, on_trace):  # noqa: ANN001
+        on_trace(_trace(5.0), ["Most nodes — 4 nodes"])
+        await release.wait()
+
+    screen, session = _trace_screen(trace=trace, samples=2)
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.start_trace()
+    await asyncio.sleep(0)
+    screen.handle("escape")  # resolves the screen and cancels the run
+    with pytest.raises(asyncio.CancelledError):
+        await screen._worker
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert session.dialogs == []
 
 
 def test_planned_route_dims_only_the_mirrored_return_leg() -> None:

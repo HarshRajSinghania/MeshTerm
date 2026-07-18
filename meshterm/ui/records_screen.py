@@ -17,7 +17,9 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   pins, no labels); then the full route and spec, and when/by which app version it was
   set. The card scrolls (PgUp/PgDn/Home/End) when it outgrows the terminal. From there
   *Trace this path* reopens Trace path with the record's route prefilled, so a claim
-  worth re-testing is one Enter from the air again;
+  worth re-testing is one Enter from the air again — and when that screen closes, the
+  flow unwinds to the main menu rather than re-entering the browser, so the user is
+  never left many Escs deep;
 * deletion comes in three grains, each behind a red data-loss dialog: one record
   behind a Cancel/Delete confirm, and — the bulk grains — one discipline (every width)
   or everything, each gated behind typing ``delete``.
@@ -429,7 +431,8 @@ async def open_records(ctx: "AppContext") -> dict:
     Wires the browser to the database and the observed contacts: records come straight
     from :meth:`Repository.discoveries`, and hop hashes resolve to friendly names
     through the same resolver the trace screens use. *Trace this path* hands off to the
-    live Trace path screen with the record's route prefilled and returns here after.
+    live Trace path screen with the record's route prefilled; when that screen closes,
+    this flow returns (unwinding to the main menu) instead of reopening the browser.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
@@ -722,6 +725,10 @@ async def open_records(ctx: "AppContext") -> dict:
         finally:
             session.pop(browser)
         # Tracing a path is a full hand-off to the Trace screen, not a dialog over the
-        # trophy case, so it runs only once the browser backdrop is down.
+        # trophy case, so it runs only once the browser backdrop is down — and the
+        # browser does not reopen behind it: when the trace screen closes, this whole
+        # flow returns, landing the user on the main menu instead of a trophy-case →
+        # trace → trophy-case stack that takes many Escs to climb out of.
         if trace_spec is not None:
             await open_trace_path(ctx, spec=trace_spec)
+            return {"records": len(ctx.repo.discoveries())}
