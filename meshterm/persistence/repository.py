@@ -907,12 +907,13 @@ class Repository:
             crypted = raw.get("crypted")
         self._conn.execute(
             "INSERT INTO observations "
-            "(run_id, node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, node, public_key, name, kind, node_type, snr, rssi, lat, lon, path, "
+            "observed_at, chan_hash, cipher_mac, crypted, payload_typename) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
+                obs.public_key,
                 obs.name,
                 obs.kind,
                 obs.node_type,
@@ -1431,7 +1432,7 @@ class Repository:
             One :class:`HeardNode` per distinct node, ordered by most-recently heard.
         """
         sql = (
-            "SELECT node, name, node_type, snr, rssi, lat, lon, observed_at "
+            "SELECT node, public_key, name, node_type, snr, rssi, lat, lon, observed_at "
             "FROM observations WHERE kind != 'packet'"
         )
         params: list[Any] = []
@@ -1444,6 +1445,7 @@ class Repository:
         for row in rows:
             obs = Observation(
                 node=row["node"],
+                public_key=row["public_key"],
                 name=row["name"],
                 node_type=row["node_type"],
                 snr=row["snr"],

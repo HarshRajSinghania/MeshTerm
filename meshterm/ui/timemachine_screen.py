@@ -1134,10 +1134,9 @@ def _picker_row(
             stored :attr:`~meshterm.core.models.HeardNode.node_type` is absent, so a node
             heard only via non-advert packets still shows its true kind (see
             :func:`~meshterm.services.trace_runner.make_node_type_resolver`).
-        key: The hex to render in the hash lane — the node's full public key when the device
-            holds it as a contact (see
-            :func:`~meshterm.services.trace_runner.make_key_resolver`), so more than the
-            stored 12-hex prefix shows; ``None`` falls back to the stored prefix.
+        key: The hex to render in the hash lane — the node's full public key when we have
+            one (captured with the observation, or resolved from the device's contacts), so
+            more than the stored 12-hex prefix shows; ``None`` falls back to the stored prefix.
     """
     kind = node.node_type if node.node_type is not None else node_type
     glyph, glyph_style = _NODE_GLYPHS.get(kind, _DEFAULT_GLYPH)
@@ -1355,7 +1354,9 @@ class TimeMachinePickerScreen(SelectScreen):
         ]
         for node, name in _ordered_heard(self._listed, self._sort):
             node_type = node.node_type if node.node_type is not None else self._type_of(node.node)
-            key = self._resolve_key(node.node) or node.node
+            # The full key, most-durable source first: the one captured with the observation
+            # (shows offline), else the device's live contact list, else the stored prefix.
+            key = node.public_key or self._resolve_key(node.node) or node.node
             items.append(
                 Choice(
                     _picker_row(

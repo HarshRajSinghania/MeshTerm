@@ -962,3 +962,19 @@ def test_picker_hash_lane_shows_a_heard_nodes_full_key_when_a_contact_holds_it()
     assert stored + "ab" * 10 in row.label.plain  # 32 hex shown — far more than the stored 12
     # Its value still carries the stored 12-hex id, so the page query it opens is unchanged.
     assert row.value == (stored, "Rep")
+
+
+def test_picker_hash_lane_shows_a_captured_full_key_without_a_device() -> None:
+    """A full key captured with the observation shows offline — no contact resolver needed."""
+    from meshterm.core.models import HeardNode
+
+    stored = "3d63c6429436"
+    full = stored + "cd" * 26
+    node = HeardNode(
+        node=stored, name="Rep", count=7, median_snr=None, best_snr=None,
+        last_rssi=None, last_seen=utcnow(), public_key=full,
+    )
+    # No resolve_key passed: the stored public_key alone drives the hash lane.
+    screen = _picker([(node, "Rep")], width=100)
+    row = next(c for c in screen._choices() if c.value == (stored, "Rep"))
+    assert stored + "cd" * 10 in row.label.plain

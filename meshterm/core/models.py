@@ -119,7 +119,13 @@ class Observation:
     time rather than only at the instant a command runs.
 
     Attributes:
-        node: Key prefix / hash identifying the transmitting node, if known.
+        node: Key prefix / hash identifying the transmitting node, if known — the stored
+            12-hex canonical id everything groups and joins on. Kept short on purpose so it
+            matches the key prefixes traces, messages, and the topology graph carry.
+        public_key: The node's *full* public key, when the advert carried one (it arrives
+            in the payload and is truncated to :attr:`node` for the id). Display-only —
+            lets a hash lane show more than the twelve stored digits — and ``None`` for a
+            packet class or firmware that named only a short hash.
         name: Friendly name advertised by the node, if carried.
         kind: Packet class, e.g. ``advert`` or ``telemetry``.
         node_type: Advert type of the transmitting node (see the ``NODE_TYPE_*`` constants),
@@ -141,6 +147,7 @@ class Observation:
     """
 
     node: Optional[str]
+    public_key: Optional[str] = None
     name: Optional[str] = None
     kind: str = "advert"
     node_type: Optional[int] = None
@@ -359,6 +366,8 @@ class HeardNode:
         lon: Most recent advertised longitude, if the node shared one.
         node_type: Most recent advert type seen for the node (see the ``NODE_TYPE_*``
             constants), if any observation carried it.
+        public_key: The node's full public key, when any observation captured one (see
+            :attr:`Observation.public_key`); ``None`` leaves only the short :attr:`node` id.
     """
 
     node: Optional[str]
@@ -371,6 +380,7 @@ class HeardNode:
     lat: Optional[float] = None
     lon: Optional[float] = None
     node_type: Optional[int] = None
+    public_key: Optional[str] = None
 
     @property
     def has_location(self) -> bool:
@@ -404,6 +414,7 @@ class HeardNode:
         )
         name = next((o.name for o in reversed(ordered) if o.name), None)
         node_type = next((o.node_type for o in reversed(ordered) if o.node_type is not None), None)
+        public_key = next((o.public_key for o in reversed(ordered) if o.public_key), None)
         return cls(
             node=node,
             name=name,
@@ -415,6 +426,7 @@ class HeardNode:
             lat=located.lat if located else None,
             lon=located.lon if located else None,
             node_type=node_type,
+            public_key=public_key,
         )
 
 

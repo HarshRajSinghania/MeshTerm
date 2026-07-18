@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -119,7 +119,8 @@ CREATE TABLE IF NOT EXISTS discovered_paths (
 CREATE TABLE IF NOT EXISTS observations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    node        TEXT,
+    node        TEXT,             -- 12-hex canonical id (grouped/joined on)
+    public_key  TEXT,             -- the node's full public key, when the advert carried one
     name        TEXT,
     kind        TEXT    NOT NULL DEFAULT 'advert',
     node_type   INTEGER,          -- advert type (repeater/chat/room/...), when carried
@@ -230,3 +231,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # origin node — so the dashboard feed can read "channel text" / "trace" instead of
         # a bare "?" even when seeded from history. Older rows carry NULL (class unknown).
         conn.execute("ALTER TABLE observations ADD COLUMN payload_typename TEXT")
+    if "public_key" not in observation_cols:
+        # v11 -> v12: adverts carry the transmitting node's full public key, but only its
+        # 12-hex prefix was ever stored as the node id. Keep that prefix as the canonical id
+        # (traces, contacts, and the topology graph all match on it) and record the whole key
+        # alongside it, so a hash lane can show more than the twelve stored digits. Older rows
+        # carry NULL until re-heard — the raw payloads the past keys arrived in were never
+        # persisted, so history can't be completed from itself.
+        conn.execute("ALTER TABLE observations ADD COLUMN public_key TEXT")

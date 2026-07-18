@@ -160,6 +160,29 @@ def test_observation_from_event_parses_advert() -> None:
     assert (obs.lat, obs.lon) == (45.5, -73.6)
 
 
+def test_observation_from_event_keeps_full_public_key() -> None:
+    """An advert carrying the whole key keeps it (public_key) while node stays the 12-hex id."""
+    full = "aabbccddee11223344556677" + "00" * 20  # 64 hex
+
+    class _Event:
+        payload = {"public_key": full.upper(), "adv_name": "Repeater", "snr": 7.5}
+
+    obs = observation_from_event(_Event(), "advert")
+    assert obs is not None
+    assert obs.node == full[:12]  # the stored 12-hex canonical id everything joins on
+    assert obs.public_key == full  # the whole key, kept for a fuller hash display
+
+
+def test_observation_from_event_short_hash_leaves_no_full_key() -> None:
+    """A short-hash-only advert stores just the id, no (fabricated) full key."""
+
+    class _Event:
+        payload = {"hash": "aabbcc0011", "adv_name": "Rep"}
+
+    obs = observation_from_event(_Event(), "advert")
+    assert obs is not None and obs.node == "aabbcc0011" and obs.public_key is None
+
+
 def test_observation_from_event_without_node_is_skipped() -> None:
     """A payload carrying no node identifier yields no observation."""
 
@@ -257,6 +280,21 @@ def test_observation_count_totals_every_run(tmp_path: Path) -> None:
     repo.record_observation(run_id, Observation(node="a1", snr=1.0))
     repo.record_observation(run_id, Observation(node="b2", snr=2.0))
     assert repo.observation_count() == 2
+    repo.close()
+
+
+def test_observation_full_key_round_trips_into_heard_nodes(tmp_path: Path) -> None:
+    """A captured full public key persists and surfaces on the aggregated HeardNode."""
+    full = "3d63c6429436" + "ab" * 26  # 64 hex; node is its first 12
+    repo = Repository(tmp_path / "keys.db")
+    run_id = repo.start_run("monitor", {})
+    # One advert with the whole key, a later one for the same node carrying only the prefix.
+    repo.record_observation(run_id, Observation(node=full[:12], public_key=full, snr=5.0))
+    repo.record_observation(run_id, Observation(node=full[:12], snr=6.0))
+    (node,) = repo.heard_nodes()
+    assert node.node == full[:12]  # the id stays the 12-hex prefix
+    assert node.public_key == full  # the full key is surfaced from the row that had it
+    assert node.count == 2
     repo.close()
 
 

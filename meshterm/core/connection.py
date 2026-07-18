@@ -2543,6 +2543,7 @@ class MockDevice(Device):
         node_type = NODE_TYPE_REPEATER if contact.name in self._MOCK_LOCATIONS else NODE_TYPE_CHAT
         return Observation(
             node=contact.key_prefix or contact.public_key[:12],
+            public_key=contact.public_key or None,
             name=contact.name,
             kind="telemetry" if seq % 4 == 3 else "advert",
             node_type=node_type,
@@ -2569,6 +2570,7 @@ class MockDevice(Device):
         contact = routed[seq % len(routed)]
         return Observation(
             node=contact.key_prefix or contact.public_key[:12],
+            public_key=contact.public_key or None,
             kind="packet",
             snr=round(self._rng.gauss(6.0, 3.0), 1),
             rssi=round(self._rng.gauss(-95.0, 8.0), 1),
@@ -2713,19 +2715,24 @@ def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: 
         The parsed :class:`Observation`, or ``None`` if the payload carried no node id.
     """
     payload = dict(getattr(event, "payload", {}) or {})
-    node = (
+    ident = (
         payload.get("public_key")
         or payload.get("pubkey")
         or payload.get("hash")
         or payload.get("key_prefix")
     )
-    if not node:
+    if not ident:
         return None
-    node = str(node).lower().removeprefix("0x")[:12]
+    ident = str(ident).lower().removeprefix("0x")
+    node = ident[:12]  # the stored 12-hex canonical id (what everything groups/joins on)
+    # Keep the whole key when the advert carried one (public_key/pubkey), so a hash lane can
+    # later show more than the twelve stored digits; a short-hash-only advert leaves it None.
+    public_key = ident if len(ident) > len(node) else None
     lat = payload.get("adv_lat", payload.get("lat"))
     lon = payload.get("adv_lon", payload.get("lon"))
     return Observation(
         node=node,
+        public_key=public_key,
         name=payload.get("adv_name") or payload.get("name"),
         kind=kind,
         node_type=_as_int(payload.get("adv_type", payload.get("type"))),
@@ -2772,11 +2779,14 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
     origin = payload.get("adv_key")
     if not origin and not hops:
         return None  # neither endpoint nor relays: no topology content
-    node = str(origin).lower().removeprefix("0x")[:12] if origin else None
+    ident = str(origin).lower().removeprefix("0x") if origin else None
+    node = ident[:12] if ident else None
+    public_key = ident if ident and len(ident) > 12 else None  # keep the whole adv_key
     lat = payload.get("adv_lat")
     lon = payload.get("adv_lon")
     return Observation(
         node=node,
+        public_key=public_key,
         name=payload.get("adv_name"),
         kind="packet",
         node_type=_as_int(payload.get("adv_type")),
