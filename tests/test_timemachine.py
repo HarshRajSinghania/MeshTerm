@@ -554,14 +554,20 @@ def test_mesh_page_rhythm_left_edge_aligns_with_the_day_charts(tmp_path: Path) -
 def test_picker_row_lanes_align_under_the_header() -> None:
     """Picker rows lane up under the header; unknown nodes read as heat-coloured names."""
     from meshterm.core.models import HeardNode
-    from meshterm.ui.timemachine_screen import _picker_header, _picker_row
+    from meshterm.ui.nodelist import NodeRow, _header, _lane
     from meshterm.ui.widgets import NodesSort
 
     node = HeardNode(
         node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
         last_rssi=None, last_seen=utcnow(),
     )
-    row = _picker_row(node, node.name, 10, 2, 16)
+    row = _lane(
+        NodeRow(
+            value=node.node, name=node.name, key=node.node or "",
+            last_seen=node.last_seen, count=node.count,
+        ),
+        10, 2, 16,
+    )
     plain = row.plain
     assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
     # A just-heard mystery node reads hot (white), not placeholder-grey.
@@ -574,7 +580,7 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     )
     # Header labels land over their lanes (+2 covers the select pointer column); the lanes
     # now read NAME · HEARD · PKTS · HASH, with the hash closing the row.
-    header = _picker_header(10, NodesSort.from_name("heard")).plain
+    header = _header(10, NodesSort.from_name("heard")).plain
     assert header.index("NAME") == plain.index("unknown") + 2
     assert header.index("HASH") == plain.index("3d" * 6) + 2
     assert header.index("HEARD") < header.index("PKTS") < header.index("HASH")
@@ -582,28 +588,28 @@ def test_picker_row_lanes_align_under_the_header() -> None:
 
 def test_picker_header_marks_the_active_sort_column() -> None:
     """The sort column carries a direction triangle; toggling flips ▲/▼, and only it."""
-    from meshterm.ui.timemachine_screen import _picker_header
+    from meshterm.ui.nodelist import _header
     from meshterm.ui.widgets import NodesSort
 
-    heard_desc = _picker_header(12, NodesSort("heard", ascending=False)).plain
+    heard_desc = _header(12, NodesSort("heard", ascending=False)).plain
     assert "HEARD ▼" in heard_desc and "▲" not in heard_desc
     # Ascending flips the same column's glyph without touching the others.
-    assert "HEARD ▲" in _picker_header(12, NodesSort("heard", ascending=True)).plain
+    assert "HEARD ▲" in _header(12, NodesSort("heard", ascending=True)).plain
     # A different active column moves the mark; packets opens descending.
-    packets = _picker_header(12, NodesSort.from_name("packets")).plain
+    packets = _header(12, NodesSort.from_name("packets")).plain
     assert "PKTS ▼" in packets and "HEARD" in packets and "HEARD ▼" not in packets
     # The hash column is sortable now too, so it carries the mark when it's active.
-    hash_sorted = _picker_header(12, NodesSort("hash", ascending=True)).plain
+    hash_sorted = _header(12, NodesSort("hash", ascending=True)).plain
     assert "HASH ▲" in hash_sorted and "PKTS ▲" not in hash_sorted
 
 
 def test_picker_header_highlights_only_the_active_sort_column() -> None:
     """The active column's label and its triangle are lit cyan; the other lanes stay muted."""
-    from meshterm.ui.timemachine_screen import _PICK_SORT_ACTIVE, _picker_header
+    from meshterm.ui.nodelist import _SORT_ACTIVE, _header
     from meshterm.ui.widgets import NodesSort
 
-    header = _picker_header(12, NodesSort.from_name("packets"))
-    lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _PICK_SORT_ACTIVE]
+    header = _header(12, NodesSort.from_name("packets"))
+    lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _SORT_ACTIVE]
     # Exactly the active PKTS lane (label + triangle) carries the highlight.
     assert any("PKTS" in seg and "▼" in seg for seg in lit)
     assert not any(any(other in seg for other in ("NAME", "HEARD", "HASH")) for seg in lit)
@@ -611,16 +617,11 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
 
 def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
     """Build a rendered picker over ``listed`` and return it (rows sized to ``width``)."""
-    from meshterm.ui.timemachine_screen import (
-        _PICKER_SORT_COLUMNS,
-        _PICKER_SORT_OPENS_ASCENDING,
-        TimeMachinePickerScreen,
-    )
+    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.timemachine_screen import TimeMachinePickerScreen
     from meshterm.ui.widgets import NodesSort
 
-    default_sort = NodesSort.from_name(
-        "heard", _PICKER_SORT_COLUMNS, _PICKER_SORT_OPENS_ASCENDING
-    )
+    default_sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
     screen = TimeMachinePickerScreen(
         listed=listed,
         prefix_bytes=prefix_bytes,
@@ -764,17 +765,17 @@ def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
 def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
     """Columns anchor left: the name lane hugs its content and stays put as the window
     widens, and the freed width flows to the hash lane so more of each key shows."""
-    from meshterm.ui.timemachine_screen import _PICK_LEAD
+    from meshterm.ui.nodelist import _LEAD
 
     screen = _picker(_heard_nodes(), width=72)
     # The widest name here is the "unknown" fallback (7 cells); the lane sizes to it.
     name_w, hash_w = screen._name_w, screen._hash_w
     assert name_w == len("unknown")
-    assert hash_w == 72 - _PICK_LEAD - name_w
+    assert hash_w == 72 - _LEAD - name_w
     # Widen the terminal: the name lane does not move, the hash lane takes the extra width.
     screen.render_body(120)
     assert screen._name_w == name_w
-    assert screen._hash_w == 120 - _PICK_LEAD - name_w
+    assert screen._hash_w == 120 - _LEAD - name_w
     assert screen._hash_w > hash_w
 
 
@@ -914,17 +915,22 @@ def test_self_sections_render_the_page_and_empty_window(tmp_path: Path) -> None:
 
 def test_self_row_leads_the_node_list_as_a_lane() -> None:
     """The own-node lane shows our name + (you), faint — for heard/pkts, and our key hash."""
-    from meshterm.ui.timemachine_screen import _self_picker_row
+    from meshterm.ui.nodelist import NodeRow, _lane
+    from meshterm.ui.timemachine_screen import SELF
 
-    named = _self_picker_row(
-        "YUL-Johputer", "3d" * 32, name_w=30, prefix_bytes=1, hash_w=30
+    named = _lane(
+        NodeRow(value=SELF, name="YUL-Johputer", key="3d" * 32, you=True),
+        name_w=30, prefix_bytes=1, hash_w=30,
     ).plain
     assert named.startswith("★")
     assert "YUL-Johputer" in named and "(you)" in named
     assert "—" in named  # heard and packets have nothing to show for us
     assert "3d3d" in named  # our key hash, its routing prefix lit
     # No reachable device: a bare "you" name and a "?" hash, no "(you)" tag.
-    anon = _self_picker_row(None, None, name_w=30, prefix_bytes=0, hash_w=30).plain
+    anon = _lane(
+        NodeRow(value=SELF, name=None, key="", you=True),
+        name_w=30, prefix_bytes=0, hash_w=30,
+    ).plain
     assert "you" in anon and "(you)" not in anon
     assert anon.rstrip().endswith("?")
 

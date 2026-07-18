@@ -56,15 +56,19 @@ class NodesTool(Tool):
 
         self_name = str(info.get("name") or "this node")
         self_key = str(info.get("public_key") or "")
-        sort = NodesSort.from_name(str(params.get("sort") or "name"))
+        sort_name = str(params.get("sort") or "name")
 
-        # In the menu, hand the list to the interactive screen so the arrows re-sort it live;
-        # on the scripted CLI, render the table once in the requested order.
+        # In the menu, hand the list to the interactive screen so the Ctrl+arrows re-sort it
+        # live — its ring spans the shared node list's four columns (hash included); on the
+        # scripted CLI, render the static table once in the requested order.
         if isinstance(ctx.ui, TuiUi):
+            from ..ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
             from ..ui.nodes_screen import open_nodes
 
+            sort = NodesSort.from_name(sort_name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
             await open_nodes(ctx, self_name, self_key, contacts, prefix_bytes, counts, sort)
         else:
+            sort = NodesSort.from_name(sort_name)
             ctx.ui.show(nodes_table(self_name, self_key, contacts, prefix_bytes, counts, sort))
 
         return ToolResult(summary={"contacts": len(contacts)})

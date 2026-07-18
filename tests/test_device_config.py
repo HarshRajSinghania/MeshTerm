@@ -200,51 +200,79 @@ def test_nodes_table_breaks_metric_ties_by_name_ascending() -> None:
     assert order(ascending=False) == ["Bob", "Alice", "Charlie"]
 
 
-def test_nodes_screen_arrows_steer_the_sort() -> None:
-    """Left/right walk the sort column (wrapping); up/down set ascending/descending."""
-    from meshterm.ui.nodes_screen import NodesScreen
+def _nodes_sort(name: str = "name"):
+    """The interactive Nodes screen's sort: the shared node list's four-column ring."""
+    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
     from meshterm.ui.widgets import NodesSort
 
-    screen = NodesScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, NodesSort())
+    return NodesSort.from_name(name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
+
+
+def test_nodes_screen_ctrl_arrows_steer_the_sort() -> None:
+    """Ctrl+←/→ walk the shared four-column ring (wrapping); Ctrl+↑/↓ force the direction —
+    the Time Machine picker's keys, now the Nodes screen's too."""
+    from meshterm.ui.nodes_screen import NodesScreen
+
+    screen = NodesScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, _nodes_sort())
     assert (screen._sort.column, screen._sort.ascending) == ("name", True)
 
-    screen.handle("right")  # name -> heard, opening in its natural (ascending) direction
+    screen.handle("ctrl_right")  # name -> heard, opening in its natural (ascending) direction
     assert (screen._sort.column, screen._sort.ascending) == ("heard", True)
-    screen.handle("right")  # heard -> packets, which opens descending
+    screen.handle("ctrl_right")  # heard -> packets, which opens descending
     assert (screen._sort.column, screen._sort.ascending) == ("packets", False)
-    screen.handle("up")  # force ascending
+    screen.handle("ctrl_up")  # force ascending
     assert screen._sort.ascending is True
-    screen.handle("down")  # force descending
+    screen.handle("ctrl_down")  # force descending
     assert screen._sort.ascending is False
-    screen.handle("right")  # packets -> wraps back to name
+    screen.handle("ctrl_right")  # packets -> hash, the ring's fourth column
+    assert (screen._sort.column, screen._sort.ascending) == ("hash", True)
+    screen.handle("ctrl_right")  # hash -> wraps back to name
     assert screen._sort.column == "name"
-    screen.handle("left")  # name -> wraps to packets
-    assert screen._sort.column == "packets"
+    screen.handle("ctrl_left")  # name -> wraps to hash
+    assert screen._sort.column == "hash"
 
 
-def test_nodes_screen_windows_rows_between_pinned_header_and_legend() -> None:
-    """The rows scroll in place: header and legend hold still, hidden rows counted."""
+def test_nodes_screen_lists_contacts_in_the_shared_lanes() -> None:
+    """Contacts render in the shared NAME/HEARD/PKTS/HASH lanes, our node pinned first;
+    plain arrows only move the highlight, and Enter is inert (selection comes later)."""
     import re
 
-    from meshterm.core.models import Contact
-    from meshterm.ui.nodes_screen import NodesScreen
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.core.models import Contact, utcnow
+    from meshterm.ui.nodes_screen import YOU, NodesScreen
+    from meshterm.ui.tui.screen import CANCEL
 
-    contacts = [Contact(name=f"n{i:02}", public_key="ab" * 16) for i in range(30)]
-    screen = NodesScreen("Us", "aabbcc" + "00" * 29, contacts, 3, {}, NodesSort())
-    screen.note_viewport(18)  # the frame records this before every real paint
-    lines = screen.render_body(70)
-    plain = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
-    body = "\n".join(plain)
+    contacts = [
+        Contact(name="Alice", public_key="aa" * 32, last_seen=utcnow()),
+        Contact(name="Bob", public_key="bb" * 32),
+    ]
+    counts = {"aa" * 6: 7}  # Alice was overheard; Bob never
+    screen = NodesScreen("Us", "cc" * 32, contacts, 1, counts, _nodes_sort())
+    body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(72))
 
-    assert len(lines) <= 18  # header + window + legend fit the frame exactly
-    assert "NAME" in body and "you" in body  # the pinned header and legend survive
-    assert "↓" in body and "more" in body  # hidden rows are counted below
-    assert "n29" not in body  # ...because the tail really is out of the window
+    # The shared column header (recorded sticky, so it pins once scrolled past)...
+    assert "NAME" in body and "HEARD" in body and "PKTS" in body and "HASH" in body
+    assert screen._sticky_headers
+    # ...our own node leading the lanes, then the contacts with their tallies.
+    choices = screen._choices()
+    assert choices[0].value == YOU
+    assert "(you)" in choices[0].label.plain
+    assert "Alice" in body and "Bob" in body
+    assert f"{7:>5}" in body  # Alice's overheard packets, right-aligned in its lane
+    assert "never" in body  # Bob has no last_seen
 
-    screen.handle("end")  # slide the window to the tail
-    body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(70))
-    assert "n29" in body and "↑" in body  # tail visible, hidden rows counted above
+    # Plain arrows move the highlight without touching the sort.
+    before = (screen._sort.column, screen._sort.ascending)
+    screen.handle("down")
+    assert (screen._sort.column, screen._sort.ascending) == before
+    assert screen._current_choice().value != YOU
+
+    # Enter does nothing yet; Esc still leaves.
+    resolved: list = []
+    screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    screen.handle("enter")
+    assert resolved == []
+    screen.handle("escape")
+    assert resolved == [CANCEL]
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:

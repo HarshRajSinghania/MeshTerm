@@ -26,23 +26,19 @@ from datetime import date, datetime, timedelta
 from statistics import median
 from typing import TYPE_CHECKING, Callable, Optional
 
-from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
 from .braillechart import _TICK_GAP, GAP, axis_chart, chart_span, timeline_rows
-from .map_render import _SELF
 from .menus import fit_cells, section_heading
+from .nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING, NodeListScreen, NodeRow
 from .theme import snr_style
 from .tui.render import render_lines
 from .tui.screen import CANCEL, Screen
-from .tui.select import Choice, Separator, SelectScreen
+from .tui.select import Choice, Separator
 from .widgets import (
-    _DEFAULT_GLYPH,
-    _NODE_GLYPHS,
     _age_seconds,
-    _format_age,
     _recency_style,
     format_ago,
     highlighted_hash,
@@ -958,51 +954,13 @@ def _mesh_sections(
 
 #: Widest the mesh page's arrivals name lane grows (longer names ellipsize so the lanes
 #: stay put). The picker sizes its own name lane to content instead (see
-#: :meth:`TimeMachinePickerScreen._lane_widths`).
+#: :meth:`~meshterm.ui.nodelist.NodeListScreen._lane_widths`).
 _PICK_NAME_MAX = 18
 
 #: The mesh page's arrivals hash lane in cells. Heard-node ids are the observations' 12-hex
 #: key prefixes, so the lane's tail pads blank — the extra room keeps the hash legible, and
 #: as the arrival row's hash column the padding falls before the FIRST HEARD lane.
 _PICK_HASH_W = 16
-
-#: The narrowest the picker's name lane shrinks to (a very narrow terminal), so the header's
-#: ``NAME`` label and its sort triangle always have somewhere to sit.
-_PICK_NAME_MIN = 6
-
-#: The picker hash lane's floor in cells — four leading bytes plus an ellipsis, still a
-#: recognisable prefix on a very narrow terminal. The lane otherwise flexes to fill whatever
-#: width the (content-sized) name lane leaves, so a longer key — our own 64-hex node key, or
-#: a heard node's full key resolved from a contact — shows as many whole bytes as fit,
-#: ellipsized past that (see :func:`~meshterm.ui.widgets.highlighted_hash`).
-_PICK_HASH_MIN = 8
-
-#: Everything in a picker row *besides* the name and hash lanes, in cells: the select pointer
-#: (2), the type glyph and its space (2), then the two gapped fixed lanes — heard (2 gap + 5)
-#: and packets (2 gap + 5) — and the 3-cell gap before the hash. The name lane is content-
-#: sized and the hash lane takes the rest (see :meth:`TimeMachinePickerScreen._lane_widths`).
-_PICK_LEAD = 2 + 2 + (2 + 5) + (2 + 5) + 3
-
-#: The muted ``(you)`` tag on the own-node lane (see :func:`_self_picker_row`), its width
-#: folded into the name lane's content sizing so the tag never truncates.
-_YOU_TAG = "  (you)"
-
-#: The picker's sort ring and each column's natural opening direction — the Nodes list's
-#: three (see :data:`~meshterm.ui.widgets._SORT_COLUMNS`) plus a fourth, ``hash``, sorting on
-#: the node's key id (ascending = ``0`` → ``f``). Passed to :class:`NodesSort` so the ring
-#: the Ctrl+arrows walk includes the hash without touching the Nodes list's own three.
-_PICKER_SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets", "hash")
-_PICKER_SORT_OPENS_ASCENDING: dict[str, bool] = {
-    "name": True, "heard": True, "packets": False, "hash": True,
-}
-
-#: The cyan the active sort column and its triangle are lit in, matching the Nodes table's
-#: header (see :func:`~meshterm.ui.widgets._sort_header`) so the two lists' sort cues read
-#: identically.
-_PICK_SORT_ACTIVE = "bold #22d3ee"
-
-#: The picker's footer: navigation, the Ctrl+arrow sort, filtering, then Esc last.
-_PICKER_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter open · Esc back"
 
 
 def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str]) -> Optional[str]:
@@ -1020,169 +978,6 @@ def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str
         if named and named != node:
             return named
     return None
-
-
-def _picker_header(name_w: int, sort: NodesSort) -> Text:
-    """Column labels over the node picker's lanes (see :func:`_picker_row`).
-
-    The lanes read ``NAME · HEARD · PKTS · HASH``, matching the row builder. The four
-    leading spaces cover the select screen's pointer column (2 cells) plus the one-cell
-    type glyph and its gap, so each label lands over its lane.
-
-    All four columns are sortable, so any one can be the active sort. The active column's
-    label *and* its direction triangle (``▲`` ascending, ``▼`` descending) are lit cyan
-    together — the same cue the Nodes table's :func:`~meshterm.ui.widgets._sort_header`
-    lights — and the triangle is drawn *into the two-cell reserve that already follows
-    every label*, so switching the sort never widens a lane and shifts the rest of the row.
-    Returned as a :class:`~rich.text.Text` (not a plain string) so just the active column
-    carries the colour while the rest stays muted.
-    """
-
-    def column(header: Text, label: str, key: str, *, pad_to: int = 0) -> None:
-        """Append one column: its label plus a two-cell mark reserve, lit when it's the sort."""
-        if key == sort.column:
-            cell = f"{label} " + ("▲" if sort.ascending else "▼")
-            header.append(cell, style=_PICK_SORT_ACTIVE)
-        else:
-            cell = f"{label}  "
-            header.append(cell, style="muted")
-        if pad_to:  # left-justify the flexing name lane; the pad stays muted
-            header.append(" " * max(0, pad_to - cell_len(cell)), style="muted")
-
-    header = Text("    ", style="muted")  # pointer (2) + the row's type glyph and gap (2)
-    column(header, "NAME", "name", pad_to=name_w)
-    header.append("  ", style="muted")  # gap to the HEARD lane
-    column(header, "HEARD", "heard")
-    column(header, f"{'PKTS':>5}", "packets")
-    # HASH sits one cell further out than the other lanes so a packets-sort triangle —
-    # packets being the lane just before it — never abuts the hash label.
-    header.append(" ", style="muted")
-    column(header, "HASH", "hash")
-    return header
-
-
-def _self_picker_row(
-    self_name: Optional[str], self_key: Optional[str], name_w: int, prefix_bytes: int,
-    hash_w: int,
-) -> Text:
-    """Our own node as the picker's first node lane — the Nodes list's self row.
-
-    Laid out exactly like :func:`_picker_row` so it sits *inside* the node list rather than
-    above it, and drawn like the Nodes screen's own-node row: the ``★`` self marker (yellow),
-    the name in the pure-white ``you`` style with a muted ``(you)`` tag, and our key hash lit
-    at the routing width, filling the flexing hash lane (``hash_w`` cells) — our 64-hex key
-    is longer than any lane, so it shows as many digits as fit and ellipsizes. The heard and
-    packet lanes read a faint ``—`` — we never overhear ourselves, so there is no reception
-    age or count to show (the page itself is built from what we *sent*). With no reachable
-    device to name us, the name falls back to a bare ``you`` and the hash to ``?``.
-    """
-    row = Text(no_wrap=True, overflow="ellipsis")
-    row.append(_SELF[0], style=_SELF[1])
-    row.append(" ")
-    # The name lane, exactly name_w cells: the name (white) with a snug muted "(you)" tag —
-    # padded out to fill the lane, matching the Nodes screen's own-node row — or, when the
-    # name alone would crowd out the tag, the name fit to the lane with the tag dropped. The
-    # lane is sized to hold the tag (see _widest_name), so the drop is a very-long-name guard.
-    used = cell_len(self_name) + cell_len(_YOU_TAG) if self_name else 0
-    if self_name and used <= name_w:
-        row.append(self_name, style="you")
-        row.append(_YOU_TAG, style="muted")
-        row.append(" " * (name_w - used))
-    else:
-        row.append(fit_cells(self_name or "you", name_w), style="you")
-    row.append("  ")
-    row.append(f"{'—':>5}", style="faint")  # heard: we don't hear ourselves
-    row.append("  ")
-    row.append(f"{'—':>5}", style="faint")  # packets: nothing to count
-    row.append("   ")  # the wider gap the header's HASH lane keeps (see _picker_header)
-    if self_key:
-        row.append_text(highlighted_hash(self_key, prefix_bytes, width=hash_w))
-    else:
-        row.append("?", style="muted")
-    return row
-
-
-def _picker_row(
-    node: "HeardNode",
-    name: Optional[str],
-    name_w: int,
-    prefix_bytes: int,
-    hash_w: int,
-    node_type: Optional[int] = None,
-    *,
-    key: Optional[str] = None,
-) -> Text:
-    """One heard node as fixed, colour-coded picker lanes.
-
-    The type glyph leads (the app's shared marker palette), so the mark reads ``▲`` for a
-    repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name —
-    stored, or filled in by the contact resolver (see :func:`_known_name`) — is coloured by
-    recency heat, ``unknown`` included, so a freshly heard mystery node still reads hot, and
-    takes the flexing name lane (``name_w`` cells). Last-heard age and packet count follow,
-    right-aligned under their headers; the hash closes the row in the shared hash widget, its
-    path-hash prefix lit at the device's routing width, exactly as the Nodes list draws keys.
-
-    Args:
-        node: The heard node whose stats fill the lanes.
-        name: Its resolved display name (``None`` renders the heat-coloured ``unknown``).
-        name_w: The name lane's width in cells (content-sized across the whole list).
-        prefix_bytes: Path-hash width in bytes to light in the hash.
-        hash_w: The flexing hash lane's width in cells (a heard id's 12 hex digits pad out
-            to it; see :func:`~meshterm.ui.widgets.highlighted_hash`).
-        node_type: The node's type when known from a source other than its stored
-            observations (the device's contacts, say) — used for the glyph only when the
-            stored :attr:`~meshterm.core.models.HeardNode.node_type` is absent, so a node
-            heard only via non-advert packets still shows its true kind (see
-            :func:`~meshterm.services.trace_runner.make_node_type_resolver`).
-        key: The hex to render in the hash lane — the node's full public key when we have
-            one (captured with the observation, or resolved from the device's contacts), so
-            more than the stored 12-hex prefix shows; ``None`` falls back to the stored prefix.
-    """
-    kind = node.node_type if node.node_type is not None else node_type
-    glyph, glyph_style = _NODE_GLYPHS.get(kind, _DEFAULT_GLYPH)
-    secs = _age_seconds(node.last_seen)
-    row = Text(no_wrap=True, overflow="ellipsis")
-    row.append(glyph, style=glyph_style)
-    row.append(" ")
-    row.append(fit_cells(name or "unknown", name_w), style=_recency_style(secs))
-    row.append("  ")
-    row.append(f"{_format_age(secs):>5}", style="muted")
-    row.append("  ")
-    row.append(f"{min(node.count, 99999):>5}", style="muted")
-    row.append("   ")  # the wider gap the header's HASH lane keeps (see _picker_header)
-    row.append_text(highlighted_hash(key or node.node or "", prefix_bytes, width=hash_w))
-    return row
-
-
-def _ordered_heard(
-    listed: list[tuple["HeardNode", Optional[str]]], sort: NodesSort
-) -> list[tuple["HeardNode", Optional[str]]]:
-    """Order the picker's ``(node, resolved name)`` pairs by the active sort.
-
-    The heard-node counterpart of the Nodes list's :func:`~meshterm.ui.widgets._ordered_contacts`,
-    over the picker's four columns and their natural directions: name A→Z, ``heard`` by age so
-    ascending is most-recently-heard first, ``packets`` by count, ``hash`` by the node's key id
-    (ascending = ``0`` → ``f``). A name-ascending pre-sort is the stable tiebreak, so two nodes
-    sharing a metric keep an A→Z order under both directions rather than flipping with the
-    primary key.
-    """
-
-    def key_name(item: tuple["HeardNode", Optional[str]]) -> str:
-        return (item[1] or "unknown").casefold()
-
-    def metric(item: tuple["HeardNode", Optional[str]]):  # noqa: ANN202 - homogeneous per sort
-        node, _name = item
-        if sort.column == "name":
-            return key_name(item)
-        if sort.column == "packets":
-            return node.count
-        if sort.column == "hash":
-            return node.node or ""
-        return _age_seconds(node.last_seen)  # "heard": ascending = freshest first
-
-    ordered = sorted(listed, key=key_name)
-    ordered.sort(key=metric, reverse=not sort.ascending)
-    return ordered
 
 
 async def _routing_prefix_bytes(ctx: "AppContext") -> int:
@@ -1254,28 +1049,15 @@ async def _self_identity(ctx: "AppContext") -> tuple[Optional[str], Optional[str
     return (str(name) if name else None), (str(key) if key else None)
 
 
-class TimeMachinePickerScreen(SelectScreen):
-    """The Time Machine's subject picker: a full-screen, sortable, filterable node list.
+class TimeMachinePickerScreen(NodeListScreen):
+    """The Time Machine's subject picker: the shared node list under the whole-mesh row.
 
-    The whole-mesh overview leads; under it the node list runs in aligned lanes — name
-    (coloured by recency heat), last-heard age, packet count, and key hash — our own node
-    first (the Nodes screen's own-node-first order), then every node ever heard. The lanes
-    anchor to the left: the name lane is sized to its widest name (not the terminal), so the
-    columns stay put as the window widens and the freed width flows to the hash lane, which
-    shows each key as fully as it fits — a heard node's full key when a contact holds it,
-    ellipsized on a byte boundary past that (see :meth:`_lane_widths`). It is a full-screen
-    list, not a floating popup.
-
-    The sort rides the Ctrl+arrows, leaving the plain arrows for the highlight and the
-    letters for type-to-filter: **Ctrl+←/→** pick the column (name → heard → packets → hash,
-    each adopting its natural direction) and **Ctrl+↑/↓** force ascending/descending. Every
-    change re-sorts the node block in place — the whole-mesh row and headers stay pinned,
-    the highlight rides its node, and any active filter holds — the same :class:`NodesSort`
-    model and cyan triangle cue the Nodes list uses (over a fourth, hash, column here), only
-    its keys moved off the plain arrows that a filterable list already spends.
+    The whole-mesh overview leads; under it runs the app's shared sortable node list
+    (see :class:`~meshterm.ui.nodelist.NodeListScreen` for the lanes, the Ctrl+arrow
+    sort, and type-to-filter) — our own node first, then every node ever heard. A heard
+    node's hash lane shows its fullest known key: the one captured with an observation
+    (shows offline), else the device's contact list, else the stored 12-hex prefix.
     """
-
-    floating = False
 
     def __init__(
         self,
@@ -1293,16 +1075,16 @@ class TimeMachinePickerScreen(SelectScreen):
 
         Args:
             listed: Every heard node with a resolved display name (``None`` = unknown),
-                in the repository's most-recently-heard order; re-sorted here per ``sort``.
+                in the repository's most-recently-heard order; re-sorted per ``sort``.
             prefix_bytes: Path-hash width in bytes to light in each hash.
             sort: The sort state, mutated in place by the Ctrl+arrows — pass the same
                 instance across re-opens so the chosen order persists. Its ring should span
-                :data:`_PICKER_SORT_COLUMNS` for the hash column to be reachable.
+                :data:`~meshterm.ui.nodelist.SORT_COLUMNS` for the hash column to be
+                reachable.
             prompt: The instruction shown above the list.
             self_name: Our own node's advertised name, for the own-node lane that always
-                leads the node list (see :func:`_self_picker_row`); ``None`` (no reachable
-                device) falls back to a bare ``you``. The row is always present — the
-                own-node page reads stored history.
+                leads the node list; ``None`` (no reachable device) falls back to a bare
+                ``you``. The row is always present — the own-node page reads stored history.
             self_key: Our own node's full public key, lit as the own-node lane's hash;
                 ``None`` renders a muted ``?``.
             type_of: Resolves a node's type from the device's contacts, filling the leading
@@ -1314,132 +1096,35 @@ class TimeMachinePickerScreen(SelectScreen):
                 the stored digits (see :func:`_contact_resolvers`); the default returns the
                 prefix unchanged, leaving the stored 12 hex to stand.
         """
-        self._listed = listed
-        self._prefix_bytes = prefix_bytes
-        self._sort = sort
-        self._self_name = self_name
-        self._self_key = self_key
-        self._type_of = type_of
-        self._resolve_key = resolve_key
-        # Provisional until the first render learns the true width (see render_body).
-        self._name_w = _PICK_NAME_MIN
-        self._hash_w = _PICK_HASH_MIN
-        super().__init__(
-            "Time machine",
-            self._compose_items(),
-            prompt=prompt,
-            footer_hint=_PICKER_HINT,
-            wrap=False,
-        )
-
-    def _compose_items(self) -> list:
-        """The whole-mesh row, the heading and sort-aware column header, then the node choices
-        — our own node first, the heard nodes after it in the active sort order.
-
-        Our node leads the ``── Nodes ──`` list and stays first whatever the sort: only the
-        heard-node block below it reorders. It reads as an ordinary node lane (see
-        :func:`_self_picker_row`), matching the Nodes screen's own-node-first table."""
-        items: list = [
-            Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
-            Separator(" "),
-            section_heading("Nodes"),
-            Separator(_picker_header(self._name_w, self._sort)),
-            Choice(
-                _self_picker_row(
-                    self._self_name, self._self_key, self._name_w,
-                    self._prefix_bytes, self._hash_w,
-                ),
-                SELF,
-            ),
-        ]
-        for node, name in _ordered_heard(self._listed, self._sort):
-            node_type = node.node_type if node.node_type is not None else self._type_of(node.node)
-            # The full key, most-durable source first: the one captured with the observation
-            # (shows offline), else the device's live contact list, else the stored prefix.
-            key = node.public_key or self._resolve_key(node.node) or node.node
-            items.append(
-                Choice(
-                    _picker_row(
-                        node, name, self._name_w, self._prefix_bytes, self._hash_w,
-                        node_type, key=key,
+        rows = [NodeRow(value=SELF, name=self_name, key=self_key or "", you=True)]
+        for node, name in listed:
+            rows.append(
+                NodeRow(
+                    value=(node.node, name or node.node),
+                    name=name,
+                    # The full key, most-durable source first: the one captured with the
+                    # observation (shows offline), else the device's live contact list,
+                    # else the stored prefix.
+                    key=node.public_key or resolve_key(node.node) or node.node or "",
+                    node_type=(
+                        node.node_type if node.node_type is not None else type_of(node.node)
                     ),
-                    (node.node, name or node.node),
+                    last_seen=node.last_seen,
+                    count=node.count,
                 )
             )
-        return items
-
-    def _rebuild(self) -> None:
-        """Recompose the rows for the current sort/width, keeping the highlight on its node."""
-        current = self._current_choice()
-        keep = current.value if current is not None else None
-        self._items = self._compose_items()
-        self._reselect(keep)
-
-    def _reselect(self, value: object) -> None:
-        """Move the highlight back onto the choice with ``value`` (else clamp it in range)."""
-        choices = self._choices()
-        for i, choice in enumerate(choices):
-            if choice.value == value:
-                self._index = i
-                return
-        self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
-
-    def _widest_name(self) -> int:
-        """The widest rendered name in cells across every lane the list draws.
-
-        The name lane is sized to its content, not the terminal, so the columns anchor to
-        the left instead of drifting apart as the window widens. The measure spans the heard
-        nodes (``unknown`` for the nameless, as the row renders them), plus our own row's
-        name and its ``(you)`` tag so the tag always fits.
-        """
-        widths = [cell_len("unknown")]
-        if self._self_name:
-            widths.append(cell_len(self._self_name) + cell_len(_YOU_TAG))
-        else:
-            widths.append(cell_len("you"))
-        widths.extend(cell_len(name or "unknown") for _node, name in self._listed)
-        return max(widths)
-
-    def _lane_widths(self, width: int) -> tuple[int, int]:
-        """The name and hash lane widths for a terminal ``width`` cells wide.
-
-        The name lane is content-sized (see :meth:`_widest_name`) so it stays put as the
-        window grows; it only yields when a very long name would starve the hash lane past
-        its :data:`_PICK_HASH_MIN` floor. The hash lane then takes all the width the fixed
-        lanes and the name lane leave, so keys show as fully as they fit — a heard id's 12
-        hex digits with room to spare, our own 64-hex key ellipsized to the lane.
-        """
-        name_cap = max(_PICK_NAME_MIN, width - _PICK_LEAD - _PICK_HASH_MIN)
-        name_w = max(_PICK_NAME_MIN, min(self._widest_name(), name_cap))
-        hash_w = max(_PICK_HASH_MIN, width - _PICK_LEAD - name_w)
-        return name_w, hash_w
-
-    def render_body(self, width: int) -> list[str]:
-        """Size the name lane to content and flex the hash lane, then render the list."""
-        name_w, hash_w = self._lane_widths(width)
-        if (name_w, hash_w) != (self._name_w, self._hash_w):
-            self._name_w, self._hash_w = name_w, hash_w
-            self._rebuild()
-        return super().render_body(width)
-
-    def handle(self, action: str, data: str = "") -> None:
-        """Steer the sort with the Ctrl+arrows; everything else is the base list's."""
-        if action == "ctrl_left":
-            self._sort.move(-1)
-            self._rebuild()
-        elif action == "ctrl_right":
-            self._sort.move(1)
-            self._rebuild()
-        elif action == "ctrl_up":
-            if not self._sort.ascending:
-                self._sort.ascending = True
-                self._rebuild()
-        elif action == "ctrl_down":
-            if self._sort.ascending:
-                self._sort.ascending = False
-                self._rebuild()
-        else:
-            super().handle(action, data)
+        super().__init__(
+            "Time machine",
+            rows=rows,
+            prefix_bytes=prefix_bytes,
+            sort=sort,
+            prompt=prompt,
+            lead=[
+                Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
+                Separator(" "),
+                section_heading("Nodes"),
+            ],
+        )
 
 
 async def open_timemachine(ctx: "AppContext") -> None:
@@ -1461,8 +1146,8 @@ async def open_timemachine(ctx: "AppContext") -> None:
     self_name, self_key = await _self_identity(ctx)
     # One sort for the whole visit, so the order the user picks survives leaving a subject
     # page and coming back. Opens most-recently-heard first, as the list always has; its ring
-    # spans the picker's four columns so the Ctrl+arrows can reach the hash sort.
-    sort = NodesSort.from_name("heard", _PICKER_SORT_COLUMNS, _PICKER_SORT_OPENS_ASCENDING)
+    # spans the shared list's four columns so the Ctrl+arrows can reach the hash sort.
+    sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
 
     while True:
         heard = ctx.repo.heard_nodes()

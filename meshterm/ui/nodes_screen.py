@@ -1,41 +1,42 @@
-"""The interactive nodes list: the node table with arrow-key sorting.
+"""The interactive Nodes screen: the device's contacts in the shared sortable node list.
 
-This wraps :func:`~meshterm.ui.widgets.nodes_table` in a full-screen TUI layer whose sort the
-user steers with the arrows — left/right pick the column, up/down set ascending/descending —
-so the table re-renders in place. The rows scroll in a window inside the fixed screen: the
-title, column header, and bottom legend hold still, faint ``↑/↓ n more`` markers bracket the
-window, and PgUp/PgDn slide it. The one-shot CLI (``meshterm nodes --sort …``) renders the
-same table statically; only the menu gets the live sorting.
+The Time Machine picker's presentation pointed at the companion's contact table: the same
+aligned ``NAME · HEARD · PKTS · HASH`` lanes, our own node pinned first, the same Ctrl+arrow
+sort (now including the hash column) and type-to-filter — one node list app-wide, whatever
+the data source (see :mod:`~meshterm.ui.nodelist`). Enter is deliberately inert for now: the
+highlight is a cursor, not yet a selection — a per-node action will land on it later. The
+one-shot CLI (``meshterm nodes --sort …``) still renders the static
+:func:`~meshterm.ui.widgets.nodes_table`; only the menu gets the live list.
 """
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
-from .tui.render import render_lines, render_to_ansi
-from .tui.screen import ListWindow, Screen
-from .widgets import NodesSort, _nodes_legend, nodes_table
+from .nodelist import NodeListScreen, NodeRow
+from .widgets import NodesSort, _contact_pkts
 
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..core.models import Contact
 
-#: Strips SGR colour codes so the header-rule line can be recognized by its bare glyphs.
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+#: A stable identity for the own-node row (its lane data has no key to stand on when no
+#: device answered), so a re-sort can keep the highlight on it.
+YOU = ("you",)
+
+#: The Nodes list's footer: the shared list's grammar minus the Enter atom — pressing it
+#: does nothing yet, so the hint doesn't advertise it.
+_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Esc back"
 
 
-class NodesScreen(Screen):
-    """A full-screen, keyboard-sortable list of this node and its known contacts."""
-
-    floating = False
-    footer_hint = "←→ column · ↑ asc ↓ desc · PgUp/PgDn scroll · Esc back"
+class NodesScreen(NodeListScreen):
+    """A full-screen, Ctrl+arrow-sortable list of this node and its known contacts."""
 
     def __init__(
         self,
         self_name: str,
         self_key: str,
-        contacts: list[Contact],
+        contacts: "list[Contact]",
         prefix_bytes: int,
         counts: dict[str, int],
         sort: NodesSort,
@@ -44,126 +45,56 @@ class NodesScreen(Screen):
 
         Args:
             self_name: This node's advertised name.
-            self_key: This node's full public key (hex).
+            self_key: This node's full public key (hex); blank renders a muted ``?``.
             contacts: Known contacts to list under our own node.
             prefix_bytes: Path-hash width in bytes to highlight in every key.
-            counts: Overheard-packet counts keyed by lowercased 12-hex node id.
-            sort: The initial sort; mutated in place as the user presses the arrows.
+            counts: Overheard-packet counts keyed by lowercased 12-hex node id; a contact
+                with no entry shows a faint ``—``.
+            sort: The initial sort; mutated in place by the Ctrl+arrows. Its ring should
+                span :data:`~meshterm.ui.nodelist.SORT_COLUMNS` so the hash sort is
+                reachable.
         """
-        super().__init__()
-        self.title = "Nodes"
-        self._self_name = self_name
-        self._self_key = self_key
-        self._contacts = contacts
-        self._prefix_bytes = prefix_bytes
-        self._counts = counts
-        self._sort = sort
-        #: The row window inside the fixed screen (title, header, and legend pinned).
-        self._rows_window = ListWindow()
-        #: Whether the last render actually windowed the rows — degenerate renders
-        #: (no header rule found, or a viewport too short) fall back to whole-body
-        #: scrolling, and the page keys follow suit.
-        self._windowed = False
-
-    def render_body(self, width: int) -> list[str]:
-        """Render the table at the current sort, windowing its rows in place.
-
-        The title, column header, and rule pin above the window; the glyph legend
-        pins beneath it; only the node rows scroll between them. A render whose
-        header rule can't be found (degenerate narrow width) or whose viewport
-        leaves the window no room falls back to the plain whole-body scroll.
-        """
-        table = nodes_table(
-            self._self_name,
-            self._self_key,
-            self._contacts,
-            self._prefix_bytes,
-            self._counts,
-            self._sort,
+        rows = [NodeRow(value=YOU, name=self_name, key=self_key, you=True)]
+        for c in contacts:
+            rows.append(
+                NodeRow(
+                    value=c.public_key or c.name,
+                    name=c.name,
+                    key=c.public_key,
+                    node_type=c.node_type,
+                    last_seen=c.last_seen,
+                    count=_contact_pkts(c, counts),
+                )
+            )
+        super().__init__(
+            f"Nodes · {len(contacts)} known",
+            rows=rows,
+            prefix_bytes=prefix_bytes,
+            sort=sort,
+            footer_hint=_HINT,
         )
-        lines = render_lines(table, width)
-        rule = self._rule_index(lines)
-        legend_h = len(render_lines(_nodes_legend(), width)) + 1  # + its blank spacer
-        win = self._scroll_viewport - (rule + 1) - legend_h if rule is not None else 0
-        self._windowed = rule is not None and win >= 3
-        if not self._windowed:
-            self._scroll_total = max(1, len(lines))
-            return lines
-
-        head, rows, tail = (
-            lines[: rule + 1], lines[rule + 1 : len(lines) - legend_h],
-            lines[len(lines) - legend_h :],
-        )
-        top, count = self._rows_window.fit(len(rows), win)
-        out = list(head)
-        if top > 0:
-            out.append(render_to_ansi(ListWindow.marker(top, "above"), width))
-        out.extend(rows[top : top + count])
-        below = len(rows) - top - count
-        if below > 0:
-            out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
-        out.extend(tail)
-        self._scroll_total = max(1, len(out))
-        return out
-
-    @staticmethod
-    def _rule_index(lines: list[str]) -> "int | None":
-        """Locate the rule the table draws under its column labels.
-
-        The table renders a full-width run of ``─`` there (box.SIMPLE_HEAD); the
-        first such line marks where the pinned head ends and the rows begin.
-        ``None`` if no rule is found (e.g. a degenerate narrow render).
-        """
-        for idx in range(1, len(lines)):
-            bare = _ANSI_RE.sub("", lines[idx]).strip()
-            if bare and set(bare) == {"─"}:
-                return idx
-        return None
 
     def handle(self, action: str, data: str = "") -> None:
-        """Re-sort with the arrows, slide the row window with the page keys, or dismiss."""
-        if action == "left":
-            self._sort.move(-1)
-        elif action == "right":
-            self._sort.move(1)
-        elif action == "up":
-            self._sort.ascending = True
-        elif action == "down":
-            self._sort.ascending = False
-        elif action == "pageup":
-            if self._windowed:
-                self._rows_window.top -= self._rows_window.page
-            else:
-                self.scroll_pages(-1)
-        elif action in ("pagedown", "space"):
-            if self._windowed:
-                self._rows_window.top += self._rows_window.page
-            else:
-                self.scroll_pages(1)
-        elif action in ("home", "ctrl_home"):
-            if self._windowed:
-                self._rows_window.top = 0
-            else:
-                self.scroll_to_top()
-        elif action in ("end", "ctrl_end"):
-            if self._windowed:
-                self._rows_window.to_end()
-            else:
-                self.scroll_to_bottom()
-        elif action in ("escape", "enter"):
-            self.resolve(None)
+        """Swallow Enter; every other key is the shared list's.
+
+        The highlight is only a cursor until per-node actions land, so committing it
+        must neither act nor dismiss the screen — only Esc leaves.
+        """
+        if action == "enter":
+            return
+        super().handle(action, data)
 
 
 async def open_nodes(
-    ctx: AppContext,
+    ctx: "AppContext",
     self_name: str,
     self_key: str,
-    contacts: list[Contact],
+    contacts: "list[Contact]",
     prefix_bytes: int,
     counts: dict[str, int],
     sort: NodesSort,
 ) -> None:
-    """Open the interactive, arrow-sortable nodes list and run until dismissed.
+    """Open the interactive, sortable nodes list and run until dismissed with Esc.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -172,7 +103,7 @@ async def open_nodes(
         contacts: Known contacts to list under our own node.
         prefix_bytes: Path-hash width in bytes to highlight in every key.
         counts: Overheard-packet counts keyed by lowercased 12-hex node id.
-        sort: The initial sort (column + direction).
+        sort: The initial sort (column + direction) over the shared list's ring.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
