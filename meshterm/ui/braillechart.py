@@ -205,11 +205,12 @@ def activity_sparkline(
 
 
 #: The meter's fill glyphs, ``(full step, half step)``, by profile. A *full-height*
-#: meter lights all four dot rows (``⣿`` both columns, ``⡇`` the left column alone),
-#: reading as a solid tally bar. A *slim* meter lights only the middle two rows
-#: (``⠶`` / ``⠆``), so the bar floats mid-cell and can sit over an unlit track of the
-#: same glyph without turning into a solid block.
-_METER_FULL = ("⣿", "⡇")
+#: meter lights the top three dot rows and leaves the bottom row blank (``⠿`` both
+#: columns, ``⠇`` the left column alone), reading as a solid tally bar that lifts a
+#: hair off the cell floor so it doesn't fuse with the row beneath it. A *slim* meter
+#: lights only the middle two rows (``⠶`` / ``⠆``), so the bar floats mid-cell and can
+#: sit over an unlit track of the same glyph without turning into a solid block.
+_METER_FULL = ("⠿", "⠇")
 _METER_SLIM = ("⠶", "⠆")
 
 
@@ -229,9 +230,9 @@ def meter(
     scale: a measured bottom is still a measurement, so it never vanishes (``None``
     is how a truly empty meter is asked for). Two profiles cover the app's two cases:
 
-    * **full-height, no track** (the default): all four dot rows, unlit cells left
-      blank — a tally bar whose length *is* the reading (the dashboard's traffic
-      lanes).
+    * **full-height, no track** (the default): the top three dot rows (the bottom
+      row left blank so the bar lifts off the cell floor), unlit cells left blank —
+      a tally bar whose length *is* the reading (the dashboard's traffic lanes).
     * **slim, on a track** (``slim=True, track="track"``): only the middle two dot
       rows, with the unlit remainder drawn in the same glyph dimmed to ``track`` — a
       gauge whose reading fills in a visible background (the SNR quality bars). The
