@@ -200,9 +200,9 @@ class MapScreen(Screen):
 
     def _matches(self) -> list[MapMarker]:
         """The markers the live find filter currently matches (all of them when off)."""
-        if not self._filter:
+        needle = self._filter.strip().casefold()
+        if not needle:
             return self._markers
-        needle = self._filter.casefold()
         return [m for m in self._markers if needle in m.label.casefold()]
 
     def _title(self, vp: Viewport) -> str:
@@ -275,7 +275,8 @@ class MapScreen(Screen):
         elif action in ("home", "ctrl_home"):
             self._reset_view(vp)
         elif action == "text" and self.find_enabled:
-            self._filter += data
+            if not data.isspace() or self._filter:  # never begin the filter with a space
+                self._filter += data
         elif action == "space" and self._filter:
             self._filter += " "  # node names carry spaces; only meaningful mid-query
         elif action == "backspace":

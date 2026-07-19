@@ -239,7 +239,7 @@ class PathComposerScreen(Screen):
                 {self._topology.self_id, self._anchor()} | ({after} if after else set())
             )
         suggestions = self._topology.next_hops(self._anchor(), exclude=exclude)
-        needle = self._entry.lower()
+        needle = self._entry.strip().lower()
         if needle:
             suggestions = [
                 s
@@ -251,7 +251,7 @@ class PathComposerScreen(Screen):
 
     def _custom_hex(self) -> Optional[str]:
         """The typed entry as an addable hex hop, or ``None`` when it isn't one."""
-        needle = self._entry.lower().removeprefix("0x")
+        needle = self._entry.strip().lower().removeprefix("0x")
         return needle if _is_hex(needle) else None
 
     def _rows(self) -> list[tuple[str, object]]:
@@ -542,7 +542,8 @@ class PathComposerScreen(Screen):
                 self._cursor -= 1
             self._index = 0
         elif action == "text" and data.isprintable() and data not in ("/",):
-            self._entry += data
-            self._index = 0
+            if not data.isspace() or self._entry:  # never begin the entry with a space
+                self._entry += data
+                self._index = 0
         elif action == "escape":
             super().handle("escape")

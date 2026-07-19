@@ -213,9 +213,9 @@ class SelectScreen(Screen):
         matching choices are shown — but every separator stays, so the list keeps its
         section landmarks (and column headers) while it narrows.
         """
-        if not self._filter:
+        needle = self._filter.strip().lower()
+        if not needle:
             return self._items
-        needle = self._filter.lower()
         return [
             it
             for it in self._items
@@ -469,9 +469,13 @@ class SelectScreen(Screen):
             self._index = 0
             self._hshift = 0
         elif action == "text" and self._filterable and data.isprintable():
-            self._filter += data
-            self._index = 0
-            self._hshift = 0
+            # A leading space is ignored (the filter never begins with whitespace); a
+            # trailing one is dropped when matching (see _rows), so spaces count only
+            # mid-query — inside a multi-word name like "Homestead R&D".
+            if not data.isspace() or self._filter:
+                self._filter += data
+                self._index = 0
+                self._hshift = 0
 
 
 class ReorderScreen(Screen):

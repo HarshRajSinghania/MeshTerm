@@ -116,6 +116,18 @@ def test_select_filter_narrows_but_keeps_separators() -> None:
     assert _run(screen, "enter") == 1
 
 
+def test_select_filter_ignores_leading_and_trailing_spaces() -> None:
+    """A leading space never begins the filter; a trailing one is dropped when matching."""
+    screen = _menu()
+    screen.handle("text", " ")  # ignored — the filter never starts with whitespace
+    assert screen._filter == ""
+    for ch in "alpha ":  # "alpha", then a trailing space
+        screen.handle("text", ch)
+    assert screen._filter == "alpha "  # the space stays in the buffer…
+    # …but matching strips it, so the trailing space doesn't stop "alpha" from matching.
+    assert [r.title for r in screen._rows() if isinstance(r, Choice)] == ["alpha"]
+
+
 def test_select_non_filterable_ignores_typing() -> None:
     """With filtering off, typed keys neither narrow the list nor add a filter line."""
     screen = SelectScreen("pick", [Choice("alpha", 1), Choice("beta", 2)], filterable=False)

@@ -271,7 +271,7 @@ class AtlasScreen(Screen):
 
     def _matches(self) -> list[str]:
         """Nodes the find filter matches: nearest first, then by display name."""
-        needle = self._filter.casefold()
+        needle = self._filter.strip().casefold()
         if not needle:
             return []
         depths = self._hops_out()
@@ -331,8 +331,9 @@ class AtlasScreen(Screen):
             self._filter = ""
             self._index = 0
         elif action == "text":
-            self._filter += data
-            self._index = 0
+            if not data.isspace() or self._filter:  # never begin the filter with a space
+                self._filter += data
+                self._index = 0
         elif action == "space" and self._filter:
             self._filter += " "  # node names carry spaces; only meaningful mid-query
         self._needs_scrub = True
