@@ -50,7 +50,6 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.models import (
-    NODE_TYPE_LABELS,
     NODE_TYPE_REPEATER,
     Contact,
     utcnow,
@@ -477,7 +476,12 @@ class AtlasScreen(Screen):
         return f"bold {base}" if last else base
 
     def _focus_line(self, depths: dict[str, int]) -> Text:
-        """Who is in focus: glyph, name, hash, kind, distance, and recency."""
+        """Who is in focus: glyph, name with its parenthesized hash, distance, and recency.
+
+        The leading glyph already carries the node type, so the line no longer spells it
+        out; the name reads ``name (hash)`` — the addressed path-hash in parentheses, its
+        digits lit in the node's hue — rather than a bare slice of the key.
+        """
         node = self._focus
         glyph, color = self._glyph(node)
         contact = self._contacts.get(node)
@@ -485,17 +489,14 @@ class AtlasScreen(Screen):
         line.append(glyph, style=color)
         line.append(" ")
         line.append(self._label(node), style=self._list_name_style(node))
-        line.append("  ")
-        line.append_text(highlighted_hash(node, self._prefix_bytes))
+        short = self._short_hash(node)
+        if short:
+            line.append(" (", style="muted")
+            line.append_text(highlighted_hash(short, self._prefix_bytes))
+            line.append(")", style="muted")
         if node == self._topo.self_id:
             line.append("  ·  this device", style="muted")
         else:
-            kind = (
-                NODE_TYPE_LABELS.get(contact.node_type, "node")
-                if contact is not None
-                else "unknown node"
-            )
-            line.append(f"  ·  {kind}", style="muted")
             if node not in depths:
                 line.append("  ·  island — no observed path to you", style="warn")
             else:
@@ -505,6 +506,18 @@ class AtlasScreen(Screen):
                 secs = max(0.0, (utcnow() - contact.last_seen).total_seconds())
                 line.append(f"  ·  heard {_format_age(secs)}", style="muted")
         return line
+
+    def _short_hash(self, node: str) -> str:
+        """The node's addressable path-hash as hex, or ``''`` for a placeholder id.
+
+        The first ``prefix_bytes`` bytes (at least one, so there is always a hash to show)
+        of a hex id; a non-hex stand-in like ``"local"`` — our own node with no key — has
+        no hash and yields the empty string, so the focus line drops the parenthetical.
+        """
+        raw = node.lower()
+        if not raw or any(c not in "0123456789abcdef" for c in raw):
+            return ""
+        return raw[: max(1, self._prefix_bytes) * 2]
 
     # -- the canvas --
 

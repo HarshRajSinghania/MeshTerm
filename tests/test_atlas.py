@@ -104,7 +104,8 @@ def test_atlas_enter_walks_and_grows_the_trail() -> None:
     assert screen._focus == topo.canonical(YUL.public_key)
     body = _plain(screen.render_body(80))
     assert "Homestead › YUL-Cartierville" in body  # the trail
-    assert "repeater" in body and "1 hop out" in body
+    # The focus line reads name (hash) — the glyph carries the type, not a spelled-out kind.
+    assert "YUL-Cartierville (3d)" in body and "1 hop out" in body
     assert "Alice" in body  # YUL's onward neighbour is now a row
     assert "⌫ back" in body  # the row leading home is marked
 
