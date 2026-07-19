@@ -45,16 +45,23 @@ _NAME_MIN = 6
 #: :func:`~meshterm.ui.widgets.highlighted_hash`).
 _HASH_MIN = 8
 
-#: Everything in a row *besides* the name and key lanes, in cells: the select pointer (2),
-#: the type glyph and its space (2), then the two gapped fixed lanes — heard (2 gap + 5) and
-#: packets (2 gap + 5) — and the 3-cell gap before the key. The name lane is content-sized
-#: and the key lane takes the rest (see :meth:`ContactListScreen._lane_widths`).
-_LEAD = 2 + 2 + (2 + 5) + (2 + 5) + 3
+#: Cells between adjacent lanes. Wide enough that the sort triangle the header draws in a
+#: column's trailing gap keeps a clear space either side and never abuts the next column's
+#: label — a 2-cell gap (just the triangle and its one leading space) left the arrow touching
+#: whatever followed. Both the header and the value lanes gap by this, so the two stay aligned.
+_GAP = 3
+_GAP_S = " " * _GAP
 
-#: The optional TRACED lane's width in cells: a 2-cell gap plus a 6-wide age field (wide
+#: Everything in a row *besides* the name and key lanes, in cells: the select pointer (2),
+#: the type glyph and its space (2), then the two gapped fixed lanes — heard (gap + 5) and
+#: packets (gap + 5) — and the gap before the key. The name lane is content-sized and the
+#: key lane takes the rest (see :meth:`ContactListScreen._lane_widths`).
+_LEAD = 2 + 2 + (_GAP + 5) + (_GAP + 5) + _GAP
+
+#: The optional TRACED lane's width in cells: a lane gap plus a 6-wide age field (wide
 #: enough for the ``TRACED`` header). Only the Trace-target picker shows it (``show_traced``),
 #: inserted between the name lane and HEARD; every other contact list omits it (and its width).
-_TRACED_LANE = 2 + 6
+_TRACED_LANE = _GAP + 6
 
 #: The muted ``(you)`` tag on the own-node lane (see :func:`_lane`), its width folded into
 #: the name lane's content sizing so the tag never truncates.
@@ -139,36 +146,38 @@ def _header(name_w: int, sort: ContactsSort, show_traced: bool = False) -> Text:
     All four columns are sortable, so any one can be the active sort. The active column's
     label *and* its direction triangle (``▲`` ascending, ``▼`` descending) are lit cyan
     together — the same cue the static Contacts table's
-    :func:`~meshterm.ui.widgets._sort_header` lights — and the triangle is drawn *into the
-    two-cell reserve that already follows every label*, so switching the sort never widens
-    a lane and shifts the rest of the row. Returned as a :class:`~rich.text.Text` (not a
-    plain string) so just the active column carries the colour while the rest stays muted.
+    :func:`~meshterm.ui.widgets._sort_header` lights. The triangle lands in the column's
+    trailing :data:`_GAP`, flanked by a space on each side so it never abuts the next
+    column's label, and every column reserves that same gap whether or not it holds a
+    triangle — so switching the sort never widens a lane and shifts the rest of the row.
+    Returned as a :class:`~rich.text.Text` (not a plain string) so just the active column
+    carries the colour while the rest stays muted.
     """
 
-    def column(header: Text, label: str, key: str, *, pad_to: int = 0) -> None:
-        """Append one column: its label plus a two-cell mark reserve, lit when it's the sort."""
-        if key == sort.column:
-            cell = f"{label} " + ("▲" if sort.ascending else "▼")
-            header.append(cell, style=_SORT_ACTIVE)
-        else:
-            cell = f"{label}  "
-            header.append(cell, style="muted")
-        if pad_to:  # left-justify the flexing name lane; the pad stays muted
-            header.append(" " * max(0, pad_to - cell_len(cell)), style="muted")
+    def column(header: Text, label: str, key: str, field_w: int, *, last: bool = False) -> None:
+        """Append one column: its label, the sort triangle when active, then the lane gap.
+
+        The label fills ``field_w`` cells (its value lane's width); the two-cell triangle
+        mark and the clear space after it live in the trailing :data:`_GAP`, so the arrow
+        keeps a space either side. The last column (KEY) takes no trailing gap.
+        """
+        active = key == sort.column
+        mark = (" " + ("▲" if sort.ascending else "▼")) if active else "  "
+        # Label and mark go down as one span so the active lane's highlight covers both.
+        header.append(label + mark, style=_SORT_ACTIVE if active else "muted")
+        # Pad the label out to its lane width (the flexing name lane needs it), then the
+        # inter-column gap less the two cells the mark already spent.
+        header.append(" " * max(0, field_w - cell_len(label)), style="muted")
+        if not last:
+            header.append(" " * (_GAP - 2), style="muted")
 
     header = Text("    ", style="muted")  # pointer (2) + the row's type glyph and gap (2)
-    column(header, "NAME", "name", pad_to=name_w)
-    header.append("  ", style="muted")  # gap to the first metric lane
+    column(header, "NAME", "name", name_w)
     if show_traced:
-        # The Trace picker's extra lane, sized 6 wide (its own label's width) so the
-        # ``TRACED`` header fits; the column helper's 2-cell reserve is the gap to HEARD.
-        column(header, "TRACED", "traced")
-    column(header, "HEARD", "heard")
-    column(header, f"{'PKTS':>5}", "packets")
-    # KEY sits one cell further out than the other lanes so a packets-sort triangle —
-    # packets being the lane just before it — never abuts the key label.
-    header.append(" ", style="muted")
-    column(header, "KEY", "hash")
+        column(header, "TRACED", "traced", 6)  # 6-wide lane fits the ``TRACED`` header
+    column(header, "HEARD", "heard", 5)
+    column(header, f"{'PKTS':>5}", "packets", 5)
+    column(header, "KEY", "hash", 3, last=True)
     return header
 
 
@@ -199,14 +208,14 @@ def _you_lane(
         text.append(" " * (name_w - used))
     else:
         text.append(fit_cells(row.name or "you", name_w), style="you")
-    text.append("  ")
+    text.append(_GAP_S)
     if show_traced:
         text.append(f"{'—':>6}", style="faint")  # traced: we never trace ourselves
-        text.append("  ")
+        text.append(_GAP_S)
     text.append(f"{'—':>5}", style="faint")  # heard: we don't hear ourselves
-    text.append("  ")
+    text.append(_GAP_S)
     text.append(f"{'—':>5}", style="faint")  # packets: nothing to count
-    text.append("   ")  # the wider gap the header's KEY lane keeps (see _header)
+    text.append(_GAP_S)  # the lane gap the header's KEY lane keeps (see _header)
     if row.key:
         text.append_text(highlighted_hash(row.key, prefix_bytes, width=hash_w))
     else:
@@ -251,18 +260,18 @@ def _lane(
         fit_cells(row.name or "unknown", name_w),
         style=name_style(row.name, row.key) if row.name else "muted",
     )
-    text.append("  ")
+    text.append(_GAP_S)
     if show_traced:
         tsecs = _age_seconds(row.last_traced)
         text.append(f"{_format_age(tsecs):>6}", style=_recency_style(tsecs))
-        text.append("  ")
+        text.append(_GAP_S)
     text.append(f"{_format_age(secs):>5}", style=_recency_style(secs))
-    text.append("  ")
+    text.append(_GAP_S)
     if row.count is None:
         text.append(f"{'—':>5}", style="faint")
     else:
         text.append(f"{min(row.count, 99999):>5}", style="muted")
-    text.append("   ")  # the wider gap the header's KEY lane keeps (see _header)
+    text.append(_GAP_S)  # the lane gap the header's KEY lane keeps (see _header)
     if row.key:
         text.append_text(highlighted_hash(row.key, prefix_bytes, width=hash_w))
     else:
