@@ -140,7 +140,7 @@ class TimeMachineScreen(Screen):
     """One subject's history page: scrollable sections, ``w`` cycles the window."""
 
     floating = False
-    footer_hint = "w window · ↑↓ PgUp/PgDn scroll · Esc back"
+    footer_hint = "↑↓ PgUp/PgDn scroll · w window · Esc back"
 
     def __init__(
         self,

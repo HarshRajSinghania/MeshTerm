@@ -117,7 +117,7 @@ class RemoteCliScreen(Screen):
         """The footer keys, tracking whether a command is in flight."""
         if self.busy:
             return "waiting for the reply… · PgUp/PgDn scroll · Esc back"
-        return "Enter send · ↑↓ history · Tab complete · PgUp/PgDn scroll · Esc back"
+        return "↑↓ history · PgUp/PgDn scroll · Enter send · Tab complete · Esc back"
 
     def handle(self, action: str, data: str = "") -> None:
         """Edit the buffer, recall history, complete, send, scroll, or dismiss."""

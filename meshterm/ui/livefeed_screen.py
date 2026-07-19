@@ -77,7 +77,7 @@ class LiveFeedScreen(Screen):
     """The full-screen packet stream. Renders state; the opener feeds it."""
 
     floating = False
-    footer_hint = "↑↓ packets · Enter open · PgUp/PgDn/Home/End scroll · Esc back"
+    footer_hint = "↑↓ move · PgUp/PgDn/Home/End scroll · Enter open · Esc back"
 
     def __init__(
         self,
