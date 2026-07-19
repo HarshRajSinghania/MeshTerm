@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
-from ..core.models import Contact, utcnow
+from ..core.models import Contact, is_direct_messageable, utcnow
 from .menus import back_rows, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
@@ -303,6 +303,11 @@ class CourierRecipientScreen(ContactListScreen):
     contacts — names in their key-derived hue, heard ages in recency heat. Unlike the
     Contacts screen, Enter *commits*: the shared list's Enter resolves the highlighted
     row's value, which is the :class:`~meshterm.core.models.Contact` itself.
+
+    Only companion contacts are ever passed in — a courier message is a direct message,
+    and direct messages go to companions only (see
+    :func:`~meshterm.core.models.is_direct_messageable`); the caller filters before
+    building the picker.
     """
 
     def __init__(
@@ -313,13 +318,14 @@ class CourierRecipientScreen(ContactListScreen):
         counts: dict[str, int],
         sort: ContactsSort,
     ) -> None:
-        """Build the picker over the device's contacts.
+        """Build the picker over the device's companion contacts.
 
         Args:
-            contacts: The candidate recipients (every contact — courier addresses any).
+            contacts: The candidate recipients — companion contacts only (the caller
+                filters non-companions out).
             prefix_bytes: The hash width in bytes to light at the head of each key.
             counts: Overheard-packet tallies keyed by lowercased 12-hex node id.
-            sort: The sort state (defaults open on ``heard``, freshest first).
+            sort: The sort state (defaults open on ``name``, A→Z).
         """
         rows = [
             ContactRow(
@@ -347,26 +353,30 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     from .timemachine_screen import _routing_prefix_bytes
 
     session = ctx.ui.session
-    if not contacts:
+    # A courier message is a direct message, so only companions can receive one — a
+    # repeater, room, or sensor is never a recipient (the app-wide DM rule, see
+    # is_direct_messageable). Filter before the picker so non-companions never appear.
+    companions = [c for c in contacts if is_direct_messageable(c.node_type)]
+    if not companions:
         await session.message_dialog(
             Text(
-                "No contacts available — connect a device that knows some contacts first.",
+                "No companion contacts available — connect a device that knows a "
+                "companion to message first.",
                 style="muted",
             ),
             title="Queue a message",
         )
         return
 
-    # The shared contact-list presentation (see CourierRecipientScreen), opened on the
-    # heard column so the most reachable candidates lead — the old fixed order, now
-    # just the default of a re-sortable list.
+    # The shared contact-list presentation (see CourierRecipientScreen), opened A→Z by
+    # name — the default of a re-sortable list, with heard/packets/key a Ctrl+arrow away.
     counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
     prefix_bytes = await _routing_prefix_bytes(ctx)
     picker = CourierRecipientScreen(
-        contacts=contacts,
+        contacts=companions,
         prefix_bytes=prefix_bytes,
         counts=counts,
-        sort=ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
+        sort=ContactsSort.from_name("name", SORT_COLUMNS, SORT_OPENS_ASCENDING),
     )
     contact = await session.run_screen(picker)
     if not isinstance(contact, Contact):  # Esc (CANCEL) or anything else backs out

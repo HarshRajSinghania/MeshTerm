@@ -40,6 +40,27 @@ NODE_TYPE_LABELS = {
 }
 
 
+def is_direct_messageable(node_type: Optional[int]) -> bool:
+    """Whether a node of this advert type is a direct-message recipient — THE DM rule.
+
+    We only send direct messages to *companion* (chat) nodes: a repeater, room server, or
+    sensor is infrastructure, not someone to message. A contact whose type was never
+    advertised (``None``) gets the benefit of the doubt, so a real companion is never
+    hidden by a missing type. Every DM recipient picker (the chat conversation list, the
+    courier outbox) filters through this one predicate, so "DMs go to companions only" is
+    enforced in a single place.
+
+    Args:
+        node_type: The node's advert type (see the ``NODE_TYPE_*`` constants), or ``None``
+            when it was never advertised.
+
+    Returns:
+        ``True`` for a companion node or an untyped contact; ``False`` for a repeater,
+        room, or sensor.
+    """
+    return node_type in (NODE_TYPE_CHAT, None)
+
+
 def utcnow() -> datetime:
     """Return a timezone-aware UTC timestamp.
 

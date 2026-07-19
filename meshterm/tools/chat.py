@@ -28,7 +28,14 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
-from ..core.models import NODE_TYPE_CHAT, ChatMessage, Contact, Conversation, utcnow
+from ..core.models import (
+    NODE_TYPE_CHAT,
+    ChatMessage,
+    Contact,
+    Conversation,
+    is_direct_messageable,
+    utcnow,
+)
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui.chat import _MENTION, _split_channel_sender
 from ..ui.menus import fit_cells
@@ -129,8 +136,9 @@ class ChatTool(Tool):
             channels = _channels_from_slots(await ctx.devstate.channel_slots())
             contacts = await ctx.devstate.contacts()
             # Only companion nodes are listed — we don't DM repeaters, rooms, or sensors;
-            # a contact whose type was never advertised gets the benefit of the doubt.
-            companions = [c for c in contacts if c.node_type in (NODE_TYPE_CHAT, None)]
+            # a contact whose type was never advertised gets the benefit of the doubt (the
+            # app-wide DM rule, see is_direct_messageable).
+            companions = [c for c in contacts if is_direct_messageable(c.node_type)]
             # A stable snapshot orders the rows (so the list doesn't reshuffle under the
             # cursor), while a self-refreshing view feeds each row's live preview
             # (see _LiveLasts).
