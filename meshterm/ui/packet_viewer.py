@@ -12,10 +12,10 @@ Message paths dialog and the Trophy case draw — and, for an overheard channel-
 naming a channel we hold the key for, the decrypted text too (see
 :func:`~meshterm.core.channels.decrypt_channel_text`), even though the radio itself never
 decoded it for us; a message shows the sender, the
-conversation, and the text; an ack shows its code. Common to all: the timestamp, the
-node (name coloured by the app-wide palette, hash in the hash widget), reception
-quality on the shared SNR bar, and any leftover raw field the flavoured layout doesn't
-already show.
+conversation, and the text; an ack shows its code. Common to all: the class headline
+(icon + UPPERCASE class, first row of the card), the timestamp, the node (name coloured
+by the app-wide palette, key in the key widget), reception quality on the shared SNR
+bar, and any leftover raw field the flavoured layout doesn't already show.
 
 When opened over a list the viewer pages through it in place — ``↑``/``↓`` step to
 the newer/older packet, Home/End jump to the newest/oldest, mirroring the keys the
@@ -105,6 +105,25 @@ KIND_ICONS = {
 }
 DEFAULT_ICON = "❔"
 
+#: The two-cell icon per parsed payload class of a raw ``packet`` frame, shared by the
+#: viewer's leading class row and the dashboard's traffic meters. One glyph per concept:
+#: 📻 rhymes with the Channels tool, 🎯 with Trace, and a raw ADVERT/ACK frame reuses
+#: its kind's icon; :data:`DEFAULT_ICON` marks a typename this table has never heard of.
+PAYLOAD_ICONS = {
+    "REQ": "📥",
+    "RESPONSE": "📮",
+    "TEXT_MSG": "📩",
+    "ACK": "✅",
+    "ADVERT": "📢",
+    "GRP_TXT": "📻",
+    "GRP_DATA": "💽",
+    "ANON_REQ": "🎭",
+    "PATH": "🧭",
+    "TRACE": "🎯",
+    "MULTIPART": "🧩",
+    "CONTROL": "🧰",
+}
+
 #: The colour a relayed packet's route draws in on THE route graph. It is the only path
 #: on the canvas, so white just reads as "the route the packet rode" (the Trophy case's
 #: single-walk convention).
@@ -188,6 +207,26 @@ def payload_class(raw: Optional[dict]) -> Optional[str]:
     if not typename:
         return None
     return _PAYLOAD_GLOSS.get(typename, typename.lower())
+
+
+def class_chrome(entry: PacketEntry) -> tuple[str, str]:
+    """The class headline every packet leads with: a two-cell icon and an UPPERCASE label.
+
+    A raw ``packet`` frame's class is its parsed payload class — ``CHANNEL TEXT``,
+    ``TRACE``, … — under its :data:`PAYLOAD_ICONS` glyph; a typename this table has
+    never heard of keeps the fallback mark and shouts the raw typename; a class-less
+    frame stays a plain ``PACKET``. Every other kind is its own class (``ADVERT``,
+    ``MESSAGE``, …) under the shared :data:`KIND_ICONS` glyph.
+    """
+    if entry.kind == "packet":
+        raw = entry.raw if isinstance(entry.raw, dict) else {}
+        typename = raw.get("payload_typename")
+        if typename:
+            icon = PAYLOAD_ICONS.get(typename, DEFAULT_ICON)
+            label = _PAYLOAD_GLOSS.get(typename, typename.lower()).upper()
+            return icon, label
+        return KIND_ICONS["packet"], "PACKET"
+    return kind_icon(entry.kind), entry.kind.upper()
 
 
 def node_label(
@@ -334,8 +373,9 @@ class PacketViewer(Screen):
         self._set_title()
 
     def _set_title(self) -> None:
+        # No emoji in a dialog title (the standards' rule); the class row carries the icon.
         entry = self._entries[self._index]
-        title = f"{kind_icon(entry.kind)} {entry.kind}"
+        title = entry.kind
         if len(self._entries) > 1:
             title += f" · {self._index + 1}/{len(self._entries)}"
         self.title = title
@@ -436,8 +476,12 @@ class PacketViewer(Screen):
         return render_lines(grid, width)
 
     def _head_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
-        """The rows above the route graph: the common core plus a packet's parsed frame."""
+        """The rows above the route graph: the class headline, the common core, then a
+        packet's parsed frame."""
         rows: list[tuple[str, RenderableType]] = []
+
+        icon, class_label = class_chrome(entry)
+        rows.append(("class", Text(f"{icon} {class_label}")))
 
         secs = _age_seconds(entry.when)
         heard = Text(entry.when.astimezone().strftime("%b %d %H:%M:%S"))
@@ -543,9 +587,7 @@ class PacketViewer(Screen):
         """
         raw = entry.raw if isinstance(entry.raw, dict) else {}
         rows: list[tuple[str, RenderableType]] = []
-        typename = raw.get("payload_typename")
-        if typename:
-            rows.append(("class", Text(payload_class(raw) or typename.lower())))
+        typename = raw.get("payload_typename")  # class itself leads the card (class_chrome)
         route = raw.get("route_typename")
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))

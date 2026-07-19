@@ -102,7 +102,10 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   📤 send now · 📨 courier/queue · 💬 chat · 🔔 notify · 🔕 mute (notifications off) ·
   📱 QR · 🔗 link · ↻ re-read · ↕ reorder · ⇄ reverse (flip a path's direction) ·
   🏆 trophy case/record · ⌨ command line · 🚪 quit. Packet-class icons (feed/viewer
-  lane): 📢 advert · 📊 telemetry · 📦 packet · 💬 message · ✅ ack.
+  lane): 📢 advert · 📊 telemetry · 📦 packet · 💬 message · ✅ ack. Raw payload
+  classes (`PAYLOAD_ICONS`): 📻 channel text · 💽 channel data · 📩 direct message
+  (overheard) · 📥 request · 📮 response · 🎭 anon request · 🧭 path · 🎯 trace ·
+  🧩 multipart · 🧰 control · ❔ unknown — raw advert/ack reuse 📢/✅.
 
 ### Colour
 

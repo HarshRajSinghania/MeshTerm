@@ -44,11 +44,36 @@ def _grp_txt_frame(secret: bytes, text: str) -> tuple[str, str, str]:
 
 
 def test_packet_viewer_shows_class_and_route() -> None:
-    """A raw packet's parsed payload class and route surface as labelled rows."""
+    """A raw packet's parsed payload class headlines the card; the route is a row."""
     entry = _grp_txt_entry({"chan_hash": "ff", "cipher_mac": "0000", "crypted": "00" * 16})
     body = _plain(_viewer(entry).render_body(80))
-    assert "channel text" in body
+    assert "📻 CHANNEL TEXT" in body
     assert "flood" in body
+
+
+def test_packet_viewer_class_row_leads_the_card() -> None:
+    """The class headline is the first row — above heard/from — for every kind."""
+    packet = _grp_txt_entry({"chan_hash": "ff", "cipher_mac": "0000", "crypted": "00" * 16})
+    body = _plain(_viewer(packet).render_body(80))
+    assert body.index("CHANNEL TEXT") < body.index("heard")
+
+    advert = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    body = _plain(_viewer(advert).render_body(80))
+    assert "📢 ADVERT" in body
+    assert body.index("ADVERT") < body.index("heard")
+
+
+def test_packet_viewer_class_marks_an_unknown_typename() -> None:
+    """A payload class this build has never heard of keeps the ❔ mark and its raw name."""
+    entry = PacketEntry(when=utcnow(), kind="packet", raw={"payload_typename": "XYZZY"})
+    body = _plain(_viewer(entry).render_body(80))
+    assert "❔ XYZZY" in body
+
+
+def test_packet_viewer_title_carries_no_emoji() -> None:
+    """Dialog titles stay emoji-free (the standards' rule); the class row has the icon."""
+    entry = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    assert _viewer(entry).title == "advert"
 
 
 def test_packet_viewer_decrypts_a_known_channel() -> None:
