@@ -110,8 +110,10 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 ### Colour
 
 - Node names are always coloured: `name_style(name, key)` palette hue, derived from the
-  node's key (its first byte — any known prefix agrees) so a rename keeps the colour;
-  the name's characters seed it only when no key exists (a channel sender). Our own node
+  node's key (its first byte — any known prefix agrees) so a rename keeps the colour.
+  A surface holding only a name resolves it first (`make_name_key_resolver`); a name
+  no known node carries stays muted — colour is reserved for keyed identities, never
+  seeded from a name's characters. Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
   Recency heat colours heard/first-heard ages, never names. A key lane (via
   `highlighted_hash`) lights its hash in the same key-derived hue; the rest of the key,

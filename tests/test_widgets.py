@@ -122,3 +122,54 @@ def test_path_text_cursor_arrow_reads_as_a_reverse_block() -> None:
     # The cursor wins over dim_from: the arrow into a dimmed tail still reads selected.
     dimmed = path_text([None, "aa", None], _resolve, self_name="us", dim_from=2, cursor_arrow=1)
     assert any(str(s.style) == "selected" for s in dimmed.spans)
+
+
+# --- the name→key resolver and the keyless-stays-muted rule --------------------------
+
+
+def test_make_name_key_resolver_contacts_win_over_stored_names() -> None:
+    """Contacts resolve first; stored advert names fill in strangers; misses are None."""
+    from meshterm.core.models import Contact
+    from meshterm.services.trace_runner import make_name_key_resolver
+
+    contacts = [Contact(name="Alice", public_key="d4" + "0" * 62)]
+    stored = {"60aabbccdd11": "Bob", "77ee00112233": "Alice"}  # a stale stored Alice
+    key_of = make_name_key_resolver(contacts, stored)
+    assert key_of("Alice") == "d4" + "0" * 62  # the contact's key, not the stored id
+    assert key_of("alice") == "d4" + "0" * 62  # casefolded
+    assert key_of("Bob") == "60aabbccdd11"     # a stored-name stranger still lands
+    assert key_of("Zed") is None               # nobody carries the name
+
+
+def test_name_style_without_a_key_is_muted() -> None:
+    """A keyless name has no hue — colour is reserved for keyed identities."""
+    from meshterm.ui.theme import NAME_COLORS, name_style
+
+    assert name_style("Stranger") == "muted"
+    assert name_style("Alice", "d4" + "0" * 62) in NAME_COLORS
+
+
+def test_name_rgb_keyless_lands_on_the_muted_grey() -> None:
+    """The raster twin: a keyless name's RGB is the muted grey, never a crash."""
+    from meshterm.ui.widgets import name_rgb
+
+    assert name_rgb("Stranger") == (148, 163, 184)
+    assert name_rgb("Alice", "d4" + "0" * 62) != (148, 163, 184)
+
+
+def test_route_graph_source_label_takes_its_resolved_keys_hue() -> None:
+    """The graph's left endpoint hue rides key_of: resolved → the key's hue, else muted."""
+    from meshterm.ui.widgets import name_rgb, route_graph_style
+
+    _, _, rgb_known = route_graph_style(
+        resolve=lambda h: h, self_name="us", source="Alice",
+        key_of=lambda name: "d4" + "0" * 62 if name == "Alice" else None,
+    )
+    from meshterm.ui.pathgraph import SRC_NODE
+
+    assert rgb_known(SRC_NODE) == name_rgb("Alice", "d4" + "0" * 62)
+
+    _, _, rgb_unknown = route_graph_style(
+        resolve=lambda h: h, self_name="us", source="Alice",
+    )
+    assert rgb_unknown(SRC_NODE) == (148, 163, 184)  # unresolvable origin stays muted

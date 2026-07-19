@@ -28,11 +28,13 @@ from ..core.channels import (
 )
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
-from ..core.models import ChatMessage, Contact, Conversation, utcnow
-from ..ui.chat import _MENTION, _sender_hue, _split_channel_sender
+from ..core.models import NODE_TYPE_CHAT, ChatMessage, Contact, Conversation, utcnow
+from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
+from ..ui.chat import _MENTION, _split_channel_sender
 from ..ui.menus import fit_cells
+from ..ui.theme import name_style
 from ..ui.tui import Choice, Separator
-from ..ui.widgets import channel_glyph
+from ..ui.widgets import _NODE_GLYPHS, channel_glyph
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:
@@ -128,13 +130,18 @@ class ChatTool(Tool):
         # while a self-refreshing view feeds each row's live preview (see _LiveLasts).
         lasts = ctx.repo.last_chat_messages()
         live = _LiveLasts(ctx, seed=lasts)
+        # Names in previews/mentions resolve back to keys for their hue (the app-wide
+        # colour rule); a name no contact or stored advert carries stays muted.
+        key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
 
         items: list = [
             Separator(_picker_header()),
             Separator("── 📡 Channels ──", style="accent"),
         ]
         for conversation in channels:
-            items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
+            items.append(
+                Choice(title=_row_title(ctx, conversation, live, key_of), value=conversation)
+            )
 
         items.append(Separator("── 👤 Direct ──", style="accent"))
         if contacts:
@@ -145,7 +152,12 @@ class ChatTool(Tool):
             ]
             direct.sort(key=lambda conv: _recency_key(conv, lasts))
             for conversation in direct:
-                items.append(Choice(title=_row_title(ctx, conversation, live), value=conversation))
+                items.append(
+                    Choice(
+                        title=_row_title(ctx, conversation, live, key_of),
+                        value=conversation,
+                    )
+                )
         else:
             items.append(Separator("  (no contacts yet — receive an advert first)"))
 
@@ -576,7 +588,10 @@ def _picker_header() -> str:
 
 
 def _row_title(
-    ctx: AppContext, conversation: Conversation, lasts: "_LiveLasts"
+    ctx: AppContext,
+    conversation: Conversation,
+    lasts: "_LiveLasts",
+    key_of: NameKeyResolver,
 ) -> Callable[[], Union[str, Text]]:
     """Return a picker-row title *callable* the select screen re-renders on each repaint.
 
@@ -588,30 +603,36 @@ def _row_title(
         ctx: Shared application context (for the live unread count).
         conversation: The conversation the row represents.
         lasts: The self-refreshing latest-message view feeding the preview.
+        key_of: Maps a sender name back to its node's key, for the preview hues.
 
     Returns:
         A zero-argument callable producing the current row title.
     """
-    return lambda: _title(ctx, conversation, lasts)
+    return lambda: _title(ctx, conversation, lasts, key_of)
 
 
 def _title(
-    ctx: AppContext, conversation: Conversation, lasts: "_LiveLasts"
+    ctx: AppContext,
+    conversation: Conversation,
+    lasts: "_LiveLasts",
+    key_of: NameKeyResolver,
 ) -> Union[str, Text]:
     """Build a picker row as fixed-width, colour-coded lanes.
 
     Alignment carries the readability — marker, label, unread badge, relative age, and preview
     each sit in their own lane, so every row's message text starts in the same column. Colour is
-    kept light and purposeful: the name stays in the base colour, a contact's leading dot is
-    tinted in that person's chat hue, the unread ``●`` badge is red, the age is muted, and the
-    preview mutes its body while lighting sender names and ``@mentions`` in their hue — the same
-    colours the live transcript uses. The row is always a Rich :class:`~rich.text.Text` so those
-    spans survive under the select screen's row highlight.
+    purposeful: a direct contact's name takes its key-derived palette hue (a channel label stays
+    base), the leading dot is the standard companion pink with its shape marking history, the
+    unread ``●`` badge is red, the age is muted, and the preview mutes its body while lighting
+    sender names and ``@mentions`` in their key-derived hue — the same colours the live
+    transcript uses. The row is always a Rich :class:`~rich.text.Text` so those spans survive
+    under the select screen's row highlight.
 
     Args:
         ctx: Shared application context (for the live unread count).
         conversation: The conversation the row represents.
         lasts: The self-refreshing latest-message view.
+        key_of: Maps a preview sender/mention name back to its node's key.
 
     Returns:
         The row title as a styled :class:`~rich.text.Text`.
@@ -620,7 +641,13 @@ def _title(
     last = lasts.get(conversation.key)
     text = Text(no_wrap=True, overflow="ellipsis")
     _append_marker(text, conversation, last)
-    text.append(fit_cells(conversation.label, _LABEL_WIDTH))
+    label_style = ""
+    if not conversation.is_channel and conversation.contact is not None:
+        contact = conversation.contact
+        label_style = name_style(
+            conversation.label, contact.public_key or contact.key_prefix
+        )
+    text.append(fit_cells(conversation.label, _LABEL_WIDTH), style=label_style or None)
     text.append("  ")
     # Unread badge lane (_BADGE_WIDTH cells): a red ● with the count in warn, or blank filler so
     # the following lanes still line up on rows with nothing unread.
@@ -636,62 +663,70 @@ def _title(
     text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
     text.append("  ")
     if last is not None:
-        text.append_text(_preview_text(last))
+        text.append_text(_preview_text(last, key_of))
     return text
+
+
+#: The standard companion pink — the shared plain-node ``●`` colour — the contact dot's
+#: hue: the shape (filled/hollow) marks history, the colour marks "a companion", and the
+#: name beside it carries the person's own key-derived hue.
+_COMPANION_DOT_STYLE = _NODE_GLYPHS[NODE_TYPE_CHAT][1]
 
 
 def _append_marker(text: Text, conversation: Conversation, last: Optional[ChatMessage]) -> None:
     """Prepend the row's leading marker (3 display cells) — a channel glyph or a contact dot.
 
-    A channel keeps its openness marker (＃ / 🌐 / 🔒). A contact gets a small circle tinted in
-    that person's chat hue — filled (``●``) once we've exchanged messages, a hollow ring (``○``)
-    before any — so the colour identifies the person and the hollow-vs-filled shape marks whether
-    there's history, while the name itself stays in the base colour. The contact dot is padded to
-    the same width as a channel's double-cell glyph so the labels line up across both sections.
+    A channel keeps its openness marker (＃ / 🌐 / 🔒). A contact gets a small circle in the
+    standard companion pink — filled (``●``) once we've exchanged messages, a hollow ring
+    (``○``) before any — so the hollow-vs-filled shape marks whether there's history while the
+    name itself carries the person's key-derived hue. The contact dot is padded to the same
+    width as a channel's double-cell glyph so the labels line up across both sections.
     """
     if conversation.is_channel:
         text.append(f"{channel_glyph(conversation.label, conversation.secret)} ")
     else:
         dot = "●" if last is not None else "○"
-        text.append(dot, style=_sender_hue(conversation.label))
+        text.append(dot, style=_COMPANION_DOT_STYLE)
         text.append("  ")
 
 
-def _preview_text(last: ChatMessage) -> Text:
-    """A muted last-message preview with sender names and ``@mentions`` lit in their chat hue.
+def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
+    """A muted last-message preview with sender names and ``@mentions`` lit in their hue.
 
     Mirrors the live transcript: our own messages get a ``you:`` prefix, an inbound channel
-    message's inline ``Name:`` sender is coloured in that sender's hue, and every ``@[Name]``
-    mention reads as a bare ``@Name`` in the mentioned person's hue — so the list and the chat
-    speak the same colour language. The result is clipped to :data:`_PREVIEW_WIDTH` cells.
+    message's inline ``Name:`` sender is coloured in its key-derived hue (muted when no known
+    node carries the name), and every ``@[Name]`` mention reads as a bare ``@Name`` the same
+    way — so the list and the chat speak the same colour language. The result is clipped to
+    :data:`_PREVIEW_WIDTH` cells.
     """
     body_raw = last.text.replace("\n", " ")
     text = Text()
     if last.outbound:
         text.append("you: ", style="accent")
-        _append_body(text, body_raw)
+        _append_body(text, body_raw, key_of)
     elif last.is_channel:
         name, body = _split_channel_sender(body_raw)
         if name is not None:
-            text.append(name, style=_sender_hue(name))
+            text.append(name, style=name_style(name, key_of(name)))
             text.append(": ", style="muted")
-            _append_body(text, body)
+            _append_body(text, body, key_of)
         else:
-            _append_body(text, body_raw)
+            _append_body(text, body_raw, key_of)
     else:
-        _append_body(text, body_raw)
+        _append_body(text, body_raw, key_of)
     text.truncate(_PREVIEW_WIDTH, overflow="ellipsis")
     return text
 
 
-def _append_body(text: Text, body: str) -> None:
-    """Append ``body`` to ``text``, muted, with each ``@[Name]`` mention drawn in the name's hue."""
+def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
+    """Append ``body`` to ``text``, muted, with each ``@[Name]`` mention drawn in the
+    mentioned node's key-derived hue (muted when the name resolves to no known node)."""
     pos = 0
     for match in _MENTION.finditer(body):
         if match.start() > pos:
             text.append(body[pos : match.start()], style="muted")
         name = match.group(1)
-        text.append(f"@{name}", style=_sender_hue(name))
+        text.append(f"@{name}", style=name_style(name, key_of(name)))
         pos = match.end()
     if pos < len(body):
         text.append(body[pos:], style="muted")

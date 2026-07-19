@@ -38,7 +38,14 @@ from .pathgraph import PathLayer, render_path_graph
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
-from .widgets import NodeResolver, TypeOf, node_type_legend, path_text, route_graph_style
+from .widgets import (
+    NameKeyResolver,
+    NodeResolver,
+    TypeOf,
+    node_type_legend,
+    path_text,
+    route_graph_style,
+)
 
 #: Cells one ←/→ press shifts the selected row by.
 _HSTEP = 4
@@ -63,6 +70,7 @@ class MessagePathsScreen(Screen):
         summary: str,
         source: Optional[str] = None,
         type_of: Optional[TypeOf] = None,
+        key_of: Optional["NameKeyResolver"] = None,
     ) -> None:
         """Build the dialog over one message's matched arrivals.
 
@@ -82,6 +90,9 @@ class MessagePathsScreen(Screen):
                 (``None`` reads as an unknown ``?`` origin).
             type_of: Maps a relay hash to its node type, so the graph marks a repeater
                 ``▲`` (etc.) instead of a generic dot; ``None`` keeps the plain dots.
+            key_of: Maps the origin's display name back to its node's key, so the
+                graph's left endpoint takes its key-derived hue; ``None`` (or an
+                unresolvable name) leaves it muted.
         """
         super().__init__()
         self.title = "Message paths"
@@ -94,6 +105,7 @@ class MessagePathsScreen(Screen):
         self._summary = summary
         self._source = source
         self._type_of = type_of
+        self._key_of = key_of
         self._index = 0
         #: Cells the selected row is shifted left by (reset whenever ↑↓ move), and
         #: how far it *can* shift, measured against the width of the last render.
@@ -277,7 +289,7 @@ class MessagePathsScreen(Screen):
         ]
         glyph_of, label_of, label_rgb_of = route_graph_style(
             resolve=self._resolve, self_name=self._self_name, source=self._source,
-            type_of=self._type_of,
+            type_of=self._type_of, key_of=self._key_of,
         )
         return render_path_graph(
             layers, width,

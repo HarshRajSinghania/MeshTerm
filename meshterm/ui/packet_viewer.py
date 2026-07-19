@@ -43,6 +43,7 @@ from .trace_screen import snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
 from .widgets import (
+    NameKeyResolver,
     TypeOf,
     _age_seconds,
     format_ago,
@@ -293,6 +294,7 @@ class PacketViewer(Screen):
         channels: Sequence[tuple[str, bytes]] = (),
         source: Optional[Callable[[], Sequence[PacketEntry]]] = None,
         type_of: Optional[TypeOf] = None,
+        key_of: Optional[NameKeyResolver] = None,
     ) -> None:
         """Open the viewer over a packet list.
 
@@ -316,6 +318,9 @@ class PacketViewer(Screen):
             type_of: Maps a relay hash to its node type, so a relayed packet's route
                 graph marks a repeater ``▲`` (etc.) instead of a generic dot; ``None``
                 keeps the plain named-dot / unknown-ring fallback.
+            key_of: Maps an origin's display name back to its node's key, so the route
+                graph's left endpoint takes its key-derived hue; ``None`` (or an
+                unresolvable name) leaves it muted.
         """
         super().__init__()
         self._entries = list(entries)
@@ -327,6 +332,7 @@ class PacketViewer(Screen):
         self._channels = channels
         self._source = source
         self._type_of = type_of
+        self._key_of = key_of
         #: The packet currently shown, tracked by identity so a live prepend to the
         #: source (which shifts every index) never slides the view onto another packet.
         self._current: Optional[PacketEntry] = (
@@ -540,6 +546,7 @@ class PacketViewer(Screen):
         glyph_of, label_of, label_rgb_of = route_graph_style(
             resolve=self._resolve, self_name=self._self_name,
             source=self._graph_source(entry), type_of=self._type_of,
+            key_of=self._key_of,
         )
         return render_path_graph(
             [PathLayer(hops=hops, color=_ROUTE_EDGE, priority=3)],

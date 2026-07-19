@@ -174,20 +174,23 @@ def name_style(name: str, key: Optional[str] = None) -> str:
     """The stable colour a node or sender name is drawn in — keyed on the node's key.
 
     Args:
-        name: The display name.
+        name: The display name (unused for the hue; kept so every call site reads
+            ``name_style(name, key)`` and the pair stays greppable).
         key: Any known prefix of the node's key/hash; when given, the hue is
             :func:`node_style`'s — hash-derived, so a rename keeps the colour and every
-            surface that knows the key agrees. ``None``/empty marks a genuinely keyless
-            sender (a channel message's inline name), coloured by the name's characters
-            as the stable fallback.
+            surface that knows the key agrees. ``None``/empty marks a sender whose key
+            we couldn't resolve — drawn ``muted``, because colour is reserved for keyed
+            identities (callers with only a name resolve it first via
+            :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
 
     Returns:
-        A style string from :data:`NAME_COLORS`; the same node always maps to the
-        same hue, so it keeps its colour across screens and sessions.
+        A style string from :data:`NAME_COLORS` (or ``muted`` for the keyless); the
+        same node always maps to the same hue, so it keeps its colour across screens
+        and sessions.
     """
     if key:
         return node_style(key)
-    return NAME_COLORS[sum(map(ord, name)) % len(NAME_COLORS)]
+    return "muted"
 
 
 def snr_style(snr: float | None) -> str:

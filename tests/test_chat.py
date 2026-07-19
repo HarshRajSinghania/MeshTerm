@@ -234,6 +234,15 @@ def test_live_lasts_serves_seed_within_ttl(repo: Repository) -> None:
     assert live.get("chan:c0").text == "seed"
 
 
+#: A resolver that places no name — every hue falls back to muted.
+_NO_KEYS = lambda name: None  # noqa: E731 - a one-line stub reads best inline
+
+
+def _keys_of(mapping: dict[str, str]):
+    """A canned name→key resolver over ``mapping`` (casefolded, like the real one)."""
+    return lambda name: mapping.get(name.casefold())
+
+
 def test_preview_prefixes_own_messages_only() -> None:
     """Only outbound messages get a ``you:`` prefix; inbound text is shown verbatim.
 
@@ -241,28 +250,37 @@ def test_preview_prefixes_own_messages_only() -> None:
     synthesized (that would double it), and a direct message's author is the row label.
     """
     chan_in = ChatMessage(text="Bob: hi", is_channel=True, channel_idx=0)  # sender inline
-    assert _preview_text(chan_in).plain == "Bob: hi"
+    assert _preview_text(chan_in, _NO_KEYS).plain == "Bob: hi"
     dm_in = ChatMessage(text="hey", peer="aa", peer_name="Bob")
-    assert _preview_text(dm_in).plain == "hey"
+    assert _preview_text(dm_in, _NO_KEYS).plain == "hey"
     mine = ChatMessage(text="yo", outbound=True, is_channel=True, channel_idx=0)
-    assert _preview_text(mine).plain == "you: yo"
+    assert _preview_text(mine, _NO_KEYS).plain == "you: yo"
 
 
 def test_preview_colours_channel_sender_and_mentions() -> None:
-    """A channel preview lights its inline sender name and any ``@[Name]`` mention in a hue."""
-    from meshterm.ui.chat import _sender_hue
+    """A preview lights resolvable sender/mention names in their key-derived hue.
 
-    msg = ChatMessage(text="Bob: hi @[Alice]", is_channel=True, channel_idx=0)
-    preview = _preview_text(msg)
-    assert preview.plain == "Bob: hi @Alice"  # the mention's brackets are dropped for display
+    A name no known node carries stays muted — colour is reserved for keyed identities.
+    """
+    from meshterm.ui.theme import node_style
+
+    key_of = _keys_of({"bob": "d4" + "0" * 62, "alice": "60" + "0" * 62})
+    msg = ChatMessage(text="Bob: hi @[Alice] @[Zed]", is_channel=True, channel_idx=0)
+    preview = _preview_text(msg, key_of)
+    assert preview.plain == "Bob: hi @Alice @Zed"  # brackets dropped for display
     styles = {span.style for span in preview.spans}
-    assert _sender_hue("Bob") in styles and _sender_hue("Alice") in styles
+    assert node_style("d4") in styles and node_style("60") in styles
+    # The unresolvable @Zed stays muted like the body around it.
+    zed = preview.plain.index("@Zed")
+    assert any(
+        s.style == "muted" and s.start <= zed < s.end for s in preview.spans
+    )
 
 
 def test_preview_ellipsizes_long_text() -> None:
     """An over-long preview is clipped to the width budget with a trailing ellipsis."""
     long = ChatMessage(text="x" * 100, is_channel=True, channel_idx=0)
-    out = _preview_text(long).plain
+    out = _preview_text(long, _NO_KEYS).plain
     assert len(out) == _PREVIEW_WIDTH and out.endswith("…")
 
 
@@ -271,7 +289,7 @@ def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
     conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
     ctx = _RowCtx(repo, unread={"chan:c0": 3})
     last = ChatMessage(text="Bob: hi there", is_channel=True, channel_id="c0")  # sender inline
-    title = _title(ctx, conv, {"chan:c0": last})
+    title = _title(ctx, conv, {"chan:c0": last}, _NO_KEYS)
     line = title.plain  # a Text, since there is unread
     assert line.startswith("🔒 General")  # a private channel leads with its openness glyph
     assert "● 3" in line
@@ -283,7 +301,7 @@ def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
     from rich.text import Text
 
     conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
-    unread = _title(_RowCtx(repo, unread={"chan:c0": 2}), conv, {})
+    unread = _title(_RowCtx(repo, unread={"chan:c0": 2}), conv, {}, _NO_KEYS)
     assert isinstance(unread, Text)
     dot = unread.plain.index("●")
     reddened = [
@@ -291,7 +309,7 @@ def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
     ]
     assert reddened and all(span.end - span.start == 1 for span in reddened)  # just the glyph
 
-    read = _title(_RowCtx(repo, unread={}), conv, {})
+    read = _title(_RowCtx(repo, unread={}), conv, {}, _NO_KEYS)
     assert isinstance(read, Text)  # always a Text now, so its spans can carry the row's colour
     assert "●" not in read.plain  # nothing unread -> no badge dot
     assert not any(span.style == "err" for span in read.spans)
@@ -304,15 +322,15 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
     long = Conversation(label="A much longer channel name here", is_channel=True, channel_idx=1, channel_id="c1")
     m0 = ChatMessage(text="X: hello", is_channel=True, channel_id="c0")
     m1 = ChatMessage(text="Y: hello", is_channel=True, channel_id="c1")
-    l0 = _title(ctx, short, {"chan:c0": m0}).plain
-    l1 = _title(ctx, long, {"chan:c1": m1}).plain
+    l0 = _title(ctx, short, {"chan:c0": m0}, _NO_KEYS).plain
+    l1 = _title(ctx, long, {"chan:c1": m1}, _NO_KEYS).plain
     assert l0.index("X: hello") == l1.index("Y: hello")
 
 
 def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 fixed-key public, 🔒 private."""
     ctx = _RowCtx(repo)
-    head = lambda conv: _title(ctx, conv, {}).plain.split(" ", 1)[0]
+    head = lambda conv: _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
     named = Conversation(
         label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
     )
@@ -328,29 +346,35 @@ def test_title_leads_with_openness_glyph(repo: Repository) -> None:
 
 
 def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> None:
-    """A contact's dot is filled ● once we've talked, hollow ○ before — always in her hue."""
-    from meshterm.ui.chat import _sender_hue
+    """A contact's dot fills ● once we've talked, hollow ○ before — companion pink both
+    ways — while the name itself carries the contact's key-derived hue."""
+    from meshterm.tools.chat import _COMPANION_DOT_STYLE
+    from meshterm.ui.theme import node_style
 
     ctx = _RowCtx(repo)
     contact = Conversation(
         label="Alice", is_channel=False, contact=Contact(name="Alice", public_key="d4" + "0" * 62)
     )
-    head = lambda lasts: _title(ctx, contact, lasts).plain.split(" ", 1)[0]
 
-    def dot_is_hued(row) -> bool:
+    def dot_is_pink(row) -> bool:
         return any(
-            span.style == _sender_hue("Alice") and span.start == 0 and span.end == 1
+            span.style == _COMPANION_DOT_STYLE and span.start == 0 and span.end == 1
             for span in row.spans
         )
 
-    # No history yet — a hollow ring, but still tinted in Alice's stable chat hue.
-    fresh = _title(ctx, contact, {})
-    assert fresh.plain.startswith("○") and dot_is_hued(fresh)
+    # No history yet — a hollow ring in the standard companion pink.
+    fresh = _title(ctx, contact, {}, _NO_KEYS)
+    assert fresh.plain.startswith("○") and dot_is_pink(fresh)
+    # The name lane carries Alice's key-derived hue.
+    name_at = fresh.plain.index("Alice")
+    assert any(
+        s.style == node_style("d4") and s.start <= name_at < s.end for s in fresh.spans
+    )
 
-    # Once we've exchanged messages the same-hued dot fills in.
+    # Once we've exchanged messages the same pink dot fills in.
     last = ChatMessage(text="hi", peer=contact.peer)
-    talked = _title(ctx, contact, {contact.key: last})
-    assert talked.plain.startswith("●") and dot_is_hued(talked)
+    talked = _title(ctx, contact, {contact.key: last}, _NO_KEYS)
+    assert talked.plain.startswith("●") and dot_is_pink(talked)
 
 
 # -- chat service -------------------------------------------------------------
@@ -696,30 +720,40 @@ def test_wrapped_body_hangs_under_the_first_line() -> None:
 
 
 def test_at_mention_renders_as_name_in_sender_hue() -> None:
-    """An ``@[Name]`` token renders as a bare ``@Name`` colored in that sender's hue."""
+    """An ``@[Name]`` token renders as a bare ``@Name`` in the node's key-derived hue.
+
+    A mentioned name no contact or stored advert carries stays muted — the app-wide
+    rule that colour marks a keyed identity.
+    """
     from datetime import datetime, timezone
 
-    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS
+    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS, node_style
 
     base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
     message = ChatMessage(
-        text="Bob: @[Alice] you around?", is_channel=True, channel_idx=0, created_at=base
+        text="Bob: @[Alice] and @[Zed] around?", is_channel=True, channel_idx=0,
+        created_at=base,
     )
-    screen = ChatScreen(conv, [message], send=None, names={}, session=_StubSession())
+    screen = ChatScreen(
+        conv, [message], send=None, names={}, session=_StubSession(),
+        key_of=_keys_of({"alice": "60" + "0" * 62}),
+    )
     _, body = screen._sender_and_body(message)
     text = screen._render_mentions(body, selected=False)
 
     assert "@Alice" in text.plain  # bracketed token collapsed to a bare mention
     assert "@[Alice]" not in text.plain and "[Alice]" not in text.plain
-    # The "@Alice" run carries Alice's palette hue (the same the header would use).
+    # The "@Alice" run carries the key-derived hue (the same the header would use).
     hue = screen._sender_style("Alice")
-    assert hue in _SENDER_COLORS
+    assert hue == node_style("60") and hue in _SENDER_COLORS
     at = text.plain.index("@Alice")
     hue_spans = [
         s for s in text.spans if s.style == hue and s.start <= at and at + len("@Alice") <= s.end
     ]
     assert hue_spans
+    # The unknown @Zed stays muted — no key, no colour.
+    assert screen._sender_style("Zed") == "muted"
 
 
 def test_direct_transcript_groups_under_sender_headers() -> None:
@@ -996,15 +1030,18 @@ def test_chat_channel_home_moves_the_compose_cursor() -> None:
 def test_channel_self_style_keyed_on_concept_not_label() -> None:
     """Our white 'self' style follows the message being outbound, not the 'you' label.
 
-    A remote sender who happens to be named 'you' must still get a palette hue, never the
-    white style reserved for us.
+    A remote sender who happens to be named 'you' must never take the white style
+    reserved for us — it reads as a normal sender (its key's hue when resolvable,
+    muted otherwise).
     """
-    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS
+    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS, node_style
 
     screen = _channel_screen([])
     assert screen._sender_style("you", is_self=True) == "you"  # us → white
-    remote = screen._sender_style("you", is_self=False)
-    assert remote != "you" and remote in _SENDER_COLORS  # remote 'you' → a normal hue
+    assert screen._sender_style("you", is_self=False) == "muted"  # no key → muted
+    keyed = _channel_screen([], key_of=_keys_of({"you": "d4" + "0" * 62}))
+    remote = keyed._sender_style("you", is_self=False)
+    assert remote == node_style("d4") and remote in _SENDER_COLORS
 
 
 def test_channel_own_messages_do_not_merge_with_remote_namesake() -> None:
@@ -1021,11 +1058,12 @@ def test_channel_own_messages_do_not_merge_with_remote_namesake() -> None:
     assert rendered.count("you") == 2  # two separate headers, not one merged group
 
 
-def _channel_screen(messages, session=None) -> ChatScreen:
+def _channel_screen(messages, session=None, key_of=None) -> ChatScreen:
     """Build a channel ChatScreen over ``messages`` for selection/reply tests."""
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
     return ChatScreen(
-        conv, messages, send=None, names={}, session=session or _StubSession()
+        conv, messages, send=None, names={}, session=session or _StubSession(),
+        key_of=key_of,
     )
 
 

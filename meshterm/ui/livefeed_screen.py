@@ -41,7 +41,7 @@ from .packet_viewer import (
 from .theme import name_style, snr_style
 from .tui.render import render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import TypeOf, path_text
+from .widgets import NameKeyResolver, TypeOf, path_text
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -90,6 +90,7 @@ class LiveFeedScreen(Screen):
         self_name: Optional[str] = None,
         channels: Sequence[tuple[str, bytes]] = (),
         type_of: Optional[TypeOf] = None,
+        key_of: Optional[NameKeyResolver] = None,
     ) -> None:
         """Create the feed over its data feeds.
 
@@ -106,6 +107,10 @@ class LiveFeedScreen(Screen):
                 so it can attempt to decrypt an overheard channel-text packet.
             type_of: Maps a relay hash to its node type, handed to the packet viewer so a
                 relayed packet's route graph marks a repeater ``▲`` (etc.) over a dot.
+            key_of: Maps a sender's display name back to its node's key (see
+                :func:`~meshterm.services.trace_runner.make_name_key_resolver`), so a
+                channel sender the contacts or the recorder know takes its key-derived
+                hue; an unresolvable name stays muted.
         """
         super().__init__()
         self.title = "Live feed"
@@ -116,6 +121,7 @@ class LiveFeedScreen(Screen):
         self._self_name = self_name
         self._channels = channels
         self._type_of = type_of
+        self._key_of: NameKeyResolver = key_of or (lambda name: None)
         #: The feed: latest events of every class as data, newest first — rendered
         #: fresh each paint (rows adapt to width) and handed whole to the viewer.
         self._feed: deque[PacketEntry] = deque(maxlen=_FEED_CAP)
@@ -230,7 +236,7 @@ class LiveFeedScreen(Screen):
             list(self._feed), self._selected,
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
             self_name=self._self_name, on_navigate=follow,
-            channels=self._channels, type_of=self._type_of,
+            channels=self._channels, type_of=self._type_of, key_of=self._key_of,
             # The live feed itself (newest first), so the viewer keeps up with packets
             # that arrive while it is open instead of freezing at this snapshot.
             source=lambda: list(self._feed),
@@ -324,7 +330,9 @@ class LiveFeedScreen(Screen):
             sender = _channel_sender(entry.text)
             if sender:
                 ours = self._self_name and sender == self._self_name
-                return sender, ("you" if ours else name_style(sender))
+                # A resolvable sender takes its key-derived hue; a stranger stays
+                # muted — colour is reserved for keyed identities.
+                return sender, ("you" if ours else name_style(sender, self._key_of(sender)))
             return "channel", "muted"
         if entry.kind == "packet":
             cls = payload_class(entry.raw)
@@ -394,6 +402,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
     # app-wide rule that a node we can name never renders as a bare hash.
     resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
     type_of = trace_runner.make_node_type_resolver(contacts)
+    key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
     seed = ctx.repo.recent_observations(since=utcnow() - OBSERVATION_WINDOW)
@@ -406,6 +415,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
         self_name=self_name,
         channels=channels,
         type_of=type_of,
+        key_of=key_of,
     )
 
     unsubscribe = ctx.events.subscribe(screen.on_event)

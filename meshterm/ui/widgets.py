@@ -48,6 +48,10 @@ if TYPE_CHECKING:
 #: Maps a hop's raw key-prefix hash to a display label (a contact name when known).
 NodeResolver = Callable[[Optional[str]], Optional[str]]
 
+#: Maps a display name back to its node's key hex, or ``None`` for a name no known
+#: node carries (built by :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
+NameKeyResolver = Callable[[str], Optional[str]]
+
 
 def channel_glyph(name: str, secret: Optional[bytes]) -> str:
     """The one-character openness marker for a channel, shared across channel-facing screens.
@@ -440,9 +444,19 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
 _SELF_RGB: RGB = (255, 255, 255)
 
 
+#: The truecolour of the ``muted`` grey — what a keyless name's hue collapses to on a
+#: raster (mirrors ``theme``'s muted ``#94a3b8``).
+_MUTED_RGB: RGB = (148, 163, 184)
+
+
 def _name_rgb(name: str, key: Optional[str] = None) -> RGB:
-    """The RGB of a node's stable palette hue (``theme.name_style`` minus its bold)."""
-    return parse_hex(name_style(name, key).split()[-1])
+    """The RGB of a node's stable palette hue (``theme.name_style`` minus its bold).
+
+    A name with no resolvable key styles ``muted`` (no hex to parse), so it lands on
+    the muted grey here — the raster twin of the app-wide keyless-stays-muted rule.
+    """
+    hexpart = name_style(name, key).split()[-1]
+    return parse_hex(hexpart) if hexpart.startswith("#") else _MUTED_RGB
 
 
 def name_rgb(name: str, key: Optional[str] = None) -> RGB:
@@ -468,6 +482,7 @@ def route_graph_style(
     self_name: Optional[str],
     source: Optional[str],
     type_of: Optional[TypeOf] = None,
+    key_of: Optional[NameKeyResolver] = None,
 ) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
     """Build the per-node callbacks that draw a route on THE route graph (``pathgraph``).
 
@@ -489,6 +504,10 @@ def route_graph_style(
             (``▲`` repeater, ``■`` room, ``◉`` sensor) in the shared palette instead of a
             generic dot. ``None``, or a hash whose type it can't resolve, keeps the old
             named-dot / unknown-ring fallback.
+        key_of: Maps the ``source`` display name back to its node's key (see
+            :func:`~meshterm.services.trace_runner.make_name_key_resolver`), so the left
+            endpoint's label takes its key-derived hue; ``None``, or a name it can't
+            place, leaves the origin muted — colour is reserved for keyed identities.
 
     Returns:
         The ``(glyph_of, label_of, label_rgb_of)`` triple to hand to
@@ -524,7 +543,9 @@ def route_graph_style(
         if node == SRC_NODE:
             if src_is_self:
                 return _SELF_RGB
-            return _name_rgb(source) if source else parse_hex(_UNKNOWN[1])
+            if not source:
+                return parse_hex(_UNKNOWN[1])
+            return _name_rgb(source, key_of(source) if key_of else None)
         named = resolve(node)
         if named and named != node:
             return _name_rgb(named, node)

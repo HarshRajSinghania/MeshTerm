@@ -146,6 +146,55 @@ def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
     return resolve
 
 
+#: Maps a display name to the node's key (as full as we hold one — a public key, a key
+#: prefix, or a stored node id), or ``None`` for a name no known node carries. The
+#: colour side of :func:`make_node_resolver`: where that resolver turns hex into names,
+#: this one turns a bare name back into the key its palette hue derives from.
+NameKeyResolver = Callable[[str], Optional[str]]
+
+
+def make_name_key_resolver(
+    contacts: Optional[list[Contact]],
+    stored_names: Optional[dict[str, str]] = None,
+) -> NameKeyResolver:
+    """Build a resolver that finds the key behind a display name.
+
+    The app-wide colour rule keys every name's hue on the node's key; some surfaces
+    (a channel message's inline sender, an ``@mention``, a route graph's origin) hold
+    only a *name*. This maps that name — casefolded — back to a key: the device's
+    contacts win (their keys are canonical), then the recorder's stored names fill in
+    nodes the companion never befriended, so a known stranger still lands on its own
+    hue. A name nobody carries resolves to ``None`` — the caller renders it muted,
+    because colour is reserved for keyed identities.
+
+    Args:
+        contacts: Known contacts to resolve against (name → public key/key prefix).
+        stored_names: The recorder's latest advertised name per stored node id
+            (:meth:`~meshterm.persistence.repository.Repository.node_names`), inverted
+            here into a name → node-id fallback.
+
+    Returns:
+        A callable taking a display name and returning the best key hex we hold for
+        it, or ``None`` when the name matches no known node.
+    """
+    keys: dict[str, str] = {}
+    for node, name in (stored_names or {}).items():
+        ident = node.lower().removeprefix("0x")
+        if name and ident:
+            keys.setdefault(name.casefold(), ident)
+    for c in contacts or []:
+        ident = (c.public_key or c.key_prefix or "").lower().removeprefix("0x")
+        if c.name and ident:
+            keys[c.name.casefold()] = ident  # contacts win over stored names
+
+    def key_of(name: str) -> Optional[str]:
+        if not name:
+            return None
+        return keys.get(name.casefold())
+
+    return key_of
+
+
 def parse_trace_path(spec: str, contacts: Optional[list[Contact]] = None) -> str:
     """Parse a user path spec into the hex path string ``send_trace`` expects.
 

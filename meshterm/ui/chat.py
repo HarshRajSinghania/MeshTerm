@@ -59,18 +59,6 @@ _FAILED = ("✗", "err")
 #: Seconds between spinner frames on a message that is still awaiting its ack.
 _SPINNER_INTERVAL = 0.12
 
-def _sender_hue(sender: str) -> str:
-    """The stable per-sender colour a name is drawn in, keyed on the name's characters.
-
-    The app-wide name palette (:func:`~meshterm.ui.theme.name_style`), shared by the live
-    transcript (sender headers, ``@mentions``), the conversation list (a contact's colour
-    dot, a channel preview's inline sender), the dashboard feed, and the packet viewer, so
-    a person reads the same colour everywhere. ``you`` and unknown (``·``) senders are
-    handled by the caller.
-    """
-    return name_style(sender)
-
-
 #: The sender-prefix parser, shared app-wide from the protocol layer (the transcript,
 #: the conversation picker, the dashboard feed, and the message-paths matcher must all
 #: split ``Name: body`` identically). Kept under its old private name for the callers
@@ -102,6 +90,7 @@ class ChatScreen(Screen):
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
         resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None,
         paths: Optional[Callable[[ChatMessage], Awaitable[None]]] = None,
+        key_of: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         """Build the chat screen.
 
@@ -118,10 +107,22 @@ class ChatScreen(Screen):
                 message, updating it in place (direct chats only; ``None`` for channels).
             paths: Async callable that presents the delivery paths of one message (the
                 ^P view); ``None`` leaves the affordance quietly inert.
+            key_of: Maps a sender's display name back to its node's key (see
+                :func:`~meshterm.services.trace_runner.make_name_key_resolver`), the seed
+                of the sender's hue; ``None`` (or a name it can't place) leaves senders
+                muted — colour is reserved for keyed identities.
         """
         super().__init__()
         self.title = conversation.label
         self._is_channel = conversation.is_channel
+        self._key_of: Callable[[str], Optional[str]] = key_of or (lambda name: None)
+        # A direct thread's one remote sender is the peer; its key colours the header
+        # even when the resolver can't place the display name.
+        contact = conversation.contact
+        self._peer_key = (
+            "" if conversation.is_channel or contact is None
+            else (contact.public_key or contact.key_prefix or "")
+        )
         self._messages = list(messages)
         self._send = send
         self._resend = resend
@@ -402,18 +403,24 @@ class ChatScreen(Screen):
         )
 
     def _sender_style(self, sender: str, *, is_self: bool = False) -> str:
-        """Pick a stable color for a channel sender.
+        """Pick a stable color for a sender name — keyed on the sender's node key.
 
         Our own messages are white — keyed on ``is_self`` (the message being outbound), not
         on the ``"you"`` label, so a remote sender who happens to be named ``you`` still gets
-        a hue from the palette rather than masquerading as us. ``·`` (unknown) is muted; every
-        other sender gets a stable hue derived from its name.
+        a hue from the palette rather than masquerading as us. ``·`` (unknown) is muted.
+        Every other sender resolves its name back to a key (contacts, then the recorder's
+        stored names; a direct thread falls back to the peer's own key) and takes that
+        key's hue; a name no known node carries stays muted — the app-wide rule that
+        colour marks a keyed identity.
         """
         if is_self:
             return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
             return "muted"
-        return _sender_hue(sender)
+        key = self._key_of(sender)
+        if not key and not self._is_channel:
+            key = self._peer_key or None
+        return name_style(sender, key)
 
     # --- input ---------------------------------------------------------------
 
@@ -744,13 +751,17 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
     except Exception:  # noqa: BLE001 - the hub may already be running; recording is best-effort
         pass
 
+    from ..services import trace_runner
+
     history = ctx.repo.recent_chat_messages(
         is_channel=conversation.is_channel,
         channel_id=conversation.channel_id,
         peer=conversation.peer,
         limit=_HISTORY_LIMIT,
     )
-    names = _contact_names(await ctx.devstate.contacts())
+    contacts = await ctx.devstate.contacts()
+    names = _contact_names(contacts)
+    key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
 
     async def send(text: str) -> Optional[ChatMessage]:
         if conversation.is_channel:
@@ -777,6 +788,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         session=session,
         resend=resend,
         paths=paths,
+        key_of=key_of,
     )
     ctx.chat.set_active(conversation.key)
 
@@ -868,6 +880,7 @@ async def _make_paths_presenter(
     contacts = await ctx.devstate.contacts()
     resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
     type_of = trace_runner.make_node_type_resolver(contacts)
+    key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
     prefix_bytes = await _routing_prefix_bytes(ctx)
     self_name: Optional[str] = None
     try:
@@ -923,7 +936,7 @@ async def _make_paths_presenter(
             MessagePathsScreen(
                 message, arrivals, matched=matched, resolve=resolve,
                 prefix_bytes=prefix_bytes, self_name=self_name, summary=summary,
-                source=source or None, type_of=type_of,
+                source=source or None, type_of=type_of, key_of=key_of,
             )
         )
 
