@@ -33,7 +33,7 @@ from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui.chat import _MENTION, _split_channel_sender
 from ..ui.menus import fit_cells
 from ..ui.theme import name_style
-from ..ui.tui import Choice, Separator
+from ..ui.tui import Choice, DeleteRequest, Separator
 from ..ui.widgets import _NODE_GLYPHS, channel_glyph
 from .base import Tool, ToolResult, register
 
@@ -118,68 +118,113 @@ class ChatTool(Tool):
             The chosen :class:`~meshterm.core.models.Conversation`, or ``None`` if
             cancelled.
         """
-        # Through the session cache: this picker runs on every Chat open, and its two reads —
-        # the channel-slot probe and the contacts table — are the two slowest round-trips on a
-        # companion. Reading them from the device each time is what made opening Chat stall for
-        # seconds (the cached chat screen behind it never got the chance to help). The cache
-        # holds channels until the channel editor writes a slot and refreshes contacts in the
-        # background (see :class:`~meshterm.services.device_state.DeviceState`).
-        channels = _channels_from_slots(await ctx.devstate.channel_slots())
-        contacts = await ctx.devstate.contacts()
-        # A stable snapshot orders the rows (so the list doesn't reshuffle under the cursor),
-        # while a self-refreshing view feeds each row's live preview (see _LiveLasts).
-        lasts = ctx.repo.last_chat_messages()
-        live = _LiveLasts(ctx, seed=lasts)
-        # Names in previews/mentions resolve back to keys for their hue (the app-wide
-        # colour rule); a name no contact or stored advert carries stays muted.
-        key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
+        while True:
+            # Through the session cache: this picker runs on every Chat open, and its two
+            # reads — the channel-slot probe and the contacts table — are the two slowest
+            # round-trips on a companion. Reading them from the device each time is what made
+            # opening Chat stall for seconds (the cached chat screen behind it never got the
+            # chance to help). The cache holds channels until the channel editor writes a
+            # slot and refreshes contacts in the background (see
+            # :class:`~meshterm.services.device_state.DeviceState`).
+            channels = _channels_from_slots(await ctx.devstate.channel_slots())
+            contacts = await ctx.devstate.contacts()
+            # Only companion nodes are listed — we don't DM repeaters, rooms, or sensors;
+            # a contact whose type was never advertised gets the benefit of the doubt.
+            companions = [c for c in contacts if c.node_type in (NODE_TYPE_CHAT, None)]
+            # A stable snapshot orders the rows (so the list doesn't reshuffle under the
+            # cursor), while a self-refreshing view feeds each row's live preview
+            # (see _LiveLasts).
+            lasts = ctx.repo.last_chat_messages()
+            live = _LiveLasts(ctx, seed=lasts)
+            # Names in previews/mentions resolve back to keys for their hue (the app-wide
+            # colour rule); a name no contact or stored advert carries stays muted.
+            key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
 
-        items: list = [
-            Separator(_picker_header()),
-            Separator("── 📡 Channels ──", style="accent"),
-        ]
-        for conversation in channels:
-            items.append(
-                Choice(title=_row_title(ctx, conversation, live, key_of), value=conversation)
-            )
-
-        items.append(Separator("── 👤 Direct ──", style="accent"))
-        if contacts:
-            # List contacts by recency — those with messages first, newest exchange at the
-            # top — then the never-contacted ones alphabetically (see _recency_key).
-            direct = [
-                Conversation(label=c.name, is_channel=False, contact=c) for c in contacts
+            items: list = [
+                Separator(_picker_header()),
+                Separator("── 📡 Channels ──", style="accent"),
             ]
-            direct.sort(key=lambda conv: _recency_key(conv, lasts))
-            for conversation in direct:
+            for conversation in channels:
                 items.append(
                     Choice(
                         title=_row_title(ctx, conversation, live, key_of),
                         value=conversation,
                     )
                 )
-        else:
-            items.append(Separator("  (no contacts yet — receive an advert first)"))
 
-        items.append(Separator(" "))
-        items.append(Choice(title="Back", value="__back__"))
+            items.append(Separator("── 👤 Direct ──", style="accent"))
+            if companions:
+                # List contacts by recency — those with messages first, newest exchange at
+                # the top — then the never-contacted ones alphabetically (see _recency_key).
+                direct = [
+                    Conversation(label=c.name, is_channel=False, contact=c)
+                    for c in companions
+                ]
+                direct.sort(key=lambda conv: _recency_key(conv, lasts))
+                for conversation in direct:
+                    items.append(
+                        Choice(
+                            title=_row_title(ctx, conversation, live, key_of),
+                            value=conversation,
+                            # Del offers to delete this thread's stored history —
+                            # only where there is history to delete.
+                            deletable=lasts.get(conversation.key) is not None,
+                        )
+                    )
+            else:
+                items.append(Separator("  (no contacts yet — receive an advert first)"))
 
-        default = next(
-            (
-                it.value
-                for it in items
-                if isinstance(it, Choice)
-                and isinstance(it.value, Conversation)
-                and it.value.key == default_key
-            ),
-            None,
-        )
-        choice = await ctx.ui.select(
-            "Chat — pick a conversation", items, default=default, wrap=False
-        )
-        if choice in (None, "__back__"):
-            return None
-        return choice
+            items.append(Separator(" "))
+            items.append(Choice(title="Back", value="__back__"))
+
+            default = next(
+                (
+                    it.value
+                    for it in items
+                    if isinstance(it, Choice)
+                    and isinstance(it.value, Conversation)
+                    and it.value.key == default_key
+                ),
+                None,
+            )
+            choice = await ctx.ui.select(
+                "Chat — pick a conversation",
+                items,
+                default=default,
+                wrap=False,
+                delete_hint="Del delete history",
+            )
+            if isinstance(choice, DeleteRequest):
+                conversation = choice.value
+                await self._delete_history(ctx, conversation)
+                # Re-enter with fresh rows: a deleted thread's dot hollows and the row
+                # demotes to the uncontacted (alphabetical) tail; keep the cursor on it.
+                default_key = conversation.key
+                continue
+            if choice in (None, "__back__"):
+                return None
+            return choice
+
+    @staticmethod
+    async def _delete_history(ctx: AppContext, conversation: Conversation) -> None:
+        """Confirm and delete one direct conversation's stored history.
+
+        Deleting history is irreversible data loss, so the confirm wears the reserved
+        red (``destructive``): Cancel on the left, the committing Delete on the right.
+        On confirm the peer's messages are removed from the database and the thread's
+        unread count is cleared; the contact itself (a device-side record) is untouched.
+        """
+        if not await ctx.ui.dialog(
+            f"Delete the chat history with {conversation.label}? Every stored "
+            "message in this conversation is removed.",
+            [("Cancel", False), ("Delete", True)],
+            title="Delete history",
+            default=1,
+            destructive=True,
+        ):
+            return
+        ctx.repo.delete_chat_history(conversation.peer)
+        ctx.chat.clear_unread(conversation.key)
 
     # -- CLI --------------------------------------------------------------------
 

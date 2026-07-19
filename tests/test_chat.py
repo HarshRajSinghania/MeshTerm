@@ -1303,3 +1303,172 @@ async def test_open_chat_sends_through_real_session(tmp_path: Path) -> None:
         assert stored[0].outbound is True
     finally:
         await ctx.aclose()
+
+
+# -- the picker's companion filter and history delete -------------------------
+
+
+def test_delete_chat_history_removes_only_that_peer(repo: Repository) -> None:
+    """Deleting one direct thread leaves other peers and channel history untouched."""
+    repo.record_chat_message(ChatMessage(text="a", peer="aa"))
+    repo.record_chat_message(ChatMessage(text="b", peer="bb"))
+    repo.record_chat_message(ChatMessage(text="c", is_channel=True, channel_id="c0"))
+
+    assert repo.delete_chat_history("aa") == 1
+    assert repo.recent_chat_messages(is_channel=False, peer="aa") == []
+    assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer="bb")] == ["b"]
+    assert [
+        m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")
+    ] == ["c"]
+
+
+class _PickerDevstate:
+    def __init__(self, contacts) -> None:
+        self._contacts = contacts
+
+    async def channel_slots(self):
+        return []
+
+    async def contacts(self):
+        return list(self._contacts)
+
+
+class _PickerChat(_FakeChat):
+    def __init__(self, unread=None) -> None:
+        super().__init__(unread or {})
+        self.cleared: list[str] = []
+
+    def clear_unread(self, key: str) -> None:
+        self.cleared.append(key)
+
+
+async def test_picker_lists_companions_only(repo: Repository) -> None:
+    """Only companion (and type-unknown) contacts appear in Direct — never repeaters."""
+    from types import SimpleNamespace
+
+    from meshterm.core.models import NODE_TYPE_REPEATER
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.tui import Choice
+
+    contacts = [
+        Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1),
+        Contact(name="Mystery", public_key="60" + "0" * 62),  # type never advertised
+        Contact(name="Tower", public_key="a1" + "0" * 62, node_type=NODE_TYPE_REPEATER),
+    ]
+
+    class _Ui:
+        def __init__(self) -> None:
+            self.items = None
+
+        async def select(self, title, items, **kw):
+            self.items = items
+            return None
+
+    ctx = SimpleNamespace(
+        devstate=_PickerDevstate(contacts), repo=repo, ui=_Ui(), chat=_PickerChat()
+    )
+    assert await ChatTool()._pick_conversation(ctx) is None
+    direct = [
+        it.value.label
+        for it in ctx.ui.items
+        if isinstance(it, Choice)
+        and isinstance(it.value, Conversation)
+        and not it.value.is_channel
+    ]
+    assert "Ally" in direct and "Mystery" in direct and "Tower" not in direct
+
+
+async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:
+    """Del on a contacted thread: red destructive confirm, history gone, unread cleared,
+    and the re-entered picker's row is hollow (no longer deletable)."""
+    from types import SimpleNamespace
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.tui import Choice, DeleteRequest
+
+    ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
+    conv = Conversation(label="Ally", is_channel=False, contact=ally)
+    repo.record_chat_message(ChatMessage(text="hi", peer=conv.peer))
+    repo.record_chat_message(ChatMessage(text="chan", is_channel=True, channel_id="c0"))
+
+    class _Ui:
+        def __init__(self) -> None:
+            self.selects = 0
+            self.dialogs: list[dict] = []
+
+        async def select(self, title, items, **kw):
+            self.selects += 1
+            assert kw.get("delete_hint") == "Del delete history"
+            row = next(
+                it
+                for it in items
+                if isinstance(it, Choice)
+                and isinstance(it.value, Conversation)
+                and not it.value.is_channel
+            )
+            if self.selects == 1:
+                assert row.deletable  # there is history to delete
+                return DeleteRequest(row.value)
+            assert not row.deletable  # history gone: the row demoted to uncontacted
+            return None
+
+        async def dialog(self, prompt, buttons, **kw):
+            self.dialogs.append({"prompt": prompt, "buttons": buttons, **kw})
+            return True  # commit the Delete
+
+    chat = _PickerChat()
+    ctx = SimpleNamespace(
+        devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
+    )
+    assert await ChatTool()._pick_conversation(ctx) is None
+    assert ctx.ui.selects == 2  # the picker re-entered after the delete
+
+    confirm = ctx.ui.dialogs[0]
+    assert confirm["destructive"] is True  # the reserved red, data loss
+    assert confirm["buttons"] == [("Cancel", False), ("Delete", True)]
+
+    assert repo.recent_chat_messages(is_channel=False, peer=conv.peer) == []
+    assert [
+        m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")
+    ] == ["chan"]  # channel history survives
+    assert chat.cleared == [conv.key]
+
+
+async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
+    """Cancelling the confirm leaves the thread's messages untouched."""
+    from types import SimpleNamespace
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.tui import Choice, DeleteRequest
+
+    ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
+    conv = Conversation(label="Ally", is_channel=False, contact=ally)
+    repo.record_chat_message(ChatMessage(text="hi", peer=conv.peer))
+
+    class _Ui:
+        def __init__(self) -> None:
+            self.selects = 0
+
+        async def select(self, title, items, **kw):
+            self.selects += 1
+            if self.selects == 1:
+                row = next(
+                    it
+                    for it in items
+                    if isinstance(it, Choice)
+                    and isinstance(it.value, Conversation)
+                    and not it.value.is_channel
+                )
+                return DeleteRequest(row.value)
+            return None
+
+        async def dialog(self, prompt, buttons, **kw):
+            return False  # Cancel backs out
+
+    chat = _PickerChat()
+    ctx = SimpleNamespace(
+        devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
+    )
+    assert await ChatTool()._pick_conversation(ctx) is None
+    assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer=conv.peer)] == ["hi"]
+    assert chat.cleared == []

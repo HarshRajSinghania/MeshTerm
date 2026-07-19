@@ -362,15 +362,20 @@ class TuiSession:
         wrap: bool = True,
         filterable: bool = True,
         footer_hint: Optional[str] = None,
+        delete_hint: str = "",
     ) -> Any:
         """Show a select screen; return the chosen value or ``None`` if cancelled.
 
         ``prompt`` draws an instruction inside the box above the list; ``filterable`` and
         ``footer_hint`` are forwarded for short, fixed lists (a yes-or-no style choice) that
-        want no type-to-filter and a tailored hint.
+        want no type-to-filter and a tailored hint. ``delete_hint`` (with rows marked
+        :attr:`~meshterm.ui.tui.select.Choice.deletable`) surfaces the Delete key's atom
+        while the highlight sits on such a row; Delete then resolves a
+        :class:`~meshterm.ui.tui.select.DeleteRequest` the caller unwraps.
         """
         kwargs: dict[str, Any] = dict(
-            prompt=prompt, default=default, wrap=wrap, filterable=filterable
+            prompt=prompt, default=default, wrap=wrap, filterable=filterable,
+            delete_hint=delete_hint,
         )
         if footer_hint is not None:
             kwargs["footer_hint"] = footer_hint

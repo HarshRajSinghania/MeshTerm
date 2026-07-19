@@ -115,12 +115,14 @@ class Ui:
         default: Any = None,
         wrap: bool = True,
         filterable: bool = True,
+        delete_hint: str = "",
     ) -> Any:
         """Prompt the user to choose one item; return its value or ``None`` if cancelled.
 
         ``prompt`` draws an instruction inside the popup, above the list. Pass
         ``filterable=False`` for a short, fixed list so a stray key can't narrow (and
-        resize) it.
+        resize) it. ``delete_hint`` (with rows marked deletable) enables the Delete
+        key's remove flow — see :meth:`~meshterm.ui.tui.session.TuiSession.select`.
         """
         raise NotImplementedError
 
@@ -394,6 +396,7 @@ class PlainUi(Ui):
         default: Any = None,
         wrap: bool = True,
         filterable: bool = True,
+        delete_hint: str = "",
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -639,10 +642,12 @@ class TuiUi(Ui):
         default: Any = None,
         wrap: bool = True,
         filterable: bool = True,
+        delete_hint: str = "",
     ) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(
-            title, items, prompt=prompt, default=default, wrap=wrap, filterable=filterable
+            title, items, prompt=prompt, default=default, wrap=wrap,
+            filterable=filterable, delete_hint=delete_hint,
         )
 
     async def select_startup(

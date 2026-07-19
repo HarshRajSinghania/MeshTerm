@@ -1533,6 +1533,26 @@ class Repository:
         )
         self._conn.commit()
 
+    def delete_chat_history(self, peer: Optional[str]) -> int:
+        """Delete every stored message of one direct conversation.
+
+        The chat picker's per-contact history delete: removes only that peer's direct
+        messages — channel history and every other conversation stay untouched. The
+        peer matches how :meth:`record_chat_message` stores it (lowercased key prefix).
+
+        Args:
+            peer: The contact's key prefix (the direct conversation's identity).
+
+        Returns:
+            How many messages were deleted.
+        """
+        cur = self._conn.execute(
+            "DELETE FROM messages WHERE is_channel = 0 AND peer = ?",
+            ((peer or "").lower(),),
+        )
+        self._conn.commit()
+        return int(cur.rowcount or 0)
+
     def recent_chat_messages(
         self,
         *,
