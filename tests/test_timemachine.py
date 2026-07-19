@@ -469,11 +469,53 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
     assert "Packets per day" in body and "Nodes per day" in body
     assert "Rhythm" in body and "15-min" in body  # 15-minute slices, four per hour
     assert "Arrivals" in body and "Newcomer" in body
-    # Arrivals are aligned lanes: the hash sits in its own column and the old
-    # per-row "first heard" prefix now lives once, in the column header.
+    # Arrivals are aligned lanes: the key sits in its own column (labelled KEY,
+    # per the lexicon) and the old per-row "first heard" prefix now lives once,
+    # in the column header.
     assert "f7" * 6 in body
+    assert "KEY" in body and "HASH" not in body
     assert "FIRST HEARD" in body and "first heard" not in body
     assert "Ledger" in body and "26 observations" in body and "2 nodes" in body
+    repo.close()
+
+
+def test_mesh_page_arrivals_key_lane_flexes_with_width(tmp_path: Path) -> None:
+    """The arrivals key lane fills the terminal: a resolvable full key shows more
+    than the stored 12 hex, truncating on a byte boundary with an ellipsis; a
+    narrow terminal floors the lane at its old fixed width."""
+    from meshterm.ui.timemachine_screen import _PICK_HASH_W
+
+    repo = _seeded_repo(tmp_path)
+    ctx = SimpleNamespace(repo=repo)
+    full_key = "f7" * 32
+
+    def resolve_key(node):
+        return full_key if node == "f7" * 6 else node
+
+    wide = _plain(
+        _mesh_sections(ctx, None, 100, 1, lambda n: n, resolve_key), width=100
+    )
+    arrivals_row = next(
+        ln for ln in wide.split("\n") if "Newcomer" in ln
+    )
+    shown = re.search(r"(f7)+…?", arrivals_row).group(0)
+    assert len(shown.rstrip("…")) > 12          # more than the stored 12 hex
+    assert len(shown.rstrip("…")) % 2 == 0      # truncated on a byte boundary
+    assert "…" in shown                          # a 64-hex key can't fit whole
+
+    narrow = _plain(
+        _mesh_sections(ctx, None, 60, 1, lambda n: n, resolve_key), width=60
+    )
+    narrow_row = next(ln for ln in narrow.split("\n") if "Newcomer" in ln)
+    narrow_shown = re.search(r"(f7)+…?", narrow_row).group(0)
+    assert len(narrow_shown) < len(shown)  # the lane tracks the terminal width
+
+    tight = _plain(
+        _mesh_sections(ctx, None, 40, 1, lambda n: n, resolve_key), width=40
+    )
+    tight_row = next(ln for ln in tight.split("\n") if "Newcomer" in ln)
+    tight_shown = re.search(r"(f7)+…?", tight_row).group(0)
+    assert len(tight_shown) <= _PICK_HASH_W  # floored at the old fixed lane
     repo.close()
 
 

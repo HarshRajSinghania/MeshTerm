@@ -808,6 +808,7 @@ def _mesh_sections(
     width: int,
     prefix_bytes: int = 0,
     resolve: "NodeResolver" = lambda label: label,
+    resolve_key: "NodeResolver" = lambda node: node,
 ) -> list[RenderableType]:
     """Build the whole-mesh overview: days, rhythm, arrivals, and the all-time ledger.
 
@@ -815,9 +816,12 @@ def _mesh_sections(
         ctx: The shared application context (repository reads only).
         window: The history window (``None`` = everything ever recorded).
         width: Render width in columns.
-        prefix_bytes: Path-hash width to light in the arrival hashes (0 = none).
+        prefix_bytes: The hash width to light at the head of each arrival's key (0 = none).
         resolve: Names a node hash from the device's contacts, for arrivals whose
             observations never carried a name.
+        resolve_key: Expands a stored 12-hex node id to the full public key when the
+            device holds it as a contact, so the arrivals' key lane can fill whatever
+            width the terminal offers (see :func:`_contact_resolvers`).
     """
     now = utcnow()
     since = now - window if window is not None else None
@@ -898,36 +902,48 @@ def _mesh_sections(
     else:
         # Aligned lanes under column labels, the picker's presentation: the name in
         # the node's hash-derived hue (a nameless arrival's "unknown" stays muted),
-        # the hash lit at the routing width, the age glowing with recency heat.
+        # the key lit at the routing width, the age glowing with recency heat.
         # The FIRST HEARD header carries what used to be repeated on every row.
         # A nameless arrival first asks the resolver (the device may know the node
-        # as a contact even though its stored observations never carried a name).
+        # as a contact even though its stored observations never carried a name),
+        # and each key expands to its fullest known form the way the picker's lane
+        # does: the key captured with an observation (shows offline), else the
+        # device's contact list, else the stored 12-hex prefix.
+        stored_keys = {n.node: n.public_key for n in ctx.repo.heard_nodes() if n.node}
         listed = [
-            (node, _known_name(resolve, node, name), first)
+            (
+                stored_keys.get(node) or resolve_key(node) or node,
+                _known_name(resolve, node, name),
+                first,
+            )
             for node, name, first in arrivals[:12]
         ]
         name_w = min(
             _PICK_NAME_MAX,
             max([len("unknown"), *(len(n) for _node, n, _f in listed if n)]),
         )
+        # The key lane absorbs whatever width the name lane and the fixed FIRST
+        # HEARD tail leave, floored at the old fixed lane — as many whole bytes as
+        # fit, ellipsized past that on a byte boundary (highlighted_hash's contract).
+        key_w = max(_PICK_HASH_W, width - name_w - _ARRIVAL_TAIL)
         out.append(
             Text(
                 "  "
                 + "NAME".ljust(name_w + 2)
-                + "HASH".ljust(_PICK_HASH_W + 2)
+                + "KEY".ljust(key_w + 2)
                 + "FIRST HEARD",
                 style="muted",
             )
         )
-        for node, name, first in listed:
+        for key, name, first in listed:
             secs = _age_seconds(first)
             line = Text("  ", no_wrap=True, overflow="ellipsis")
             line.append(
                 fit_cells(name or "unknown", name_w),
-                style=name_style(name, node) if name else "muted",
+                style=name_style(name, key) if name else "muted",
             )
             line.append("  ")
-            line.append_text(highlighted_hash(node, prefix_bytes, width=_PICK_HASH_W))
+            line.append_text(highlighted_hash(key, prefix_bytes, width=key_w))
             line.append("  ")
             line.append(_when_label(first))
             line.append(f"  ({format_ago(secs)})", style=_recency_style(secs))
@@ -961,10 +977,15 @@ def _mesh_sections(
 #: :meth:`~meshterm.ui.nodelist.NodeListScreen._lane_widths`).
 _PICK_NAME_MAX = 18
 
-#: The mesh page's arrivals hash lane in cells. Heard-node ids are the observations' 12-hex
-#: key prefixes, so the lane's tail pads blank — the extra room keeps the hash legible, and
-#: as the arrival row's hash column the padding falls before the FIRST HEARD lane.
+#: The mesh page's arrivals key lane's *floor* in cells (a very narrow terminal). The lane
+#: otherwise flexes to fill the width the name lane and the FIRST HEARD tail leave, so a
+#: resolved full key shows as many whole bytes as fit (see the ``key_w`` math above).
 _PICK_HASH_W = 16
+
+#: Everything in an arrival row *besides* the name and key lanes, in cells: the 2-cell
+#: indent, the two 2-cell lane gaps, the ``Jul 04 18:30`` stamp (12), and the recency
+#: parenthetical (``  (259w ago)`` at its widest, 12).
+_ARRIVAL_TAIL = 2 + 2 + 2 + 12 + 12
 
 
 def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str]) -> Optional[str]:
@@ -1193,7 +1214,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
             label = "the whole mesh"
             build = (  # noqa: E731
                 lambda window, width, _pb=prefix_bytes: _mesh_sections(
-                    ctx, window, width, _pb, resolve
+                    ctx, window, width, _pb, resolve, resolve_key
                 )
             )
         else:
