@@ -121,7 +121,20 @@ class DashboardScreen(Screen):
     """The live mesh overview. Renders state and scrolls; the opener feeds it."""
 
     floating = False
-    footer_hint = "↑↓ PgUp/PgDn scroll · Esc back"
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The footer keys — advertising scroll only when the overview actually overflows.
+
+        The dashboard is one scrolling body, but on a tall terminal it often fits whole; a
+        static ``↑↓ PgUp/PgDn scroll`` then names keys that do nothing. Show that atom only
+        while the content is taller than the viewport (see
+        :attr:`~meshterm.ui.tui.screen.Screen.content_overflows`); otherwise Esc is the only
+        key that acts.
+        """
+        if self.content_overflows:
+            return "↑↓ PgUp/PgDn scroll · Esc back"
+        return "Esc back"
 
     def __init__(
         self,

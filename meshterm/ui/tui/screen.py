@@ -208,6 +208,18 @@ class Screen:
         """Lines a PageUp/PageDown moves: a screenful, bar one row kept for continuity."""
         return max(1, self._scroll_viewport - 1)
 
+    @property
+    def content_overflows(self) -> bool:
+        """Whether the last-rendered body is taller than its viewport — i.e. it can scroll.
+
+        The reusable gate for the app-wide rule that a footer only advertises a key that
+        would do something: a screen whose body fits has nothing to scroll, so it drops its
+        ``↑↓ PgUp/PgDn scroll`` atom (see :attr:`DashboardScreen.footer_hint`). Reads the
+        metrics the frame recorded on the *previous* paint (:meth:`note_metrics`), so it is
+        honest one frame after a resize — the frame repaints again immediately.
+        """
+        return self._scroll_total > self._scroll_viewport
+
     def scroll_by(self, delta: int, total: int, viewport: int) -> None:
         """Adjust :attr:`scroll` by ``delta`` lines, clamped to the given content bounds."""
         self.scroll = _clamp_scroll(self.scroll + delta, total, viewport)

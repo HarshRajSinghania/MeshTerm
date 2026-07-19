@@ -58,6 +58,17 @@ def _stripped(lines: list[str]) -> list[str]:
 # --- the screen ----------------------------------------------------------------------
 
 
+def test_footer_advertises_scroll_only_when_the_overview_overflows() -> None:
+    """The scroll keys join the footer only when the body is taller than the viewport."""
+    screen = _screen()
+    # Fits (the frame recorded a body no taller than the viewport): Esc alone acts.
+    screen.note_metrics(total=10, viewport=20)
+    assert screen.footer_hint == "Esc back"
+    # Overflows: the scroll atom appears, ahead of Esc.
+    screen.note_metrics(total=40, viewport=20)
+    assert screen.footer_hint == "↑↓ PgUp/PgDn scroll · Esc back"
+
+
 def test_dashboard_renders_all_three_sections() -> None:
     """Activity, Traffic, and RF health all render from a seeded window.
 
