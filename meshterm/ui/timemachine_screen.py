@@ -33,7 +33,7 @@ from ..core.models import utcnow
 from .braillechart import _TICK_GAP, GAP, axis_chart, chart_span, timeline_rows
 from .menus import fit_cells, section_heading
 from .nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING, NodeListScreen, NodeRow
-from .theme import snr_style
+from .theme import name_style, snr_style
 from .tui.render import render_lines
 from .tui.screen import CANCEL, Screen
 from .tui.select import Choice, Separator
@@ -896,8 +896,9 @@ def _mesh_sections(
     if not arrivals:
         out.append(Text("none in this window", style="muted"))
     else:
-        # Aligned lanes under column labels, the picker's presentation: the name
-        # coloured by heat ("unknown" included), the hash lit at the routing width.
+        # Aligned lanes under column labels, the picker's presentation: the name in
+        # the node's hash-derived hue (a nameless arrival's "unknown" stays muted),
+        # the hash lit at the routing width, the age glowing with recency heat.
         # The FIRST HEARD header carries what used to be repeated on every row.
         # A nameless arrival first asks the resolver (the device may know the node
         # as a contact even though its stored observations never carried a name).
@@ -921,12 +922,15 @@ def _mesh_sections(
         for node, name, first in listed:
             secs = _age_seconds(first)
             line = Text("  ", no_wrap=True, overflow="ellipsis")
-            line.append(fit_cells(name or "unknown", name_w), style=_recency_style(secs))
+            line.append(
+                fit_cells(name or "unknown", name_w),
+                style=name_style(name, node) if name else "muted",
+            )
             line.append("  ")
             line.append_text(highlighted_hash(node, prefix_bytes, width=_PICK_HASH_W))
             line.append("  ")
             line.append(_when_label(first))
-            line.append(f"  ({format_ago(secs)})", style="muted")
+            line.append(f"  ({format_ago(secs)})", style=_recency_style(secs))
             out.append(line)
 
     all_days = ctx.repo.daily_activity()

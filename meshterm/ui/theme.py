@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from rich.console import Console
 from rich.theme import Theme
 
@@ -128,13 +130,14 @@ def hint_style(border_style: str) -> str:
     return name if name in MESH_THEME.styles else "muted"
 
 
-#: Palette of distinct, dark-theme-friendly colors cycled through to give each node or
-#: sender name its own stable hue (red is reserved for errors, so it's excluded). The
-#: app-wide rule: a node's *name* is always coloured — by this palette, unless the
-#: context already colours it (a picker's recency heat, a chart's quality tint) — and
-#: our own node is always the pure-white ``you`` style instead, so "us" never blends
-#: into the crowd. Shared by the chat transcript, the dashboard feed, and the packet
-#: viewer, so one node reads as one colour everywhere.
+#: Palette of distinct, dark-theme-friendly colors that give each node its own stable hue
+#: (red is reserved for errors, so it's excluded). The app-wide rule: a node's *name* is
+#: always coloured — by this palette, keyed on the node's key (see :func:`node_style`) so
+#: the colour is the node's identity, surviving renames and colouring every surface that
+#: knows any prefix of the key identically — and our own node is always the pure-white
+#: ``you`` style instead, so "us" never blends into the crowd. Shared by the node lists,
+#: the chat transcript, the dashboard feed, and the packet viewer, so one node reads as
+#: one colour everywhere.
 NAME_COLORS = (
     "bold #f472b6",  # pink
     "bold #60a5fa",  # blue
@@ -147,16 +150,43 @@ NAME_COLORS = (
 )
 
 
-def name_style(name: str) -> str:
-    """The stable per-name colour a node or sender is drawn in, keyed on its characters.
+def node_style(key: str) -> str:
+    """The stable palette hue a node's *key* selects — the hash-derived node colour.
+
+    Only the first byte picks the colour, so any prefix of the key a surface happens to
+    hold — a 2-hex path hop, the stored 12-hex id, the full 64-hex public key — lands on
+    the same hue: one node, one colour, however it was learned.
 
     Args:
-        name: The display name (not a hash — hashes stay muted).
+        key: The node's key/hash as hex (any length ≥ 1 byte, ``0x``/mixed-case tolerated).
 
     Returns:
-        A style string from :data:`NAME_COLORS`; the same name always maps to the
-        same hue, so a node keeps its colour across screens and sessions.
+        A style string from :data:`NAME_COLORS`.
     """
+    raw = key.lower().removeprefix("0x")
+    try:
+        return NAME_COLORS[int(raw[:2], 16) % len(NAME_COLORS)]
+    except ValueError:  # not hex — fall back to the character sum so *something* stable shows
+        return NAME_COLORS[sum(map(ord, raw)) % len(NAME_COLORS)]
+
+
+def name_style(name: str, key: Optional[str] = None) -> str:
+    """The stable colour a node or sender name is drawn in — keyed on the node's key.
+
+    Args:
+        name: The display name.
+        key: Any known prefix of the node's key/hash; when given, the hue is
+            :func:`node_style`'s — hash-derived, so a rename keeps the colour and every
+            surface that knows the key agrees. ``None``/empty marks a genuinely keyless
+            sender (a channel message's inline name), coloured by the name's characters
+            as the stable fallback.
+
+    Returns:
+        A style string from :data:`NAME_COLORS`; the same node always maps to the
+        same hue, so it keeps its colour across screens and sessions.
+    """
+    if key:
+        return node_style(key)
     return NAME_COLORS[sum(map(ord, name)) % len(NAME_COLORS)]
 
 

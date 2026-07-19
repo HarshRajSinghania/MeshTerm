@@ -350,7 +350,7 @@ def _path_node(
         elif self_name and named == self_name:
             style = "you"
         else:
-            style = name_style(named)
+            style = name_style(named, hop)
         text = Text(named, style=style)
         if show_hash:
             text.append(f" ({_shorten_hash(hop, hash_bytes)})", style=note_style)
@@ -437,19 +437,20 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
 _SELF_RGB: RGB = (255, 255, 255)
 
 
-def _name_rgb(name: str) -> RGB:
-    """The RGB of a name's stable palette hue (``theme.name_style`` minus its bold)."""
-    return parse_hex(name_style(name).split()[-1])
+def _name_rgb(name: str, key: Optional[str] = None) -> RGB:
+    """The RGB of a node's stable palette hue (``theme.name_style`` minus its bold)."""
+    return parse_hex(name_style(name, key).split()[-1])
 
 
-def name_rgb(name: str) -> RGB:
-    """The truecolour of a node name's stable palette hue, for a braille canvas.
+def name_rgb(name: str, key: Optional[str] = None) -> RGB:
+    """The truecolour of a node's stable palette hue, for a braille canvas.
 
     The public face of :func:`_name_rgb` — the same hue :func:`~meshterm.ui.theme.name_style`
-    paints a name in, as an ``(r, g, b)`` tuple a raster can plot. A caller colouring node
-    markers by their mesh name (the trophy case's area drawing) mints them through here.
+    paints a name in (hash-derived when ``key`` is given), as an ``(r, g, b)`` tuple a
+    raster can plot. A caller colouring node markers by their mesh identity (the trophy
+    case's area drawing) mints them through here.
     """
-    return _name_rgb(name)
+    return _name_rgb(name, key)
 
 
 #: Maps a relay hash to its node type (see the ``NODE_TYPE_*`` constants), or ``None`` when
@@ -523,7 +524,7 @@ def route_graph_style(
             return _name_rgb(source) if source else parse_hex(_UNKNOWN[1])
         named = resolve(node)
         if named and named != node:
-            return _name_rgb(named)
+            return _name_rgb(named, node)
         return parse_hex(glyph_of(node)[1])
 
     return glyph_of, label_of, label_rgb_of
@@ -682,7 +683,7 @@ def self_marker() -> tuple[str, RGB]:
     """Our own node's map marker — the yellow ``★`` — as a ``(glyph, rgb)`` pair."""
     return _SELF[0], parse_hex(_SELF[1])
 
-# A heat-map gradient for a contact's name, hottest (most recently heard) to coldest: white
+# A heat-map gradient for a node's heard age, hottest (most recently heard) to coldest: white
 # → yellow → orange → red → grey. Each stop pairs an age anchor (log10 of seconds since heard)
 # with an RGB colour; :func:`_recency_style` interpolates continuously between them, so the
 # colour glides with recency rather than snapping between a handful of discrete shades.
@@ -733,7 +734,7 @@ def format_ago(secs: Optional[float]) -> str:
 
 
 def _recency_style(secs: Optional[float]) -> str:
-    """The heat-map name colour for a contact last heard ``secs`` ago (hotter = more recent).
+    """The heat-map colour for a node's heard age of ``secs`` (hotter = more recent).
 
     Interpolates the RGB channels between the two :data:`_HEAT_STOPS` bracketing ``secs`` (in
     log-age space), clamping to white below the first stop and cold slate above the last.
@@ -901,9 +902,10 @@ def nodes_table(
 
     Our own node is the first row (``★``, name in the white ``you`` style); contacts follow
     in ``sort`` order.
-    A per-type glyph marks each node in the app's shared colours, the name is coloured by how
-    recently it was last heard (brighter = fresher), and the full key is shown with its
-    path-hash prefix lit — chopped with an ellipsis only when the terminal is too narrow.
+    A per-type glyph marks each node in the app's shared colours, the name takes the node's
+    hash-derived palette hue, the heard age glows with recency heat (brighter = fresher),
+    and the full key is shown with its path-hash prefix lit — chopped with an ellipsis only
+    when the terminal is too narrow.
 
     Args:
         self_name: This node's advertised name.
@@ -962,8 +964,8 @@ def nodes_table(
         pkts = _contact_pkts(c, counts)
         table.add_row(
             Text(glyph, style=glyph_style),
-            Text(c.name, style=_recency_style(secs)),
-            Text(_format_age(secs), style="muted"),
+            Text(c.name, style=name_style(c.name, c.public_key or c.key_prefix)),
+            Text(_format_age(secs), style=_recency_style(secs)),
             Text(str(pkts), style="muted") if pkts else Text("—", style="faint"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,
         )

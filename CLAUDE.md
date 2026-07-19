@@ -22,8 +22,9 @@ them instead of hand-rolling:
 - `ui/menus.py` — `back_rows`, `exit_rows`, `menu_rows`, `lane_row`, `section_heading`,
   `confirm_discard`, `fit_cells`.
 - `ui/widgets.py` — `highlighted_hash` (THE hash widget), `format_ago` (prose ages),
-  `_format_age` (column ages), `channel_glyph`, `_NODE_GLYPHS`, node heat colouring.
-- `ui/theme.py` — `name_style` (per-name hues), `snr_style`, the `you` white.
+  `_format_age` (column ages), `channel_glyph`, `_NODE_GLYPHS`, heard-age heat colouring.
+- `ui/theme.py` — `name_style`/`node_style` (per-node hues, hash-derived), `snr_style`,
+  the `you` white.
 
 ### Lexicon — one term per concept
 
@@ -104,9 +105,12 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 
 ### Colour
 
-- Node names are always coloured: `name_style(name)` palette hue; our own node is the
-  pure-white `you` style; a context colouring (recency heat, chart quality) may win.
-  Bare hashes stay muted — colour is the "this is a name" signal.
+- Node names are always coloured: `name_style(name, key)` palette hue, derived from the
+  node's key (its first byte — any known prefix agrees) so a rename keeps the colour;
+  the name's characters seed it only when no key exists (a channel sender). Our own node
+  is the pure-white `you` style; a context colouring (chart quality) may still win.
+  Recency heat colours heard/first-heard ages, never names. Bare hashes stay muted —
+  colour is the "this is a name" signal.
 - SNR always through `snr_style`; timelines oldest→now left-to-right, grey baseline = 0,
   drawn via `ui/braillechart` only.
 

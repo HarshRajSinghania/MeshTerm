@@ -221,7 +221,7 @@ def node_label(
         return (entry.node or "?", "muted")
     if self_name and name == self_name:
         return (name, "you")
-    return (name, name_style(name))
+    return (name, name_style(name, entry.node))
 
 
 class PacketViewer(Screen):

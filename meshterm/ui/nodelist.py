@@ -21,6 +21,7 @@ from rich.text import Text
 
 from .map_render import _SELF
 from .menus import fit_cells
+from .theme import name_style
 from .tui.select import Choice, SelectScreen, Separator
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -79,14 +80,15 @@ class NodeRow:
         value: What the row's :class:`~meshterm.ui.tui.select.Choice` resolves with —
             also the identity a re-sort uses to keep the highlight on its node, so it
             should be unique across the list.
-        name: The display name; ``None`` renders the heat-coloured ``unknown`` (an
-            own-node row falls back to a bare ``you`` instead).
+        name: The display name, drawn in the node's hash-derived palette hue; ``None``
+            renders a muted ``unknown`` (an own-node row falls back to a bare ``you``
+            instead).
         key: The hex the hash lane shows — as full a key as the caller could resolve;
-            empty renders a muted ``?``.
+            also the seed of the name's palette hue. Empty renders a muted ``?``.
         node_type: The node's type for the leading glyph (``None`` = the plain-node
             ``●``; ignored on the own-node row, which always leads with the yellow ``★``).
-        last_seen: When the node was last heard (aware UTC) — colours the name by recency
-            heat and fills the heard lane; ``None`` reads ``never`` and the cold style.
+        last_seen: When the node was last heard (aware UTC) — fills the heard lane,
+            coloured by recency heat; ``None`` reads ``never`` in the cold style.
         count: The packet tally; ``None`` renders a faint ``—`` (never overheard).
         you: Whether this is our own node: the ``★`` marker, the pure-white ``you`` name
             style with a muted ``(you)`` tag, faint ``—`` heard/packet lanes (we never
@@ -182,14 +184,15 @@ def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
     """One node as fixed, colour-coded lanes under :func:`_header`'s columns.
 
     The type glyph leads (the app's shared marker palette), so the mark reads ``▲`` for a
-    repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name is
-    coloured by recency heat, ``unknown`` included, so a freshly heard mystery node still
-    reads hot, and takes the flexing name lane (``name_w`` cells). Last-heard age and
-    packet count follow, right-aligned under their headers — a node never overheard reads
-    a faint ``—`` in the packets lane; the hash closes the row in the shared hash widget,
-    its path-hash prefix lit at the device's routing width, or a muted ``?`` when no key
-    is known at all. An own-node row (:attr:`NodeRow.you`) takes its own drawing —
-    see :func:`_you_lane`.
+    repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name takes
+    the node's hash-derived palette hue (a nameless node's ``unknown`` placeholder stays
+    muted — colour marks a name, and the hash lane already carries the identity) and the
+    flexing name lane (``name_w`` cells). The last-heard age follows, glowing with recency
+    heat (brighter = fresher) so a freshly heard node still reads hot at a glance; then the
+    packet count, right-aligned — a node never overheard reads a faint ``—``; the hash
+    closes the row in the shared hash widget, its path-hash prefix lit at the device's
+    routing width, or a muted ``?`` when no key is known at all. An own-node row
+    (:attr:`NodeRow.you`) takes its own drawing — see :func:`_you_lane`.
 
     Args:
         row: The node's lane data.
@@ -205,9 +208,12 @@ def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(glyph, style=glyph_style)
     text.append(" ")
-    text.append(fit_cells(row.name or "unknown", name_w), style=_recency_style(secs))
+    text.append(
+        fit_cells(row.name or "unknown", name_w),
+        style=name_style(row.name, row.key) if row.name else "muted",
+    )
     text.append("  ")
-    text.append(f"{_format_age(secs):>5}", style="muted")
+    text.append(f"{_format_age(secs):>5}", style=_recency_style(secs))
     text.append("  ")
     if row.count is None:
         text.append(f"{'—':>5}", style="faint")
@@ -252,9 +258,9 @@ def _ordered(rows: list[NodeRow], sort: NodesSort) -> list[NodeRow]:
 class NodeListScreen(SelectScreen):
     """A full-screen, sortable, filterable node list in the shared lane layout.
 
-    The rows run in aligned lanes — name (coloured by recency heat), last-heard age,
-    packet count, and key hash — own-node rows first, then the rest in the active sort
-    order. The lanes anchor to the left: the name lane is sized to its widest name (not
+    The rows run in aligned lanes — name (in the node's hash-derived palette hue),
+    last-heard age (coloured by recency heat), packet count, and key hash — own-node rows
+    first, then the rest in the active sort order. The lanes anchor to the left: the name lane is sized to its widest name (not
     the terminal), so the columns stay put as the window widens and the freed width flows
     to the hash lane, which shows each key as fully as it fits (see :meth:`_lane_widths`).
     It is a full-screen list, not a floating popup.

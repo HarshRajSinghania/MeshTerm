@@ -794,13 +794,13 @@ class AtlasScreen(Screen):
         return row
 
     def _list_name_style(self, node: str) -> str:
-        """The list's name colour: the app-wide palette hue, us in pure white."""
+        """The list's name colour: the app-wide palette hue (hash-derived), us in pure white."""
         if node == self._topo.self_id:
             return "you"
         label = self._label(node)
         if label == node[:8]:  # a bare hash is not a name — colour is the name signal
             return "muted"
-        return name_style(label)
+        return name_style(label, node)
 
     def _empty_state(self, width: int) -> list[str]:
         """A friendly explanation while the evidence graph is still empty."""

@@ -132,6 +132,7 @@ class RecordDialog(Screen):
         device_label: str,
         device_hash: Optional[str],
         far_label: Optional[str] = None,
+        far_id: Optional[str] = None,
         shape: Optional[Sequence[WalkVertex]] = None,
         reliability: Optional[tuple[float, int, int]] = None,
         type_of: Optional[TypeOf] = None,
@@ -147,6 +148,8 @@ class RecordDialog(Screen):
             device_hash: Our public key, annotated at the record's width.
             far_label: The farthest node's name, shown beside its distance; ``None`` when
                 no positioned hop was named.
+            far_id: The farthest node's id, seeding the name's hash-derived hue; ``None``
+                leaves the label on the name-derived fallback.
             shape: The walk's positioned circuit, projected for the area drawing; ``None``
                 below the three points a polygon needs.
             reliability: ``(rate, successes, total)`` of traces to the walk's far node, or
@@ -163,6 +166,7 @@ class RecordDialog(Screen):
         self._device_label = device_label
         self._device_hash = device_hash
         self._far_label = far_label
+        self._far_id = far_id
         self._shape = list(shape) if shape else None
         self._reliability = reliability
         self._type_of = type_of
@@ -284,7 +288,7 @@ class RecordDialog(Screen):
             value = Text(f"{far:.1f} km")
             if self._far_label:
                 value.append("  ")
-                value.append(self._far_label, style=name_style(self._far_label))
+                value.append(self._far_label, style=name_style(self._far_label, self._far_id))
             lanes.append(self._lane("far point", value))
         area = stats.get("area_km2")
         if area is not None:
@@ -533,7 +537,7 @@ async def open_records(ctx: "AppContext") -> dict:
             # the neutral shape tone so it never masquerades as a coloured name.
             name = resolve(node_id)
             hop_glyph = node_marker(ntype)[0]
-            hop_color = name_rgb(name) if name and name != node_id else _AREA_TONE
+            hop_color = name_rgb(name, node_id) if name and name != node_id else _AREA_TONE
             verts.append(WalkVertex(east, north, hop_glyph, hop_color, False))
             dist = haversine_km(self_pos[0], self_pos[1], pos[0], pos[1])
             if dist > far_dist:
@@ -706,7 +710,7 @@ async def open_records(ctx: "AppContext") -> dict:
                 action = await session.run_screen(RecordDialog(
                     record, category, rank,
                     resolve=resolve, device_label=device_label, device_hash=device_hash,
-                    far_label=far_label, shape=shape,
+                    far_label=far_label, far_id=far_id, shape=shape,
                     reliability=walk_reliability(far_id, far_label),
                     type_of=lambda node_id: node_geo(node_id)[1],
                 ))
