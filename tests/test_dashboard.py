@@ -125,6 +125,31 @@ def test_dashboard_pulse_drops_heard_only_when_it_wont_fit() -> None:
     assert "heard" not in tight and "nodes" in tight
 
 
+def test_dashboard_traffic_breaks_packets_out_by_payload_class() -> None:
+    """The raw ``packet`` bucket meters per payload class, glossed and iconed."""
+    screen = _screen(
+        window=[_obs()],
+        kinds={"advert": 4, "packet:GRP_TXT": 3, "packet:TRACE": 2, "packet": 1},
+    )
+    body = _plain(_stripped(screen.render_body(100)))
+    assert "channel text" in body and "trace" in body  # glossed, not raw typenames
+    assert "GRP_TXT" not in body
+    # The class-less remainder keeps a plain "packet" row alongside the classed ones.
+    assert "packet" in body
+    # Decoded families before the raw classes, class-less packet closing the block.
+    assert body.index("advert") < body.index("channel text") < body.index("trace")
+
+
+def test_dashboard_traffic_disambiguates_raw_advert_and_ack_rows() -> None:
+    """An overheard ADVERT/ACK frame's row reads "raw …" so no two meters match."""
+    screen = _screen(
+        window=[_obs()],
+        kinds={"advert": 4, "packet:ADVERT": 2, "ack": 3, "packet:ACK": 1},
+    )
+    body = _plain(_stripped(screen.render_body(100)))
+    assert "raw advert" in body and "raw ack" in body
+
+
 def test_dashboard_live_observations_land_in_the_window() -> None:
     """A hub observation folds into the trailing window and repaints the charts."""
     screen = _screen()
@@ -154,6 +179,42 @@ def test_dashboard_radio_rows_render_device_stats() -> None:
     assert "-104 dBm noise floor" in body
     assert "TX 12 s · RX 340 s" in body
     assert "4.01 V" in body
+
+
+def test_repository_kind_counts_bucket_packets_by_payload_class(tmp_path: Path) -> None:
+    """Stored packet frames with a payload class seed as ``packet:<TYPENAME>`` buckets."""
+    repo = Repository(tmp_path / "kinds.db")
+    run = repo.start_run("monitor", {}, None)
+    repo.record_observation(run, _obs(node="a", kind="advert"))
+    repo.record_observation(
+        run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"})
+    )
+    repo.record_observation(
+        run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"})
+    )
+    repo.record_observation(run, _obs(node="", kind="packet"))  # class-less frame
+
+    counts = repo.kind_counts()
+    assert counts["advert"] == 1
+    assert counts["packet:GRP_TXT"] == 2
+    assert counts["packet"] == 1  # only the class-less frame stays a bare packet
+    repo.close()
+
+
+def test_monitor_tallies_live_packets_by_payload_class(tmp_path: Path) -> None:
+    """A live classed packet observation lands in its ``packet:<TYPENAME>`` bucket."""
+    from meshterm.services.monitor_service import MonitorService
+
+    monitor = MonitorService.__new__(MonitorService)
+    monitor._activity = {}
+    monitor._kind_counts = {}
+    monitor._count_packet(
+        MeshEvent.observation_event(
+            _obs(node="", kind="packet", raw={"payload_typename": "TRACE"})
+        )
+    )
+    monitor._count_packet(MeshEvent.observation_event(_obs(kind="advert")))
+    assert monitor._kind_counts == {"packet:TRACE": 1, "advert": 1}
 
 
 # --- the repository window -----------------------------------------------------------

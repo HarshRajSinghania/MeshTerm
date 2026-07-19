@@ -1376,23 +1376,30 @@ class Repository:
 
         The persistent seed of the dashboard's traffic panel: what the recorder has
         heard across sessions, by kind, so the panel opens populated instead of
-        counting from zero every launch. Messages and acks are separate event
-        families (not observations) and are counted live on top of this.
+        counting from zero every launch. A raw ``packet`` frame carrying a parsed
+        payload class buckets as ``packet:<TYPENAME>`` (``packet:GRP_TXT``,
+        ``packet:TRACE``, …) so the panel can name what the frames were; only a
+        class-less frame stays a bare ``packet``. Messages and acks are separate
+        event families (not observations) and are counted live on top of this.
 
         Args:
             since: Only observations at or after this time, if given.
 
         Returns:
-            ``kind → count`` for every packet class ever stored (in the window).
+            ``bucket → count`` for every packet class ever stored (in the window).
         """
-        sql = "SELECT kind, COUNT(*) AS n FROM observations"
+        sql = (
+            "SELECT CASE WHEN kind = 'packet' AND payload_typename IS NOT NULL "
+            "THEN 'packet:' || payload_typename ELSE kind END AS bucket, "
+            "COUNT(*) AS n FROM observations"
+        )
         params: list[Any] = []
         if since is not None:
             sql += " WHERE observed_at >= ?"
             params.append(since.isoformat())
-        sql += " GROUP BY kind"
+        sql += " GROUP BY bucket"
         rows = self._conn.execute(sql, params).fetchall()
-        return {row["kind"]: row["n"] for row in rows}
+        return {row["bucket"]: row["n"] for row in rows}
 
     def prune_observations(self, older_than: datetime) -> int:
         """Delete observations that aged past the retention window (housekeeping).

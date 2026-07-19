@@ -149,12 +149,15 @@ class MonitorService:
         return tuple(bucket - i >= self._start_bucket for i in range(ACTIVITY_BUCKETS))
 
     def kind_counts(self) -> dict[str, int]:
-        """Tallies by packet class: advert/telemetry/packet, message, ack.
+        """Tallies by packet class: advert/telemetry/packet buckets, message, ack.
 
         Seeded from stored history at session start and grown live from there, so the
         numbers describe everything the recorder retains, not just this session.
-        Observation classes come from the packet itself (``Observation.kind``);
-        messages and acks are their own classes. A copy, safe to mutate.
+        Observation classes come from the packet itself (``Observation.kind``) — a raw
+        ``packet`` frame with a parsed payload class buckets as ``packet:<TYPENAME>``,
+        matching :meth:`~meshterm.persistence.repository.Repository.kind_counts`'s
+        stored seed — and messages and acks are their own classes. A copy, safe to
+        mutate.
         """
         return dict(self._kind_counts)
 
@@ -164,6 +167,11 @@ class MonitorService:
         self._activity[bucket] = self._activity.get(bucket, 0) + 1
         obs = event.observation
         kind = obs.kind if obs is not None else event.kind.value
+        if obs is not None and kind == "packet":
+            # Bucket a classed raw frame by its payload class (the stored seed's shape).
+            typename = (obs.raw or {}).get("payload_typename")
+            if typename:
+                kind = f"packet:{typename}"
         self._kind_counts[kind] = self._kind_counts.get(kind, 0) + 1
         if len(self._activity) > ACTIVITY_BUCKETS + 1:
             cutoff = bucket - ACTIVITY_BUCKETS

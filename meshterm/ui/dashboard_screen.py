@@ -11,8 +11,10 @@ stacks three reads of the mesh, coarsest first:
   drawn from the same :meth:`~meshterm.services.monitor_service.MonitorService`
   buckets. A pulse line beneath it reads the rate, who's been heard, and the busiest
   node of the window.
-* **Traffic** — the session's tallies by packet class, each with a proportional bar,
-  from the monitor's kind counters.
+* **Traffic** — the session's tallies by packet class, each with its icon and a
+  proportional bar, from the monitor's kind counters — the raw ``packet`` bucket
+  broken out by payload class (channel text, trace, path, …), so every known frame
+  class shows once heard.
 * **RF health** — the trailing window's reception quality: median SNR (on the trace
   tool's quality bar) and RSSI from stored observations, plus the radio's own live
   numbers — noise floor, last RSSI/SNR, airtime, battery — polled from the device the
@@ -42,7 +44,13 @@ from ..core.events import MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import OBSERVATION_WINDOW
 from .braillechart import axis_chart, meter, timeline_rows
-from .packet_viewer import KIND_STYLES
+from .packet_viewer import (
+    DEFAULT_ICON,
+    KIND_ICONS,
+    KIND_STYLES,
+    PAYLOAD_ICONS,
+    _PAYLOAD_GLOSS,
+)
 from .theme import snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
@@ -60,8 +68,38 @@ _STATS_POLL_S = 10.0
 #: How many braille rows tall the activity chart draws (each row is four dot rows).
 _CHART_ROWS = 3
 
-#: The order the traffic panel lists packet classes in (heard ones not listed sort last).
-_KIND_ORDER = ("advert", "telemetry", "packet", "message", "ack")
+#: The order the traffic panel lists its buckets in (heard ones not listed sort last,
+#: alphabetically): the decoded families first, then the raw ``packet:<TYPENAME>``
+#: classes expanding in the old lone-``packet`` slot — chat-ish frames before
+#: protocol-ish ones — with the class-less ``packet`` closing the raw block.
+_TRAFFIC_ORDER = (
+    "advert", "telemetry",
+    "packet:GRP_TXT", "packet:GRP_DATA", "packet:TEXT_MSG", "packet:REQ",
+    "packet:RESPONSE", "packet:ANON_REQ", "packet:PATH", "packet:TRACE",
+    "packet:ADVERT", "packet:ACK", "packet:MULTIPART", "packet:CONTROL", "packet",
+    "message", "ack",
+)
+
+#: Raw payload glosses that would read identically to a decoded family's row, retold
+#: so two meters never share a label (an overheard advert frame vs. the advert event).
+_RAW_GLOSS_CLASH = {"advert": "raw advert", "ack": "raw ack"}
+
+
+def _traffic_chrome(bucket: str) -> tuple[str, str, str]:
+    """One traffic bucket's ``(icon, label, meter style)``.
+
+    A decoded family keeps its kind icon, name, and colour; a ``packet:<TYPENAME>``
+    bucket takes the payload class's icon and gloss over the calm muted ``packet``
+    meter — colour keeps marking the decoded families, raw overheard stays quiet.
+    """
+    if bucket.startswith("packet:"):
+        typename = bucket.split(":", 1)[1]
+        gloss = _PAYLOAD_GLOSS.get(typename, typename.lower())
+        label = _RAW_GLOSS_CLASH.get(gloss, gloss)
+        return (
+            PAYLOAD_ICONS.get(typename, DEFAULT_ICON), label, KIND_STYLES["packet"],
+        )
+    return KIND_ICONS.get(bucket, DEFAULT_ICON), bucket, KIND_STYLES.get(bucket, "brand")
 
 #: How many character cells a traffic lane's meter spans (48 half-step levels).
 _TRAFFIC_METER_CELLS = 24
@@ -294,29 +332,32 @@ class DashboardScreen(Screen):
     # -- traffic --
 
     def _traffic_section(self) -> list[RenderableType]:
-        """Tallies by packet class, each with a proportional braille meter."""
+        """Tallies by packet class, each with an icon and a proportional braille meter.
+
+        Every known class shows once heard — the raw ``packet`` bucket is broken out
+        by payload class (channel text, trace, path, …) instead of lumping every
+        overheard frame together; classes never heard stay hidden.
+        """
         heading = Text("Traffic", style="accent")
         heading.append("  ·  by packet class · stored history + live", style="muted")
         counts = self._kind_counts()
         if not counts:
             return [heading, Text("nothing heard yet", style="muted")]
-        order = {k: i for i, k in enumerate(_KIND_ORDER)}
+        order = {k: i for i, k in enumerate(_TRAFFIC_ORDER)}
         peak = max(counts.values())
-        label_w = max(len(k) for k in counts)
+        chrome = {bucket: _traffic_chrome(bucket) for bucket in counts}
+        label_w = max(len(label) for _, label, _ in chrome.values())
         count_w = len(str(peak))
         rows: list[RenderableType] = [heading]
-        for kind in sorted(counts, key=lambda k: (order.get(k, len(order)), k)):
-            count = counts[kind]
-            row = Text(f"{kind.ljust(label_w)}  ", style="muted")
+        for bucket in sorted(counts, key=lambda k: (order.get(k, len(order)), k)):
+            count = counts[bucket]
+            icon, label, style = chrome[bucket]
+            row = Text(f"{icon} ")
+            row.append(f"{label.ljust(label_w)}  ", style="muted")
             row.append(f"{count:>{count_w}}  ")
             # The shared braille meter, full-height with no track: the lane resolves
             # 48 levels across its 24 cells (two half-steps per cell).
-            row.append_text(
-                meter(
-                    count / peak, _TRAFFIC_METER_CELLS,
-                    style=KIND_STYLES.get(kind, "brand"),
-                )
-            )
+            row.append_text(meter(count / peak, _TRAFFIC_METER_CELLS, style=style))
             rows.append(row)
         return rows
 
