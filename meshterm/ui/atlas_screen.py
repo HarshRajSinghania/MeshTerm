@@ -35,8 +35,8 @@ recorded — and when the trail outgrows the line its *head* is dropped behind a
 ``…`` so the focus stays visible. **Home** refocuses our own node. **Typing finds** — a
 global filter over every node in
 the graph, islands included; Enter teleports the focus to the highlighted match (the
-trail restarts there, since the walk didn't cross the gap). ``^R`` rebuilds the graph
-from storage, and Esc peels find first, the screen second.
+trail restarts there, since the walk didn't cross the gap). Esc peels find first, the
+screen second.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -177,7 +177,6 @@ class AtlasScreen(Screen):
         contacts: dict[str, Contact],
         self_label: str,
         prefix_bytes: int = 0,
-        rebuild: Optional[Callable[[], MeshTopology]] = None,
     ) -> None:
         """Create the atlas over a built topology snapshot.
 
@@ -187,8 +186,6 @@ class AtlasScreen(Screen):
             contacts: Contacts keyed by canonical id, for glyphs, names, and ages.
             self_label: Display name for our own node (its mesh name when known).
             prefix_bytes: Path-hash width to light in the hash lane (0 = none).
-            rebuild: Rebuilds the graph from storage for the ``^R`` key; ``None``
-                leaves the snapshot fixed (tests, and the odd caller without a repo).
         """
         super().__init__()
         self._session = session
@@ -196,7 +193,6 @@ class AtlasScreen(Screen):
         self._contacts = contacts
         self._self_label = self_label
         self._prefix_bytes = prefix_bytes
-        self._rebuild = rebuild
         #: The walked trail of canonical ids; the focus is its last entry. Walking
         #: appends, ⌫ pops, Home resets to us, a find teleport restarts it.
         self._trail: list[str] = [topo.self_id]
@@ -289,7 +285,7 @@ class AtlasScreen(Screen):
         return "↑↓ move · Enter focus · ⌫ back · Home you · type to find · Esc back"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the highlight, walk, back up, find, rebuild, or dismiss."""
+        """Move the highlight, walk, back up, find, or dismiss."""
         rows = self._rows()
         if action == "escape":
             if self._filter:
@@ -326,8 +322,6 @@ class AtlasScreen(Screen):
             self._index = 0
         elif action == "space" and self._filter:
             self._filter += " "  # node names carry spaces; only meaningful mid-query
-        elif action == "retry":  # ^R
-            self._do_rebuild()
         self._needs_scrub = True
         self._session.invalidate()
 
@@ -349,16 +343,6 @@ class AtlasScreen(Screen):
             self._trail = self._trail[: self._trail.index(target) + 1]
         else:
             self._trail.append(target)
-        self._index = 0
-
-    def _do_rebuild(self) -> None:
-        """Re-read the evidence and keep the trail where it survives."""
-        if self._rebuild is None:
-            return
-        self._topo = self._rebuild()
-        known = self._all_nodes()
-        kept = [node for node in self._trail if node in known]
-        self._trail = kept or [self._topo.self_id]
         self._index = 0
 
     # --- smear scrub (same fallback-glyph problem as the map) ---------------------
@@ -891,9 +875,8 @@ async def open_atlas(ctx: "AppContext") -> None:
 
     Contacts and our own identity come from the device when one is reachable
     (best-effort — the stored evidence draws fine without them, just with hashes for
-    names), the graph itself comes entirely from the repository, and ``^R`` re-reads
-    storage so evidence landing while the screen is open can be pulled in. No
-    transmissions, ever.
+    names); the graph itself comes entirely from the repository, snapshotted once when
+    the screen opens. No transmissions, ever.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
@@ -922,17 +905,13 @@ async def open_atlas(ctx: "AppContext") -> None:
         contacts = []
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
-    def build() -> MeshTopology:
-        """One fresh graph from everything currently stored."""
-        return build_topology(
-            self_id=self_hash or "local",
-            contacts=contacts,
-            trace_paths=ctx.repo.trace_paths(),
-            packet_paths=ctx.repo.packet_paths(),
-            neighbour_links=ctx.repo.neighbour_links(),
-        )
-
-    topo = build()
+    topo = build_topology(
+        self_id=self_hash or "local",
+        contacts=contacts,
+        trace_paths=ctx.repo.trace_paths(),
+        packet_paths=ctx.repo.packet_paths(),
+        neighbour_links=ctx.repo.neighbour_links(),
+    )
     by_id: dict[str, Contact] = {}
     for contact in contacts:
         canonical = topo.canonical(contact.public_key or contact.key_prefix)
@@ -945,7 +924,6 @@ async def open_atlas(ctx: "AppContext") -> None:
         contacts=by_id,
         self_label=self_label,
         prefix_bytes=prefix_bytes,
-        rebuild=build,
     )
     try:
         await session.run_screen(screen)

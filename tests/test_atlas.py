@@ -360,24 +360,3 @@ def test_atlas_esc_peels_find_then_dismisses() -> None:
         return await screen.future
 
     assert asyncio.run(drive()) is None
-
-
-# --- rebuild ------------------------------------------------------------------------------
-
-
-def test_atlas_rebuild_refreshes_the_evidence_and_keeps_the_trail() -> None:
-    """^R re-reads storage; the trail survives where its nodes still exist."""
-    grown = _topo(with_island=True)
-    screen = AtlasScreen(
-        session=_FakeSession(),
-        topo=_topo(),
-        contacts={},
-        self_label="Homestead",
-        rebuild=lambda: grown,
-    )
-    screen.render_body(80)
-    assert "2 links" in screen.title
-    screen.handle("retry")
-    screen.render_body(80)
-    assert "3 links" in screen.title
-    assert screen._trail == [grown.self_id]
