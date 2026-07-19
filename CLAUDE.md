@@ -109,8 +109,9 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   node's key (its first byte — any known prefix agrees) so a rename keeps the colour;
   the name's characters seed it only when no key exists (a channel sender). Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
-  Recency heat colours heard/first-heard ages, never names. Bare hashes stay muted —
-  colour is the "this is a name" signal.
+  Recency heat colours heard/first-heard ages, never names. A hash's addressed prefix
+  (via `highlighted_hash`) lights in the same key-derived hue; the rest of the hash, and
+  any hash standing in as a name, stays muted.
 - SNR always through `snr_style`; timelines oldest→now left-to-right, grey baseline = 0,
   drawn via `ui/braillechart` only.
 

@@ -552,7 +552,8 @@ def test_mesh_page_rhythm_left_edge_aligns_with_the_day_charts(tmp_path: Path) -
 
 
 def test_picker_row_lanes_align_under_the_header() -> None:
-    """Picker rows lane up under the header; unknown nodes read as heat-coloured names."""
+    """Picker rows lane up under the header; the heard age glows hot, the hash prefix
+    lights in the key's own hue, and a nameless node's placeholder stays muted."""
     from meshterm.core.models import HeardNode
     from meshterm.ui.nodelist import NodeRow, _header, _lane
     from meshterm.ui.widgets import NodesSort
@@ -570,12 +571,20 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     )
     plain = row.plain
     assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
-    # A just-heard mystery node reads hot (white), not placeholder-grey.
+    # A just-heard node's HEARD age reads hot (white); the nameless placeholder is muted.
     assert any(span.style == "#ffffff" for span in row.spans)
-    # The hash's routing prefix (2 bytes here) is lit brand, the tail muted.
+    unknown_at = plain.index("unknown")
+    assert any(
+        span.style == "muted" and span.start <= unknown_at < span.end
+        for span in row.spans
+    )
+    # The hash's routing prefix (2 bytes here) is lit in the key's hue, the tail muted.
+    from meshterm.ui.theme import node_style
+
     hash_at = plain.index("3d" * 6)
     assert any(
-        span.style == "brand" and span.start == hash_at and span.end == hash_at + 4
+        span.style == node_style("3d" * 6)
+        and span.start == hash_at and span.end == hash_at + 4
         for span in row.spans
     )
     # Header labels land over their lanes (+2 covers the select pointer column); the lanes

@@ -71,14 +71,16 @@ def test_path_hash_mode_is_strict_enum() -> None:
 
 
 def test_highlighted_hash_highlights_path_hash_prefix() -> None:
-    """The full key is shown with only its path-hash prefix bytes highlighted."""
+    """The full key is shown with only its path-hash prefix bytes highlighted, lit in
+    the node's hash-derived palette hue (the same hue the node's name wears)."""
+    from meshterm.ui.theme import node_style
     from meshterm.ui.widgets import highlighted_hash
 
     pub = "aabbccddee" + "00" * 27
     # mode 2 => 3-byte hashes => first 6 hex chars are the addressable prefix.
     text = highlighted_hash(pub, prefix_bytes=3)
     assert text.plain == pub  # the full key is shown
-    highlighted = [s for s in text.spans if s.style == "brand"]
+    highlighted = [s for s in text.spans if s.style == node_style(pub)]
     assert len(highlighted) == 1
     assert text.plain[highlighted[0].start : highlighted[0].end] == "aabbcc"
 
@@ -134,9 +136,12 @@ def test_nodes_table_lists_us_first_with_full_keys() -> None:
 
     # Keys (column 4) are the full key with the path-hash prefix highlighted (no truncation
     # in the model; Rich ellipsizes only at render time when the terminal is too narrow).
+    from meshterm.ui.theme import node_style
+
     keys = list(table.columns[4].cells)
     assert keys[1].plain == "3d63c6" + "00" * 29
-    assert any(s.style == "brand" for s in keys[1].spans)  # prefix highlighted
+    # The prefix is highlighted in the key's own hash-derived hue.
+    assert any(s.style == node_style("3d63c6") for s in keys[1].spans)
 
 
 def test_nodes_table_sorts_by_heard_and_packets() -> None:

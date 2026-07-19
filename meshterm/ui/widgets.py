@@ -40,7 +40,7 @@ from ..core.models import (
 from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
 from .mapcanvas import RGB, parse_hex
 from .pathgraph import DST_NODE, GlyphOf, LabelOf, LabelRgbOf, SRC_NODE
-from .theme import name_style, snr_style
+from .theme import name_style, node_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
@@ -378,8 +378,10 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
 
     The one way MeshTerm displays a hash, wherever one appears: the first
     ``prefix_bytes`` bytes are the slice other nodes address in a forced trace path
-    (the path-hash), shown in the brand colour with the remainder muted, so the
-    addressable prefix stands out within the otherwise full key. A ``width`` budget
+    (the path-hash), lit in the node's hash-derived palette hue — the same hue its
+    name wears (see :func:`~meshterm.ui.theme.node_style`) — with the remainder muted,
+    so the addressable prefix stands out within the otherwise full key and carries the
+    node's identity colour even where no name is known. A ``width`` budget
     shorter than the key ellipsizes it (the ``…`` takes the colour of the digit it
     replaces, so a highlight wider than the budget still reads as one).
 
@@ -409,11 +411,12 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
         pad = width - kept - 1
     elif width is not None:
         pad = width - len(raw)
+    hue = node_style(value)  # from the untruncated key, though any prefix agrees
     text = Text()
-    text.append(raw[:split], style="brand")
+    text.append(raw[:split], style=hue)
     text.append(raw[split:], style="muted")
     if ellipsis:
-        text.append("…", style="brand" if len(raw) < split else "muted")
+        text.append("…", style=hue if len(raw) < split else "muted")
     text.append(" " * pad)
     return text
 

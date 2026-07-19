@@ -54,10 +54,17 @@ def test_path_text_empty_reads_as_direct() -> None:
 
 
 def test_path_text_lights_the_hash_prefix() -> None:
-    """An unnamed hop renders through the shared hash widget, its prefix lit."""
+    """An unnamed hop renders through the shared hash widget, its prefix lit in the
+    node's hash-derived hue."""
+    from meshterm.ui.theme import node_style
+
     text = path_text(["77bb"], _resolve, prefix_bytes=1)
-    brand = [text.plain[s.start : s.end] for s in text.spans if "brand" in str(s.style)]
-    assert "77" in brand  # the addressed prefix stands out within the hash
+    lit = [
+        text.plain[s.start : s.end]
+        for s in text.spans
+        if str(s.style) == node_style("77bb")
+    ]
+    assert "77" in lit  # the addressed prefix stands out within the hash
 
 
 def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
@@ -69,7 +76,9 @@ def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
     assert text.plain == "e839f2 (e8)"  # mode width identity, then the addressed byte
     styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
     assert styles.get("e839f2") == "muted"  # greyed — colour is the "this is a name" cue
-    assert not any(str(s.style) == "brand" for s in text.spans)  # no prefix lit
+    from meshterm.ui.theme import node_style
+
+    assert not any(str(s.style) == node_style("e839f2ab") for s in text.spans)  # no prefix lit
 
 
 def test_path_text_hash_as_name_drops_the_byte_when_it_is_the_whole_hash() -> None:
