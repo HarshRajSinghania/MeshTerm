@@ -109,12 +109,25 @@ _MORE = "\x00more"
 #: How many find matches the list shows at most (the filter narrows it fast).
 _MAX_MATCHES = 10
 
-#: Display cells the neighbour list's name lane spans (longer names ellipsize).
-_LIST_NAME_W = 16
+#: The narrowest the neighbour/match list's name lane shrinks to. The lane is content-sized
+#: and flexes up to whatever the fixed lanes leave (see :meth:`AtlasScreen._name_lane_w`),
+#: so as much of a long name shows as the row can spare.
+_LIST_NAME_MIN = 10
 
-#: Display cells the hash lane spans (canonical ids are 12 hex; six with an ellipsis
-#: keeps rows inside 72 columns while the prefix stays recognisable).
-_LIST_HASH_W = 6
+#: Display cells the key lane spans: the whole 12-hex canonical id, no ellipsis — the node's
+#: full hash, with its addressed prefix lit in the node's hue (see :func:`highlighted_hash`).
+_LIST_HASH_W = 12
+
+#: Cells a link row spends *outside* its (flexing) name lane, so the lane can size to the
+#: rest: pointer (2) + type glyph and its space (2) + the name→key space (1) + the key lane
+#: (:data:`_LIST_HASH_W`) + gap (2) + SNR (5) + space (1) + quality bar (4) + samples (5)
+#: + source tags (5) + age (5) + a reserve for the trailing ⌫/⋯ marker (8).
+_LINK_ROW_FIXED = 2 + 2 + 1 + _LIST_HASH_W + 2 + 5 + 1 + 4 + 5 + 5 + 5 + 8
+
+#: The same, for a find-match row — which trails a short distance note rather than the SNR
+#: evidence: pointer (2) + glyph and space (2) + name→key space (1) + the key lane + gap (2)
+#: + a distance reserve (12, for ``this device`` / ``N hops out``).
+_MATCH_ROW_FIXED = 2 + 2 + 1 + _LIST_HASH_W + 2 + 12
 
 #: SNR (dB) → edge colour anchors, interpolated linearly and clamped at the ends: the
 #: red/amber/green of the app's snr styles, so the graph and the rows agree.
@@ -730,8 +743,10 @@ class AtlasScreen(Screen):
                 out.append(render_to_ansi(Text("no matches", style="muted"), width))
                 return out
 
+            name_w = self._name_lane_w(width, rows, _MATCH_ROW_FIXED)
+
             def render(i: int) -> Text:
-                return self._match_row(rows[i], i == self._index, depths)
+                return self._match_row(rows[i], i == self._index, depths, name_w)
         else:
             heading = Text("Links", style="accent")
             heading.append("  ·  strongest observed first · Enter walks", style="muted")
@@ -744,10 +759,13 @@ class AtlasScreen(Screen):
                 out.append(render_to_ansi(note, width))
                 return out
             onward = self._onward_counts(pairs)
+            name_w = self._name_lane_w(width, [o for o, _ in pairs], _LINK_ROW_FIXED)
 
             def render(i: int) -> Text:
                 other, link = pairs[i]
-                return self._link_row(other, link, i == self._index, onward.get(other, 0))
+                return self._link_row(
+                    other, link, i == self._index, onward.get(other, 0), name_w
+                )
 
         top, count = self._list.fit(len(rows), win, self._index)
         if top > 0:
@@ -758,6 +776,17 @@ class AtlasScreen(Screen):
         if below > 0:
             out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
         return out
+
+    def _name_lane_w(self, width: int, nodes: list[str], fixed: int) -> int:
+        """The list's name-lane width: as much of the name as fits, sized to content.
+
+        Grows to the widest name the rows carry but never past the width the fixed lanes
+        leave, so a short-name list stays tight while a long name shows as much of itself
+        as the row can spare (ellipsized only past that).
+        """
+        avail = max(_LIST_NAME_MIN, width - fixed)
+        widest = max((cell_len(self._label(n)) for n in nodes), default=_LIST_NAME_MIN)
+        return max(_LIST_NAME_MIN, min(widest, avail))
 
     def _onward_counts(self, pairs: list[tuple[str, Link]]) -> dict[str, int]:
         """How many links continue from each neighbour, the one back here excluded."""
@@ -770,7 +799,9 @@ class AtlasScreen(Screen):
             )
         return counts
 
-    def _link_row(self, other: str, link: Link, selected: bool, onward: int) -> Text:
+    def _link_row(
+        self, other: str, link: Link, selected: bool, onward: int, name_w: int
+    ) -> Text:
         """One neighbour row: glyph, name, hash, SNR + bar, evidence, onward count."""
         glyph, glyph_style = self._glyph(other)
         row = Text()
@@ -778,7 +809,7 @@ class AtlasScreen(Screen):
         row.append(glyph, style=glyph_style)
         row.append(" ")
         name_style_ = self._list_name_style(other)
-        row.append(fit_cells(self._label(other), _LIST_NAME_W), style=name_style_)
+        row.append(fit_cells(self._label(other), name_w), style=name_style_)
         row.append(" ")
         row.append_text(highlighted_hash(other, self._prefix_bytes, width=_LIST_HASH_W))
         row.append("  ")
@@ -806,14 +837,16 @@ class AtlasScreen(Screen):
             row.style = "brand"
         return row
 
-    def _match_row(self, node: str, selected: bool, depths: dict[str, int]) -> Text:
+    def _match_row(
+        self, node: str, selected: bool, depths: dict[str, int], name_w: int
+    ) -> Text:
         """One find match: glyph, name, hash, and how far out it sits."""
         glyph, glyph_style = self._glyph(node)
         row = Text()
         row.append("❯ " if selected else "  ", style="brand" if selected else "")
         row.append(glyph, style=glyph_style)
         row.append(" ")
-        row.append(fit_cells(self._label(node), _LIST_NAME_W), style=self._list_name_style(node))
+        row.append(fit_cells(self._label(node), name_w), style=self._list_name_style(node))
         row.append(" ")
         row.append_text(highlighted_hash(node, self._prefix_bytes, width=_LIST_HASH_W))
         row.append("  ")

@@ -81,6 +81,8 @@ def test_atlas_link_rows_carry_snr_evidence_and_onward_count() -> None:
     assert "1×" in row  # samples
     assert "T" in row  # trace evidence tag
     assert "⋯ 1" in row  # one link onward (YUL — Alice)
+    assert "3d" * 6 in row  # the whole 12-hex id, not a truncated prefix…
+    assert "…" not in row  # …and nothing about it elided
 
 
 def test_atlas_empty_graph_renders_guidance() -> None:
