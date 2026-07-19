@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from meshterm.core.events import MeshEvent
-from meshterm.core.models import Ack, Message, Observation, utcnow
+from meshterm.core.models import Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 from meshterm.ui.dashboard_screen import DashboardScreen
@@ -26,7 +26,7 @@ class _FakeSession:
         self.repaints += 1
 
 
-def _screen(window=None, histogram=None, kinds=None, active=True) -> DashboardScreen:
+def _screen(window=None, histogram=None, kinds=None) -> DashboardScreen:
     screen = DashboardScreen(
         session=_FakeSession(),
         resolve=lambda h: {"a1b2": "Alice", "3d63": "YUL"}.get(h, ""),
@@ -34,7 +34,6 @@ def _screen(window=None, histogram=None, kinds=None, active=True) -> DashboardSc
         activity=lambda: tuple(histogram or (0,) * ACTIVITY_BUCKETS),
         activity_flags=lambda: (True,) * ACTIVITY_BUCKETS,
         kind_counts=lambda: dict(kinds or {}),
-        hub_active=lambda: active,
     )
     screen.note_viewport(48)  # the frame records this before every real paint
     return screen
@@ -59,19 +58,21 @@ def _stripped(lines: list[str]) -> list[str]:
 # --- the screen ----------------------------------------------------------------------
 
 
-def test_dashboard_renders_all_four_sections() -> None:
-    """Activity, Traffic, RF health, and Feed all render from a seeded window."""
+def test_dashboard_renders_all_three_sections() -> None:
+    """Activity, Traffic, and RF health all render from a seeded window.
+
+    (The feed panel moved out to the Live feed tool — see ``test_livefeed``.)
+    """
     screen = _screen(
         window=[_obs(), _obs(node="3d63", node_type=2, snr=-2.0)],
         histogram=[3] + [0] * (ACTIVITY_BUCKETS - 1),
         kinds={"advert": 5, "ack": 1},
     )
     body = _plain(screen.render_body(100))
-    assert "Activity" in body and "Traffic" in body
-    assert "RF health" in body and "Feed" in body
-    assert "● live" in body
+    assert "Activity" in body and "Traffic" in body and "RF health" in body
+    assert "Feed" not in body  # the packet stream lives in the Live feed tool now
     assert "nodes heard" in body and "(1 repeater)" in body
-    assert "advert" in body and "Alice" in body and "YUL" in body
+    assert "advert" in body and "Alice" in body  # traffic class + the busiest node
 
 
 def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> None:
@@ -124,100 +125,21 @@ def test_dashboard_pulse_drops_heard_only_when_it_wont_fit() -> None:
     assert "heard" not in tight and "nodes" in tight
 
 
-def test_dashboard_live_events_land_in_the_feed_and_window() -> None:
-    """Observations, messages, and acks each fold into the feed as they arrive."""
+def test_dashboard_live_observations_land_in_the_window() -> None:
+    """A hub observation folds into the trailing window and repaints the charts."""
     screen = _screen()
     screen.on_event(MeshEvent.observation_event(_obs(snr=7.5)))
-    screen.on_event(MeshEvent.message_event(Message(text="hi", sender="a1b2")))
-    screen.on_event(MeshEvent.ack_event(Ack(code="01c3")))
     body = _plain(screen.render_body(100))
-    assert "+7.5 dB" in body
-    assert "message" in body and "ack" in body
-    # Newest first: the ack row sits above the message row, which sits above the advert.
-    assert body.index("ack") < body.index("message") < body.index("advert")
+    assert "+7.5 dB median" in body  # the RF section now has a reception to describe
+    assert screen._session.repaints >= 1
 
 
-def test_dashboard_packet_rows_show_their_relay_path() -> None:
-    """An RX-log packet reads as its relay path, resolved to names where known.
-
-    The path renders through the shared compact path widget, so each name carries its
-    own hue — assert on the stripped text, not the raw ANSI.
-    """
-    screen = _screen()
-    screen.on_event(
-        MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0))
-    )
-    assert "via YUL → Alice" in "\n".join(_stripped(screen.render_body(100)))
-
-
-def test_dashboard_feed_names_a_relayed_packet_by_its_payload_class() -> None:
-    """A relayed packet naming no origin reads as its payload class, never a bare '?'."""
-    screen = _screen()
-    raw = {"payload_typename": "TRACE", "route_typename": "FLOOD"}
-    screen.on_event(
-        MeshEvent.observation_event(
-            _obs(node="", kind="packet", snr=1.0, path="3d63,a1b2", raw=raw)
-        )
-    )
-    feed = _plain(screen.render_body(100)).split("Feed")[1]
-    assert "trace" in feed  # the payload-class gloss stands in for the missing identity
-    assert "?" not in feed  # …instead of the useless placeholder
-
-
-def test_dashboard_feed_names_a_channel_message_by_its_sender() -> None:
-    """A channel message's ``Name:`` prefix names the node lane, not the bare channel."""
-    from meshterm.core.models import Message
-
-    screen = _screen()
-    screen.on_event(
-        MeshEvent.message_event(Message(text="Alice: hi all", channel=3, is_channel=True))
-    )
-    feed = _plain(screen.render_body(100)).split("Feed")[1]
-    assert "Alice" in feed          # the parsed sender leads the row
-    assert "ch 3" in feed           # …with the channel kept as the trailing context
-
-
-def test_dashboard_prunes_the_window_but_keeps_the_feed() -> None:
+def test_dashboard_prunes_the_window() -> None:
     """Observations older than the window drop out of the statistics."""
     stale = _obs(age_s=3 * 3600, snr=-12.0)
     screen = _screen(window=[stale])
     body = _plain(screen.render_body(100))
     assert "no receptions in the window yet" in body  # stats pruned the stale row
-
-
-def test_dashboard_page_keys_move_the_feed_selection() -> None:
-    """With a feed row highlighted, PgUp/PgDn walk the selection a windowful at a time."""
-    window = [_obs(node=f"n{i}", age_s=i) for i in range(20)]
-    screen = _screen(window=window)
-    screen._feed_window.page = 5  # as if the last paint settled a five-row window
-    assert screen._selected == 0  # the newest packet is highlighted from the start
-    screen.handle("pagedown")
-    assert screen._selected == 5  # the selection travelled down a page, not just the view
-    screen.handle("pageup")
-    assert screen._selected == 0
-
-    # With nothing highlighted, the page keys slide the feed window instead.
-    screen._selected = None
-    screen.handle("pagedown")
-    assert screen._feed_window.top > 0 and screen._selected is None
-
-
-def test_dashboard_feed_windows_inside_the_fixed_screen() -> None:
-    """The charts stay pinned: the body fits the viewport and the feed rows window."""
-    window = [_obs(node=f"n{i}", age_s=i) for i in range(40)]
-    screen = _screen(window=window)
-    screen.note_viewport(24)
-    lines = screen.render_body(100)
-    assert len(lines) <= 24  # charts + feed window == the viewport, never more
-    body = _plain(_stripped(lines))
-    assert "Activity" in body and "Feed" in body  # the chrome is all still there
-    assert "↓" in body and "more" in body  # hidden feed rows are counted below
-
-
-def test_dashboard_without_a_device_reads_as_waiting() -> None:
-    """With the hub idle the feed heading says so instead of pretending to be live."""
-    screen = _screen(active=False)
-    assert "○ waiting for a device" in _plain(screen.render_body(100))
 
 
 def test_dashboard_radio_rows_render_device_stats() -> None:

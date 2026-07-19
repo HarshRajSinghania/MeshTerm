@@ -2,9 +2,10 @@
 
 Opens the full-screen dashboard (see :mod:`meshterm.ui.dashboard_screen`): the two-hour
 all-packet activity chart with its pulse line, the session's traffic tallies by packet
-class, the window's RF health beside the radio's own live numbers, and the streaming
-packet feed. It leads the Mesh section because it answers the section's first question —
-*what's going on out there?* — before any specific tool is reached for.
+class, and the window's RF health beside the radio's own live numbers. (The per-packet
+stream is the Live feed tool, right below.) It leads the Mesh section because it answers
+the section's first question — *what's going on out there?* — before any specific tool
+is reached for.
 
 Menu-only: the dashboard is inherently live (it rides the event hub and repaints every
 second), so there is no scripted one-shot to register — the ``monitor`` and ``nodes``
@@ -23,12 +24,12 @@ from .base import Tool, ToolResult, register
 
 @register
 class DashboardTool(Tool):
-    """Watch everything going on on the mesh: activity, traffic, RF health, feed."""
+    """Watch everything going on on the mesh: activity, traffic, RF health."""
 
     name = "dashboard"
     title = "Dashboard"
     icon = "📊"
-    help = "Watch the mesh live — activity, traffic, RF health, packet feed"
+    help = "Watch the mesh live — activity, traffic, RF health"
     category = "Mesh"
     order = 5  # the section's overview, above the tools it summarizes
 
