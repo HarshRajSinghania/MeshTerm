@@ -1850,38 +1850,57 @@ def _row_plains(screen, width: int) -> list[str]:
     return [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(width)]
 
 
-def test_select_hscroll_shifts_rows_and_pins_the_pointer() -> None:
-    """→ slides row content left under the pinned pointer; ← slides it back."""
-    screen = _hscroll_screen()
+def test_select_hscroll_shifts_only_the_highlighted_row() -> None:
+    """→ slides the highlighted row under its pinned pointer; other rows and headers hold."""
+    screen = _hscroll_screen()  # the long "row-one" is highlighted by default
     before = _row_plains(screen, 40)
     assert any("row-one-" in ln for ln in before)
     screen.handle("right")
     shifted = _row_plains(screen, 40)
-    assert not any("row-one-" in ln for ln in shifted)  # the head scrolled off
-    assert any(ln.startswith("❯ ") for ln in shifted)  # the pointer stays pinned
-    assert any("HEAD-" not in ln and "hhh" in ln for ln in shifted)  # headers slide too
+    # The highlighted row's head scrolled off, under the still-pinned pointer…
+    assert any(ln.startswith("❯ ") for ln in shifted)
+    assert not any("row-one-" in ln for ln in shifted)
+    # …but the section header did not move, and the short row is untouched.
+    assert any(ln.strip().startswith("HEAD-") for ln in shifted)
+    assert any("short" in ln for ln in shifted)
     screen.handle("left")
     assert any("row-one-" in ln for ln in _row_plains(screen, 40))
 
 
-def test_select_hscroll_clamps_at_the_widest_row() -> None:
-    """→ stops once the longest row's tail is in view instead of scrolling to blank."""
+def test_select_hscroll_clamps_at_the_highlighted_rows_tail() -> None:
+    """→ stops once the *highlighted* row's own end is in view, not the widest row's."""
     screen = _hscroll_screen()
     for _ in range(50):
         screen.handle("right")
-    plains = _row_plains(screen, 40)
-    assert any("-tail" in ln for ln in plains)  # the longest row's end is visible
-    assert screen._hshift <= 60 + len("row-one--tail") + 2
+    plains = _row_plains(screen, 40)  # the render clamps the shift
+    assert any("-tail" in ln for ln in plains)  # the highlighted row's end is visible
+    row_len = len("row-one-" + "x" * 60 + "-tail")
+    assert screen._hshift == row_len - (40 - 2)  # clamped to its tail (width less pointer)
 
 
-def test_select_hscroll_survives_moves_and_resets_on_filter() -> None:
-    """The shift holds across ↑↓ (a chosen column) and resets when the filter edits."""
+def test_select_hscroll_resets_when_the_highlight_moves() -> None:
+    """The shift is per-row: moving the highlight (or editing the filter) drops it to the start."""
     screen = _hscroll_screen()
     screen.handle("right")
-    screen.handle("down")
     assert screen._hshift > 0
-    screen.handle("text", "r")
+    screen.handle("down")  # moving to another row abandons that row's scroll
     assert screen._hshift == 0
+    screen.handle("right")
+    screen.handle("text", "r")  # a filter edit resets it too
+    assert screen._hshift == 0
+
+
+def test_select_hscroll_only_acts_on_an_overflowing_row() -> None:
+    """←→ and its footer atom appear only while the highlighted row overflows the width."""
+    screen = _hscroll_screen()
+    screen.render_body(40)  # the long row-one is highlighted and overflows 40 cells
+    assert "←→ scroll" in screen.footer_hint
+    screen.handle("down")  # the short row fits — nothing to scroll
+    screen.render_body(40)
+    assert "←→ scroll" not in screen.footer_hint
+    screen.handle("right")
+    screen.render_body(40)
+    assert screen._hshift == 0  # a row that fits can't shift
 
 
 def test_select_without_hscroll_ignores_left_right() -> None:

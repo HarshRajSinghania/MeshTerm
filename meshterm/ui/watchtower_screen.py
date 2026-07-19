@@ -120,7 +120,9 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
             default=cursor,
             wrap=False,
             hscroll=True,
-            footer_hint="↑↓ move · ←→ scroll · Enter select/acknowledge · Esc back",
+            # ←→ scroll is surfaced by the list itself, but only while the highlighted
+            # alert actually overflows the width (see SelectScreen.hscroll_hint).
+            footer_hint="↑↓ move · Enter select/acknowledge · Esc back",
         )
         menu.future = loop.create_future()
         session.push(menu)

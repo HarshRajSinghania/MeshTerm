@@ -80,6 +80,18 @@ def _splice_hint(base: str, segment: str) -> str:
     return f"{base[:idx]} · {segment}{base[idx:]}"
 
 
+def _insert_atom(base: str, atom: str, index: int = 1) -> str:
+    """Insert ``atom`` as the ``index``-th ` · `-separated atom of a footer hint.
+
+    Surfaces a conditional *navigation* atom (the ←→ per-row scroll) right after the
+    leading move atom, keeping the hint's navigation-then-actions-then-``Esc`` shape — where
+    :func:`_splice_hint` instead places an *action* atom just before the trailing ``Esc``.
+    """
+    parts = base.split(" · ")
+    parts.insert(min(index, len(parts)), atom)
+    return " · ".join(parts)
+
+
 @dataclass
 class Separator:
     """A non-selectable row between choices.
@@ -99,6 +111,14 @@ class Separator:
 
 
 Item = "Choice | Separator"
+
+#: The navigation actions that move the highlight to another row, so an ``hscroll`` list
+#: drops the current row's horizontal shift (each row scrolls on its own — see
+#: :meth:`SelectScreen.handle`). The filter edits reset it in their own branches.
+_HSHIFT_RESET_ACTIONS = frozenset({
+    "up", "down", "pageup", "pagedown", "home", "ctrl_home", "end", "ctrl_end",
+    "ctrl_pageup", "ctrl_pagedown",
+})
 
 
 class SelectScreen(Screen):
@@ -123,6 +143,7 @@ class SelectScreen(Screen):
         filterable: bool = True,
         wrap: bool = True,
         hscroll: bool = False,
+        hscroll_hint: str = "←→ scroll",
     ) -> None:
         """Build a select screen.
 
@@ -143,16 +164,24 @@ class SelectScreen(Screen):
             wrap: Whether the highlight wraps around the ends (Down from the last row jumps
                 to the first, and vice versa). Off for grouped lists where wrapping across the
                 section headings reads as a jarring jump rather than continuing to scroll.
-            hscroll: Whether ←/→ shift every row sideways so an over-long line can be read
-                to its end (the Watchtower's alert log). Off by default — rows simply
-                ellipsize at the right edge and ←/→ stay inert, exactly as before. The
-                shift survives ↑↓ moves (you scrolled to a column; walking rows keeps it)
-                and resets when the filter is edited.
+            hscroll: Whether ←/→ horizontally scroll the *highlighted* row so an over-long
+                line can be read to its end (the Watchtower's alert log). Off by default —
+                rows simply ellipsize at the right edge and ←/→ stay inert. Only a row that
+                actually overflows the width scrolls; a short row (and every separator or
+                column header) stays put, and the shift resets to the start whenever the
+                highlight moves to another row or the filter is edited — each row scrolls
+                on its own, independently of the rest of the screen.
+            hscroll_hint: The footer atom surfaced (as the second ` · ` atom, right after
+                the move atom) while ``hscroll`` is on and the highlighted row overflows —
+                so ←→ advertises itself exactly when it would do something. Ignored when
+                ``hscroll`` is off.
         """
         super().__init__()
         self.title = title
         self._hscroll = hscroll
+        self._hscroll_hint = hscroll_hint
         self._hshift = 0
+        self._last_width = 0  # the last render width, for the footer's overflow probe
         if footer_hint is None:
             footer_hint = (
                 "↑↓ move · type to filter · Enter select · Esc back"
@@ -250,18 +279,39 @@ class SelectScreen(Screen):
 
     @property
     def footer_hint(self) -> str:
-        """The footer key hint, gaining the :attr:`_delete_hint` atom on a deletable row.
+        """The footer key hint, gaining dynamic atoms only where their keys would act.
 
-        Fixed to the base hint unless a ``delete_hint`` was supplied *and* the highlighted
-        row opted into removal — then the atom is spliced in just before the trailing ``Esc``
-        clause (see :func:`_splice_hint`), so the removal key shows up on the bottom border
-        precisely while the cursor is on a row it can act on.
+        Two conditional atoms fold in exactly where they apply, so the bottom border never
+        advertises a key that would do nothing:
+
+        * the :attr:`_delete_hint` atom, spliced just before the trailing ``Esc`` clause
+          (see :func:`_splice_hint`) while the highlighted row is :attr:`Choice.deletable`;
+        * the :attr:`_hscroll_hint` atom (``hscroll`` lists only), inserted right after the
+          move atom (see :func:`_insert_atom`) while the highlighted row overflows the width
+          — a short row scrolls nowhere, so ←→ stays hidden on it.
         """
         base = self._footer_base
         current = self._current_choice()
         if self._delete_hint and current is not None and current.deletable:
-            return _splice_hint(base, self._delete_hint)
+            base = _splice_hint(base, self._delete_hint)
+        if self._hscroll and self._hscroll_hint and self._selected_overflows():
+            base = _insert_atom(base, self._hscroll_hint)
         return base
+
+    def _selected_overflows(self) -> bool:
+        """Whether the highlighted row's label is too wide for the last render width.
+
+        The gate for both the ←→ scroll and its footer atom: a row that fits has nothing to
+        scroll. Measured against the row's content area (the width less the 2-cell pointer),
+        using the width the last :meth:`render_body` saw (``0`` before the first paint, so
+        nothing reads as overflowing until a real width is known).
+        """
+        if not self._hscroll or self._last_width <= 0:
+            return False
+        current = self._current_choice()
+        if current is None:
+            return False
+        return cell_len(_plain(current.label)) > max(1, self._last_width - 2)
 
     @property
     def sizing_footer_hint(self) -> str:
@@ -304,15 +354,15 @@ class SelectScreen(Screen):
         self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
         selected = choices[self._index] if choices else None
 
-        # Clamp an active horizontal shift to the widest row, so → stops at the point
-        # where the longest line's tail has come into view (measured fresh each paint —
-        # callable titles may have changed width).
+        # Horizontal scroll rides only the *highlighted* row, and only as far as its own
+        # tail: → stops once that row's end is in view, and a short (or unselected) row
+        # can't shift at all. Measured fresh each paint — a callable title may have changed
+        # width — against the row's content area (width less the 2-cell pointer).
+        self._last_width = width
         if self._hscroll and self._hshift:
-            widest = 0
-            for item in rows:
-                label = item.title if isinstance(item, Separator) else item.label
-                widest = max(widest, cell_len(_plain(label)) + 2)
-            self._hshift = max(0, min(self._hshift, widest - width))
+            avail = max(1, width - 2)
+            sel_len = cell_len(_plain(selected.label)) if selected is not None else 0
+            self._hshift = max(0, min(self._hshift, sel_len - avail))
 
         lines: list[str] = []
         # A prompt (when set) sits above the list, offsetting every row below it; the cursor
@@ -332,11 +382,10 @@ class SelectScreen(Screen):
         for item in rows:
             if isinstance(item, Separator):
                 # A Text title carries its own spans (a two-colour column header); a plain
-                # string is drawn uniformly in the separator's style.
+                # string is drawn uniformly in the separator's style. Separators never
+                # h-scroll — the shift rides the highlighted choice row alone.
                 title = item.title
                 heading = title if isinstance(title, Text) else Text(title, style=item.style)
-                if self._hscroll and self._hshift:
-                    heading = crop_cells(heading, self._hshift, width)
                 sep = render_to_ansi(heading, width)
                 self._sticky_headers.append((len(lines), sep))
                 lines.append(sep)
@@ -350,8 +399,9 @@ class SelectScreen(Screen):
             # keeps its colour. A plain string is styled uniformly as before.
             text = Text(pointer, style=style)
             label_text = label if isinstance(label, Text) else Text(label)
-            if self._hscroll and self._hshift:
-                # The 2-cell pointer stays pinned; only the label slides under it.
+            if self._hscroll and self._hshift and is_sel:
+                # Only the highlighted row slides, and only its label — the 2-cell pointer
+                # stays pinned. Every other row (and separator) renders unshifted.
                 label_text = crop_cells(label_text, self._hshift, max(1, width - 2))
             text.append_text(label_text)
             text.style = style
@@ -376,6 +426,8 @@ class SelectScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, edit the filter, or commit/cancel the selection."""
         choices = self._choices()
+        if self._hscroll and action in _HSHIFT_RESET_ACTIONS:
+            self._hshift = 0  # moving off a row abandons its scroll — each row scrolls alone
         if action == "up":
             if choices:
                 self._index = (self._index - 1) % len(choices) if self._wrap else max(
@@ -409,7 +461,7 @@ class SelectScreen(Screen):
         elif action == "left" and self._hscroll:
             self._hshift = max(0, self._hshift - self._HSCROLL_STEP)
         elif action == "right" and self._hscroll:
-            self._hshift += self._HSCROLL_STEP  # clamped to the widest row at render
+            self._hshift += self._HSCROLL_STEP  # clamped to the highlighted row's tail at render
         elif action == "escape":
             super().handle("escape")
         elif action == "backspace" and self._filterable:
