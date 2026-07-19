@@ -1531,6 +1531,32 @@ def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> 
     assert seen == ["ctrl_left", "ctrl_home", "enter", "left"]
 
 
+def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -> None:
+    """A bare letter typed while the physical right Ctrl is down becomes its Ctrl-letter
+    chord — the same rescue as the nav keys, for the ^R/^P shortcuts a layout-claimed right
+    Ctrl would otherwise strip to plain text. Only the mapped letters promote (case-folded,
+    with the now-stale data dropped); other text — and everything once the key is released —
+    stays text."""
+    from meshterm.ui.tui import session as session_mod
+
+    session = TuiSession()
+    seen: list[tuple[str, str]] = []
+
+    class Probe(ScrollScreen):
+        def handle(self, action: str, data: str = "") -> None:
+            seen.append((action, data))
+
+    session.push(Probe(Text("x")))
+
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: True)
+    session._dispatch("text", "r")  # ^R retry
+    session._dispatch("text", "P")  # ^P paths, case-folded
+    session._dispatch("text", "x")  # unmapped letter: stays text even while held
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: False)
+    session._dispatch("text", "r")  # released: plain text again
+    assert seen == [("retry", ""), ("paths", ""), ("text", "x"), ("text", "r")]
+
+
 def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
     """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
     emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they

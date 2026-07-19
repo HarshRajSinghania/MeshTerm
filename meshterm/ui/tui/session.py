@@ -88,6 +88,18 @@ _CTRL_CHORDS: dict[str, str] = {
     "pagedown": "ctrl_pagedown",
 }
 
+#: The letter Ctrl chords (the ``Keys.Control*`` letter entries in :data:`_KEY_ACTIONS`),
+#: keyed by the bare lowercase letter a layout-claimed right Ctrl delivers as *text* instead.
+#: Same right-Ctrl rescue as :data:`_CTRL_CHORDS`, but promoting a typed letter rather than a
+#: navigation key — a bare ``r``/``p`` only reaches text while the right Ctrl is physically
+#: held when the layout has no third-level glyph for that key (i.e. it really is the chord); a
+#: genuine third-level character arrives as some *other* glyph and is never in this map. Keep
+#: in step with the ``Keys.ControlR``/``Keys.ControlP`` entries above.
+_CTRL_LETTER_CHORDS: dict[str, str] = {
+    "r": "retry",
+    "p": "paths",
+}
+
 
 def _right_ctrl_down() -> bool:
     """Whether the right Ctrl key is physically held right now (Windows; ``False`` elsewhere).
@@ -1143,10 +1155,11 @@ class TuiSession:
     def _dispatch(self, action: str, data: str = "") -> None:
         """Forward an action to the top screen and repaint.
 
-        A plain navigation action arriving while the right Ctrl key is physically held is
-        promoted to its Ctrl chord first (see :func:`_right_ctrl_down`) — a no-op when the
-        console already reported the chord, and the rescue when a layout-claimed right Ctrl
-        stripped it.
+        A plain navigation key — or a bare ``r``/``p`` typed as text — arriving while the right
+        Ctrl key is physically held is promoted to its Ctrl chord first (see
+        :func:`_right_ctrl_down`, :data:`_CTRL_CHORDS`, :data:`_CTRL_LETTER_CHORDS`) — a no-op
+        when the console already reported the chord, and the rescue when a layout-claimed right
+        Ctrl stripped it.
 
         The repaint keeps prompt_toolkit's fast differential paint; a frame carrying a glyph
         the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
@@ -1154,6 +1167,8 @@ class TuiSession:
         """
         if action in _CTRL_CHORDS and _right_ctrl_down():
             action = _CTRL_CHORDS[action]
+        elif action == "text" and data.lower() in _CTRL_LETTER_CHORDS and _right_ctrl_down():
+            action, data = _CTRL_LETTER_CHORDS[data.lower()], ""
         top = self.top
         if top is not None:
             top.handle(action, data)
