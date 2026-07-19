@@ -1,8 +1,8 @@
 """The interactive Nodes screen: the device's contacts in the shared sortable node list.
 
 The Time Machine picker's presentation pointed at the companion's contact table: the same
-aligned ``NAME · HEARD · PKTS · HASH`` lanes, our own node pinned first, the same Ctrl+arrow
-sort (now including the hash column) and type-to-filter — one node list app-wide, whatever
+aligned ``NAME · HEARD · PKTS · KEY`` lanes, our own node pinned first, the same Ctrl+arrow
+sort (now including the key column) and type-to-filter — one node list app-wide, whatever
 the data source (see :mod:`~meshterm.ui.nodelist`). Enter is deliberately inert for now: the
 highlight is a cursor, not yet a selection — a per-node action will land on it later. The
 one-shot CLI (``meshterm nodes --sort …``) still renders the static

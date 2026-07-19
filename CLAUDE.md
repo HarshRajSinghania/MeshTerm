@@ -21,7 +21,8 @@ them instead of hand-rolling:
 
 - `ui/menus.py` — `back_rows`, `exit_rows`, `menu_rows`, `lane_row`, `section_heading`,
   `confirm_discard`, `fit_cells`.
-- `ui/widgets.py` — `highlighted_hash` (THE hash widget), `format_ago` (prose ages),
+- `ui/widgets.py` — `highlighted_hash` (THE key widget — shows a key, lights its hash),
+  `format_ago` (prose ages),
   `_format_age` (column ages), `channel_glyph`, `_NODE_GLYPHS`, heard-age heat colouring.
 - `ui/theme.py` — `name_style`/`node_style` (per-node hues, hash-derived), `snr_style`,
   the `you` white.
@@ -33,8 +34,8 @@ them instead of hand-rolling:
 | node | any mesh participant |
 | contact | a node the device knows (has a key) |
 | heard | received from ("last heard", "first heard") — never "seen" in UX text |
-| key | a full public key / channel secret |
-| hash | the displayed key prefix (shown via `highlighted_hash`) |
+| key | the full fixed-length value — a node's public key, a channel secret |
+| hash | the short derived id — a key's first path-hash-mode bytes (the slice `highlighted_hash` lights), a channel hash, a path hop |
 | path | an ordered hop spec you compose or force (`a1,3d,…`) |
 | route | the concrete node sequence a trace walked or will walk |
 | via | prefix for a packet/message's relay chain |
@@ -109,9 +110,10 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   node's key (its first byte — any known prefix agrees) so a rename keeps the colour;
   the name's characters seed it only when no key exists (a channel sender). Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
-  Recency heat colours heard/first-heard ages, never names. A hash's addressed prefix
-  (via `highlighted_hash`) lights in the same key-derived hue; the rest of the hash, and
-  any hash standing in as a name, stays muted.
+  Recency heat colours heard/first-heard ages, never names. A key lane (via
+  `highlighted_hash`) lights its hash in the same key-derived hue; the rest of the key,
+  and any key standing in as a name, stays muted. UX text says "key" for the lane and
+  "hash" only for the short derived id — never "hash" for a truncated key.
 - SNR always through `snr_style`; timelines oldest→now left-to-right, grey baseline = 0,
   drawn via `ui/braillechart` only.
 

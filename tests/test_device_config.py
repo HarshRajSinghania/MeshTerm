@@ -238,7 +238,7 @@ def test_nodes_screen_ctrl_arrows_steer_the_sort() -> None:
 
 
 def test_nodes_screen_lists_contacts_in_the_shared_lanes() -> None:
-    """Contacts render in the shared NAME/HEARD/PKTS/HASH lanes, our node pinned first;
+    """Contacts render in the shared NAME/HEARD/PKTS/KEY lanes, our node pinned first;
     plain arrows only move the highlight, and Enter is inert (selection comes later)."""
     import re
 
@@ -255,7 +255,7 @@ def test_nodes_screen_lists_contacts_in_the_shared_lanes() -> None:
     body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(72))
 
     # The shared column header (recorded sticky, so it pins once scrolled past)...
-    assert "NAME" in body and "HEARD" in body and "PKTS" in body and "HASH" in body
+    assert "NAME" in body and "HEARD" in body and "PKTS" in body and "KEY" in body
     assert screen._sticky_headers
     # ...our own node leading the lanes, then the contacts with their tallies.
     choices = screen._choices()

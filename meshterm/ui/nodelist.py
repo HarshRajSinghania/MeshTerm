@@ -1,10 +1,10 @@
 """The shared node list: one sortable, filterable lane layout for every screenful of nodes.
 
 Extracted from the Time Machine's subject picker so the app has exactly one way to draw "a
-full-screen list of nodes": aligned ``NAME · HEARD · PKTS · HASH`` lanes under a sort-aware
+full-screen list of nodes": aligned ``NAME · HEARD · PKTS · KEY`` lanes under a sort-aware
 column header, our own node pinned first, the sort riding the Ctrl+arrows (plain arrows keep
 the highlight, letters keep type-to-filter), and the name lane sized to its content so the
-columns anchor left while the hash lane soaks up the rest of the terminal. The Time Machine
+columns anchor left while the key lane soaks up the rest of the terminal. The Time Machine
 picker and the Nodes screen both build on :class:`NodeListScreen`; each hands its rows over
 as :class:`NodeRow` values — however it learned them (stored history, the device's contact
 table) — so the two lists render, sort, and steer identically without sharing a data source.
@@ -37,17 +37,17 @@ from .widgets import (
 #: label and its sort triangle always have somewhere to sit.
 _NAME_MIN = 6
 
-#: The hash lane's floor in cells — four leading bytes plus an ellipsis, still a recognisable
+#: The key lane's floor in cells — four leading bytes plus an ellipsis, still a recognisable
 #: prefix on a very narrow terminal. The lane otherwise flexes to fill whatever width the
 #: (content-sized) name lane leaves, so a longer key — our own 64-hex node key, or a full key
 #: resolved from a contact — shows as many whole bytes as fit, ellipsized past that (see
 #: :func:`~meshterm.ui.widgets.highlighted_hash`).
 _HASH_MIN = 8
 
-#: Everything in a row *besides* the name and hash lanes, in cells: the select pointer (2),
+#: Everything in a row *besides* the name and key lanes, in cells: the select pointer (2),
 #: the type glyph and its space (2), then the two gapped fixed lanes — heard (2 gap + 5) and
-#: packets (2 gap + 5) — and the 3-cell gap before the hash. The name lane is content-sized
-#: and the hash lane takes the rest (see :meth:`NodeListScreen._lane_widths`).
+#: packets (2 gap + 5) — and the 3-cell gap before the key. The name lane is content-sized
+#: and the key lane takes the rest (see :meth:`NodeListScreen._lane_widths`).
 _LEAD = 2 + 2 + (2 + 5) + (2 + 5) + 3
 
 #: The muted ``(you)`` tag on the own-node lane (see :func:`_lane`), its width folded into
@@ -56,6 +56,8 @@ _YOU_TAG = "  (you)"
 
 #: The sort ring and each column's natural opening direction — name A→Z, most-recently-heard
 #: first, most packets first, and ``hash`` on the node's key (ascending = ``0`` → ``f``).
+#: The ``hash`` ring id predates the lexicon and stays for saved-sort compatibility; its
+#: column header reads ``KEY`` — the lane shows the key, with the hash lit inside it.
 #: Callers build their :class:`~meshterm.ui.widgets.NodesSort` over these so the Ctrl+arrows
 #: walk the same four columns on every node list.
 SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets", "hash")
@@ -83,7 +85,7 @@ class NodeRow:
         name: The display name, drawn in the node's hash-derived palette hue; ``None``
             renders a muted ``unknown`` (an own-node row falls back to a bare ``you``
             instead).
-        key: The hex the hash lane shows — as full a key as the caller could resolve;
+        key: The hex the key lane shows — as full a key as the caller could resolve;
             also the seed of the name's palette hue. Empty renders a muted ``?``.
         node_type: The node's type for the leading glyph (``None`` = the plain-node
             ``●``; ignored on the own-node row, which always leads with the yellow ``★``).
@@ -107,7 +109,7 @@ class NodeRow:
 def _header(name_w: int, sort: NodesSort) -> Text:
     """Column labels over the node lanes (see :func:`_lane`).
 
-    The lanes read ``NAME · HEARD · PKTS · HASH``, matching the row builder. The four
+    The lanes read ``NAME · HEARD · PKTS · KEY``, matching the row builder. The four
     leading spaces cover the select screen's pointer column (2 cells) plus the one-cell
     type glyph and its gap, so each label lands over its lane.
 
@@ -136,10 +138,10 @@ def _header(name_w: int, sort: NodesSort) -> Text:
     header.append("  ", style="muted")  # gap to the HEARD lane
     column(header, "HEARD", "heard")
     column(header, f"{'PKTS':>5}", "packets")
-    # HASH sits one cell further out than the other lanes so a packets-sort triangle —
-    # packets being the lane just before it — never abuts the hash label.
+    # KEY sits one cell further out than the other lanes so a packets-sort triangle —
+    # packets being the lane just before it — never abuts the key label.
     header.append(" ", style="muted")
-    column(header, "HASH", "hash")
+    column(header, "KEY", "hash")
     return header
 
 
@@ -147,12 +149,12 @@ def _you_lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text
     """Our own node's lane — laid out exactly like :func:`_lane`'s regular rows.
 
     Drawn like the map and the static table draw us: the ``★`` self marker (yellow), the
-    name in the pure-white ``you`` style with a muted ``(you)`` tag, and our key hash lit
-    at the routing width, filling the flexing hash lane — our 64-hex key is longer than
-    any lane, so it shows as many digits as fit and ellipsizes. The heard and packet lanes
-    read a faint ``—``: we never overhear ourselves, so there is no reception age or count
-    to show. With no reachable device to name us, the name falls back to a bare ``you``
-    and the hash to ``?``.
+    name in the pure-white ``you`` style with a muted ``(you)`` tag, and our key with its
+    hash lit at the routing width, filling the flexing key lane — our 64-hex key is longer
+    than any lane, so it shows as many digits as fit and ellipsizes. The heard and packet
+    lanes read a faint ``—``: we never overhear ourselves, so there is no reception age or
+    count to show. With no reachable device to name us, the name falls back to a bare
+    ``you`` and the key to ``?``.
     """
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(_SELF[0], style=_SELF[1])
@@ -172,7 +174,7 @@ def _you_lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text
     text.append(f"{'—':>5}", style="faint")  # heard: we don't hear ourselves
     text.append("  ")
     text.append(f"{'—':>5}", style="faint")  # packets: nothing to count
-    text.append("   ")  # the wider gap the header's HASH lane keeps (see _header)
+    text.append("   ")  # the wider gap the header's KEY lane keeps (see _header)
     if row.key:
         text.append_text(highlighted_hash(row.key, prefix_bytes, width=hash_w))
     else:
@@ -189,16 +191,16 @@ def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
     muted — colour marks a name, and the hash lane already carries the identity) and the
     flexing name lane (``name_w`` cells). The last-heard age follows, glowing with recency
     heat (brighter = fresher) so a freshly heard node still reads hot at a glance; then the
-    packet count, right-aligned — a node never overheard reads a faint ``—``; the hash
-    closes the row in the shared hash widget, its path-hash prefix lit at the device's
-    routing width, or a muted ``?`` when no key is known at all. An own-node row
-    (:attr:`NodeRow.you`) takes its own drawing — see :func:`_you_lane`.
+    packet count, right-aligned — a node never overheard reads a faint ``—``; the key
+    closes the row in the shared key widget, its hash lit at the device's routing width,
+    or a muted ``?`` when no key is known at all. An own-node row (:attr:`NodeRow.you`)
+    takes its own drawing — see :func:`_you_lane`.
 
     Args:
         row: The node's lane data.
         name_w: The name lane's width in cells (content-sized across the whole list).
-        prefix_bytes: Path-hash width in bytes to light in the hash.
-        hash_w: The flexing hash lane's width in cells (a short key pads out to it; see
+        prefix_bytes: The hash width in bytes to light at the head of the key.
+        hash_w: The flexing key lane's width in cells (a short key pads out to it; see
             :func:`~meshterm.ui.widgets.highlighted_hash`).
     """
     if row.you:
@@ -219,7 +221,7 @@ def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
         text.append(f"{'—':>5}", style="faint")
     else:
         text.append(f"{min(row.count, 99999):>5}", style="muted")
-    text.append("   ")  # the wider gap the header's HASH lane keeps (see _header)
+    text.append("   ")  # the wider gap the header's KEY lane keeps (see _header)
     if row.key:
         text.append_text(highlighted_hash(row.key, prefix_bytes, width=hash_w))
     else:
@@ -259,10 +261,10 @@ class NodeListScreen(SelectScreen):
     """A full-screen, sortable, filterable node list in the shared lane layout.
 
     The rows run in aligned lanes — name (in the node's hash-derived palette hue),
-    last-heard age (coloured by recency heat), packet count, and key hash — own-node rows
+    last-heard age (coloured by recency heat), packet count, and key — own-node rows
     first, then the rest in the active sort order. The lanes anchor to the left: the name lane is sized to its widest name (not
     the terminal), so the columns stay put as the window widens and the freed width flows
-    to the hash lane, which shows each key as fully as it fits (see :meth:`_lane_widths`).
+    to the key lane, which shows each key as fully as it fits (see :meth:`_lane_widths`).
     It is a full-screen list, not a floating popup.
 
     The sort rides the Ctrl+arrows, leaving the plain arrows for the highlight and the
@@ -294,7 +296,7 @@ class NodeListScreen(SelectScreen):
             title: Short heading shown in the border.
             rows: Every node's lane data; :attr:`NodeRow.you` rows are pinned first (in
                 the order given), the rest re-sorted here per ``sort``.
-            prefix_bytes: Path-hash width in bytes to light in each hash.
+            prefix_bytes: The hash width in bytes to light at the head of each key.
             sort: The sort state, mutated in place by the Ctrl+arrows — pass the same
                 instance across re-opens so the chosen order persists. Its ring should
                 span :data:`SORT_COLUMNS` for the hash column to be reachable.
@@ -371,11 +373,11 @@ class NodeListScreen(SelectScreen):
         return max(widths)
 
     def _lane_widths(self, width: int) -> tuple[int, int]:
-        """The name and hash lane widths for a terminal ``width`` cells wide.
+        """The name and key lane widths for a terminal ``width`` cells wide.
 
         The name lane is content-sized (see :meth:`_widest_name`) so it stays put as the
-        window grows; it only yields when a very long name would starve the hash lane past
-        its :data:`_HASH_MIN` floor. The hash lane then takes all the width the fixed
+        window grows; it only yields when a very long name would starve the key lane past
+        its :data:`_HASH_MIN` floor. The key lane then takes all the width the fixed
         lanes and the name lane leave, so keys show as fully as they fit — a heard id's 12
         hex digits with room to spare, a 64-hex key ellipsized to the lane.
         """
@@ -385,7 +387,7 @@ class NodeListScreen(SelectScreen):
         return name_w, hash_w
 
     def render_body(self, width: int) -> list[str]:
-        """Size the name lane to content and flex the hash lane, then render the list."""
+        """Size the name lane to content and flex the key lane, then render the list."""
         name_w, hash_w = self._lane_widths(width)
         if (name_w, hash_w) != (self._name_w, self._hash_w):
             self._name_w, self._hash_w = name_w, hash_w

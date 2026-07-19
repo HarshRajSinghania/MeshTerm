@@ -578,7 +578,7 @@ def test_picker_row_lanes_align_under_the_header() -> None:
         span.style == "muted" and span.start <= unknown_at < span.end
         for span in row.spans
     )
-    # The hash's routing prefix (2 bytes here) is lit in the key's hue, the tail muted.
+    # The key's 2-byte hash is lit in the key's hue, the tail muted.
     from meshterm.ui.theme import node_style
 
     hash_at = plain.index("3d" * 6)
@@ -588,11 +588,11 @@ def test_picker_row_lanes_align_under_the_header() -> None:
         for span in row.spans
     )
     # Header labels land over their lanes (+2 covers the select pointer column); the lanes
-    # now read NAME · HEARD · PKTS · HASH, with the hash closing the row.
+    # now read NAME · HEARD · PKTS · KEY, with the key closing the row.
     header = _header(10, NodesSort.from_name("heard")).plain
     assert header.index("NAME") == plain.index("unknown") + 2
-    assert header.index("HASH") == plain.index("3d" * 6) + 2
-    assert header.index("HEARD") < header.index("PKTS") < header.index("HASH")
+    assert header.index("KEY") == plain.index("3d" * 6) + 2
+    assert header.index("HEARD") < header.index("PKTS") < header.index("KEY")
 
 
 def test_picker_header_marks_the_active_sort_column() -> None:
@@ -607,9 +607,9 @@ def test_picker_header_marks_the_active_sort_column() -> None:
     # A different active column moves the mark; packets opens descending.
     packets = _header(12, NodesSort.from_name("packets")).plain
     assert "PKTS ▼" in packets and "HEARD" in packets and "HEARD ▼" not in packets
-    # The hash column is sortable now too, so it carries the mark when it's active.
+    # The key column (ring id "hash") is sortable too, so it carries the mark when active.
     hash_sorted = _header(12, NodesSort("hash", ascending=True)).plain
-    assert "HASH ▲" in hash_sorted and "PKTS ▲" not in hash_sorted
+    assert "KEY ▲" in hash_sorted and "PKTS ▲" not in hash_sorted
 
 
 def test_picker_header_highlights_only_the_active_sort_column() -> None:
@@ -621,7 +621,7 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
     lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _SORT_ACTIVE]
     # Exactly the active PKTS lane (label + triangle) carries the highlight.
     assert any("PKTS" in seg and "▼" in seg for seg in lit)
-    assert not any(any(other in seg for other in ("NAME", "HEARD", "HASH")) for seg in lit)
+    assert not any(any(other in seg for other in ("NAME", "HEARD", "KEY")) for seg in lit)
 
 
 def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
