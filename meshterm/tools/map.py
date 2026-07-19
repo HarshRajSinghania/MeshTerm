@@ -207,6 +207,7 @@ async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
                 lon=float(contact.lon),
                 is_repeater=contact.is_repeater,
                 detail=_signal_detail(observed.get(key)),
+                key=contact.public_key or contact.key_prefix or None,
             )
         )
 
@@ -221,6 +222,7 @@ async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
                 lon=float(node.lon),
                 is_repeater=node.is_repeater,
                 detail=_signal_detail(node),
+                key=node.public_key or node.node or None,
             )
         )
 
@@ -255,26 +257,32 @@ async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
         lon=lon,
         is_repeater=info.get("adv_type") == NODE_TYPE_REPEATER,
         is_self=True,
+        key=str(info.get("public_key") or "") or None,
     )
 
 
 def _legend(markers: list["MapMarker"]) -> Table:
-    """A compact legend: self → repeaters → leaf nodes, with coordinates and detail."""
+    """A compact legend: self → repeaters → leaf nodes, with coordinates and detail.
+
+    Names take their key-derived hue (our own the pure-white ``you``), matching the
+    interactive map's labels; the glyph keeps the marker's type colour.
+    """
     from ..ui.map_render import _NODE, _REPEATER, _SELF
+    from ..ui.theme import name_style
 
     table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
     table.add_column("")
     table.add_column("NODE")
     table.add_column("TYPE")
     table.add_column("COORDS", justify="right")
-    table.add_column("SEEN")
+    table.add_column("HEARD")
     ordered = sorted(markers, key=lambda m: -m._rank())
     for m in ordered:
         glyph, color = _SELF if m.is_self else (_REPEATER if m.is_repeater else _NODE)
         kind = "you" if m.is_self else ("repeater" if m.is_repeater else "node")
         table.add_row(
             Text(glyph, style=color),
-            Text(m.label, style=color if m.is_self else ""),
+            Text(m.label, style="you" if m.is_self else name_style(m.label, m.key)),
             Text(kind, style="muted"),
             Text(f"{m.lat:.4f}, {m.lon:.4f}", style="muted"),
             Text(m.detail, style="muted"),

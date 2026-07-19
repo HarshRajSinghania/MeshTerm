@@ -614,3 +614,32 @@ def test_map_observation_round_trips_node_type(ctx) -> None:
     )
     node = next(n for n in ctx.repo.heard_nodes() if n.node == "a1")
     assert node.is_repeater and node.node_type == NODE_TYPE_REPEATER
+
+
+def test_render_map_labels_take_the_name_hue_ours_white() -> None:
+    """Node labels carry their key-derived hue; our own label is white while the
+    ★ glyph stays yellow; a keyless label lands on the muted grey."""
+    from meshterm.ui.map_render import _SELF, MapMarker, render_map
+    from meshterm.ui.widgets import name_rgb
+
+    vp = Viewport.fit([(45.5, -73.6), (45.4, -73.5)], 120, 80, max_zoom=14)
+    markers = [
+        MapMarker("US", 45.5, -73.6, is_self=True, key="cc" * 32),
+        MapMarker("KEYED", 45.4, -73.5, key="d4" * 32),
+        MapMarker("BARE", 45.45, -73.55),
+    ]
+    lines = render_map(vp, {}, markers)
+    assert _glyph_color(lines, "★") == parse_hex(_SELF[1])  # the glyph keeps its yellow
+    assert _glyph_color(lines, "US") == (255, 255, 255)     # ...the label goes you-white
+    assert _glyph_color(lines, "KEYED") == name_rgb("KEYED", "d4" * 32)
+    assert _glyph_color(lines, "BARE") == (148, 163, 184)   # no key, the muted grey
+
+
+def test_render_map_find_matches_still_label_white() -> None:
+    """An active find filter keeps forcing matching labels to full white."""
+    from meshterm.ui.map_render import MapMarker, render_map
+
+    vp = Viewport.fit([(45.5, -73.6), (45.4, -73.5)], 120, 80, max_zoom=14)
+    markers = [MapMarker("TARGET", 45.5, -73.6, key="d4" * 32)]
+    lines = render_map(vp, {}, markers, find="targ")
+    assert _glyph_color(lines, "TARGET") == (255, 255, 255)

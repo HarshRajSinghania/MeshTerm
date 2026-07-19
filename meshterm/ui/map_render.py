@@ -36,6 +36,8 @@ class MapMarker:
         is_repeater: Whether the node is a repeater (prioritised marker).
         is_self: Whether this is our own node (highlighted).
         detail: Extra text for the CLI legend (e.g. ``"18 pkts · +6.0 dB"``).
+        key: The node's key hex (as full as the caller holds), seeding the label's
+            key-derived hue; ``None`` leaves the label the muted no-key grey.
     """
 
     label: str
@@ -44,6 +46,7 @@ class MapMarker:
     is_repeater: bool = False
     is_self: bool = False
     detail: str = ""
+    key: Optional[str] = None
 
     def _rank(self) -> int:
         """Draw order: self on top of repeaters on top of leaf nodes."""
@@ -394,9 +397,18 @@ def _draw_nodes(
             rgb = _pile_color(rgb, pile[(ix >> 1, iy >> 2)])
         canvas.marker(ix, iy, glyph, rgb)
 
-    # A filtered-out node is context: bare dim glyph, no label.
+    # A filtered-out node is context: bare dim glyph, no label. Labels take the
+    # node's key-derived name hue — the app-wide colour rule — with our own label the
+    # pure ``you`` white (the ★ glyph keeps its yellow); an active find filter still
+    # forces every match's label full white so the sought node pops.
+    from .widgets import name_rgb  # widgets imports this module; late-bind to dodge the cycle
+
     labelled = (p for p in placed if p[3])
     for marker, ix, iy, _matched in sorted(labelled, key=lambda p: -p[0]._rank()):
-        _, color = _marker_style(marker)
-        label_color = _FIND_MATCH_LABEL if needle else parse_hex(color)
+        if needle:
+            label_color = _FIND_MATCH_LABEL
+        elif marker.is_self:
+            label_color = (255, 255, 255)  # the `you` white
+        else:
+            label_color = name_rgb(marker.label, marker.key)
         canvas.marker_label(ix, iy, marker.label, label_color)
