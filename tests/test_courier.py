@@ -468,3 +468,58 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
     # no refresh() needed, the callable title re-reads the entry on repaint.
     ctx.courier_store.note_attempt(entry.ident)
     assert "try 1" in _outbox_plain(screen)
+
+
+# --- the recipient picker ----------------------------------------------------------------
+
+
+def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
+    """The picker draws the full lanes, opens freshest-heard first, and Enter commits."""
+    from meshterm.ui.courier_screen import _PICK_HINT, CourierRecipientScreen
+    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.widgets import NodesSort
+
+    fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=utcnow())
+    stale = Contact(
+        name="Stale", public_key="bb" * 32, last_seen=utcnow() - timedelta(days=2)
+    )
+    counts = {"aa" * 6: 7}
+    screen = CourierRecipientScreen(
+        contacts=[stale, fresh],
+        prefix_bytes=1,
+        counts=counts,
+        sort=NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
+    )
+    import re
+
+    body = "\n".join(
+        re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(80)
+    )
+    assert "NAME" in body and "HEARD" in body and "PKTS" in body and "KEY" in body
+    assert body.index("Fresh") < body.index("Stale")  # heard opens freshest-first
+    assert "    7" in body  # Fresh's overheard tally fills the PKTS lane
+    assert screen.footer_hint == _PICK_HINT
+
+    # Enter resolves the highlighted row's value — the Contact itself.
+    resolved: list = []
+    screen.resolve = resolved.append  # type: ignore[method-assign]
+    screen.handle("enter")
+    assert resolved == [fresh]
+
+
+def test_recipient_picker_sort_keys_walk_the_ring(tmp_path: Path) -> None:
+    """The same ^←→ keys the Nodes list uses re-sort the picker's columns."""
+    from meshterm.ui.courier_screen import CourierRecipientScreen
+    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.widgets import NodesSort
+
+    a = Contact(name="Alpha", public_key="aa" * 32, last_seen=utcnow())
+    z = Contact(name="Zulu", public_key="bb" * 32)
+    sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
+    screen = CourierRecipientScreen(
+        contacts=[z, a], prefix_bytes=0, counts={}, sort=sort
+    )
+    screen.handle("ctrl_left")  # heard -> name (opens ascending)
+    assert sort.column == "name" and sort.ascending
+    values = [c.value for c in screen._choices()]
+    assert values == [a, z]

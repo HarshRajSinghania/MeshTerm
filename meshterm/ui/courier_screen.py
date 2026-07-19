@@ -30,16 +30,10 @@ from rich.text import Text
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
 from .menus import back_rows, section_heading
-from .tui import DM_BYTE_LIMIT, Choice, SelectScreen, Separator
+from .nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING, NodeListScreen, NodeRow
+from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import (
-    _DEFAULT_GLYPH,
-    _NODE_GLYPHS,
-    _age_seconds,
-    _format_age,
-    _recency_style,
-    format_ago,
-)
+from .widgets import NodesSort, _age_seconds, _contact_pkts, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -105,7 +99,6 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
     from .surface import TuiUi
-    from .tui import CANCEL
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the courier is only available in the menu")
@@ -297,8 +290,62 @@ def _done_row(message: QueuedMessage) -> Text:
 # --- the flows --------------------------------------------------------------------------
 
 
+#: The recipient picker's footer: the shared node-list grammar with a committing Enter,
+#: Esc cancelling the queueing step it sits in.
+_PICK_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter select · Esc cancel"
+
+
+class CourierRecipientScreen(NodeListScreen):
+    """The recipient picker on the shared node list.
+
+    The full ``NAME · HEARD · PKTS · KEY`` lanes, the Ctrl+arrow sort ring, and
+    type-to-filter, exactly as the Nodes screen and the Time Machine picker draw
+    contacts — names in their key-derived hue, heard ages in recency heat. Unlike the
+    Nodes screen, Enter *commits*: the shared list's Enter resolves the highlighted
+    row's value, which is the :class:`~meshterm.core.models.Contact` itself.
+    """
+
+    def __init__(
+        self,
+        *,
+        contacts: list[Contact],
+        prefix_bytes: int,
+        counts: dict[str, int],
+        sort: NodesSort,
+    ) -> None:
+        """Build the picker over the device's contacts.
+
+        Args:
+            contacts: The candidate recipients (every contact — courier addresses any).
+            prefix_bytes: The hash width in bytes to light at the head of each key.
+            counts: Overheard-packet tallies keyed by lowercased 12-hex node id.
+            sort: The sort state (defaults open on ``heard``, freshest first).
+        """
+        rows = [
+            NodeRow(
+                value=c,
+                name=c.name,
+                key=c.public_key or c.key_prefix or "",
+                node_type=c.node_type,
+                last_seen=c.last_seen,
+                count=_contact_pkts(c, counts),
+            )
+            for c in contacts
+        ]
+        super().__init__(
+            "Courier — recipient",
+            rows=rows,
+            prefix_bytes=prefix_bytes,
+            sort=sort,
+            prompt="The message waits in the outbox until this node can take it:",
+            footer_hint=_PICK_HINT,
+        )
+
+
 async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     """Float the queueing flow: recipient, message, schedule."""
+    from .timemachine_screen import _routing_prefix_bytes
+
     session = ctx.ui.session
     if not contacts:
         await session.message_dialog(
@@ -310,28 +357,19 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         )
         return
 
-    def recency(contact: Contact) -> float:
-        seen = _age_seconds(contact.last_seen)
-        return seen if seen is not None else float("inf")
-
-    # The picker's shared presentation: the per-type glyph in the app's marker
-    # palette, the name coloured by recency heat (hotter = heard more recently),
-    # exactly as the Nodes list and the Time Machine picker draw contacts.
-    items: list = []
-    for contact in sorted(contacts, key=recency):
-        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
-        secs = _age_seconds(contact.last_seen)
-        row = Text()
-        row.append(glyph + " ", style=glyph_style)
-        row.append(contact.name, style=_recency_style(secs))
-        row.append(f"   heard {_format_age(secs)}", style="muted")
-        items.append(Choice(row, contact))
-    contact = await session.select(
-        "Courier — recipient",
-        items,
-        prompt="The message waits in the outbox until this node can take it:",
+    # The shared node-list presentation (see CourierRecipientScreen), opened on the
+    # heard column so the most reachable candidates lead — the old fixed order, now
+    # just the default of a re-sortable list.
+    counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
+    prefix_bytes = await _routing_prefix_bytes(ctx)
+    picker = CourierRecipientScreen(
+        contacts=contacts,
+        prefix_bytes=prefix_bytes,
+        counts=counts,
+        sort=NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
     )
-    if contact is None:
+    contact = await session.run_screen(picker)
+    if not isinstance(contact, Contact):  # Esc (CANCEL) or anything else backs out
         return
     text = await session.text(
         f"Message for {contact.name}",
