@@ -124,6 +124,48 @@ def _right_ctrl_down() -> bool:
         return False
 
 
+def _read_clipboard() -> str:
+    """Best-effort read of the OS clipboard's Unicode text (Windows; ``""`` elsewhere).
+
+    The fallback behind Ctrl-V on a terminal that delivers the key literally rather than as a
+    bracketed paste (see :meth:`TuiSession._key_bindings`): it pulls the clipboard's text
+    straight from the Win32 API. Every failure — a non-Windows platform, an empty or
+    non-text clipboard, a clipboard busy elsewhere we couldn't open — collapses to ``""``, so
+    the paste simply does nothing rather than raising into the key handler. Pointer-returning
+    calls declare a ``c_void_p`` result so a 64-bit handle isn't truncated to an int.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+
+        CF_UNICODETEXT = 13
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.GetClipboardData.restype = ctypes.c_void_p
+        user32.GetClipboardData.argtypes = [ctypes.c_uint]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        if not user32.OpenClipboard(None):
+            return ""
+        try:
+            handle = user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return ""
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                return ""
+            try:
+                return ctypes.wstring_at(ptr)
+            finally:
+                kernel32.GlobalUnlock(handle)
+        finally:
+            user32.CloseClipboard()
+    except Exception:  # noqa: BLE001 - a clipboard hiccup must never break a keypress
+        return ""
+
+
 #: Reclaim the terminal's final column. Some terminals (and prompt_toolkit's size probe on
 #: them) report the window one column narrower than it really is, so the frame is drawn to
 #: ``columns - 1`` and the true last column sits unused — visibly selectable to the right of
@@ -1144,11 +1186,28 @@ class TuiSession:
             if self._app is not None:
                 self._app.exit()
 
+        @kb.add(Keys.ControlV)
+        def _paste_clipboard(event: Any) -> None:  # noqa: ANN401
+            # Some terminals deliver Ctrl-V as the literal control key — no bracketed-paste
+            # sequence, so no text on the event. Read the OS clipboard ourselves and hand the
+            # run to the top screen as a paste. Terminals that instead translate Ctrl-V into a
+            # bracketed paste never reach here — that lands in _typed below as a multi-char run.
+            text = _read_clipboard()
+            if text:
+                self._dispatch("paste", text)
+
         @kb.add(Keys.Any)
         def _typed(event: Any) -> None:  # noqa: ANN401
             data = event.data
-            if data and len(data) == 1 and data.isprintable():
+            if not data:
+                return
+            if len(data) == 1 and data.isprintable():
                 self._dispatch("text", data)
+            elif len(data) > 1:
+                # A bracketed paste (Ctrl-V, right-click, Ctrl-Shift-V) arrives as one
+                # multi-character run — hand the whole thing to the top screen as a paste it
+                # can confirm and insert, rather than dropping it as the old len==1 guard did.
+                self._dispatch("paste", data)
 
         return kb
 

@@ -138,6 +138,7 @@ class ChatScreen(Screen):
         self._status = ""
         self._stick = True  # keep the newest message in view until the user scrolls up
         self._paths_open = False  # one paths dialog at a time
+        self._paste_open = False  # one paste-confirm dialog at a time
         # The pick: index of the highlighted message (or None when the compose line is
         # focused), plus the body line it rendered on so the frame keeps it in view.
         self._selected: Optional[int] = None
@@ -434,7 +435,9 @@ class ChatScreen(Screen):
         """Dispatch a key: pick and act on messages, edit the compose line, or leave.
 
         Both chat kinds share one model. With no message picked, Enter sends and typing
-        edits the compose line. ↑ picks the newest message; the pick then walks with
+        edits the compose line; a paste (Ctrl-V, or a terminal's bracketed paste) is
+        confirmed on an amber dialog before it lands there (see :meth:`_begin_paste`). ↑
+        picks the newest message; the pick then walks with
         ↑↓, PgUp/PgDn (a screenful), Ctrl+Home (the very first message), and
         Ctrl+PgUp/PgDn (day dividers), carrying the view with it. Enter on a picked
         message primes a reply ``@mention`` in a channel and opens the delivery paths
@@ -450,6 +453,8 @@ class ChatScreen(Screen):
                     self._open_paths(self._selected)
             else:
                 self._submit()
+        elif action == "paste":
+            self._begin_paste(data)
         elif action == "paths":
             target = self._selected if self._selected is not None else len(self._messages) - 1
             self._open_paths(target)
@@ -501,6 +506,52 @@ class ChatScreen(Screen):
             finally:
                 self._paths_open = False
                 self._session.invalidate()
+
+        asyncio.ensure_future(run())
+
+    def _begin_paste(self, data: str) -> None:
+        """Confirm a clipboard paste on an amber dialog, then insert it into the compose line.
+
+        A chat message goes out over the air, so a paste — which can be far larger than a
+        keystroke, or carry content the user didn't mean to broadcast — is gated behind a
+        Cancel/Paste confirm (the amber ``danger`` tier: disruptive, not data loss) rather
+        than dropped straight in. Newlines and control characters fold to spaces (a message
+        is one line); an empty result never opens the dialog. One paste dialog at a time,
+        scheduled off the key handler like the paths view.
+        """
+        if self._paste_open:
+            return
+        clean = "".join(ch if ch.isprintable() else " " for ch in data).strip()
+        if not clean:
+            return
+        self._paste_open = True
+        count = len(clean)
+
+        async def run() -> None:
+            try:
+                confirmed = await self._session.button_dialog(
+                    Text(
+                        f"Paste {count} character{'s' if count != 1 else ''} "
+                        "into your message?",
+                        style="warn",
+                    ),
+                    [("Cancel", False), ("Paste", True)],
+                    title="Paste",
+                    default=1,
+                    border_style="warn",
+                    footer_hint="←→ choose · Enter select · Esc cancel",
+                )
+            finally:
+                self._paste_open = False
+            if confirmed:
+                # Land it in the compose line: drop any message pick, snap back to the tail,
+                # and insert the run through the shared editor. An over-budget result is
+                # flagged by the byte gauge, exactly as typing past the limit already is.
+                self._clear_selection()
+                self._stick = True
+                self._editor.edit("text", clean)
+                self._status = ""
+            self._session.invalidate()
 
         asyncio.ensure_future(run())
 

@@ -519,6 +519,51 @@ def test_chat_screen_renders_transcript_and_input() -> None:
     assert "›" in joined  # the input editor's prompt marker
 
 
+class _PasteSession(_StubSession):
+    """A stub session whose paste confirm answers a scripted Cancel/Paste."""
+
+    def __init__(self, answer: bool) -> None:
+        super().__init__()
+        self.answer = answer
+        self.dialogs: list = []
+
+    async def button_dialog(self, prompt, buttons, **kwargs):  # noqa: ANN001, ANN201
+        self.dialogs.append((prompt, buttons, kwargs))
+        return self.answer
+
+
+async def _drain_paste(screen: ChatScreen) -> None:
+    """Let the scheduled paste-confirm task run to completion."""
+    for _ in range(100):
+        await asyncio.sleep(0)
+        if not screen._paste_open:
+            return
+
+
+async def test_chat_paste_confirms_amber_then_inserts() -> None:
+    """Ctrl-V paste asks first on an amber Cancel/Paste dialog, then lands the run in compose."""
+    session = _PasteSession(answer=True)
+    screen = _screen(session, send=None)
+    screen.handle("paste", "hello\nworld")
+    await _drain_paste(screen)
+
+    # The newline folded to a space and the run dropped into the compose line…
+    assert screen._editor.text == "hello world"
+    prompt, buttons, kwargs = session.dialogs[0]
+    assert "Paste 11 characters" in prompt.plain  # the folded, stripped run's length
+    assert kwargs.get("border_style") == "warn"   # the amber (danger) tier — "yellow"
+    assert [label for label, _ in buttons] == ["Cancel", "Paste"]  # safe way out on the left
+
+
+async def test_chat_paste_declined_leaves_compose_untouched() -> None:
+    """Choosing Cancel on the paste confirm inserts nothing."""
+    session = _PasteSession(answer=False)
+    screen = _screen(session, send=None)
+    screen.handle("paste", "unwanted")
+    await _drain_paste(screen)
+    assert screen._editor.text == ""
+
+
 async def test_chat_screen_enter_sends_and_appends() -> None:
     """Pressing Enter sends the line and appends the returned message to the transcript."""
     session = _StubSession()

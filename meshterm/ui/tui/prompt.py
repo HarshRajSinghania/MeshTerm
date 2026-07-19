@@ -102,11 +102,20 @@ class _LineEditor:
 
         Args:
             action: The normalized key action.
-            data: The character to insert when ``action`` is ``text``.
+            data: The character to insert when ``action`` is ``text`` — or the whole run
+                pasted when ``action`` is ``paste``.
 
         Returns:
             ``True`` if the action was an editing action handled here.
         """
+        if action == "paste":
+            # A paste arrives as one multi-character run. A single-line field can't hold
+            # newlines or control characters, so fold them to spaces, then insert the run
+            # exactly like typed text (the max-length trim below still applies).
+            data = "".join(ch if ch.isprintable() else " " for ch in data)
+            if not data:
+                return False
+            action = "text"
         if action == "text" and data.isprintable():
             if self._max_length is not None:
                 room = self._max_length - len(self.text)

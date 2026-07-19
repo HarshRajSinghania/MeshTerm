@@ -706,6 +706,22 @@ def test_line_editor_caps_length_and_truncates_paste() -> None:
     assert pasted.text == "123456"  # filled only the six available slots
 
 
+def test_line_editor_paste_folds_controls_and_respects_max_length() -> None:
+    """A ``paste`` action folds newlines/controls to spaces and inserts the run at the cursor."""
+    from meshterm.ui.tui.prompt import _LineEditor
+
+    editor = _LineEditor("ab")
+    editor.cursor = 1
+    assert editor.edit("paste", "X\nY") is True
+    assert editor.text == "aX Yb"  # the newline became a space, inserted mid-buffer
+
+    capped = _LineEditor("", max_length=3)
+    capped.edit("paste", "hello")
+    assert capped.text == "hel"  # a paste is trimmed to the remaining room, like a big insert
+
+    assert _LineEditor("z").edit("paste", "") is False  # nothing to paste leaves the buffer
+
+
 def test_pin_dialog_shows_six_slots_with_dots_for_blanks() -> None:
     """The PIN field is six fixed slots: bullets for typed digits, centre dots for blanks."""
     from meshterm.ui.tui.prompt import PinDialog
