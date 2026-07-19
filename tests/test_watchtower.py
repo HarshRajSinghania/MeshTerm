@@ -252,3 +252,31 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
     acked_row = _alert_row(acked, key_of)
     at = acked_row.plain.index("Roof")
     assert any(s.style == "muted" and s.start <= at < s.end for s in acked_row.spans)
+
+
+def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
+    """The node name is preceded by its shared type glyph (own colour, muted when acked)."""
+    from meshterm.core.watch_store import Alert
+    from meshterm.ui.watchtower_screen import _alert_row
+    from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+
+    key_of = lambda label: None
+    type_of = lambda label: 2 if label == "Roof" else None  # Roof advertises as a repeater
+    glyph, glyph_style = _NODE_GLYPHS[2]
+
+    alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
+    row = _alert_row(alert, key_of, type_of)
+    assert f"{glyph} Roof" in row.plain  # glyph sits immediately left of the name
+    gi = row.plain.index(glyph)
+    assert any(s.style == glyph_style and s.start <= gi < s.end for s in row.spans)
+
+    # Unknown type (and a keyless kind like courier) falls back to the plain-node glyph.
+    ghost = Alert(ident=2, when=utcnow(), kind="courier", label="Ghost", message="gave up")
+    assert f"{_DEFAULT_GLYPH[0]} Ghost" in _alert_row(ghost, key_of).plain
+
+    # An acked alert mutes the glyph with the rest of its history.
+    acked = Alert(ident=3, when=utcnow(), kind="silence", label="Roof",
+                  message="quiet", acked=True)
+    acked_row = _alert_row(acked, key_of, type_of)
+    gi = acked_row.plain.index(glyph)
+    assert any(s.style == "muted" and s.start <= gi < s.end for s in acked_row.spans)

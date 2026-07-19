@@ -95,12 +95,24 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
     loop = asyncio.get_running_loop()
     cursor: Any = None
     while True:
+        # An alert's node type, by its label — the contact table's advertised type wins
+        # (freshest), a watched entry's stored type backfills, so an alert's name gets its
+        # glyph even for a node no longer in the device's contacts.
+        type_by_name: dict[str, int] = {
+            entry.name.casefold(): entry.node_type
+            for entry in store.watched().values()
+            if entry.node_type is not None
+        }
+        type_by_name.update(
+            {c.name.casefold(): c.node_type for c in contacts if c.node_type is not None}
+        )
         items = _menu_items(
             store.alerts(),
             store.watched(),
             store.new_node_alerts,
             type_of=type_by_key.get,
             key_of=contact_key_of,
+            alert_type_of=lambda label: type_by_name.get(label.casefold()),
         )
         menu = SelectScreen(
             "Watchtower — alerts & watched nodes",
@@ -144,6 +156,7 @@ def _menu_items(
     *,
     type_of: Callable[[str], Optional[int]] = lambda key: None,
     key_of: Callable[[str], Optional[str]] = lambda name: None,
+    alert_type_of: Callable[[str], Optional[int]] = lambda label: None,
 ) -> list:
     """Build the screen's rows: alerts, then the watchlist, then the actions.
 
@@ -156,6 +169,8 @@ def _menu_items(
         key_of: Maps an alert's node label back to a key, for its hue; layered here
             with the watchlist's own names so a starred node's alerts colour even
             when the device (and its contact table) is offline.
+        alert_type_of: Maps an alert's node label to that node's type, for the type
+            glyph that leads its name (the plain-node ``●`` when unknown).
     """
     watched_keys = {entry.name.casefold(): entry.key for entry in watched.values()}
 
@@ -166,7 +181,9 @@ def _menu_items(
     if not alerts:
         items.append(Separator("  nothing yet — tripped rules land here"))
     for alert in alerts[:_SHOWN_ALERTS]:
-        items.append(Choice(_alert_row(alert, label_key), ("ack", alert.ident)))
+        items.append(
+            Choice(_alert_row(alert, label_key, alert_type_of), ("ack", alert.ident))
+        )
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
     if unacked:
@@ -195,11 +212,19 @@ def _menu_items(
     return items
 
 
-def _alert_row(alert: Alert, key_of: Callable[[str], Optional[str]]) -> Text:
-    """One alert as a row: marker, age, kind, node, and the message.
+def _alert_row(
+    alert: Alert,
+    key_of: Callable[[str], Optional[str]],
+    type_of: Callable[[str], Optional[int]] = lambda label: None,
+) -> Text:
+    """One alert as a row: marker, age, kind, type glyph, node, and the message.
 
-    An unacked alert's node label takes its key-derived hue (resolved through
-    ``key_of``, muted when no key is known); an acked row's label recedes to muted
+    The leading ``●``/``○`` is the *acknowledgement* state, so the node's own type marker
+    (``▲`` repeater, ``●`` node, …) leads the node name instead — the map's shared marker
+    palette in its own type colour, resolved from the node's key through ``type_of`` (the
+    plain-node ``●`` when the type is unknown, matching the watchlist rows). An unacked
+    alert's node label takes its key-derived hue (resolved through ``key_of``, muted when
+    no key is known); an acked row recedes to muted throughout — the type glyph included —
     with the rest of its history.
     """
     row = Text()
@@ -210,6 +235,8 @@ def _alert_row(alert: Alert, key_of: Callable[[str], Optional[str]]) -> Text:
     age = _format_age(_age_seconds(alert.when))
     row.append(f"{age:>5}  ", style="muted")
     row.append(alert.kind.ljust(10), style=_KIND_STYLES.get(alert.kind, "brand"))
+    glyph, glyph_style = _NODE_GLYPHS.get(type_of(alert.label), _DEFAULT_GLYPH)
+    row.append(f"{glyph} ", style="muted" if alert.acked else glyph_style)
     if alert.acked:
         row.append(alert.label, style="muted")
     else:
