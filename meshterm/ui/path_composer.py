@@ -541,7 +541,7 @@ class PathComposerScreen(Screen):
                 self._hops.pop(self._cursor - 1)
                 self._cursor -= 1
             self._index = 0
-        elif action == "text" and data.isprintable() and data not in ("/",):
+        elif action == "text" and data.isprintable():
             if not data.isspace() or self._entry:  # never begin the entry with a space
                 self._entry += data
                 self._index = 0
