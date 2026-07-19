@@ -42,6 +42,12 @@ def _console(width: int) -> Console:
             file=StringIO(),
             force_terminal=True,
             color_system="truecolor",
+            # This console is a rasterizer, not terminal output: its ANSI is re-parsed
+            # by prompt_toolkit, and the TUI's hues are semantics (node identity,
+            # recency heat), not decoration. So a NO_COLOR environment must not strip
+            # them here — the scripted CLI's real console (theme.build_console) is the
+            # one that honours NO_COLOR.
+            no_color=False,
             highlight=False,
             soft_wrap=False,
         )
