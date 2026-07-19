@@ -194,6 +194,22 @@ def test_target_trace_counts_tallies_successes_and_totals(repo: Repository) -> N
     assert PATH_TRACE_TARGET not in counts  # path walks name no target
 
 
+def test_target_last_traced_keeps_latest_per_target(repo: Repository) -> None:
+    """Per target, the most recent trace time — failures counted, path walks excluded."""
+    run = repo.start_run("trace", {})
+    early = datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)
+    late = datetime(2026, 1, 12, 18, 0, tzinfo=timezone.utc)
+    repo.record_trace(run, _make_trace("Alice", ("r", 1.0), ts=early))
+    repo.record_trace(run, _make_trace("Alice", success=False, ts=late))  # newer, timed out
+    repo.record_trace(run, _make_trace("Bob", ("r", 1.0), ts=early))
+    repo.record_trace(run, _make_trace(PATH_TRACE_TARGET, ("r", 3.0), ts=late))
+
+    last = repo.target_last_traced()
+    assert last["Alice"] == late  # the failed-but-newer trace wins — you still traced it
+    assert last["Bob"] == early
+    assert PATH_TRACE_TARGET not in last  # path walks name no target
+
+
 # -- latest_trace edge cases -----------------------------------------------
 
 

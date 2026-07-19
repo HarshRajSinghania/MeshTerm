@@ -480,6 +480,32 @@ class Repository:
         ).fetchall()
         return [row["target"] for row in rows]
 
+    def target_last_traced(self) -> dict[str, datetime]:
+        """Per trace target, when it was most recently traced (any outcome).
+
+        Feeds the Trace-target picker's ``TRACED`` column and its default sort — how long
+        ago each node was last aimed at, so the picker opens with the most-recently-traced
+        node on top. Keyed by the raw target string the trace was filed under (a contact
+        name or a hex hash), exactly like :meth:`target_trace_counts`; the caller matches
+        its node against those keys. Timed-out attempts count — you *traced* the node
+        whether or not it answered — and the hand-composed path walks filed under
+        :data:`~meshterm.core.models.PATH_TRACE_TARGET` are excluded (they name no target).
+
+        Returns:
+            ``target → last-traced timestamp`` (aware UTC) for every distinct non-path-walk
+            target.
+        """
+        rows = self._conn.execute(
+            "SELECT target, MAX(created_at) AS latest FROM traces "
+            "WHERE target != ? GROUP BY target",
+            (PATH_TRACE_TARGET,),
+        ).fetchall()
+        out: dict[str, datetime] = {}
+        for row in rows:
+            if row["latest"]:
+                out[row["target"]] = datetime.fromisoformat(row["latest"])
+        return out
+
     def target_trace_counts(self) -> dict[str, tuple[int, int]]:
         """Per trace target, its ``(successes, total)`` across every stored trace.
 

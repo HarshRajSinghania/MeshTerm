@@ -24,6 +24,7 @@ stored history reads the same no matter where it came from.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 import typer
@@ -34,8 +35,6 @@ from ..core.models import LOCAL_DEVICE_LABEL, PATH_TRACE_TARGET, Contact, TraceS
 from ..services import trace_runner
 from ..ui.widgets import stats_panel
 from .base import Tool, ToolResult, register
-
-_BACK = "__back__"
 
 #: The characters a stored trace target must consist of to be treated as a hex key
 #: prefix when folding it back to a contact name in the target picker.
@@ -118,63 +117,74 @@ class TraceTool(Tool):
         return ToolResult(summary={"sessions": 1, "traces": traces})
 
     async def _pick_target(self, ctx: AppContext) -> Optional[str]:
-        """Pick a trace target: recently traced first, then contacts by recency.
+        """Pick a trace target from the shared sortable contact list.
+
+        The same ``NAME · TRACED · HEARD · PKTS · KEY`` lanes, Ctrl+arrow sort ring, and
+        type-to-filter the Contacts screen and the courier recipient draw — but with every
+        node type listed (a trace answers *can I reach this node?* for a repeater or room
+        just as for a companion) and an extra ``TRACED`` lane: how long ago each node was
+        last traced. The list opens sorted by ``TRACED`` descending, so the most recently
+        traced node leads and never-traced ones gather at the bottom. Enter commits the
+        highlighted node's name as the target.
+
+        With no known contacts at all the list would be empty, so a free-text prompt takes
+        over instead — also the only way to trace a bare key prefix for a node the device
+        doesn't carry as a contact.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            The chosen target name, or ``None`` if cancelled. With no known contacts and
-            no history, falls back to a free-text prompt so a key prefix can be typed.
+            The chosen target name, or ``None`` if cancelled.
         """
-        from ..ui.tui import Choice, Separator
-        from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+        from ..ui.contactlist import (
+            TRACE_SORT_COLUMNS,
+            TRACE_SORT_OPENS_ASCENDING,
+            ContactListScreen,
+            ContactRow,
+        )
+        from ..ui.surface import TuiUi
+        from ..ui.timemachine_screen import _routing_prefix_bytes
+        from ..ui.widgets import ContactsSort, _contact_pkts
 
         # Through the session cache: this picker runs on every Trace open, and the contacts
         # table is a slow round-trip on a busy node — re-reading it here (in front of the
         # already-cached trace screen) is what kept opening Trace feeling like a stall. See
-        # the note in the ``nodes`` tool and :class:`~meshterm.services.device_state.DeviceState`.
+        # :class:`~meshterm.services.device_state.DeviceState`.
         contacts = await ctx.devstate.contacts()
-        recent = _recent_targets(ctx.repo.traced_targets(), contacts)
-
-        if not contacts and not recent:
+        if not contacts or not isinstance(ctx.ui, TuiUi):
+            # No contacts to list (or no full-screen session): a free-text prompt is the
+            # only way in — and the only way to trace a bare key prefix off-list.
             entered = await ctx.ui.text("Target node (name or key prefix):")
             return entered.strip() if entered else None
 
-        by_name = {c.name: c for c in contacts}
-
-        def row(name: str) -> Choice:
-            contact = by_name.get(name)
-            glyph, style = (
-                _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
-                if contact is not None
-                else _DEFAULT_GLYPH
+        traced = _last_traced_by_name(contacts, ctx.repo.target_last_traced())
+        counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
+        prefix_bytes = await _routing_prefix_bytes(ctx)
+        rows = [
+            ContactRow(
+                value=c,
+                name=c.name,
+                key=c.public_key or c.key_prefix or "",
+                node_type=c.node_type,
+                last_seen=c.last_seen,
+                count=_contact_pkts(c, counts),
+                last_traced=traced.get(c.name),
             )
-            label = Text(glyph, style=style)
-            label.append(f" {name}")
-            return Choice(title=label, value=name)
-
-        items: list = []
-        listed: set[str] = set()
-        if recent:
-            items.append(Separator("── ⏱ Recently traced ──", style="accent"))
-            for name in recent:
-                items.append(row(name))
-                listed.add(name)
-        remaining = [c for c in contacts if c.name not in listed]
-        if remaining:
-            items.append(Separator("── 👤 Contacts ──", style="accent"))
-            for contact in _by_recency(remaining):
-                items.append(row(contact.name))
-        items.append(Separator(" "))
-        items.append(Choice(title="Back", value=_BACK))
-
-        choice = await ctx.ui.select(
-            "Trace target — pick a target", items, wrap=False
+            for c in contacts
+        ]
+        picker = ContactListScreen(
+            "Trace target — pick a target",
+            rows=rows,
+            prefix_bytes=prefix_bytes,
+            sort=ContactsSort.from_name(
+                "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
+            ),
+            footer_hint="↑↓ move · ^←→↑↓ sort · type filter · Enter select · Esc back",
+            show_traced=True,
         )
-        if choice in (None, _BACK):
-            return None
-        return str(choice)
+        chosen = await ctx.ui.session.run_screen(picker)
+        return chosen.name if isinstance(chosen, Contact) else None
 
     # -- scripted (CLI) -------------------------------------------------------------
 
@@ -387,61 +397,44 @@ async def _trace_once_cli(
     return ToolResult(summary=summary, message=message)
 
 
-def _recent_targets(stored: list[str], contacts: list[Contact]) -> list[str]:
-    """Clean the stored recent-target names for the picker's *Recently traced* section.
+def _last_traced_by_name(
+    contacts: list[Contact], traced: dict[str, datetime]
+) -> dict[str, datetime]:
+    """Map each contact's name to when that node was last traced.
 
-    Targets are recorded exactly as the user addressed them, so the same node can
-    appear once as a contact name and again as a raw hex prefix typed some other day.
-    Each stored target is folded back to its contact's current name when it matches one
-    (by name, case-insensitively, or as a prefix of a contact's public key), then
-    deduplicated with order preserved — so every node shows once, under the name the
-    rest of the picker uses.
+    The Trace picker's ``TRACED`` lane and default sort read this. Stored trace targets are
+    filed exactly as the user addressed them — a contact name one day, a raw hex key prefix
+    another — so each target is folded onto the contact it names (by name, case-insensitively,
+    or as a prefix of a contact's public key) and the *latest* trace time wins, so a node
+    traced under both spellings still shows one honest "last traced" age. This is the inverse
+    of the picker's old recent-targets fold, kept per-contact rather than as a name list.
 
     Args:
-        stored: Recent trace destinations, most recent first, as recorded.
-        contacts: The device's current contacts to fold names against.
+        contacts: The device's current contacts.
+        traced: ``target → last-traced time`` from
+            :meth:`~meshterm.persistence.repository.Repository.target_last_traced`.
 
     Returns:
-        The display names, most recently traced first, one per node.
+        ``contact name → last-traced time`` for every contact the history can place.
     """
     by_fold = {c.name.casefold(): c.name for c in contacts}
+    out: dict[str, datetime] = {}
 
-    def fold(target: str) -> str:
+    def note(name: str, when: datetime) -> None:
+        current = out.get(name)
+        if current is None or when > current:
+            out[name] = when
+
+    for target, when in traced.items():
         named = by_fold.get(target.casefold())
         if named is not None:
-            return named
+            note(named, when)
+            continue
         needle = target.lower().removeprefix("0x")
-        # Only fold plausible key prefixes (≥2 bytes of hex) — a short hex-looking
-        # *name* like "ace" must not be mistaken for an address.
+        # Only fold plausible key prefixes (≥2 bytes of hex) — a short hex-looking *name*
+        # like "ace" must not be mistaken for an address.
         if len(needle) >= 4 and all(ch in _HEX_DIGITS for ch in needle):
-            for c in contacts:
-                if (c.public_key or "").lower().startswith(needle):
-                    return c.name
-        return target
-
-    names: list[str] = []
-    seen: set[str] = set()
-    for target in stored:
-        name = fold(target)
-        if name.casefold() not in seen:
-            seen.add(name.casefold())
-            names.append(name)
-    return names
-
-
-def _by_recency(contacts: list[Contact]) -> list[Contact]:
-    """Order contacts most-recently-heard first (never-heard last, alphabetically).
-
-    Args:
-        contacts: The contacts to order.
-
-    Returns:
-        A new sorted list; the input is left untouched.
-    """
-
-    def key(c: Contact) -> tuple:
-        heard = c.last_seen is not None and getattr(c.last_seen, "tzinfo", None) is not None
-        stamp = c.last_seen.timestamp() if heard else 0.0
-        return (not heard, -stamp, c.name.casefold())
-
-    return sorted(contacts, key=key)
+            for contact in contacts:
+                if (contact.public_key or "").lower().startswith(needle):
+                    note(contact.name, when)
+    return out

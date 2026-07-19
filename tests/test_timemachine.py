@@ -666,6 +666,62 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
     assert not any(any(other in seg for other in ("NAME", "HEARD", "KEY")) for seg in lit)
 
 
+def test_traced_lane_shows_only_when_enabled() -> None:
+    """The optional TRACED lane sits between NAME and HEARD — and only with show_traced."""
+    from meshterm.ui.contactlist import (
+        TRACE_SORT_COLUMNS,
+        TRACE_SORT_OPENS_ASCENDING,
+        ContactRow,
+        _header,
+        _lane,
+    )
+    from meshterm.ui.widgets import ContactsSort
+
+    sort = ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING)
+    # Off (the default of every other list): no TRACED column, lanes read NAME·HEARD·PKTS·KEY.
+    assert "TRACED" not in _header(10, ContactsSort.from_name("heard")).plain
+    # On: TRACED lands between NAME and HEARD, and opens as the default sort (descending).
+    header = _header(10, sort, show_traced=True).plain
+    assert header.index("NAME") < header.index("TRACED") < header.index("HEARD")
+    assert "TRACED ▼" in header
+
+    row = ContactRow(
+        value="x", name="Poly", key="3d" * 6,
+        last_seen=utcnow() - timedelta(minutes=90),
+        last_traced=utcnow() - timedelta(minutes=2),
+    )
+    # The traced age ("2m") renders left of the heard age ("1h") in the shown lane.
+    traced_lane = _lane(row, 10, 1, 12, True).plain
+    assert traced_lane.index("2m") < traced_lane.index("1h")
+    # With the lane off, only the heard age shows.
+    assert "2m" not in _lane(row, 10, 1, 12, False).plain
+
+
+def test_traced_sort_orders_most_recent_first_never_last() -> None:
+    """The traced sort opens most-recently-traced first, never-traced gathered at the bottom."""
+    from meshterm.ui.contactlist import (
+        TRACE_SORT_COLUMNS,
+        TRACE_SORT_OPENS_ASCENDING,
+        ContactRow,
+        _ordered,
+    )
+    from meshterm.ui.widgets import ContactsSort
+
+    now = utcnow()
+    rows = [
+        ContactRow(value="stale", name="Stale", last_traced=now - timedelta(hours=5)),
+        ContactRow(value="never", name="Never", last_traced=None),
+        ContactRow(value="fresh", name="Fresh", last_traced=now - timedelta(minutes=1)),
+    ]
+    sort = ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING)
+    assert sort.column == "traced" and sort.ascending is False  # opens descending
+    # Descending (the default): freshest trace on top, never-traced last.
+    assert [r.value for r in _ordered(rows, sort)] == ["fresh", "stale", "never"]
+    # Ascending flips the traced order but keeps never-traced out of the fresh block.
+    sort.ascending = True
+    assert [r.value for r in _ordered(rows, sort)] == ["never", "stale", "fresh"]
+
+
 def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
     """Build a rendered picker over ``listed`` and return it (rows sized to ``width``)."""
     from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING

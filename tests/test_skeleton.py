@@ -62,21 +62,32 @@ def test_parse_trace_path_rejects_mixed_widths() -> None:
         trace_runner.parse_trace_path("3d,a1b2c3", contacts=[])
 
 
-def test_recent_targets_folds_hex_to_names_and_dedupes() -> None:
-    """Stored targets collapse to contact names so a node shows once in the picker.
+def test_last_traced_by_name_folds_hex_to_contacts_and_keeps_latest() -> None:
+    """The Trace picker's TRACED lane folds every stored target onto its contact.
 
-    The same node traced as "alice" one day and by its key prefix another must appear
-    a single time under its contact name; a hex-looking *name* stays a name, and
-    unknown prefixes pass through untouched.
+    A node traced as "alice" one day and by its key prefix another shows one honest last-
+    traced time — the latest of the two. A hex-looking *name* stays a name (matched by
+    name, not address), and an unknown prefix that names no contact simply drops out.
     """
-    from meshterm.tools.trace import _recent_targets
+    from datetime import datetime, timezone
+
+    from meshterm.tools.trace import _last_traced_by_name
 
     contacts = [
         Contact(name="Alice", public_key="d4e5f6a7" + "00" * 28, key_prefix="d4e5f6a7"),
         Contact(name="cafe", public_key="12ab34cd" + "00" * 28, key_prefix="12ab34cd"),
     ]
-    stored = ["d4e5f6", "alice", "Alice", "cafe", "beefbeef", "d4e5f6a7"]
-    assert _recent_targets(stored, contacts) == ["Alice", "cafe", "beefbeef"]
+
+    def when(day: int) -> datetime:
+        return datetime(2026, 7, day, tzinfo=timezone.utc)
+
+    traced = {
+        "d4e5f6": when(1),   # Alice by an early key-prefix trace
+        "Alice": when(9),    # …and by name, more recently — the latest must win
+        "cafe": when(5),     # a hex-looking *name*, matched as a name
+        "beefbeef": when(3),  # a prefix that names no contact — dropped
+    }
+    assert _last_traced_by_name(contacts, traced) == {"Alice": when(9), "cafe": when(5)}
 
 
 def test_node_type_resolver_matches_hop_hash_to_contact_type() -> None:
