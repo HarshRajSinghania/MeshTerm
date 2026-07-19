@@ -53,6 +53,12 @@ _OVERZOOM = 2
 #: outliers don't zoom the whole mesh out to a continent. See :meth:`geo.Viewport.fit`.
 DEFAULT_VIEW_FRACTION = 0.5
 
+#: The zoom an Enter-to-frame homes in at when the matches set no extent of their own — a
+#: single node (or several at one spot) has nothing to frame, so Enter zooms to this
+#: street-level closeness rather than the fit's neutral default. Capped at the tile
+#: source's max so it never over-zooms onto blank tiles.
+_FIND_ZOOM = 16
+
 
 class MapScreen(Screen):
     """A full-screen, keyboard-driven map of the mesh's located nodes over an OSM basemap."""
@@ -301,7 +307,10 @@ class MapScreen(Screen):
         """Refit the view around the find filter's matches (Enter on an active find).
 
         All matches are framed (``fraction=1.0`` — the user asked for exactly these
-        nodes, so no dense-core trimming), and no matches at all leaves the view alone.
+        nodes, so no dense-core trimming). A single match — or several at one spot — has
+        no extent to frame, so instead of the fit's neutral default the view homes in
+        close on it (:data:`_FIND_ZOOM`, capped at the tile source's max so it never
+        over-zooms onto blank tiles). No matches at all leaves the view alone.
         """
         matches = self._matches()
         if not matches:
@@ -311,6 +320,7 @@ class MapScreen(Screen):
             vp.dot_w,
             vp.dot_h,
             max_zoom=self._max_tile_zoom,
+            default_zoom=min(_FIND_ZOOM, self._max_tile_zoom),
             fraction=1.0,
         )
 

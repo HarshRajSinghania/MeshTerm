@@ -544,6 +544,26 @@ def test_map_screen_find_filters_frames_and_clears() -> None:
     assert asyncio.run(drive()) is None
 
 
+def test_map_screen_enter_zooms_in_on_a_single_match() -> None:
+    """Enter on a lone filtered node homes in close on it, not the fit's neutral default."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import _FIND_ZOOM, MapScreen
+
+    markers = [
+        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Alice", 45.40, -73.50),
+    ]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 19)  # source max 19
+    screen.render_body(80)
+    for ch in "yul":
+        screen.handle("text", ch)
+    assert [m.label for m in screen._matches()] == ["YUL-Cartierville"]
+    screen.handle("enter")
+    assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.01)
+    assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.01)
+    assert screen._viewport.zoom == _FIND_ZOOM  # zoomed in, not the fit's default 14
+
+
 def test_map_screen_restores_and_persists_view() -> None:
     """The screen reopens on a saved view and reports every centre/zoom change."""
     from meshterm.ui.map_render import MapMarker
