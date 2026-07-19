@@ -1,13 +1,14 @@
-"""The shared node list: one sortable, filterable lane layout for every screenful of nodes.
+"""The shared contact list: one sortable, filterable lane layout for every screenful of contacts.
 
 Extracted from the Time Machine's subject picker so the app has exactly one way to draw "a
-full-screen list of nodes": aligned ``NAME · HEARD · PKTS · KEY`` lanes under a sort-aware
+full-screen list of contacts": aligned ``NAME · HEARD · PKTS · KEY`` lanes under a sort-aware
 column header, our own node pinned first, the sort riding the Ctrl+arrows (plain arrows keep
 the highlight, letters keep type-to-filter), and the name lane sized to its content so the
-columns anchor left while the key lane soaks up the rest of the terminal. The Time Machine
-picker and the Nodes screen both build on :class:`NodeListScreen`; each hands its rows over
-as :class:`NodeRow` values — however it learned them (stored history, the device's contact
-table) — so the two lists render, sort, and steer identically without sharing a data source.
+columns anchor left while the key lane soaks up the rest of the terminal. The Contacts screen,
+the Time Machine picker, and the courier recipient list all build on :class:`ContactListScreen`;
+each hands its rows over as :class:`ContactRow` values — however it learned them (stored history
+of *discovered* contacts, the device's *added* contact table) — so the lists render, sort, and
+steer identically without sharing a data source.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from .widgets import (
     _format_age,
     _recency_style,
     highlighted_hash,
-    NodesSort,
+    ContactsSort,
 )
 
 #: The narrowest the name lane shrinks to (a very narrow terminal), so the header's ``NAME``
@@ -47,7 +48,7 @@ _HASH_MIN = 8
 #: Everything in a row *besides* the name and key lanes, in cells: the select pointer (2),
 #: the type glyph and its space (2), then the two gapped fixed lanes — heard (2 gap + 5) and
 #: packets (2 gap + 5) — and the 3-cell gap before the key. The name lane is content-sized
-#: and the key lane takes the rest (see :meth:`NodeListScreen._lane_widths`).
+#: and the key lane takes the rest (see :meth:`ContactListScreen._lane_widths`).
 _LEAD = 2 + 2 + (2 + 5) + (2 + 5) + 3
 
 #: The muted ``(you)`` tag on the own-node lane (see :func:`_lane`), its width folded into
@@ -55,17 +56,17 @@ _LEAD = 2 + 2 + (2 + 5) + (2 + 5) + 3
 _YOU_TAG = "  (you)"
 
 #: The sort ring and each column's natural opening direction — name A→Z, most-recently-heard
-#: first, most packets first, and ``hash`` on the node's key (ascending = ``0`` → ``f``).
+#: first, most packets first, and ``hash`` on the contact's key (ascending = ``0`` → ``f``).
 #: The ``hash`` ring id predates the lexicon and stays for saved-sort compatibility; its
 #: column header reads ``KEY`` — the lane shows the key, with the hash lit inside it.
-#: Callers build their :class:`~meshterm.ui.widgets.NodesSort` over these so the Ctrl+arrows
-#: walk the same four columns on every node list.
+#: Callers build their :class:`~meshterm.ui.widgets.ContactsSort` over these so the Ctrl+arrows
+#: walk the same four columns on every contact list.
 SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets", "hash")
 SORT_OPENS_ASCENDING: dict[str, bool] = {
     "name": True, "heard": True, "packets": False, "hash": True,
 }
 
-#: The cyan the active sort column and its triangle are lit in, matching the static Nodes
+#: The cyan the active sort column and its triangle are lit in, matching the static Contacts
 #: table's header (see :func:`~meshterm.ui.widgets._sort_header`) so sort cues read
 #: identically everywhere.
 _SORT_ACTIVE = "bold #22d3ee"
@@ -75,21 +76,21 @@ _HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter open · Esc b
 
 
 @dataclass
-class NodeRow:
-    """One node's lane data, however the caller learned it.
+class ContactRow:
+    """One contact's lane data, however the caller learned it.
 
     Attributes:
         value: What the row's :class:`~meshterm.ui.tui.select.Choice` resolves with —
-            also the identity a re-sort uses to keep the highlight on its node, so it
+            also the identity a re-sort uses to keep the highlight on its contact, so it
             should be unique across the list.
-        name: The display name, drawn in the node's hash-derived palette hue; ``None``
+        name: The display name, drawn in the contact's hash-derived palette hue; ``None``
             renders a muted ``unknown`` (an own-node row falls back to a bare ``you``
             instead).
         key: The hex the key lane shows — as full a key as the caller could resolve;
             also the seed of the name's palette hue. Empty renders a muted ``?``.
-        node_type: The node's type for the leading glyph (``None`` = the plain-node
+        node_type: The contact's node type for the leading glyph (``None`` = the plain-node
             ``●``; ignored on the own-node row, which always leads with the yellow ``★``).
-        last_seen: When the node was last heard (aware UTC) — fills the heard lane,
+        last_seen: When the contact was last heard (aware UTC) — fills the heard lane,
             coloured by recency heat; ``None`` reads ``never`` in the cold style.
         count: The packet tally; ``None`` renders a faint ``—`` (never overheard).
         you: Whether this is our own node: the ``★`` marker, the pure-white ``you`` name
@@ -106,8 +107,8 @@ class NodeRow:
     you: bool = False
 
 
-def _header(name_w: int, sort: NodesSort) -> Text:
-    """Column labels over the node lanes (see :func:`_lane`).
+def _header(name_w: int, sort: ContactsSort) -> Text:
+    """Column labels over the contact lanes (see :func:`_lane`).
 
     The lanes read ``NAME · HEARD · PKTS · KEY``, matching the row builder. The four
     leading spaces cover the select screen's pointer column (2 cells) plus the one-cell
@@ -115,7 +116,7 @@ def _header(name_w: int, sort: NodesSort) -> Text:
 
     All four columns are sortable, so any one can be the active sort. The active column's
     label *and* its direction triangle (``▲`` ascending, ``▼`` descending) are lit cyan
-    together — the same cue the static Nodes table's
+    together — the same cue the static Contacts table's
     :func:`~meshterm.ui.widgets._sort_header` lights — and the triangle is drawn *into the
     two-cell reserve that already follows every label*, so switching the sort never widens
     a lane and shifts the rest of the row. Returned as a :class:`~rich.text.Text` (not a
@@ -145,7 +146,7 @@ def _header(name_w: int, sort: NodesSort) -> Text:
     return header
 
 
-def _you_lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
+def _you_lane(row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
     """Our own node's lane — laid out exactly like :func:`_lane`'s regular rows.
 
     Drawn like the map and the static table draw us: the ``★`` self marker (yellow), the
@@ -162,7 +163,7 @@ def _you_lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text
     # The name lane, exactly name_w cells: the name (white) with a snug muted "(you)" tag —
     # padded out to fill the lane — or, when the name alone would crowd out the tag, the
     # name fit to the lane with the tag dropped. The lane is sized to hold the tag (see
-    # NodeListScreen._widest_name), so the drop is a very-long-name guard.
+    # ContactListScreen._widest_name), so the drop is a very-long-name guard.
     used = cell_len(row.name) + cell_len(_YOU_TAG) if row.name else 0
     if row.name and used <= name_w:
         text.append(row.name, style="you")
@@ -182,22 +183,22 @@ def _you_lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text
     return text
 
 
-def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
-    """One node as fixed, colour-coded lanes under :func:`_header`'s columns.
+def _lane(row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
+    """One contact as fixed, colour-coded lanes under :func:`_header`'s columns.
 
     The type glyph leads (the app's shared marker palette), so the mark reads ``▲`` for a
     repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name takes
-    the node's hash-derived palette hue (a nameless node's ``unknown`` placeholder stays
-    muted — colour marks a name, and the hash lane already carries the identity) and the
-    flexing name lane (``name_w`` cells). The last-heard age follows, glowing with recency
-    heat (brighter = fresher) so a freshly heard node still reads hot at a glance; then the
-    packet count, right-aligned — a node never overheard reads a faint ``—``; the key
-    closes the row in the shared key widget, its hash lit at the device's routing width,
-    or a muted ``?`` when no key is known at all. An own-node row (:attr:`NodeRow.you`)
-    takes its own drawing — see :func:`_you_lane`.
+    the contact's hash-derived palette hue (a nameless contact's ``unknown`` placeholder
+    stays muted — colour marks a name, and the hash lane already carries the identity) and
+    the flexing name lane (``name_w`` cells). The last-heard age follows, glowing with
+    recency heat (brighter = fresher) so a freshly heard contact still reads hot at a
+    glance; then the packet count, right-aligned — a contact never overheard reads a faint
+    ``—``; the key closes the row in the shared key widget, its hash lit at the device's
+    routing width, or a muted ``?`` when no key is known at all. An own-node row
+    (:attr:`ContactRow.you`) takes its own drawing — see :func:`_you_lane`.
 
     Args:
-        row: The node's lane data.
+        row: The contact's lane data.
         name_w: The name lane's width in cells (content-sized across the whole list).
         prefix_bytes: The hash width in bytes to light at the head of the key.
         hash_w: The flexing key lane's width in cells (a short key pads out to it; see
@@ -229,20 +230,20 @@ def _lane(row: NodeRow, name_w: int, prefix_bytes: int, hash_w: int) -> Text:
     return text
 
 
-def _ordered(rows: list[NodeRow], sort: NodesSort) -> list[NodeRow]:
+def _ordered(rows: list[ContactRow], sort: ContactsSort) -> list[ContactRow]:
     """Order the sortable rows by the active sort (own-node rows are pinned elsewhere).
 
     The four columns' natural metrics: name A→Z, ``heard`` by age so ascending is
     most-recently-heard first (a never-heard row gathers at the old end), ``packets`` by
     count, ``hash`` by the displayed key (ascending = ``0`` → ``f``). A name-ascending
-    pre-sort is the stable tiebreak, so two nodes sharing a metric keep an A→Z order
+    pre-sort is the stable tiebreak, so two contacts sharing a metric keep an A→Z order
     under both directions rather than flipping with the primary key.
     """
 
-    def key_name(row: NodeRow) -> str:
+    def key_name(row: ContactRow) -> str:
         return (row.name or "unknown").casefold()
 
-    def metric(row: NodeRow):  # noqa: ANN202 - homogeneous per sort
+    def metric(row: ContactRow):  # noqa: ANN202 - homogeneous per sort
         if sort.column == "name":
             return key_name(row)
         if sort.column == "packets":
@@ -257,10 +258,10 @@ def _ordered(rows: list[NodeRow], sort: NodesSort) -> list[NodeRow]:
     return ordered
 
 
-class NodeListScreen(SelectScreen):
-    """A full-screen, sortable, filterable node list in the shared lane layout.
+class ContactListScreen(SelectScreen):
+    """A full-screen, sortable, filterable contact list in the shared lane layout.
 
-    The rows run in aligned lanes — name (in the node's hash-derived palette hue),
+    The rows run in aligned lanes — name (in the contact's hash-derived palette hue),
     last-heard age (coloured by recency heat), packet count, and key — own-node rows
     first, then the rest in the active sort order. The lanes anchor to the left: the name lane is sized to its widest name (not
     the terminal), so the columns stay put as the window widens and the freed width flows
@@ -270,9 +271,9 @@ class NodeListScreen(SelectScreen):
     The sort rides the Ctrl+arrows, leaving the plain arrows for the highlight and the
     letters for type-to-filter: **Ctrl+←/→** pick the column (name → heard → packets →
     hash, each adopting its natural direction) and **Ctrl+↑/↓** force ascending/
-    descending. Every change re-sorts the node block in place — the lead rows and headers
-    stay pinned, the highlight rides its node, and any active filter holds — the same
-    :class:`~meshterm.ui.widgets.NodesSort` model and cyan triangle cue the static Nodes
+    descending. Every change re-sorts the contact block in place — the lead rows and headers
+    stay pinned, the highlight rides its contact, and any active filter holds — the same
+    :class:`~meshterm.ui.widgets.ContactsSort` model and cyan triangle cue the static Contacts
     table uses, only its keys moved off the plain arrows that a filterable list already
     spends.
     """
@@ -283,9 +284,9 @@ class NodeListScreen(SelectScreen):
         self,
         title: str,
         *,
-        rows: list[NodeRow],
+        rows: list[ContactRow],
         prefix_bytes: int,
-        sort: NodesSort,
+        sort: ContactsSort,
         prompt: str = "",
         lead: Optional[list] = None,
         footer_hint: str = _HINT,
@@ -294,7 +295,7 @@ class NodeListScreen(SelectScreen):
 
         Args:
             title: Short heading shown in the border.
-            rows: Every node's lane data; :attr:`NodeRow.you` rows are pinned first (in
+            rows: Every contact's lane data; :attr:`ContactRow.you` rows are pinned first (in
                 the order given), the rest re-sorted here per ``sort``.
             prefix_bytes: The hash width in bytes to light at the head of each key.
             sort: The sort state, mutated in place by the Ctrl+arrows — pass the same
@@ -305,7 +306,7 @@ class NodeListScreen(SelectScreen):
                 Machine's whole-mesh row and its section heading; ``None`` for none.
             footer_hint: Footer key hint; the default advertises the full grammar.
         """
-        self._node_rows = rows
+        self._contact_rows = rows
         self._prefix_bytes = prefix_bytes
         self._sort = sort
         self._lead = list(lead) if lead else []
@@ -321,14 +322,14 @@ class NodeListScreen(SelectScreen):
         )
 
     def _compose_items(self) -> list:
-        """The lead rows, the sort-aware column header, then the node lanes.
+        """The lead rows, the sort-aware column header, then the contact lanes.
 
         Own-node rows lead the lanes and stay first whatever the sort: only the block
         below them reorders (see :func:`_ordered`)."""
         items: list = list(self._lead)
         items.append(Separator(_header(self._name_w, self._sort)))
-        pinned = [row for row in self._node_rows if row.you]
-        rest = [row for row in self._node_rows if not row.you]
+        pinned = [row for row in self._contact_rows if row.you]
+        rest = [row for row in self._contact_rows if not row.you]
         for row in (*pinned, *_ordered(rest, self._sort)):
             items.append(
                 Choice(
@@ -339,7 +340,7 @@ class NodeListScreen(SelectScreen):
         return items
 
     def _rebuild(self) -> None:
-        """Recompose the rows for the current sort/width, keeping the highlight on its node."""
+        """Recompose the rows for the current sort/width, keeping the highlight on its contact."""
         current = self._current_choice()
         keep = current.value if current is not None else None
         self._items = self._compose_items()
@@ -363,7 +364,7 @@ class NodeListScreen(SelectScreen):
         own-node row's name plus its ``(you)`` tag, so the tag always fits.
         """
         widths = [cell_len("unknown")]
-        for row in self._node_rows:
+        for row in self._contact_rows:
             if row.you:
                 widths.append(
                     cell_len(row.name) + cell_len(_YOU_TAG) if row.name else cell_len("you")

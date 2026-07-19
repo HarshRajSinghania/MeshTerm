@@ -1,20 +1,20 @@
-"""The interactive Nodes screen: the device's contacts in the shared sortable node list.
+"""The interactive Contacts screen: the device's contacts in the shared sortable contact list.
 
 The Time Machine picker's presentation pointed at the companion's contact table: the same
 aligned ``NAME · HEARD · PKTS · KEY`` lanes, our own node pinned first, the same Ctrl+arrow
-sort (now including the key column) and type-to-filter — one node list app-wide, whatever
-the data source (see :mod:`~meshterm.ui.nodelist`). Enter is deliberately inert for now: the
-highlight is a cursor, not yet a selection — a per-node action will land on it later. The
-one-shot CLI (``meshterm nodes --sort …``) still renders the static
-:func:`~meshterm.ui.widgets.nodes_table`; only the menu gets the live list.
+sort (now including the key column) and type-to-filter — one contact list app-wide, whatever
+the data source (see :mod:`~meshterm.ui.contactlist`). Enter is deliberately inert for now: the
+highlight is a cursor, not yet a selection — a per-contact action will land on it later. The
+one-shot CLI (``meshterm contacts --sort …``) still renders the static
+:func:`~meshterm.ui.widgets.contacts_table`; only the menu gets the live list.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .nodelist import NodeListScreen, NodeRow
-from .widgets import NodesSort, _contact_pkts
+from .contactlist import ContactListScreen, ContactRow
+from .widgets import ContactsSort, _contact_pkts
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -24,12 +24,12 @@ if TYPE_CHECKING:
 #: device answered), so a re-sort can keep the highlight on it.
 YOU = ("you",)
 
-#: The Nodes list's footer: the shared list's grammar minus the Enter atom — pressing it
+#: The Contacts list's footer: the shared list's grammar minus the Enter atom — pressing it
 #: does nothing yet, so the hint doesn't advertise it.
 _HINT = "↑↓ move · ^←→↑↓ sort · type filter · Esc back"
 
 
-class NodesScreen(NodeListScreen):
+class ContactsScreen(ContactListScreen):
     """A full-screen, Ctrl+arrow-sortable list of this node and its known contacts."""
 
     def __init__(
@@ -39,9 +39,9 @@ class NodesScreen(NodeListScreen):
         contacts: "list[Contact]",
         prefix_bytes: int,
         counts: dict[str, int],
-        sort: NodesSort,
+        sort: ContactsSort,
     ) -> None:
-        """Create the nodes screen over already-fetched contact data.
+        """Create the contacts screen over already-fetched contact data.
 
         Args:
             self_name: This node's advertised name.
@@ -51,13 +51,13 @@ class NodesScreen(NodeListScreen):
             counts: Overheard-packet counts keyed by lowercased 12-hex node id; a contact
                 with no entry shows a faint ``—``.
             sort: The initial sort; mutated in place by the Ctrl+arrows. Its ring should
-                span :data:`~meshterm.ui.nodelist.SORT_COLUMNS` so the hash sort is
+                span :data:`~meshterm.ui.contactlist.SORT_COLUMNS` so the hash sort is
                 reachable.
         """
-        rows = [NodeRow(value=YOU, name=self_name, key=self_key, you=True)]
+        rows = [ContactRow(value=YOU, name=self_name, key=self_key, you=True)]
         for c in contacts:
             rows.append(
-                NodeRow(
+                ContactRow(
                     value=c.public_key or c.name,
                     name=c.name,
                     key=c.public_key,
@@ -67,7 +67,7 @@ class NodesScreen(NodeListScreen):
                 )
             )
         super().__init__(
-            f"Nodes · {len(contacts)} known",
+            f"Contacts · {len(contacts)} known",
             rows=rows,
             prefix_bytes=prefix_bytes,
             sort=sort,
@@ -77,7 +77,7 @@ class NodesScreen(NodeListScreen):
     def handle(self, action: str, data: str = "") -> None:
         """Swallow Enter; every other key is the shared list's.
 
-        The highlight is only a cursor until per-node actions land, so committing it
+        The highlight is only a cursor until per-contact actions land, so committing it
         must neither act nor dismiss the screen — only Esc leaves.
         """
         if action == "enter":
@@ -85,16 +85,16 @@ class NodesScreen(NodeListScreen):
         super().handle(action, data)
 
 
-async def open_nodes(
+async def open_contacts(
     ctx: "AppContext",
     self_name: str,
     self_key: str,
     contacts: "list[Contact]",
     prefix_bytes: int,
     counts: dict[str, int],
-    sort: NodesSort,
+    sort: ContactsSort,
 ) -> None:
-    """Open the interactive, sortable nodes list and run until dismissed with Esc.
+    """Open the interactive, sortable contacts list and run until dismissed with Esc.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -111,6 +111,6 @@ async def open_nodes(
     from .surface import TuiUi
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
-        raise RuntimeError("the interactive nodes list is only available in the menu")
-    screen = NodesScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
+        raise RuntimeError("the interactive contacts list is only available in the menu")
+    screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
     await ctx.ui.session.run_screen(screen)

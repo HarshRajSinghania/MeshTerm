@@ -198,8 +198,8 @@ def config_table(
     """
     pending = pending or {}
     show_staged = bool(pending)
-    # Match the nodes list: a frameless SIMPLE_HEAD table with a left-justified accent title
-    # and muted headers, so the two screens read as one family (see widgets.nodes_table).
+    # Match the contacts list: a frameless SIMPLE_HEAD table with a left-justified accent title
+    # and muted headers, so the two screens read as one family (see widgets.contacts_table).
     table = Table(
         title="[accent]Device configuration[/accent]",
         title_justify="left",

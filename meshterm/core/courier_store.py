@@ -1,7 +1,7 @@
 """Persistence for the Courier: the store-and-forward outbox.
 
-The Courier (see :mod:`meshterm.services.courier`) queues direct messages for nodes
-that aren't reachable right now and delivers them when the node is next heard — or at
+The Courier (see :mod:`meshterm.services.courier`) queues direct messages for contacts
+that aren't reachable right now and delivers them when the contact is next heard — or at
 a scheduled time. This store is the outbox itself: queued messages with their schedule
 and attempt history, plus the finished ones (delivered or given-up) kept around, capped,
 so the morning after tells the story.
@@ -9,7 +9,7 @@ so the morning after tells the story.
 Like the remembered devices (:mod:`meshterm.core.device_store`), this is global machine
 state in a small JSON file (``<config_dir>/courier.json``) rather than the
 per-invocation SQLite database — a queued message must survive restarts, or the whole
-promise ("it'll go out when the node shows up") is hollow.
+promise ("it'll go out when the contact shows up") is hollow.
 """
 
 from __future__ import annotations

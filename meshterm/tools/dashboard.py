@@ -8,7 +8,7 @@ the section's first question — *what's going on out there?* — before any spe
 is reached for.
 
 Menu-only: the dashboard is inherently live (it rides the event hub and repaints every
-second), so there is no scripted one-shot to register — the ``monitor`` and ``nodes``
+second), so there is no scripted one-shot to register — the ``monitor`` and ``contacts``
 subcommands cover scripted inspection.
 """
 

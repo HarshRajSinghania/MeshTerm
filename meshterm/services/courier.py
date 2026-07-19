@@ -1,7 +1,7 @@
 """The Courier: store-and-forward delivery for the outbox.
 
 A session-long background loop over the :class:`~meshterm.core.courier_store.
-CourierStore`. Messages queue for nodes that aren't reachable right now; the courier
+CourierStore`. Messages queue for contacts that aren't reachable right now; the courier
 listens to the hub for signs of life and delivers when the recipient is *fresh* —
 heard within the last few minutes — or when a scheduled entry's time arrives. Each
 attempt is one ordinary chat send (:meth:`~meshterm.services.chat_service.ChatService.
@@ -13,7 +13,7 @@ Deliberately transmission-shy, like the advert scheduler:
 * At most **one** delivery attempt per pass, so a backlog drains politely instead of
   bursting onto a shared mesh.
 * Failed attempts back off exponentially (5 min doubling to an hour) and — after the
-  first shot — wait until the node has been heard *again*, so an absent node is never
+  first shot — wait until the contact has been heard *again*, so an absent contact is never
   hammered on faith alone. Only a scheduled entry's first attempt fires blind: the
   schedule was an explicit instruction.
 * After :data:`MAX_ATTEMPTS` unacknowledged tries the courier gives up and says so.

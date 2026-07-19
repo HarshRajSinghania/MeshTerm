@@ -2,7 +2,7 @@
 
 The interactive face of the ``courier`` tool. One select-list screen carries the whole
 feature (the persistent-backdrop pattern): the waiting outbox — each entry with its
-live state (waiting to hear the node, scheduled for a time, backing off between
+live state (waiting to hear the contact, scheduled for a time, backing off between
 retries) — the finished history (delivered / given-up), and the queueing flow: pick a
 contact, write the message, choose when. Enter on a waiting entry offers *Send now*
 (one forced attempt, outcome in a dialog) and *Cancel*.
@@ -30,10 +30,10 @@ from rich.text import Text
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
 from .menus import back_rows, section_heading
-from .nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING, NodeListScreen, NodeRow
+from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import NodesSort, _age_seconds, _contact_pkts, format_ago
+from .widgets import ContactsSort, _age_seconds, _contact_pkts, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -172,7 +172,7 @@ class CourierOutboxScreen(SelectScreen):
     finished, a new queue, a cleared history) can't be expressed by a row re-rendering
     itself, so the opener's ticker calls :meth:`refresh`: it fingerprints the store's
     shape and recomposes the sections in place only when that changed, keeping the
-    highlight on its entry (the :class:`~meshterm.ui.nodelist.NodeListScreen` rebuild
+    highlight on its entry (the :class:`~meshterm.ui.contactlist.ContactListScreen` rebuild
     idiom).
     """
 
@@ -262,9 +262,9 @@ def _waiting_row(ctx: "AppContext", message: QueuedMessage) -> Text:
         elif message.attempts > 0:
             row.append(f"try {message.attempts} · waiting to hear it again", style="muted")
         elif ctx.courier.heard_recently(message.node_key, now):
-            row.append("node is fresh — next pass", style="ok")
+            row.append("contact is fresh — next pass", style="ok")
         else:
-            row.append("waiting to hear the node", style="muted")
+            row.append("waiting to hear the contact", style="muted")
     return row
 
 
@@ -290,18 +290,18 @@ def _done_row(message: QueuedMessage) -> Text:
 # --- the flows --------------------------------------------------------------------------
 
 
-#: The recipient picker's footer: the shared node-list grammar with a committing Enter,
+#: The recipient picker's footer: the shared contact-list grammar with a committing Enter,
 #: Esc cancelling the queueing step it sits in.
 _PICK_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter select · Esc cancel"
 
 
-class CourierRecipientScreen(NodeListScreen):
-    """The recipient picker on the shared node list.
+class CourierRecipientScreen(ContactListScreen):
+    """The recipient picker on the shared contact list.
 
     The full ``NAME · HEARD · PKTS · KEY`` lanes, the Ctrl+arrow sort ring, and
-    type-to-filter, exactly as the Nodes screen and the Time Machine picker draw
+    type-to-filter, exactly as the Contacts screen and the Time Machine picker draw
     contacts — names in their key-derived hue, heard ages in recency heat. Unlike the
-    Nodes screen, Enter *commits*: the shared list's Enter resolves the highlighted
+    Contacts screen, Enter *commits*: the shared list's Enter resolves the highlighted
     row's value, which is the :class:`~meshterm.core.models.Contact` itself.
     """
 
@@ -311,7 +311,7 @@ class CourierRecipientScreen(NodeListScreen):
         contacts: list[Contact],
         prefix_bytes: int,
         counts: dict[str, int],
-        sort: NodesSort,
+        sort: ContactsSort,
     ) -> None:
         """Build the picker over the device's contacts.
 
@@ -322,7 +322,7 @@ class CourierRecipientScreen(NodeListScreen):
             sort: The sort state (defaults open on ``heard``, freshest first).
         """
         rows = [
-            NodeRow(
+            ContactRow(
                 value=c,
                 name=c.name,
                 key=c.public_key or c.key_prefix or "",
@@ -337,7 +337,7 @@ class CourierRecipientScreen(NodeListScreen):
             rows=rows,
             prefix_bytes=prefix_bytes,
             sort=sort,
-            prompt="The message waits in the outbox until this node can take it:",
+            prompt="The message waits in the outbox until this contact can take it:",
             footer_hint=_PICK_HINT,
         )
 
@@ -350,14 +350,14 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     if not contacts:
         await session.message_dialog(
             Text(
-                "No contacts available — connect a device that knows some nodes first.",
+                "No contacts available — connect a device that knows some contacts first.",
                 style="muted",
             ),
             title="Queue a message",
         )
         return
 
-    # The shared node-list presentation (see CourierRecipientScreen), opened on the
+    # The shared contact-list presentation (see CourierRecipientScreen), opened on the
     # heard column so the most reachable candidates lead — the old fixed order, now
     # just the default of a re-sortable list.
     counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
@@ -366,7 +366,7 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         contacts=contacts,
         prefix_bytes=prefix_bytes,
         counts=counts,
-        sort=NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
+        sort=ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
     )
     contact = await session.run_screen(picker)
     if not isinstance(contact, Contact):  # Esc (CANCEL) or anything else backs out
@@ -481,14 +481,14 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
             )
             return
         notes = {
-            "delivered": Text("✓ delivered — acknowledged by the node", style="ok"),
+            "delivered": Text("✓ delivered — acknowledged by the contact", style="ok"),
             "no ack": Text(
                 "sent, but no acknowledgement — it stays queued and the courier "
                 "will retry with backoff", style="warn",
             ),
             "gave up": Text("no acknowledgement — the retry budget is spent", style="err"),
             "unknown contact": Text(
-                "the device's contact list doesn't know this node yet; "
+                "the device's contact list doesn't know this contact yet; "
                 "it stays queued", style="warn",
             ),
             "busy": Text("another delivery is in flight — try again in a moment", style="muted"),

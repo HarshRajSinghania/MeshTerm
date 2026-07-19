@@ -597,15 +597,15 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     """Picker rows lane up under the header; the heard age glows hot, the hash prefix
     lights in the key's own hue, and a nameless node's placeholder stays muted."""
     from meshterm.core.models import HeardNode
-    from meshterm.ui.nodelist import NodeRow, _header, _lane
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.contactlist import ContactRow, _header, _lane
+    from meshterm.ui.widgets import ContactsSort
 
     node = HeardNode(
         node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
         last_rssi=None, last_seen=utcnow(),
     )
     row = _lane(
-        NodeRow(
+        ContactRow(
             value=node.node, name=node.name, key=node.node or "",
             last_seen=node.last_seen, count=node.count,
         ),
@@ -631,7 +631,7 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     )
     # Header labels land over their lanes (+2 covers the select pointer column); the lanes
     # now read NAME · HEARD · PKTS · KEY, with the key closing the row.
-    header = _header(10, NodesSort.from_name("heard")).plain
+    header = _header(10, ContactsSort.from_name("heard")).plain
     assert header.index("NAME") == plain.index("unknown") + 2
     assert header.index("KEY") == plain.index("3d" * 6) + 2
     assert header.index("HEARD") < header.index("PKTS") < header.index("KEY")
@@ -639,27 +639,27 @@ def test_picker_row_lanes_align_under_the_header() -> None:
 
 def test_picker_header_marks_the_active_sort_column() -> None:
     """The sort column carries a direction triangle; toggling flips ▲/▼, and only it."""
-    from meshterm.ui.nodelist import _header
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.contactlist import _header
+    from meshterm.ui.widgets import ContactsSort
 
-    heard_desc = _header(12, NodesSort("heard", ascending=False)).plain
+    heard_desc = _header(12, ContactsSort("heard", ascending=False)).plain
     assert "HEARD ▼" in heard_desc and "▲" not in heard_desc
     # Ascending flips the same column's glyph without touching the others.
-    assert "HEARD ▲" in _header(12, NodesSort("heard", ascending=True)).plain
+    assert "HEARD ▲" in _header(12, ContactsSort("heard", ascending=True)).plain
     # A different active column moves the mark; packets opens descending.
-    packets = _header(12, NodesSort.from_name("packets")).plain
+    packets = _header(12, ContactsSort.from_name("packets")).plain
     assert "PKTS ▼" in packets and "HEARD" in packets and "HEARD ▼" not in packets
     # The key column (ring id "hash") is sortable too, so it carries the mark when active.
-    hash_sorted = _header(12, NodesSort("hash", ascending=True)).plain
+    hash_sorted = _header(12, ContactsSort("hash", ascending=True)).plain
     assert "KEY ▲" in hash_sorted and "PKTS ▲" not in hash_sorted
 
 
 def test_picker_header_highlights_only_the_active_sort_column() -> None:
     """The active column's label and its triangle are lit cyan; the other lanes stay muted."""
-    from meshterm.ui.nodelist import _SORT_ACTIVE, _header
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.contactlist import _SORT_ACTIVE, _header
+    from meshterm.ui.widgets import ContactsSort
 
-    header = _header(12, NodesSort.from_name("packets"))
+    header = _header(12, ContactsSort.from_name("packets"))
     lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _SORT_ACTIVE]
     # Exactly the active PKTS lane (label + triangle) carries the highlight.
     assert any("PKTS" in seg and "▼" in seg for seg in lit)
@@ -668,11 +668,11 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
 
 def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
     """Build a rendered picker over ``listed`` and return it (rows sized to ``width``)."""
-    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
     from meshterm.ui.timemachine_screen import TimeMachinePickerScreen
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.widgets import ContactsSort
 
-    default_sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
+    default_sort = ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
     screen = TimeMachinePickerScreen(
         listed=listed,
         prefix_bytes=prefix_bytes,
@@ -816,7 +816,7 @@ def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
 def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
     """Columns anchor left: the name lane hugs its content and stays put as the window
     widens, and the freed width flows to the hash lane so more of each key shows."""
-    from meshterm.ui.nodelist import _LEAD
+    from meshterm.ui.contactlist import _LEAD
 
     screen = _picker(_heard_nodes(), width=72)
     # The widest name here is the "unknown" fallback (7 cells); the lane sizes to it.
@@ -966,11 +966,11 @@ def test_self_sections_render_the_page_and_empty_window(tmp_path: Path) -> None:
 
 def test_self_row_leads_the_node_list_as_a_lane() -> None:
     """The own-node lane shows our name + (you), faint — for heard/pkts, and our key hash."""
-    from meshterm.ui.nodelist import NodeRow, _lane
+    from meshterm.ui.contactlist import ContactRow, _lane
     from meshterm.ui.timemachine_screen import SELF
 
     named = _lane(
-        NodeRow(value=SELF, name="YUL-Johputer", key="3d" * 32, you=True),
+        ContactRow(value=SELF, name="YUL-Johputer", key="3d" * 32, you=True),
         name_w=30, prefix_bytes=1, hash_w=30,
     ).plain
     assert named.startswith("★")
@@ -979,7 +979,7 @@ def test_self_row_leads_the_node_list_as_a_lane() -> None:
     assert "3d3d" in named  # our key hash, its routing prefix lit
     # No reachable device: a bare "you" name and a "?" hash, no "(you)" tag.
     anon = _lane(
-        NodeRow(value=SELF, name=None, key="", you=True),
+        ContactRow(value=SELF, name=None, key="", you=True),
         name_w=30, prefix_bytes=0, hash_w=30,
     ).plain
     assert "you" in anon and "(you)" not in anon

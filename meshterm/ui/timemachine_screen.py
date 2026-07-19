@@ -32,7 +32,7 @@ from rich.text import Text
 from ..core.models import utcnow
 from .braillechart import _TICK_GAP, GAP, axis_chart, chart_span, timeline_rows
 from .menus import fit_cells, section_heading
-from .nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING, NodeListScreen, NodeRow
+from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import name_style, snr_style
 from .tui.render import render_lines
 from .tui.screen import CANCEL, Screen
@@ -42,7 +42,7 @@ from .widgets import (
     _recency_style,
     format_ago,
     highlighted_hash,
-    NodesSort,
+    ContactsSort,
 )
 
 if TYPE_CHECKING:
@@ -974,7 +974,7 @@ def _mesh_sections(
 
 #: Widest the mesh page's arrivals name lane grows (longer names ellipsize so the lanes
 #: stay put). The picker sizes its own name lane to content instead (see
-#: :meth:`~meshterm.ui.nodelist.NodeListScreen._lane_widths`).
+#: :meth:`~meshterm.ui.contactlist.ContactListScreen._lane_widths`).
 _PICK_NAME_MAX = 18
 
 #: The mesh page's arrivals key lane's *floor* in cells (a very narrow terminal). The lane
@@ -1074,11 +1074,11 @@ async def _self_identity(ctx: "AppContext") -> tuple[Optional[str], Optional[str
     return (str(name) if name else None), (str(key) if key else None)
 
 
-class TimeMachinePickerScreen(NodeListScreen):
-    """The Time Machine's subject picker: the shared node list under the whole-mesh row.
+class TimeMachinePickerScreen(ContactListScreen):
+    """The Time Machine's subject picker: the shared list under the whole-mesh row.
 
-    The whole-mesh overview leads; under it runs the app's shared sortable node list
-    (see :class:`~meshterm.ui.nodelist.NodeListScreen` for the lanes, the Ctrl+arrow
+    The whole-mesh overview leads; under it runs the app's shared sortable list
+    (see :class:`~meshterm.ui.contactlist.ContactListScreen` for the lanes, the Ctrl+arrow
     sort, and type-to-filter) — our own node first, then every node ever heard. A heard
     node's hash lane shows its fullest known key: the one captured with an observation
     (shows offline), else the device's contact list, else the stored 12-hex prefix.
@@ -1089,7 +1089,7 @@ class TimeMachinePickerScreen(NodeListScreen):
         *,
         listed: list[tuple["HeardNode", Optional[str]]],
         prefix_bytes: int,
-        sort: NodesSort,
+        sort: ContactsSort,
         prompt: str,
         self_name: Optional[str] = None,
         self_key: Optional[str] = None,
@@ -1104,7 +1104,7 @@ class TimeMachinePickerScreen(NodeListScreen):
             prefix_bytes: Path-hash width in bytes to light in each hash.
             sort: The sort state, mutated in place by the Ctrl+arrows — pass the same
                 instance across re-opens so the chosen order persists. Its ring should span
-                :data:`~meshterm.ui.nodelist.SORT_COLUMNS` for the hash column to be
+                :data:`~meshterm.ui.contactlist.SORT_COLUMNS` for the hash column to be
                 reachable.
             prompt: The instruction shown above the list.
             self_name: Our own node's advertised name, for the own-node lane that always
@@ -1121,10 +1121,10 @@ class TimeMachinePickerScreen(NodeListScreen):
                 the stored digits (see :func:`_contact_resolvers`); the default returns the
                 prefix unchanged, leaving the stored 12 hex to stand.
         """
-        rows = [NodeRow(value=SELF, name=self_name, key=self_key or "", you=True)]
+        rows = [ContactRow(value=SELF, name=self_name, key=self_key or "", you=True)]
         for node, name in listed:
             rows.append(
-                NodeRow(
+                ContactRow(
                     value=(node.node, name or node.node),
                     name=name,
                     # The full key, most-durable source first: the one captured with the
@@ -1172,7 +1172,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
     # One sort for the whole visit, so the order the user picks survives leaving a subject
     # page and coming back. Opens most-recently-heard first, as the list always has; its ring
     # spans the shared list's four columns so the Ctrl+arrows can reach the hash sort.
-    sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
+    sort = ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
 
     while True:
         heard = ctx.repo.heard_nodes()

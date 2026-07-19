@@ -790,7 +790,7 @@ def _contact_pkts(contact: Contact, counts: dict[str, int]) -> Optional[int]:
     return counts.get(_key_id(ident)) if ident else None
 
 
-# The columns the node list can be sorted by, left-to-right, and the direction each opens on
+# The columns the contact list can be sorted by, left-to-right, and the direction each opens on
 # — name A→Z, most-recently-heard first, most packets first — chosen so a fresh sort shows
 # the "interesting" end at the top.
 _SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets")
@@ -798,8 +798,8 @@ _SORT_OPENS_ASCENDING: dict[str, bool] = {"name": True, "heard": True, "packets"
 
 
 @dataclass
-class NodesSort:
-    """Which column the node list is sorted by, and in which direction.
+class ContactsSort:
+    """Which column the contact list is sorted by, and in which direction.
 
     ``column`` is one of :attr:`columns`; ``ascending`` sorts the column's underlying
     metric low-to-high — name A→Z, *age* (so ascending = most recently heard first), packet
@@ -807,7 +807,7 @@ class NodesSort:
     arrows.
 
     The sort *ring* is per-instance: :attr:`columns` and :attr:`opens_ascending` default to
-    the Nodes list's three (:data:`_SORT_COLUMNS`), but the Time Machine picker passes a
+    the Contacts list's three (:data:`_SORT_COLUMNS`), but the Time Machine picker passes a
     wider set — it adds a sortable ``hash`` column — so the same model drives both without a
     module-global column list that one screen would have to share with the other.
     """
@@ -823,7 +823,7 @@ class NodesSort:
         name: str,
         columns: tuple[str, ...] = _SORT_COLUMNS,
         opens_ascending: Optional[dict[str, bool]] = None,
-    ) -> "NodesSort":
+    ) -> "ContactsSort":
         """Build a sort for ``name`` over ``columns``, opening in that column's natural direction.
 
         Falls back to the ring's first column when ``name`` isn't one of ``columns`` (so a
@@ -842,12 +842,12 @@ class NodesSort:
 
 
 def _ordered_contacts(
-    contacts: list[Contact], counts: dict[str, int], sort: NodesSort
+    contacts: list[Contact], counts: dict[str, int], sort: ContactsSort
 ) -> list[Contact]:
     """Contacts sorted per ``sort`` (our own node is pinned separately, above these).
 
     The active column's metric drives the order (reversed for a descending sort); ties always
-    break by case-folded name *ascending*, so two nodes sharing a metric (e.g. the same
+    break by case-folded name *ascending*, so two contacts sharing a metric (e.g. the same
     ``heard`` age) keep a stable A→Z order instead of flipping with the primary direction.
     Never-heard / never-overheard rows carry an extreme metric so they gather at the ascending
     end.
@@ -875,12 +875,12 @@ def _ordered_contacts(
     return ordered
 
 
-def _sort_header(label: str, column: str, sort: NodesSort) -> str:
+def _sort_header(label: str, column: str, sort: ContactsSort) -> str:
     """A column header: plain-muted, or cyan with a direction triangle when it's the sort key.
 
     The active column's name and its triangle are lit cyan together (so the interactive
     left/right selection is obvious) — ``▲`` for ascending, ``▼`` for descending. The column
-    reserves its width (see :func:`nodes_table`) so toggling the sort doesn't shift the row.
+    reserves its width (see :func:`contacts_table`) so toggling the sort doesn't shift the row.
     """
     if column != sort.column:
         return label
@@ -892,7 +892,7 @@ def node_type_legend(indent: str = "") -> Text:
     """The one-line key to the node-type marks: ``★ you  ▲ repeater  ● node  …``.
 
     Every glyph in its shared map colour (see :data:`_NODE_GLYPHS`), each named muted after
-    it. THE legend for any surface that draws typed node markers — the nodes list under its
+    it. THE legend for any surface that draws typed node markers — the contacts list under its
     table, the route graph under its fan — so one glyph means one thing app-wide.
 
     Args:
@@ -909,18 +909,18 @@ def node_type_legend(indent: str = "") -> Text:
     return legend
 
 
-def _nodes_legend() -> Text:
-    """The node-type legend, indented to sit under the nodes table body."""
+def _contacts_legend() -> Text:
+    """The node-type legend, indented to sit under the contacts table body."""
     return node_type_legend(indent="  ")
 
 
-def nodes_table(
+def contacts_table(
     self_name: str,
     self_key: str,
     contacts: list[Contact],
     prefix_bytes: int,
     counts: dict[str, int],
-    sort: Optional[NodesSort] = None,
+    sort: Optional[ContactsSort] = None,
 ) -> Group:
     """List this node and its known contacts with recency, packets, type, key, and legend.
 
@@ -944,12 +944,12 @@ def nodes_table(
     Returns:
         A Rich :class:`Group` of the frameless table and its glyph legend.
     """
-    sort = sort if sort is not None else NodesSort()
+    sort = sort if sort is not None else ContactsSort()
 
     # expand=True lets the key column (the only flexible one) soak up all spare width and be
     # the sole column Rich squeezes when narrow — the fixed columns keep their natural size.
     table = Table(
-        title=f"[accent]Nodes[/accent]  [muted]· {len(contacts)} known[/muted]",
+        title=f"[accent]Contacts[/accent]  [muted]· {len(contacts)} known[/muted]",
         title_justify="left",
         box=box.SIMPLE_HEAD,
         show_edge=False,
@@ -993,7 +993,7 @@ def nodes_table(
             Text(str(pkts), style="muted") if pkts else Text("—", style="faint"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,
         )
-    return Group(table, Text(""), _nodes_legend())
+    return Group(table, Text(""), _contacts_legend())
 
 
 def tx_opt_table(result: TxOptResult) -> Table:

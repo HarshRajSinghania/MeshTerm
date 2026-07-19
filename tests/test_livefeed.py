@@ -58,7 +58,7 @@ def test_livefeed_tool_registers_under_the_dashboard() -> None:
     tools = {t.name: t for t in all_tools()}
     tool = tools["livefeed"]
     assert tool.title == "Live feed" and tool.category == "Mesh"
-    assert tools["dashboard"].order < tool.order < tools["nodes"].order
+    assert tools["dashboard"].order < tool.order < tools["contacts"].order
 
 
 def test_livefeed_live_events_land_in_the_feed() -> None:

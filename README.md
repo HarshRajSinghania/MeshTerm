@@ -33,12 +33,12 @@ your mesh's history is worth.
   a scripted one-shot. The registry that builds the menu builds the CLI, so they never
   drift apart.
 - **It remembers.** A passive monitor logs every overheard advert and telemetry frame —
-  SNR, RSSI, shared location — to SQLite from the moment the radio opens. Maps, node lists,
+  SNR, RSSI, shared location — to SQLite from the moment the radio opens. Maps, contact lists,
   charts, and the Time Machine all read back that history.
 - **It measures.** Live trace with per-hop reliability, a coarse→refine→verify TX-power
   sweep, and a walkable graph of how the mesh actually hangs together.
 - **It talks.** Live channel and direct messaging, store-and-forward courier delivery for
-  nodes that aren't there yet, and shareable channels as QR codes and `meshcore://` links.
+  contacts that aren't there yet, and shareable channels as QR codes and `meshcore://` links.
 - **It connects however your companion does.** Serial (USB), Bluetooth LE, or TCP (a WiFi
   board or a network proxy) — the discoverable transports are auto-found and picked
   interactively, a network device is named by hand, and every kind reconnects live when a link
@@ -98,7 +98,7 @@ with its scripted equivalent, where one exists.
 | --- | --- | --- |
 | **💬 Chat** | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged; unread counts show in the menu header. | `meshterm chat send / history / list` |
 | **# Channels** | Create, join, reorder, mute, and share mesh channels — with QR codes and `meshcore://` share links. | `meshterm channels list / add / join / import / share / clear` |
-| **📨 Courier** | Store-and-forward outbox for nodes that aren't reachable yet. Queue a message; it goes out (with ack tracking and polite exponential backoff) the moment the node is next heard, or at a scheduled time. | `meshterm courier queue / list / send / cancel / clear` |
+| **📨 Courier** | Store-and-forward outbox for contacts that aren't reachable yet. Queue a message; it goes out (with ack tracking and polite exponential backoff) the moment the contact is next heard, or at a scheduled time. | `meshterm courier queue / list / send / cancel / clear` |
 
 ### ⚙ Device management
 
@@ -113,7 +113,7 @@ with its scripted equivalent, where one exists.
 
 | Feature | What it does | Scripted |
 | --- | --- | --- |
-| **☰ Nodes** | This node and its known contacts — a recency heat-map, overheard packet counts, and full public keys with the path-hash prefix highlighted. | `meshterm nodes` |
+| **👥 Contacts** | This node and its known contacts — a recency heat-map, overheard packet counts, and full public keys with the path-hash prefix highlighted. | `meshterm contacts` |
 | **🧭 Trace** | A live trace screen: pick a target and watch each trace stream in hop by hop, with running per-hop medians and reliability. Compose or force a route through specific repeaters. A trace transmits **exactly once** (repeaters can blacklist nodes that burst) — sample more by running it again. | `meshterm trace --target …` |
 | **⚡ TX-power optimization** | Sweep a remote node's transmit power live — coarse, then refine, then verify — watch each level land, and decide whether to apply the winner. | `meshterm tx-optimize --path … [--apply]` |
 | **⏳ Time machine** | Everything the recorder ever heard, as braille charts: reception volume, the median-SNR band, hour-of-day rhythm, packets and nodes per day, and first-ever arrivals — over a switchable 24h / 7d / 30d / all-time window, per node or mesh-wide. | — |
@@ -143,7 +143,7 @@ meshterm chat send --channel 0 "net in 5"      # channel broadcast
 meshterm chat history --to Alice
 meshterm chat list
 
-# Store-and-forward: queue for a node that's offline right now
+# Store-and-forward: queue for a contact that's offline right now
 meshterm courier queue Alice "ping me when you're back" --at 18:30
 meshterm courier list                 # the outbox — waiting and finished
 meshterm courier send 3               # force one delivery attempt now

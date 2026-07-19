@@ -1,4 +1,4 @@
-"""The ``nodes`` tool: list this node and the contacts it knows about."""
+"""The ``contacts`` tool: list this node and the contacts it knows about."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from .base import Tool, ToolResult, register
 
 
 @register
-class NodesTool(Tool):
+class ContactsTool(Tool):
     """List this node and its known contacts, each with its path-hash prefix."""
 
-    name = "nodes"
-    title = "Nodes"
+    name = "contacts"
+    title = "Contacts"
     icon = "👥"
     help = "List this node and known contacts (last heard, packets, type, key)"
     category = "Mesh"
     order = 10  # right under the Dashboard: the "who's out there" view
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Query the device and render the node/contact list.
+        """Query the device and render the contacts list.
 
         Args:
             ctx: Shared application context.
@@ -32,7 +32,7 @@ class NodesTool(Tool):
             A :class:`ToolResult` summarizing the number of known contacts.
         """
         from ..ui.surface import TuiUi
-        from ..ui.widgets import NodesSort, nodes_table
+        from ..ui.widgets import ContactsSort, contacts_table
 
         # Read through the session cache: on a busy node the contacts table is a slow
         # round-trip, and re-fetching it (plus self-info) on every menu visit is a chief cause
@@ -59,22 +59,22 @@ class NodesTool(Tool):
         sort_name = str(params.get("sort") or "name")
 
         # In the menu, hand the list to the interactive screen so the Ctrl+arrows re-sort it
-        # live — its ring spans the shared node list's four columns (hash included); on the
+        # live — its ring spans the shared contact list's four columns (hash included); on the
         # scripted CLI, render the static table once in the requested order.
         if isinstance(ctx.ui, TuiUi):
-            from ..ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
-            from ..ui.nodes_screen import open_nodes
+            from ..ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+            from ..ui.contacts_screen import open_contacts
 
-            sort = NodesSort.from_name(sort_name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
-            await open_nodes(ctx, self_name, self_key, contacts, prefix_bytes, counts, sort)
+            sort = ContactsSort.from_name(sort_name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
+            await open_contacts(ctx, self_name, self_key, contacts, prefix_bytes, counts, sort)
         else:
-            sort = NodesSort.from_name(sort_name)
-            ctx.ui.show(nodes_table(self_name, self_key, contacts, prefix_bytes, counts, sort))
+            sort = ContactsSort.from_name(sort_name)
+            ctx.ui.show(contacts_table(self_name, self_key, contacts, prefix_bytes, counts, sort))
 
         return ToolResult(summary={"contacts": len(contacts)})
 
     def register_cli(self, app: typer.Typer) -> None:
-        """Register the ``nodes`` subcommand.
+        """Register the ``contacts`` subcommand.
 
         Args:
             app: The Typer application.
@@ -82,7 +82,7 @@ class NodesTool(Tool):
         from ..cli import run_tool_command
 
         @app.command(name=self.name, help=self.help)
-        def _nodes(
+        def _contacts(
             sort: str = typer.Option(
                 "name", "--sort", "-s", help="Order contacts by: name, heard, packets"
             ),

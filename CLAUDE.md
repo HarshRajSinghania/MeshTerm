@@ -31,8 +31,8 @@ them instead of hand-rolling:
 
 | Term | Meaning |
 |---|---|
-| node | any mesh participant |
-| contact | a node the device knows (has a key) |
+| node | any device on the mesh — a radio broadcasting packets; roles: client, repeater, room server. The umbrella term |
+| contact | a node your device knows: **discovered** (heard broadcasting, not yet added) or **added** (in the contact list, messageable). Every contact is a node; not every node is a contact |
 | heard | received from ("last heard", "first heard") — never "seen" in UX text |
 | key | the full fixed-length value — a node's public key, a channel secret |
 | hash | the short derived id — a key's first path-hash-mode bytes (the slice `highlighted_hash` lights), a channel hash, a path hop |
@@ -41,6 +41,14 @@ them instead of hand-rolling:
 | via | prefix for a packet/message's relay chain |
 | Back | leave the current screen/list (the only exit word on rows) |
 | Quit | leave the app (main menu, device splash) — nowhere else |
+
+Node vs contact — the boundary: **node** is the hardware/participant sense — the map,
+atlas, heard-nodes, relay hops, graph vertices, and node *types* (client/repeater/room/
+sensor) all speak "node". **Contact** is the saved-identity sense — the Contacts screen,
+the courier recipient, anything you *address*. The reception/persistence layer
+(`observations.node`, `HeardNode`, `heard_nodes()`, `trace_hops.node`) stays "node"; the
+sortable list you pick from is `contactlist.py` (`ContactListScreen`/`ContactRow`/
+`ContactsSort`/`contacts_table`). The `contacts` tool lists the device's added contacts.
 
 Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now ago"),
 `_format_age` for aligned columns ("now", "5m").

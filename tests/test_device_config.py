@@ -102,27 +102,27 @@ def test_highlighted_hash_truncates_on_a_byte_boundary() -> None:
     assert highlighted_hash(pub, prefix_bytes=1, width=15).plain == "ab" * 7 + "…"
 
 
-def _nodes_names(counts, sort: str, prefix_bytes: int = 3):
-    """Render a nodes table for ``sort`` and return (table, name-column plain text)."""
+def _contacts_names(counts, sort: str, prefix_bytes: int = 3):
+    """Render a contacts table for ``sort`` and return (table, name-column plain text)."""
     from meshterm.core.models import Contact
-    from meshterm.ui.widgets import NodesSort, nodes_table
+    from meshterm.ui.widgets import ContactsSort, contacts_table
 
     contacts = [
         Contact(name="Bob", public_key="9f1a2b" + "00" * 29, key_prefix="9f1a2b"),
         Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6"),
     ]
-    group = nodes_table(
-        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts, NodesSort.from_name(sort)
+    group = contacts_table(
+        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts, ContactsSort.from_name(sort)
     )
     table = group.renderables[0]  # (table, blank line, legend)
     names = [c.plain if hasattr(c, "plain") else str(c) for c in table.columns[1].cells]
     return table, names
 
 
-def test_nodes_table_lists_us_first_with_full_keys() -> None:
-    """The nodes table pins our node first, sorts by name, and shows full highlighted keys."""
+def test_contacts_table_lists_us_first_with_full_keys() -> None:
+    """The contacts table pins our node first, sorts by name, and shows full highlighted keys."""
     counts = {"3d63c6000000": 14}  # Alice was overheard; Bob wasn't
-    table, names = _nodes_names(counts, sort="name")
+    table, names = _contacts_names(counts, sort="name")
 
     # Column 1 is the name; us first, then contacts alphabetically (Alice before Bob).
     assert names[0].startswith("Homestead")
@@ -144,7 +144,7 @@ def test_nodes_table_lists_us_first_with_full_keys() -> None:
     assert any(s.style == node_style("3d63c6") for s in keys[1].spans)
 
 
-def test_nodes_table_sorts_by_heard_and_packets() -> None:
+def test_contacts_table_sorts_by_heard_and_packets() -> None:
     """Non-default sorts reorder contacts while keeping our node pinned first."""
     from datetime import timedelta
 
@@ -166,27 +166,27 @@ def test_nodes_table_sorts_by_heard_and_packets() -> None:
         ),
     ]
     counts = {"3d63c6000000": 14, "9f1a2b000000": 3}
-    from meshterm.ui.widgets import NodesSort, nodes_table
+    from meshterm.ui.widgets import ContactsSort, contacts_table
 
-    def names(sort: NodesSort):
-        group = nodes_table("Us", "aabbcc" + "00" * 29, contacts, 3, counts, sort)
+    def names(sort: ContactsSort):
+        group = contacts_table("Us", "aabbcc" + "00" * 29, contacts, 3, counts, sort)
         cells = group.renderables[0].columns[1].cells
         return [c.plain if hasattr(c, "plain") else str(c) for c in cells]
 
     # Freshest first: Bob (5m) before Alice (2d) under the default (ascending-age) heard sort.
-    assert names(NodesSort.from_name("heard"))[1:] == ["Bob", "Alice"]
+    assert names(ContactsSort.from_name("heard"))[1:] == ["Bob", "Alice"]
     # Most packets first: Alice (14) before Bob (3) under the default (descending) packets sort.
-    assert names(NodesSort.from_name("packets"))[1:] == ["Alice", "Bob"]
+    assert names(ContactsSort.from_name("packets"))[1:] == ["Alice", "Bob"]
     # Descending flips it: oldest-heard first puts Alice (2d) above Bob (5m).
-    assert names(NodesSort(column="heard", ascending=False))[1:] == ["Alice", "Bob"]
+    assert names(ContactsSort(column="heard", ascending=False))[1:] == ["Alice", "Bob"]
 
 
-def test_nodes_table_breaks_metric_ties_by_name_ascending() -> None:
-    """Two nodes with the same metric keep an A→Z order in both sort directions (no flip)."""
+def test_contacts_table_breaks_metric_ties_by_name_ascending() -> None:
+    """Two contacts with the same metric keep an A→Z order in both sort directions (no flip)."""
     from datetime import timedelta
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.widgets import NodesSort, _ordered_contacts
+    from meshterm.ui.widgets import ContactsSort, _ordered_contacts
 
     same = utcnow() - timedelta(minutes=5)
     contacts = [
@@ -196,29 +196,29 @@ def test_nodes_table_breaks_metric_ties_by_name_ascending() -> None:
     ]
 
     def order(ascending: bool) -> list[str]:
-        sort = NodesSort(column="heard", ascending=ascending)
+        sort = ContactsSort(column="heard", ascending=ascending)
         return [c.name for c in _ordered_contacts(contacts, {}, sort)]
 
-    # Freshest first: the two 5-min nodes lead, ordered Alice→Charlie, then Bob (3h).
+    # Freshest first: the two 5-min contacts lead, ordered Alice→Charlie, then Bob (3h).
     assert order(ascending=True) == ["Alice", "Charlie", "Bob"]
     # Oldest first: Bob leads, but the tie still breaks Alice→Charlie — not Charlie→Alice.
     assert order(ascending=False) == ["Bob", "Alice", "Charlie"]
 
 
-def _nodes_sort(name: str = "name"):
-    """The interactive Nodes screen's sort: the shared node list's four-column ring."""
-    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
-    from meshterm.ui.widgets import NodesSort
+def _contacts_sort(name: str = "name"):
+    """The interactive Contacts screen's sort: the shared contact list's four-column ring."""
+    from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.widgets import ContactsSort
 
-    return NodesSort.from_name(name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
+    return ContactsSort.from_name(name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
 
 
-def test_nodes_screen_ctrl_arrows_steer_the_sort() -> None:
+def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
     """Ctrl+←/→ walk the shared four-column ring (wrapping); Ctrl+↑/↓ force the direction —
-    the Time Machine picker's keys, now the Nodes screen's too."""
-    from meshterm.ui.nodes_screen import NodesScreen
+    the Time Machine picker's keys, now the Contacts screen's too."""
+    from meshterm.ui.contacts_screen import ContactsScreen
 
-    screen = NodesScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, _nodes_sort())
+    screen = ContactsScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, _contacts_sort())
     assert (screen._sort.column, screen._sort.ascending) == ("name", True)
 
     screen.handle("ctrl_right")  # name -> heard, opening in its natural (ascending) direction
@@ -237,13 +237,13 @@ def test_nodes_screen_ctrl_arrows_steer_the_sort() -> None:
     assert screen._sort.column == "hash"
 
 
-def test_nodes_screen_lists_contacts_in_the_shared_lanes() -> None:
+def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     """Contacts render in the shared NAME/HEARD/PKTS/KEY lanes, our node pinned first;
     plain arrows only move the highlight, and Enter is inert (selection comes later)."""
     import re
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.nodes_screen import YOU, NodesScreen
+    from meshterm.ui.contacts_screen import YOU, ContactsScreen
     from meshterm.ui.tui.screen import CANCEL
 
     contacts = [
@@ -251,7 +251,7 @@ def test_nodes_screen_lists_contacts_in_the_shared_lanes() -> None:
         Contact(name="Bob", public_key="bb" * 32),
     ]
     counts = {"aa" * 6: 7}  # Alice was overheard; Bob never
-    screen = NodesScreen("Us", "cc" * 32, contacts, 1, counts, _nodes_sort())
+    screen = ContactsScreen("Us", "cc" * 32, contacts, 1, counts, _contacts_sort())
     body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(72))
 
     # The shared column header (recorded sticky, so it pins once scrolled past)...

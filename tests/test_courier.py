@@ -115,7 +115,7 @@ def test_store_caps_the_finished_history(tmp_path: Path) -> None:
 
 
 def test_eligibility_waits_for_freshness_and_schedule(tmp_path: Path) -> None:
-    """Plain entries need the node heard; scheduled ones hold until their time."""
+    """Plain entries need the contact heard; scheduled ones hold until their time."""
     service = _service(tmp_path, [])
     store = service._ctx.courier_store
     now = utcnow()
@@ -135,7 +135,7 @@ def test_eligibility_waits_for_freshness_and_schedule(tmp_path: Path) -> None:
 
 
 def test_eligibility_backs_off_after_failures(tmp_path: Path) -> None:
-    """A failed attempt waits out its (doubling) backoff even when the node is fresh."""
+    """A failed attempt waits out its (doubling) backoff even when the contact is fresh."""
     service = _service(tmp_path, [])
     store = service._ctx.courier_store
     now = utcnow()
@@ -462,7 +462,7 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
     ctx = _outbox_ctx(tmp_path)
     entry = ctx.courier_store.queue(NODE, "YUL", "patience")
     screen = CourierOutboxScreen(ctx)
-    assert "waiting to hear the node" in _outbox_plain(screen)
+    assert "waiting to hear the contact" in _outbox_plain(screen)
 
     # An attempt just happened: the same row now shows the retry countdown —
     # no refresh() needed, the callable title re-reads the entry on repaint.
@@ -476,8 +476,8 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
 def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
     """The picker draws the full lanes, opens freshest-heard first, and Enter commits."""
     from meshterm.ui.courier_screen import _PICK_HINT, CourierRecipientScreen
-    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.widgets import ContactsSort
 
     fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=utcnow())
     stale = Contact(
@@ -488,7 +488,7 @@ def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
         contacts=[stale, fresh],
         prefix_bytes=1,
         counts=counts,
-        sort=NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
+        sort=ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING),
     )
     import re
 
@@ -510,12 +510,12 @@ def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
 def test_recipient_picker_sort_keys_walk_the_ring(tmp_path: Path) -> None:
     """The same ^←→ keys the Nodes list uses re-sort the picker's columns."""
     from meshterm.ui.courier_screen import CourierRecipientScreen
-    from meshterm.ui.nodelist import SORT_COLUMNS, SORT_OPENS_ASCENDING
-    from meshterm.ui.widgets import NodesSort
+    from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.widgets import ContactsSort
 
     a = Contact(name="Alpha", public_key="aa" * 32, last_seen=utcnow())
     z = Contact(name="Zulu", public_key="bb" * 32)
-    sort = NodesSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
+    sort = ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
     screen = CourierRecipientScreen(
         contacts=[z, a], prefix_bytes=0, counts={}, sort=sort
     )
