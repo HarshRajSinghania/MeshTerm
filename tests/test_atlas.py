@@ -134,6 +134,60 @@ def test_atlas_walking_into_the_back_node_pops_instead_of_growing() -> None:
     assert screen._trail == [topo.self_id]  # popped, not [us, yul, us]
 
 
+def test_atlas_walking_to_an_earlier_node_drops_the_loop() -> None:
+    """Revisiting a node already on the trail truncates the stack to its first appearance,
+    dropping the circular stretch walked to get back there."""
+    topo = MeshTopology(US, contacts=[YUL, ALICE])
+    yul = topo.canonical(YUL.public_key)
+    alice = topo.canonical(ALICE.public_key)
+    when = utcnow()
+    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([yul, alice], snrs=[-2.0], when=when, source="packet")
+    topo.add_walk([topo.self_id, alice], snrs=[3.0], when=when, source="trace")  # closes the loop
+    screen = _screen(topo)
+
+    def walk_to(node: str) -> None:
+        screen.render_body(80)
+        screen._index = screen._rows().index(node)
+        screen.handle("enter")
+
+    walk_to(yul)  # us → YUL
+    walk_to(alice)  # YUL → Alice
+    assert screen._trail == [topo.self_id, yul, alice]
+    walk_to(yul)  # Alice → YUL: loops back, so Alice is dropped, not re-appended
+    assert screen._trail == [topo.self_id, yul]
+
+
+def test_atlas_trail_drops_the_head_not_the_tail_when_narrow() -> None:
+    """A trail too long for the line loses its head behind a leading …, keeping the focus."""
+    screen = _screen(_topo())
+    us = screen._topo.self_id
+    yul = screen._topo.canonical(YUL.public_key)
+    alice = screen._topo.canonical(ALICE.public_key)
+    screen._trail = [us, yul, alice]
+    text = screen._trail_text(20).plain  # too narrow for the whole "Homestead › … › Alice"
+    assert text.startswith("…")
+    assert text.endswith("Alice")  # the focus is always kept
+    assert "Homestead" not in text  # the head was dropped, not the tail
+
+
+def test_atlas_trail_names_carry_their_node_hues() -> None:
+    """Trail names take the per-node key hue (ours the white you-style), the focus bold."""
+    from meshterm.ui.theme import node_style
+
+    screen = _screen(_topo())
+    us = screen._topo.self_id
+    yul = screen._topo.canonical(YUL.public_key)
+    screen._trail = [us, yul]
+    text = screen._trail_text(80)
+    plain = text.plain
+    yul_at = plain.index("YUL-Cartierville")
+    assert any(
+        s.start <= yul_at < s.end and "bold" in str(s.style) and node_style(yul) in str(s.style)
+        for s in text.spans
+    )
+
+
 def test_atlas_home_refocuses_us() -> None:
     """Home resets the walk to our own node from anywhere."""
     topo = _topo()

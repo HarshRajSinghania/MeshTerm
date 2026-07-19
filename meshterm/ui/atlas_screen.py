@@ -28,8 +28,12 @@ only its immediate neighbourhood:
   PgUp/PgDn a windowful.
 
 **Enter walks**: the highlighted neighbour becomes the new focus, the breadcrumb trail
-across the top grows (``you › YUL-Cartierville › …``), and **⌫ steps back** along it.
-**Home** refocuses our own node. **Typing finds** — a global filter over every node in
+across the top grows (``you › YUL-Cartierville › …``, each name in its node's own hue),
+and **⌫ steps back** along it. Walking to a node already on the trail truncates the stack
+to its first appearance — the loop you walked to get back there is dropped rather than
+recorded — and when the trail outgrows the line its *head* is dropped behind a leading
+``…`` so the focus stays visible. **Home** refocuses our own node. **Typing finds** — a
+global filter over every node in
 the graph, islands included; Enter teleports the focus to the highlighted match (the
 trail restarts there, since the walk didn't cross the gap). ``^R`` rebuilds the graph
 from storage, and Esc peels find first, the screen second.
@@ -42,6 +46,7 @@ from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Optional
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.models import (
@@ -337,8 +342,12 @@ class AtlasScreen(Screen):
             # gap, so pretending it did would make ⌫ retrace a path never taken.
             self._trail = [target]
             self._filter = ""
-        elif target == self._came_from:
-            self._trail.pop()  # walking back through the west node = one step back
+        elif target in self._trail:
+            # Revisiting a node already on the trail — stepping back through the west
+            # node, or looping round to an earlier one — truncates the stack to that
+            # node's first appearance. We drop the circular stretch we walked to get
+            # back here rather than recording the round trip; losing the loop is the point.
+            self._trail = self._trail[: self._trail.index(target) + 1]
         else:
             self._trail.append(target)
         self._index = 0
@@ -425,18 +434,47 @@ class AtlasScreen(Screen):
         """The breadcrumb trail (when walking) and the focus node's identity line."""
         out: list[str] = []
         if len(self._trail) > 1:
-            trail = Text()
-            for i, node in enumerate(self._trail):
-                if i:
-                    trail.append(" › ", style="muted")
-                last = i == len(self._trail) - 1
-                trail.append(
-                    self._label(node), style="bold" if last else "muted"
-                )
-            trail.truncate(width, overflow="ellipsis")
-            out.append(render_to_ansi(trail, width, no_wrap=True))
+            out.append(render_to_ansi(self._trail_text(width), width, no_wrap=True))
         out.append(render_to_ansi(self._focus_line(depths), width, no_wrap=True))
         return out
+
+    def _trail_text(self, width: int) -> Text:
+        """The breadcrumb trail, each name in its own key-derived hue, tail-anchored.
+
+        Names carry the app-wide per-node hue (ours the white ``you``, a nameless node
+        muted), the focus bold. When the whole trail won't fit on the line the *head* is
+        dropped behind a leading ``…`` — never the tail — so the focus and the steps that
+        led to it are always the ones kept in view.
+        """
+        nodes = self._trail
+        sep = " › "
+
+        def width_of(start: int) -> int:
+            total = cell_len("…") + cell_len(sep) if start else 0  # the leading "… › "
+            for k in range(start, len(nodes)):
+                total += cell_len(sep) if k > start else 0
+                total += cell_len(self._label(nodes[k]))
+            return total
+
+        start = 0
+        while start < len(nodes) - 1 and width_of(start) > width:
+            start += 1
+
+        trail = Text()
+        if start:
+            trail.append("…" + sep, style="muted")
+        for k in range(start, len(nodes)):
+            if k > start:
+                trail.append(sep, style="muted")
+            last = k == len(nodes) - 1
+            trail.append(self._label(nodes[k]), style=self._trail_style(nodes[k], last))
+        trail.truncate(width, overflow="ellipsis")  # guard a lone label wider than the line
+        return trail
+
+    def _trail_style(self, node: str, last: bool) -> str:
+        """A trail name's style: its key hue (ours white, a nameless node muted), focus bold."""
+        base = self._list_name_style(node)
+        return f"bold {base}" if last else base
 
     def _focus_line(self, depths: dict[str, int]) -> Text:
         """Who is in focus: glyph, name, hash, kind, distance, and recency."""
