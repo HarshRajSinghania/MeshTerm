@@ -756,6 +756,35 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
     assert screen._sender_style("Zed") == "muted"
 
 
+def test_direct_chat_unknown_mention_stays_muted() -> None:
+    """In a direct chat an unresolved ``@mention`` stays muted — as it does in a channel.
+
+    A direct thread's *sender label* falls back to the peer's own key so it keeps its
+    hue even when the display name won't resolve, but that fallback must not leak onto
+    an ``@mention`` in the body: a mention names an arbitrary person, so an unknown one
+    is gray. Regression guard for the peer-key fallback bleeding into mentions.
+    """
+    from meshterm.ui.theme import node_style
+
+    # Direct chat with peer key d4… — the sender label may borrow this hue, mentions must not.
+    conv = Conversation(
+        label="Alice", is_channel=False,
+        contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
+    )
+    screen = ChatScreen(
+        conv, [], send=None, names={"d4e5f6a7": "Alice"}, session=_StubSession(),
+        key_of=_keys_of({"alice": "60" + "0" * 62}),
+    )
+
+    # A resolvable mention still lights in its own key-derived hue…
+    assert screen._sender_style("Alice", mention=True) == node_style("60")
+    # …but an unknown mention is muted, not painted with the peer's (d4…) hue.
+    assert screen._sender_style("Zed", mention=True) == "muted"
+    assert screen._sender_style("Zed", mention=True) != node_style("d4")
+    # The sender label keeps the peer-key fallback (unchanged behaviour).
+    assert screen._sender_style("Zed") == node_style("d4")
+
+
 def test_direct_transcript_groups_under_sender_headers() -> None:
     """Direct chats use the same grouped layout as channels: one header per sender run."""
     from datetime import datetime, timezone

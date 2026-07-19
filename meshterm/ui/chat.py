@@ -365,7 +365,7 @@ class ChatScreen(Screen):
             if match.start() > pos:
                 text.append(body[pos : match.start()], style=base)
             name = match.group(1)
-            text.append(f"@{name}", style=self._sender_style(name))
+            text.append(f"@{name}", style=self._sender_style(name, mention=True))
             pos = match.end()
         if pos < len(body):
             text.append(body[pos:], style=base)
@@ -402,23 +402,29 @@ class ChatScreen(Screen):
             "Enter to see the paths this message took · End to cancel", style="accent"
         )
 
-    def _sender_style(self, sender: str, *, is_self: bool = False) -> str:
+    def _sender_style(
+        self, sender: str, *, is_self: bool = False, mention: bool = False
+    ) -> str:
         """Pick a stable color for a sender name — keyed on the sender's node key.
 
         Our own messages are white — keyed on ``is_self`` (the message being outbound), not
         on the ``"you"`` label, so a remote sender who happens to be named ``you`` still gets
         a hue from the palette rather than masquerading as us. ``·`` (unknown) is muted.
         Every other sender resolves its name back to a key (contacts, then the recorder's
-        stored names; a direct thread falls back to the peer's own key) and takes that
-        key's hue; a name no known node carries stays muted — the app-wide rule that
-        colour marks a keyed identity.
+        stored names; a direct thread's *sender label* falls back to the peer's own key)
+        and takes that key's hue; a name no known node carries stays muted — the app-wide
+        rule that colour marks a keyed identity.
+
+        ``mention=True`` styles an ``@mention`` in the body rather than a sender label: a
+        mention names an arbitrary person, so the peer-key fallback must not apply — an
+        unresolved one stays muted (gray) in a direct chat exactly as it does in a channel.
         """
         if is_self:
             return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
             return "muted"
         key = self._key_of(sender)
-        if not key and not self._is_channel:
+        if not key and not self._is_channel and not mention:
             key = self._peer_key or None
         return name_style(sender, key)
 
