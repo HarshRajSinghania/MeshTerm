@@ -185,3 +185,70 @@ def test_new_node_rule_can_be_switched_off(tmp_path: Path) -> None:
     service.note(_obs(node="c9" * 6))
     assert store.alerts() == []
     assert store.known_contains("c9" * 6)
+
+
+# --- the screen's rows ---------------------------------------------------------------
+
+
+def test_store_round_trips_node_type(tmp_path: Path) -> None:
+    """A starred node's advertised type persists; legacy entries load as None."""
+    path = tmp_path / "watch.json"
+    store = WatchStore(path)
+    store.watch("aa" * 6, "Roof", node_type=2)
+    store.watch("bb" * 6, "Old-style")  # no type, like a pre-field entry
+
+    reloaded = WatchStore(path)
+    assert reloaded.watched()["aa" * 6].node_type == 2
+    assert reloaded.watched()["bb" * 6].node_type is None
+
+
+def test_watched_row_type_glyph_and_hued_name(tmp_path: Path) -> None:
+    """The watchlist row leads with the shared type glyph (own colour) and hues the
+    name by the entry's key; silence still reads from the trailing tail."""
+    from meshterm.core.watch_store import WatchedNode
+    from meshterm.ui.theme import name_style
+    from meshterm.ui.watchtower_screen import _watched_row
+    from meshterm.ui.widgets import _NODE_GLYPHS
+
+    entry = WatchedNode(key="a1" * 6, name="Roof", node_type=2, last_heard=utcnow())
+    row = _watched_row(entry, lambda key: None)
+    glyph, glyph_style = _NODE_GLYPHS[2]
+    assert row.plain.startswith(f"{glyph} Roof")
+    assert any(s.style == glyph_style and s.start == 0 for s in row.spans)
+    name_at = row.plain.index("Roof")
+    assert any(
+        s.style == name_style("Roof", "a1" * 6) and s.start <= name_at < s.end
+        for s in row.spans
+    )
+
+    # A legacy entry (no stored type) falls back to the contact table's resolver.
+    legacy = WatchedNode(key="a1" * 6, name="Roof")
+    resolved = _watched_row(legacy, lambda key: 2)
+    assert resolved.plain.startswith(f"{glyph} ")
+
+    # Silence is signalled by the ⚠ tail, never the glyph colour.
+    quiet = WatchedNode(key="a1" * 6, name="Roof", node_type=2, silent_since=utcnow())
+    assert "⚠ silent" in _watched_row(quiet, lambda key: None).plain
+
+
+def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
+    """An unacked alert's label takes its key-derived hue; acked recedes to muted."""
+    from meshterm.core.watch_store import Alert
+    from meshterm.ui.theme import name_style
+    from meshterm.ui.watchtower_screen import _alert_row
+
+    key_of = lambda label: "d4" * 6 if label == "Roof" else None
+    alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
+    row = _alert_row(alert, key_of)
+    at = row.plain.index("Roof")
+    assert any(
+        s.style == name_style("Roof", "d4" * 6) and s.start <= at < s.end
+        for s in row.spans
+    )
+
+    acked = Alert(
+        ident=2, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True
+    )
+    acked_row = _alert_row(acked, key_of)
+    at = acked_row.plain.index("Roof")
+    assert any(s.style == "muted" and s.start <= at < s.end for s in acked_row.spans)

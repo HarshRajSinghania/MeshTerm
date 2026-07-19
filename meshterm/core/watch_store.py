@@ -56,6 +56,9 @@ class WatchedNode:
             silence countdown is armed immediately).
         silent_since: Set while a silence alarm is active, so it fires once and
             re-arms only after the node is heard again.
+        node_type: The node's advertised type at star time (a ``NODE_TYPE_*``
+            constant), for the watchlist's type glyph; ``None`` for entries starred
+            before the field existed (the screen falls back to the contact table).
     """
 
     key: str
@@ -64,6 +67,7 @@ class WatchedNode:
     snr_watch: bool = True
     last_heard: Optional[datetime] = None
     silent_since: Optional[datetime] = None
+    node_type: Optional[int] = None
 
 
 @dataclass(slots=True)
@@ -139,6 +143,7 @@ class WatchStore:
             for key, record in watched.items():
                 if not isinstance(record, dict):
                     continue
+                raw_type = record.get("node_type")
                 state.watched[str(key)] = WatchedNode(
                     key=str(key),
                     name=str(record.get("name") or key),
@@ -146,6 +151,7 @@ class WatchStore:
                     snr_watch=bool(record.get("snr_watch", True)),
                     last_heard=_as_time(record.get("last_heard")),
                     silent_since=_as_time(record.get("silent_since")),
+                    node_type=raw_type if isinstance(raw_type, int) and raw_type >= 0 else None,
                 )
         for record in data.get("alerts", []):
             if not isinstance(record, dict):
@@ -175,7 +181,14 @@ class WatchStore:
         """Whether ``key`` is on the watchlist."""
         return key in self.state.watched
 
-    def watch(self, key: str, name: str, *, last_seen: Optional[datetime] = None) -> None:
+    def watch(
+        self,
+        key: str,
+        name: str,
+        *,
+        last_seen: Optional[datetime] = None,
+        node_type: Optional[int] = None,
+    ) -> None:
         """Star a node with default rules.
 
         The silence countdown arms immediately: it counts from the contact's known
@@ -187,9 +200,10 @@ class WatchStore:
             key: The node's canonical 12-hex id.
             name: Display label.
             last_seen: When the node was last heard, if known.
+            node_type: The node's advertised type, if known (for the watchlist glyph).
         """
         self.state.watched[key] = WatchedNode(
-            key=key, name=name, last_heard=last_seen or utcnow()
+            key=key, name=name, last_heard=last_seen or utcnow(), node_type=node_type
         )
         self._save()
 
@@ -361,6 +375,7 @@ class WatchStore:
                     "snr_watch": e.snr_watch,
                     "last_heard": e.last_heard.isoformat() if e.last_heard else None,
                     "silent_since": e.silent_since.isoformat() if e.silent_since else None,
+                    "node_type": e.node_type,
                 }
                 for key, e in state.watched.items()
             },

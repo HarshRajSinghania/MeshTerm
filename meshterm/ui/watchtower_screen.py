@@ -16,15 +16,17 @@ is opened before that ever happened). Nothing transmits.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from rich.text import Text
 
-from ..core.models import NODE_TYPE_REPEATER, Contact
+from ..core.models import Contact
 from ..core.watch_store import OFF, SILENCE_CHOICES_H, Alert, WatchedNode
+from ..services.trace_runner import make_name_key_resolver
 from .menus import back_rows, section_heading
+from .theme import name_style
 from .tui import Choice, Separator
-from .widgets import _age_seconds, _format_age
+from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -82,16 +84,31 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
         contacts = []
 
     store = ctx.watch_store
+    # Legacy watched entries (starred before types were stored) fall back to the
+    # contact table's advertised type; alert labels resolve back to keys for their hue.
+    type_by_key = {
+        key: c.node_type
+        for c in contacts
+        if (key := contact_watch_key(c)) is not None and c.node_type is not None
+    }
+    contact_key_of = make_name_key_resolver(contacts)
     loop = asyncio.get_running_loop()
     cursor: Any = None
     while True:
-        items = _menu_items(store.alerts(), store.watched(), store.new_node_alerts)
+        items = _menu_items(
+            store.alerts(),
+            store.watched(),
+            store.new_node_alerts,
+            type_of=type_by_key.get,
+            key_of=contact_key_of,
+        )
         menu = SelectScreen(
             "Watchtower — alerts & watched nodes",
             items,
             default=cursor,
             wrap=False,
-            footer_hint="↑↓ move · Enter select/acknowledge · Esc back",
+            hscroll=True,
+            footer_hint="↑↓ move · ←→ scroll · Enter select/acknowledge · Esc back",
         )
         menu.future = loop.create_future()
         session.push(menu)
@@ -121,14 +138,35 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
 
 
 def _menu_items(
-    alerts: list[Alert], watched: dict[str, WatchedNode], new_node_alerts: bool
+    alerts: list[Alert],
+    watched: dict[str, WatchedNode],
+    new_node_alerts: bool,
+    *,
+    type_of: Callable[[str], Optional[int]] = lambda key: None,
+    key_of: Callable[[str], Optional[str]] = lambda name: None,
 ) -> list:
-    """Build the screen's rows: alerts, then the watchlist, then the actions."""
+    """Build the screen's rows: alerts, then the watchlist, then the actions.
+
+    Args:
+        alerts: The alert log, newest first.
+        watched: The watchlist by canonical id.
+        new_node_alerts: Whether the mesh-wide new-node rule is on.
+        type_of: Maps a watch key to a node type, for entries starred before types
+            were stored.
+        key_of: Maps an alert's node label back to a key, for its hue; layered here
+            with the watchlist's own names so a starred node's alerts colour even
+            when the device (and its contact table) is offline.
+    """
+    watched_keys = {entry.name.casefold(): entry.key for entry in watched.values()}
+
+    def label_key(label: str) -> Optional[str]:
+        return key_of(label) or watched_keys.get(label.casefold())
+
     items: list = [section_heading("Alerts")]
     if not alerts:
         items.append(Separator("  nothing yet — tripped rules land here"))
     for alert in alerts[:_SHOWN_ALERTS]:
-        items.append(Choice(_alert_row(alert), ("ack", alert.ident)))
+        items.append(Choice(_alert_row(alert, label_key), ("ack", alert.ident)))
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
     if unacked:
@@ -141,7 +179,7 @@ def _menu_items(
     if not watched:
         items.append(Separator("  none starred yet — silence and SNR rules need one"))
     for key in sorted(watched, key=lambda k: watched[k].name.casefold()):
-        items.append(Choice(_watched_row(watched[key]), ("node", key)))
+        items.append(Choice(_watched_row(watched[key], type_of), ("node", key)))
     items.append(Choice("⭐ Watch a node…", _WATCH))
 
     items.append(Separator(" "))
@@ -157,8 +195,13 @@ def _menu_items(
     return items
 
 
-def _alert_row(alert: Alert) -> Text:
-    """One alert as a row: marker, age, kind, node, and the message."""
+def _alert_row(alert: Alert, key_of: Callable[[str], Optional[str]]) -> Text:
+    """One alert as a row: marker, age, kind, node, and the message.
+
+    An unacked alert's node label takes its key-derived hue (resolved through
+    ``key_of``, muted when no key is known); an acked row's label recedes to muted
+    with the rest of its history.
+    """
     row = Text()
     if alert.acked:
         row.append("○ ", style="muted")
@@ -167,16 +210,26 @@ def _alert_row(alert: Alert) -> Text:
     age = _format_age(_age_seconds(alert.when))
     row.append(f"{age:>5}  ", style="muted")
     row.append(alert.kind.ljust(10), style=_KIND_STYLES.get(alert.kind, "brand"))
-    row.append(alert.label, style="muted" if alert.acked else None)
+    if alert.acked:
+        row.append(alert.label, style="muted")
+    else:
+        row.append(alert.label, style=name_style(alert.label, key_of(alert.label)))
     row.append(f" — {alert.message}", style="muted")
     return row
 
 
-def _watched_row(entry: WatchedNode) -> Text:
-    """One watched node as a row: name, its rules, and when it was last heard."""
+def _watched_row(entry: WatchedNode, type_of: Callable[[str], Optional[int]]) -> Text:
+    """One watched node as a row: type glyph, hued name, its rules, and last heard.
+
+    The leading glyph is the node's shared type marker (``▲`` repeater, ``●`` node, …)
+    in its own type colour — silence is signalled by the trailing ``⚠ silent``, not the
+    glyph — and the name takes its key-derived hue (the entry's 12-hex watch key).
+    """
+    node_type = entry.node_type if entry.node_type is not None else type_of(entry.key)
+    glyph, glyph_style = _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
     row = Text()
-    row.append("▲ ", style="err" if entry.silent_since is not None else "brand")
-    row.append(entry.name)
+    row.append(f"{glyph} ", style=glyph_style)
+    row.append(entry.name, style=name_style(entry.name, entry.key))
     silence = "off" if entry.silence_hours == OFF else f"{entry.silence_hours} h"
     row.append(f"   silence {silence}", style="muted")
     row.append(" · SNR watch " + ("on" if entry.snr_watch else "off"), style="muted")
@@ -214,9 +267,13 @@ async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
 
     items: list = []
     for key, contact in sorted(candidates, key=recency):
+        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
         row = Text()
-        row.append("▲ " if contact.node_type == NODE_TYPE_REPEATER else "● ", style="brand")
-        row.append(contact.name)
+        row.append(f"{glyph} ", style=glyph_style)
+        row.append(
+            contact.name,
+            style=name_style(contact.name, contact.public_key or contact.key_prefix),
+        )
         row.append(f"   heard {_format_age(_age_seconds(contact.last_seen))}", style="muted")
         items.append(Choice(row, (key, contact)))
     picked = await session.select(
@@ -227,7 +284,9 @@ async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
     if picked is None:
         return
     key, contact = picked
-    store.watch(key, contact.name, last_seen=contact.last_seen)
+    store.watch(
+        key, contact.name, last_seen=contact.last_seen, node_type=contact.node_type
+    )
 
 
 async def _node_rules(ctx: "AppContext", key: str) -> None:

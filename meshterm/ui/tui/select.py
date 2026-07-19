@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional, Union
 from rich.cells import cell_len
 from rich.text import Text
 
-from .render import render_lines, render_to_ansi
+from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
 
 
@@ -108,6 +108,9 @@ class SelectScreen(Screen):
     if the user presses Esc.
     """
 
+    #: Cells one ←/→ press shifts an h-scrolling list by (see the ``hscroll`` flag).
+    _HSCROLL_STEP = 8
+
     def __init__(
         self,
         title: str,
@@ -119,6 +122,7 @@ class SelectScreen(Screen):
         delete_hint: str = "",
         filterable: bool = True,
         wrap: bool = True,
+        hscroll: bool = False,
     ) -> None:
         """Build a select screen.
 
@@ -139,9 +143,16 @@ class SelectScreen(Screen):
             wrap: Whether the highlight wraps around the ends (Down from the last row jumps
                 to the first, and vice versa). Off for grouped lists where wrapping across the
                 section headings reads as a jarring jump rather than continuing to scroll.
+            hscroll: Whether ←/→ shift every row sideways so an over-long line can be read
+                to its end (the Watchtower's alert log). Off by default — rows simply
+                ellipsize at the right edge and ←/→ stay inert, exactly as before. The
+                shift survives ↑↓ moves (you scrolled to a column; walking rows keeps it)
+                and resets when the filter is edited.
         """
         super().__init__()
         self.title = title
+        self._hscroll = hscroll
+        self._hshift = 0
         if footer_hint is None:
             footer_hint = (
                 "↑↓ move · type to filter · Enter select · Esc back"
@@ -293,6 +304,16 @@ class SelectScreen(Screen):
         self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
         selected = choices[self._index] if choices else None
 
+        # Clamp an active horizontal shift to the widest row, so → stops at the point
+        # where the longest line's tail has come into view (measured fresh each paint —
+        # callable titles may have changed width).
+        if self._hscroll and self._hshift:
+            widest = 0
+            for item in rows:
+                label = item.title if isinstance(item, Separator) else item.label
+                widest = max(widest, cell_len(_plain(label)) + 2)
+            self._hshift = max(0, min(self._hshift, widest - width))
+
         lines: list[str] = []
         # A prompt (when set) sits above the list, offsetting every row below it; the cursor
         # line and sticky-header indices below are shifted by exactly this many lines.
@@ -314,6 +335,8 @@ class SelectScreen(Screen):
                 # string is drawn uniformly in the separator's style.
                 title = item.title
                 heading = title if isinstance(title, Text) else Text(title, style=item.style)
+                if self._hscroll and self._hshift:
+                    heading = crop_cells(heading, self._hshift, width)
                 sep = render_to_ansi(heading, width)
                 self._sticky_headers.append((len(lines), sep))
                 lines.append(sep)
@@ -326,7 +349,11 @@ class SelectScreen(Screen):
             # row's base style underneath, so the highlight tints the row while the badge
             # keeps its colour. A plain string is styled uniformly as before.
             text = Text(pointer, style=style)
-            text.append_text(label if isinstance(label, Text) else Text(label))
+            label_text = label if isinstance(label, Text) else Text(label)
+            if self._hscroll and self._hshift:
+                # The 2-cell pointer stays pinned; only the label slides under it.
+                label_text = crop_cells(label_text, self._hshift, max(1, width - 2))
+            text.append_text(label_text)
             text.style = style
             text.no_wrap = True
             text.overflow = "ellipsis"
@@ -379,14 +406,20 @@ class SelectScreen(Screen):
             # (e.g. a remembered network device in the picker); elsewhere it's inert.
             if choices and choices[self._index].deletable:
                 self.resolve(DeleteRequest(choices[self._index].value))
+        elif action == "left" and self._hscroll:
+            self._hshift = max(0, self._hshift - self._HSCROLL_STEP)
+        elif action == "right" and self._hscroll:
+            self._hshift += self._HSCROLL_STEP  # clamped to the widest row at render
         elif action == "escape":
             super().handle("escape")
         elif action == "backspace" and self._filterable:
             self._filter = self._filter[:-1]
             self._index = 0
+            self._hshift = 0
         elif action == "text" and self._filterable and data.isprintable():
             self._filter += data
             self._index = 0
+            self._hshift = 0
 
 
 class ReorderScreen(Screen):

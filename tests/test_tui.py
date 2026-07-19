@@ -1798,3 +1798,72 @@ async def test_session_busy_overlay_shows_between_screens_and_clears() -> None:
     assert seen["rendered"] is True
     assert seen["hidden_over_screen"] is True
     assert session._overlay is None  # cleared on exit
+
+
+# --- horizontal scroll (opt-in) -------------------------------------------------------
+
+
+def _hscroll_screen(width_of_rows: int = 60) -> "SelectScreen":
+    from meshterm.ui.tui.select import Choice, SelectScreen, Separator
+
+    return SelectScreen(
+        "long",
+        [
+            Separator("HEAD-" + "h" * width_of_rows),
+            Choice("row-one-" + "x" * width_of_rows + "-tail", 1),
+            Choice("short", 2),
+        ],
+        hscroll=True,
+        filterable=True,
+    )
+
+
+def _row_plains(screen, width: int) -> list[str]:
+    import re
+
+    return [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(width)]
+
+
+def test_select_hscroll_shifts_rows_and_pins_the_pointer() -> None:
+    """→ slides row content left under the pinned pointer; ← slides it back."""
+    screen = _hscroll_screen()
+    before = _row_plains(screen, 40)
+    assert any("row-one-" in ln for ln in before)
+    screen.handle("right")
+    shifted = _row_plains(screen, 40)
+    assert not any("row-one-" in ln for ln in shifted)  # the head scrolled off
+    assert any(ln.startswith("❯ ") for ln in shifted)  # the pointer stays pinned
+    assert any("HEAD-" not in ln and "hhh" in ln for ln in shifted)  # headers slide too
+    screen.handle("left")
+    assert any("row-one-" in ln for ln in _row_plains(screen, 40))
+
+
+def test_select_hscroll_clamps_at_the_widest_row() -> None:
+    """→ stops once the longest row's tail is in view instead of scrolling to blank."""
+    screen = _hscroll_screen()
+    for _ in range(50):
+        screen.handle("right")
+    plains = _row_plains(screen, 40)
+    assert any("-tail" in ln for ln in plains)  # the longest row's end is visible
+    assert screen._hshift <= 60 + len("row-one--tail") + 2
+
+
+def test_select_hscroll_survives_moves_and_resets_on_filter() -> None:
+    """The shift holds across ↑↓ (a chosen column) and resets when the filter edits."""
+    screen = _hscroll_screen()
+    screen.handle("right")
+    screen.handle("down")
+    assert screen._hshift > 0
+    screen.handle("text", "r")
+    assert screen._hshift == 0
+
+
+def test_select_without_hscroll_ignores_left_right() -> None:
+    """The flag defaults off: ←/→ stay inert and rows render exactly as before."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    screen = SelectScreen("plain", [Choice("row", 1)])
+    before = screen.render_body(40)
+    screen.handle("right")
+    screen.handle("left")
+    assert screen.render_body(40) == before and screen._hshift == 0
