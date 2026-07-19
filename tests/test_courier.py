@@ -395,3 +395,76 @@ async def test_pick_schedule_a_fixed_delay_holds_until_its_time() -> None:
     result = await _pick_schedule(ctx, "YUL")
     assert result is not None and result is not CANCEL_SCHEDULE
     assert result > utcnow()
+
+
+# --- the live outbox screen --------------------------------------------------------------
+
+
+def _outbox_ctx(tmp_path: Path) -> _StubContext:
+    ctx = _StubContext(tmp_path, [])
+    ctx.courier = CourierService(ctx)
+    return ctx
+
+
+def _outbox_plain(screen, width: int = 100) -> str:
+    import re
+
+    return "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(width))
+
+
+def test_outbox_refresh_moves_a_delivered_entry_without_a_keypress(tmp_path: Path) -> None:
+    """A delivery lands its row in Finished on refresh(), no action required."""
+    from meshterm.ui.courier_screen import CourierOutboxScreen
+
+    ctx = _outbox_ctx(tmp_path)
+    entry = ctx.courier_store.queue(NODE, "YUL", "hold this")
+    screen = CourierOutboxScreen(ctx)
+    before = _outbox_plain(screen)
+    assert "⏳ YUL" in before and "Finished" not in before
+
+    ctx.courier_store.mark_delivered(entry.ident)
+    screen.refresh()
+    after = _outbox_plain(screen)
+    assert "Finished" in after and "✓ YUL" in after and "⏳" not in after
+
+
+def test_outbox_refresh_keeps_the_highlight_on_its_entry(tmp_path: Path) -> None:
+    """A row finishing above the cursor doesn't drag the highlight off its entry."""
+    from meshterm.ui.courier_screen import CourierOutboxScreen
+
+    ctx = _outbox_ctx(tmp_path)
+    first = ctx.courier_store.queue(NODE, "YUL", "first")
+    second = ctx.courier_store.queue(NODE, "YUL", "second")
+    screen = CourierOutboxScreen(ctx, default=("msg", second.ident))
+    assert screen._current_choice().value == ("msg", second.ident)
+
+    ctx.courier_store.mark_delivered(first.ident)
+    screen.refresh()
+    assert screen._current_choice().value == ("msg", second.ident)
+
+
+def test_outbox_refresh_without_change_recomposes_nothing(tmp_path: Path) -> None:
+    """An unchanged store shape leaves the row objects alone (no churn per tick)."""
+    from meshterm.ui.courier_screen import CourierOutboxScreen
+
+    ctx = _outbox_ctx(tmp_path)
+    ctx.courier_store.queue(NODE, "YUL", "steady")
+    screen = CourierOutboxScreen(ctx)
+    items = screen._items
+    screen.refresh()
+    assert screen._items is items
+
+
+def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
+    """The waiting row's text is a callable: a state change shows on the next paint."""
+    from meshterm.ui.courier_screen import CourierOutboxScreen
+
+    ctx = _outbox_ctx(tmp_path)
+    entry = ctx.courier_store.queue(NODE, "YUL", "patience")
+    screen = CourierOutboxScreen(ctx)
+    assert "waiting to hear the node" in _outbox_plain(screen)
+
+    # An attempt just happened: the same row now shows the retry countdown —
+    # no refresh() needed, the callable title re-reads the entry on repaint.
+    ctx.courier_store.note_attempt(entry.ident)
+    assert "try 1" in _outbox_plain(screen)

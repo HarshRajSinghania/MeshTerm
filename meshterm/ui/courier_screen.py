@@ -7,6 +7,12 @@ retries) — the finished history (delivered / given-up), and the queueing flow:
 contact, write the message, choose when. Enter on a waiting entry offers *Send now*
 (one forced attempt, outcome in a dialog) and *Cancel*.
 
+The outbox is **live** while it sits open: every row is a callable title recomputed on
+each repaint (so "retry in ~N m" counts down for real), and a once-a-second ticker
+compares the store's shape — entry set and statuses — rebuilding the sections in place
+when something moved (a delivery lands its row in *Finished* within a second, no
+keypress needed), keeping the highlight on its entry.
+
 Delivery itself happens in the background service (:mod:`meshterm.services.courier`),
 which the menu starts with the other always-on services — this screen never needs to
 stay open for a queued message to go out.
@@ -24,7 +30,7 @@ from rich.text import Text
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, utcnow
 from .menus import back_rows, section_heading
-from .tui import DM_BYTE_LIMIT, Choice, Separator
+from .tui import DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -41,6 +47,9 @@ if TYPE_CHECKING:
 # Menu action sentinels (tuples so they never collide with entry ids).
 _QUEUE = ("queue",)
 _CLEAR = ("clear",)
+
+#: Seconds between the open outbox's refresh ticks (shape check + repaint).
+_REFRESH_S = 1.0
 
 #: The widest a message body renders in a row before it is ellipsized.
 _TEXT_W = 36
@@ -96,7 +105,7 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
     from .surface import TuiUi
-    from .tui import CANCEL, SelectScreen
+    from .tui import CANCEL
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the courier is only available in the menu")
@@ -114,16 +123,18 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
     loop = asyncio.get_running_loop()
     cursor: Any = None
     while True:
-        items = _menu_items(ctx, store.entries())
-        menu = SelectScreen(
-            "Courier — store-and-forward outbox",
-            items,
-            default=cursor,
-            wrap=False,
-            footer_hint="↑↓ move · Enter select · Esc back",
-        )
+        menu = CourierOutboxScreen(ctx, default=cursor)
         menu.future = loop.create_future()
         session.push(menu)
+
+        async def tick(screen: "CourierOutboxScreen" = menu) -> None:
+            """Fold store changes in and repaint, once a second, while the list is open."""
+            while True:
+                await asyncio.sleep(_REFRESH_S)
+                screen.refresh()
+                session.invalidate()
+
+        ticker = asyncio.ensure_future(tick())
         try:
             choice = await menu.future
             if choice in (None, CANCEL):
@@ -146,14 +157,74 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
             elif isinstance(choice, tuple) and choice[0] == "msg":
                 await _entry_actions(ctx, int(choice[1]))
         finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - teardown must never surface a tick hiccup
+                pass
             session.pop(menu)
 
 
 # --- the menu ---------------------------------------------------------------------------
 
 
+class CourierOutboxScreen(SelectScreen):
+    """The live outbox list: row text recomputes per repaint, sections per tick.
+
+    Rows are callable titles (see :attr:`~meshterm.ui.tui.select.Choice.title`), so
+    every repaint re-reads each entry's live state — the retry countdown, the fresh/
+    waiting note, a finished row's age. Structure changes (an entry moving waiting →
+    finished, a new queue, a cleared history) can't be expressed by a row re-rendering
+    itself, so the opener's ticker calls :meth:`refresh`: it fingerprints the store's
+    shape and recomposes the sections in place only when that changed, keeping the
+    highlight on its entry (the :class:`~meshterm.ui.nodelist.NodeListScreen` rebuild
+    idiom).
+    """
+
+    def __init__(self, ctx: "AppContext", *, default: Any = None) -> None:
+        self._ctx = ctx
+        self._shape = self._fingerprint()
+        super().__init__(
+            "Courier — store-and-forward outbox",
+            _menu_items(ctx, ctx.courier_store.entries()),
+            default=default,
+            wrap=False,
+            footer_hint="↑↓ move · Enter select · Esc back",
+        )
+
+    def _fingerprint(self) -> tuple:
+        """The store's shape: which entries exist and what status each is in."""
+        return tuple((m.ident, m.status) for m in self._ctx.courier_store.entries())
+
+    def refresh(self) -> None:
+        """Recompose the sections if the store's shape changed, keeping the highlight."""
+        shape = self._fingerprint()
+        if shape == self._shape:
+            return
+        self._shape = shape
+        current = self._current_choice()
+        keep = current.value if current is not None else None
+        self._items = _menu_items(self._ctx, self._ctx.courier_store.entries())
+        self._reselect(keep)
+
+    def _reselect(self, value: Any) -> None:
+        """Move the highlight back onto the choice with ``value`` (else clamp in range)."""
+        choices = self._choices()
+        for i, choice in enumerate(choices):
+            if choice.value == value:
+                self._index = i
+                return
+        self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
+
+
 def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
-    """Build the screen's rows: the waiting outbox, then the finished history."""
+    """Build the screen's rows: the waiting outbox, then the finished history.
+
+    Entry rows are zero-arg callables so their live state re-renders every repaint;
+    the fixed action rows stay plain strings.
+    """
     waiting = [m for m in entries if m.status == QUEUED]
     done = [m for m in entries if m.status != QUEUED]
 
@@ -161,7 +232,9 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
     if not waiting:
         items.append(Separator("  empty — queued messages wait here for their moment"))
     for message in waiting:
-        items.append(Choice(_waiting_row(ctx, message), ("msg", message.ident)))
+        items.append(
+            Choice(lambda m=message: _waiting_row(ctx, m), ("msg", message.ident))
+        )
     items.append(Separator(" "))  # space the action off the outbox rows above it
     items.append(Choice("📨 Queue a message…", _QUEUE))
 
@@ -169,7 +242,7 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
         items.append(Separator(" "))
         items.append(section_heading("Finished"))
         for message in done[:15]:
-            items.append(Choice(_done_row(message), ("msg", message.ident)))
+            items.append(Choice(lambda m=message: _done_row(m), ("msg", message.ident)))
         items.append(Choice("🗑 Clear finished", _CLEAR))
 
     items.extend(back_rows())  # a visible exit beside Esc
