@@ -536,7 +536,9 @@ class AtlasScreen(Screen):
         :meth:`_fan_capacity`); the weaker rest collapse into one ``…`` marker at
         the fan's foot. Highlighting a collapsed row from the list lights that
         marker white and swaps its label for the highlighted node's name, so the
-        selection is always somewhere on the picture.
+        selection is always somewhere on the picture. The edges tracing the *route to
+        the selected link* — that link plus the approach the walk took into the focus —
+        draw brightest and undimmed, lighting the whole path that reaches it.
         """
         canvas = MapCanvas(width, canvas_h)
         fx, fy = self._focus_pos(width, canvas_h)
@@ -552,26 +554,35 @@ class AtlasScreen(Screen):
             shown, hidden = fan, []
         placed = self._place_neighbours(width, canvas_h, shown, back, bool(hidden))
 
-        # Edges first (markers and labels overprint them), coloured by SNR and faded
-        # by evidence age; the highlighted neighbour's edge wins its cells. The
-        # collapsed marker's edge is slate — unless the selection hides in it, when
-        # it takes the selected link's colour instead.
+        # Edges first (markers and labels overprint them), coloured by SNR and faded by
+        # evidence age. The *route to the selected link* draws brightest and on top: the
+        # selected neighbour's own edge, plus the approach the walk took into the focus
+        # (came_from → focus) — so selecting a link lights the whole path that reaches it,
+        # west through the focus to east, not just the one hop. Route edges shed the age
+        # fade (drawn full-strength) so they read as one lit thread over the dimmer rest;
+        # the age is still legible in the row's age column. The collapsed marker's edge is
+        # slate — unless the selection hides in it, when it joins the route.
         now = utcnow()
+        route = {selected} if selected is not None else set()
+        if selected is not None and back is not None and back != selected:
+            route.add(back)  # the last walked step, drawn as part of the lit route
         for other, (x, y) in placed.items():
             if other == _MORE:
                 if selected in hidden:
                     link = by_other[selected]
-                    color = _scaled(
-                        _snr_rgb(link.median_snr), _freshness(link.last_seen, now)
-                    )
-                    priority = 3
+                    color = _scaled(_snr_rgb(link.median_snr), 1.0)
+                    priority = 4
                 else:
                     color = _scaled(_NO_READING, 0.6)
                     priority = 1
             else:
                 link = by_other[other]
-                color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
-                priority = 3 if other == selected else 2
+                if other in route:
+                    color = _scaled(_snr_rgb(link.median_snr), 1.0)
+                    priority = 4
+                else:
+                    color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
+                    priority = 2
             canvas.draw_line([(fx, fy), (x, y)], color, priority)
 
         # The focus marker, its label to the LEFT — the walker reads left-to-right,

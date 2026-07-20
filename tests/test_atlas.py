@@ -145,6 +145,53 @@ def test_atlas_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     assert "Repeater-Downtown-01" in canvas  # 20 chars, whole
 
 
+def test_atlas_selected_link_lights_the_route_that_reaches_it() -> None:
+    """Selecting a link draws its edge *and* the approach into the focus at full strength.
+
+    With every link stale (so an un-highlighted edge fades to half), the selected
+    neighbour's edge and the came_from → focus approach are drawn undimmed — the lit
+    route — while an unselected neighbour's edge stays faded.
+    """
+    from meshterm.ui.atlas_screen import _snr_rgb
+
+    stale = utcnow() - timedelta(days=10)  # older than a week → _freshness 0.5
+    yul = Contact(name="YUL", public_key="3d" * 32, node_type=2)
+    alice = Contact(name="Alice", public_key="b2" * 32)
+    bob = Contact(name="Bob", public_key="c4" * 32)
+    topo = MeshTopology(US, contacts=[yul, alice, bob])
+    y = topo.canonical(yul.public_key)
+    topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")   # approach: green
+    topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")   # amber
+    topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")   # red
+    screen = AtlasScreen(
+        session=_FakeSession(),
+        topo=topo,
+        contacts={topo.canonical(c.public_key): c for c in (yul, alice, bob)},
+        self_label="Homestead",
+    )
+    screen.note_viewport(24)
+    screen.render_body(80)
+    screen.handle("enter")  # walk to YUL — now came_from is us, the approach edge
+    # Land the selection on Alice (a fan neighbour, not the ⌫-back row).
+    while screen._rows()[screen._index] != topo.canonical(alice.public_key):
+        screen.handle("down")
+
+    ansi_lines = screen.render_body(80)
+    legend = next(i for i, l in enumerate(ansi_lines) if "edge = SNR" in _plain([l]))
+    canvas = "".join(ansi_lines[:legend])
+
+    def code(rgb: tuple[int, int, int]) -> str:
+        return f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}m"
+
+    def scaled(rgb: tuple[int, int, int], f: float) -> tuple[int, int, int]:
+        return tuple(max(0, min(255, round(c * f))) for c in rgb)
+
+    assert code(_snr_rgb(10.0)) in canvas          # approach edge, full-strength green
+    assert code(_snr_rgb(0.0)) in canvas           # Alice's edge, full-strength amber
+    assert code(scaled(_snr_rgb(-15.0), 0.5)) in canvas   # Bob's edge stays faded…
+    assert code(_snr_rgb(-15.0)) not in canvas     # …and never reaches full strength
+
+
 def test_atlas_empty_graph_renders_guidance() -> None:
     """With no evidence at all the screen explains how the atlas fills up."""
     topo = MeshTopology(US, contacts=[])
