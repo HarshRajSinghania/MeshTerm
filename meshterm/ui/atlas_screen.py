@@ -101,11 +101,22 @@ _LABEL_W = 22
 #: the per-marker room-to-edge clamp, so the two need no longer differ.
 _FAN_LABEL_W = _LABEL_W
 
-#: The fan's angular reach on each side of due east, in radians. The whole fan stays
-#: east of the focus — neighbours to the right, labels rightward — and a smaller
-#: neighbourhood uses proportionally less of the arc so two nodes never sit at its
-#: extremes with nothing between them.
+#: The fan's angular reach on each side of due east, in radians. This sets the fan's
+#: *vertical* spread (the marker rows the leaves fan across); the *horizontal* reach is
+#: flattened from it by :data:`_FAN_X_FLATTEN`, so a leaf's height and its easting are
+#: decoupled. The whole fan stays east of the focus — neighbours to the right, labels
+#: rightward — and a smaller neighbourhood uses proportionally less of the arc so two
+#: nodes never sit at its extremes with nothing between them.
 _FAN_HALF_ANGLE = math.radians(72)
+
+#: How much flatter the fan's horizontal reach is than its vertical spread. A leaf's full
+#: fan angle sets its *height*; its *east reach* uses only this fraction of that angle, so
+#: the rim (top/bottom) leaves bow just gently back from due-east instead of curling in
+#: toward the focus on a true circle. The fan then spreads across the width rather than
+#: bulging in the middle with empty corners. ``1.0`` restores the old circular arc; lower
+#: flattens it further. The setback still scales with the fan's angular reach, so a small
+#: fan sitting near due-east barely eases back at all.
+_FAN_X_FLATTEN = 0.55
 
 #: Vertical dot span one fan marker (with the row its rightward label lands in) claims;
 #: the canvas area divided by this is how many neighbours the graph draws before the
@@ -721,8 +732,11 @@ class AtlasScreen(Screen):
         below, so the picture and the rows correspond — with the collapsed ``…`` marker
         (keyed :data:`_MORE`) taking the fan's last slot. Anchoring the fan at the name-end
         (rather than at the icon) hands it the whole width east of the focus label to
-        breathe in. A small fan uses proportionally less of the arc, so two neighbours sit
-        near due east rather than at opposite rims.
+        breathe in. The arc is flattened horizontally (:data:`_FAN_X_FLATTEN`): a leaf's
+        fan angle sets its row, but its east reach bows only gently back from due-east, so
+        the rim leaves spread across the width instead of curling in and leaving the
+        corners empty. A small fan uses proportionally less of the arc, so two neighbours
+        sit near due east rather than at opposite rims.
         """
         dot_w, dot_h = width * 2, canvas_h * 4
         fx, fy = self._focus_pos(width, canvas_h)
@@ -739,7 +753,12 @@ class AtlasScreen(Screen):
         keys = list(shown) + ([_MORE] if more else [])
         for i, node in enumerate(keys):
             angle = 0.0 if slots == 1 else -phi + (2 * phi) * i / (slots - 1)
-            x = ax + rx * math.cos(angle)
+            # The leaf's full fan angle sets its height (y); its east reach traces a
+            # *flatter* arc — only :data:`_FAN_X_FLATTEN` of that angle — so a rim leaf
+            # still reaches well east instead of curling back toward the focus on a true
+            # circle. The falloff scales with the fan's reach, so a small near-due-east
+            # fan barely eases back while a wide one fills the corners.
+            x = ax + rx * math.cos(angle * _FAN_X_FLATTEN)
             y = ay + ry * math.sin(angle)
             placed[node] = (round(x), round(y))
         return placed

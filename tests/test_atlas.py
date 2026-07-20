@@ -323,6 +323,28 @@ def test_atlas_came_from_anchors_west_and_the_fan_stays_east() -> None:
     assert fx <= (80 * 2) // 3  # and the focus itself leans left
 
 
+def test_atlas_fan_rim_leaves_spread_east_not_curling_back() -> None:
+    """The fan is a flattened arc: the top/bottom leaves reach well east too.
+
+    On the old circular arc only the due-east leaf reached the far side; the rim leaves
+    curled back toward the focus (to ~0.31 of the reach), leaving the corners empty. The
+    wedge flattens the horizontal reach, so a rim leaf lands east of the midpoint between
+    the fan's anchor and its due-east tip — the fan spreads across the width.
+    """
+    fan = [f"{i + 0x20:02x}" * 6 for i in range(5)]
+    topo = MeshTopology(US, contacts=[])
+    when = utcnow()
+    for i, node in enumerate(fan):
+        topo.add_walk([topo.self_id, node], snrs=[5.0 - i], when=when, source="trace")
+    screen = _screen(topo)
+    ax, _ay, _name = screen._focus_anchor(80, 14)
+    placed = screen._place_neighbours(80, 14, fan, None, False)
+    tip = max(x for x, _y in placed.values())  # the due-east leaf, the fan's far tip
+    midpoint = ax + (tip - ax) / 2
+    assert placed[fan[0]][0] > midpoint  # the topmost leaf reaches past halfway east…
+    assert placed[fan[-1]][0] > midpoint  # …and so does the bottommost
+
+
 def _hub_topo(spokes: int) -> MeshTopology:
     """Us at the centre of a ``spokes``-neighbour hub, strengths descending."""
     topo = MeshTopology(US, contacts=[])
