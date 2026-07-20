@@ -464,6 +464,33 @@ class MeshTopology:
         )
         return (head + rest)[:_MAX_SCENARIOS]
 
+    def suggested(self, target: str) -> Optional[PathScenario]:
+        """The single best *evidence-backed* outbound route to ``target``, if one exists.
+
+        The data-driven answer to "what's the best way to reach this node?": the highest-
+        scoring **observed** scenario — a route through repeaters the recorder has actually
+        watched carry traffic (traces, overheard relay chains, fetched neighbour tables),
+        ranked weakest-link-first with a per-hop penalty and its links' sample counts and
+        median SNR behind the score. It deliberately ignores the *device* and *direct*
+        families :meth:`scenarios` also offers: the firmware's learned route is what an
+        auto-routed trace already walks (the caller prefers it when it has one), and a
+        direct shot is the trivial fallback — neither is a *suggestion* the observations
+        made. A node the evidence can only reach directly (or not at all) yields ``None``,
+        so the caller keeps whatever default it would have used.
+
+        Args:
+            target: The target's canonical id.
+
+        Returns:
+            The best observed :class:`PathScenario` (always with at least one intermediate
+            hop and a positive, evidence-backed score), or ``None`` when the observations
+            support nothing better than a direct route.
+        """
+        for scenario in self.scenarios(target):
+            if scenario.source == "observed" and scenario.hops and scenario.score > 0:
+                return scenario
+        return None
+
     # --- internals -----------------------------------------------------------------
 
     def _score_route(

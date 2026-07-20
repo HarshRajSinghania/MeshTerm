@@ -139,6 +139,27 @@ def test_scenarios_rank_observed_route_and_pin_device_route_first() -> None:
     assert sum(1 for s in scenarios if s.hops == ("3d63c6429436",)) == 1
 
 
+def test_suggested_returns_the_strongest_observed_route_only() -> None:
+    """suggested() is the data's answer: the best observed multi-hop route to the target."""
+    walks = [
+        _traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)) for _ in range(4)
+    ]
+    topo = _topo(trace_paths=walks)
+    best = topo.suggested("f2c24f54551e")
+    assert best is not None
+    assert best.source == "observed"  # never the device/direct families
+    assert best.hops == ("3d63c6429436",)  # us → Hub → Far
+    assert best.score > 0 and best.samples >= 4  # evidence-backed
+
+
+def test_suggested_is_none_without_an_observed_repeater_route() -> None:
+    """A target ever only reached directly (or not at all) has no route to suggest."""
+    # One direct trace to the Hub — us → Hub → us, no intermediate repeater.
+    topo = _topo(trace_paths=[_traced(("3d", 9.0), (None, 9.0))])
+    assert topo.suggested("3d63c6429436") is None  # direct-only: nothing to suggest
+    assert topo.suggested("f2c24f54551e") is None  # never reached at all
+
+
 def test_scenario_spec_ends_at_target_and_collapses_width() -> None:
     """Specs walk out to the target then mirror the hops back, at a uniform width."""
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]

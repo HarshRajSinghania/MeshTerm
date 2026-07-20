@@ -3,9 +3,11 @@
 The Time Machine picker's presentation pointed at the companion's contact table: the same
 aligned ``NAME · HEARD · PKTS · KEY`` lanes, our own node pinned first, the same Ctrl+arrow
 sort (now including the key column) and type-to-filter — one contact list app-wide, whatever
-the data source (see :mod:`~meshterm.ui.contactlist`). Enter is deliberately inert for now: the
-highlight is a cursor, not yet a selection — a per-contact action will land on it later. The
-one-shot CLI (``meshterm contacts --sort …``) still renders the static
+the data source (see :mod:`~meshterm.ui.contactlist`). Enter opens the highlighted node's
+full-screen Node detail page (:mod:`~meshterm.ui.node_detail_screen`) — its identity, a
+location preview, the observed routes to it, and the ways in (trace, map, time machine) —
+and backing out of that page returns to the list right where it stood. The one-shot CLI
+(``meshterm contacts --sort …``) still renders the static
 :func:`~meshterm.ui.widgets.contacts_table`; only the menu gets the live list.
 """
 
@@ -14,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .contactlist import ContactListScreen, ContactRow
+from .tui.screen import CANCEL
 from .widgets import ContactsSort, _contact_pkts
 
 if TYPE_CHECKING:
@@ -21,16 +24,17 @@ if TYPE_CHECKING:
     from ..core.models import Contact
 
 #: A stable identity for the own-node row (its lane data has no key to stand on when no
-#: device answered), so a re-sort can keep the highlight on it.
+#: device answered) — Enter on it opens our own node's detail page.
 YOU = ("you",)
-
-#: The Contacts list's footer: the shared list's grammar minus the Enter atom — pressing it
-#: does nothing yet, so the hint doesn't advertise it.
-_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Esc back"
 
 
 class ContactsScreen(ContactListScreen):
-    """A full-screen, Ctrl+arrow-sortable list of this node and its known contacts."""
+    """A full-screen, Ctrl+arrow-sortable list of this node and its known contacts.
+
+    Enter resolves the highlighted row — our own node (:data:`YOU`) or a
+    :class:`~meshterm.core.models.Contact` — for :func:`open_contacts` to open in the
+    Node detail page; the shared list handles the sort, filter, and navigation.
+    """
 
     def __init__(
         self,
@@ -58,7 +62,9 @@ class ContactsScreen(ContactListScreen):
         for c in contacts:
             rows.append(
                 ContactRow(
-                    value=c.public_key or c.name,
+                    # The contact itself is the row's identity, so Enter hands the whole
+                    # record straight to the detail page — no re-lookup by name/key.
+                    value=c,
                     name=c.name,
                     key=c.public_key,
                     node_type=c.node_type,
@@ -71,18 +77,7 @@ class ContactsScreen(ContactListScreen):
             rows=rows,
             prefix_bytes=prefix_bytes,
             sort=sort,
-            footer_hint=_HINT,
         )
-
-    def handle(self, action: str, data: str = "") -> None:
-        """Swallow Enter; every other key is the shared list's.
-
-        The highlight is only a cursor until per-contact actions land, so committing it
-        must neither act nor dismiss the screen — only Esc leaves.
-        """
-        if action == "enter":
-            return
-        super().handle(action, data)
 
 
 async def open_contacts(
@@ -94,7 +89,11 @@ async def open_contacts(
     counts: dict[str, int],
     sort: ContactsSort,
 ) -> None:
-    """Open the interactive, sortable contacts list and run until dismissed with Esc.
+    """Open the interactive contacts list; Enter opens Node detail, Esc leaves.
+
+    Runs the show/open/reshow loop: the sortable list, then whichever node's detail page
+    Enter commits, then the list again (same sort, the highlight kept on its row) — until
+    Esc backs out of the list itself.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -103,14 +102,24 @@ async def open_contacts(
         contacts: Known contacts to list under our own node.
         prefix_bytes: Path-hash width in bytes to highlight in every key.
         counts: Overheard-packet counts keyed by lowercased 12-hex node id.
-        sort: The initial sort (column + direction) over the shared list's ring.
+        sort: The initial sort (column + direction) over the shared list's ring — mutated
+            in place, so a re-sort survives visiting a detail page and coming back.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
+    from .node_detail_screen import open_node_detail
     from .surface import TuiUi
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the interactive contacts list is only available in the menu")
+    session = ctx.ui.session
+    # One screen for the whole visit: re-running it keeps the highlight (and any sort or
+    # filter) on the row the user just opened a detail for, rather than snapping to the top.
     screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
-    await ctx.ui.session.run_screen(screen)
+    while True:
+        chosen = await session.run_screen(screen)
+        if chosen is CANCEL or chosen is None:
+            return
+        # The own-node sentinel opens our own node's page; any other value is a Contact.
+        await open_node_detail(ctx, None if chosen == YOU else chosen)

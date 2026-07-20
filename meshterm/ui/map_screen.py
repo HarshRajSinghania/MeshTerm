@@ -500,8 +500,12 @@ async def pick_location(
 
 
 def basemap_source(ctx: "AppContext") -> BasemapSource:
-    """Build the vector-tile source backed by the app's on-disk tile cache."""
-    return BasemapSource(ctx.settings.config_dir / "tilecache")
+    """The session's shared vector-tile source (see :attr:`AppContext.basemap_source`).
+
+    Memoized on the context, so the one-off TileJSON resolve is paid once for the whole
+    session instead of on every map open or Node-detail location preview.
+    """
+    return ctx.basemap_source
 
 
 async def open_map(

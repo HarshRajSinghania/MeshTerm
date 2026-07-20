@@ -620,6 +620,12 @@ async def _resume_monitor(ctx: AppContext) -> None:
         await ctx.chat.start()
     except Exception:  # noqa: BLE001 - surface via the header, don't crash the menu
         pass
+    # Warm the map tile source's metadata behind the menu too: the first ``.max_zoom`` touch
+    # resolves the TileJSON over the network, and the Map / Node-detail location preview would
+    # otherwise pay that round-trip on the navigation path (a stall on opening a located node's
+    # page). The tile source is independent of the radio link, so this runs regardless of
+    # connect state — offline it just fails quietly and the map falls back to a default zoom.
+    _warm_basemap(ctx)
     # Warm the slow session caches (contacts, the channel-slot probe) behind the menu now that
     # the link is up, so the first Chat/Trace/Dashboard open is served from cache instead of
     # paying those round-trips in the navigation path — one quiet wait after login rather than a
@@ -627,6 +633,24 @@ async def _resume_monitor(ctx: AppContext) -> None:
     # connect (connect_on_start off) returns above and warms lazily on first use instead.
     if ctx.is_connected:
         ctx.devstate.prewarm()
+
+
+def _warm_basemap(ctx: AppContext) -> None:
+    """Resolve the shared tile source's TileJSON in the background (best-effort, once).
+
+    Fire-and-forget: the resolve is a blocking network call, so it runs in a worker thread
+    off the event loop, and any failure (offline, a slow source) is swallowed — the map
+    simply falls back to its default max zoom. Warming it here means the first Map or
+    Node-detail location preview opens from the already-resolved source instead of stalling
+    on the round-trip.
+    """
+    async def _warm() -> None:
+        try:
+            await asyncio.to_thread(lambda: ctx.basemap_source.max_zoom)
+        except Exception:  # noqa: BLE001 - the map works offline at a default zoom
+            pass
+
+    asyncio.ensure_future(_warm())
 
 
 @asynccontextmanager

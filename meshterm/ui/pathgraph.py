@@ -101,6 +101,7 @@ def render_path_graph(
     label_rgb_of: LabelRgbOf,
     min_rows: int = 5,
     max_rows: int = 15,
+    lane_step: int = _LANE_STEP_DOTS,
 ) -> list[str]:
     """Draw the layered route graph and return its ANSI lines.
 
@@ -118,6 +119,10 @@ def render_path_graph(
         min_rows: The fewest canvas rows to draw, however flat the fan.
         max_rows: The most canvas rows to spend; a taller fan compresses its lane
             spacing to fit.
+        lane_step: Vertical dot separation between adjacent path lanes. A smaller step
+            packs the fan into a shallower band, so the segments leaving each endpoint
+            run closer to horizontal — flatter, less acute angles — at the cost of the
+            lanes sitting nearer each other. Defaults to :data:`_LANE_STEP_DOTS`.
 
     Returns:
         One ANSI string per canvas row (empty when there are no layers to draw).
@@ -165,7 +170,7 @@ def render_path_graph(
     # far the fan reaches *each* way, which is rarely symmetric (lanes fan 0, −1, +1,
     # −2, …). Sizing to the real up/down reach and centring the endpoints' lane-0
     # line on it keeps the box off the empty half a mirrored block would leave.
-    step = _LANE_STEP_DOTS
+    step = lane_step
     ups = -min([0.0, *lane_y.values()])   # lanes rising above the lane-0 line
     downs = max([0.0, *lane_y.values()])  # …and dropping below it
 

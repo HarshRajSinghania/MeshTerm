@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from .services.courier import CourierService
     from .services.monitor_service import MonitorService
     from .services.watchtower import WatchtowerService
+    from .services.basemap import BasemapSource
     from .services.battery_service import BatteryService
     from .services.device_state import DeviceState
     from .ui.surface import Ui
@@ -117,6 +118,7 @@ class AppContext:
     _courier: "Optional[CourierService]" = field(default=None, init=False, repr=False)
     _battery: "Optional[BatteryService]" = field(default=None, init=False, repr=False)
     _devstate: "Optional[DeviceState]" = field(default=None, init=False, repr=False)
+    _basemap_source: "Optional[BasemapSource]" = field(default=None, init=False, repr=False)
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -344,6 +346,24 @@ class AppContext:
 
             self._devstate = DeviceState(self)
         return self._devstate
+
+    @property
+    def basemap_source(self) -> "BasemapSource":
+        """Return the session's shared map tile source, built once and reused.
+
+        The map, the location picker, and the Node-detail location preview all draw the
+        same OpenStreetMap basemap; each used to build its own :class:`BasemapSource`, so
+        each paid the one-off TileJSON resolve — a blocking network round-trip the first
+        time ``.max_zoom``/``.available`` is touched — on *every* open. Holding one source
+        for the session means that resolve happens once (warmed behind the menu, see
+        :func:`meshterm.ui.menu._warm_basemap`), and the on-disk tile cache is shared too.
+        Independent of the radio link, so it survives reconnects untouched.
+        """
+        if self._basemap_source is None:
+            from .services.basemap import BasemapSource
+
+            self._basemap_source = BasemapSource(self.settings.config_dir / "tilecache")
+        return self._basemap_source
 
     @property
     def log(self):  # type: ignore[no-untyped-def]

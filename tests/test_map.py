@@ -381,6 +381,38 @@ async def test_map_tool_static_render_plots_contacts(ctx) -> None:
     assert "1 pkts" in out  # the seeded observation's detail merged onto the contact
 
 
+def test_usable_fix_rejects_out_of_range_and_null_island() -> None:
+    """A fix is usable only in valid lat/lon range and away from the 0/0 no-GPS sentinel."""
+    from meshterm.core.geo import usable_fix
+
+    assert usable_fix(45.5, -73.6) is True
+    assert usable_fix(90.0, 180.0) is True and usable_fix(-90.0, -180.0) is True  # extremes
+    assert usable_fix(0.0, 0.0) is False  # null island (a no-GPS companion reports this)
+    assert usable_fix(-97.0, -1041.97) is False  # out of range (a real advert seen in the wild)
+    assert usable_fix(45.0, 181.0) is False and usable_fix(-91.0, -73.0) is False
+
+
+async def test_gather_markers_drops_out_of_range_fix(ctx) -> None:
+    """A node advertising nonsense coordinates is never plotted, only the real one is.
+
+    Some firmware reports an out-of-range fix (a companion has advertised ``lat -97,
+    lon -1042``); projecting it flings the view off the world, leaving the map an all-black
+    off-world frame. It is treated as no fix at all, the same guard the 0/0 null island gets.
+    """
+    from meshterm.tools.map import gather_markers
+
+    run_id = ctx.repo.start_run("monitor", {})
+    ctx.repo.record_observation(run_id, Observation(
+        node="beefbeefbeef", name="BadFix", node_type=NODE_TYPE_REPEATER,
+        lat=-97.0, lon=-1041.97, observed_at=utcnow()))
+    ctx.repo.record_observation(run_id, Observation(
+        node="cafecafecafe", name="GoodFix", node_type=NODE_TYPE_REPEATER,
+        lat=45.5, lon=-73.6, observed_at=utcnow()))
+    labels = {m.label for m in await gather_markers(ctx)}
+    assert "GoodFix" in labels
+    assert "BadFix" not in labels
+
+
 def test_repository_round_trips_map_view(ctx) -> None:
     """The saved map viewport persists and reads back; absent by default."""
     assert ctx.repo.get_map_view() is None

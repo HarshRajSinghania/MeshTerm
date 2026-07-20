@@ -112,6 +112,28 @@ def clamp_lat(lat: float) -> float:
     return max(-85.05112878, min(85.05112878, lat))
 
 
+def usable_fix(lat: float, lon: float) -> bool:
+    """Whether an advertised ``(lat, lon)`` is a real position worth plotting.
+
+    A node's advert location is only usable if it is a genuine fix. Two ways it isn't:
+
+    * **out of range** — latitude must sit within ±90° and longitude within ±180°.
+      Some firmware/adverts report nonsense (a MeshCore companion has been seen
+      advertising ``lat -97, lon -1042``); projecting that flings the view off the
+      world, leaving the map a screen of empty/water fill that reads as solid black.
+    * **null island** — a companion with no GPS lock advertises latitude and
+      longitude both zero, which projects to the empty mid-Atlantic. Plotting a node
+      there is worse than useless: framing only it drops the whole view onto open
+      ocean (again, solid-water black).
+
+    Either way the fix is treated as absent, so the node simply carries no location —
+    the shared guard the map markers and the Node-detail location preview both apply.
+    """
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    return not (abs(lat) < 1e-6 and abs(lon) < 1e-6)
+
+
 def lonlat_to_world(lat: float, lon: float, zoom: float) -> tuple[float, float]:
     """Project ``(lat, lon)`` to Web Mercator world pixels at ``zoom``.
 

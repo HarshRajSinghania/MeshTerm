@@ -1069,7 +1069,35 @@ def _previous_walk(previous: Optional[TraceResult]) -> Optional[tuple[str, ...]]
     return tokens or None
 
 
-async def open_trace(ctx: "AppContext", target: str) -> int:
+def _best_observed(topo: Any, target_hash: str) -> Optional[tuple[tuple[str, ...], str]]:
+    """The strongest evidence-backed outbound route to ``target_hash``, if the data has one.
+
+    The observed-topology counterpart to the firmware's learned route: when the device
+    knows no route to a contact — the common case, since repeater contacts flood — the
+    recorder's own evidence (traces, overheard relay chains, fetched neighbour tables)
+    may still spell out a route that has demonstrably carried traffic. Delegates the
+    ranking to :meth:`~meshterm.services.topology.MeshTopology.suggested` and returns the
+    winner's canonical outbound hops with a short provenance line
+    (``best observed · 3× · −7 dB``) for the route line and summary, or ``None`` when
+    nothing beats a direct shot.
+
+    Args:
+        topo: The freshly built :class:`~meshterm.services.topology.MeshTopology`.
+        target_hash: The target's hex hash (any width ≥ 1 byte).
+
+    Returns:
+        ``(outbound_hops, provenance)`` for the suggested route, or ``None``.
+    """
+    scenario = topo.suggested(topo.canonical(target_hash) or target_hash[:12])
+    if scenario is None:
+        return None
+    source = f"best observed · {scenario.samples}×"
+    if scenario.weakest_snr is not None:
+        source += f" · {scenario.weakest_snr:+.0f} dB"
+    return scenario.hops, source
+
+
+async def open_trace(ctx: "AppContext", target: str, *, initial_spec: str = "") -> int:
     """Open the live *Trace target* screen for ``target`` and run it until dismissed.
 
     The symmetric feature: can I reach this node? Routes turn at the target and come
@@ -1079,6 +1107,11 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
         target: The trace destination (contact name or key prefix).
+        initial_spec: A forced path to open armed on (the full symmetric boomerang,
+            comma-separated hex hops), instead of idle on the auto-resolved route — how
+            the Node detail screen hands over its suggested best path so the trace opens
+            ready to walk it. Empty (the default) opens on the auto route (device-learned,
+            best-observed, last trace, or direct — see :func:`_open_session`).
 
     Returns:
         The number of traces run while the screen was open.
@@ -1086,7 +1119,7 @@ async def open_trace(ctx: "AppContext", target: str) -> int:
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    return await _open_session(ctx, target)
+    return await _open_session(ctx, target, initial_spec=initial_spec)
 
 
 async def open_trace_path(ctx: "AppContext", spec: str = "") -> int:
@@ -1243,6 +1276,12 @@ async def _open_session(
     if target_hash is not None:
         if device_route is not None:
             auto_hops, auto_source = device_route, "device route"
+        elif (observed := _best_observed(fresh_topology(), target_hash)) is not None:
+            # No firmware route, but the recorder's own evidence spells one out — the
+            # strongest observed path (sample counts, SNR behind the ranking). This is
+            # what makes Trace target *suggest* a route from the data rather than
+            # defaulting to a doomed path-less flood past the first neighbour.
+            auto_hops, auto_source = observed
         else:
             auto_hops = _previous_outbound(previous, target_hash)
             if auto_hops is not None and previous is not None:
@@ -1873,7 +1912,10 @@ async def _open_session(
         previous=previous,
         auto_spec=auto_spec,
         auto_source=auto_source,
-        initial_spec=initial_spec if mode == "path" else "",
+        # A caller-supplied spec arms either mode: a path walk's stored route, or the Node
+        # detail screen's suggested best path handed to a target trace. In target mode it
+        # only arms when the target is addressable — a forced path must end at a real hash.
+        initial_spec=initial_spec if (mode == "path" or target_hash is not None) else "",
     )
     try:
         result = await session.run_screen(screen)

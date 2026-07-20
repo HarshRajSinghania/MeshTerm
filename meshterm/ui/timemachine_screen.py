@@ -1226,3 +1226,57 @@ async def open_timemachine(ctx: "AppContext") -> None:
             )
         screen = TimeMachineScreen(session=session, label=label, build=build)
         await session.run_screen(screen)
+
+
+async def open_timemachine_node(ctx: "AppContext", node_id: str, label: str) -> None:
+    """Open one node's Time Machine page directly, skipping the subject picker.
+
+    The Node detail screen's *Time machine* link lands here: the same scrollable per-node
+    page :func:`open_timemachine` reaches through its picker (volume, SNR band, hour-of-day
+    rhythm, roll-up), but for a node already chosen elsewhere. Reads stored history only, so
+    no device is needed and nothing transmits; runs until dismissed with Esc.
+
+    Args:
+        ctx: The shared application context (must be running the interactive TUI).
+        node_id: The node's stored 12-hex key-prefix id (what observations carry).
+        label: The node's display name for the page heading.
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    from .surface import TuiUi
+
+    if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("the time machine is only available in the menu")
+    session = ctx.ui.session
+    build = (  # noqa: E731 - a tiny binding closure reads better than a def here
+        lambda window, width, _id=node_id, _lb=label: _node_sections(
+            ctx, _id, _lb, window, width
+        )
+    )
+    await session.run_screen(TimeMachineScreen(session=session, label=label, build=build))
+
+
+async def open_timemachine_self(ctx: "AppContext") -> None:
+    """Open our own node's Time Machine page directly (the outbound-activity ledger).
+
+    The Node detail screen's *Time machine* link for our own node: we never overhear
+    ourselves, so this page is the traces we launched and the messages we sent, not a
+    reception history (see :func:`_self_sections`). Reads stored history only; runs until
+    dismissed with Esc.
+
+    Args:
+        ctx: The shared application context (must be running the interactive TUI).
+
+    Raises:
+        RuntimeError: If called outside the interactive menu (no full-screen session).
+    """
+    from .surface import TuiUi
+
+    if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
+        raise RuntimeError("the time machine is only available in the menu")
+    session = ctx.ui.session
+    self_name, _ = await _self_identity(ctx)
+    label = self_name or "you"
+    build = lambda window, width: _self_sections(ctx, window, width)  # noqa: E731
+    await session.run_screen(TimeMachineScreen(session=session, label=label, build=build))
