@@ -403,6 +403,28 @@ async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     assert result.summary == {"located": 0}
 
 
+async def test_gather_markers_drops_null_island_fixes(ctx, monkeypatch) -> None:
+    """A node advertising a 0/0 fix (no GPS lock) is not plotted at null island.
+
+    Framing such a marker (filter to it, press Enter) would drop the map onto the empty
+    mid-Atlantic — a screen of solid water fill — so a both-near-zero fix is treated as no
+    fix at all, exactly as our own node's marker already is.
+    """
+    from meshterm.core.models import Contact
+    from meshterm.tools.map import gather_markers
+
+    async def _contacts(_ctx):
+        return [
+            Contact(name="Real", public_key="aa" * 32, lat=45.50, lon=-73.57),
+            Contact(name="NoFix", public_key="bb" * 32, lat=0.0, lon=0.0),
+        ]
+
+    monkeypatch.setattr("meshterm.tools.map._contacts", _contacts)
+    labels = [m.label for m in await gather_markers(ctx)]
+    assert "Real" in labels
+    assert "NoFix" not in labels  # the null-island node is dropped
+
+
 class _StubSession:
     """Minimal stand-in for :class:`TuiSession` for driving :class:`MapScreen`."""
 

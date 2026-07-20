@@ -195,7 +195,7 @@ async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
     seen: set[str] = set()
 
     for contact in await _contacts(ctx):
-        if not contact.has_location:
+        if not contact.has_location or _is_null_island(contact.lat, contact.lon):
             continue
         key = contact.key_prefix or (contact.public_key or "")[:12]
         if key:
@@ -214,6 +214,8 @@ async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
     # A node we overheard advertising a location but that isn't in our contacts.
     for node in observed.values():
         if not node.has_location or node.node in seen:
+            continue
+        if _is_null_island(node.lat, node.lon):
             continue
         markers.append(
             MapMarker(
@@ -249,7 +251,7 @@ async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
     except Exception:  # noqa: BLE001 - the map is useful without our own position
         return None
     lat, lon = _as_float(info.get("adv_lat")), _as_float(info.get("adv_lon"))
-    if lat is None or lon is None or (abs(lat) < 1e-6 and abs(lon) < 1e-6):
+    if lat is None or lon is None or _is_null_island(lat, lon):
         return None  # a device with no fix reports 0/0
     return MapMarker(
         label=str(info.get("name") or "this node"),
@@ -298,6 +300,20 @@ def _signal_detail(node: object) -> str:
     if node.median_snr is not None:  # type: ignore[attr-defined]
         detail += f" · {node.median_snr:+.1f} dB"  # type: ignore[attr-defined]
     return detail
+
+
+def _is_null_island(lat: float, lon: float) -> bool:
+    """Whether a fix is the 0/0 "null island" a device reports when it has no GPS lock.
+
+    A companion without a position advertises latitude and longitude both zero, which
+    projects to the empty mid-Atlantic. Plotting a node there is worse than useless: the
+    default frame trims the far outlier away so it hides unseen, but *filtering to it and
+    pressing Enter* frames only that node — dropping the whole view onto open ocean, a
+    screen of solid water fill that reads as all black. So a both-near-zero fix counts as
+    no fix at all — the same guard :func:`_self_marker` applies to our own node, now shared
+    with the contact and heard-node markers.
+    """
+    return abs(lat) < 1e-6 and abs(lon) < 1e-6
 
 
 def _as_float(value: object) -> Optional[float]:
