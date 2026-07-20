@@ -270,13 +270,13 @@ class MessagePathsScreen(Screen):
     def _graph_lines(self, width: int) -> list[str]:
         """Draw every distinct path origin → us, the selected one white over gray.
 
-        The shared route-graph widget does the layout (lanes fanned from the centre
-        in first-heard order, shared relays averaged together); this just maps each
-        distinct path to a :class:`~meshterm.ui.pathgraph.PathLayer` — the selected
-        one white on top, the rest gray beneath — and hands it the shared route-graph
-        callbacks (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named,
-        relays their own map marker where the type is known, each labelled by its
-        first hash byte in the node's own hue.
+        The shared route-graph widget does the layout (a layered left-to-right graph,
+        each relay drawn once in its own column); this just maps each distinct path to a
+        :class:`~meshterm.ui.pathgraph.PathLayer` — the selected one white on top, the
+        rest gray beneath — and hands it the shared route-graph callbacks
+        (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named, relays their
+        own map marker where the type is known, each labelled by its first hash byte in
+        the node's own hue.
         """
         selected = self._arrivals[self._index].hops
         layers = [

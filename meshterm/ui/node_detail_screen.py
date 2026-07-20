@@ -272,7 +272,7 @@ class NodeDetailScreen(Screen):
             max_rows=_PATH_MAX_ROWS,
             lane_step=_PATH_LANE_STEP,
         )
-        caption = Text("you → node · white = suggested route · labels = hash byte", style="faint")
+        caption = Text("you → node · white = suggested route", style="faint")
         lines.extend(render_lines(caption, width, no_wrap=True))
         if path.legend:
             lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
@@ -604,8 +604,8 @@ def _route_row(
     """The firmware's learned route to the node, or a note that it floods.
 
     The hops render through THE path widget (:func:`~meshterm.ui.widgets.path_text`) at a
-    1-byte hash width, so each reads ``name (3d)`` — the same first-byte tag the route graph
-    prints beside its markers, letting the row and the graph be cross-read hop for hop.
+    1-byte hash width, so each reads ``name (3d)`` — the same name the route graph prints
+    beside its markers, plus the short hash it travels under, so row and graph cross-read.
     """
     if device_route is None:
         return Text("no learned route — floods", style="muted")
@@ -620,8 +620,8 @@ def _route_row(
 def _suggest_row(suggested, *, resolve, self_name: Optional[str]) -> Text:  # noqa: ANN001
     """The observed best path (the "suggest best path" answer), or a muted stand-in.
 
-    Like :func:`_route_row`, the hops render through THE path widget with a 1-byte hash in
-    parentheses so they match the route graph's byte labels; the bottleneck SNR and sample
+    Like :func:`_route_row`, the hops render through THE path widget named, with a 1-byte
+    hash in parentheses (the short id each hop travels under); the bottleneck SNR and sample
     count trail behind as context.
     """
     if suggested is None:
@@ -709,14 +709,34 @@ def _path_view(
     for scenario in scenarios:
         add(scenario.hops, 2, grey)
 
-    glyph_of, label_of, label_rgb_of = style(
+    glyph_of, byte_label_of, label_rgb_of = style(
         resolve=resolve, self_name=self_name, source=node_label, type_of=type_of, key_of=key_of
     )
+
+    # This page names every node, not just the two ends. Where the Message paths graph tags
+    # a relay with only its first hash byte, here each relay wears its resolved contact name
+    # (its colour is already the name's hue), so the whole route reads as places rather than
+    # hex; an unidentified relay keeps the byte, the honest most it can be called. The two
+    # endpoints keep route_graph_style's names.
+    def label_of(node: str) -> Optional[str]:
+        if node in (SRC_NODE, DST_NODE):
+            return byte_label_of(node)
+        named = resolve(node)
+        return named if named and named != node else node[:2]
+
     # route_graph_style pins us to DST (the right) and the target to SRC (the left); swap the
     # two sentinels so the graph draws us on the left and the target on the right.
     glyph_of = _flip_endpoints(glyph_of)
     label_of = _flip_endpoints(label_of)
     label_rgb_of = _flip_endpoints(label_rgb_of)
+
+    # The target wears its own map glyph (▲ repeater, ■ room, ◉ sensor) — the same mark the
+    # header and the map give it. route_graph_style draws the far endpoint as a plain dot,
+    # since on its home screen (Message paths) that end is an arbitrary message origin; here
+    # it is a known contact whose type we can show.
+    glyph_of = _with_target_glyph(
+        glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
+    )
     legend = any(type_of(h) is not None for layer in layers for h in layer.hops)
     return _PathView(
         layers=layers,
@@ -725,6 +745,20 @@ def _path_view(
         label_rgb_of=label_rgb_of,
         legend=legend,
     )
+
+
+def _with_target_glyph(glyph_of: GlyphOf, target_glyph: tuple[str, str]) -> GlyphOf:
+    """Wrap the graph's glyph callback so the target endpoint draws its own node glyph.
+
+    The graph's right endpoint is the node this page is about, and here we know its type —
+    so it draws the map's own mark for that type (``▲`` repeater, ``■`` room, ``◉`` sensor,
+    ``●`` plain), matching the identity header and the location preview, rather than
+    ``route_graph_style``'s generic origin dot. Every other node passes through untouched.
+    """
+    def wrapped(node: str) -> tuple[str, str]:
+        return target_glyph if node == DST_NODE else glyph_of(node)
+
+    return wrapped
 
 
 def _flip_endpoints(callback):

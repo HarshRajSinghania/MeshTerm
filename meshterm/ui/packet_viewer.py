@@ -7,7 +7,7 @@ that lays the packet out in full, flavoured by kind. An advert shows the node's
 identity, type, and location; telemetry shows the node and its reported values; an
 RX-logged packet shows its parsed class and route plus the relay path it rode in on —
 as a ``via`` chain and, when it actually crossed a relay, as THE route graph
-(:mod:`~meshterm.ui.pathgraph`): origin → relays → us, the same fan-lane picture the
+(:mod:`~meshterm.ui.pathgraph`): origin → relays → us, the same layered picture the
 Message paths dialog and the Trophy case draw — and, for an overheard channel-text frame
 naming a channel we hold the key for, the decrypted text too (see
 :func:`~meshterm.core.channels.decrypt_channel_text`), even though the radio itself never
@@ -535,8 +535,8 @@ class PacketViewer(Screen):
         a two-node graph would waste the height. The relay chain is the packet's path
         (originator-nearest first), the left endpoint the origin when the frame named one
         (an advert's ``adv_key``; other classes arrive origin-less, drawn ``?``), the right
-        endpoint always us — the same fan-lane widget the Message paths dialog and the
-        Trophy case draw, in a single white path.
+        endpoint always us — the same layered route-graph widget the Message paths dialog
+        and the Trophy case draw, in a single white path.
         """
         if entry.kind != "packet":
             return []

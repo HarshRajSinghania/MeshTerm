@@ -222,12 +222,12 @@ class RecordDialog(Screen):
         """Draw the walked route as one path on THE route graph — us at both ends.
 
         A scored walk leaves home and comes back, so it draws us (left) → its relays →
-        us (right) as a single white path through the shared fan-lane widget
+        us (right) as a single white path through the shared route-graph widget
         (:func:`~meshterm.ui.pathgraph.render_path_graph`), the same shape the Message
         paths dialog draws a delivery over. Relays wear their own map marker (``▲``
         repeater, …) where the type is known. Nodes the walk passed through more than once
         — a boomerang's mirrored return leg — collapse to their first appearance: the
-        depth-ordered graph can only seat a node once, and the route line below still
+        layered graph can only seat a node once, and the route line below still
         carries every hop, revisits and all.
         """
         seen: set[str] = set()

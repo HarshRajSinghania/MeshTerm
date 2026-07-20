@@ -366,6 +366,99 @@ class MeshTopology:
             ):
                 link.last_seen = when
 
+    def coalesce_prefixes(self) -> None:
+        """Fold each under-specified node id into the longer id it can only be.
+
+        The same physical node reaches the graph at different hash widths: a trace hop
+        logged at 1 byte (``27``), a packet relay at 3 (``27d439``), a full 6-byte
+        contact id (``27d4396a2967``). :meth:`canonical` widens a hop onto a contact id
+        only when the prefix names *exactly one* contact — but the mesh holds two nodes
+        whose keys both open ``27`` (``27d4…`` and ``27e4…``), so the bare ``27`` hop
+        stays short and stands beside the wide ``27d4396a2967`` as a phantom second node.
+        Left alone that doubles the node on every surface the graph feeds — the atlas
+        draws it twice, the route graph fans two lanes to one repeater, and the scenario
+        ranker offers a redundant weaker route through the stub.
+
+        This closes the gap using the evidence the graph *actually holds* rather than the
+        whole contact list: a short id is merged into a longer node id present in the graph
+        when it is a strict prefix of **exactly one** of them (following a prefix chain —
+        ``65`` → ``6532`` → ``6532eb`` — to its longest end). A short id that opens two
+        distinct longer nodes (``c5`` → ``c5bc…`` and ``c5ba…``) is genuinely ambiguous and
+        is left as its own node; a short id that opens none (a node we have only ever heard
+        narrowly) keeps its width too — it is one node, merely under-named. Merging folds
+        the short id's links into the wide id's, summing samples, pooling SNR readings and
+        sources, and keeping the freshest sighting, so the wide node inherits every reading
+        the stub had gathered. Idempotent: a second call finds nothing left to merge.
+
+        Called once at the end of :func:`build_topology`, so every consumer sees each node
+        once. Safe for our own node (its 12-hex id is never a short prefix candidate).
+        """
+        while True:
+            merge = self._next_prefix_merge(self._node_ids())
+            if merge is None:
+                return
+            self._merge_node(*merge)
+
+    def _node_ids(self) -> set[str]:
+        """Every node id that currently appears as a link endpoint."""
+        ids: set[str] = set()
+        for a, b in self._links:
+            ids.add(a)
+            ids.add(b)
+        return ids
+
+    def _next_prefix_merge(self, nodes: set[str]) -> Optional[tuple[str, str]]:
+        """The next ``(short, long)`` pair to fold, or ``None`` when none remains.
+
+        A short id (under a full 6-byte canonical width) folds when the graph's longer
+        ids that extend it all lie on one prefix chain — i.e. the longest of them starts
+        with every other — so the short can only mean that one node. Shortest ids are
+        offered first, so a ``65`` → ``6532`` → ``6532eb`` chain collapses from the tail
+        end inward over successive calls.
+        """
+        for short in sorted(nodes, key=len):
+            if len(short) >= 12:  # a full canonical id is never under-specified
+                continue
+            exts = [
+                other
+                for other in nodes
+                if other != short and len(other) > len(short) and other.startswith(short)
+            ]
+            if not exts:
+                continue
+            longest = max(exts, key=len)
+            if all(longest.startswith(ext) for ext in exts):  # one node, not two
+                return short, longest
+        return None
+
+    def _merge_node(self, src: str, dst: str) -> None:
+        """Relabel every link touching ``src`` onto ``dst``, folding shared links together."""
+        for key in list(self._links):
+            if src not in key:
+                continue
+            link = self._links.pop(key)
+            a, b = key
+            na = dst if a == src else a
+            nb = dst if b == src else b
+            if na == nb:  # a src→dst link (src prefixes dst) collapses to a self-loop
+                continue
+            new_key = (na, nb) if na < nb else (nb, na)
+            existing = self._links.get(new_key)
+            if existing is None:
+                self._links[new_key] = Link(
+                    a=new_key[0], b=new_key[1],
+                    samples=link.samples, snrs=list(link.snrs),
+                    last_seen=link.last_seen, sources=set(link.sources),
+                )
+            else:
+                existing.samples += link.samples
+                existing.snrs.extend(link.snrs)
+                existing.sources |= link.sources
+                if link.last_seen is not None and (
+                    existing.last_seen is None or link.last_seen > existing.last_seen
+                ):
+                    existing.last_seen = link.last_seen
+
     # --- queries -----------------------------------------------------------------
 
     @property
@@ -647,4 +740,7 @@ def build_topology(
             source="neighbour",
         )
 
+    # Every source has folded in; collapse any node that reached us at two hash widths
+    # (a bare trace hop beside its wide contact id) so each appears once everywhere.
+    topo.coalesce_prefixes()
     return topo

@@ -73,6 +73,34 @@ def test_canonicalization_maps_prefixes_and_rejects_junk() -> None:
     assert ambiguous.canonical("3d") == "3d"  # two contacts match: keep the short id
 
 
+def test_coalesce_folds_a_short_hop_into_its_only_wide_match() -> None:
+    """A bare hop beside the same node's wide id collapses to one node, its evidence pooled."""
+    twin = Contact(name="Twin", public_key="27e4" + "0" * 60)  # makes a bare "27" ambiguous
+    walks = [
+        _traced(("27", 5.0), ("f2", -3.0), ("27", -3.5), (None, 5.0)),      # us→27→Far
+        _traced(("27d4", 7.0), ("f2", -4.0), ("27d4", -4.5), (None, 7.0)),  # us→27d4→Far
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin])
+    ids = {node for link in topo.links() for node in (link.a, link.b)}
+    assert "27" not in ids  # the 1-byte stub folded onto its only wide match in the graph
+    assert "27d4396a2967" in ids
+    link = topo.link(topo.self_id, "27d4396a2967")
+    assert link is not None and link.samples == 4  # both walks' out+back readings pooled
+
+
+def test_coalesce_leaves_a_genuinely_ambiguous_stub_alone() -> None:
+    """A short hop that opens two nodes both present in the graph is not guessed onto one."""
+    twin = Contact(name="Twin", public_key="27e41e2d7cb5" + "0" * 52, key_prefix="27e41e2d7cb5")
+    walks = [  # both 27d4… and 27e4… land in the graph, plus a bare, undecidable 27
+        _traced(("27d4", 5.0), (None, 5.0)),
+        _traced(("27e4", 5.0), (None, 5.0)),
+        _traced(("27", 5.0), (None, 5.0)),
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin])
+    ids = {node for link in topo.links() for node in (link.a, link.b)}
+    assert {"27", "27d4396a2967", "27e41e2d7cb5"} <= ids  # the stub stays its own node
+
+
 def test_contact_routes_and_packet_paths_feed_the_graph() -> None:
     """Firmware-learned routes and RX-logged packet paths both count as evidence."""
     routed = Contact(

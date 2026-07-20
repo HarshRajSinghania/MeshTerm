@@ -146,7 +146,7 @@ def test_route_and_suggest_rows_speak_the_evidence() -> None:
     resolve = make_node_resolver([HUB, FAR])
     learned = _plain([_route_row(("3d63c6429436",), resolve=resolve, self_name="Us").plain])
     assert "device route" in learned and "Hub" in learned
-    assert "(3d)" in learned  # the first-byte tag, matching the graph's byte label
+    assert "(3d)" in learned  # the row tags each hop with its first hash byte
     assert "floods" in _route_row(None, resolve=resolve, self_name="Us").plain  # no route
 
     best = topo.suggested("f2c24f54551e")
@@ -198,8 +198,46 @@ def test_path_view_puts_us_on_the_left_and_the_target_on_the_right() -> None:
     assert view.glyph_of(SRC_NODE)[0] == "★"  # the left endpoint is our own star
     assert view.label_of(SRC_NODE) == "Us"    # …labelled as us
     assert view.label_of(DST_NODE) == "Far"   # the right endpoint is the target
-    # A relay resolves to its first hash byte, wherever it lands between the endpoints.
-    assert view.label_of("3d63c6429436") == "3d"
+    # This page names every node: a known relay reads by its contact name, not its hash byte.
+    assert view.label_of("3d63c6429436") == "Hub"
+
+
+def test_path_view_relay_falls_back_to_the_hash_byte_when_unnamed() -> None:
+    """A relay no contact can name keeps the honest first-byte tag rather than a blank."""
+    topo = _topo_with_route()
+    view = _path_view(
+        topo, topo.scenarios("f2c24f54551e", device_route=("abcd1234ef56",)),
+        None, ("abcd1234ef56",), "f2c24f54551e",
+        resolve=make_node_resolver([FAR]),  # the relay abcd… is not among the contacts
+        type_of=make_node_type_resolver([FAR]),
+        key_of=make_name_key_resolver([FAR]),
+        style=route_graph_style, self_name="Us", node_label="Far",
+    )
+    assert view.label_of("abcd1234ef56") == "ab"  # unnamed → its first hash byte
+
+
+def test_path_view_target_wears_its_node_type_glyph() -> None:
+    """The right endpoint draws the target's own map mark (a repeater ▲), not a plain dot."""
+    from meshterm.persistence.repository import TracedPath
+    from meshterm.ui.pathgraph import DST_NODE
+
+    leaf = Contact(name="Leaf", public_key="27d4396a2967" + "0" * 52, key_prefix="27d4396a2967")
+    # Reach the Hub (a repeater) through the Leaf, so the Hub is the drawn right endpoint.
+    walks = [
+        TracedPath(when=utcnow(), hops=[("27d4", 8.0), ("3d", 6.0), ("27d4", 6.0), (None, 8.0)])
+        for _ in range(3)
+    ]
+    topo = build_topology(self_id=US + "0" * 52, contacts=[HUB, leaf],
+                          trace_paths=walks, packet_paths=[], neighbour_links=[])
+    view = _path_view(
+        topo, topo.scenarios("3d63c6429436"), topo.suggested("3d63c6429436"),
+        None, "3d63c6429436",
+        resolve=make_node_resolver([HUB, leaf]),
+        type_of=make_node_type_resolver([HUB, leaf]),
+        key_of=make_name_key_resolver([HUB, leaf]),
+        style=route_graph_style, self_name="Us", node_label="Hub",
+    )
+    assert view.glyph_of(DST_NODE)[0] == "▲"  # the repeater target keeps its own glyph
 
 
 def test_located_accepts_real_fixes_and_rejects_junk() -> None:

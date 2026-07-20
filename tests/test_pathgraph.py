@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import re
 
-from meshterm.ui.pathgraph import DST_NODE, SRC_NODE, PathLayer, render_path_graph
+from meshterm.ui.pathgraph import (
+    DST_NODE,
+    SRC_NODE,
+    PathLayer,
+    _coalesce_prefixes,
+    render_path_graph,
+)
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 WHITE = (255, 255, 255)
 GREEN = (74, 222, 128)
 YELLOW = (250, 204, 21)
+GREY = (120, 120, 120)
 
 
 def _glyph(node: str) -> tuple[str, str]:
@@ -90,6 +97,36 @@ def test_endpoint_labels_may_leave_the_marker_row() -> None:
     # The name fits the 60-cell canvas, so it is kept whole — no fixed label budget clips it.
     assert "VeryLongStationName" in plain
     assert "…" not in plain
+
+
+def test_prefix_dupe_relay_folds_onto_its_only_wide_match() -> None:
+    """A 1-byte hop beside the same node's wide id, across layers, becomes one node."""
+    layers = [
+        PathLayer(("e9043958308d", "be"), WHITE, 3),
+        PathLayer(("3d63c6429436", "be1d1c1dbc4b"), GREY, 2),
+    ]
+    out = _coalesce_prefixes(layers)
+    assert out[0].hops == ("e9043958308d", "be1d1c1dbc4b")  # "be" rewritten to the wide id
+    assert out[1].hops == ("3d63c6429436", "be1d1c1dbc4b")
+
+
+def test_ambiguous_prefix_relay_is_left_alone() -> None:
+    """A short hop that prefixes two distinct present nodes is not guessed onto either."""
+    layers = [
+        PathLayer(("be",), WHITE, 3),
+        PathLayer(("be1d1c1dbc4b",), GREY, 2),
+        PathLayer(("bedd2bff0011",), GREY, 2),
+    ]
+    out = _coalesce_prefixes(layers)
+    assert out[0].hops == ("be",)  # opens two present nodes — kept as its honest short self
+
+
+def test_a_shared_relay_draws_a_single_marker() -> None:
+    """A relay two paths pass through is one vertex, labelled once — never doubled."""
+    layers = [PathLayer(("aa", "bb"), WHITE, 3), PathLayer(("cc", "bb"), YELLOW, 2)]
+    plain = _ANSI.sub("", "\n".join(_render(layers)))
+    assert plain.count("bb") == 1  # the shared relay is seated once
+    assert plain.count("aa") == 1 and plain.count("cc") == 1
 
 
 def test_labels_ellipsize_only_when_wider_than_the_canvas() -> None:
