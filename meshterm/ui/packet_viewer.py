@@ -494,6 +494,9 @@ class PacketViewer(Screen):
         heard.append(f"  ({format_ago(secs)})", style="muted")
         rows.append(("heard", heard))
 
+        if entry.snr is not None or entry.rssi is not None:
+            rows.append(("snr", self._reception(entry)))
+
         if entry.node or entry.name:
             who = Text()
             label, style = node_label(entry, self._resolve, self._self_name)
@@ -506,8 +509,6 @@ class PacketViewer(Screen):
             label = NODE_TYPE_LABELS.get(entry.node_type, f"type {entry.node_type}")
             rows.append(("type", Text(label)))
 
-        if entry.snr is not None or entry.rssi is not None:
-            rows.append(("snr", self._reception(entry)))
         if entry.kind == "packet":
             rows.extend(self._packet_rows(entry))
         return rows
