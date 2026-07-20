@@ -68,10 +68,12 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 #: Horizontal / vertical dot-space margins the neighbour fan keeps clear of the canvas
-#: edge. The east margin is wide enough to hold a fan node's rightward label (see
-#: :meth:`AtlasScreen._label_right`), so even the fan's outermost marker has room to
-#: name itself without the label running off the edge.
-_PAD_X_DOTS = 28
+#: edge. The east margin holds a fan node's rightward label (see
+#: :meth:`AtlasScreen._label_right`); it is deliberately roomy — pulling the whole fan a
+#: little west of the edge — so even the tightest (due-east) marker has cells to name
+#: itself in full rather than clipping a long contact name, which the labels' room-to-edge
+#: clamp then spends wherever the fan leaves it.
+_PAD_X_DOTS = 44
 _PAD_Y_DOTS = 6
 
 #: The canvas's floor in character rows: below this the fan's shape stops reading.
@@ -81,13 +83,17 @@ _CANVAS_MIN_H = 6
 #: graph would like to be — a windowed list needs at least a few rows to scroll in.
 _LIST_MIN_ROWS = 3
 
-#: The widest the focus/selection label may render on the canvas before it ellipsizes.
-_LABEL_W = 16
+#: The widest any on-canvas label renders before it ellipsizes — a generous cap that most
+#: real node names clear whole. It is only an upper bound: each label is *also* clamped to
+#: the cells actually free between its marker and the canvas edge (see :meth:`_label_right`,
+#: :meth:`_label_left`, :meth:`_place_label`), so a name loses letters only when it genuinely
+#: won't fit, not to a fixed short budget — the fan's placement leaves most markers far more
+#: room than the old flat cap allowed.
+_LABEL_W = 22
 
-#: The widest a *fan* node's rightward label renders before it ellipsizes. Shorter than
-#: the focus/selection cap so a name always fits in the east gutter (:data:`_PAD_X_DOTS`)
-#: even on the fan's outermost marker; the list below carries the fuller name.
-_FAN_LABEL_W = 12
+#: Kept as the *fan* label cap for symmetry with the focus/selection one; both now defer to
+#: the per-marker room-to-edge clamp, so the two need no longer differ.
+_FAN_LABEL_W = _LABEL_W
 
 #: The fan's angular reach on each side of due east, in radians. The whole fan stays
 #: east of the focus — neighbours to the right, labels rightward — and a smaller
@@ -661,13 +667,32 @@ class AtlasScreen(Screen):
             placed[node] = (round(x), round(y))
         return placed
 
+    @staticmethod
+    def _clip(label: str, room: int) -> str:
+        """``label`` fit to ``room`` cells: whole if it fits, else ellipsized (``…`` alone
+        at one cell, nothing at zero). The cap and the room-to-edge both flow through here,
+        so a name is only ever shortened as far as it truly must be."""
+        room = min(room, _LABEL_W)
+        if room <= 0:
+            return ""
+        if len(label) <= room:
+            return label
+        return "…" if room == 1 else label[: room - 1] + "…"
+
     def _place_label(
         self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
     ) -> None:
         """Place one marker label (right of the marker when it fits, else left),
-        retrying a row below then above on collision."""
-        if len(label) > _LABEL_W:
-            label = label[: _LABEL_W - 1] + "…"
+        retrying a row below then above on collision.
+
+        The label is clamped to whichever side has more room — the cells free to the
+        right of the marker, or to its left — so the selection keeps as much of its name
+        as the canvas allows before ellipsizing."""
+        cx = x >> 1
+        room = max(canvas.cell_w - (cx + 2), cx - 1)  # the roomier of right / left
+        label = self._clip(label, room)
+        if not label:
+            return
         for dy in (0, 4, -4):
             if canvas.marker_label(x, y + dy, label, rgb):
                 return
@@ -682,14 +707,15 @@ class AtlasScreen(Screen):
         direction of the walk. The label tries the marker's own row first, then a
         row below and above to slip past a crowded neighbour; if every checked row
         is blocked it is stamped to the right regardless, so a node is never left a
-        bare glyph. The fan's east gutter (:data:`_PAD_X_DOTS`) is sized so a
-        :data:`_FAN_LABEL_W`-capped name lands without running off the edge, even on
-        the fan's outermost marker.
+        bare glyph. The name is clamped to the cells actually free between the marker
+        and the canvas edge, so it keeps its full length wherever the fan leaves room
+        and only clips on the tightest (due-east) markers.
         """
-        if len(label) > _FAN_LABEL_W:
-            label = label[: _FAN_LABEL_W - 1] + "…"
         cx, cy = x >> 1, y >> 2
         start = cx + 2
+        label = self._clip(label, canvas.cell_w - start)
+        if not label:
+            return
         for dy in (0, 1, -1, 2, -2):
             if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):
                 return
@@ -702,11 +728,13 @@ class AtlasScreen(Screen):
 
         The focus is drawn first, so a collision is rare (a trail-back label at
         most); after the dodge rows are exhausted the label is stamped anyway —
-        the focus must always be named.
+        the focus must always be named. The name is clamped to the cells free to the
+        marker's left (column 0 onward).
         """
-        if len(label) > _LABEL_W:
-            label = label[: _LABEL_W - 1] + "…"
         cx, cy = x >> 1, y >> 2
+        label = self._clip(label, cx - 1)
+        if not label:
+            return
         start = cx - 1 - len(label)
         for dy in (0, 1, -1):
             if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):

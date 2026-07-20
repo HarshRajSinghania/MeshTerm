@@ -108,12 +108,41 @@ def test_atlas_link_row_shrinks_the_key_before_the_name() -> None:
     screen.note_viewport(24)
     row = next(
         line for line in _plain(screen.render_body(68)).split("\n")
-        if "Repeater-Downtown-01" in line
+        if "Repeater-Downtown-01" in line and "❯" in line  # the list row, not a canvas label
     )
     assert "Repeater-Downtown-01" in row  # the name shows whole, not clipped
     assert "…" in row  # the key is the lane that gave ground
     assert "d4c3" in row  # its lit hash (and a byte or two more) survives
     assert "d4c3b2a1f0e9" not in row  # …but not the whole id — it was truncated
+
+
+def test_atlas_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
+    """A neighbour's name is drawn whole on the canvas, not clipped to a flat short cap.
+
+    The fan pulls west of the edge and each label clamps to the room actually there, so a
+    long contact name keeps its letters wherever the canvas can hold it.
+    """
+    long_names = [
+        Contact(name="YUL-Polytechnique", public_key="e8" * 32, node_type=2),
+        Contact(name="Repeater-Downtown-01", public_key="d4" * 32, node_type=2),
+    ]
+    topo = MeshTopology(US, contacts=long_names)
+    when = utcnow()
+    for c, snr in zip(long_names, (8.0, 1.0)):
+        topo.add_walk([topo.self_id, topo.canonical(c.public_key)], snrs=[snr], when=when,
+                      source="trace")
+    screen = AtlasScreen(
+        session=_FakeSession(),
+        topo=topo,
+        contacts={topo.canonical(c.public_key): c for c in long_names},
+        self_label="Homestead",
+    )
+    screen.note_viewport(24)
+    # The canvas rows are everything above the legend line.
+    lines = _plain(screen.render_body(80)).split("\n")
+    canvas = "\n".join(lines[: next(i for i, l in enumerate(lines) if "edge = SNR" in l)])
+    assert "YUL-Polytechnique" in canvas  # 17 chars, drawn whole — no "YUL-Polytechniq…"
+    assert "Repeater-Downtown-01" in canvas  # 20 chars, whole
 
 
 def test_atlas_empty_graph_renders_guidance() -> None:
