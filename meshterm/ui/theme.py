@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 from typing import Optional
 
 from rich.console import Console
@@ -20,7 +21,7 @@ MESH_THEME = Theme(
         # in for the same reason as ``selected`` — "reverse err" would render as plain text.
         "err.reverse": "reverse bold #f87171",
         # Our own node, anywhere it is named: pure white, deliberately outside the
-        # per-name hue palette (see NAME_COLORS below) so "you" is always easy to spot.
+        # per-node hue spectrum (see node_style) so "you" is always easy to spot.
         "you": "bold #ffffff",
         # A confirmed companion's name on the startup device picker: pure white so the
         # devices we've actually talked to before jump out above the merely-detected ports.
@@ -130,44 +131,43 @@ def hint_style(border_style: str) -> str:
     return name if name in MESH_THEME.styles else "muted"
 
 
-#: Palette of distinct, dark-theme-friendly colors that give each node its own stable hue
-#: (red is reserved for errors, so it's excluded). The app-wide rule: a node's *name* is
-#: always coloured — by this palette, keyed on the node's key (see :func:`node_style`) so
-#: the colour is the node's identity, surviving renames and colouring every surface that
-#: knows any prefix of the key identically — and our own node is always the pure-white
-#: ``you`` style instead, so "us" never blends into the crowd. Shared by the node lists,
-#: the chat transcript, the dashboard feed, and the packet viewer, so one node reads as
-#: one colour everywhere.
-NAME_COLORS = (
-    "bold #f472b6",  # pink
-    "bold #60a5fa",  # blue
-    "bold #34d399",  # green
-    "bold #a78bfa",  # violet
-    "bold #fb923c",  # orange
-    "bold #22d3ee",  # cyan
-    "bold #a3e635",  # lime
-    "bold #e879f9",  # fuchsia
-)
+#: The per-node hue *spectrum*: a node's first key byte maps straight onto the HSV colour
+#: wheel — ``0x00`` is red, sweeping the full spectrum round to ``0xff`` — at a fixed
+#: saturation and value tuned to stay vivid and readable on the dark theme across every hue.
+#: So all 256 first-byte values give 256 distinct hues, rather than folding onto a handful
+#: of palette entries. The app-wide rule is unchanged: a node's *name* is always coloured —
+#: by this spectrum, keyed on the node's key (see :func:`node_style`) so the colour is the
+#: node's identity, surviving renames and colouring every surface that knows any prefix of
+#: the key identically — and our own node is always the pure-white ``you`` style instead,
+#: so "us" never blends into the crowd. Shared by the node lists, the chat transcript, the
+#: dashboard feed, and the packet viewer, so one node reads as one colour everywhere.
+_NODE_HUE_SAT = 0.65
+_NODE_HUE_VAL = 0.95
 
 
 def node_style(key: str) -> str:
-    """The stable palette hue a node's *key* selects — the hash-derived node colour.
+    """The stable spectrum hue a node's *key* selects — the hash-derived node colour.
 
-    Only the first byte picks the colour, so any prefix of the key a surface happens to
-    hold — a 2-hex path hop, the stored 12-hex id, the full 64-hex public key — lands on
-    the same hue: one node, one colour, however it was learned.
+    The node's first key byte is mapped straight onto the HSV colour wheel (``0x00`` red,
+    sweeping round to ``0xff``) at a fixed saturation/value (:data:`_NODE_HUE_SAT`,
+    :data:`_NODE_HUE_VAL`), so all 256 first-byte values give 256 distinct hues. Only the
+    first byte picks the colour, so any prefix of the key a surface happens to hold — a
+    2-hex path hop, the stored 12-hex id, the full 64-hex public key — lands on the same
+    hue: one node, one colour, however it was learned.
 
     Args:
         key: The node's key/hash as hex (any length ≥ 1 byte, ``0x``/mixed-case tolerated).
 
     Returns:
-        A style string from :data:`NAME_COLORS`.
+        A ``"bold #rrggbb"`` style string.
     """
     raw = key.lower().removeprefix("0x")
     try:
-        return NAME_COLORS[int(raw[:2], 16) % len(NAME_COLORS)]
+        byte = int(raw[:2], 16)
     except ValueError:  # not hex — fall back to the character sum so *something* stable shows
-        return NAME_COLORS[sum(map(ord, raw)) % len(NAME_COLORS)]
+        byte = sum(map(ord, raw)) % 256
+    r, g, b = colorsys.hsv_to_rgb(byte / 256, _NODE_HUE_SAT, _NODE_HUE_VAL)
+    return f"bold #{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
 
 
 def name_style(name: str, key: Optional[str] = None) -> str:
@@ -184,9 +184,8 @@ def name_style(name: str, key: Optional[str] = None) -> str:
             :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
 
     Returns:
-        A style string from :data:`NAME_COLORS` (or ``muted`` for the keyless); the
-        same node always maps to the same hue, so it keeps its colour across screens
-        and sessions.
+        A ``"bold #rrggbb"`` spectrum hue (or ``muted`` for the keyless); the same node
+        always maps to the same hue, so it keeps its colour across screens and sessions.
     """
     if key:
         return node_style(key)

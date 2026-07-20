@@ -772,7 +772,7 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
     """
     from datetime import datetime, timezone
 
-    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS, node_style
+    from meshterm.ui.theme import node_style
 
     base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
@@ -791,7 +791,7 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
     assert "@[Alice]" not in text.plain and "[Alice]" not in text.plain
     # The "@Alice" run carries the key-derived hue (the same the header would use).
     hue = screen._sender_style("Alice")
-    assert hue == node_style("60") and hue in _SENDER_COLORS
+    assert hue == node_style("60")  # the sender's key-derived spectrum hue
     at = text.plain.index("@Alice")
     hue_spans = [
         s for s in text.spans if s.style == hue and s.start <= at and at + len("@Alice") <= s.end
@@ -1108,14 +1108,14 @@ def test_channel_self_style_keyed_on_concept_not_label() -> None:
     reserved for us — it reads as a normal sender (its key's hue when resolvable,
     muted otherwise).
     """
-    from meshterm.ui.theme import NAME_COLORS as _SENDER_COLORS, node_style
+    from meshterm.ui.theme import node_style
 
     screen = _channel_screen([])
     assert screen._sender_style("you", is_self=True) == "you"  # us → white
     assert screen._sender_style("you", is_self=False) == "muted"  # no key → muted
     keyed = _channel_screen([], key_of=_keys_of({"you": "d4" + "0" * 62}))
     remote = keyed._sender_style("you", is_self=False)
-    assert remote == node_style("d4") and remote in _SENDER_COLORS
+    assert remote == node_style("d4")  # the key's spectrum hue
 
 
 def test_channel_own_messages_do_not_merge_with_remote_namesake() -> None:

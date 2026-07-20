@@ -143,10 +143,11 @@ def test_make_name_key_resolver_contacts_win_over_stored_names() -> None:
 
 def test_name_style_without_a_key_is_muted() -> None:
     """A keyless name has no hue — colour is reserved for keyed identities."""
-    from meshterm.ui.theme import NAME_COLORS, name_style
+    from meshterm.ui.theme import name_style, node_style
 
     assert name_style("Stranger") == "muted"
-    assert name_style("Alice", "d4" + "0" * 62) in NAME_COLORS
+    keyed = name_style("Alice", "d4" + "0" * 62)
+    assert keyed == node_style("d4" + "0" * 62) and keyed.startswith("bold #")
 
 
 def test_name_rgb_keyless_lands_on_the_muted_grey() -> None:
