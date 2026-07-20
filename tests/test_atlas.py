@@ -85,6 +85,37 @@ def test_atlas_link_rows_carry_snr_evidence_and_onward_count() -> None:
     assert "…" not in row  # …and nothing about it elided
 
 
+def test_atlas_link_row_shrinks_the_key_before_the_name() -> None:
+    """A long name keeps its letters; the key gives ground first, on a byte boundary.
+
+    When the row can't hold both a long name and the full 12-hex id, the key truncates to
+    its lit hash plus a ``…`` (an even, whole-byte count) rather than the name losing
+    characters — and the hash prefix is never the part dropped.
+    """
+    long_repeater = Contact(
+        name="Repeater-Downtown-01", public_key="d4c3b2a1f0e9" + "00" * 26, node_type=2
+    )
+    topo = MeshTopology(US, contacts=[long_repeater])
+    node = topo.canonical(long_repeater.public_key)
+    topo.add_walk([topo.self_id, node], snrs=[4.0], when=utcnow(), source="trace")
+    screen = AtlasScreen(
+        session=_FakeSession(),
+        topo=topo,
+        contacts={node: long_repeater},
+        self_label="Homestead",
+        prefix_bytes=1,  # the first byte (``d4``) is the addressed hash
+    )
+    screen.note_viewport(24)
+    row = next(
+        line for line in _plain(screen.render_body(68)).split("\n")
+        if "Repeater-Downtown-01" in line
+    )
+    assert "Repeater-Downtown-01" in row  # the name shows whole, not clipped
+    assert "…" in row  # the key is the lane that gave ground
+    assert "d4c3" in row  # its lit hash (and a byte or two more) survives
+    assert "d4c3b2a1f0e9" not in row  # …but not the whole id — it was truncated
+
+
 def test_atlas_empty_graph_renders_guidance() -> None:
     """With no evidence at all the screen explains how the atlas fills up."""
     topo = MeshTopology(US, contacts=[])
