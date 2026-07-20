@@ -239,7 +239,7 @@ def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
 
 def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     """Contacts render in the shared NAME/HEARD/PKTS/KEY lanes, our node pinned first;
-    plain arrows only move the highlight, and Enter is inert (selection comes later)."""
+    plain arrows only move the highlight, and Enter resolves the highlighted node."""
     import re
 
     from meshterm.core.models import Contact, utcnow
@@ -264,20 +264,24 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert "Alice" in body and "Bob" in body
     assert f"{7:>5}" in body  # Alice's overheard packets, right-aligned in its lane
     assert "never" in body  # Bob has no last_seen
+    # Each contact row carries the Contact itself, so Enter hands the whole record on.
+    assert all(isinstance(c.value, Contact) for c in choices[1:])
 
     # Plain arrows move the highlight without touching the sort.
     before = (screen._sort.column, screen._sort.ascending)
     screen.handle("down")
     assert (screen._sort.column, screen._sort.ascending) == before
-    assert screen._current_choice().value != YOU
+    highlighted = screen._current_choice().value
+    assert highlighted != YOU and isinstance(highlighted, Contact)
 
-    # Enter does nothing yet; Esc still leaves.
+    # Enter resolves the highlighted contact (open_contacts opens its Node detail);
+    # Esc still leaves with CANCEL.
     resolved: list = []
     screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
     screen.handle("enter")
-    assert resolved == []
+    assert resolved == [highlighted]
     screen.handle("escape")
-    assert resolved == [CANCEL]
+    assert resolved == [highlighted, CANCEL]
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:
