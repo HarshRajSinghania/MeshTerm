@@ -23,6 +23,8 @@ _WAVE = "👋"  # the confirmed lone-codepoint emoji this terminal draws in one 
 _DISH = "📡"  # a menu icon the terminal draws two wide — must never be narrowed
 _CA = "🇨🇦"  # a flag: two Regional Indicators; prompt_toolkit miscounts it as four cells
 _CN = "🇨🇳"  # a second flag sharing the "C" indicator — the whole category must be handled
+_PLANE = "🛩️"  # a VS16 sequence this terminal draws two wide despite the narrow-VS16 verdict
+_PLANE_BASE = "\U0001f6e9"  # its base codepoint (no selector) — what the wide set is keyed on
 
 
 def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
@@ -38,9 +40,29 @@ def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
     assert ew._narrow_lone_set() == frozenset()
 
 
+def test_wide_vs16_set_defaults_extends_and_disables(monkeypatch) -> None:
+    """The wide set seeds to the confirmed airplane base; the env var overrides it outright."""
+    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
+    assert _PLANE_BASE in ew._wide_vs16_set()
+
+    # ✈ (U+2708) is a second VS16 airplane base; both list cleanly.
+    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "\U0001f6e9✈")
+    assert {"\U0001f6e9", "✈"} <= ew._wide_vs16_set()
+
+    # Pasting the whole rendered glyph keeps the base but strips the zero-width selector, so
+    # the selector is never itself counted as a wide cell.
+    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", _PLANE)
+    wide = ew._wide_vs16_set()
+    assert _PLANE_BASE in wide and "️" not in wide
+
+    # Empty string trusts the narrow-VS16 verdict for every sequence.
+    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "")
+    assert ew._wide_vs16_set() == frozenset()
+
+
 def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
     """Rich's replacement measures a listed lone emoji as one, an unlisted one still as two."""
-    cell_len = ew._make_cell_len(frozenset(_WAVE))
+    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset(_PLANE_BASE))
 
     assert cell_len(_WAVE) == 1
     assert cell_len(_DISH) == 2  # unlisted: the terminal draws it wide, so leave it wide
@@ -48,17 +70,25 @@ def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
     # The pre-existing VS16 handling still applies: a narrow base is measured alone, its
     # variation selector skipped, so "☀️" stays one cell rather than being promoted to two.
     assert cell_len("☀️") == 1
+    # A wide-VS16 exception is forced back to two, selector still skipped, so the airplane
+    # frames flush instead of collapsing to one and smearing the row.
+    assert cell_len(_PLANE) == 2
+    assert cell_len("hi 🛩️") == len("hi ") + 2
 
 
 def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
     """prompt_toolkit's cache — the authority that places the border — matches Rich."""
-    cache = ew._make_pt_cache(frozenset(_WAVE))
+    cache = ew._make_pt_cache(frozenset(_WAVE), frozenset(_PLANE_BASE))
 
     assert cache[_WAVE] == 1
     assert cache[_DISH] == 2
     # The base cache sums a multi-char string per character through the cache, so the
     # one-cell wave is inherited by any line that contains it.
     assert cache["Bob 👋"] == 5
+    # The wide-VS16 airplane is the reverse: its base is forced to two, the selector stays
+    # zero, so the whole glyph (and any line holding it) keeps the terminal's two cells.
+    assert cache[_PLANE] == 2
+    assert cache["🛩️ hi"] == 2 + len(" hi")
 
 
 def test_flags_measure_two_cells_in_both_authorities() -> None:
@@ -67,8 +97,8 @@ def test_flags_measure_two_cells_in_both_authorities() -> None:
     category makes every flag sum to two in both authorities — no per-country allowlist entry,
     and flags sharing an indicator (🇨🇦 / 🇨🇳) are all fixed at once."""
     # Only the lone-emoji allowlist is passed; flags are handled by category, not by listing.
-    cell_len = ew._make_cell_len(frozenset(_WAVE))
-    cache = ew._make_pt_cache(frozenset(_WAVE))
+    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
+    cache = ew._make_pt_cache(frozenset(_WAVE), frozenset())
 
     for flag in (_CA, _CN):
         assert cell_len(flag) == 2
@@ -93,6 +123,7 @@ def _restore(snap: tuple) -> None:
 def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> None:
     """A renderer that draws emoji narrow gets both Rich and pt aligned to the terminal."""
     monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
+    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
     from prompt_toolkit.utils import get_cwidth
 
     snap = _snapshot()
@@ -102,9 +133,11 @@ def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> N
         assert cells.cell_len(_WAVE) == 1
         assert cells.cell_len(_DISH) == 2  # unlisted icon stays wide
         assert cells.cell_len(_CA) == 2  # flag handled by category, no allowlist entry
+        assert cells.cell_len(_PLANE) == 2  # wide-VS16 exception carved back out of the narrowing
         assert get_cwidth(_WAVE) == 1  # pt now places the border a cell earlier
         assert get_cwidth(_DISH) == 2
         assert get_cwidth(_CA) == 2  # was 4 unpatched
+        assert get_cwidth(_PLANE) == 2  # was 1 unpatched: the airplane smeared a cell short
     finally:
         _restore(snap)
 
