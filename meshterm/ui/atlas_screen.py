@@ -487,6 +487,15 @@ class AtlasScreen(Screen):
         The leading glyph already carries the node type, so the line no longer spells it
         out; the name reads ``name (hash)`` — the addressed path-hash in parentheses, its
         digits lit in the node's hue — rather than a bare slice of the key.
+
+        The ``N hops out`` distance is the *shortest* observed path from us to this node
+        (a BFS over the whole evidence graph, :meth:`_hops_out`) — the node's ring in the
+        mesh. It is deliberately **not** the length of the breadcrumb trail above, which is
+        the route you happened to *walk* to reach the focus: wander out a long way and
+        double back, or step to a node also reachable by a shorter link, and the walk is
+        longer than the ring. The two answer different questions — "how near is this node?"
+        versus "how did I get here?" — so a shorter "hops out" than the trail is correct,
+        not a miscount.
         """
         node = self._focus
         glyph, color = self._glyph(node)
