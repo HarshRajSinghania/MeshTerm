@@ -11,7 +11,7 @@ detail read together:
   right, and every relay in between gets its own node-type marker (``▲`` repeater, …)
   plus the first byte of its hash — set straight above or below the marker, in the mesh
   name's own colour, so the byte reads as that node and never crowds the line running
-  through it. A node-type key sits under the fan. The row list carries the full names,
+  through it. A node-type key sits under the graph. The row list carries the full names,
   so the graph's labels stay two cells wide and a many-path graph stays readable.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
   the relay chain through the shared compact path widget, each named hop annotated
@@ -270,8 +270,9 @@ class MessagePathsScreen(Screen):
     def _graph_lines(self, width: int) -> list[str]:
         """Draw every distinct path origin → us, the selected one white over gray.
 
-        The shared route-graph widget does the layout (a layered left-to-right graph,
-        each relay drawn once in its own column); this just maps each distinct path to a
+        The shared route-graph widget does the layout (a left-to-right flow of paths that
+        diverge and converge, each route its own lane and each relay drawn once); this just
+        maps each distinct path to a
         :class:`~meshterm.ui.pathgraph.PathLayer` — the selected one white on top, the
         rest gray beneath — and hands it the shared route-graph callbacks
         (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named, relays their

@@ -893,7 +893,7 @@ def node_type_legend(indent: str = "") -> Text:
 
     Every glyph in its shared map colour (see :data:`_NODE_GLYPHS`), each named muted after
     it. THE legend for any surface that draws typed node markers — the contacts list under its
-    table, the route graph under its fan — so one glyph means one thing app-wide.
+    table, the route graph under its lanes — so one glyph means one thing app-wide.
 
     Args:
         indent: Leading spaces to sit the legend under a table or graph body.

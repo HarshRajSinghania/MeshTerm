@@ -74,9 +74,9 @@ _MAP_ROWS = 7
 #: Route-graph tuning for this page. It draws the contact on the left and us on the right
 #: (node → us, so the graph reads left to right as the inbound direction its packets
 #: travelled to reach us). A well-connected node offers several candidate paths at once, and
-#: cramming them into a short box overlaps the lanes into an unreadable tangle — so this page
-#: gives the fan a generous lane step and row budget, letting each path spread into its own
-#: clearly separated track. The height is adaptive: it grows only with the number of distinct
+#: cramming them into a short box compresses the lanes together — so this page gives each lane
+#: a generous step and row budget, letting each route spread into its own clearly separated
+#: track. The height is adaptive: it grows only with the number of distinct
 #: lanes, so a node with one or two routes still draws compact while a busy one earns the room
 #: it needs. The page scrolls (PgUp/PgDn), so a tall graph never crowds the action rows off.
 _PATH_LANE_STEP = 15

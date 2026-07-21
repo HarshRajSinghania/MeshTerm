@@ -1,30 +1,47 @@
-"""THE route-graph widget: hop sequences drawn as a tidy left-to-right layered graph.
+"""THE route-graph widget: hop sequences drawn as a left-to-right flow of paths.
 
 Extracted from the Message paths dialog so every screen that draws walked (or planned)
 routes draws them the same way. A *layer* is one path — its relay hops, an edge colour,
-and a draw priority — and the widget lays every distinct path out between a left and a
-right endpoint marker.
+and a draw priority — and the widget lays every distinct path out between a shared left
+and right endpoint marker.
 
-Rather than fanning the paths as free lanes and averaging shared relays (which pulls
-lines into acute tangles wherever many paths meet the two endpoints), the widget draws
-the paths as one **layered graph**, the way a subway map or a dependency chart reads:
+Every path shares its two endpoints (an origin on the left, us on the right) and is walked
+left to right, so the picture is a *flow*: routes that **diverge** out of the origin, run
+their own course, and **converge** back into us, sharing a relay wherever their walks agree.
+Earlier drawings tried a vertical *bus* the lanes tapped at right angles (a metro map you
+wander around, the bare 90° turns hiding that A flows to B), then oblique branches straight
+off each marker (which left every off-lane relay a pointed *peak* or *valley*). The widget
+now draws the fan as a **multilane highway**: a node always sits on a level platform in its
+lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
+the way a car drifts one lane over and then stays there. Concretely:
 
-* **ranks** (columns) are hop distance from the left endpoint — a node sits in the column
-  of its *furthest* appearance across the paths, so every edge runs strictly left-to-right
-  and a relay shared by several routes is drawn **once**, in one place;
-* **long edges** — a path that skips a column (a direct shot past where another route
-  stops to relay) — are routed through invisible waypoints at each column it crosses, so
-  the line bends around the intervening nodes instead of slicing through them;
-* **within a column** the nodes are ordered to minimise crossings (a few barycentre
-  sweeps), then spread down the full available height with their vertical positions
-  pulled toward the average of their neighbours — straightening each route into a lane
-  while keeping the branches far enough apart to leave readable (~60°) angles;
-* **shared cells** go to the highest-priority layer (drawn last), so e.g. the Message
-  paths dialog's selected path reads white over the unused grey;
+* **lanes** — each distinct path owns one horizontal lane; the highest-priority (drawn last,
+  e.g. the selected or best-evidence) path takes the centre lane, running dead straight
+  through the two endpoints as the flow's spine, and the alternatives lie above and below it.
+  The lanes are ordered to seat routes that share relays near each other, so a shared hop
+  costs the shortest possible detour;
+* **columns** (x) place each node by *balanced* rank — its distance from the origin over its
+  distance-plus-remaining-distance to us — so a path's relays spread evenly between the two
+  ends however long the other paths are, and a shared relay lands in one place;
+* **platforms** — every node is entered and left along a level run in its own lane, so a
+  relay that sits off its neighbours' lane reads as a flat-topped *trapezium*, never a
+  pointed peak or valley. Between two nodes on different lanes the line stays level out of the
+  first, makes one oblique shift, and runs level into the second — the only corners are the
+  soft level→oblique bends of the shift, never a bare right angle in open canvas;
+* **shared relays** draw as a single marker (a route re-using a hop is not a new node): the
+  marker sits on its highest-priority path's lane, and a lower path that also rides it leans
+  off its lane to meet the platform and back — which reads as the alternative *branching
+  through the shared node*, exactly the story the evidence tells;
+* **diverge / converge** — the fan at each end is flow, not a switchboard: routes leave the
+  origin overlapping on the centre line and peel off one by one to their lanes (the
+  divergence), and mirror that back into us on the right (the convergence). Every edge draws
+  exactly once, however many routes share it; the one edge drawn as a bare vertical is a pair
+  of nodes walked in *both* directions — a genuine two-way hop, the sole place a straight
+  up-and-down line tells the truth;
 * **labels** sit straight above or below their marker — pushed to the side away from the
   graph's middle, a spot clear of the drawn lines preferred — and endpoints slide their
-  label inward from the canvas edge so a long name still lands by its marker. A caller
-  that wants a node unlabelled returns ``None`` for it.
+  label inward from the canvas edge so a long name still lands by its marker. A caller that
+  wants a node unlabelled returns ``None`` for it.
 
 Everything renders onto a :class:`~meshterm.ui.mapcanvas.MapCanvas`; the caller supplies
 the per-node glyph/label/colour callbacks, so the widget stays free of contact-list and
@@ -33,8 +50,8 @@ theme concerns.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
+from itertools import permutations
 from math import ceil
 from typing import Callable, Optional, Sequence
 
@@ -45,44 +62,59 @@ from .mapcanvas import RGB, MapCanvas, parse_hex
 SRC_NODE = "\x00src"
 DST_NODE = "\x00dst"
 
-#: Prefix for the invisible waypoint ids a long edge is routed through — one per column
-#: it crosses. Never handed to the caller's callbacks (waypoints draw line only).
-_VIRTUAL_PREFIX = "\x00v"
-
-#: Vertical dot separation aimed for between adjacent nodes sharing a column — the base
-#: "lane" height one unit of the layout maps to. Wide enough to seat a marker and its
-#: label row; a tall graph compresses it to fit, a sparse one stretches it (bounded by
-#: :data:`_MAX_STRETCH`) to spend the height it has on airier, less acute branch angles.
+#: Vertical dot separation aimed for between adjacent lanes — the base height one lane maps
+#: to. Wide enough to seat a marker and its label row; a graph with many lanes compresses it
+#: to fit the row budget, and a graph with few lanes never stretches *past* it (spreading the
+#: lanes further apart would only reintroduce the empty space the layout exists to avoid), so
+#: a sparse graph draws compact rather than splayed.
 _LANE_STEP_DOTS = 14
 
-#: How far the lane step may stretch beyond :data:`_LANE_STEP_DOTS` when a graph has few
-#: rows to fill — enough to open the branch angles up without blowing a two-node fork out
-#: to the full height.
-_MAX_STRETCH = 1.8
-
-#: Dots reserved beyond the outermost node at each end of the graph — a label row for
-#: that node's marker, plus a little air. The box is sized and centred on the graph's
-#: real vertical extent (which is rarely symmetric), so it spends its rows on the paths
-#: rather than on a mirrored half that stays empty.
+#: Dots reserved beyond the outermost lane at each end of the graph — a label row for that
+#: lane's markers, plus a little air.
 _GRAPH_END_DOTS = 8
 
-#: The dot row within a character cell a horizontal edge line is aimed at — the
-#: upper-middle of the cell's 2×4 pixel grid (rows 0..3 top-down), where a one-dot
-#: line reads as running through the glyph rather than hugging its bottom edge. Every
-#: node's y is snapped onto this row (see ``_mid_row``) so same-column runs stay level.
-_CELL_MID_DOT = 1
+#: The dot row within a character cell a horizontal edge line is aimed at — the upper-middle
+#: of the cell's 2×4 pixel grid (rows 0..3 top-down), where a one-dot line reads as running
+#: through the glyph rather than hugging its bottom edge. Every lane's y is snapped onto this
+#: row (see :func:`_mid_row`) so a level run stays level and same-column markers align.
+_CELL_MID_DOT = 2
 
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
 
-#: Minimum vertical separation, in layout units, between two nodes in the same column —
-#: one lane. The ordering/placement passes never seat two markers closer than this.
-_MIN_LANE_GAP = 1.0
+#: A lane change spends this many dots of horizontal run per dot of vertical offset — the
+#: shift's aspect ratio. Above 1 the oblique lies flatter than 45°, drifting across the way a
+#: car eases between highway lanes rather than cutting; the level platforms on either side
+#: (where the node sits) take whatever span is left.
+_SHIFT_RATIO = 1.0
 
-#: Sweeps of the crossing-minimisation and vertical-straightening relaxations. The graphs
-#: are tiny (a handful of nodes over a handful of columns), so a few passes converge.
-_ORDER_SWEEPS = 6
-_PLACE_ITERS = 10
+#: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
+#: column gap still bends across a few dots rather than snapping over in one abrupt step.
+_MIN_SHIFT_DOTS = 4
+
+#: How far (as a fraction of the shift's horizontal span) the bezier control points sit in
+#: from each end — both placed level with their own end, so the curve leaves and enters the
+#: platforms horizontally. Near ½ the S is at its roundest; lower tightens it toward a
+#: straight diagonal with only its corners eased.
+_BEND_K = 0.5
+
+#: Dots left of our marker the flow arrow sits — one cell, so it embeds in the trunk as ``▶★``
+#: and marks the node → us direction without crowding the endpoint.
+_ARROW_GAP_DOTS = 2
+
+#: Most distinct paths the lane order is optimised over by exhaustive search. Beyond it the
+#: search space (``(n-1)!`` orders of the non-central lanes) is too large, so a barycentre
+#: heuristic seats the lanes instead. The widget's real inputs sit far under this.
+_MAX_EXACT_LANES = 8
+
+#: Sweeps of the barycentre lane-ordering heuristic used past :data:`_MAX_EXACT_LANES`.
+_ORDER_SWEEPS = 8
+
+#: The glyph used for the flow arrow embedded in the trunk just before us, 
+#: so the whole flow reads better as a directed run node → us (not a map you wander).
+#_ARROW_GLYPH = "▶"  
+_ARROW_GLYPH = ""  
+
 
 #: A node's graph marker: the glyph and its ``#rrggbb`` colour (the shared node-glyph
 #: tuples from :mod:`~meshterm.ui.map_render` / :mod:`~meshterm.ui.widgets` fit as-is).
@@ -104,7 +136,8 @@ class PathLayer:
             path runs endpoint to endpoint straight across).
         color: The edge colour the path draws in.
         priority: Draw priority — where paths share a cell, the highest priority
-            keeps it (its edges are also drawn last).
+            keeps it (its edges are also drawn last), and the highest-priority path
+            takes the straight centre lane.
     """
 
     hops: tuple[str, ...]
@@ -112,33 +145,13 @@ class PathLayer:
     priority: int
 
 
-@dataclass
-class _LayoutNode:
-    """A vertex the layout positions — a real node, an endpoint, or an edge waypoint.
-
-    Attributes:
-        node: The id handed to the caller's callbacks (``SRC_NODE``/``DST_NODE`` for the
-            endpoints, a hop hash for a relay), or a ``_VIRTUAL_PREFIX`` id for a waypoint.
-        rank: The column (hop distance from the left endpoint) the node sits in.
-        real: Whether the node carries a marker and label (waypoints are line-only).
-        order: Its position within the column, top to bottom (set by the ordering pass).
-        y: Its vertical coordinate — layout units during placement, canvas dots after.
-    """
-
-    node: str
-    rank: int
-    real: bool
-    order: int = 0
-    y: float = 0.0
-
-
 def _mid_row(y_dot: float) -> int:
     """Snap a dot row onto the upper-middle dot of its character cell.
 
-    A braille cell is four dot rows tall; a horizontal line drawn on the top or
-    bottom row hugs the glyph's edge and reads as sitting too high or too low.
-    Snapping every node's y to :data:`_CELL_MID_DOT` keeps markers — and the level
-    runs between same-column nodes — centred in the cell's pixel space.
+    A braille cell is four dot rows tall; a horizontal line drawn on the top or bottom row
+    hugs the glyph's edge and reads as sitting too high or too low. Snapping every lane's y
+    to :data:`_CELL_MID_DOT` keeps markers — and the level runs along a lane — centred in the
+    cell's pixel space.
     """
     return round((y_dot - _CELL_MID_DOT) / 4) * 4 + _CELL_MID_DOT
 
@@ -234,43 +247,6 @@ def _is_hex(value: str) -> bool:
     return bool(value) and all(char in _HEX_DIGITS for char in value)
 
 
-def _pava(values: list[float]) -> list[float]:
-    """Pool-adjacent-violators: the nearest non-decreasing sequence to ``values`` (L2).
-
-    The engine behind :func:`_pack` — it fits a monotone curve to the desired positions,
-    merging any run that would step backwards into its weighted mean.
-    """
-    means: list[float] = []
-    counts: list[int] = []
-    for value in values:
-        means.append(value)
-        counts.append(1)
-        while len(means) > 1 and means[-2] > means[-1]:
-            m2, c2 = means.pop(), counts.pop()
-            m1, c1 = means.pop(), counts.pop()
-            means.append((m1 * c1 + m2 * c2) / (c1 + c2))
-            counts.append(c1 + c2)
-    out: list[float] = []
-    for mean, count in zip(means, counts):
-        out.extend([mean] * count)
-    return out
-
-
-def _pack(desired: list[float], gap: float) -> list[float]:
-    """Place ordered nodes as close to their desired ys as a minimum gap allows.
-
-    Given each node's preferred y (the average of its neighbours) in column order, return
-    ys that stay in that order with at least ``gap`` between neighbours and minimise the
-    total squared shift — the optimal one-dimensional separation, via isotonic regression:
-    subtract the running gap, fit a monotone curve (:func:`_pava`), add the gap back.
-    """
-    if not desired:
-        return []
-    shifted = [value - i * gap for i, value in enumerate(desired)]
-    fitted = _pava(shifted)
-    return [value + i * gap for i, value in enumerate(fitted)]
-
-
 def render_path_graph(
     layers: Sequence[PathLayer],
     width: int,
@@ -282,24 +258,25 @@ def render_path_graph(
     max_rows: int = 15,
     lane_step: int = _LANE_STEP_DOTS,
 ) -> list[str]:
-    """Draw the layered route graph and return its ANSI lines.
+    """Draw the diverge/converge route-flow graph and return its ANSI lines.
 
     Args:
         layers: The paths to draw, in draw order (later layers, and higher priorities,
-            win shared cells). Layers with identical hop sequences collapse to one drawn
-            path owned by the highest priority among them.
+            win shared cells; the highest priority takes the straight centre lane). Layers
+            with identical hop sequences collapse to one drawn path owned by the highest
+            priority among them.
         width: Canvas width in character cells.
         glyph_of: Marker glyph + colour per node id (endpoints keyed by
             :data:`SRC_NODE` / :data:`DST_NODE`).
         label_of: Label text per node id (``None``/``""`` = bare marker). A label is
             kept whole unless it is wider than the canvas, when it is ellipsized to fit.
         label_rgb_of: Label colour per node id.
-        min_rows: The fewest canvas rows to draw, however flat the graph.
-        max_rows: The most canvas rows to spend; a taller graph compresses its lane
-            spacing to fit.
-        lane_step: Vertical dot separation aimed for between column-mates. A smaller step
-            packs the graph into a shallower band; a larger one opens the branch angles
-            up. Bounded by the row budget either way. Defaults to :data:`_LANE_STEP_DOTS`.
+        min_rows: The fewest canvas rows to draw, however few the lanes.
+        max_rows: The most canvas rows to spend; a graph with more lanes than fit
+            compresses its lane spacing rather than growing past this.
+        lane_step: Vertical dot separation aimed for between lanes. A larger step opens the
+            lanes apart; the row budget compresses it when there are many lanes, and never
+            stretches past it when there are few. Defaults to :data:`_LANE_STEP_DOTS`.
 
     Returns:
         One ANSI string per canvas row (empty when there are no layers to draw).
@@ -310,229 +287,294 @@ def render_path_graph(
     drawn = _collapse(_coalesce_prefixes(layers))
     seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
 
-    # First-appearance order for every node and edge, so the layout is identical on every
-    # repaint: a set of hash-seeded string ids would iterate in a run-varying order and let
-    # the ordering pass settle differently each time, making the graph jump between frames.
+    # First-appearance order for every node, so the layout is identical on every repaint: a
+    # set of hash-seeded string ids would iterate in a run-varying order and let the passes
+    # settle differently each time, making the graph jump between frames.
     ordered_nodes: list[str] = []
-    ordered_edges: list[tuple[str, str]] = []
-    seen_nodes: set[str] = set()
-    seen_edges: set[tuple[str, str]] = set()
+    seen: set[str] = set()
+    edges: set[tuple[str, str]] = set()
     for seq in seqs:
         for node in seq:
-            if node not in seen_nodes:
-                seen_nodes.add(node)
+            if node not in seen:
+                seen.add(node)
                 ordered_nodes.append(node)
-        for u, v in zip(seq, seq[1:]):
-            if (u, v) not in seen_edges:
-                seen_edges.add((u, v))
-                ordered_edges.append((u, v))
+        edges.update(zip(seq, seq[1:]))
 
-    # -- Ranks (columns): the longest path (in edges) from the source to each node. Ranking
-    # by longest path — not merely a node's furthest position in some one sequence — is what
-    # guarantees every edge steps strictly forward (``rank(v) ≥ rank(u) + 1``): a relay that
-    # one route reaches late is seated in the deeper column, so no edge ever doubles back or
-    # runs *within* a column (which would draw as a stray vertical bar). The right endpoint,
-    # the sink of every path, takes the deepest rank of all. Relaxed to a fixed point, capped
-    # at the node count so a pathological order-flipped pair can't spin it forever.
-    rank: dict[str, int] = {node: 0 for node in ordered_nodes}
-    for _ in range(len(ordered_nodes)):
-        changed = False
-        for u, v in ordered_edges:
-            if rank[v] < rank[u] + 1:
-                rank[v] = rank[u] + 1
-                changed = True
-        if not changed:
-            break
-    max_rank = max(rank.values())
+    xfrac = _balanced_x(ordered_nodes, edges)
 
-    # -- Edges routed. An edge that spans more than one column is broken over invisible
-    # waypoints, one per crossed column, so the drawn line bends around the nodes between its
-    # ends instead of cutting across them. ``route`` maps each directed edge to the full
-    # waypoint chain the drawing pass threads its line through.
-    route: dict[tuple[str, str], list[str]] = {}
-    nodes: dict[str, _LayoutNode] = {}
+    # A node draws on its highest-priority owning path — the first (by priority, then
+    # appearance) to carry it — so a shared relay sits once, on the strongest route through it,
+    # and weaker routes jog to meet it. A path that introduces no node of its own (every hop
+    # already owned by a stronger route) is *subsumed*: it earns no lane and simply threads the
+    # markers others placed, so it costs no empty band.
+    best = max(range(len(drawn)), key=lambda j: drawn[j].priority)
+    owner: dict[str, int] = {}
+    for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
+        for node in seqs[i]:
+            owner.setdefault(node, i)
+    lane_of_path = _assign_lanes(drawn, seqs, owner, best)
 
-    def ensure(node: str, node_rank: int, real: bool) -> None:
-        if node not in nodes:
-            nodes[node] = _LayoutNode(node=node, rank=node_rank, real=real)
+    # The endpoints sit on the best path's lane, where the strongest route runs dead straight
+    # across as the graph's spine; the alternatives fan above and below it.
+    max_lane = max(lane_of_path.values())
+    centre_lane = float(lane_of_path[best])
+    node_lane: dict[str, float] = {
+        node: (centre_lane if node in (SRC_NODE, DST_NODE) else float(lane_of_path[owner[node]]))
+        for node in ordered_nodes
+    }
 
-    for node in ordered_nodes:
-        ensure(node, rank[node], real=True)
-
-    virtual = 0
-    for u, v in ordered_edges:
-        chain = [u]
-        for r in range(rank[u] + 1, rank[v]):
-            vid = f"{_VIRTUAL_PREFIX}{virtual}"
-            virtual += 1
-            ensure(vid, r, real=False)
-            chain.append(vid)
-        chain.append(v)
-        route[(u, v)] = chain
-
-    columns: dict[int, list[str]] = defaultdict(list)
-    for node in nodes.values():
-        columns[node.rank].append(node.node)
-
-    # -- Adjacency over the routed (waypoint-inclusive) graph, for ordering + straightening.
-    adjacent: dict[str, list[str]] = defaultdict(list)
-    for chain in route.values():
-        for a, b in zip(chain, chain[1:]):
-            adjacent[a].append(b)
-            adjacent[b].append(a)
-
-    _order_columns(columns, adjacent, nodes)
-    extent = _place_columns(columns, adjacent, nodes)
-
-    # -- Vertical sizing: fill the row budget with the graph's real extent, stretching a
-    # sparse graph (bounded) for airier angles and compressing a busy one to fit.
-    if extent <= 0:
+    # -- Vertical sizing: size the rows to the lanes, compressing the spacing (never
+    # stretching it past ``lane_step``) so a busy graph fits and a sparse one stays compact.
+    if max_lane <= 0:
         step = 0.0
         rows = min_rows
     else:
-        ideal = extent * lane_step + 2 * _GRAPH_END_DOTS
+        ideal = max_lane * lane_step + 2 * _GRAPH_END_DOTS
         rows = max(min_rows, min(max_rows, ceil(ideal / 4)))
         avail = rows * 4 - 2 * _GRAPH_END_DOTS
-        step = min(avail / extent, lane_step * _MAX_STRETCH)
+        step = min(float(lane_step), avail / max_lane)
 
     canvas = MapCanvas(width, rows)
     dot_w = width * 2
     span = dot_w - 2 * _GRAPH_PAD_DOTS
-    min_y = min(node.y for node in nodes.values())
-    band = extent * step
-    top = (rows * 4 - band) / 2  # centre the real extent in the chosen rows
+    band = max_lane * step
+    top = (rows * 4 - band) / 2  # centre the lane band in the chosen rows
 
-    def x_of(node_rank: int) -> int:
-        return _GRAPH_PAD_DOTS + round(node_rank / max_rank * span) if max_rank else dot_w // 2
+    def x_of(node: str) -> int:
+        return _GRAPH_PAD_DOTS + round(xfrac[node] * span)
 
-    pos: dict[str, tuple[int, int]] = {}
-    for node in nodes.values():
-        pos[node.node] = (x_of(node.rank), _mid_row(top + (node.y - min_y) * step))
-    mid_y = rows * 2  # canvas vertical middle, in dots — the side labels push away from
-
-    # -- Edges: ascending priority, so where paths share cells the top layer draws last
-    # and keeps them. Each layer threads its line through the waypoint chain of every edge.
+    pos: dict[str, tuple[int, int]] = {
+        node: (x_of(node), _mid_row(top + node_lane[node] * step)) for node in ordered_nodes
+    }
+    # -- Edges. Collect every edge once, keyed by its unordered node pair: an edge two routes
+    # share — or a pair walked in *both* directions — must draw a single time, else it silts up
+    # as a doubled line a dot off itself (two routes' Bresenham runs never land on the exact
+    # same dots). Each pair keeps the colour and priority of the strongest route through it; a
+    # two-way pair is flagged so it draws as the one honest vertical rather than a lane change.
+    bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
+    edge_style: dict[frozenset[str], tuple[int, RGB]] = {}
     for layer, seq in sorted(zip(drawn, seqs), key=lambda ls: ls[0].priority):
         for u, v in zip(seq, seq[1:]):
-            points = [pos[node] for node in route[(u, v)]]
-            canvas.draw_line(points, layer.color, layer.priority)
+            key = frozenset((u, v))
+            prev = edge_style.get(key)
+            if prev is None or layer.priority > prev[0]:
+                edge_style[key] = (layer.priority, layer.color)
+    # Draw ascending by priority so the strongest route's colour wins any cell two edges share.
+    for key, (priority, color) in sorted(edge_style.items(), key=lambda kv: kv[1][0]):
+        u, v = tuple(key)
+        canvas.draw_line(_route(u, v, pos, key in bidir), color, priority)
 
-    # -- Markers for every real node; waypoints stay line-only.
-    for node in nodes.values():
-        if not node.real:
-            continue
-        glyph, color_hex = glyph_of(node.node)
-        canvas.marker(*pos[node.node], glyph, parse_hex(color_hex))
+    # -- An arrow embedded in the trunk just before us, so the whole flow reads as a directed
+    # run node → us (not a map you wander). A single glyph in the spine's own colour: it reserves
+    # its cell, so the endpoint label routes around it rather than colliding with stray dots.
+    ax, ay = pos[DST_NODE]
+    canvas.marker(ax - _ARROW_GAP_DOTS, ay, _ARROW_GLYPH, drawn[best].color)
 
-    _place_labels(canvas, nodes, pos, width, mid_y, label_of, label_rgb_of)
+    # -- Markers for every node (endpoints and relays alike each draw once).
+    for node in ordered_nodes:
+        glyph, color_hex = glyph_of(node)
+        canvas.marker(*pos[node], glyph, parse_hex(color_hex))
+
+    _place_labels(canvas, ordered_nodes, pos, node_lane, width, rows * 2, label_of, label_rgb_of)
     return canvas.to_ansi_lines()
 
 
-def _order_columns(
-    columns: dict[int, list[str]],
-    adjacent: dict[str, list[str]],
-    nodes: dict[str, _LayoutNode],
-) -> None:
-    """Order the nodes within each column to reduce edge crossings (barycentre sweeps).
+def _route(
+    u: str,
+    v: str,
+    pos: dict[str, tuple[int, int]],
+    bidir: bool,
+) -> list[tuple[float, float]]:
+    """The point chain for one edge (dot coordinates), drawn as multilane-highway flow.
 
-    Starting from first-appearance order, each node is repeatedly re-seated at the mean
-    position of its neighbours in the column just settled — down the ranks, then up —
-    which is the standard cheap crossing-minimiser. A node with no neighbour in the
-    reference column keeps its place. The results are written back as each node's
-    ``order`` (its index within the column).
+    Two nodes on the same lane join with a level run; two on different lanes join with a
+    *trapezium* — level out of the first marker, one smooth **shift** across the intervening
+    lanes (a bezier lane change, level where it meets each platform; see :func:`_sbend`), then
+    level into the second — so both nodes sit on a flat platform and there is no corner
+    anywhere, only the eased level→curve→level of the shift. The shift is sized by
+    :data:`_SHIFT_RATIO` (a gentle drift, not a 45° cut) and centred in the span, so the
+    platforms flank it evenly; when the column gap is too tight to hold both platforms and the
+    shift, the bend simply spans the whole gap. The endpoints, sitting on the centre lane,
+    make the origin's diverging peels and us's converging merges fall out of this one rule —
+    no endpoint special case. The lone exception is ``bidir``: a pair walked both ways draws as
+    a single straight segment between the markers (a near-vertical when the layout stacks
+    them), the one place an up-and-down line is the honest picture.
     """
-    order: dict[str, int] = {}
-    for column in columns.values():
-        for i, node in enumerate(column):
-            order[node] = i
+    (xu, yu), (xv, yv) = pos[u], pos[v]
+    if bidir:
+        return [(xu, yu), (xv, yv)]
+    if xu > xv:  # orient the trapezium left→right; balanced rank only ties, never inverts
+        (xu, yu), (xv, yv) = (xv, yv), (xu, yu)
+    if yu == yv:
+        return [(xu, yu), (xv, yv)]
+    dx = xv - xu
+    dy = abs(yv - yu)
+    shift = min(dx, max(round(dy * _SHIFT_RATIO), _MIN_SHIFT_DOTS))
+    stub = (dx - shift) // 2
+    # Level stub, a bezier S across the shift (level tangents at both ends, so it eases out of
+    # and back into the platforms with no corner), then the level stub into the far marker.
+    return [(xu, yu), *_sbend(xu + stub, yu, xv - stub, yv), (xv, yv)]
 
-    max_rank = max(columns)
 
-    def barycentre(node: str, ref_rank: int) -> float:
-        refs = [order[n] for n in adjacent[node] if nodes[n].rank == ref_rank]
-        return sum(refs) / len(refs) if refs else float(order[node])
+def _sbend(
+    x0: float, y0: float, x1: float, y1: float
+) -> list[tuple[float, float]]:
+    """Sample a cubic-bezier S-curve from ``(x0, y0)`` to ``(x1, y1)``, level at both ends.
 
+    Both control points sit level with their own endpoint (:data:`_BEND_K` of the span in from
+    each side), so the curve's tangent is horizontal where it meets the platforms — the smooth
+    lane change that drifts across and settles rather than cutting a hard diagonal. Sampled
+    densely enough that the polyline rasterizes as a continuous curve; the convex hull keeps it
+    inside the ``(x0, y0)–(x1, y1)`` box, so it never overshoots its lane or column.
+    """
+    cx0 = x0 + _BEND_K * (x1 - x0)
+    cx1 = x1 - _BEND_K * (x1 - x0)
+    samples = max(4, int(abs(x1 - x0) + abs(y1 - y0)))
+    pts: list[tuple[float, float]] = []
+    for i in range(samples + 1):
+        t = i / samples
+        mt = 1.0 - t
+        a, b, c, d = mt * mt * mt, 3 * mt * mt * t, 3 * mt * t * t, t * t * t
+        pts.append((a * x0 + b * cx0 + c * cx1 + d * x1, a * y0 + b * y0 + c * y1 + d * y1))
+    return pts
+
+
+def _balanced_x(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[str, float]:
+    """Each node's horizontal position in ``0..1`` — balanced rank from origin toward us.
+
+    A node's fraction is its longest-path distance from the origin over that distance plus
+    its longest remaining distance to us: the origin lands at ``0``, us at ``1``, and every
+    other node between them in proportion to how far along its route it sits. So a path's
+    relays spread *evenly* between the two ends however many hops the other paths take — a
+    lone relay on a one-hop route lands mid-canvas rather than jammed against the origin with
+    a long edge arcing across to us — and a relay shared by routes of different lengths still
+    resolves to one x. Because every edge steps the from-origin distance up and the
+    to-us distance down, the fraction rises strictly along each path: edges only ever run
+    left to right.
+    """
+    up = _longest_paths(ordered_nodes, edges)
+    down = _longest_paths(ordered_nodes, {(v, u) for u, v in edges})
+    return {
+        node: (up[node] / (up[node] + down[node])) if (up[node] + down[node]) else 0.0
+        for node in ordered_nodes
+    }
+
+
+def _longest_paths(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[str, int]:
+    """Longest-path depth of each node over ``edges`` (relaxed to a fixed point).
+
+    Capped at the node count so a pathological cycle in the id set can't spin it forever;
+    the graphs are acyclic fans, so it settles in a couple of passes.
+    """
+    depth = {node: 0 for node in ordered_nodes}
+    for _ in range(len(ordered_nodes)):
+        changed = False
+        for u, v in edges:
+            if depth[v] < depth[u] + 1:
+                depth[v] = depth[u] + 1
+                changed = True
+        if not changed:
+            break
+    return depth
+
+
+def _assign_lanes(
+    drawn: Sequence[PathLayer],
+    seqs: Sequence[tuple[str, ...]],
+    owner: dict[str, int],
+    best: int,
+) -> dict[int, int]:
+    """Seat each lane-bearing path on a horizontal lane, best centred, sharing routes close.
+
+    Returns ``{path_index: lane}`` — only for the paths that own at least one node (a subsumed
+    path threads others' markers and needs no lane of its own) — with lanes ``0`` (top) up. The
+    best path is pinned to the centre lane, where it runs straight through the two endpoints as
+    the graph's spine; the rest are ordered to minimise the total *jog* — the vertical distance
+    a path travels to reach a relay another path owns — so routes that share hops sit near each
+    other and a shared relay costs the shortest detour. Small graphs
+    (``≤`` :data:`_MAX_EXACT_LANES` lanes) get the exact best order by search; larger ones fall
+    back to a barycentre heuristic.
+    """
+    bearing = [i for i in range(len(drawn)) if any(owner[node] == i for node in seqs[i])]
+    n = len(bearing)
+    if n == 1:
+        return {bearing[0]: 0}
+
+    # Each bearing path's jog partners: the owning lanes of the hops it borrows from others.
+    shared_owners = {
+        i: [owner[node] for node in seqs[i] if owner[node] != i] for i in bearing
+    }
+
+    def jog(lane: dict[int, int]) -> int:
+        return sum(abs(lane[i] - lane[o]) for i in bearing for o in shared_owners[i])
+
+    centre_slot = (n - 1) // 2
+    others = [i for i in bearing if i != best]
+
+    if n - 1 <= _MAX_EXACT_LANES:
+        best_order: Optional[tuple[int, ...]] = None
+        best_cost: Optional[int] = None
+        for perm in permutations(others):
+            slots = list(perm)
+            slots.insert(centre_slot, best)
+            cost = jog({p: k for k, p in enumerate(slots)})
+            if best_cost is None or cost < best_cost:
+                best_cost, best_order = cost, tuple(slots)
+        assert best_order is not None
+        return {p: k for k, p in enumerate(best_order)}
+
+    return _barycentre_lanes(bearing, best, centre_slot, shared_owners)
+
+
+def _barycentre_lanes(
+    bearing: list[int],
+    best: int,
+    centre_slot: int,
+    shared_owners: dict[int, list[int]],
+) -> dict[int, int]:
+    """Heuristic lane order for a graph too large to search: barycentre sweeps.
+
+    Each path is repeatedly re-seated at the average lane of the paths it shares relays with,
+    with the best path pinned to the centre lane. A handful of sweeps settles sharing routes
+    next to each other — the cheap crossing-minimiser, at the coarser grain of whole lanes.
+    """
+    lane = {p: float(k) for k, p in enumerate(bearing)}
+    lane[best] = float(centre_slot)
+    others = [i for i in bearing if i != best]
     for _ in range(_ORDER_SWEEPS):
-        for r in range(1, max_rank + 1):
-            columns[r].sort(key=lambda n: barycentre(n, r - 1))  # noqa: B023 - r is bound per loop
-            for i, node in enumerate(columns[r]):
-                order[node] = i
-        for r in range(max_rank - 1, -1, -1):
-            columns[r].sort(key=lambda n: barycentre(n, r + 1))  # noqa: B023 - r is bound per loop
-            for i, node in enumerate(columns[r]):
-                order[node] = i
-
-    for column in columns.values():
-        for i, node in enumerate(column):
-            nodes[node].order = i
-
-
-def _place_columns(
-    columns: dict[int, list[str]],
-    adjacent: dict[str, list[str]],
-    nodes: dict[str, _LayoutNode],
-) -> float:
-    """Assign each node a vertical coordinate (layout units) and return the total extent.
-
-    Seeded from the column orders, every node is pulled toward the average height of its
-    neighbours and its column re-separated to the minimum lane gap (:func:`_pack`) — a few
-    passes each way. This straightens each route into a near-level lane while keeping
-    branches apart; an endpoint, being the lone node in its column, drifts to the centroid
-    of its own branches so the whole fan reads as leaving (or arriving at) one point.
-    Returns ``max_y - min_y`` across all nodes, the height the caller scales to the canvas.
-    """
-    for column in columns.values():
-        for node in column:
-            nodes[node].y = float(nodes[node].order)
-
-    max_rank = max(columns)
-    ranks_desc = list(range(max_rank + 1))
-
-    def relax(order_of_ranks: list[int]) -> None:
-        for r in order_of_ranks:
-            column = columns[r]
-            desired = []
-            for node in column:
-                neighbours = adjacent[node]
-                if neighbours:
-                    desired.append(sum(nodes[n].y for n in neighbours) / len(neighbours))
-                else:
-                    desired.append(nodes[node].y)
-            for node, y in zip(column, _pack(desired, _MIN_LANE_GAP)):
-                nodes[node].y = y
-
-    for _ in range(_PLACE_ITERS):
-        relax(ranks_desc)
-        relax(ranks_desc[::-1])
-
-    ys = [node.y for node in nodes.values()]
-    return max(ys) - min(ys)
+        for i in others:
+            if shared_owners[i]:
+                lane[i] = sum(lane[o] for o in shared_owners[i]) / len(shared_owners[i])
+        order = sorted(others, key=lambda i: lane[i])
+        order.insert(centre_slot, best)
+        lane = {p: float(k) for k, p in enumerate(order)}
+    return {p: int(lane[p]) for p in order}
 
 
 def _place_labels(
     canvas: MapCanvas,
-    nodes: dict[str, _LayoutNode],
+    ordered_nodes: list[str],
     pos: dict[str, tuple[int, int]],
+    node_lane: dict[str, float],
     width: int,
     mid_y: int,
     label_of: LabelOf,
     label_rgb_of: LabelRgbOf,
 ) -> None:
-    """Write each real node's label above or below its marker, clear of the lines if it can.
+    """Write each node's label above or below its marker, clear of the lines if it can.
 
-    Endpoints first, then relays column by column, so the named ends win any contest for a
+    Endpoints first, then relays down the lanes, so the named ends win any contest for a
     cell. Each label is tried on the side away from the graph's middle first (spreading the
-    text outward off the busy centre), preferring a row the drawn lines don't already
-    occupy; an endpoint, hard against a canvas edge, slides its anchor inward far enough for
-    the whole name to land, and falls back to sitting beside its marker. A name is only
-    ever shortened when it is wider than the entire canvas.
+    text outward off the busy centre), preferring a row the drawn lines don't already occupy;
+    an endpoint, hard against a canvas edge, slides its anchor inward far enough for the whole
+    name to land, and falls back to sitting beside its marker. A name is only ever shortened
+    when it is wider than the entire canvas.
     """
-    endpoints = [n for n in (DST_NODE, SRC_NODE) if n in nodes]
-    relays = [
-        layout.node
-        for layout in sorted(nodes.values(), key=lambda n: (n.rank, n.order))
-        if layout.real and layout.node not in (SRC_NODE, DST_NODE)
-    ]
+    endpoints = [n for n in (DST_NODE, SRC_NODE) if n in pos]
+    relays = sorted(
+        (n for n in ordered_nodes if n not in (SRC_NODE, DST_NODE)),
+        key=lambda n: (node_lane[n], pos[n][0]),
+    )
     for node in [*endpoints, *relays]:
         label = label_of(node)
         if not label:

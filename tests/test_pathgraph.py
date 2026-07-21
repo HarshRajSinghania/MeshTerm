@@ -1,4 +1,4 @@
-"""Unit tests for the shared route-graph widget (the fan-lane braille renderer)."""
+"""Unit tests for the shared route-graph widget (the diverge/converge braille renderer)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from meshterm.ui.pathgraph import (
     SRC_NODE,
     PathLayer,
     _coalesce_prefixes,
+    _route,
     render_path_graph,
 )
 
@@ -127,6 +128,59 @@ def test_a_shared_relay_draws_a_single_marker() -> None:
     plain = _ANSI.sub("", "\n".join(_render(layers)))
     assert plain.count("bb") == 1  # the shared relay is seated once
     assert plain.count("aa") == 1 and plain.count("cc") == 1
+
+
+def test_every_label_shows_on_a_busy_graph() -> None:
+    """Four distinct routes lay out as separated lanes — every relay label lands, none dropped."""
+    names = {
+        "aa": "Alpha", "bb": "Bravo", "cc": "Charlie", "dd": "Delta",
+        "ee": "Echo", "ff": "Foxtrot", "gg": "Golf",
+    }
+    layers = [
+        PathLayer(("aa", "bb"), WHITE, 4),
+        PathLayer(("cc", "dd"), GREY, 2),
+        PathLayer(("ee", "ff"), GREY, 2),
+        PathLayer(("gg",), GREY, 2),
+    ]
+    plain = _ANSI.sub("", "\n".join(_render(layers, label_of=lambda n: names.get(n[:2]))))
+    for name in names.values():
+        assert name in plain, f"{name} was dropped from the graph"
+
+
+def test_a_subsumed_route_adds_no_duplicate_markers() -> None:
+    """A route whose hops are all carried by a stronger one draws through them, not doubled."""
+    layers = [
+        PathLayer(("aa", "bb", "cc"), WHITE, 4),  # the backbone owns aa, bb, cc
+        PathLayer(("aa", "cc"), GREY, 2),  # a shortcut over the same relays — no new node
+    ]
+    plain = _ANSI.sub("", "\n".join(_render(layers)))
+    for hop in ("aa", "bb", "cc"):
+        assert plain.count(hop) == 1  # each relay seated exactly once
+
+
+def test_route_seats_each_node_on_a_level_platform() -> None:
+    """A lane-changing edge leaves and enters level, so neither node is a pointed apex."""
+    pts = _route("u", "v", {"u": (0, 1), "v": (40, 9)}, bidir=False)
+    assert pts[0] == (0, 1) and pts[-1] == (40, 9)  # the two markers are the ends
+    assert pts[0][1] == pts[1][1]  # level out of u — u sits flat
+    assert pts[-1][1] == pts[-2][1]  # level into v — v sits flat
+
+
+def test_route_same_lane_is_one_level_run() -> None:
+    """Two nodes on the same lane join with a single straight horizontal segment."""
+    assert _route("u", "v", {"u": (0, 5), "v": (40, 5)}, bidir=False) == [(0, 5), (40, 5)]
+
+
+def test_route_orients_left_to_right() -> None:
+    """A right-to-left node pair is flipped, so the trapezium always reads as forward flow."""
+    forward = _route("u", "v", {"u": (0, 1), "v": (40, 9)}, bidir=False)
+    reverse = _route("u", "v", {"u": (40, 9), "v": (0, 1)}, bidir=False)
+    assert reverse == forward  # same picture whichever way the pair is handed in
+
+
+def test_route_bidirectional_is_a_single_straight_segment() -> None:
+    """A two-way pair is the sole straight (near-vertical) edge — never a trapezium."""
+    assert _route("u", "v", {"u": (20, 1), "v": (24, 30)}, bidir=True) == [(20, 1), (24, 30)]
 
 
 def test_labels_ellipsize_only_when_wider_than_the_canvas() -> None:
