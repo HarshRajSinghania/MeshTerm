@@ -10,9 +10,11 @@ the node itself, in full:
 * **where it is** — a small static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`)
   centred on the node with the rest of the mesh around it, when the node has advertised a
   location;
-* **how we reach it** — the observed routes drawn on the shared route graph
-  (:mod:`~meshterm.ui.pathgraph`), the best-evidence one lit white over the alternatives, so
-  the path the trace would take reads at a glance;
+* **how we hear it** — the routes we've actually heard it arrive over, drawn on the shared
+  route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
+  travelled, contact on the left, us on the right), the best-evidence one lit white over the
+  alternatives. Only *good* routes are drawn — stale evidence and far-weaker outliers are
+  dropped, so the graph shows the routes worth trusting rather than every chain ever heard;
 * **the ways in** — an action list: *Trace target* (armed with the suggested best path, so
   Enter walks straight to it), *Open full map*, and *Time machine* (only when the recorder
   actually holds history for the node). ↑/↓ move the cursor, Enter commits, Esc backs to the
@@ -29,12 +31,13 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
-from ..core.models import NODE_TYPE_LABELS, Contact
+from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -68,16 +71,30 @@ _SELF_GLYPH = ("★", "#facc15")
 #: How many character rows the inline location preview draws.
 _MAP_ROWS = 7
 
-#: Route-graph tuning for this page. It draws us on the left and the target on the right
-#: (us → target, so the graph reads as "how we reach it", left to right). A well-connected
-#: node offers several candidate paths at once, and cramming them into a short box overlaps
-#: the lanes into an unreadable tangle — so this page gives the fan a generous lane step and
-#: row budget, letting each path spread into its own clearly separated track. The height is
-#: adaptive: it grows only with the number of distinct lanes, so a node with one or two
-#: routes still draws compact while a busy one earns the room it needs. The page scrolls
-#: (PgUp/PgDn), so a tall graph never crowds the action rows off-screen.
+#: Route-graph tuning for this page. It draws the contact on the left and us on the right
+#: (node → us, so the graph reads left to right as the inbound direction its packets
+#: travelled to reach us). A well-connected node offers several candidate paths at once, and
+#: cramming them into a short box overlaps the lanes into an unreadable tangle — so this page
+#: gives the fan a generous lane step and row budget, letting each path spread into its own
+#: clearly separated track. The height is adaptive: it grows only with the number of distinct
+#: lanes, so a node with one or two routes still draws compact while a busy one earns the room
+#: it needs. The page scrolls (PgUp/PgDn), so a tall graph never crowds the action rows off.
 _PATH_LANE_STEP = 15
 _PATH_MAX_ROWS = 22
+
+#: A drawn route is dropped as *stale* when its freshest-limiting link — the stalest hop it
+#: rides through — has not been heard in this many days. A route is only as current as its
+#: weakest-heard link: if any hop along it has gone quiet, the whole chain may no longer
+#: carry. Matches the spirit of the topology's one-week evidence half-life (four half-lives
+#: leaves a link weighted ~1/16), the point past which a path is more memory than fact.
+_PATH_STALE_DAYS = 28.0
+
+#: A drawn alternative route is dropped as an *outlier* when its evidence score falls below
+#: this fraction of the strongest observed alternative's. Keeps the graph to the handful of
+#: routes actually worth trusting rather than every far-weaker chain the evidence can string
+#: together. The best-evidence (white) route is always drawn regardless — it is the answer to
+#: "how do we reach it", not one of the alternatives being weighed.
+_PATH_OUTLIER_RATIO = 0.25
 
 #: Cells the labelled info rows reserve for their label lane, so the value blocks line up
 #: and a wrapped value hangs under itself rather than under the label (the app-wide
@@ -159,7 +176,7 @@ class NodeDetailScreen(Screen):
             minimap: The inline location preview, or ``None`` when the node has no location.
             map_caption: A faint line under the preview (its centre/scale), when a map shows.
             path: The route-graph view (layers + callbacks, or a muted note), or ``None`` to
-                omit the whole "Path to node" section (our own node has no route to itself).
+                omit the whole "Routes heard" section (we never overhear our own node).
         """
         super().__init__()
         self.title = title
@@ -236,7 +253,7 @@ class NodeDetailScreen(Screen):
                 lines.extend(render_lines(self._map_caption, width, no_wrap=True))
         if self._path is not None:
             lines.append("")
-            lines.extend(render_lines(Text("Path to node", style="accent"), width))
+            lines.extend(render_lines(Text("Routes heard", style="accent"), width))
             lines.extend(self._path_lines(width))
         lines.append("")
         self._cursor = None
@@ -272,7 +289,7 @@ class NodeDetailScreen(Screen):
             max_rows=_PATH_MAX_ROWS,
             lane_step=_PATH_LANE_STEP,
         )
-        caption = Text("you → node · white = suggested route", style="faint")
+        caption = Text("node → you, as heard  ·  white = best route", style="faint")
         lines.extend(render_lines(caption, width, no_wrap=True))
         if path.legend:
             lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
@@ -522,7 +539,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         )
         map_caption = Text(f"{label} · centred here", style="faint")
 
-    # -- the "path to node" route graph (node → us), best-evidence path white.
+    # -- the "routes heard" route graph (node → us), best-evidence path white.
     path: Optional[_PathView] = None
     if not you:
         path = _path_view(
@@ -666,18 +683,25 @@ def _path_view(
     self_name,
     node_label,
 ) -> _PathView:
-    """Build the route-graph layers (us → node) and their draw callbacks, or a muted note.
+    """Build the route-graph layers (node → us) and their draw callbacks, or a muted note.
 
-    The paths are drawn us-on-the-left to the target-on-the-right — the outbound direction
-    a trace walks, so the graph reads left to right as "how we reach it" and lines up with
-    the Path-to-node rows above. The shared :func:`~meshterm.ui.widgets.route_graph_style`
-    always pins us to the graph's right endpoint (it was built for the Message paths view,
-    where traffic arrives *at* us), so we hand it the target as its ``source`` and then swap
-    the two endpoint sentinels in its callbacks — putting the star on the left and the named
-    target on the right without disturbing the widget's other callers. The best-evidence
-    route (the observed suggestion, else the firmware's route) is lit white over the
-    alternatives' grey. With no route evidence at all — no learned route, no observed path,
-    not even a direct link — there is nothing honest to draw, so a muted note stands in.
+    The routes are drawn contact-on-the-left to us-on-the-right — the *inbound* direction the
+    packets travelled to reach us, since everything the graph knows was received, not sent.
+    That is exactly the orientation the shared :func:`~meshterm.ui.widgets.route_graph_style`
+    already draws (it was built for the Message paths view, where traffic arrives *at* us on
+    the right), so we hand it the target as its ``source`` — the left endpoint — and use its
+    callbacks as they come, only reversing each route's hop order so the drawn line runs from
+    the contact inward to us. The best-evidence route (the observed suggestion, else the
+    firmware's learned route) is lit white over the alternatives' grey.
+
+    Only *good* alternatives are drawn: an observed route is kept as grey when its evidence is
+    both **fresh** (its stalest hop heard within :data:`_PATH_STALE_DAYS`) and **not an
+    outlier** (its score within :data:`_PATH_OUTLIER_RATIO` of the strongest observed one) —
+    so the graph shows the routes worth trusting rather than every chain ever heard. The
+    best-evidence route is always drawn, stale or not: it is the page's answer to how we'd
+    reach the node, not one of the alternatives being weighed. With no route evidence at all —
+    no learned route, no observed path, not even a direct link — there is nothing honest to
+    draw, so a muted note stands in.
     """
     if canonical_target is None:
         return _PathView(note="no key to route to")
@@ -695,18 +719,25 @@ def _path_view(
         else device_route if device_route is not None
         else None
     )
+    # A node we only ever hear directly (no relays, no learned route) still earns a line —
+    # the straight zero-hop shot — so the graph shows the direct link rather than a bare note.
+    if best_hops is None and topo.link(topo.self_id, canonical_target) is not None:
+        best_hops = ()
     layers: list[PathLayer] = []
     seen: set[tuple[str, ...]] = set()
 
     def add(hops: tuple[str, ...], priority: int, color: tuple[int, int, int]) -> None:
-        if hops in seen:  # draw us → target (the outbound order the trace walks)
+        # Reverse the outbound (us-outward) hop order into inbound (node→us) draw order, so
+        # the contact lands on the left endpoint and our star on the right.
+        drawn = tuple(reversed(hops))
+        if drawn in seen:
             return
-        seen.add(hops)
-        layers.append(PathLayer(hops=hops, color=color, priority=priority))
+        seen.add(drawn)
+        layers.append(PathLayer(hops=drawn, color=color, priority=priority))
 
     if best_hops is not None:
         add(best_hops, 3, white)
-    for scenario in scenarios:
+    for scenario in _good_alternatives(topo, scenarios, canonical_target):
         add(scenario.hops, 2, grey)
 
     glyph_of, byte_label_of, label_rgb_of = style(
@@ -717,23 +748,17 @@ def _path_view(
     # a relay with only its first hash byte, here each relay wears its resolved contact name
     # (its colour is already the name's hue), so the whole route reads as places rather than
     # hex; an unidentified relay keeps the byte, the honest most it can be called. The two
-    # endpoints keep route_graph_style's names.
+    # endpoints keep route_graph_style's names (target on the left, us on the right).
     def label_of(node: str) -> Optional[str]:
         if node in (SRC_NODE, DST_NODE):
             return byte_label_of(node)
         named = resolve(node)
         return named if named and named != node else node[:2]
 
-    # route_graph_style pins us to DST (the right) and the target to SRC (the left); swap the
-    # two sentinels so the graph draws us on the left and the target on the right.
-    glyph_of = _flip_endpoints(glyph_of)
-    label_of = _flip_endpoints(label_of)
-    label_rgb_of = _flip_endpoints(label_rgb_of)
-
     # The target wears its own map glyph (▲ repeater, ■ room, ◉ sensor) — the same mark the
-    # header and the map give it. route_graph_style draws the far endpoint as a plain dot,
-    # since on its home screen (Message paths) that end is an arbitrary message origin; here
-    # it is a known contact whose type we can show.
+    # header and the map give it. route_graph_style draws the far (left) endpoint as a plain
+    # dot, since on its home screen (Message paths) that end is an arbitrary message origin;
+    # here it is a known contact whose type we can show.
     glyph_of = _with_target_glyph(
         glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
     )
@@ -747,34 +772,70 @@ def _path_view(
     )
 
 
+def _good_alternatives(topo, scenarios, target) -> list:  # noqa: ANN001
+    """The observed alternative routes worth drawing: fresh, evidence-backed, not outliers.
+
+    Trims the raw scenario list down to the alternatives the graph should show in grey:
+
+    * only the **observed** family (the device/direct scenarios are not routes the evidence
+      *observed* the node arrive over — the device route rides in white on its own when it is
+      the best, and a bare direct line the evidence never saw is not worth a lane);
+    * only ones with real evidence behind them (a positive score — an unobserved link scores
+      zero, see :meth:`~meshterm.services.topology.MeshTopology._score_route`);
+    * only **fresh** ones — every hop heard within :data:`_PATH_STALE_DAYS`, so a route whose
+      weakest link has gone quiet drops out rather than lingering as a line that may no longer
+      carry;
+    * only ones **not far weaker** than the best observed alternative (score within
+      :data:`_PATH_OUTLIER_RATIO` of the strongest), so one clearly-best route isn't buried
+      under a fan of marginal ones.
+
+    Returns the survivors in the order :meth:`~meshterm.services.topology.MeshTopology.scenarios`
+    ranked them (strongest first).
+    """
+    observed = [s for s in scenarios if s.source == "observed" and s.hops and s.score > 0]
+    if not observed:
+        return []
+    best_score = max(s.score for s in observed)
+    now = utcnow()
+    return [
+        s
+        for s in observed
+        if s.score >= best_score * _PATH_OUTLIER_RATIO
+        and _route_is_fresh(topo, s.hops, target, now)
+    ]
+
+
+def _route_is_fresh(topo, hops: tuple[str, ...], target: str, now: datetime) -> bool:
+    """Whether every link along ``us → hops… → target`` was heard within the stale horizon.
+
+    A route is only as current as its stalest hop: if any link on it has not been heard in
+    :data:`_PATH_STALE_DAYS`, the chain may no longer carry, so the whole route counts as
+    stale. A link with no timestamp (evidence that carries no ``when``, e.g. a firmware route)
+    is treated as fresh — we have no age to hold against it.
+    """
+    chain = [topo.self_id, *hops, target]
+    for a, b in zip(chain, chain[1:]):
+        link = topo.link(a, b)
+        if link is None:
+            return False
+        last = link.last_seen
+        if last is None or getattr(last, "tzinfo", None) is None:
+            continue  # undated evidence — no age to judge it stale by
+        if (now - last).total_seconds() > _PATH_STALE_DAYS * 86400.0:
+            return False
+    return True
+
+
 def _with_target_glyph(glyph_of: GlyphOf, target_glyph: tuple[str, str]) -> GlyphOf:
     """Wrap the graph's glyph callback so the target endpoint draws its own node glyph.
 
-    The graph's right endpoint is the node this page is about, and here we know its type —
-    so it draws the map's own mark for that type (``▲`` repeater, ``■`` room, ``◉`` sensor,
-    ``●`` plain), matching the identity header and the location preview, rather than
-    ``route_graph_style``'s generic origin dot. Every other node passes through untouched.
+    The graph's left endpoint (``SRC_NODE``) is the node this page is about, and here we know
+    its type — so it draws the map's own mark for that type (``▲`` repeater, ``■`` room,
+    ``◉`` sensor, ``●`` plain), matching the identity header and the location preview, rather
+    than ``route_graph_style``'s generic origin dot. Every other node passes through
+    untouched (our own star on the right endpoint keeps the style's ``you`` mark).
     """
     def wrapped(node: str) -> tuple[str, str]:
-        return target_glyph if node == DST_NODE else glyph_of(node)
-
-    return wrapped
-
-
-def _flip_endpoints(callback):
-    """Wrap a pathgraph per-node callback so it swaps the two endpoint sentinels.
-
-    :func:`~meshterm.ui.widgets.route_graph_style` builds its glyph/label/colour callbacks
-    with us on the right (``DST_NODE``) and the far node on the left (``SRC_NODE``). Passing
-    each hop through here maps ``SRC_NODE`` to ``DST_NODE`` and back, so the drawn graph puts
-    us on the left and the target on the right — relay hops (anything else) pass through
-    untouched.
-    """
-    def wrapped(node: str):  # noqa: ANN202 - forwards whatever the callback returns
-        if node == SRC_NODE:
-            node = DST_NODE
-        elif node == DST_NODE:
-            node = SRC_NODE
-        return callback(node)
+        return target_glyph if node == SRC_NODE else glyph_of(node)
 
     return wrapped

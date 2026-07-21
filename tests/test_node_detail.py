@@ -156,7 +156,7 @@ def test_route_and_suggest_rows_speak_the_evidence() -> None:
 
 
 def test_path_view_draws_evidence_and_notes_its_absence() -> None:
-    """With route evidence the graph draws us→node; without any, a muted note stands in."""
+    """With route evidence the graph draws node→us; without any, a muted note stands in."""
     topo = _topo_with_route()
     style_args = dict(
         resolve=make_node_resolver([HUB, FAR]),
@@ -182,8 +182,8 @@ def test_path_view_draws_evidence_and_notes_its_absence() -> None:
     assert not note.layers and "no route observed" in note.note
 
 
-def test_path_view_puts_us_on_the_left_and_the_target_on_the_right() -> None:
-    """The route graph reads us → target: our star on the left endpoint, the node on the right."""
+def test_path_view_puts_the_contact_on_the_left_and_us_on_the_right() -> None:
+    """The graph reads node → us (the inbound direction): the contact on the left, our star right."""
     from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
 
     topo = _topo_with_route()
@@ -195,9 +195,9 @@ def test_path_view_puts_us_on_the_left_and_the_target_on_the_right() -> None:
         key_of=make_name_key_resolver([HUB, FAR]),
         style=route_graph_style, self_name="Us", node_label="Far",
     )
-    assert view.glyph_of(SRC_NODE)[0] == "★"  # the left endpoint is our own star
-    assert view.label_of(SRC_NODE) == "Us"    # …labelled as us
-    assert view.label_of(DST_NODE) == "Far"   # the right endpoint is the target
+    assert view.label_of(SRC_NODE) == "Far"   # the left endpoint is the target contact
+    assert view.glyph_of(DST_NODE)[0] == "★"  # the right endpoint is our own star
+    assert view.label_of(DST_NODE) == "Us"    # …labelled as us
     # This page names every node: a known relay reads by its contact name, not its hash byte.
     assert view.label_of("3d63c6429436") == "Hub"
 
@@ -217,12 +217,12 @@ def test_path_view_relay_falls_back_to_the_hash_byte_when_unnamed() -> None:
 
 
 def test_path_view_target_wears_its_node_type_glyph() -> None:
-    """The right endpoint draws the target's own map mark (a repeater ▲), not a plain dot."""
+    """The left endpoint draws the target's own map mark (a repeater ▲), not a plain dot."""
     from meshterm.persistence.repository import TracedPath
-    from meshterm.ui.pathgraph import DST_NODE
+    from meshterm.ui.pathgraph import SRC_NODE
 
     leaf = Contact(name="Leaf", public_key="27d4396a2967" + "0" * 52, key_prefix="27d4396a2967")
-    # Reach the Hub (a repeater) through the Leaf, so the Hub is the drawn right endpoint.
+    # Reach the Hub (a repeater) through the Leaf, so the Hub is the drawn left endpoint.
     walks = [
         TracedPath(when=utcnow(), hops=[("27d4", 8.0), ("3d", 6.0), ("27d4", 6.0), (None, 8.0)])
         for _ in range(3)
@@ -237,7 +237,101 @@ def test_path_view_target_wears_its_node_type_glyph() -> None:
         key_of=make_name_key_resolver([HUB, leaf]),
         style=route_graph_style, self_name="Us", node_label="Hub",
     )
-    assert view.glyph_of(DST_NODE)[0] == "▲"  # the repeater target keeps its own glyph
+    assert view.glyph_of(SRC_NODE)[0] == "▲"  # the repeater target keeps its own glyph
+
+
+def test_path_view_draws_routes_inbound_reversing_the_hop_order() -> None:
+    """A drawn route runs node → us: the outbound (us-outward) hops reverse into inbound order."""
+    r1 = Contact(name="R1", public_key="111111111111" + "0" * 52, key_prefix="111111111111")
+    r2 = Contact(name="R2", public_key="222222222222" + "0" * 52, key_prefix="222222222222")
+    topo = build_topology(self_id=US + "0" * 52, contacts=[r1, r2, FAR],
+                          trace_paths=[], packet_paths=[], neighbour_links=[])
+    route = ("111111111111", "222222222222")  # us → r1 → r2 → target, outward order
+    view = _path_view(
+        topo, topo.scenarios("f2c24f54551e", device_route=route), None, route, "f2c24f54551e",
+        resolve=make_node_resolver([r1, r2, FAR]),
+        type_of=make_node_type_resolver([r1, r2, FAR]),
+        key_of=make_name_key_resolver([r1, r2, FAR]),
+        style=route_graph_style, self_name="Us", node_label="Far",
+    )
+    # Drawn contact→us, so the relay nearest the target leads and the one nearest us trails.
+    assert view.layers[0].hops == ("222222222222", "111111111111")
+
+
+def _topo_two_alternatives():  # noqa: ANN202
+    """A graph reaching Far two ways: a strong route via Hub and a far weaker one via Alt."""
+    from meshterm.persistence.repository import TracedPath
+
+    alt = Contact(name="Alt", public_key="a1a1a1a1a1a1" + "0" * 52, key_prefix="a1a1a1a1a1a1")
+    now = utcnow()
+    strong = [
+        TracedPath(when=now, hops=[("3d", 12.0), ("f2", 10.0), ("3d", 10.0), (None, 12.0)])
+        for _ in range(8)
+    ]
+    weak = [TracedPath(when=now, hops=[("a1", -14.0), ("f2", -14.0), ("a1", -14.0), (None, -14.0)])]
+    topo = build_topology(
+        self_id=US + "0" * 52, contacts=[HUB, alt, FAR],
+        trace_paths=strong + weak, packet_paths=[], neighbour_links=[],
+    )
+    return topo
+
+
+def test_good_alternatives_keeps_observed_routes_and_drops_outliers() -> None:
+    """The grey alternatives are the observed routes worth trusting — outliers and the bare
+    direct/device families don't earn a lane."""
+    from meshterm.ui.node_detail_screen import _good_alternatives
+
+    topo = _topo_two_alternatives()
+    scenarios = topo.scenarios("f2c24f54551e")
+    kept = {s.hops for s in _good_alternatives(topo, scenarios, "f2c24f54551e")}
+    assert ("3d63c6429436",) in kept          # the strong observed route survives
+    assert ("a1a1a1a1a1a1",) not in kept      # the far weaker one is trimmed as an outlier
+    assert () not in kept                     # the bare direct family is never a grey lane
+
+
+def test_path_view_draws_a_direct_line_for_a_bare_neighbour() -> None:
+    """A node only ever heard directly still draws its zero-hop line, not a muted note."""
+    from meshterm.persistence.repository import PacketPath
+
+    # A single overheard frame straight from Far to us — a direct link, no relays, no route.
+    topo = build_topology(
+        self_id=US + "0" * 52, contacts=[FAR],
+        trace_paths=[],
+        packet_paths=[PacketPath(when=utcnow(), origin="f2c24f54551e", hops=[], snr=6.0)],
+        neighbour_links=[],
+    )
+    view = _path_view(
+        topo, topo.scenarios("f2c24f54551e"), topo.suggested("f2c24f54551e"),
+        None, "f2c24f54551e",
+        resolve=make_node_resolver([FAR]),
+        type_of=make_node_type_resolver([FAR]),
+        key_of=make_name_key_resolver([FAR]),
+        style=route_graph_style, self_name="Us", node_label="Far",
+    )
+    assert view.layers and view.layers[0].hops == ()  # a straight endpoint-to-endpoint line
+
+
+def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
+    """A route counts as stale — and is dropped — once its stalest hop goes quiet past the horizon."""
+    from datetime import timedelta
+
+    from meshterm.persistence.repository import TracedPath
+    from meshterm.ui.node_detail_screen import _route_is_fresh
+
+    now = utcnow()
+    hops = [("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)]
+    fresh = build_topology(
+        self_id=US + "0" * 52, contacts=[HUB, FAR],
+        trace_paths=[TracedPath(when=now, hops=hops)], packet_paths=[], neighbour_links=[],
+    )
+    assert _route_is_fresh(fresh, ("3d63c6429436",), "f2c24f54551e", now) is True
+
+    stale = build_topology(
+        self_id=US + "0" * 52, contacts=[HUB, FAR],
+        trace_paths=[TracedPath(when=now - timedelta(days=60), hops=hops)],
+        packet_paths=[], neighbour_links=[],
+    )
+    assert _route_is_fresh(stale, ("3d63c6429436",), "f2c24f54551e", now) is False
 
 
 def test_located_accepts_real_fixes_and_rejects_junk() -> None:
@@ -285,7 +379,7 @@ def test_node_detail_screen_renders_its_sections() -> None:
     body = _plain(screen.render_body(72))
     assert "Hub" in body and "repeater" in body  # identity
     assert "42" in body  # a packet tally from the info block
-    assert "Path to node" in body and "no route observed yet" in body
+    assert "Routes heard" in body and "no route observed yet" in body
     assert "Trace target" in body and "Time machine" in body and "Back" in body
     # Every rendered line fits the 72-column standard.
     for line in screen.render_body(72):
