@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from meshterm.ui.pathgraph import (
     DST_NODE,
     SRC_NODE,
     PathLayer,
+    _balanced_x,
     _coalesce_prefixes,
     _route,
     render_path_graph,
@@ -201,6 +204,30 @@ def test_route_orients_left_to_right() -> None:
 def test_route_bidirectional_is_a_single_straight_segment() -> None:
     """A two-way pair is the sole straight (near-vertical) edge — never a trapezium."""
     assert _route("u", "v", {"u": (20, 1), "v": (24, 30)}, bidir=True) == [(20, 1), (24, 30)]
+
+
+def test_bidir_pair_does_not_jam_a_sibling_relay_against_the_origin() -> None:
+    """A both-ways pair's 2-cycle must not inflate the rank and squash another relay left.
+
+    ``aa`` and ``bb`` are walked in both directions (the vertical-drawn pair); ``cc`` is a
+    plain relay one hop off the origin feeding ``bb``. Ranked over the raw edge set the cycle
+    would drive ``cc`` toward ``0``; collapsing the pair leaves ``cc`` at its natural third of
+    the way across, and the pair shares one x (they draw as a single vertical).
+    """
+    layers = [
+        PathLayer(("bb",), WHITE, 3),
+        PathLayer(("aa", "bb"), GREY, 2),
+        PathLayer(("bb", "aa"), GREY, 2),  # the reverse — makes aa<->bb a 2-cycle
+        PathLayer(("cc", "bb"), GREY, 1),
+    ]
+    seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in layers]
+    ordered = list(dict.fromkeys(n for seq in seqs for n in seq))
+    edges = {pair for seq in seqs for pair in zip(seq, seq[1:])}
+    x = _balanced_x(ordered, edges)
+    assert x[SRC_NODE] == 0.0 and x[DST_NODE] == 1.0
+    assert x["cc"] == pytest.approx(1 / 3)  # its natural spot, not jammed toward 0
+    assert x["aa"] == x["bb"]  # the pair shares one x — it draws as a single vertical
+    assert x["cc"] < x["aa"]  # and still sits left of the pair it feeds
 
 
 def test_labels_ellipsize_only_when_wider_than_the_canvas() -> None:

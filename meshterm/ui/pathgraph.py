@@ -454,13 +454,56 @@ def _balanced_x(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[s
     resolves to one x. Because every edge steps the from-origin distance up and the
     to-us distance down, the fraction rises strictly along each path: edges only ever run
     left to right.
+
+    A pair walked in *both* directions is a 2-cycle in the edge set, and the longest-path
+    relaxation would loop through it, inflating every downstream depth toward the node-count
+    cap and jamming other relays hard against the ends. So the rank runs over the graph with
+    each such pair (transitively) merged to one representative — the acyclic flow the picture
+    really is; the pair, drawn as a single vertical, rightly shares an x anyway.
     """
-    up = _longest_paths(ordered_nodes, edges)
-    down = _longest_paths(ordered_nodes, {(v, u) for u, v in edges})
-    return {
-        node: (up[node] / (up[node] + down[node])) if (up[node] + down[node]) else 0.0
-        for node in ordered_nodes
+    rep = _merge_bidir_pairs(ordered_nodes, edges)
+    reps: list[str] = []
+    seen: set[str] = set()
+    for node in ordered_nodes:
+        if rep[node] not in seen:
+            seen.add(rep[node])
+            reps.append(rep[node])
+    rep_edges = {(rep[u], rep[v]) for u, v in edges if rep[u] != rep[v]}
+    up = _longest_paths(reps, rep_edges)
+    down = _longest_paths(reps, {(v, u) for u, v in rep_edges})
+    frac = {
+        r: (up[r] / (up[r] + down[r])) if (up[r] + down[r]) else 0.0 for r in reps
     }
+    return {node: frac[rep[node]] for node in ordered_nodes}
+
+
+def _merge_bidir_pairs(
+    ordered_nodes: list[str], edges: set[tuple[str, str]]
+) -> dict[str, str]:
+    """Map each node to a representative, uniting any two joined by a both-ways edge.
+
+    Two nodes walked in both directions form a 2-cycle; uniting them — transitively, so a
+    chain of such pairs folds into one group — lets the balanced rank treat the flow as the
+    acyclic run it otherwise is. A node in no such pair maps to itself. The choice of which
+    member is the representative doesn't matter: every member is assigned the group's one
+    fraction, and the group's rank is structural.
+    """
+    parent = {node: node for node in ordered_nodes}
+
+    def find(node: str) -> str:
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        while parent[node] != root:  # path-compress
+            parent[node], node = root, parent[node]
+        return root
+
+    for u, v in edges:
+        if (v, u) in edges:
+            ru, rv = find(u), find(v)
+            if ru != rv:
+                parent[ru] = rv
+    return {node: find(node) for node in ordered_nodes}
 
 
 def _longest_paths(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[str, int]:
