@@ -147,6 +147,26 @@ def test_every_label_shows_on_a_busy_graph() -> None:
         assert name in plain, f"{name} was dropped from the graph"
 
 
+def test_edge_pinned_relay_labels_are_not_dropped() -> None:
+    """A relay a balanced rank pins near a canvas edge still shows its whole name.
+
+    A long chain hung off ``cc`` drives its balanced rank hard against the origin and pushes
+    the shared ``bb`` hard against us, so both land near an edge where a *centred* long label
+    overhangs the canvas. Those anchors must slide inward — like an endpoint's — rather than
+    place nothing and leave the marker silently unlabelled.
+    """
+    names = {"aa": "UpperStation", "bb": "RightEdgeStation", "cc": "LeftEdgeStation"}
+    tail = tuple(f"g{i}" for i in range(1, 13))
+    layers = [
+        PathLayer(("bb",), WHITE, 3),
+        PathLayer(("aa", "bb"), GREY, 2),
+        PathLayer(("cc", *tail, "bb"), GREY, 1),
+    ]
+    plain = _ANSI.sub("", "\n".join(_render(layers, label_of=lambda n: names.get(n))))
+    for name in names.values():
+        assert name in plain, f"{name} was dropped near a canvas edge"
+
+
 def test_a_subsumed_route_adds_no_duplicate_markers() -> None:
     """A route whose hops are all carried by a stronger one draws through them, not doubled."""
     layers = [

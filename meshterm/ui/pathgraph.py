@@ -568,10 +568,13 @@ def _place_labels(
 
     Endpoints first, then relays down the lanes, so the named ends win any contest for a
     cell. Each label is tried on the side away from the graph's middle first (spreading the
-    text outward off the busy centre), preferring a row the drawn lines don't already occupy;
-    an endpoint, hard against a canvas edge, slides its anchor inward far enough for the whole
-    name to land, and falls back to sitting beside its marker. A name is only ever shortened
-    when it is wider than the entire canvas.
+    text outward off the busy centre), preferring a row the drawn lines don't already occupy.
+    Any node hard against a canvas edge — an endpoint by construction, or a relay a balanced
+    rank pins near the origin or us — slides its centre anchor inward far enough for the whole
+    name to land, since a centred label overhanging the edge places nothing and would leave the
+    marker silently unlabelled. When both stacked rows are blocked the label falls back to
+    sitting beside its marker. A name is only ever shortened when it is wider than the entire
+    canvas.
     """
     endpoints = [n for n in (DST_NODE, SRC_NODE) if n in pos]
     relays = sorted(
@@ -586,11 +589,12 @@ def _place_labels(
             label = label[: max(1, width - 1)] + "…"
         rgb = label_rgb_of(node)
         x, y = pos[node]
-        anchor_x = x
-        if node in (SRC_NODE, DST_NODE):
-            half = len(label) // 2
-            cx = min(max(x >> 1, half), max(half, width - (len(label) - half)))
-            anchor_x = cx * 2
+        # Clamp the centre cell so the whole label fits between the canvas edges: a marker near
+        # an edge would otherwise centre its name off-canvas, place nothing, and be dropped. A
+        # marker with room to spare keeps its true centre (the clamp is a no-op there).
+        half = len(label) // 2
+        cx = min(max(x >> 1, half), max(half, width - (len(label) - half)))
+        anchor_x = cx * 2
         rows_out = (y - 4, y + 4) if y <= mid_y else (y + 4, y - 4)
         if any(
             canvas.place_label(anchor_x, sy, label, rgb, bold=True, avoid_dots=True)
@@ -601,6 +605,7 @@ def _place_labels(
             canvas.place_label(anchor_x, sy, label, rgb, bold=True) for sy in rows_out
         ):
             continue
-        if node in (SRC_NODE, DST_NODE):
-            if not canvas.marker_label(x, y, label, rgb, avoid_dots=True):
-                canvas.marker_label(x, y, label, rgb)
+        # Both rows blocked: sit the label beside the marker (clear of the drawn lines if it
+        # can, else over them) rather than drop it.
+        if not canvas.marker_label(x, y, label, rgb, avoid_dots=True):
+            canvas.marker_label(x, y, label, rgb)
