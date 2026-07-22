@@ -353,6 +353,56 @@ def test_routes_stacking_in_one_column_keep_separate_lanes() -> None:
     assert len({signed[n] for n in diverging}) == 4  # so each keeps a row of its own
 
 
+def test_balancing_splits_same_column_pairs_across_both_flanks() -> None:
+    """Two routes that share a column split above and below, so their flank never stacks deep.
+
+    The best spine runs through two relays ``c1`` and ``c2``. Two alternatives *swap* ``c1`` for a
+    relay of their own (``x1``/``y1``, both landing in ``c1``'s column); two more swap ``c2``
+    (``x2``/``y2``, both in ``c2``'s column). Seated by the jog order alone each pair lands on the
+    *same* flank — one column two deep above the spine, the other two deep below — a five-lane
+    band. Balancing the flanks splits each pair across the spine instead, so every column holds one
+    node above and one below and the band is the spine plus a single row each side: three lanes.
+    This is the 7bc505 shape drawn tight — the win the straight-spine-only pack left on the table.
+    """
+    layers = [
+        PathLayer(("c1", "c2"), WHITE, 4),   # spine: SRC -> c1 -> c2 -> us
+        PathLayer(("x1", "c2"), GREY, 2),    # swaps c1 -> x1 (x1 in c1's column)
+        PathLayer(("y1", "c2"), GREY, 2),    # swaps c1 -> y1 (shares x1's column)
+        PathLayer(("c1", "x2"), GREY, 2),    # swaps c2 -> x2 (x2 in c2's column)
+        PathLayer(("c1", "y2"), GREY, 2),    # swaps c2 -> y2 (shares x2's column)
+    ]
+    signed, columns, route_lanes = _packed_lanes(layers)
+    assert route_lanes == 5  # five full-width lanes before packing
+    assert _lane_count(signed) == 3  # balanced down to spine + one flank each side
+    assert signed["c1"] == signed["c2"] == 0  # spine relays stay on the straight centre
+    for a, b in (("x1", "y1"), ("x2", "y2")):
+        assert columns[a] == columns[b]  # each pair genuinely shares a column
+        assert signed[a] == -signed[b]  # so the balancer seats one above, one below
+
+
+def test_balancing_never_draws_a_taller_band_than_the_jog_order() -> None:
+    """A column that truly stacks three nodes is not padded taller in the name of symmetry.
+
+    ``ee``, ``ff`` and ``gg`` all fall in one column (three parallel detours off ``bf``), so one
+    flank is unavoidably two deep whatever the colouring. Filling the opposite flank to match it
+    would centre the picture but cost a row. The balancer refuses that: it never draws a band
+    taller than the jog order already would, so the three-stack packs as two-up-one-down (four
+    lanes), not two-up-two-down (five). This is the c5ba shape — the ceiling that guards it.
+    """
+    layers = [
+        PathLayer(("bf", "tt"), WHITE, 4),         # spine: SRC -> bf -> tt -> us
+        PathLayer(("bf", "ee", "dd"), GREY, 2),    # ee in the mid column, on to dd
+        PathLayer(("bf", "ee", "ww"), GREY, 2),    # reuses ee, on to ww
+        PathLayer(("bf", "ff", "dd"), GREY, 2),    # ff shares ee's column, rejoins dd
+        PathLayer(("bf", "gg", "ww"), GREY, 2),    # gg shares ee's column, rejoins ww
+    ]
+    signed, columns, _route_lanes = _packed_lanes(layers)
+    mid = ("ee", "ff", "gg")
+    assert len({columns[n] for n in mid}) == 1  # the three detours genuinely stack in one column
+    assert len({signed[n] for n in mid}) == 3  # each holds a distinct row — the honest floor
+    assert _lane_count(signed) == 4  # spine + two-up-one-down, not padded to a symmetric five
+
+
 def test_edge_pinned_relay_labels_are_not_dropped() -> None:
     """A relay a balanced rank pins near a canvas edge still shows its whole name.
 

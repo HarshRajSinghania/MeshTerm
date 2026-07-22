@@ -15,20 +15,21 @@ now draws the fan as a **multilane highway**: a node always sits on a level plat
 lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
 the way a car drifts one lane over and then stays there. Concretely:
 
-* **lanes** — the highest-priority (drawn last, e.g. the selected or best-evidence) path runs
-  along the centre lane as the flow's straight spine, and the alternatives fan above and below
-  it, a fixed pitch of text rows apart. The routes are first ordered so ones that share relays
-  seat next to each other (a shared hop costs the shortest detour), then the lanes are *packed
-  by column*: rather than give every route a full-width lane of its own — which stacks the band
-  as tall as the route count even where the routes barely overlap — each node keeps its side of
-  the spine but slides to the innermost free row *in its own column*. So a column with a single
-  off-spine node claims just one flanking row however many routes cross the graph, and only a
-  column where routes genuinely stack pays for the deeper rows; a five-route fan through at most
-  two nodes per column draws three lanes deep, not five. The two endpoints sit at the vertical
-  centre of the packed band, so the spine runs through them — dead straight when the lanes are
-  odd (its own lane is the centre), easing gently when they are even, where one extra padding row
-  is opened between the two central lanes so the endpoints land on an exact centred row between
-  them;
+* **lanes** — the highest-priority (drawn last, e.g. the selected or best-evidence) path holds
+  the flow's spine, its relays in a straight run, and the alternatives fan above and below it a
+  fixed pitch of text rows apart. Rather than give every route a full-width lane of its own —
+  which stacks the band as tall as the route count even where the routes barely overlap — the
+  lanes are *packed by column*: the spine keeps its own relays, and each other node slides to the
+  innermost free row above or below the spine *in its own column*, so a column with one off-spine
+  node claims a single flanking row however many routes cross the graph, and only a column where
+  routes genuinely stack pays the deeper rows. Which flank an alternative takes is then *balanced*
+  so column-sharing routes split above and below rather than piling one flank two deep while the
+  other sits empty (the band is only as tall as its deepest flank plus the other's): a five-route
+  fan through at most two nodes per column draws three lanes deep — spine plus one flank each side
+  — not five. The two endpoints sit at the vertical centre of the packed band, so the spine runs
+  through them — dead straight when the flanks come out even and the lanes are odd, leaning gently
+  to the centre otherwise (and where the lanes are even, one extra padding row is opened between
+  the two central lanes so the endpoints land on an exact centred row between them);
 * **columns** (x) place each node by *balanced* rank — its distance from the origin over its
   distance-plus-remaining-distance to us — so a path's relays spread evenly between the two
   ends however long the other paths are, and a shared relay lands in one place;
@@ -60,7 +61,7 @@ theme concerns.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import permutations
+from itertools import permutations, product
 from math import ceil
 from typing import Callable, Optional, Sequence
 
@@ -123,6 +124,11 @@ _MAX_EXACT_LANES = 8
 
 #: Sweeps of the barycentre lane-ordering heuristic used past :data:`_MAX_EXACT_LANES`.
 _ORDER_SWEEPS = 8
+
+#: Most non-best routes the side-balancer weighs by exhaustive 2-colouring (see
+#: :func:`_balance_sides`). Past it the ``2**m`` side assignments grow too many, so the routes
+#: keep the side the jog order handed them. The widget's real inputs sit far under this.
+_MAX_BALANCE_ROUTES = 16
 
 #: The glyph used for the flow arrow embedded in the trunk just before us, 
 #: so the whole flow reads better as a directed run node → us (not a map you wander).
@@ -336,10 +342,11 @@ def render_path_graph(
 
     # Compress the per-path lanes onto the fewest rows the picture actually needs. A lane per
     # path stacks the whole graph as tall as it has routes, even where the routes barely overlap
-    # — five routes through at most two nodes per column drew five lanes deep. So each node is
-    # slid to the innermost free lane *in its own column*, keeping its side of the best spine:
-    # a column holding one off-spine node needs one off-spine row however many paths cross the
-    # graph, and only a column where several routes genuinely stack pays for the extra rows.
+    # — five routes through at most two nodes per column drew five lanes deep. So each off-spine
+    # node is slid to the innermost free lane *in its own column*, and the alternatives' flanks
+    # are balanced above/below so no flank stacks deep while the other sits empty: a column
+    # holding one off-spine node needs one off-spine row however many paths cross the graph, and
+    # only a column where several routes genuinely stack pays for the extra rows.
     span = width * 2 - 2 * _GRAPH_PAD_DOTS
 
     def col_of(node: str) -> int:
@@ -348,11 +355,11 @@ def render_path_graph(
     signed = _compress_lanes(ordered_nodes, lane_of_path, owner, best, col_of)
 
     # The endpoints sit at the vertical centre of the compressed lane band, where the strongest
-    # route runs through them as the graph's spine; the alternatives fan above and below. For an
-    # odd lane count that centre *is* the best path's own lane, so the spine runs dead straight;
-    # for an even count it is the midpoint between the two central lanes (the best path takes the
-    # upper of the two), so the endpoints stay centred and a best path carrying relays of its own
-    # eases half a lane to reach them rather than seating the whole graph off-centre.
+    # route runs through them as the graph's spine; the alternatives fan above and below. When the
+    # flanks balance out evenly the spine's own lane *is* that centre and it runs dead straight;
+    # when the band is lopsided (or even-numbered) the centre falls between lanes, and the best
+    # path eases gently to reach the endpoints rather than seating the whole graph off-centre —
+    # a lean the balancer keeps small by flattening the flanks first.
     low = min(signed.values(), default=0)
     high = max(signed.values(), default=0)
     max_lane = high - low
@@ -718,42 +725,113 @@ def _compress_lanes(
     graph has routes — even where the routes only ever run one or two abreast. But a lane is a
     whole-width row: two routes need distinct rows only in the *columns* where they both carry a
     node, and endpoint-to-endpoint every route already shares the origin and us. So this pass
-    keeps each node's **side** of the best spine (above it, below it, or on it) but slides it to
-    the innermost free lane *in its own column*: a column with one node above the spine uses the
-    first row above however many routes fan past it, and only a column where several routes truly
-    stack claims the deeper rows. The best path's own nodes stay on the spine (offset ``0``), so
-    it still runs straight through the centre; the returned lanes are signed offsets from that
-    spine (``<0`` above, ``>0`` below), which the caller shifts to a ``0``-based band.
+    keeps the best path's relays on the spine (offset ``0``) and slides every other node to the
+    innermost free lane *above or below* it *in its own column*: a column with one node above
+    the spine uses the first row above however many routes fan past it, and only a column where
+    several routes truly stack claims the deeper rows.
+
+    Which **side** each alternative takes is not inherited from its jog-order lane — that seats
+    routes sharing a relay *adjacent*, which piles column-sharing routes onto the *same* flank
+    and leaves the band as tall as one flank's deepest stack plus the other's, even when no
+    single column holds more than two nodes. Instead :func:`_balance_sides` 2-colours the
+    alternatives to flatten the deeper flank (the spine may lean off dead-centre to reach the
+    band's middle, which is fine), so a five-route fan through at most two nodes per column draws
+    three lanes — spine plus one flank each side — not five. The best path's relays still hold
+    the straight spine; the returned lanes are signed offsets from it (``<0`` above, ``>0``
+    below), which the caller shifts to a ``0``-based band.
 
     Returns ``{node: signed_lane}`` for every relay (endpoints are placed on the band centre by
     the caller, not here). A node a column holds alone off the spine always lands on ``±1``, so
     a sparse multi-route graph collapses to the three-lane spine-and-two-flanks it really is.
     """
     best_lane = lane_of_path[best]
-    # Signed distance of each relay's owning-path lane from the best spine: 0 on the spine,
-    # negative above it, positive below. The magnitude only orders the packing; the gaps close.
-    offset = {
-        node: lane_of_path[owner[node]] - best_lane
-        for node in ordered_nodes
-        if node not in (SRC_NODE, DST_NODE)
+    relays = [node for node in ordered_nodes if node not in (SRC_NODE, DST_NODE)]
+    spine = {node for node in relays if owner[node] == best}
+    off_spine = [node for node in relays if node not in spine]
+    # The non-best bearing routes, in the jog-order _assign_lanes settled (each route keyed by
+    # its signed lane relative to best), so ties fall to the arrangement that already reads clean.
+    routes = sorted(
+        {owner[node] for node in off_spine},
+        key=lambda r: (lane_of_path[r] - best_lane, r),
+    )
+    cols_of_route = {
+        r: {col_of(node) for node in off_spine if owner[node] == r} for r in routes
     }
+    orig_side = {r: (1 if lane_of_path[r] - best_lane > 0 else -1) for r in routes}
+    side = _balance_sides(routes, cols_of_route, orig_side)
+
+    rank = {r: i for i, r in enumerate(routes)}  # nearest-to-spine order within a flank
     columns: dict[int, list[str]] = {}
-    for node in offset:
+    for node in off_spine:
         columns.setdefault(col_of(node), []).append(node)
 
-    signed: dict[str, int] = {}
+    signed: dict[str, int] = {node: 0 for node in spine}
     for members in columns.values():
-        # Pack each side toward the spine, nearest-first, so the closest route keeps ±1.
-        above = sorted((n for n in members if offset[n] < 0), key=lambda n: -offset[n])
-        below = sorted((n for n in members if offset[n] > 0), key=lambda n: offset[n])
-        for n in members:
-            if offset[n] == 0:  # the best path itself — stays on the spine
-                signed[n] = 0
-        for depth, n in enumerate(above, start=1):
-            signed[n] = -depth
-        for depth, n in enumerate(below, start=1):
-            signed[n] = depth
+        above = sorted((n for n in members if side[owner[n]] < 0), key=lambda n: rank[owner[n]])
+        below = sorted((n for n in members if side[owner[n]] > 0), key=lambda n: rank[owner[n]])
+        for depth, node in enumerate(above, start=1):
+            signed[node] = -depth
+        for depth, node in enumerate(below, start=1):
+            signed[node] = depth
     return signed
+
+
+def _balance_sides(
+    routes: list[int],
+    cols_of_route: dict[int, set[int]],
+    orig_side: dict[int, int],
+) -> dict[int, int]:
+    """Choose a flank (``-1`` above / ``+1`` below the spine) for each alternative route.
+
+    The band a :func:`_compress_lanes` pack draws is ``(deepest stack above) + (deepest stack
+    below) + 1``: two alternatives need distinct rows only where they share a column, so a flank
+    is only as deep as its most-crowded column. The jog order that seats sharing routes adjacent
+    puts them on the *same* flank, which can stack one flank two deep while the other sits empty
+    — a needlessly tall band. So the routes are 2-coloured, exhaustively while they are few
+    (:data:`_MAX_BALANCE_ROUTES`; past it the jog-order sides stand):
+
+    * never above the **ceiling** the jog order itself draws — balancing may flatten a band, never
+      grow one. A column that genuinely stacks three nodes forces one flank two deep whatever the
+      colouring, and filling the other flank to match it (prettier, but taller) is refused;
+    * under that ceiling, **flatten the deeper flank**, so a fan piled two deep on one side while
+      the other is empty splits across both and the band shrinks;
+    * then even the two flanks, then keep the jog-order side. So a graph the jog order already
+      draws flat is left exactly as it is — its lower-band one-sided alternative has the *same*
+      deepest flank, so the balance tie-break holds it airy rather than lopsiding it a row shorter
+      — while a graph with a needlessly deep flank is the one that actually moves.
+
+    Returns ``{route_index: side}``.
+    """
+    if not routes:
+        return {}
+    if len(routes) > _MAX_BALANCE_ROUTES:
+        return dict(orig_side)
+
+    def flanks(assign: dict[int, int]) -> tuple[int, int]:
+        above: dict[int, int] = {}
+        below: dict[int, int] = {}
+        for r in routes:
+            stack = above if assign[r] < 0 else below
+            for col in cols_of_route[r]:
+                stack[col] = stack.get(col, 0) + 1
+        return max(above.values(), default=0), max(below.values(), default=0)
+
+    orig_above, orig_below = flanks(orig_side)
+    ceiling = orig_above + orig_below  # the jog order's band height − 1; never draw taller
+
+    best_assign: Optional[dict[int, int]] = None
+    best_key: Optional[tuple[int, int, int]] = None
+    for combo in product((-1, 1), repeat=len(routes)):
+        assign = dict(zip(routes, combo))
+        deep_above, deep_below = flanks(assign)
+        if deep_above + deep_below > ceiling:  # taller than the jog order would draw — reject
+            continue
+        agree = sum(1 for r in routes if assign[r] == orig_side[r])
+        key = (max(deep_above, deep_below), abs(deep_above - deep_below), -agree)
+        if best_key is None or key < best_key:
+            best_key, best_assign = key, assign
+    assert best_assign is not None  # orig_side always meets its own ceiling
+    return best_assign
 
 
 def _place_labels(
