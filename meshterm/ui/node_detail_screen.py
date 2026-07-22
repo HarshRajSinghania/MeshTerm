@@ -6,24 +6,39 @@ the node itself, in full:
 
 * **who it is** — its name in the node's own hue, its key with the routing hash lit, its
   type, when it was first and last heard, how many packets we've overheard, its reception
-  SNR (median and best) and last RSSI, and where it sits;
-* **where it is** — a small static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`)
-  centred on the node with the rest of the mesh around it, when the node has advertised a
-  location;
-* **how we hear it** — the routes we've actually heard it arrive over, drawn on the shared
-  route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
-  travelled, contact on the left, us on the right), the best-evidence one lit white over the
-  alternatives. Only *good* routes are drawn — stale evidence and far-weaker outliers are
-  dropped, so the graph shows the routes worth trusting rather than every chain ever heard;
-* **the ways in** — an action list: *Trace target* (armed with the suggested best path, so
-  Enter walks straight to it), *Open full map*, and *Time machine* (only when the recorder
-  actually holds history for the node). ↑/↓ move the cursor, Enter commits, Esc backs to the
-  list.
+  SNR (median and best) and last RSSI, and where it sits — the fixed identity block pinned
+  at the top of the page;
+* **a tabbed stage** below it — one full-height view at a time, switched with ``←→`` (or
+  ``Tab``/``Shift+Tab``) across a one-line tab strip (see
+  :func:`~meshterm.ui.widgets.tab_strip`). Rather than stack the location preview and the
+  route graph down one long scroll, each earns the whole stage:
+
+  * **Map** — a static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred
+    on the node with the rest of the mesh around it, shown when the node has advertised a
+    location. Its ``Open full map`` action sits right under it.
+  * **Routes** — the routes we've actually heard the node arrive over, drawn on the shared
+    route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
+    travelled, contact on the left, us on the right). Beneath the graph sits the *route
+    list*: one selectable row per distinct route (the firmware's learned route and the
+    observed alternatives, the strongest marked ``★ best``), each spelled out through THE
+    path widget with a hanging wrap. ``↑↓`` moves the selection; the picked route lights
+    white in the graph while the rest go grey and every node not on it fades its label to
+    grey, so the graph reads as *this* route through the fan. Only *good* routes are drawn —
+    stale evidence and far-weaker outliers are dropped, so the list is the routes worth
+    trusting rather than every chain ever heard. The ``🎯 Trace this route …`` action arms
+    a trace on whichever route is selected (nothing transmits here — it opens the trace
+    screen loaded with that path).
+
+* **the ways in** — the tab's action rows: ``Open full map`` / ``Trace this route`` plus the
+  always-available ``Time machine`` (when the recorder holds history) and ``Back``. ``↑↓``
+  moves the cursor through them, Enter commits, Esc backs to the list; ``PgUp/PgDn`` scroll
+  the page when the identity block and stage together overflow a short terminal.
 
 The screen is a pure read-and-route view: it renders already-resolved display data and
-resolves an action token; :func:`open_node_detail` owns the data-gathering and runs the
-sub-flows each action opens, then re-shows the page — the same loop the Time Machine and
-Contacts list use. Nothing here transmits.
+resolves an action token (the Trace token carrying the selected route's spec via
+:meth:`NodeDetailScreen.selected_spec`); :func:`open_node_detail` owns the data-gathering
+and runs the sub-flows each action opens, then re-shows the page — the same loop the Time
+Machine and Contacts list use. Nothing here transmits.
 """
 
 from __future__ import annotations
@@ -60,6 +75,7 @@ from .widgets import (
     highlighted_hash,
     node_type_legend,
     path_text,
+    tab_strip,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -71,15 +87,15 @@ _SELF_GLYPH = ("★", "#facc15")
 #: How many character rows the inline location preview draws.
 _MAP_ROWS = 7
 
-#: Route-graph tuning for this page. It draws the contact on the left and us on the right
-#: (node → us, so the graph reads left to right as the inbound direction its packets
+#: Route-graph tuning for the Routes tab. It draws the contact on the left and us on the
+#: right (node → us, so the graph reads left to right as the inbound direction its packets
 #: travelled to reach us). A well-connected node offers several candidate paths at once, and
 #: cramming them into a short box compresses the lanes together — so this page keeps the shared
 #: lane pitch but grants a generous row budget, letting a busy node spread each route into its
 #: own clearly separated track instead of scaling the pitch down. The height is adaptive: it
 #: grows only with the number of distinct lanes, so a node with one or two routes still draws
 #: compact while a busy one earns the room it needs. The page scrolls (PgUp/PgDn), so a tall
-#: graph never crowds the action rows off.
+#: graph never crowds the route list off.
 _PATH_MAX_ROWS = 22
 
 #: A drawn route is dropped as *stale* when its freshest-limiting link — the stalest hop it
@@ -101,10 +117,16 @@ _PATH_OUTLIER_RATIO = 0.25
 #: hanging-indent rule). Sized to the widest label the block uses ("packets").
 _LABEL_LANE = 9
 
+#: The selected route's edge colour (white, the spine) over the alternatives' grey, and the
+#: grey a node's label fades to when it sits on no part of the selected route. One grey for
+#: both, so an off-route relay's line and its name read as the same "not this route" dim.
+_WHITE = (255, 255, 255)
+_GREY = (120, 120, 120)
+
 
 @dataclass(slots=True)
 class _Action:
-    """One action row at the foot of the page.
+    """One action row at the foot of a tab.
 
     Attributes:
         key: The token the screen resolves with when this row is committed.
@@ -120,20 +142,47 @@ class _Action:
 
 
 @dataclass(slots=True)
-class _PathView:
-    """The route-graph layers and their shared per-node draw callbacks, or a bare note.
+class _Route:
+    """One selectable route on the Routes tab: how it draws, how it traces, how it reads.
 
     Attributes:
-        layers: The paths to draw (best-evidence one highest priority), or empty when
-            there is no route evidence at all — then ``note`` carries the muted stand-in.
+        draw: The relay hops in the graph's inbound draw order (contact → us), so a
+            :class:`~meshterm.ui.pathgraph.PathLayer` built from them lands the contact on
+            the left endpoint and our star on the right. Empty = a straight zero-hop shot.
+        spec: The forced-path spec a trace arms on when this route is selected (the symmetric
+            round trip through these hops); ``""`` lets the trace screen auto-resolve.
+        row: The pre-rendered route line — the whole path named through THE path widget,
+            contact → relays → us, with the bottleneck SNR / sample count and a ``★ best`` or
+            ``device route`` tag trailing. Shown hanging-wrapped, so a long route lines up
+            under itself.
+    """
+
+    draw: tuple[str, ...]
+    spec: str
+    row: Text
+
+
+@dataclass(slots=True)
+class _RoutesView:
+    """The Routes tab's selectable routes and the shared per-node draw callbacks, or a note.
+
+    The routes are drawn as one fan (best-evidence spine plus alternatives); which one lights
+    white — and which nodes keep their name hue rather than fading to grey — follows the
+    screen's live selection, so the layers and label colours are composed per render rather
+    than baked in here.
+
+    Attributes:
+        routes: The selectable routes (strongest first), or empty when there is no route
+            evidence at all — then ``note`` carries the muted stand-in.
         glyph_of: Per-node marker callback for the graph.
         label_of: Per-node label callback for the graph.
-        label_rgb_of: Per-node label-colour callback for the graph.
+        label_rgb_of: Per-node label-colour callback (the un-muted base; the screen fades the
+            off-route nodes over it).
         legend: Whether to draw the node-type key beneath the graph (a typed relay showed).
         note: The muted line shown instead of a graph when there is no evidence.
     """
 
-    layers: list[PathLayer] = field(default_factory=list)
+    routes: list[_Route] = field(default_factory=list)
     glyph_of: Optional[GlyphOf] = None
     label_of: Optional[LabelOf] = None
     label_rgb_of: Optional[LabelRgbOf] = None
@@ -141,15 +190,33 @@ class _PathView:
     note: str = ""
 
 
+@dataclass(slots=True)
+class _Tab:
+    """One tab in the stage's strip.
+
+    Attributes:
+        name: The strip label (``Map`` / ``Routes``).
+        kind: Which stage it draws (``map`` / ``routes``).
+    """
+
+    name: str
+    kind: str
+
+
 class NodeDetailScreen(Screen):
-    """A full-screen page for one node: identity, location, routes, and the ways in.
+    """A full-screen page for one node: identity, a tabbed stage, and the ways in.
 
     A read-and-route view. It renders already-resolved display data (see
     :func:`open_node_detail`, which assembles it) and, on Enter, resolves the highlighted
-    action's token for the opener to act on; Esc resolves :data:`CANCEL` to leave. ↑/↓ move
-    the action cursor (its row is kept in view while navigating); PgUp/PgDn/Home/End scroll
-    the whole page, so the location preview and route graph can be read on a short terminal
-    without losing the controls.
+    action's token for the opener to act on (a Trace token is paired with
+    :meth:`selected_spec`); Esc resolves :data:`CANCEL` to leave.
+
+    Two axes of navigation, matching the app's spatial feel: ``←→`` (or ``Tab`` /
+    ``Shift+Tab``) switches which view fills the stage, and ``↑↓`` moves the cursor *within*
+    the active tab — through its route list (on the Routes tab, the selection drives the
+    graph highlight) and action rows. The cursor is kept in view while ``↑↓`` are in use;
+    ``PgUp/PgDn/Home/End`` scroll the whole page, so the stage and its rows can be read on a
+    short terminal without losing the controls.
     """
 
     floating = False
@@ -160,10 +227,13 @@ class NodeDetailScreen(Screen):
         title: str,
         header: Text,
         info_rows: list[tuple[str, Text]],
-        actions: list[_Action],
+        tabs: list[_Tab],
         minimap: Optional[MiniMap] = None,
         map_caption: Optional[Text] = None,
-        path: Optional[_PathView] = None,
+        routes: Optional[_RoutesView] = None,
+        open_map_action: Optional[_Action] = None,
+        trace_action: Optional[_Action] = None,
+        tail_actions: Optional[list[_Action]] = None,
     ) -> None:
         """Build the page over resolved display data.
 
@@ -172,21 +242,33 @@ class NodeDetailScreen(Screen):
             header: The identity line: type glyph, the coloured name, its type label.
             info_rows: ``(label, value)`` pairs for the fixed info block; each renders as
                 a muted label lane with the value hanging under itself when it wraps.
-            actions: The action rows, in display order (a ``back`` row set apart at the end).
-            minimap: The inline location preview, or ``None`` when the node has no location.
+            tabs: The stage tabs to offer, in strip order (empty = no stage, just actions).
+            minimap: The inline location preview for the Map tab, or ``None``.
             map_caption: A faint line under the preview (its centre/scale), when a map shows.
-            path: The route-graph view (layers + callbacks, or a muted note), or ``None`` to
-                omit the whole "Routes heard" section (we never overhear our own node).
+            routes: The Routes tab's route list + graph callbacks (or a muted note), or
+                ``None`` when there is no Routes tab (we never overhear our own node).
+            open_map_action: The Map tab's ``Open full map`` action, or ``None``.
+            trace_action: The Routes tab's ``Trace this route`` action, or ``None``.
+            tail_actions: The always-available actions closing every tab (Time machine when
+                there is history, then Back).
         """
         super().__init__()
         self.title = title
         self._header = header
         self._info_rows = info_rows
-        self._actions = actions
+        self._tabs = tabs
         self._minimap = minimap
         self._map_caption = map_caption
-        self._path = path
-        self._index = 0
+        self._routes = routes
+        self._open_map_action = open_map_action
+        self._trace_action = trace_action
+        self._tail_actions = tail_actions or []
+        self._tab_index = 0
+        self._row_index = 0
+        #: The highlighted route on the Routes tab (drives the graph); tracks the cursor as
+        #: it moves onto a route row and holds while it rests on an action row, so the graph
+        #: keeps showing the pick the Trace row would arm on.
+        self._route_sel = 0
         self._pin_cursor = False  # open showing the top; only pin once ↑/↓ are used
         self._cursor: Optional[int] = None
 
@@ -194,23 +276,60 @@ class NodeDetailScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Navigation, commit, scroll, then Esc last."""
-        return "↑↓ actions · Enter open · PgUp/PgDn scroll · Esc back"
+        """Tab switch (when there are tabs to switch), move, open, scroll, Esc last."""
+        parts: list[str] = []
+        if len(self._tabs) >= 2:
+            parts.append("←→ tab")
+        parts.extend(("↑↓ move", "Enter open"))
+        if self.content_overflows:
+            parts.append("PgUp/PgDn scroll")
+        parts.append("Esc back")
+        return " · ".join(parts)
+
+    def selected_spec(self) -> str:
+        """The forced-path spec of the currently-highlighted route (``""`` = auto).
+
+        The opener reads this after a ``trace`` token resolves, so a trace arms on whichever
+        route the cursor had picked rather than always the best one.
+        """
+        routes = self._routes.routes if self._routes is not None else []
+        if routes:
+            sel = self._route_sel if 0 <= self._route_sel < len(routes) else 0
+            return routes[sel].spec
+        return ""
 
     def consume_edge_scrub(self) -> int:
-        """Scrub the panel's right edge while a braille map shows (the same smear the map has)."""
-        return 2 if self._minimap is not None else 0
+        """Scrub the panel's right edge only while the braille Map tab is the one showing."""
+        if self._minimap is None or not self._tabs:
+            return 0
+        return 2 if self._tabs[self._tab_index].kind == "map" else 0
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the action cursor, commit it, scroll the page, or leave."""
+        """Switch tab, move the cursor within a tab, commit a row, scroll, or leave."""
+        focus = self._focusables()
+        n = len(focus)
         if action == "enter":
-            self.resolve(self._actions[self._index].key)
+            if n:
+                kind, payload = focus[self._row_index % n]
+                if kind == "action":
+                    assert isinstance(payload, _Action)
+                    self.resolve(payload.key)
+                # A route row is inert on Enter: selecting it (the highlight + graph) is the
+                # whole interaction; the dedicated Trace row is what opens the trace flow.
+        elif action in ("right", "tab"):
+            self._switch_tab(1)
+        elif action in ("left", "shift_tab"):
+            self._switch_tab(-1)
         elif action == "up":
-            self._index = (self._index - 1) % len(self._actions)
-            self._pin_cursor = True
+            if n:
+                self._row_index = (self._row_index - 1) % n
+                self._sync_route_sel(focus)
+                self._pin_cursor = True
         elif action == "down":
-            self._index = (self._index + 1) % len(self._actions)
-            self._pin_cursor = True
+            if n:
+                self._row_index = (self._row_index + 1) % n
+                self._sync_route_sel(focus)
+                self._pin_cursor = True
         elif action == "pageup":
             self._pin_cursor = False
             self.scroll_pages(-1)
@@ -227,13 +346,50 @@ class NodeDetailScreen(Screen):
             self.resolve(CANCEL)
 
     def cursor_line(self) -> Optional[int]:
-        """Keep the highlighted action visible while ↑/↓ are in use; free scroll otherwise."""
+        """Keep the highlighted row visible while ↑/↓ are in use; free scroll otherwise."""
         return self._cursor if self._pin_cursor else None
+
+    def _switch_tab(self, delta: int) -> None:
+        """Move the active tab, resetting the cursor to that tab's top (and its stage in view)."""
+        if len(self._tabs) < 2:
+            return
+        self._tab_index = (self._tab_index + delta) % len(self._tabs)
+        self._row_index = 0
+        self._route_sel = 0
+        self._pin_cursor = False
+        self.scroll_to_top()
+        self._sync_route_sel(self._focusables())
+
+    def _sync_route_sel(self, focus: list[tuple[str, object]]) -> None:
+        """Point the graph highlight at the route under the cursor, when it rests on one."""
+        if focus:
+            kind, payload = focus[self._row_index % len(focus)]
+            if kind == "path":
+                assert isinstance(payload, int)
+                self._route_sel = payload
+
+    def _focusables(self) -> list[tuple[str, object]]:
+        """The active tab's cursor stops: ``("path", route_idx)`` and ``("action", _Action)``.
+
+        The route rows come first (Routes tab only), then the tab's own committing action
+        (Open full map / Trace this route), then the shared tail (Time machine, Back). A tab
+        with no stage (our own fix-less node) is just the tail.
+        """
+        tab = self._tabs[self._tab_index] if self._tabs else None
+        focus: list[tuple[str, object]] = []
+        if tab is not None and tab.kind == "routes" and self._routes is not None:
+            focus.extend(("path", i) for i in range(len(self._routes.routes)))
+            if self._trace_action is not None:
+                focus.append(("action", self._trace_action))
+        elif tab is not None and tab.kind == "map" and self._open_map_action is not None:
+            focus.append(("action", self._open_map_action))
+        focus.extend(("action", a) for a in self._tail_actions)
+        return focus
 
     # --- rendering -------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Render the identity block, location preview, route graph, and action list."""
+        """Render the identity block, the active tab's stage, and its cursor rows."""
         lines: list[str] = []
         lines.extend(render_lines(self._header, width))
         for label, value in self._info_rows:
@@ -245,54 +401,111 @@ class NodeDetailScreen(Screen):
                     indent=_LABEL_LANE,
                 )
             )
-        if self._minimap is not None:
-            lines.append("")
-            lines.extend(render_lines(Text("Location", style="accent"), width))
-            lines.extend(self._minimap.render(width, _MAP_ROWS))
-            if self._map_caption is not None:
-                lines.extend(render_lines(self._map_caption, width, no_wrap=True))
-        if self._path is not None:
-            lines.append("")
-            lines.extend(render_lines(Text("Routes heard", style="accent"), width))
-            lines.extend(self._path_lines(width))
-        lines.append("")
+
+        focus = self._focusables()
+        if focus:
+            self._row_index %= len(focus)
         self._cursor = None
-        for i, action in enumerate(self._actions):
-            if action.key == "back":
-                lines.append("")  # set the exit row apart, as the menus do
-            selected = i == self._index
-            text = Text("❯ " if selected else "  ", style="brand" if selected else "")
-            if action.glyph:
-                text.append(f"{action.glyph} ", style=action.glyph_style)
-            text.append(action.label)
-            if selected:
-                text.style = "brand"
-                self._cursor = len(lines)
-            text.no_wrap = True
-            text.truncate(width, overflow="ellipsis")
-            lines.append(render_to_ansi(text, width))
+
+        if self._tabs:
+            lines.append("")
+            lines.extend(
+                render_lines(
+                    tab_strip([t.name for t in self._tabs], self._tab_index), width, no_wrap=True
+                )
+            )
+            lines.append("")
+            if self._tabs[self._tab_index].kind == "map":
+                lines.extend(self._map_stage(width))
+            else:
+                lines.extend(self._routes_stage(width))
+        lines.append("")
+
+        for i, (kind, payload) in enumerate(focus):
+            selected = i == self._row_index
+            if kind == "path":
+                assert isinstance(payload, int)
+                if selected:
+                    self._cursor = len(lines)
+                lines.extend(self._route_row_lines(self._routes.routes[payload], selected, width))
+            else:
+                assert isinstance(payload, _Action)
+                if payload.key == "back":
+                    lines.append("")  # set the exit row apart, as the menus do
+                if selected:
+                    self._cursor = len(lines)
+                lines.append(self._action_line(payload, selected, width))
+
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def _path_lines(self, width: int) -> list[str]:
-        """The route graph (best-evidence path white over the rest), or the muted note."""
-        path = self._path
-        assert path is not None  # only called when a path section exists
-        if not path.layers or path.glyph_of is None:
-            return render_lines(Text(path.note or "no route observed yet", style="muted"), width)
-        lines = render_path_graph(
-            path.layers,
-            width,
-            glyph_of=path.glyph_of,
-            label_of=path.label_of,  # type: ignore[arg-type]
-            label_rgb_of=path.label_rgb_of,  # type: ignore[arg-type]
-            max_rows=_PATH_MAX_ROWS,
+    def _map_stage(self, width: int) -> list[str]:
+        """The location preview and its faint caption."""
+        assert self._minimap is not None
+        lines = list(self._minimap.render(width, _MAP_ROWS))
+        if self._map_caption is not None:
+            lines.extend(render_lines(self._map_caption, width, no_wrap=True))
+        return lines
+
+    def _routes_stage(self, width: int) -> list[str]:
+        """The route-graph fan — the selected route white, its off-route nodes' labels faded —
+        or the muted note when there is no route evidence."""
+        rv = self._routes
+        assert rv is not None
+        if not rv.routes or rv.glyph_of is None:
+            return render_lines(Text(rv.note or "no route observed yet", style="muted"), width)
+        sel = self._route_sel if 0 <= self._route_sel < len(rv.routes) else 0
+        layers = [
+            PathLayer(hops=route.draw, color=_WHITE if i == sel else _GREY, priority=3 if i == sel else 2)
+            for i, route in enumerate(rv.routes)
+        ]
+        # A node keeps its name hue only while it sits on the selected route (its endpoints
+        # always do); every other node in the fan fades its label to the same grey its line
+        # went, so the picture reads as *this* route rather than the whole tangle.
+        on_route = set(rv.routes[sel].draw) | {SRC_NODE, DST_NODE}
+        base_rgb = rv.label_rgb_of
+        assert base_rgb is not None
+
+        def label_rgb_of(node: str):
+            return base_rgb(node) if node in on_route else _GREY
+
+        lines = list(
+            render_path_graph(
+                layers,
+                width,
+                glyph_of=rv.glyph_of,
+                label_of=rv.label_of,  # type: ignore[arg-type]
+                label_rgb_of=label_rgb_of,
+                max_rows=_PATH_MAX_ROWS,
+            )
         )
-        caption = Text("node → you, as heard  ·  white = best route", style="faint")
+        caption = Text("node → you, as heard  ·  white = selected route", style="faint")
         lines.extend(render_lines(caption, width, no_wrap=True))
-        if path.legend:
+        if rv.legend:
             lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
         return lines
+
+    def _route_row_lines(self, route: _Route, selected: bool, width: int) -> list[str]:
+        """One route row: a ``❯`` pointer when picked, the route hanging-wrapped under itself.
+
+        The route keeps its per-node colours even when selected (the pointer, and the white
+        line in the graph above, carry the selection) — unlike the plain action rows, which
+        go fully brand, since here the colour *is* the content.
+        """
+        prefix = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        return render_hanging(prefix, route.row, width, indent=2)
+
+    def _action_line(self, action: _Action, selected: bool, width: int) -> str:
+        """One action row: ``❯`` + icon + label, the whole row brand when it is the cursor's."""
+        text = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        if action.glyph:
+            text.append(f"{action.glyph} ", style=action.glyph_style)
+        text.append(action.label)
+        if selected:
+            text.style = "brand"
+        text.no_wrap = True
+        text.truncate(width, overflow="ellipsis")
+        return render_to_ansi(text, width)
 
 
 # -- geographic helpers --------------------------------------------------------
@@ -374,7 +587,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         make_node_resolver,
         make_node_type_resolver,
     )
-    from ..services.topology import build_topology, render_forced_spec, _is_hex
+    from ..services.topology import build_topology, _is_hex
     from ..tools.map import gather_markers
     from .map_screen import basemap_source, open_map
     from .surface import TuiUi
@@ -412,8 +625,8 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         prefix_bytes, width_bytes = 0, 1
 
     stored_names = ctx.repo.node_names()
-    # One hash→name resolver for the whole page: the route/suggest rows and the route
-    # graph all name their hops through it (contacts first, recorder history behind).
+    # One hash→name resolver for the whole page: the route list and the route graph all name
+    # their hops through it (contacts first, recorder history behind).
     resolve = make_node_resolver(contacts, stored_names)
 
     if you:
@@ -483,16 +696,8 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         if canonical_target
         else []
     )
-    # The spec the Trace action arms on: the observed best path, else the firmware's
-    # learned route, else nothing (let the trace screen auto-resolve).
-    if target_hash and suggested is not None:
-        suggested_spec = render_forced_spec(suggested.hops, target_hash, width_bytes)
-    elif target_hash and device_route is not None:
-        suggested_spec = render_forced_spec(device_route, target_hash, width_bytes)
-    else:
-        suggested_spec = ""
 
-    # -- the info block.
+    # -- the info block (identity + how-heard + where; the routes fold into the Routes tab).
     info_rows: list[tuple[str, Text]] = []
     if key:
         info_rows.append(("key", highlighted_hash(key, prefix_bytes)))
@@ -514,9 +719,6 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             info_rows.append(("signal", signal))
     if lat is not None and lon is not None:
         info_rows.append(("where", _range_text(lat, lon, self_lat, self_lon)))
-    if not you:
-        info_rows.append(("route", _route_row(device_route, resolve=resolve, self_name=self_name)))
-        info_rows.append(("suggest", _suggest_row(suggested, resolve=resolve, self_name=self_name)))
 
     # -- the location preview (only when the node advertised a fix).
     minimap: Optional[MiniMap] = None
@@ -538,32 +740,37 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         )
         map_caption = Text(f"{label} · centred here", style="faint")
 
-    # -- the "routes heard" route graph (node → us), best-evidence path white.
-    path: Optional[_PathView] = None
+    # -- the "routes heard" route list + graph (node → us), best-evidence path white.
+    routes_view: Optional[_RoutesView] = None
     if not you:
-        path = _path_view(
-            topo, scenarios, suggested, device_route, canonical_target,
+        routes_view = _routes_view(
+            topo, scenarios, suggested, device_route, canonical_target, target_hash, width_bytes,
             resolve=resolve,
             type_of=make_node_type_resolver(contacts),
             key_of=make_name_key_resolver(contacts, stored_names),
             style=route_graph_style,
             self_name=self_name,
             node_label=label,
+            name_key=key,
         )
 
-    # -- the action rows.
-    def build_actions() -> list[_Action]:
-        rows: list[_Action] = []
-        if not you and node_id:
-            rows.append(_Action("trace", "🎯", "", _trace_label(suggested_spec)))
-        if minimap is not None:
-            rows.append(_Action("map", "🌍", "", "Open full map"))
-        if you:
-            rows.append(_Action("timemachine", "⏳", "", "Time machine — your activity"))
-        elif hn is not None:
-            rows.append(_Action("timemachine", "⏳", "", f"Time machine — {hn.count} receptions"))
-        rows.append(_Action("back", "", "", "Back"))
-        return rows
+    # -- the tabs (only the views that have content) and their action rows.
+    tabs: list[_Tab] = []
+    if minimap is not None:
+        tabs.append(_Tab(name="Map", kind="map"))
+    if routes_view is not None:
+        tabs.append(_Tab(name="Routes", kind="routes"))
+
+    open_map_action = _Action("map", "🌍", "", "Open full map") if minimap is not None else None
+    trace_action: Optional[_Action] = None
+    if not you and node_id:
+        trace_action = _Action("trace", "🎯", "", _trace_label(routes_view))
+    tail_actions: list[_Action] = []
+    if you:
+        tail_actions.append(_Action("timemachine", "⏳", "", "Time machine — your activity"))
+    elif hn is not None:
+        tail_actions.append(_Action("timemachine", "⏳", "", f"Time machine — {hn.count} receptions"))
+    tail_actions.append(_Action("back", "", "", "Back"))
 
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
     while True:
@@ -571,16 +778,19 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             title=title,
             header=header,
             info_rows=info_rows,
-            actions=build_actions(),
+            tabs=tabs,
             minimap=minimap,
             map_caption=map_caption,
-            path=path,
+            routes=routes_view,
+            open_map_action=open_map_action,
+            trace_action=trace_action,
+            tail_actions=tail_actions,
         )
         action = await session.run_screen(screen)
         if action is CANCEL or action is None:
             break
         if action == "trace":
-            await open_trace(ctx, name or key, initial_spec=suggested_spec)
+            await open_trace(ctx, name or key, initial_spec=screen.selected_spec())
         elif action == "map":
             if markers:
                 await open_map(ctx, markers)
@@ -614,66 +824,65 @@ def _signal_row(hn) -> Optional[Text]:  # noqa: ANN001 - Optional[HeardNode]
     return text if text.plain else None
 
 
-def _route_row(
-    device_route: Optional[tuple[str, ...]], *, resolve, self_name: Optional[str]
+def _route_line(
+    node_label: str,
+    name_key: str,
+    hops_out: tuple[str, ...],
+    tag: str,
+    weakest: Optional[float],
+    samples: int,
+    *,
+    resolve,
+    self_name: Optional[str],
 ) -> Text:
-    """The firmware's learned route to the node, or a note that it floods.
+    """One route rendered as a full line: contact → relays → us, then its context and tag.
 
-    The hops render through THE path widget (:func:`~meshterm.ui.widgets.path_text`) at a
-    1-byte hash width, so each reads ``name (3d)`` — the same name the route graph prints
-    beside its markers, plus the short hash it travels under, so row and graph cross-read.
+    The whole route reads left to right in the graph's own direction (contact on the left, us
+    on the right), so the row and the drawn line cross-read. The contact and our own node
+    anchor the two ends in their own hues (the contact's key-derived, us the white ``you``);
+    the relays in between render through THE path widget (:func:`~meshterm.ui.widgets.path_text`)
+    at a 1-byte hash width, each ``name (3d)`` — the trace presentation. The bottleneck SNR
+    and sample count trail as muted context, and a ``★ best`` / ``device route`` tag marks the
+    winner and the firmware's learned route.
     """
-    if device_route is None:
-        return Text("no learned route — floods", style="muted")
-    if not device_route:
-        return Text("direct neighbour (zero-hop route)", style="")
-    text = Text("device route", style="accent")
-    text.append("  via ", style="muted")
-    text.append_text(_hop_path(device_route, resolve, self_name))
-    return text
-
-
-def _suggest_row(suggested, *, resolve, self_name: Optional[str]) -> Text:  # noqa: ANN001
-    """The observed best path (the "suggest best path" answer), or a muted stand-in.
-
-    Like :func:`_route_row`, the hops render through THE path widget named, with a 1-byte
-    hash in parentheses (the short id each hop travels under); the bottleneck SNR and sample
-    count trail behind as context.
-    """
-    if suggested is None:
-        return Text("none observed yet — trace to learn one", style="muted")
-    text = (
-        _hop_path(suggested.hops, resolve, self_name)
-        if suggested.hops
-        else Text("direct", style="brand")
+    text = Text()
+    text.append(node_label, style=name_style(node_label, name_key))
+    relays = path_text(
+        list(reversed(hops_out)), resolve, prefix_bytes=1, self_name=self_name,
+        empty="", show_hash=True, hash_bytes=1,
     )
-    if suggested.weakest_snr is not None:
+    if relays.plain:
+        text.append(" → ", style="muted")
+        text.append_text(relays)
+    text.append(" → ", style="muted")
+    text.append(self_name or "us", style="you")
+    if weakest is not None:
         text.append("  ·  weakest ", style="muted")
-        text.append(f"{suggested.weakest_snr:+.1f} dB", style=snr_style(suggested.weakest_snr))
-    if suggested.samples:
-        text.append(f"  ·  {suggested.samples}×", style="muted")
+        text.append(f"{weakest:+.1f} dB", style=snr_style(weakest))
+    if samples:
+        text.append(f"  ·  {samples}×", style="muted")
+    if tag == "best":
+        text.append("   ★ best", style="brand")
+    elif tag == "device":
+        text.append("   device route", style="accent")
     return text
 
 
-def _hop_path(hops: tuple[str, ...], resolve, self_name: Optional[str]) -> Text:
-    """A hop sequence rendered through THE path widget, each hop tagged with its first byte."""
-    return path_text(
-        list(hops), resolve, prefix_bytes=1, self_name=self_name,
-        show_hash=True, hash_bytes=1,
-    )
+def _trace_label(routes: Optional["_RoutesView"]) -> str:
+    """The Trace action's row label — armed on the selected route, or auto with none drawn."""
+    if routes is not None and routes.routes:
+        return "Trace this route …"
+    return "Trace — auto route …"
 
 
-def _trace_label(suggested_spec: str) -> str:
-    """The Trace action's row label — naming whether it arms on a suggested path or auto."""
-    return "Trace target — suggested path" if suggested_spec else "Trace target — auto route"
-
-
-def _path_view(
+def _routes_view(
     topo,
     scenarios,
     suggested,
     device_route,
     canonical_target,
+    target_hash,
+    width_bytes,
     *,
     resolve,
     type_of,
@@ -681,8 +890,9 @@ def _path_view(
     style,
     self_name,
     node_label,
-) -> _PathView:
-    """Build the route-graph layers (node → us) and their draw callbacks, or a muted note.
+    name_key,
+) -> _RoutesView:
+    """Build the Routes tab's selectable routes (node → us) + graph callbacks, or a muted note.
 
     The routes are drawn contact-on-the-left to us-on-the-right — the *inbound* direction the
     packets travelled to reach us, since everything the graph knows was received, not sent.
@@ -690,29 +900,34 @@ def _path_view(
     already draws (it was built for the Message paths view, where traffic arrives *at* us on
     the right), so we hand it the target as its ``source`` — the left endpoint — and use its
     callbacks as they come, only reversing each route's hop order so the drawn line runs from
-    the contact inward to us. The best-evidence route (the observed suggestion, else the
-    firmware's learned route) is lit white over the alternatives' grey.
+    the contact inward to us.
 
-    Only *good* alternatives are drawn: an observed route is kept as grey when its evidence is
-    both **fresh** (its stalest hop heard within :data:`_PATH_STALE_DAYS`) and **not an
-    outlier** (its score within :data:`_PATH_OUTLIER_RATIO` of the strongest observed one) —
-    so the graph shows the routes worth trusting rather than every chain ever heard. The
-    best-evidence route is always drawn, stale or not: it is the page's answer to how we'd
-    reach the node, not one of the alternatives being weighed. With no route evidence at all —
-    no learned route, no observed path, not even a direct link — there is nothing honest to
-    draw, so a muted note stands in.
+    The selectable list, strongest first, folds the old ``route`` / ``suggest`` info rows into
+    the tab: the best-evidence route (the observed suggestion, else the firmware's learned
+    route, else a bare direct shot), then the firmware's learned route when it is something
+    different, then the *good* observed alternatives. Only good alternatives are kept: an
+    observed route survives when its evidence is both **fresh** (its stalest hop heard within
+    :data:`_PATH_STALE_DAYS`) and **not an outlier** (its score within
+    :data:`_PATH_OUTLIER_RATIO` of the strongest observed one) — so the list is the routes
+    worth trusting rather than every chain ever heard. With no route evidence at all — no
+    learned route, no observed path, not even a direct link — there is nothing honest to draw,
+    so a muted note stands in and the tab still offers an auto trace.
+
+    Which route lights white (and which nodes keep their name hue) is the screen's live
+    selection, applied per render; this only assembles the routes and the base callbacks.
     """
+    from ..services.topology import render_forced_spec
+
     if canonical_target is None:
-        return _PathView(note="no key to route to")
+        return _RoutesView(note="no key to route to")
     has_evidence = (
         device_route is not None
         or any(s.source == "observed" for s in scenarios)
         or topo.link(topo.self_id, canonical_target) is not None
     )
     if not has_evidence:
-        return _PathView(note="no route observed yet — trace to discover one")
+        return _RoutesView(note="no route observed yet — trace to discover one")
 
-    white, grey = (255, 255, 255), (120, 120, 120)
     best_hops = (
         suggested.hops if suggested is not None
         else device_route if device_route is not None
@@ -722,32 +937,46 @@ def _path_view(
     # the straight zero-hop shot — so the graph shows the direct link rather than a bare note.
     if best_hops is None and topo.link(topo.self_id, canonical_target) is not None:
         best_hops = ()
-    layers: list[PathLayer] = []
+
+    # The ordered, de-duplicated selectable routes (outbound hops us → target).
+    entries: list[tuple[tuple[str, ...], str, Optional[float], int]] = []
     seen: set[tuple[str, ...]] = set()
 
-    def add(hops: tuple[str, ...], priority: int, color: tuple[int, int, int]) -> None:
-        # Reverse the outbound (us-outward) hop order into inbound (node→us) draw order, so
-        # the contact lands on the left endpoint and our star on the right.
-        drawn = tuple(reversed(hops))
-        if drawn in seen:
+    def add(hops_out: tuple[str, ...], tag: str, weakest: Optional[float], samples: int) -> None:
+        key = tuple(hops_out)
+        if key in seen:
             return
-        seen.add(drawn)
-        layers.append(PathLayer(hops=drawn, color=color, priority=priority))
+        seen.add(key)
+        entries.append((key, tag, weakest, samples))
 
     if best_hops is not None:
-        add(best_hops, 3, white)
+        if suggested is not None:
+            add(best_hops, "best", suggested.weakest_snr, suggested.samples)
+        else:
+            add(best_hops, "best", None, 0)
+    if device_route is not None:
+        add(device_route, "device", None, 0)
     for scenario in _good_alternatives(topo, scenarios, canonical_target):
-        add(scenario.hops, 2, grey)
+        add(scenario.hops, "", scenario.weakest_snr, scenario.samples)
+
+    routes: list[_Route] = []
+    for hops_out, tag, weakest, samples in entries:
+        spec = render_forced_spec(hops_out, target_hash, width_bytes) if target_hash else ""
+        row = _route_line(
+            node_label, name_key, hops_out, tag, weakest, samples,
+            resolve=resolve, self_name=self_name,
+        )
+        routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, row=row))
 
     glyph_of, byte_label_of, label_rgb_of = style(
         resolve=resolve, self_name=self_name, source=node_label, type_of=type_of, key_of=key_of
     )
 
-    # This page names every node, not just the two ends. Where the Message paths graph tags
-    # a relay with only its first hash byte, here each relay wears its resolved contact name
-    # (its colour is already the name's hue), so the whole route reads as places rather than
-    # hex; an unidentified relay keeps the byte, the honest most it can be called. The two
-    # endpoints keep route_graph_style's names (target on the left, us on the right).
+    # This tab names every node in the graph, not just the two ends. Where the Message paths
+    # graph tags a relay with only its first hash byte, here each relay wears its resolved
+    # contact name (its colour is already the name's hue), so the whole route reads as places
+    # rather than hex; an unidentified relay keeps the byte, the honest most it can be called.
+    # The two endpoints keep route_graph_style's names (target on the left, us on the right).
     def label_of(node: str) -> Optional[str]:
         if node in (SRC_NODE, DST_NODE):
             return byte_label_of(node)
@@ -761,9 +990,9 @@ def _path_view(
     glyph_of = _with_target_glyph(
         glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
     )
-    legend = any(type_of(h) is not None for layer in layers for h in layer.hops)
-    return _PathView(
-        layers=layers,
+    legend = any(type_of(h) is not None for route in routes for h in route.draw)
+    return _RoutesView(
+        routes=routes,
         glyph_of=glyph_of,
         label_of=label_of,
         label_rgb_of=label_rgb_of,
@@ -774,11 +1003,12 @@ def _path_view(
 def _good_alternatives(topo, scenarios, target) -> list:  # noqa: ANN001
     """The observed alternative routes worth drawing: fresh, evidence-backed, not outliers.
 
-    Trims the raw scenario list down to the alternatives the graph should show in grey:
+    Trims the raw scenario list down to the alternatives the graph should show as grey
+    alternatives:
 
     * only the **observed** family (the device/direct scenarios are not routes the evidence
-      *observed* the node arrive over — the device route rides in white on its own when it is
-      the best, and a bare direct line the evidence never saw is not worth a lane);
+      *observed* the node arrive over — the device route rides on its own row, and a bare
+      direct line the evidence never saw is not worth a lane);
     * only ones with real evidence behind them (a positive score — an unobserved link scores
       zero, see :meth:`~meshterm.services.topology.MeshTopology._score_route`);
     * only **fresh** ones — every hop heard within :data:`_PATH_STALE_DAYS`, so a route whose

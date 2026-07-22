@@ -71,6 +71,7 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.Backspace: "backspace",
     Keys.Delete: "delete",
     Keys.Tab: "tab",
+    Keys.BackTab: "shift_tab",
     Keys.ControlR: "retry",
     Keys.ControlP: "paths",
 }

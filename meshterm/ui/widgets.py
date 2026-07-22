@@ -909,6 +909,37 @@ def node_type_legend(indent: str = "") -> Text:
     return legend
 
 
+def tab_strip(labels: Sequence[str], active: int) -> Text:
+    """A one-line tab strip: the active view lit like a section heading, the rest muted.
+
+    THE navigation header for a screen that pages one full-height view at a time between a
+    handful of named views (the node detail page's ``Map`` / ``Routes``) instead of stacking
+    them. The active tab is drawn in the same accent ``── Label ──`` form the grouped select
+    lists give their section headings (:func:`~meshterm.ui.menus.section_heading`), so "the
+    view you are in" reads exactly like a section you have scrolled into; the inactive tabs sit
+    beside it muted, so the alternatives are visible without competing. A lone tab therefore
+    renders as a plain accent heading — the strip collapses gracefully when only one view has
+    content. The owning screen switches the active index (``←→``, with ``Tab``/``Shift+Tab`` as
+    a backup); the strip itself is pure presentation.
+
+    Args:
+        labels: The tab names in display order.
+        active: Index of the lit tab.
+
+    Returns:
+        A single-line :class:`~rich.text.Text` (no wrapping intended).
+    """
+    strip = Text(no_wrap=True)
+    for i, label in enumerate(labels):
+        if i:
+            strip.append("    ")
+        if i == active:
+            strip.append(f"── {label} ──", style="accent")
+        else:
+            strip.append(label, style="muted")
+    return strip
+
+
 def _contacts_legend() -> Text:
     """The node-type legend, indented to sit under the contacts table body."""
     return node_type_legend(indent="  ")

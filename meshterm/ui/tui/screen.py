@@ -172,7 +172,8 @@ class Screen:
                 ``right``, ``ctrl_left``, ``ctrl_right``, ``ctrl_up``, ``ctrl_down``,
                 ``shift_up``, ``shift_down``,
                 ``shift_left``, ``shift_right``, ``enter``, ``escape``, ``backspace``,
-                ``delete``, ``space``, ``tab``, or ``text`` (with ``data`` set to the character).
+                ``delete``, ``space``, ``tab``, ``shift_tab``, or ``text`` (with ``data``
+                set to the character).
             data: The typed character when ``action`` is ``text``.
         """
         if action == "escape":
