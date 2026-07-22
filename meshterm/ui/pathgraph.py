@@ -15,11 +15,14 @@ now draws the fan as a **multilane highway**: a node always sits on a level plat
 lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
 the way a car drifts one lane over and then stays there. Concretely:
 
-* **lanes** — each distinct path owns one horizontal lane; the highest-priority (drawn last,
-  e.g. the selected or best-evidence) path takes the centre lane, running dead straight
-  through the two endpoints as the flow's spine, and the alternatives lie above and below it.
-  The lanes are ordered to seat routes that share relays near each other, so a shared hop
-  costs the shortest possible detour;
+* **lanes** — each distinct path owns one horizontal lane, the lanes a fixed pitch of text rows
+  apart; the highest-priority (drawn last, e.g. the selected or best-evidence) path takes the
+  centre lane and the alternatives lie above and below it. The two endpoints sit at the vertical
+  centre of the lane band, so the strongest route runs through them as the flow's spine — dead
+  straight when the lanes are odd (its own lane is the centre), easing gently when they are even,
+  where one extra padding row is opened between the two central lanes so the endpoints land on an
+  exact centred row between them. The lanes are ordered to seat routes that share relays near
+  each other, so a shared hop costs the shortest possible detour;
 * **columns** (x) place each node by *balanced* rank — its distance from the origin over its
   distance-plus-remaining-distance to us — so a path's relays spread evenly between the two
   ends however long the other paths are, and a shared relay lands in one place;
@@ -62,12 +65,14 @@ from .mapcanvas import RGB, MapCanvas, parse_hex
 SRC_NODE = "\x00src"
 DST_NODE = "\x00dst"
 
-#: Vertical dot separation aimed for between adjacent lanes — the base height one lane maps
-#: to. Wide enough to seat a marker and its label row; a graph with many lanes compresses it
-#: to fit the row budget, and a graph with few lanes never stretches *past* it (spreading the
-#: lanes further apart would only reintroduce the empty space the layout exists to avoid), so
-#: a sparse graph draws compact rather than splayed.
-_LANE_STEP_DOTS = 14
+#: Text rows between adjacent lane markers — the pitch one lane maps to. At the default there
+#: are two blank rows padding each gap (room for a lane's label and its neighbour's), and an
+#: *even* lane count opens one extra row between the two central lanes so the endpoints land on
+#: an exact centred row (see the vertical-sizing block). A graph with more lanes than fit the
+#: row budget scales the pitch down to fit, and a graph with few lanes never stretches *past* it
+#: (spreading the lanes apart would only reintroduce the empty space the layout exists to
+#: avoid), so a sparse graph draws compact rather than splayed.
+_LANE_PITCH_ROWS = 3
 
 #: Dots reserved beyond the outermost lane at each end of the graph — a label row for that
 #: lane's markers, plus a little air.
@@ -89,7 +94,7 @@ _GRAPH_PAD_DOTS = 6
 #: the curve as a fraction of the gap — rather than by a fixed slope keyed off the vertical
 #: offset — keeps the platform-to-curve proportion constant however wide or narrow the columns
 #: fall.
-_CURVE_SPAN = 0.75
+_CURVE_SPAN = 0.8
 
 #: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
 #: column gap still bends across a few dots rather than snapping over in one abrupt step.
@@ -259,7 +264,7 @@ def render_path_graph(
     label_rgb_of: LabelRgbOf,
     min_rows: int = 5,
     max_rows: int = 15,
-    lane_step: int = _LANE_STEP_DOTS,
+    lane_pitch: int = _LANE_PITCH_ROWS,
 ) -> list[str]:
     """Draw the diverge/converge route-flow graph and return its ANSI lines.
 
@@ -277,9 +282,11 @@ def render_path_graph(
         min_rows: The fewest canvas rows to draw, however few the lanes.
         max_rows: The most canvas rows to spend; a graph with more lanes than fit
             compresses its lane spacing rather than growing past this.
-        lane_step: Vertical dot separation aimed for between lanes. A larger step opens the
-            lanes apart; the row budget compresses it when there are many lanes, and never
-            stretches past it when there are few. Defaults to :data:`_LANE_STEP_DOTS`.
+        lane_pitch: Text rows between adjacent lane markers (so ``lane_pitch - 1`` blank rows
+            pad each gap). An even lane count opens one extra row between the two central lanes
+            so the endpoints land on an exact centred row. The row budget compresses the pitch
+            when there are many lanes, and never stretches it when there are few. Defaults to
+            :data:`_LANE_PITCH_ROWS`.
 
     Returns:
         One ANSI string per canvas row (empty when there are no layers to draw).
@@ -315,39 +322,68 @@ def render_path_graph(
     for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
         for node in seqs[i]:
             owner.setdefault(node, i)
+    # A path that is only a detour off a sibling (that sibling's route with an extra relay
+    # inserted) is subsumed too: its relay is re-owned onto the sibling's lane so it costs no
+    # band and needs no crossing to rejoin the shared node. See :func:`_fold_detours`.
+    _fold_detours(drawn, seqs, owner, xfrac, width)
     lane_of_path = _assign_lanes(drawn, seqs, owner, best)
 
-    # The endpoints sit on the best path's lane, where the strongest route runs dead straight
-    # across as the graph's spine; the alternatives fan above and below it.
+    # The endpoints sit at the vertical centre of the lane band, where the strongest route runs
+    # through them as the graph's spine; the alternatives fan above and below. For an odd lane
+    # count that centre *is* the best path's own lane, so the spine runs dead straight; for an
+    # even count it is the midpoint between the two central lanes (the best path takes the upper
+    # of the two), so the endpoints stay centred and a best path carrying relays of its own eases
+    # half a lane to reach them rather than seating the whole graph off-centre.
     max_lane = max(lane_of_path.values())
-    centre_lane = float(lane_of_path[best])
+    centre_lane = max_lane / 2.0
     node_lane: dict[str, float] = {
         node: (centre_lane if node in (SRC_NODE, DST_NODE) else float(lane_of_path[owner[node]]))
         for node in ordered_nodes
     }
 
-    # -- Vertical sizing: size the rows to the lanes, compressing the spacing (never
-    # stretching it past ``lane_step``) so a busy graph fits and a sparse one stays compact.
+    # -- Vertical sizing. Each lane sits on its own text row, ``lane_pitch`` rows apart (so
+    # ``lane_pitch - 1`` blank rows pad each gap). On an *even* lane count the two central lanes
+    # are opened one extra row apart, so the endpoints — pinned to the band's centre — land on
+    # the exact middle row between them rather than on a fractional row that would snap off it;
+    # an *odd* count already seats a central lane there for them to ride. A graph too tall for
+    # ``max_rows`` scales every row down proportionally (never up), so it stays compact.
+    even_lanes = max_lane % 2 == 1  # N = max_lane + 1 lanes; even ⟺ max_lane odd
+    lower_centre = max_lane // 2 + 1  # first lane below the centre (only meaningful when even)
+
+    def slot(lane: float) -> float:
+        """The text row (pre-scaling) a lane index maps to, with the even-count centre gap."""
+        rows_out = lane * lane_pitch
+        if even_lanes and lane > lower_centre - 1:
+            # the lower-central lane and everything below it are pushed one row down; the
+            # endpoints' half-lane takes half of it, landing them on the widened gap's middle.
+            rows_out += min(1.0, lane - (lower_centre - 1))
+        return rows_out
+
     if max_lane <= 0:
-        step = 0.0
         rows = min_rows
+        lane_rows = 0.0
+        scale = 0.0
     else:
-        ideal = max_lane * lane_step + 2 * _GRAPH_END_DOTS
+        lane_rows = slot(float(max_lane))  # total lane span, in rows
+        ideal = lane_rows * 4 + 2 * _GRAPH_END_DOTS
         rows = max(min_rows, min(max_rows, ceil(ideal / 4)))
         avail = rows * 4 - 2 * _GRAPH_END_DOTS
-        step = min(float(lane_step), avail / max_lane)
+        scale = min(1.0, avail / (lane_rows * 4)) if lane_rows else 0.0
 
     canvas = MapCanvas(width, rows)
     dot_w = width * 2
     span = dot_w - 2 * _GRAPH_PAD_DOTS
-    band = max_lane * step
-    top = (rows * 4 - band) / 2  # centre the lane band in the chosen rows
+    band = lane_rows * 4 * scale
+    # Centre the band, anchored on a cell-mid row so the (unscaled) integer lane rows land dead
+    # on their cells — no per-lane snap drift that would nudge a centred endpoint off its middle.
+    top = float(_mid_row((rows * 4 - band) / 2))
 
     def x_of(node: str) -> int:
         return _GRAPH_PAD_DOTS + round(xfrac[node] * span)
 
     pos: dict[str, tuple[int, int]] = {
-        node: (x_of(node), _mid_row(top + node_lane[node] * step)) for node in ordered_nodes
+        node: (x_of(node), _mid_row(top + slot(node_lane[node]) * 4 * scale))
+        for node in ordered_nodes
     }
     # -- Edges. Collect every edge once, keyed by its unordered node pair: an edge two routes
     # share — or a pair walked in *both* directions — must draw a single time, else it silts up
@@ -398,7 +434,7 @@ def _route(
     :data:`_CURVE_SPAN` of the column gap (a gentle drift, not a slope keyed off the drop) and
     sits centred in it, so the platforms flank it evenly; when the gap is too tight to hold a
     curve of even :data:`_MIN_SHIFT_DOTS`, the bend simply spans the whole gap. The endpoints,
-    sitting on the centre lane,
+    sitting at the centre of the lane band,
     make the origin's diverging peels and us's converging merges fall out of this one rule —
     no endpoint special case. The lone exception is ``bidir``: a pair walked both ways draws as
     a single straight segment between the markers (a near-vertical when the layout stacks
@@ -522,6 +558,59 @@ def _longest_paths(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dic
         if not changed:
             break
     return depth
+
+
+def _fold_detours(
+    drawn: Sequence[PathLayer],
+    seqs: Sequence[tuple[str, ...]],
+    owner: dict[str, int],
+    xfrac: dict[str, float],
+    width: int,
+) -> None:
+    """Re-own a *detour* path's extra relays onto the sibling lane it converges into.
+
+    A route heard as another route *plus* an inserted relay or two — same convergence into us,
+    one extra hop on the way — shouldn't cost a whole extra lane. Given its own lane it would
+    sit on the far side of the best-centred spine from the sibling it rejoins, dragging its
+    inserted relay clear across the graph to meet the shared node (an avoidable crossing).
+
+    So when a bearing path's relays, minus the ones it alone owns, exactly match a
+    higher-or-equal-priority sibling's relays — and that sibling truly owns them (is their
+    lane) — the path is that sibling with a detour. Its owned relays are re-owned to the
+    sibling, riding its lane as waypoints the branch dips through, provided none shares a cell
+    column with a node *already on that lane* — including a detour folded there earlier, so two
+    siblings that insert a relay at the same column don't overprint (the second keeps its own
+    lane). The detour path then owns nothing, earns no lane, and reads as a branch *off* its
+    sibling instead of a track that crosses the graph to reach it. Mutates ``owner`` in place.
+    """
+    span = width * 2 - 2 * _GRAPH_PAD_DOTS
+
+    def col(node: str) -> int:
+        return (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1
+
+    relays = [
+        frozenset(n for n in seq if n not in (SRC_NODE, DST_NODE)) for seq in seqs
+    ]
+    # Weakest first, so a marginal detour folds onto its stronger sibling, never the reverse.
+    for i in sorted(range(len(drawn)), key=lambda j: drawn[j].priority):
+        own_i = {n for n in seqs[i] if owner[n] == i}
+        residual = relays[i] - own_i
+        if not own_i or not residual:
+            continue
+        for q in range(len(drawn)):
+            if q == i or drawn[q].priority < drawn[i].priority or relays[q] != residual:
+                continue
+            if not all(owner[n] == q for n in relays[q]):  # q must own (be the lane of) them
+                continue
+            # Columns already committed on q's lane (its own relays plus any earlier fold).
+            q_cols = {
+                col(n) for n, o in owner.items() if o == q and n not in (SRC_NODE, DST_NODE)
+            }
+            new_cols = {col(n) for n in own_i}
+            if len(new_cols) == len(own_i) and q_cols.isdisjoint(new_cols):
+                for n in own_i:
+                    owner[n] = q
+            break
 
 
 def _assign_lanes(

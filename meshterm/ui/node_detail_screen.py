@@ -74,12 +74,12 @@ _MAP_ROWS = 7
 #: Route-graph tuning for this page. It draws the contact on the left and us on the right
 #: (node → us, so the graph reads left to right as the inbound direction its packets
 #: travelled to reach us). A well-connected node offers several candidate paths at once, and
-#: cramming them into a short box compresses the lanes together — so this page gives each lane
-#: a generous step and row budget, letting each route spread into its own clearly separated
-#: track. The height is adaptive: it grows only with the number of distinct
-#: lanes, so a node with one or two routes still draws compact while a busy one earns the room
-#: it needs. The page scrolls (PgUp/PgDn), so a tall graph never crowds the action rows off.
-_PATH_LANE_STEP = 15
+#: cramming them into a short box compresses the lanes together — so this page keeps the shared
+#: lane pitch but grants a generous row budget, letting a busy node spread each route into its
+#: own clearly separated track instead of scaling the pitch down. The height is adaptive: it
+#: grows only with the number of distinct lanes, so a node with one or two routes still draws
+#: compact while a busy one earns the room it needs. The page scrolls (PgUp/PgDn), so a tall
+#: graph never crowds the action rows off.
 _PATH_MAX_ROWS = 22
 
 #: A drawn route is dropped as *stale* when its freshest-limiting link — the stalest hop it
@@ -287,7 +287,6 @@ class NodeDetailScreen(Screen):
             label_of=path.label_of,  # type: ignore[arg-type]
             label_rgb_of=path.label_rgb_of,  # type: ignore[arg-type]
             max_rows=_PATH_MAX_ROWS,
-            lane_step=_PATH_LANE_STEP,
         )
         caption = Text("node → you, as heard  ·  white = best route", style="faint")
         lines.extend(render_lines(caption, width, no_wrap=True))

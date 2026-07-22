@@ -12,6 +12,8 @@ from meshterm.ui.pathgraph import (
     PathLayer,
     _balanced_x,
     _coalesce_prefixes,
+    _collapse,
+    _fold_detours,
     _route,
     render_path_graph,
 )
@@ -133,6 +135,49 @@ def test_a_shared_relay_draws_a_single_marker() -> None:
     assert plain.count("aa") == 1 and plain.count("cc") == 1
 
 
+def _marker_rows(lines, glyph):  # noqa: ANN001, ANN202
+    """The distinct canvas row indices a marker glyph is drawn on (endpoints ``★``, relays ``●``)."""
+    return sorted({i for i, ln in enumerate(_ANSI.sub("", "\n".join(lines)).splitlines()) if glyph in ln})
+
+
+def test_even_lane_count_centres_the_endpoints() -> None:
+    """With an even number of lanes the origin and destination sit exactly midway between them.
+
+    Two disjoint one-relay routes make two lanes — an upper and a lower. The endpoints ride
+    neither: an extra padding row is opened between the two central lanes so they land on the
+    exact centred row, rather than pinned to the upper lane (where the best path's discrete lane
+    would put it) or snapped a row off centre.
+    """
+    layers = [
+        PathLayer(("aa",), WHITE, 4),  # best -> upper lane
+        PathLayer(("bb",), GREY, 2),   # -> lower lane
+    ]
+    lines = _render(layers, label_of=lambda _n: None)  # markers only — no label rows to muddy
+    (star,) = _marker_rows(lines, "★")  # both endpoints share the one centre row
+    top, bottom = _marker_rows(lines, "●")  # the two relays sit on their own lanes
+    assert top < star < bottom  # centred between the lanes, not pinned to either
+    assert star - top == bottom - star  # exact integer centring, thanks to the extra pad row
+
+
+def test_odd_lane_count_seats_endpoints_on_the_straight_middle_lane() -> None:
+    """An odd lane count gives the endpoints a real middle lane to ride — spine dead straight.
+
+    Three disjoint one-relay routes make three evenly spaced lanes; the best path's relay owns
+    the centre lane. The origin and destination share that centre row (no bend, no extra pad
+    row), sitting midway between the two outer lanes.
+    """
+    layers = [
+        PathLayer(("mm",), WHITE, 4),  # best -> centre lane
+        PathLayer(("aa",), GREY, 2),   # -> a flanking lane
+        PathLayer(("bb",), GREY, 1),   # -> the other flanking lane
+    ]
+    lines = _render(layers, label_of=lambda _n: None)
+    (star,) = _marker_rows(lines, "★")
+    top, mid, bottom = _marker_rows(lines, "●")  # three relays, one per lane
+    assert star == mid  # endpoints ride the centre lane — same row as the best relay
+    assert mid - top == bottom - mid  # lanes evenly spaced: no extra gap on an odd count
+
+
 def test_every_label_shows_on_a_busy_graph() -> None:
     """Four distinct routes lay out as separated lanes — every relay label lands, none dropped."""
     names = {
@@ -148,6 +193,77 @@ def test_every_label_shows_on_a_busy_graph() -> None:
     plain = _ANSI.sub("", "\n".join(_render(layers, label_of=lambda n: names.get(n[:2]))))
     for name in names.values():
         assert name in plain, f"{name} was dropped from the graph"
+
+
+def _owner_after_fold(layers, width=72):  # noqa: ANN001
+    """Build the per-node owner map and run the detour fold, as ``render_path_graph`` does."""
+    drawn = _collapse(_coalesce_prefixes(layers))
+    seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    edges: set[tuple[str, str]] = set()
+    for seq in seqs:
+        for node in seq:
+            if node not in seen:
+                seen.add(node)
+                ordered.append(node)
+        edges.update(zip(seq, seq[1:]))
+    xfrac = _balanced_x(ordered, edges)
+    owner: dict[str, int] = {}
+    for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
+        for node in seqs[i]:
+            owner.setdefault(node, i)
+    _fold_detours(drawn, seqs, owner, xfrac, width)
+    lanes = sum(1 for i in range(len(drawn)) if any(owner[n] == i for n in seqs[i]))
+    return owner, lanes
+
+
+def test_detour_path_rides_its_siblings_lane_not_a_new_one() -> None:
+    """A route that is a sibling *plus* one inserted relay folds onto that sibling's lane.
+
+    ``cc`` inserts a relay before the ``bb`` its sibling also converges through. Given its own
+    lane on the far side of the best spine, it would drag that relay clear across the graph to
+    rejoin ``bb`` (the crossing). Folded, ``cc`` is re-owned to ``bb``'s lane — two lanes, no
+    crossing. This is the real YUL-Poly shape: CDN-FENDALL1 → UpperSalaberry.
+    """
+    layers = [
+        PathLayer(("xx",), WHITE, 3),          # best spine: SRC -> xx -> DST
+        PathLayer(("bb",), GREY, 2),           # sibling:    SRC -> bb -> DST
+        PathLayer(("cc", "bb"), GREY, 2),      # detour:     SRC -> cc -> bb -> DST
+    ]
+    owner, lanes = _owner_after_fold(layers)
+    assert owner["cc"] == owner["bb"]  # cc rides bb's lane rather than earning its own
+    assert lanes == 2
+
+
+def test_disjoint_routes_are_never_folded() -> None:
+    """Routes that share no convergence relay each keep their own lane — folding stays targeted."""
+    layers = [
+        PathLayer(("xx",), WHITE, 3),
+        PathLayer(("aa",), GREY, 2),
+        PathLayer(("bb",), GREY, 2),
+    ]
+    _owner, lanes = _owner_after_fold(layers)
+    assert lanes == 3
+
+
+def test_two_detours_sharing_a_column_do_not_overprint() -> None:
+    """Two siblings inserting a relay at the same column can't both fold onto the shared lane.
+
+    ``cc`` and ``dd`` each sit one hop off the origin feeding the same ``bb``, so they share a
+    column; folding both onto ``bb``'s lane would stack two markers in one cell. Exactly one
+    folds; the other keeps a lane of its own.
+    """
+    layers = [
+        PathLayer(("xx",), WHITE, 3),
+        PathLayer(("bb",), GREY, 2),
+        PathLayer(("cc", "bb"), GREY, 2),
+        PathLayer(("dd", "bb"), GREY, 1),
+    ]
+    owner, lanes = _owner_after_fold(layers)
+    folded = [n for n in ("cc", "dd") if owner[n] == owner["bb"]]
+    assert len(folded) == 1  # only one rides bb's lane; the other stays separate
+    assert lanes == 3
 
 
 def test_edge_pinned_relay_labels_are_not_dropped() -> None:
