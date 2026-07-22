@@ -15,14 +15,20 @@ now draws the fan as a **multilane highway**: a node always sits on a level plat
 lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
 the way a car drifts one lane over and then stays there. Concretely:
 
-* **lanes** — each distinct path owns one horizontal lane, the lanes a fixed pitch of text rows
-  apart; the highest-priority (drawn last, e.g. the selected or best-evidence) path takes the
-  centre lane and the alternatives lie above and below it. The two endpoints sit at the vertical
-  centre of the lane band, so the strongest route runs through them as the flow's spine — dead
-  straight when the lanes are odd (its own lane is the centre), easing gently when they are even,
-  where one extra padding row is opened between the two central lanes so the endpoints land on an
-  exact centred row between them. The lanes are ordered to seat routes that share relays near
-  each other, so a shared hop costs the shortest possible detour;
+* **lanes** — the highest-priority (drawn last, e.g. the selected or best-evidence) path runs
+  along the centre lane as the flow's straight spine, and the alternatives fan above and below
+  it, a fixed pitch of text rows apart. The routes are first ordered so ones that share relays
+  seat next to each other (a shared hop costs the shortest detour), then the lanes are *packed
+  by column*: rather than give every route a full-width lane of its own — which stacks the band
+  as tall as the route count even where the routes barely overlap — each node keeps its side of
+  the spine but slides to the innermost free row *in its own column*. So a column with a single
+  off-spine node claims just one flanking row however many routes cross the graph, and only a
+  column where routes genuinely stack pays for the deeper rows; a five-route fan through at most
+  two nodes per column draws three lanes deep, not five. The two endpoints sit at the vertical
+  centre of the packed band, so the spine runs through them — dead straight when the lanes are
+  odd (its own lane is the centre), easing gently when they are even, where one extra padding row
+  is opened between the two central lanes so the endpoints land on an exact centred row between
+  them;
 * **columns** (x) place each node by *balanced* rank — its distance from the origin over its
   distance-plus-remaining-distance to us — so a path's relays spread evenly between the two
   ends however long the other paths are, and a shared relay lands in one place;
@@ -328,16 +334,31 @@ def render_path_graph(
     _fold_detours(drawn, seqs, owner, xfrac, width)
     lane_of_path = _assign_lanes(drawn, seqs, owner, best)
 
-    # The endpoints sit at the vertical centre of the lane band, where the strongest route runs
-    # through them as the graph's spine; the alternatives fan above and below. For an odd lane
-    # count that centre *is* the best path's own lane, so the spine runs dead straight; for an
-    # even count it is the midpoint between the two central lanes (the best path takes the upper
-    # of the two), so the endpoints stay centred and a best path carrying relays of its own eases
-    # half a lane to reach them rather than seating the whole graph off-centre.
-    max_lane = max(lane_of_path.values())
+    # Compress the per-path lanes onto the fewest rows the picture actually needs. A lane per
+    # path stacks the whole graph as tall as it has routes, even where the routes barely overlap
+    # — five routes through at most two nodes per column drew five lanes deep. So each node is
+    # slid to the innermost free lane *in its own column*, keeping its side of the best spine:
+    # a column holding one off-spine node needs one off-spine row however many paths cross the
+    # graph, and only a column where several routes genuinely stack pays for the extra rows.
+    span = width * 2 - 2 * _GRAPH_PAD_DOTS
+
+    def col_of(node: str) -> int:
+        return (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1
+
+    signed = _compress_lanes(ordered_nodes, lane_of_path, owner, best, col_of)
+
+    # The endpoints sit at the vertical centre of the compressed lane band, where the strongest
+    # route runs through them as the graph's spine; the alternatives fan above and below. For an
+    # odd lane count that centre *is* the best path's own lane, so the spine runs dead straight;
+    # for an even count it is the midpoint between the two central lanes (the best path takes the
+    # upper of the two), so the endpoints stay centred and a best path carrying relays of its own
+    # eases half a lane to reach them rather than seating the whole graph off-centre.
+    low = min(signed.values(), default=0)
+    high = max(signed.values(), default=0)
+    max_lane = high - low
     centre_lane = max_lane / 2.0
     node_lane: dict[str, float] = {
-        node: (centre_lane if node in (SRC_NODE, DST_NODE) else float(lane_of_path[owner[node]]))
+        node: (centre_lane if node in (SRC_NODE, DST_NODE) else float(signed[node] - low))
         for node in ordered_nodes
     }
 
@@ -371,8 +392,6 @@ def render_path_graph(
         scale = min(1.0, avail / (lane_rows * 4)) if lane_rows else 0.0
 
     canvas = MapCanvas(width, rows)
-    dot_w = width * 2
-    span = dot_w - 2 * _GRAPH_PAD_DOTS
     band = lane_rows * 4 * scale
     # Centre the band, anchored on a cell-mid row so the (unscaled) integer lane rows land dead
     # on their cells — no per-lane snap drift that would nudge a centred endpoint off its middle.
@@ -684,6 +703,57 @@ def _barycentre_lanes(
         order.insert(centre_slot, best)
         lane = {p: float(k) for k, p in enumerate(order)}
     return {p: int(lane[p]) for p in order}
+
+
+def _compress_lanes(
+    ordered_nodes: list[str],
+    lane_of_path: dict[int, int],
+    owner: dict[str, int],
+    best: int,
+    col_of: Callable[[str], int],
+) -> dict[str, int]:
+    """Squeeze the per-path lanes onto the fewest rows, one node at a time within each column.
+
+    :func:`_assign_lanes` seats each path on a lane of its own, so the band is as tall as the
+    graph has routes — even where the routes only ever run one or two abreast. But a lane is a
+    whole-width row: two routes need distinct rows only in the *columns* where they both carry a
+    node, and endpoint-to-endpoint every route already shares the origin and us. So this pass
+    keeps each node's **side** of the best spine (above it, below it, or on it) but slides it to
+    the innermost free lane *in its own column*: a column with one node above the spine uses the
+    first row above however many routes fan past it, and only a column where several routes truly
+    stack claims the deeper rows. The best path's own nodes stay on the spine (offset ``0``), so
+    it still runs straight through the centre; the returned lanes are signed offsets from that
+    spine (``<0`` above, ``>0`` below), which the caller shifts to a ``0``-based band.
+
+    Returns ``{node: signed_lane}`` for every relay (endpoints are placed on the band centre by
+    the caller, not here). A node a column holds alone off the spine always lands on ``±1``, so
+    a sparse multi-route graph collapses to the three-lane spine-and-two-flanks it really is.
+    """
+    best_lane = lane_of_path[best]
+    # Signed distance of each relay's owning-path lane from the best spine: 0 on the spine,
+    # negative above it, positive below. The magnitude only orders the packing; the gaps close.
+    offset = {
+        node: lane_of_path[owner[node]] - best_lane
+        for node in ordered_nodes
+        if node not in (SRC_NODE, DST_NODE)
+    }
+    columns: dict[int, list[str]] = {}
+    for node in offset:
+        columns.setdefault(col_of(node), []).append(node)
+
+    signed: dict[str, int] = {}
+    for members in columns.values():
+        # Pack each side toward the spine, nearest-first, so the closest route keeps ±1.
+        above = sorted((n for n in members if offset[n] < 0), key=lambda n: -offset[n])
+        below = sorted((n for n in members if offset[n] > 0), key=lambda n: offset[n])
+        for n in members:
+            if offset[n] == 0:  # the best path itself — stays on the spine
+                signed[n] = 0
+        for depth, n in enumerate(above, start=1):
+            signed[n] = -depth
+        for depth, n in enumerate(below, start=1):
+            signed[n] = depth
+    return signed
 
 
 def _place_labels(

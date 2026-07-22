@@ -9,10 +9,13 @@ import pytest
 from meshterm.ui.pathgraph import (
     DST_NODE,
     SRC_NODE,
+    _GRAPH_PAD_DOTS,
     PathLayer,
+    _assign_lanes,
     _balanced_x,
     _coalesce_prefixes,
     _collapse,
+    _compress_lanes,
     _fold_detours,
     _route,
     render_path_graph,
@@ -218,6 +221,45 @@ def _owner_after_fold(layers, width=72):  # noqa: ANN001
     return owner, lanes
 
 
+def _packed_lanes(layers, width=60):  # noqa: ANN001
+    """Run the lane pipeline through compression, as ``render_path_graph`` does.
+
+    Returns ``(signed, columns, route_lanes)``: the packed signed lane per relay (``0`` on the
+    best spine, ``<0`` above, ``>0`` below), each relay's cell column, and how many lanes the
+    per-path assignment used *before* packing — so a test can assert the pack squeezed them.
+    """
+    drawn = _collapse(_coalesce_prefixes(layers))
+    seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    edges: set[tuple[str, str]] = set()
+    for seq in seqs:
+        for node in seq:
+            if node not in seen:
+                seen.add(node)
+                ordered.append(node)
+        edges.update(zip(seq, seq[1:]))
+    xfrac = _balanced_x(ordered, edges)
+    best = max(range(len(drawn)), key=lambda j: drawn[j].priority)
+    owner: dict[str, int] = {}
+    for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
+        for node in seqs[i]:
+            owner.setdefault(node, i)
+    _fold_detours(drawn, seqs, owner, xfrac, width)
+    lane_of_path = _assign_lanes(drawn, seqs, owner, best)
+    route_lanes = max(lane_of_path.values()) + 1
+    span = width * 2 - 2 * _GRAPH_PAD_DOTS
+    col_of = lambda node: (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1  # noqa: E731
+    signed = _compress_lanes(ordered, lane_of_path, owner, best, col_of)
+    columns = {node: col_of(node) for node in signed}
+    return signed, columns, route_lanes
+
+
+def _lane_count(signed) -> int:  # noqa: ANN001
+    """Number of distinct rows the packed lanes span (spine included)."""
+    return max(signed.values()) - min(signed.values()) + 1
+
+
 def test_detour_path_rides_its_siblings_lane_not_a_new_one() -> None:
     """A route that is a sibling *plus* one inserted relay folds onto that sibling's lane.
 
@@ -264,6 +306,51 @@ def test_two_detours_sharing_a_column_do_not_overprint() -> None:
     folded = [n for n in ("cc", "dd") if owner[n] == owner["bb"]]
     assert len(folded) == 1  # only one rides bb's lane; the other stays separate
     assert lanes == 3
+
+
+def test_routes_pack_onto_shared_flanks_when_their_columns_differ() -> None:
+    """Routes that diverge at different columns share a flank lane, so the band packs tight.
+
+    Four routes: a three-relay best spine, and three alternatives that each swap a *different*
+    one of the spine's relays (a different column). Given a full-width lane apiece they draw
+    four deep, yet at no column do more than two nodes coexist — so the pack squeezes them onto
+    the spine plus a single row above and below: three lanes, not four. This is the SUTTON-680M
+    shape (five routes, ≤2 nodes per column) drawn small.
+    """
+    layers = [
+        PathLayer(("aa", "bb", "cc"), WHITE, 4),  # spine
+        PathLayer(("xx", "bb", "cc"), GREY, 2),   # swaps the first relay  (col of aa)
+        PathLayer(("aa", "yy", "cc"), GREY, 2),   # swaps the middle relay (col of bb)
+        PathLayer(("aa", "bb", "zz"), GREY, 2),   # swaps the last relay   (col of cc)
+    ]
+    signed, columns, route_lanes = _packed_lanes(layers)
+    assert route_lanes == 4  # a lane per route before packing
+    assert _lane_count(signed) == 3  # packed down to spine + one flank each side
+    assert signed["aa"] == signed["bb"] == signed["cc"] == 0  # best rides the straight spine
+    assert all(signed[n] != 0 for n in ("xx", "yy", "zz"))  # alternatives leave the spine
+    # Two alternatives sharing a flank must sit in different columns (no overprint).
+    for lane in {signed["xx"], signed["yy"], signed["zz"]}:
+        on_lane = [n for n in ("xx", "yy", "zz") if signed[n] == lane]
+        assert len({columns[n] for n in on_lane}) == len(on_lane)
+
+
+def test_routes_stacking_in_one_column_keep_separate_lanes() -> None:
+    """The pack never collapses routes that genuinely coexist in a column onto one row.
+
+    Three alternatives all diverge through the *same* column off the origin, so three nodes
+    truly stack there. Packing can't squeeze that — the column needs a distinct row per node —
+    so the spine plus three stacked alternatives hold their own lanes; the floor is honest.
+    """
+    layers = [
+        PathLayer(("aa", "zz"), WHITE, 4),  # spine relay aa, then shared zz near us
+        PathLayer(("bb", "zz"), GREY, 3),   # bb shares aa's column
+        PathLayer(("cc", "zz"), GREY, 2),   # cc shares aa's column
+        PathLayer(("dd", "zz"), GREY, 1),   # dd shares aa's column
+    ]
+    signed, columns, _route_lanes = _packed_lanes(layers)
+    diverging = ("aa", "bb", "cc", "dd")
+    assert len({columns[n] for n in diverging}) == 1  # they all stack in one column
+    assert len({signed[n] for n in diverging}) == 4  # so each keeps a row of its own
 
 
 def test_edge_pinned_relay_labels_are_not_dropped() -> None:
