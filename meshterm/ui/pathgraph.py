@@ -82,11 +82,14 @@ _CELL_MID_DOT = 2
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
 
-#: A lane change spends this many dots of horizontal run per dot of vertical offset — the
-#: shift's aspect ratio. Above 1 the oblique lies flatter than 45°, drifting across the way a
-#: car eases between highway lanes rather than cutting; the level platforms on either side
-#: (where the node sits) take whatever span is left.
-_SHIFT_RATIO = 1.0
+#: The share of a lane change's horizontal column gap spent on the eased curve itself — the
+#: rest is split into the two level platforms that flank it, where the nodes sit. At ``1.0`` the
+#: whole gap curves (the platforms vanish and successive shifts run into one another); a smaller
+#: share lengthens the flat platforms and steepens the (now shorter) curve between them. Sizing
+#: the curve as a fraction of the gap — rather than by a fixed slope keyed off the vertical
+#: offset — keeps the platform-to-curve proportion constant however wide or narrow the columns
+#: fall.
+_CURVE_SPAN = 0.75
 
 #: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
 #: column gap still bends across a few dots rather than snapping over in one abrupt step.
@@ -391,10 +394,11 @@ def _route(
     *trapezium* — level out of the first marker, one smooth **shift** across the intervening
     lanes (a bezier lane change, level where it meets each platform; see :func:`_sbend`), then
     level into the second — so both nodes sit on a flat platform and there is no corner
-    anywhere, only the eased level→curve→level of the shift. The shift is sized by
-    :data:`_SHIFT_RATIO` (a gentle drift, not a 45° cut) and centred in the span, so the
-    platforms flank it evenly; when the column gap is too tight to hold both platforms and the
-    shift, the bend simply spans the whole gap. The endpoints, sitting on the centre lane,
+    anywhere, only the eased level→curve→level of the shift. The shift takes a fixed share
+    :data:`_CURVE_SPAN` of the column gap (a gentle drift, not a slope keyed off the drop) and
+    sits centred in it, so the platforms flank it evenly; when the gap is too tight to hold a
+    curve of even :data:`_MIN_SHIFT_DOTS`, the bend simply spans the whole gap. The endpoints,
+    sitting on the centre lane,
     make the origin's diverging peels and us's converging merges fall out of this one rule —
     no endpoint special case. The lone exception is ``bidir``: a pair walked both ways draws as
     a single straight segment between the markers (a near-vertical when the layout stacks
@@ -408,8 +412,7 @@ def _route(
     if yu == yv:
         return [(xu, yu), (xv, yv)]
     dx = xv - xu
-    dy = abs(yv - yu)
-    shift = min(dx, max(round(dy * _SHIFT_RATIO), _MIN_SHIFT_DOTS))
+    shift = min(dx, max(_MIN_SHIFT_DOTS, round(dx * _CURVE_SPAN)))
     stub = (dx - shift) // 2
     # Level stub, a bezier S across the shift (level tangents at both ends, so it eases out of
     # and back into the platforms with no corner), then the level stub into the far marker.
