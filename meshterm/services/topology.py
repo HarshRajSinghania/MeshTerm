@@ -622,19 +622,34 @@ class MeshTopology:
         return score, weakest_snr, samples
 
     def _best_routes(self, target: str, *, k: int) -> list[tuple[str, ...]]:
-        """Find up to ``k`` strong simple paths from us to ``target`` in the graph.
+        """Find up to ``k`` strong simple paths from us to ``target``, cheapest first.
 
-        A best-first search over path cost (each link contributes ``1/strength``, plus
-        the per-hop penalty), expanding the cheapest partial path until ``k`` complete
-        routes emerge. The graph is small (tens of nodes), so exhaustive-ish search is
-        fine; simple paths only, since revisiting a node is never useful.
+        Yen's k-shortest-loopless-paths over the evidence graph. Each link costs
+        ``1/strength + _HOP_PENALTY`` — a weak or roundabout way scores dearer — and the
+        routes come back ranked by total cost, cheapest first (the candidate set
+        :meth:`scenarios` then re-scores by weakest link). Simple (loopless) paths only,
+        since revisiting a node is never useful, and only routes within
+        :data:`_MAX_SCENARIO_HOPS` intermediate hops — a longer chain is more airtime and
+        more failure points than a trace should carry (and it is crossed twice).
+
+        Yen's builds on plain Dijkstra rather than enumerating simple paths with a
+        best-first frontier, because that frontier is pathological on a real mesh graph.
+        A well-heard core has cheap links everywhere, so a partial-path search *floods*
+        it — every wandering prefix through the core costs less than the one weak link a
+        distant target sits behind — exploring millions of dead-end prefixes before it
+        reaches the target (tens of seconds for a busy node). Yen's instead finds the
+        single shortest path, then derives each next-shortest by rerouting around one
+        edge of the previous one, so the work stays polynomial in the graph size however
+        dense the core: the same routes, in the same cost order (ties aside), in
+        milliseconds.
 
         Args:
             target: The destination's canonical id.
             k: Maximum number of routes to return.
 
         Returns:
-            The intermediate-hop tuples of the found routes, cheapest first.
+            The intermediate-hop tuples of the found routes (endpoints stripped),
+            cheapest total-cost first.
         """
         neighbors: dict[str, list[tuple[str, float]]] = {}
         for (a, b), link in self._links.items():
@@ -642,23 +657,83 @@ class MeshTopology:
             neighbors.setdefault(a, []).append((b, cost))
             neighbors.setdefault(b, []).append((a, cost))
 
-        found: list[tuple[str, ...]] = []
-        counter = 0  # heap tiebreaker so equal-cost paths never compare tuples of str
-        heap: list[tuple[float, int, tuple[str, ...]]] = [(0.0, counter, (self.self_id,))]
-        while heap and len(found) < k:
-            cost, _tie, path = heapq.heappop(heap)
-            tail = path[-1]
-            if tail == target:
-                found.append(path[1:-1])  # strip both endpoints: hops only
-                continue
-            if len(path) - 1 > _MAX_SCENARIO_HOPS:
-                continue
-            for node, edge_cost in neighbors.get(tail, ()):
-                if node in path:
+        def shortest(
+            source: str, banned_nodes: set[str], banned_edges: set[tuple[str, str]]
+        ) -> Optional[tuple[float, list[str]]]:
+            """Dijkstra ``source``→``target`` avoiding the banned nodes/edges, or ``None``."""
+            dist: dict[str, float] = {source: 0.0}
+            prev: dict[str, str] = {}
+            heap: list[tuple[float, str]] = [(0.0, source)]
+            done: set[str] = set()
+            while heap:
+                d, u = heapq.heappop(heap)
+                if u in done:
                     continue
+                done.add(u)
+                if u == target:
+                    break
+                for v, cost in neighbors.get(u, ()):
+                    if v in banned_nodes or (u, v) in banned_edges:
+                        continue
+                    nd = d + cost
+                    if nd < dist.get(v, math.inf):
+                        dist[v] = nd
+                        prev[v] = u
+                        heapq.heappush(heap, (nd, v))
+            if target not in dist:
+                return None
+            path = [target]
+            while path[-1] != source:
+                path.append(prev[path[-1]])
+            path.reverse()
+            return dist[target], path
+
+        def path_cost(path: list[str]) -> float:
+            total = 0.0
+            for a, b in zip(path, path[1:]):
+                total += min((c for v, c in neighbors.get(a, ()) if v == b), default=math.inf)
+            return total
+
+        first = shortest(self.self_id, set(), set())
+        if first is None or len(first[1]) - 2 > _MAX_SCENARIO_HOPS:
+            return []
+        accepted: list[list[str]] = [first[1]]
+        # Spur candidates, a min-heap by total cost (counter tiebreaker so equal-cost
+        # candidates never fall through to comparing the path lists themselves).
+        candidates: list[tuple[float, int, list[str]]] = []
+        seen: set[tuple[str, ...]] = {tuple(first[1])}
+        counter = 0
+        while len(accepted) < k:
+            prev_path = accepted[-1]
+            for i in range(len(prev_path) - 1):
+                spur = prev_path[i]
+                root = prev_path[: i + 1]
+                # Ban the next edge every accepted path with this same root took, so the
+                # spur is forced onto a genuinely different route out of the spur node...
+                banned_edges: set[tuple[str, str]] = set()
+                for p in accepted:
+                    if p[: i + 1] == root and len(p) > i + 1:
+                        banned_edges.add((p[i], p[i + 1]))
+                        banned_edges.add((p[i + 1], p[i]))
+                # ...and ban the root's interior nodes so the detour stays loopless.
+                banned_nodes = set(root[:-1])
+                spur_result = shortest(spur, banned_nodes, banned_edges)
+                if spur_result is None:
+                    continue
+                full = root[:-1] + spur_result[1]
+                if len(full) - 2 > _MAX_SCENARIO_HOPS:
+                    continue
+                key = tuple(full)
+                if key in seen:
+                    continue
+                seen.add(key)
                 counter += 1
-                heapq.heappush(heap, (cost + edge_cost, counter, (*path, node)))
-        return found
+                heapq.heappush(candidates, (path_cost(full), counter, full))
+            if not candidates:
+                break
+            _, _, best_path = heapq.heappop(candidates)
+            accepted.append(best_path)
+        return [tuple(path[1:-1]) for path in accepted]
 
 
 def build_topology(

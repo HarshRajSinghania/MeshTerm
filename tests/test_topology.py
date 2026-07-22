@@ -188,6 +188,59 @@ def test_suggested_is_none_without_an_observed_repeater_route() -> None:
     assert topo.suggested("f2c24f54551e") is None  # never reached at all
 
 
+def test_scenarios_return_disjoint_alternatives_cheapest_first() -> None:
+    """Two independent routes to a target both surface, ranked by evidence strength."""
+    # Two repeaters, each a separate one-hop route to Far. Hub's link is stronger.
+    walks = [
+        _traced(("3d", 12.0), ("f2", -3.0), ("3d", -3.0), (None, 12.0)) for _ in range(3)
+    ] + [
+        _traced(("27", 4.0), ("f2", -8.0), ("27", -8.0), (None, 4.0)) for _ in range(3)
+    ]
+    topo = _topo(trace_paths=walks)
+    observed = [
+        s for s in topo.scenarios("f2c24f54551e") if s.source == "observed" and s.hops
+    ]
+    assert [s.hops for s in observed[:2]] == [("3d63c6429436",), ("27d4396a2967",)]
+    assert observed[0].score > observed[1].score  # the stronger route ranks first
+
+
+def test_best_routes_stays_fast_on_a_densely_connected_core() -> None:
+    """A well-heard core must not stall route-finding — the pathology this search avoids.
+
+    A best-first walk over *partial* paths floods a dense core: every wandering prefix
+    through it is cheaper than the one weak link a distant target sits behind, so the
+    frontier explodes to millions of dead-end prefixes (tens of seconds for a busy node).
+    Yen's k-shortest search stays polynomial. Here a 20-node clique with the target hung
+    off a single weak link resolves in milliseconds (the old frontier took seconds), and
+    still finds the route out.
+    """
+    import time
+
+    now = utcnow()
+    core = [f"c0de{i:08x}" for i in range(20)]  # 20 distinct 12-hex core nodes
+    target = "fa11faceface"
+    links = []
+    us = US + "0" * 52
+    # Everyone in the core hears everyone (a full clique), and hears us — a maximally
+    # dense frontier for the search to get lost in.
+    for i, a in enumerate([us, *core]):
+        for b in [*core][i:]:
+            if a != b:
+                links.append(NeighbourLink(when=now, repeater=a, neighbour=b, snr=8.0))
+    # The target is reachable only across one weak link off the last core node.
+    links.append(NeighbourLink(when=now, repeater=core[-1], neighbour=target, snr=-12.0))
+
+    topo = _topo(neighbour_links=links)
+    started = time.perf_counter()
+    scenarios = topo.scenarios(target)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0  # milliseconds in practice; the old frontier took seconds+
+    observed = [s for s in scenarios if s.source == "observed" and s.hops]
+    assert observed  # the route through the core to the target was found
+    assert observed[0].hops[-1] == core[-1]  # it arrives via the one weak link
+
+
 def test_scenario_spec_ends_at_target_and_collapses_width() -> None:
     """Specs walk out to the target then mirror the hops back, at a uniform width."""
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
