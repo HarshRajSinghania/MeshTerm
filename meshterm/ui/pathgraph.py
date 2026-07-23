@@ -11,9 +11,9 @@ their own course, and **converge** back into us, sharing a relay wherever their 
 Earlier drawings tried a vertical *bus* the lanes tapped at right angles (a metro map you
 wander around, the bare 90° turns hiding that A flows to B), then oblique branches straight
 off each marker (which left every off-lane relay a pointed *peak* or *valley*). The widget
-now draws the fan as a **multilane highway**: a node always sits on a level platform in its
-lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
-the way a car drifts one lane over and then stays there. Concretely:
+now draws the fan as a **multilane highway**: a node sits level in its lane, and a route changes
+lane only *between* nodes, easing across on a single gentle shift the way a car drifts one lane
+over and then settles. Concretely:
 
 * **lanes** — the highest-*priority* path (the spine, e.g. the best-evidence route) holds the
   flow's centre, its relays in a straight run, and the alternatives fan above and below it a
@@ -36,14 +36,16 @@ the way a car drifts one lane over and then stays there. Concretely:
 * **columns** (x) place each node by *balanced* rank — its distance from the origin over its
   distance-plus-remaining-distance to us — so a path's relays spread evenly between the two
   ends however long the other paths are, and a shared relay lands in one place;
-* **platforms** — every node is entered and left along a level run in its own lane, so a
-  relay that sits off its neighbours' lane reads as a flat-topped *trapezium*, never a
-  pointed peak or valley. Between two nodes on different lanes the line stays level out of the
-  first, makes one oblique shift, and runs level into the second — the only corners are the
-  soft level→oblique bends of the shift, never a bare right angle in open canvas;
+* **level seating** — every node is entered and left on a *level tangent*, so a relay that sits
+  off its neighbours' lane reads as a gentle rise-and-settle, never a pointed peak or valley.
+  Between two nodes on different lanes the shift leaves the first level, drifts across, and
+  arrives level into the second — the only bends are the soft level→curve→level eases, never a
+  bare right angle in open canvas. The curve spans the whole gap rather than a centred stretch
+  flanked by flat platforms: a platform-to-curve corner draws a heavy braille *knee*, so the
+  stroke runs continuously node to node and stays an even, thin arc (see :data:`_CURVE_SPAN`);
 * **shared relays** draw as a single marker (a route re-using a hop is not a new node): the
   marker sits on its highest-priority path's lane, and a lower path that also rides it leans
-  off its lane to meet the platform and back — which reads as the alternative *branching
+  off its lane to meet the marker and back — which reads as the alternative *branching
   through the shared node*, exactly the story the evidence tells;
 * **diverge / converge** — the fan at each end is flow, not a switchboard: routes leave the
   origin overlapping on the centre line and peel off one by one to their lanes (the
@@ -97,32 +99,32 @@ _CELL_MID_DOT = 2
 #: Dot-space margin the endpoint markers keep from the canvas edges.
 _GRAPH_PAD_DOTS = 6
 
-#: The share of a lane change's horizontal column gap spent on the eased curve itself — the
-#: rest is split into the two level platforms that flank it, where the nodes sit. At ``1.0`` the
-#: whole gap curves (the platforms vanish and successive shifts run into one another); a smaller
-#: share lengthens the flat platforms and steepens the (now shorter) curve between them. Sizing
-#: the curve as a fraction of the gap — rather than by a fixed slope keyed off the vertical
-#: offset — keeps the platform-to-curve proportion constant however wide or narrow the columns
-#: fall. Kept generous so the curve has room to stay shallow: a braille cell is 2 dots wide by
-#: 4 tall, so a stroke steeper than one dot across per dot down must light two dots in a cell to
-#: stay joined and reads *thick* — giving the curve more horizontal run keeps its slope, and so
-#: its stroke, thin.
-_CURVE_SPAN = 0.9
+#: The share of a lane change's horizontal column gap spent on the eased curve itself — the rest
+#: would split into two flat platforms flanking it. Set to the whole gap: the curve runs
+#: continuously from one node to the next with *no* separate flat segment. A shorter curve leaves
+#: flat platforms but reintroduces a **corner** where a platform (slope 0) meets the climbing
+#: curve, and that corner piles a heavy braille *knee* (a cell filled 3–4 dots) that reads thick —
+#: the more so the shallower the curve's end tangent. Spanning the whole gap removes the corner,
+#: so the stroke stays an even, thin arc end to end; the nodes still seat level because the curve's
+#: end tangents are kept horizontal (see :data:`_BEND_K`), giving each marker a flat point to sit on
+#: without a platform run. (In a very tight column a full-lane shift is unavoidably steep right up to
+#: the node, so its marker sits on a gentle slope rather than dead level — the honest cost of keeping
+#: the stroke thin there.)
+_CURVE_SPAN = 1.0
 
 #: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
 #: column gap still bends across a few dots rather than snapping over in one abrupt step.
 _MIN_SHIFT_DOTS = 4
 
-#: How far (as a fraction of the shift's horizontal span) the bezier control points sit in
-#: from each end — both placed level with their own end, so the curve leaves and enters the
-#: platforms horizontally. Near ½ the S is at its roundest, but a round S is also its *thickest*:
-#: pinning both tangents flat concentrates the whole vertical change into a steep middle that
-#: lights two-plus dots per braille cell (a heavy knee), while the shallow ends stay thin — so
-#: one shift reads as thin at its ends and thick through its centre. A low value straightens the
-#: S toward a constant-slope diagonal (only its corners eased), spreading the drop evenly so the
-#: stroke is as thin as the geometry allows along its whole length; too low brings the corners
-#: back as visible kinks. Tuned low for an even, thin stroke that still eases off the platforms.
-_BEND_K = 0.2
+#: How far (as a fraction of the shift's horizontal span) the bezier control points sit in from
+#: each end — both placed level with their own end, so the curve leaves and enters each node
+#: horizontally. This flat end tangent is what seats a node level now that the curve spans the
+#: whole gap (:data:`_CURVE_SPAN`) with no separate platform. It trades against thinness: a higher
+#: value holds the tangent flatter for longer (a better-seated node) but steepens the curve's
+#: middle to compensate (a thicker centre), while a lower value spreads the drop more evenly
+#: (thinner) but tilts the node's tangent (a marker on a slope). Tuned to the balance that keeps
+#: the marker's seating close to level while the stroke stays an even, thin arc between nodes.
+_BEND_K = 0.4
 
 #: Dots left of our marker the flow arrow sits — one cell, so it embeds in the trunk as ``▶★``
 #: and marks the node → us direction without crowding the endpoint.
@@ -510,19 +512,18 @@ def _route(
 ) -> list[tuple[float, float]]:
     """The point chain for one edge (dot coordinates), drawn as multilane-highway flow.
 
-    Two nodes on the same lane join with a level run; two on different lanes join with a
-    *trapezium* — level out of the first marker, one smooth **shift** across the intervening
-    lanes (a bezier lane change, level where it meets each platform; see :func:`_sbend`), then
-    level into the second — so both nodes sit on a flat platform and there is no corner
-    anywhere, only the eased level→curve→level of the shift. The shift takes a fixed share
-    :data:`_CURVE_SPAN` of the column gap (a gentle drift, not a slope keyed off the drop) and
-    sits centred in it, so the platforms flank it evenly; when the gap is too tight to hold a
-    curve of even :data:`_MIN_SHIFT_DOTS`, the bend simply spans the whole gap. The endpoints,
-    sitting at the centre of the lane band,
-    make the origin's diverging peels and us's converging merges fall out of this one rule —
-    no endpoint special case. The lone exception is ``bidir``: a pair walked both ways draws as
-    a single straight segment between the markers (a near-vertical when the layout stacks
-    them), the one place an up-and-down line is the honest picture.
+    Two nodes on the same lane join with a level run; two on different lanes join with one smooth
+    **shift** — a bezier S that leaves the first marker level, drifts across the intervening lanes,
+    and settles level into the second (see :func:`_sbend`), so there is no corner anywhere, only
+    the eased level→curve→level of the shift. The shift spans the whole column gap
+    (:data:`_CURVE_SPAN`) rather than a centred stretch flanked by flat platforms: a platform would
+    meet the climbing curve at a corner, and that corner draws a heavy braille *knee*, so the curve
+    runs continuously node to node instead and the marker seats on the curve's own level end tangent.
+    The endpoints, sitting at the centre of the lane band, make the origin's diverging peels and
+    us's converging merges fall out of this one rule — no endpoint special case. The lone exception
+    is ``bidir``: a pair walked both ways draws as a single straight segment between the markers (a
+    near-vertical when the layout stacks them), the one place an up-and-down line is the honest
+    picture.
     """
     (xu, yu), (xv, yv) = pos[u], pos[v]
     if bidir:
@@ -534,8 +535,8 @@ def _route(
     dx = xv - xu
     shift = min(dx, max(_MIN_SHIFT_DOTS, round(dx * _CURVE_SPAN)))
     stub = (dx - shift) // 2
-    # Level stub, a bezier S across the shift (level tangents at both ends, so it eases out of
-    # and back into the platforms with no corner), then the level stub into the far marker.
+    # A bezier S across the whole gap (level tangents at both ends, so it eases out of and back
+    # into each marker with no corner — and no platform corner to pile a heavy knee).
     return [(xu, yu), *_sbend(xu + stub, yu, xv - stub, yv), (xv, yv)]
 
 
