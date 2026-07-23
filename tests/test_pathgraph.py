@@ -90,6 +90,22 @@ def test_emphasis_moves_the_highlight_not_the_layout() -> None:
     assert lit_spine != lit_alt
 
 
+def test_bidir_clusters_finds_knots_not_pairs() -> None:
+    """Three-plus mutually-bidirectional nodes are a cluster to contract; a tidy two-way pair
+    (and any lone node) is not."""
+    from meshterm.ui.pathgraph import bidir_clusters
+
+    # A single two-way pair draws fine on its own — not a cluster.
+    pair = [(SRC_NODE, "aa", "bb", DST_NODE), (SRC_NODE, "bb", "aa", DST_NODE)]
+    assert bidir_clusters(pair) == []
+    # aa<->bb and bb<->cc both ways make {aa, bb, cc} one strongly-connected knot.
+    knot = [(SRC_NODE, "aa", "bb", "cc", DST_NODE), (SRC_NODE, "cc", "bb", "aa", DST_NODE)]
+    groups = bidir_clusters(knot)
+    assert len(groups) == 1 and set(groups[0]) == {"aa", "bb", "cc"}
+    # Endpoints are never cluster members.
+    assert SRC_NODE not in groups[0] and DST_NODE not in groups[0]
+
+
 def test_emphasis_wins_a_shared_edge_over_a_higher_priority_spine() -> None:
     """A highlighted alternative paints its whole run — even the edge it shares with the spine —
     rather than dropping out where the higher-priority spine would otherwise own the colour."""

@@ -196,10 +196,14 @@ def _mid_row(y_dot: float) -> int:
 
 
 def _collapse(layers: Sequence[PathLayer]) -> list[PathLayer]:
-    """Fold layers with identical hop sequences onto their highest-priority instance.
+    """Fold layers with identical hop sequences onto one drawn path.
 
-    Re-walking a known route highlights it rather than doubling it: the first appearance
-    fixes draw order, the strongest priority (and its colour) wins the shared path.
+    Re-walking a known route highlights it rather than doubling it. Geometry keeps the
+    strongest ``priority`` of the folded copies (so a shared route seats where its best
+    instance would), while the highlight — the drawn colour and its on-top order — follows the
+    most-*emphasised* copy, and the emphasis carries across. So two routes that only differ in
+    a cluster-internal order the caller has contracted away land on one line, and selecting
+    either lights it, even when a higher-priority copy owns the layout.
     """
     drawn: list[PathLayer] = []
     by_hops: dict[tuple[str, ...], int] = {}
@@ -208,10 +212,14 @@ def _collapse(layers: Sequence[PathLayer]) -> list[PathLayer]:
         if at is None:
             by_hops[layer.hops] = len(drawn)
             drawn.append(layer)
-        elif layer.priority > drawn[at].priority:
+        else:
+            cur = drawn[at]
+            top = layer if _draw_rank(layer) > _draw_rank(cur) else cur
             drawn[at] = PathLayer(
-                layer.hops, layer.color, layer.priority,
-                max(layer.emphasis, drawn[at].emphasis),
+                cur.hops,
+                top.color,
+                max(layer.priority, cur.priority),
+                max(layer.emphasis, cur.emphasis),
             )
     return drawn
 
@@ -608,6 +616,31 @@ def _merge_bidir_pairs(
             if ru != rv:
                 parent[ru] = rv
     return {node: find(node) for node in ordered_nodes}
+
+
+def bidir_clusters(sequences: Sequence[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """The groups of three or more nodes that form a bidirectional cluster (a flow SCC).
+
+    Two nodes walked in both directions are a 2-cycle the graph draws as one tidy vertical
+    pair — fine on its own. Three or more mutually linked that way are a strongly-connected
+    knot the left-to-right flow cannot order: :func:`_merge_bidir_pairs` collapses them all
+    onto one column, where their markers and labels pile up illegibly. A caller can pass its
+    path sequences (endpoints included) here to find those knots and contract each to a single
+    super-node *before* drawing, so the cluster reads as one marker rather than a jam — the one
+    honest way to seat a cycle in a DAG layout.
+
+    Returns each cluster's member ids in first-appearance order (endpoints excluded); a lone
+    node or the tidy two-node pair is not a cluster and is not returned.
+    """
+    edges = {pair for seq in sequences for pair in zip(seq, seq[1:])}
+    ordered = list(dict.fromkeys(node for seq in sequences for node in seq))
+    rep = _merge_bidir_pairs(ordered, edges)
+    groups: dict[str, list[str]] = {}
+    for node in ordered:
+        if node in (SRC_NODE, DST_NODE):
+            continue
+        groups.setdefault(rep[node], []).append(node)
+    return [tuple(members) for members in groups.values() if len(members) >= 3]
 
 
 def _longest_paths(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[str, int]:

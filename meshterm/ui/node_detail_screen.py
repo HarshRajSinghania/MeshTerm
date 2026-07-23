@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -53,6 +53,7 @@ from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
+from .mapcanvas import RGB, parse_hex
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -61,6 +62,7 @@ from .pathgraph import (
     LabelOf,
     LabelRgbOf,
     PathLayer,
+    bidir_clusters,
     render_path_graph,
 )
 from .theme import name_style, snr_style
@@ -123,6 +125,11 @@ _LABEL_LANE = 9
 _WHITE = (255, 255, 255)
 _GREY = (120, 120, 120)
 
+#: The synthetic node-id prefix a contracted bidirectional cluster draws under. A ``\x00``
+#: lead keeps it non-hex (so the graph never tries to coalesce it against a hash) and clear of
+#: any real hop, mirroring the graph's own endpoint sentinels.
+_CLUSTER_NODE = "\x00clu"
+
 
 @dataclass(slots=True)
 class _Action:
@@ -160,6 +167,30 @@ class _Route:
     draw: tuple[str, ...]
     spec: str
     row: Text
+
+
+@dataclass(slots=True)
+class _Cluster:
+    """A contracted bidirectional cluster's stand-in marker on the graph.
+
+    Three or more repeaters that relay each other in every order are a knot the left-to-right
+    flow can't seat (see :func:`~meshterm.ui.pathgraph.bidir_clusters`); they draw as one
+    super-node instead, and this is how it presents. The route rows below the graph still name
+    every member in order, so the detail the marker folds away is one glance down.
+
+    Attributes:
+        glyph: The marker glyph — the members' shared node-type mark when they agree
+            (``▲`` repeater, ``■`` room, …), else the plain node dot.
+        color: The marker glyph's ``#rrggbb`` colour (the node-type hue, or the plain dot's).
+        label: The count-and-type label, e.g. ``3 repeaters`` (``n nodes`` when mixed).
+        rgb: The label colour — the same type hue as the marker, so the super-node reads as a
+            typed group rather than a named node.
+    """
+
+    glyph: str
+    color: str
+    label: str
+    rgb: tuple[int, int, int]
 
 
 @dataclass(slots=True)
@@ -879,6 +910,63 @@ def _route_line(
     return text
 
 
+def _cluster_presentation(members: tuple[str, ...], type_of) -> _Cluster:  # noqa: ANN001
+    """The marker + label a contracted bidirectional cluster draws under.
+
+    A homogeneous cluster (every member the same node type) wears that type's map marker and
+    hue — ``3 repeaters`` under a ``▲`` — so it reads as a group of that kind at a glance; a
+    mixed one falls back to the plain node dot and ``n nodes``.
+    """
+    types = {type_of(m) for m in members}
+    only = next(iter(types)) if len(types) == 1 else None
+    if only is not None:
+        glyph, color = _NODE_GLYPHS.get(only, _DEFAULT_GLYPH)
+        kind = NODE_TYPE_LABELS.get(only, "node")
+    else:
+        glyph, color = _DEFAULT_GLYPH
+        kind = "node"
+    return _Cluster(glyph=glyph, color=color, label=f"{len(members)} {kind}s", rgb=parse_hex(color))
+
+
+def _contract_bidir_clusters(
+    routes: list[_Route], type_of
+) -> tuple[list[_Route], dict[str, _Cluster]]:  # noqa: ANN001
+    """Fold each 3+ bidirectional cluster in the routes' draw sequences to one super-node.
+
+    A dense knot of mutually-relaying repeaters is a strongly-connected component the flow
+    graph can't order (see :func:`~meshterm.ui.pathgraph.bidir_clusters`); left as-is every
+    member collapses onto one jammed column. So each such cluster is contracted to a single
+    synthetic node: every route's ``draw`` has its members rewritten to the one cluster id
+    (consecutive members merged), and the returned map gives each cluster its marker and label.
+
+    Only ``draw`` — the graph geometry — changes. Each route's spelled-out ``row`` and its
+    trace ``spec`` keep every member named in order, so the list under the graph still carries
+    the exact ordering the single marker can't, and a trace still arms on the real path.
+
+    Returns ``(routes, clusters)`` unchanged (and an empty map) when there is no such knot.
+    """
+    groups = bidir_clusters([(SRC_NODE, *route.draw, DST_NODE) for route in routes])
+    if not groups:
+        return routes, {}
+    member_of: dict[str, str] = {}
+    clusters: dict[str, _Cluster] = {}
+    for i, members in enumerate(groups):
+        cid = f"{_CLUSTER_NODE}{i}"
+        clusters[cid] = _cluster_presentation(members, type_of)
+        for member in members:
+            member_of[member] = cid
+    contracted: list[_Route] = []
+    for route in routes:
+        draw: list[str] = []
+        for hop in route.draw:
+            cid = member_of.get(hop, hop)
+            if draw and draw[-1] == cid:
+                continue  # a run of members through the same cluster is one stop
+            draw.append(cid)
+        contracted.append(replace(route, draw=tuple(draw)))
+    return contracted, clusters
+
+
 def _trace_label(routes: Optional["_RoutesView"]) -> str:
     """The Trace action's row label — armed on the selected route, or auto with none drawn."""
     if routes is not None and routes.routes:
@@ -979,6 +1067,14 @@ def _routes_view(
         )
         routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, row=row))
 
+    # The legend explains the typed relay marks, so it is decided on the members' real types —
+    # before contraction folds a dense cluster's members behind one synthetic id.
+    legend = any(type_of(h) is not None for route in routes for h in route.draw)
+    # Fold any 3+ bidirectional cluster (a knot the flow can't order) to one super-node, so it
+    # draws as a single marker rather than piling its members onto one column. Each route's row
+    # and spec keep the members named in order — only the drawn geometry contracts.
+    routes, clusters = _contract_bidir_clusters(routes, type_of)
+
     glyph_of, byte_label_of, label_rgb_of = style(
         resolve=resolve, self_name=self_name, source=node_label, type_of=type_of, key_of=key_of
     )
@@ -987,26 +1083,42 @@ def _routes_view(
     # graph tags a relay with only its first hash byte, here each relay wears its resolved
     # contact name (its colour is already the name's hue), so the whole route reads as places
     # rather than hex; an unidentified relay keeps the byte, the honest most it can be called.
-    # The two endpoints keep route_graph_style's names (target on the left, us on the right).
+    # A contracted cluster wears its own count-and-type label. The two endpoints keep
+    # route_graph_style's names (target on the left, us on the right).
     def label_of(node: str) -> Optional[str]:
+        cluster = clusters.get(node)
+        if cluster is not None:
+            return cluster.label
         if node in (SRC_NODE, DST_NODE):
             return byte_label_of(node)
         named = resolve(node)
         return named if named and named != node else node[:2]
 
+    base_rgb_of = label_rgb_of
+
+    def cluster_label_rgb_of(node: str) -> RGB:
+        cluster = clusters.get(node)
+        return cluster.rgb if cluster is not None else base_rgb_of(node)
+
     # The target wears its own map glyph (▲ repeater, ■ room, ◉ sensor) — the same mark the
     # header and the map give it. route_graph_style draws the far (left) endpoint as a plain
     # dot, since on its home screen (Message paths) that end is an arbitrary message origin;
-    # here it is a known contact whose type we can show.
+    # here it is a known contact whose type we can show. A contracted cluster draws its own
+    # type mark; everything else keeps the style's glyph.
+    base_glyph_of = glyph_of
+
+    def cluster_glyph_of(node: str) -> tuple[str, str]:
+        cluster = clusters.get(node)
+        return (cluster.glyph, cluster.color) if cluster is not None else base_glyph_of(node)
+
     glyph_of = _with_target_glyph(
-        glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
+        cluster_glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
     )
-    legend = any(type_of(h) is not None for route in routes for h in route.draw)
     return _RoutesView(
         routes=routes,
         glyph_of=glyph_of,
         label_of=label_of,
-        label_rgb_of=label_rgb_of,
+        label_rgb_of=cluster_label_rgb_of,
         legend=legend,
     )
 

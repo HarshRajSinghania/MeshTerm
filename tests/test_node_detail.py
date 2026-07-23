@@ -333,6 +333,50 @@ def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
     assert _route_is_fresh(stale, ("3d63c6429436",), "f2c24f54551e", now) is False
 
 
+def test_contract_bidir_clusters_folds_a_knot_but_keeps_the_rows() -> None:
+    """A 3+ bidirectional knot contracts to one super-node in the graph draw, while each route
+    row and its trace spec keep every member named in order."""
+    from meshterm.ui.node_detail_screen import _contract_bidir_clusters
+
+    routes = [
+        _Route(draw=("aa", "bb", "cc"), spec="s1", row=Text("A B C")),
+        _Route(draw=("cc", "bb", "aa"), spec="s2", row=Text("C B A")),
+    ]
+    new, clusters = _contract_bidir_clusters(routes, lambda _n: 2)  # all repeaters
+    (cid, cluster), = clusters.items()
+    assert cluster.label == "3 repeaters" and cluster.glyph == "▲"
+    assert [r.draw for r in new] == [(cid,), (cid,)]  # members folded to the one cluster stop
+    assert [r.spec for r in new] == ["s1", "s2"]  # traces still arm on the real path
+    assert [r.row.plain for r in new] == ["A B C", "C B A"]  # the list keeps the full order
+
+
+def test_contract_leaves_a_two_node_pair_and_unclustered_routes_alone() -> None:
+    """A tidy two-way pair keeps its own markers (the display JP likes); nothing contracts."""
+    from meshterm.ui.node_detail_screen import _contract_bidir_clusters
+
+    routes = [
+        _Route(draw=("aa", "bb"), spec="s1", row=Text("A B")),
+        _Route(draw=("bb", "aa"), spec="s2", row=Text("B A")),
+    ]
+    new, clusters = _contract_bidir_clusters(routes, lambda _n: 2)
+    assert clusters == {}
+    assert [r.draw for r in new] == [("aa", "bb"), ("bb", "aa")]
+
+
+def test_contract_labels_a_mixed_cluster_generically() -> None:
+    """A knot whose members are different node types can't wear one type mark — it reads
+    ``n nodes`` under the plain dot."""
+    from meshterm.ui.node_detail_screen import _contract_bidir_clusters
+
+    routes = [
+        _Route(draw=("aa", "bb", "cc"), spec="", row=Text("")),
+        _Route(draw=("cc", "bb", "aa"), spec="", row=Text("")),
+    ]
+    _new, clusters = _contract_bidir_clusters(routes, lambda n: {"aa": 2, "bb": 3, "cc": 4}[n[:2]])
+    (_cid, cluster), = clusters.items()
+    assert cluster.label == "3 nodes" and cluster.glyph == "●"
+
+
 def test_located_accepts_real_fixes_and_rejects_junk() -> None:
     """The location preview is gated on a real fix — no null island, no out-of-range advert."""
     from meshterm.ui.node_detail_screen import _located
