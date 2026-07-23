@@ -458,8 +458,16 @@ class NodeDetailScreen(Screen):
         if not rv.routes or rv.glyph_of is None:
             return render_lines(Text(rv.note or "no route observed yet", style="muted"), width)
         sel = self._route_sel if 0 <= self._route_sel < len(rv.routes) else 0
+        # Priority is fixed by evidence order (route 0, the best-evidence route, is always the
+        # spine) so the fan's geometry never moves as the selection changes — only emphasis
+        # (which route is drawn white and on top) and the label muting below follow the pick.
         layers = [
-            PathLayer(hops=route.draw, color=_WHITE if i == sel else _GREY, priority=3 if i == sel else 2)
+            PathLayer(
+                hops=route.draw,
+                color=_WHITE if i == sel else _GREY,
+                priority=len(rv.routes) - i,
+                emphasis=1 if i == sel else 0,
+            )
             for i, route in enumerate(rv.routes)
         ]
         # A node keeps its name hue only while it sits on the selected route (its endpoints

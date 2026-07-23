@@ -69,6 +69,41 @@ def test_identical_paths_collapse_to_the_top_layer() -> None:
     assert _sgr(YELLOW) not in joined
 
 
+def test_emphasis_moves_the_highlight_not_the_layout() -> None:
+    """Emphasis re-colours the drawn fan on top of a fixed geometry: the same layout, painted
+    in different colours, so a caller can light a different route without it reflowing."""
+    # A two-route fan whose spine (priority) is pinned to route 0. Only emphasis differs
+    # between the two renders — were emphasis to drive geometry (as raising priority would),
+    # route 1 becoming the highlight would seize the centre lane and shuffle the markers.
+    def fan(emph: int):
+        return [
+            PathLayer(("aa",), WHITE if emph == 0 else GREY, 2, emphasis=1 if emph == 0 else 0),
+            PathLayer(("bb",), WHITE if emph == 1 else GREY, 1, emphasis=1 if emph == 1 else 0),
+        ]
+
+    lit_spine = _render(fan(0))
+    lit_alt = _render(fan(1))
+    # Geometry is identical — strip the colour and the two frames are the same picture.
+    assert _ANSI.sub("", "\n".join(lit_spine)) == _ANSI.sub("", "\n".join(lit_alt))
+    # But the colouring moved: each frame still lights one route white, and the frames differ.
+    assert _sgr(WHITE) in "\n".join(lit_spine) and _sgr(WHITE) in "\n".join(lit_alt)
+    assert lit_spine != lit_alt
+
+
+def test_emphasis_wins_a_shared_edge_over_a_higher_priority_spine() -> None:
+    """A highlighted alternative paints its whole run — even the edge it shares with the spine —
+    rather than dropping out where the higher-priority spine would otherwise own the colour."""
+    # Both routes leave SRC through the same first relay (aa), so they share the SRC–aa edge;
+    # the spine (priority 2, grey) would win that shared edge by priority, but the emphasised
+    # alternative (priority 1, white) must win it by draw rank so its highlight stays unbroken.
+    layers = [
+        PathLayer(("aa", "bb"), GREY, 2),
+        PathLayer(("aa", "cc"), WHITE, 1, emphasis=1),
+    ]
+    joined = "\n".join(_render(layers))
+    assert _sgr(WHITE) in joined  # the emphasised route drew, shared edge and all
+
+
 def test_distinct_layers_draw_in_their_own_colours() -> None:
     """Three different routes keep three edge colours on one canvas."""
     layers = [

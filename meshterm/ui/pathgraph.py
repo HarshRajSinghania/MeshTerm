@@ -15,9 +15,12 @@ now draws the fan as a **multilane highway**: a node always sits on a level plat
 lane, and a route changes lane only *between* nodes, easing across on a single gentle shift
 the way a car drifts one lane over and then stays there. Concretely:
 
-* **lanes** — the highest-priority (drawn last, e.g. the selected or best-evidence) path holds
-  the flow's spine, its relays in a straight run, and the alternatives fan above and below it a
-  fixed pitch of text rows apart. Rather than give every route a full-width lane of its own —
+* **lanes** — the highest-*priority* path (the spine, e.g. the best-evidence route) holds the
+  flow's centre, its relays in a straight run, and the alternatives fan above and below it a
+  fixed pitch of text rows apart. Priority fixes the geometry; a separate *emphasis* rank picks
+  which route is drawn highlighted (on top, winning any shared cell) without moving a marker, so
+  a caller can light a different route without the picture reflowing. Rather than give every
+  route a full-width lane of its own —
   which stacks the band as tall as the route count even where the routes barely overlap — the
   lanes are *packed by column*: the spine keeps its own relays, and each other node slides to the
   innermost free row above or below the spine *in its own column*, so a column with one off-spine
@@ -130,10 +133,18 @@ _ORDER_SWEEPS = 8
 #: keep the side the jog order handed them. The widget's real inputs sit far under this.
 _MAX_BALANCE_ROUTES = 16
 
-#: The glyph used for the flow arrow embedded in the trunk just before us, 
+#: The glyph used for the flow arrow embedded in the trunk just before us,
 #: so the whole flow reads better as a directed run node → us (not a map you wander).
-#_ARROW_GLYPH = "▶"  
-_ARROW_GLYPH = ""  
+#_ARROW_GLYPH = "▶"
+_ARROW_GLYPH = ""
+
+#: How far a layer's emphasis outranks its layout priority when edges compete for a cell.
+#: Emphasis is the draw-time highlight — the selected path drawn on top and winning any shared
+#: cell — and must beat any spread of priority values, so it is scaled well past the small
+#: priorities the widget ever sees. Layout geometry ignores emphasis entirely; only the colour
+#: and z-order of the drawn edges follow it (see :func:`_draw_rank`), so re-emphasising a
+#: different path repaints the same picture in new colours rather than relaying it.
+_EMPHASIS_BOOST = 1_000_000
 
 
 #: A node's graph marker: the glyph and its ``#rrggbb`` colour (the shared node-glyph
@@ -155,14 +166,22 @@ class PathLayer:
         hops: The relay node ids between the endpoints, in walk order (empty = the
             path runs endpoint to endpoint straight across).
         color: The edge colour the path draws in.
-        priority: Draw priority — where paths share a cell, the highest priority
-            keeps it (its edges are also drawn last), and the highest-priority path
-            takes the straight centre lane.
+        priority: **Layout** rank — which path is the spine. The highest-priority path takes
+            the straight centre lane and owns any relay it shares (weaker paths jog to meet it),
+            so it fixes every node's column and lane. Geometry depends on this alone, never on
+            :attr:`emphasis`: a caller that wants the drawn picture to hold still while it
+            re-highlights keeps each path's priority constant.
+        emphasis: **Draw** rank — the highlight, layered over the fixed geometry. Where edges
+            share a cell (or cross), the higher-emphasis path wins the colour and draws on top;
+            it moves no marker. Defaults to ``0`` (all paths equal, so the colour falls to
+            :attr:`priority` as before). A caller that highlights by selection varies *this*,
+            not priority, so the layout stays put and only the colours change.
     """
 
     hops: tuple[str, ...]
     color: RGB
     priority: int
+    emphasis: int = 0
 
 
 def _mid_row(y_dot: float) -> int:
@@ -190,7 +209,10 @@ def _collapse(layers: Sequence[PathLayer]) -> list[PathLayer]:
             by_hops[layer.hops] = len(drawn)
             drawn.append(layer)
         elif layer.priority > drawn[at].priority:
-            drawn[at] = PathLayer(layer.hops, layer.color, layer.priority)
+            drawn[at] = PathLayer(
+                layer.hops, layer.color, layer.priority,
+                max(layer.emphasis, drawn[at].emphasis),
+            )
     return drawn
 
 
@@ -233,7 +255,10 @@ def _coalesce_prefixes(layers: Sequence[PathLayer]) -> list[PathLayer]:
         return hop
 
     return [
-        PathLayer(tuple(resolved(hop) for hop in layer.hops), layer.color, layer.priority)
+        PathLayer(
+            tuple(resolved(hop) for hop in layer.hops),
+            layer.color, layer.priority, layer.emphasis,
+        )
         for layer in layers
     ]
 
@@ -267,6 +292,17 @@ def _is_hex(value: str) -> bool:
     return bool(value) and all(char in _HEX_DIGITS for char in value)
 
 
+def _draw_rank(layer: PathLayer) -> int:
+    """A layer's edge draw rank: emphasis dominates, layout priority breaks ties.
+
+    Governs only which colour wins a shared cell and which edge draws on top — never node
+    placement (that is :attr:`PathLayer.priority` alone). So a caller can re-emphasise a
+    different path (bump its :attr:`~PathLayer.emphasis`) and the graph repaints in new colours
+    over the very same layout, rather than reflowing because the spine changed.
+    """
+    return layer.priority + layer.emphasis * _EMPHASIS_BOOST
+
+
 def render_path_graph(
     layers: Sequence[PathLayer],
     width: int,
@@ -281,10 +317,11 @@ def render_path_graph(
     """Draw the diverge/converge route-flow graph and return its ANSI lines.
 
     Args:
-        layers: The paths to draw, in draw order (later layers, and higher priorities,
-            win shared cells; the highest priority takes the straight centre lane). Layers
-            with identical hop sequences collapse to one drawn path owned by the highest
-            priority among them.
+        layers: The paths to draw. The highest ``priority`` takes the straight centre lane and
+            fixes the geometry; a separate ``emphasis`` (default ``0``) decides which path is
+            drawn highlighted — on top, winning any shared cell — without moving a marker, so
+            re-emphasising a path repaints the same layout in new colours. Layers with identical
+            hop sequences collapse to one drawn path owned by the highest priority among them.
         width: Canvas width in character cells.
         glyph_of: Marker glyph + colour per node id (endpoints keyed by
             :data:`SRC_NODE` / :data:`DST_NODE`).
@@ -414,20 +451,25 @@ def render_path_graph(
     # -- Edges. Collect every edge once, keyed by its unordered node pair: an edge two routes
     # share — or a pair walked in *both* directions — must draw a single time, else it silts up
     # as a doubled line a dot off itself (two routes' Bresenham runs never land on the exact
-    # same dots). Each pair keeps the colour and priority of the strongest route through it; a
-    # two-way pair is flagged so it draws as the one honest vertical rather than a lane change.
+    # same dots). Each pair keeps the colour and draw rank of the strongest route through it —
+    # by draw rank, so the *emphasised* (highlighted) route wins a shared edge over a merely
+    # higher-priority spine, and the highlight paints the whole selected route rather than
+    # dropping out where it overlaps another. A two-way pair is flagged so it draws as the one
+    # honest vertical rather than a lane change.
     bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
     edge_style: dict[frozenset[str], tuple[int, RGB]] = {}
-    for layer, seq in sorted(zip(drawn, seqs), key=lambda ls: ls[0].priority):
+    for layer, seq in sorted(zip(drawn, seqs), key=lambda ls: _draw_rank(ls[0])):
+        rank = _draw_rank(layer)
         for u, v in zip(seq, seq[1:]):
             key = frozenset((u, v))
             prev = edge_style.get(key)
-            if prev is None or layer.priority > prev[0]:
-                edge_style[key] = (layer.priority, layer.color)
-    # Draw ascending by priority so the strongest route's colour wins any cell two edges share.
-    for key, (priority, color) in sorted(edge_style.items(), key=lambda kv: kv[1][0]):
+            if prev is None or rank > prev[0]:
+                edge_style[key] = (rank, layer.color)
+    # Draw ascending by draw rank so the strongest/most-emphasised route's colour wins any cell
+    # two edges share and sits on top.
+    for key, (rank, color) in sorted(edge_style.items(), key=lambda kv: kv[1][0]):
         u, v = tuple(key)
-        canvas.draw_line(_route(u, v, pos, key in bidir), color, priority)
+        canvas.draw_line(_route(u, v, pos, key in bidir), color, rank)
 
     # -- An arrow embedded in the trunk just before us, so the whole flow reads as a directed
     # run node → us (not a map you wander). A single glyph in the spine's own colour: it reserves
