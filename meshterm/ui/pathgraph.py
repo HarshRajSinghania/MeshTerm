@@ -103,8 +103,11 @@ _GRAPH_PAD_DOTS = 6
 #: share lengthens the flat platforms and steepens the (now shorter) curve between them. Sizing
 #: the curve as a fraction of the gap — rather than by a fixed slope keyed off the vertical
 #: offset — keeps the platform-to-curve proportion constant however wide or narrow the columns
-#: fall.
-_CURVE_SPAN = 0.8
+#: fall. Kept generous so the curve has room to stay shallow: a braille cell is 2 dots wide by
+#: 4 tall, so a stroke steeper than one dot across per dot down must light two dots in a cell to
+#: stay joined and reads *thick* — giving the curve more horizontal run keeps its slope, and so
+#: its stroke, thin.
+_CURVE_SPAN = 0.9
 
 #: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
 #: column gap still bends across a few dots rather than snapping over in one abrupt step.
@@ -112,9 +115,14 @@ _MIN_SHIFT_DOTS = 4
 
 #: How far (as a fraction of the shift's horizontal span) the bezier control points sit in
 #: from each end — both placed level with their own end, so the curve leaves and enters the
-#: platforms horizontally. Near ½ the S is at its roundest; lower tightens it toward a
-#: straight diagonal with only its corners eased.
-_BEND_K = 0.5
+#: platforms horizontally. Near ½ the S is at its roundest, but a round S is also its *thickest*:
+#: pinning both tangents flat concentrates the whole vertical change into a steep middle that
+#: lights two-plus dots per braille cell (a heavy knee), while the shallow ends stay thin — so
+#: one shift reads as thin at its ends and thick through its centre. A low value straightens the
+#: S toward a constant-slope diagonal (only its corners eased), spreading the drop evenly so the
+#: stroke is as thin as the geometry allows along its whole length; too low brings the corners
+#: back as visible kinks. Tuned low for an even, thin stroke that still eases off the platforms.
+_BEND_K = 0.2
 
 #: Dots left of our marker the flow arrow sits — one cell, so it embeds in the trunk as ``▶★``
 #: and marks the node → us direction without crowding the endpoint.
