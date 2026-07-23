@@ -411,6 +411,20 @@ def test_node_detail_screen_cursor_and_commit() -> None:
     assert resolved == ["timemachine", CANCEL]
 
 
+def test_node_detail_back_row_leaves_like_escape() -> None:
+    """Committing the Back row resolves CANCEL — the same leave Esc does — not a stray token
+    the opener's loop would ignore and re-show the page over."""
+    screen = _screen()
+    resolved: list = []
+    screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+
+    screen.render_body(72)
+    screen.handle("down")  # Trace -> Time machine
+    screen.handle("down")  # Time machine -> Back
+    screen.handle("enter")
+    assert resolved == [CANCEL]
+
+
 def test_node_detail_screen_route_selection_arms_the_trace() -> None:
     """↑/↓ over the route rows moves the graph highlight and the spec a Trace would arm on."""
     routes = _RoutesView(

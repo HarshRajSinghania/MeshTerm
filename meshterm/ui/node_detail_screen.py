@@ -313,7 +313,10 @@ class NodeDetailScreen(Screen):
                 kind, payload = focus[self._row_index % n]
                 if kind == "action":
                     assert isinstance(payload, _Action)
-                    self.resolve(payload.key)
+                    # Back leaves the page exactly as Esc does — it resolves the same
+                    # CANCEL the opener's loop breaks on, not a "back" token the loop would
+                    # ignore and re-show the page over.
+                    self.resolve(CANCEL if payload.key == "back" else payload.key)
                 # A route row is inert on Enter: selecting it (the highlight + graph) is the
                 # whole interaction; the dedicated Trace row is what opens the trace flow.
         elif action in ("right", "tab"):
