@@ -109,28 +109,32 @@ class ChannelsTool(Tool):
 
     async def _cli_add(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Add a public, private-random, or explicitly-keyed channel on a slot."""
+        from ..ui.channels import write_channel
+
         device = await ctx.device()
         idx = int(params["index"])
         name = str(params["name"])
         if name.startswith("#"):  # public: firmware derives the key from the name
-            await device.set_channel(idx, name, None)
+            await write_channel(ctx, device, idx, name, None)
             secret = derive_secret(name)
         else:
             secret = (
                 normalize_secret(params["secret"]) if params.get("secret") else random_secret()
             )
-            await device.set_channel(idx, name, secret)
+            await write_channel(ctx, device, idx, name, secret)
         ctx.ui.note(f"[ok]✓[/ok] channel [brand]{name}[/brand] set on slot {idx}")
         self._print_share(ctx, name, secret)
         return ToolResult(summary={"index": idx, "name": name})
 
     async def _cli_join(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Join a channel from a name and an explicit key."""
+        from ..ui.channels import write_channel
+
         device = await ctx.device()
         idx = int(params["index"])
         name = str(params["name"])
         secret = normalize_secret(str(params["secret"]))
-        await device.set_channel(idx, name, secret)
+        await write_channel(ctx, device, idx, name, secret)
         ctx.ui.note(f"[ok]✓[/ok] joined [brand]{name}[/brand] on slot {idx}")
         return ToolResult(summary={"index": idx, "name": name})
 
@@ -140,9 +144,11 @@ class ChannelsTool(Tool):
         if parsed is None:
             raise typer.BadParameter("not a valid meshcore:// channel link")
         name, secret = parsed
+        from ..ui.channels import write_channel
+
         device = await ctx.device()
         idx = int(params["index"])
-        await device.set_channel(idx, name, secret)
+        await write_channel(ctx, device, idx, name, secret)
         ctx.ui.note(f"[ok]✓[/ok] imported [brand]{name}[/brand] on slot {idx}")
         return ToolResult(summary={"index": idx, "name": name})
 
@@ -167,7 +173,7 @@ class ChannelsTool(Tool):
         command (a private channel's key is lost with the slot unless it's saved
         elsewhere), mirroring the interactive flow's danger confirmation.
         """
-        from ..ui.channels import read_channel_slots
+        from ..ui.channels import read_channel_slots, write_channel
 
         device = await ctx.device()
         idx = int(params["index"])
@@ -175,7 +181,7 @@ class ChannelsTool(Tool):
         if slot is None:
             ctx.ui.note(f"[muted]slot {idx} is already empty[/muted]")
             return ToolResult(summary={"index": idx, "cleared": False})
-        await device.set_channel(idx, "", None)  # empty name => the slot reads as unused
+        await write_channel(ctx, device, idx, "", None)  # empty name => the slot reads as unused
         ctx.ui.note(f"[warn]cleared channel {slot.name} on slot {idx}[/warn]")
         return ToolResult(summary={"index": idx, "cleared": True})
 

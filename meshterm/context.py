@@ -14,6 +14,7 @@ from rich.console import Console
 
 from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
+from .core.channel_store import ChannelStore
 from .core.config import DeviceProfile, Settings
 from .core.courier_store import CourierStore
 from .core.mute_store import MuteStore
@@ -61,6 +62,9 @@ class AppContext:
         mute_store: Store for muted channel notifications — the channels whose new
             messages don't raise the unread badge (defaults to
             ``<config_dir>/mutes.json`` when not injected).
+        channel_store: Store for channels created through MeshTerm, replayed into a device
+            that forgot them (a firmware-less radio bridge). Keyed by device public key;
+            defaults to ``<config_dir>/channels.json`` when not injected.
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -87,6 +91,7 @@ class AppContext:
     watch_store: Optional[WatchStore] = None
     courier_store: Optional[CourierStore] = None
     mute_store: Optional[MuteStore] = None
+    channel_store: Optional[ChannelStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -133,6 +138,8 @@ class AppContext:
             self.courier_store = CourierStore(self.settings.config_dir / "courier.json")
         if self.mute_store is None:
             self.mute_store = MuteStore(self.settings.config_dir / "mutes.json")
+        if self.channel_store is None:
+            self.channel_store = ChannelStore(self.settings.config_dir / "channels.json")
 
     @property
     def profile_name(self) -> Optional[str]:
@@ -432,6 +439,7 @@ class AppContext:
             self._active_address = None
             await self._device.connect()
             await self._remember_connected()
+            await self._reconcile_channels()
             return self._device
 
         # A Bluetooth endpoint (an explicit ``--ble``, a BLE profile, a device picked at
@@ -463,6 +471,7 @@ class AppContext:
             self._active_endpoint = None
             await self._device.connect()
             await self._remember_connected()
+            await self._reconcile_channels()
             return self._device
 
         resolution = resolve_device(
@@ -481,6 +490,7 @@ class AppContext:
         self._active_endpoint = None
         await self._device.connect()
         await self._remember_connected()
+        await self._reconcile_channels()
         return self._device
 
     def _resolve_tcp_endpoint(self) -> tuple[Optional[str], Optional[int]]:
@@ -565,6 +575,27 @@ class AppContext:
                 node_name=await self._node_name(),
                 hardware_model=await self._hardware_model(),
             )
+
+    async def _reconcile_channels(self) -> None:
+        """Replay channels remembered for this device that it isn't reporting (best-effort).
+
+        A firmware-less radio bridge loses its channels whenever it restarts, so the channels
+        you added through MeshTerm are restored into free slots on connect (see
+        :func:`~meshterm.core.channel_store.reconcile`). With nothing remembered for the device
+        this is a single identity probe, so a firmware radio pays almost nothing. A failure here
+        must never break connecting — it is logged and swallowed.
+        """
+        if self._device is None or self.channel_store is None:
+            return
+        from .core.channel_store import reconcile
+
+        try:
+            restored = await reconcile(self.channel_store, self._device)
+        except Exception as exc:  # noqa: BLE001 - channel replay must not block a connection
+            self.log.debug("channels: reconcile on connect failed: %s", exc)
+            return
+        if restored:
+            self.log.info("channels: restored %d remembered channel(s) to the device", restored)
 
     async def reconnect(self) -> None:
         """Drop a lost device connection and rebuild it, restoring live services.

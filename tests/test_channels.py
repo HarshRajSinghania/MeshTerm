@@ -329,7 +329,7 @@ async def test_apply_order_relays_channels_into_new_positions(ctx: AppContext) -
 
     slots = await read_channel_slots(device)
     # Reverse the display order: the row that was third moves first, first moves last.
-    writes = await _apply_order(device, slots, [2, 1, 0])
+    writes = await _apply_order(ctx, device, slots, [2, 1, 0])
     assert writes == 2  # the middle channel keeps its slot; the two ends swap
 
     after = {s.idx: s for s in await read_channel_slots(device)}
@@ -456,7 +456,7 @@ async def test_reorder_keeps_history_because_key_is_intrinsic(ctx: AppContext) -
         alpha_id, beta_id = before["Alpha"].identity, before["Beta"].identity
 
         # Swap the two channels' slots, then refresh the service's slot→identity cache.
-        writes = await _apply_order(device, slots, [1, 0])
+        writes = await _apply_order(ctx, device, slots, [1, 0])
         assert writes == 2
         await chat.refresh_channels()
 

@@ -318,6 +318,45 @@ def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
     return next((i for i in range(capacity) if i not in used), None)
 
 
+# --- writing -----------------------------------------------------------------
+
+
+async def write_channel(
+    ctx: "AppContext", device: Device, idx: int, name: str, secret: Optional[bytes]
+) -> None:
+    """Write a channel to a device slot, remembering it so a forgetful device can be restored.
+
+    The single boundary every channel mutation goes through — create, join, import, edit,
+    reorder, and clear all land here — so the channel store stays a faithful record of what
+    MeshTerm wrote (see :mod:`meshterm.core.channel_store`). Clearing a slot (an empty ``name``)
+    forgets it; any other write remembers the channel under the device's own public key, storing
+    a name-derived channel's derived key so it can later be replayed as-is. Remembering is
+    best-effort: it never blocks or fails the actual device write.
+
+    Args:
+        ctx: Shared application context (for the channel store and cached self-info).
+        device: The connected device to write to.
+        idx: The slot to write.
+        name: The channel name (empty clears the slot).
+        secret: The 16-byte secret, or ``None`` to let the firmware derive it from the name.
+    """
+    await device.set_channel(idx, name, secret)
+    store = ctx.channel_store
+    if store is None:
+        return
+    try:
+        pubkey = (await ctx.devstate.self_info()).get("public_key", "")
+    except Exception as exc:  # noqa: BLE001 - identity probe is best-effort; skip remembering
+        ctx.log.debug("channels: could not read self key to remember channel: %s", exc)
+        return
+    if not pubkey:
+        return
+    if name.strip():
+        store.remember(pubkey, idx, name, secret if secret is not None else derive_secret(name))
+    else:
+        store.forget(pubkey, idx)
+
+
 def _slot_label(slot: ChannelSlot) -> str:
     """Format a channel for a compact row (the reorder screen): just its glyph and name.
 
@@ -697,7 +736,7 @@ async def _create_private(
     if not name:
         return 0
     secret = random_secret()
-    await device.set_channel(idx, name.strip(), secret)
+    await write_channel(ctx, device, idx, name.strip(), secret)
     ctx.ui.note(f"[ok]✓[/ok] created private channel [brand]{name.strip()}[/brand]")
     await _show_share(ctx, name.strip(), secret, intro="Share this channel:")
     return 1
@@ -710,7 +749,7 @@ async def _add_default_public(
     idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
-    await device.set_channel(idx, "Public", DEFAULT_PUBLIC_SECRET)
+    await write_channel(ctx, device, idx, "Public", DEFAULT_PUBLIC_SECRET)
     ctx.ui.note("[ok]✓[/ok] added the standard [brand]Public[/brand] channel")
     return 1
 
@@ -733,7 +772,7 @@ async def _add_public(
     if not name.startswith("#"):
         name = f"#{name}"
     secret = derive_secret(name)  # what the firmware will compute; kept for the QR/share
-    await device.set_channel(idx, name, None)  # None => firmware derives the key from name
+    await write_channel(ctx, device, idx, name, None)  # None => firmware derives the key from name
     ctx.ui.note(f"[ok]✓[/ok] added public channel [brand]{name}[/brand]")
     await _show_share(ctx, name, secret, intro="Share this channel:")
     return 1
@@ -755,7 +794,7 @@ async def _join_with_key(
     if not key:
         return 0
     secret = normalize_secret(key)
-    await device.set_channel(idx, name.strip(), secret)
+    await write_channel(ctx, device, idx, name.strip(), secret)
     ctx.ui.note(f"[ok]✓[/ok] joined [brand]{name.strip()}[/brand]")
     return 1
 
@@ -777,7 +816,7 @@ async def _import_link(
         ctx.ui.note("[err]not a valid channel link[/err]")
         return 0
     name, secret = parsed
-    await device.set_channel(idx, name, secret)
+    await write_channel(ctx, device, idx, name, secret)
     ctx.ui.note(f"[ok]✓[/ok] imported [brand]{name}[/brand]")
     return 1
 
@@ -796,7 +835,7 @@ async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
     if key is None:
         return False
     secret = normalize_secret(key) if key.strip() else None
-    await device.set_channel(slot.idx, name, secret)
+    await write_channel(ctx, device, slot.idx, name, secret)
     ctx.ui.note(f"[ok]✓[/ok] updated channel [brand]{name}[/brand]")
     return True
 
@@ -819,7 +858,7 @@ async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
         return False
     ctx.chat.set_active(slot.conversation.key)  # drop its unread before the slot goes away
     ctx.chat.set_active(None)
-    await device.set_channel(slot.idx, "", None)  # empty name => the slot reads as unused
+    await write_channel(ctx, device, slot.idx, "", None)  # empty name => the slot reads as unused
     ctx.ui.note(f"[warn]cleared channel {slot.name}[/warn]")
     return True
 
@@ -827,14 +866,16 @@ async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
 # --- reordering --------------------------------------------------------------
 
 
-async def _write_slot(device: Device, idx: int, slot: ChannelSlot) -> None:
+async def _write_slot(
+    ctx: "AppContext", device: Device, idx: int, slot: ChannelSlot
+) -> None:
     """Write ``slot``'s contents into slot ``idx`` (name-derived channels re-derive their key)."""
     secret = None if slot.is_name_derived else slot.secret
-    await device.set_channel(idx, slot.name, secret)
+    await write_channel(ctx, device, idx, slot.name, secret)
 
 
 async def _apply_order(
-    device: Device, slots: list[ChannelSlot], order: list[int]
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], order: list[int]
 ) -> int:
     """Rewrite the channel slots so they display in ``order``; return the writes made.
 
@@ -850,7 +891,7 @@ async def _apply_order(
         slot = slots[pos]
         if slot.idx == target_idx:
             continue  # already in place; no write needed
-        await _write_slot(device, target_idx, slot)
+        await _write_slot(ctx, device, target_idx, slot)
         changes += 1
     return changes
 
@@ -869,7 +910,7 @@ async def _reorder_channels(
     # the channels automatically — reordering needs no history migration. The slot→identity
     # cache the chat service resolves inbound messages through is refreshed centrally by
     # manage_channels once any change lands (see :func:`_refresh_chat_channels`).
-    return await _apply_order(device, slots, order)
+    return await _apply_order(ctx, device, slots, order)
 
 
 # --- shared views ------------------------------------------------------------
