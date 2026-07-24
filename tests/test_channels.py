@@ -563,6 +563,33 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     assert label.spans[-1].style == "ok"  # …and its newest cell reads as live traffic
 
 
+async def test_standard_public_row_appears_only_while_it_is_absent(ctx: AppContext) -> None:
+    """The 'Standard Public channel' add-action shows until a slot holds the fixed-key default."""
+    from meshterm.core.channels import DEFAULT_PUBLIC_SECRET
+    from meshterm.ui.channels import _DEFAULT_PUBLIC, _add_default_public, _LiveStats, _menu_items
+    from meshterm.ui.tui import Choice
+
+    device = await ctx.device()
+
+    def has_default_row(slots: list) -> bool:
+        _, items = _menu_items(ctx, slots, 8, _LiveStats(ctx))
+        return any(isinstance(it, Choice) and it.value == _DEFAULT_PUBLIC for it in items)
+
+    # Absent on an empty table and while an unrelated channel occupies a slot.
+    assert has_default_row([])
+    await device.set_channel(1, "Ops", bytes(range(16)))
+    slots = await read_channel_slots(device)
+    assert has_default_row(slots)
+
+    # Adding it lands the well-known secret on the next free slot and retires the offer.
+    added = await _add_default_public(ctx, device, slots, 8)
+    assert added == 1
+    slots = await read_channel_slots(device)
+    public = next(s for s in slots if s.secret == DEFAULT_PUBLIC_SECRET)
+    assert public.name == "Public" and public.is_public
+    assert not has_default_row(slots)
+
+
 async def test_clearing_a_channel_reads_off_its_unread(ctx: AppContext) -> None:
     """Clearing a channel drops its unread from the global total, not just the slot."""
     from meshterm.ui.channels import _clear

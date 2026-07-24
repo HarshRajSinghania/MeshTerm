@@ -45,6 +45,7 @@ from rich.text import Text
 from ..core.channels import (
     CHANNEL_SLOT_EMPTY_RUN,
     CHANNEL_SLOT_PROBE_CAP,
+    DEFAULT_PUBLIC_SECRET,
     MAX_CHANNELS,
     channel_hash,
     channel_identity,
@@ -73,6 +74,7 @@ if TYPE_CHECKING:
 # Top-menu action sentinels (distinct from a plain slot index, which selects that channel).
 _CREATE = "__create__"
 _PUBLIC = "__public__"
+_DEFAULT_PUBLIC = "__default_public__"
 _JOIN = "__join__"
 _IMPORT = "__import__"
 _REORDER = "__reorder__"
@@ -181,6 +183,8 @@ async def manage_channels(ctx: "AppContext") -> int:
             before = changes
             if choice == _CREATE:
                 changes += await _create_private(ctx, device, slots, capacity)
+            elif choice == _DEFAULT_PUBLIC:
+                changes += await _add_default_public(ctx, device, slots, capacity)
             elif choice == _PUBLIC:
                 changes += await _add_public(ctx, device, slots, capacity)
             elif choice == _JOIN:
@@ -546,16 +550,22 @@ def _menu_items(
         items.append(Choice(title="↕  Reorder channels", value=_REORDER))
 
     items.append(section_heading("Add a channel"))
-    items.extend(
-        menu_rows(
-            [
-                ("＋ New private channel…", "A fresh random key", _CREATE),
-                ("＃ Public channel…", "Key derived from its name", _PUBLIC),
-                ("🔑 Join with a key…", "Paste a channel's 32-hex key", _JOIN),
-                ("🔗 Import a link…", "Paste a meshcore:// share link", _IMPORT),
-            ]
+    rows = []
+    # The firmware's built-in fixed-key Public channel has one well-known secret, so it's the
+    # same channel on every slot — offer to restore it only while no slot already holds it.
+    if not any(s.secret == DEFAULT_PUBLIC_SECRET for s in slots):
+        rows.append(
+            ("🌐 Standard Public channel", "MeshCore's built-in meshwide channel", _DEFAULT_PUBLIC)
         )
+    rows.extend(
+        [
+            ("＋ New private channel…", "A fresh random key", _CREATE),
+            ("＃ Public channel…", "Key derived from its name", _PUBLIC),
+            ("🔑 Join with a key…", "Paste a channel's 32-hex key", _JOIN),
+            ("🔗 Import a link…", "Paste a meshcore:// share link", _IMPORT),
+        ]
     )
+    items.extend(menu_rows(rows))
     items.extend(back_rows(_BACK))
 
     return f"Channels — {len(slots)}/{capacity} slots", items
@@ -690,6 +700,18 @@ async def _create_private(
     await device.set_channel(idx, name.strip(), secret)
     ctx.ui.note(f"[ok]✓[/ok] created private channel [brand]{name.strip()}[/brand]")
     await _show_share(ctx, name.strip(), secret, intro="Share this channel:")
+    return 1
+
+
+async def _add_default_public(
+    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+) -> int:
+    """Add MeshCore's built-in fixed-key ``Public`` channel on the next free slot."""
+    idx = await _pick_free_slot(ctx, slots, capacity)
+    if idx is None:
+        return 0
+    await device.set_channel(idx, "Public", DEFAULT_PUBLIC_SECRET)
+    ctx.ui.note("[ok]✓[/ok] added the standard [brand]Public[/brand] channel")
     return 1
 
 
