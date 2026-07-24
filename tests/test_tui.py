@@ -974,6 +974,74 @@ def test_device_picker_reinjects_remembered_tcp_device(tmp_path) -> None:
     assert _TCP_ICON in top.plain  # marked with the network TYPE glyph
 
 
+def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
+    """A ``[profiles.*]`` TCP entry shows up in the picker under its alias, ready to select."""
+    from meshterm.core.config import DeviceProfile
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui.device_picker import _TCP_ICON, prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    profiles = {
+        "bridge": DeviceProfile(
+            name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000
+        )
+    }
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None  # skip past the smoke test
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    # Nothing scanned or remembered — the profile alone puts the endpoint in the list.
+    asyncio.run(prompt_device(_Ui(), [], store, _never, profiles))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    device_rows = [r for r in rows if hasattr(r, "plain") and "bridge" in r.plain]
+    assert device_rows, "the configured TCP profile should be listed"
+    top = device_rows[0]
+    assert "127.0.0.1:5000" in top.plain  # its host:port sits in the address column
+    assert _TCP_ICON in top.plain  # marked with the network TYPE glyph
+
+
+def test_device_picker_profile_yields_to_remembered_endpoint(tmp_path) -> None:
+    """A profile at an already-remembered endpoint doesn't double-list — the richer row wins."""
+    from meshterm.core.config import DeviceProfile
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import tcp_device
+    from meshterm.ui.device_picker import prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    # Confirmed before, so it carries the real node name learned at connect time.
+    store.remember(tcp_device("127.0.0.1", 5000), node_name="uConsole")
+    profiles = {
+        "bridge": DeviceProfile(
+            name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000
+        )
+    }
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    asyncio.run(prompt_device(_Ui(), [], store, _never, profiles))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    endpoint_rows = [r for r in rows if hasattr(r, "plain") and "127.0.0.1:5000" in r.plain]
+    assert len(endpoint_rows) == 1, "the endpoint should appear exactly once"
+    # The remembered node name wins over the bare profile alias.
+    assert "uConsole" in endpoint_rows[0].plain
+    assert "bridge" not in endpoint_rows[0].plain
+
+
 def test_device_picker_adds_network_device(tmp_path) -> None:
     """The 'add a network device' row prompts for host:port and confirms the TCP companion."""
     from meshterm.core.device_store import DeviceStore

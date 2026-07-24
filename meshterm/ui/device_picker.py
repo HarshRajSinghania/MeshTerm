@@ -19,12 +19,13 @@ device; anything else sends the user back to the list to choose another.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Mapping, Optional
 
 from rich.cells import cell_len
 from rich.text import Text
 
 from .. import copyright_notice
+from ..core.config import DeviceProfile
 from ..core.connection import DeviceAuthenticationError, DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
 from ..core.discovery import (
@@ -262,6 +263,7 @@ async def prompt_device(
     devices: list[DiscoveredDevice],
     store: DeviceStore,
     verify: Verify,
+    profiles: Optional[Mapping[str, DeviceProfile]] = None,
 ) -> Optional[DiscoveredDevice]:
     """Prompt the user to choose a companion device on the startup splash.
 
@@ -276,6 +278,9 @@ async def prompt_device(
             record a device once its smoke test passes.
         verify: Async smoke test returning a device's self-info dict, or ``None`` if it is
             not a reachable MeshCore companion.
+        profiles: The configured device profiles (``config.toml`` ``[profiles.*]``). Their TCP
+            entries are folded into the list so a hand-authored network companion appears here
+            without having to be connected to first (see :func:`_profile_tcp_devices`).
 
     Returns:
         The chosen, confirmed :class:`DiscoveredDevice`, or ``None`` if the user chose to
@@ -291,8 +296,11 @@ async def prompt_device(
         registry = store.load_all()
         # A TCP companion isn't discoverable, so a previously confirmed one only reappears if we
         # rebuild it from its remembered endpoint and fold it into the list alongside the
-        # scanned devices (the scan never produces it).
+        # scanned devices (the scan never produces it). Configured TCP profiles are folded in
+        # the same way, after the scanned/remembered set so an already-known endpoint keeps its
+        # richer remembered row rather than being shadowed by the profile.
         listed = scanned + _remembered_tcp_devices(scanned, registry)
+        listed += _profile_tcp_devices(listed, profiles)
         # Preselect the remembered "last known good" device when it is currently attached/in range.
         default = next((d for d in listed if remembered and remembered.matches(d)), None)
 
@@ -372,6 +380,44 @@ def _remembered_tcp_devices(
         device = tcp_device(record.host, record.tcp_port, name=record.node_name)
         if device.stable_id not in seen:
             rebuilt.append(device)
+    return rebuilt
+
+
+def _profile_tcp_devices(
+    listed: list[DiscoveredDevice],
+    profiles: Optional[Mapping[str, DeviceProfile]],
+) -> list[DiscoveredDevice]:
+    """Rebuild configured TCP profiles as :class:`DiscoveredDevice` rows for the picker.
+
+    A ``[profiles.<alias>]`` block with ``transport = "tcp"`` names a network companion the
+    user wants to reach — but a TCP endpoint isn't discoverable, so without this it would only
+    ever surface via ``meshterm -p <alias>`` on the command line, never in the interactive
+    splash. Each such profile is turned into a device carrying its alias as the DEVICE-column
+    name (that is how the user addresses it), so it lists like a hand-added network device and
+    smoke-tests the same way. Any profile whose endpoint is already present — scanned, or a
+    remembered companion carrying its real node name — is skipped so the richer existing row
+    wins rather than being duplicated by the bare profile.
+
+    Args:
+        listed: The devices already gathered (scanned + remembered), for de-duplication.
+        profiles: The configured profiles, or ``None`` when none are loaded.
+
+    Returns:
+        One TCP :class:`DiscoveredDevice` per not-yet-listed TCP profile, in profile order.
+    """
+    if not profiles:
+        return []
+    seen = {d.stable_id for d in listed}
+    rebuilt: list[DiscoveredDevice] = []
+    for profile in profiles.values():
+        if not profile.is_tcp or not profile.host:
+            continue
+        port = profile.tcp_port or DEFAULT_TCP_PORT
+        device = tcp_device(profile.host, port, name=profile.name)
+        if device.stable_id in seen:
+            continue
+        seen.add(device.stable_id)
+        rebuilt.append(device)
     return rebuilt
 
 

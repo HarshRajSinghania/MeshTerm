@@ -553,7 +553,9 @@ async def _startup(ctx: AppContext) -> bool:
             probed["device"] = connection
             return info
 
-        chosen = await prompt_device(ctx.ui, devices, ctx.device_store, verify)
+        chosen = await prompt_device(
+            ctx.ui, devices, ctx.device_store, verify, ctx.settings.profiles
+        )
         if chosen is None:
             return False  # the user quit at the splash — exit without opening the menu
         ctx.selected_device = chosen
