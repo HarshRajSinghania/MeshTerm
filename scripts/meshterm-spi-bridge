@@ -1,0 +1,748 @@
+#!/usr/bin/env python3
+"""
+meshterm-spi-bridge — expose an SPI-attached MeshCore radio to MeshTerm.
+
+Some boards (the ClockworkPi uConsole hackergadgets AIO, Waveshare LoRa HATs)
+wire the LoRa chip straight to the host's SPI bus — there is no companion MCU
+and no firmware to flash. The node runs *in software* on the host via the
+`pymc_core` library. MeshTerm, though, speaks the MeshCore companion protocol
+over serial/BLE/TCP and expects to talk to a node, not to drive a bare radio.
+
+This tool bridges the two: it runs the pymc_core node itself and puts the
+standard companion protocol in front of it on a local TCP port, so that
+
+    meshterm --tcp 127.0.0.1:5000
+
+connects exactly as if a real companion device were plugged in.
+
+It is BOTH a friendly setup menu and the bridge process. Run it with any
+Python 3 — it finds the pymc_core runtime for you and re-execs the bridge half
+under that interpreter automatically. You never need to know about venvs.
+
+    ./meshterm-spi-bridge            # interactive menu
+    ./meshterm-spi-bridge --check    # run prerequisite checks and exit
+    ./meshterm-spi-bridge --run      # run the bridge now in this terminal
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+# --------------------------------------------------------------------------- #
+# Configuration
+# --------------------------------------------------------------------------- #
+
+APP_NAME = "meshterm-spi-bridge"
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 5000
+DEFAULT_NODE_NAME = "uConsole"
+
+# Interpreters likely to have pymc_core, in preference order. The hackergadgets
+# uConsole .deb installs everything into this private virtualenv.
+VENV_CANDIDATES = ["/opt/venvs/meshcore-uconsole/bin/python"]
+
+HOME = Path.home()
+INSTALL_PATH = HOME / ".local" / "bin" / APP_NAME
+UNIT_NAME = f"{APP_NAME}.service"
+UNIT_PATH = HOME / ".config" / "systemd" / "user" / UNIT_NAME
+MESHTERM_CONFIG = HOME / ".meshterm" / "config.toml"
+
+RULE = "=" * 62
+THIN = "-" * 62
+
+
+# --------------------------------------------------------------------------- #
+# Colour (restrained — off when piped, dumb terminal, or NO_COLOR is set)
+# --------------------------------------------------------------------------- #
+
+_USE_COLOR = (
+    sys.stdout.isatty()
+    and not os.environ.get("NO_COLOR")
+    and not os.environ.get("MESHTERM_NO_COLOR")
+    and os.environ.get("TERM", "") != "dumb"
+)
+
+
+def _c(text: str, code: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
+
+def bold(t: str) -> str:
+    return _c(t, "1")
+
+
+def dim(t: str) -> str:
+    return _c(t, "2")
+
+
+def green(t: str) -> str:
+    return _c(t, "32")
+
+
+def red(t: str) -> str:
+    return _c(t, "1;31")
+
+
+def yellow(t: str) -> str:
+    return _c(t, "33")
+
+
+def cyan(t: str) -> str:
+    return _c(t, "36")
+
+
+def cmd(t: str) -> str:
+    """Highlight a command the user should type/copy."""
+    return bold(cyan(t))
+
+
+# --------------------------------------------------------------------------- #
+# Small text helpers (deliberately plain — a little colour, no flourish)
+# --------------------------------------------------------------------------- #
+
+
+def tag(ok: bool, warn: bool = False) -> str:
+    if warn:
+        return yellow("[warn]")
+    return green("[ ok ]") if ok else red("[FAIL]")
+
+
+def ask(prompt: str, default: str = "") -> str:
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+
+
+def confirm(prompt: str, default_yes: bool = False) -> bool:
+    suffix = " [Y/n] " if default_yes else " [y/N] "
+    ans = ask(prompt + suffix).lower()
+    if not ans:
+        return default_yes
+    return ans in ("y", "yes")
+
+
+# --------------------------------------------------------------------------- #
+# Runtime discovery
+# --------------------------------------------------------------------------- #
+
+
+def python_has_pymc(python: str) -> bool:
+    """Return whether `python` can import pymc_core."""
+    if not python or not os.path.exists(python):
+        return False
+    try:
+        r = subprocess.run(
+            [python, "-c", "import pymc_core"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _meshcore_console_python() -> str | None:
+    """Resolve the interpreter behind the `meshcore-console` command, if present."""
+    exe = shutil.which("meshcore-console")
+    if not exe:
+        return None
+    try:
+        first = Path(exe).resolve().read_text(errors="replace").splitlines()[0]
+    except Exception:
+        return None
+    if first.startswith("#!"):
+        cand = first[2:].strip().split()[0]
+        if cand.endswith("python") or "python" in os.path.basename(cand):
+            return cand
+    return None
+
+
+def find_pymc_python() -> str | None:
+    """Find an interpreter that has pymc_core, or None.
+
+    Order: explicit override, this interpreter, known venv paths, then the
+    interpreter behind an installed `meshcore-console`.
+    """
+    seen: set[str] = set()
+    candidates = [os.environ.get("MESHTERM_PYMC_PYTHON", ""), sys.executable]
+    candidates += VENV_CANDIDATES
+    mcc = _meshcore_console_python()
+    if mcc:
+        candidates.append(mcc)
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            if python_has_pymc(c):
+                return c
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Preflight checks
+# --------------------------------------------------------------------------- #
+
+
+def _dev_ok(path: str) -> tuple[bool, str]:
+    if not os.path.exists(path):
+        return False, "missing"
+    if not os.access(path, os.R_OK | os.W_OK):
+        return False, "present but no read/write permission"
+    return True, "present, read/write ok"
+
+
+def _first_spidev() -> str | None:
+    import glob
+
+    devs = sorted(glob.glob("/dev/spidev*"))
+    if "/dev/spidev1.0" in devs:
+        return "/dev/spidev1.0"
+    return devs[0] if devs else None
+
+
+def port_listening(host: str, port: int) -> bool:
+    """Return whether something is already accepting connections on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return True
+    except OSError:
+        return False
+
+
+def meshcore_console_running() -> list[str]:
+    """Best-effort list of running meshcore-console (GUI/CLI) command lines."""
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-af", "meshcore-console"], text=True, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return []
+    lines = []
+    for line in out.splitlines():
+        # our own bridge invokes the meshcore-uconsole venv python, not the
+        # meshcore-console binary, so it never matches — but guard anyway.
+        if "--run-bridge" in line or APP_NAME in line:
+            continue
+        lines.append(line.strip())
+    return lines
+
+
+def systemctl_user(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["systemctl", "--user", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def service_installed() -> bool:
+    return UNIT_PATH.exists()
+
+
+def service_active() -> bool:
+    return systemctl_user("is-active", UNIT_NAME).stdout.strip() == "active"
+
+
+class Preflight:
+    def __init__(self) -> None:
+        self.python = find_pymc_python()
+        self.spidev = _first_spidev()
+        self.spidev_ok, self.spidev_detail = (
+            _dev_ok(self.spidev) if self.spidev else (False, "no /dev/spidev* found")
+        )
+        self.gpio_ok, self.gpio_detail = _dev_ok("/dev/gpiochip0")
+        self.svc_active = service_active()
+        self.port_busy = port_listening(DEFAULT_HOST, DEFAULT_PORT)
+        self.gui = meshcore_console_running()
+
+    @property
+    def can_run(self) -> bool:
+        return bool(self.python) and self.spidev_ok and self.gpio_ok
+
+    def print(self) -> None:
+        print(bold("Prerequisite check:"))
+        # 1. runtime
+        if self.python:
+            print(f"  {tag(True)} pymc_core runtime    {self.python}")
+        else:
+            print(f"  {tag(False)} pymc_core runtime    not found")
+            print("         fix: install the radio stack, e.g. on the uConsole:")
+            print("              sudo apt install meshcore-uconsole")
+            print("              (or set MESHTERM_PYMC_PYTHON to a python that has it)")
+        # 2. spi
+        print(f"  {tag(self.spidev_ok)} SPI device           {self.spidev or '-'} — {self.spidev_detail}")
+        if not self.spidev_ok and self.spidev is None:
+            print("         fix: enable SPI in /boot/firmware/config.txt")
+            print("              (dtoverlay=spi1-1cs on the uConsole) and reboot")
+        elif not self.spidev_ok:
+            print("         fix: add your user to the 'spi' group, then log out/in:")
+            print("              sudo usermod -aG spi $USER")
+        # 3. gpio
+        print(f"  {tag(self.gpio_ok)} GPIO chip            /dev/gpiochip0 — {self.gpio_detail}")
+        if not self.gpio_ok and "permission" in self.gpio_detail:
+            print("         fix: sudo usermod -aG gpio $USER  (then log out/in)")
+        # 4. radio availability (informational)
+        if self.svc_active:
+            print(f"  {tag(True)} bridge service       running (radio in use by the boot service)")
+        elif self.gui:
+            print(f"  {tag(False, warn=True)} radio in use         meshcore-console is running:")
+            for line in self.gui[:2]:
+                print(f"              {line[:70]}")
+            print("         note: only one program can use the radio at a time —")
+            print("               close meshcore-console before running the bridge")
+        elif self.port_busy:
+            print(f"  {tag(False, warn=True)} port {DEFAULT_PORT} busy         something is already on {DEFAULT_HOST}:{DEFAULT_PORT}")
+        else:
+            print(f"  {tag(True)} radio is free        nothing else is using it")
+
+
+# --------------------------------------------------------------------------- #
+# Caveats banner
+# --------------------------------------------------------------------------- #
+
+CAVEATS = """\
+How this works, briefly:
+  * Your LoRa radio is wired to the host's SPI bus — there is no separate
+    MCU and no firmware to flash. The mesh node runs as software here.
+  * This bridge runs that node and exposes it on a local network port so
+    MeshTerm can connect with:  meshterm --tcp {host}:{port}
+  * Two processes cooperate: this bridge (owns the radio) and MeshTerm
+    (the terminal you use). Keep the bridge running while you use MeshTerm.
+
+Caveat — only ONE program may use the radio at a time:
+  * Run EITHER the meshcore-console GUI, OR this bridge — never both.
+  * If the bridge won't start, close meshcore-console first."""
+
+
+def print_caveats() -> None:
+    text = CAVEATS.format(host=DEFAULT_HOST, port=DEFAULT_PORT)
+    for line in text.splitlines():
+        if line.endswith(":") and not line.startswith(" "):
+            print(bold(line))
+        elif "meshterm --tcp" in line:
+            print(line.replace(
+                f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}",
+                cmd(f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}"),
+            ))
+        else:
+            print(line)
+
+
+# --------------------------------------------------------------------------- #
+# Actions
+# --------------------------------------------------------------------------- #
+
+
+def action_run_now(pre: Preflight) -> None:
+    if pre.svc_active:
+        print()
+        print("The bridge is already running as a boot service, so the radio is")
+        print("in use and MeshTerm can connect right now:")
+        print("    " + cmd(f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}"))
+        print("To run it in this terminal instead, stop the service first (menu")
+        print("option 3, or: systemctl --user stop " + UNIT_NAME + ").")
+        return
+    if pre.gui:
+        print()
+        print("meshcore-console is running and holding the radio. Close it first,")
+        print("then try again.")
+        return
+    if not pre.can_run:
+        print("\nCan't run yet — resolve the [FAIL] items above first.")
+        return
+
+    print()
+    print(dim(THIN))
+    print("Starting the bridge. Leave this running, open another terminal, and:")
+    print("    " + cmd(f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}"))
+    print("Press Ctrl+C here to stop the bridge.")
+    print(dim(THIN))
+    offer_meshterm_profile()
+    print()
+    run_cmd = [pre.python, os.path.abspath(__file__), "--run-bridge",
+               "--host", DEFAULT_HOST, "--port", str(DEFAULT_PORT), "--name", DEFAULT_NODE_NAME]
+    try:
+        subprocess.run(run_cmd)
+    except KeyboardInterrupt:
+        pass
+    print("\nBridge stopped. Back to the menu.")
+
+
+def _write_unit(python: str) -> None:
+    UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    exec_start = (
+        f"{python} {INSTALL_PATH} --run-bridge "
+        f"--host {DEFAULT_HOST} --port {DEFAULT_PORT} --name {DEFAULT_NODE_NAME}"
+    )
+    UNIT_PATH.write_text(
+        "[Unit]\n"
+        "Description=MeshTerm SPI-radio companion bridge (pymc_core -> TCP)\n"
+        "After=network.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"ExecStart={exec_start}\n"
+        "Restart=on-failure\n"
+        "RestartSec=3\n\n"
+        "[Install]\n"
+        "WantedBy=default.target\n"
+    )
+
+
+def action_install_service(pre: Preflight) -> None:
+    if not pre.python:
+        print("\nCan't install — the pymc_core runtime wasn't found (see above).")
+        return
+    if pre.gui:
+        print("\nmeshcore-console is running. The service would fight it for the")
+        print("radio. Close meshcore-console first, then install the service.")
+        if not confirm("Install anyway?"):
+            return
+
+    print()
+    print("This will install a background service that:")
+    print(f"  * runs the bridge on {DEFAULT_HOST}:{DEFAULT_PORT}")
+    print("  * starts automatically on boot and restarts if it crashes")
+    print("  * runs as YOU, using your node identity (same as the GUI)")
+    print("Reminder: while it's running, don't also open the meshcore-console GUI.")
+    if not confirm("\nInstall and start it now?", default_yes=True):
+        print("Cancelled.")
+        return
+
+    # Install a stable copy of this script for the unit to point at.
+    INSTALL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if os.path.abspath(__file__) != str(INSTALL_PATH):
+        shutil.copyfile(os.path.abspath(__file__), INSTALL_PATH)
+    INSTALL_PATH.chmod(0o755)
+
+    _write_unit(pre.python)
+    systemctl_user("daemon-reload")
+    r = systemctl_user("enable", "--now", UNIT_NAME)
+    if r.returncode != 0:
+        print("\nFailed to start the service:")
+        print("  " + (r.stderr.strip() or "unknown error"))
+        return
+
+    # Try to make it start at boot even before you log in.
+    linger = subprocess.run(
+        ["loginctl", "enable-linger", os.environ.get("USER", "")],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+    print(green("\nInstalled and started."))
+    if service_active():
+        print(f"  {tag(True)} service is running")
+    print(f"  unit:  {UNIT_PATH}")
+    print(f"  logs:  journalctl --user -u {UNIT_NAME} -f")
+    if linger.returncode != 0:
+        print("\nOne extra step for start-on-boot without logging in first:")
+        print(f"    sudo loginctl enable-linger {os.environ.get('USER','')}")
+    offer_meshterm_profile()
+    print("\nConnect from MeshTerm with:  " + cmd(f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}"))
+
+
+def action_uninstall_service() -> None:
+    if not service_installed():
+        print("\nNo bridge service is installed. Nothing to remove.")
+        print("(This never touches the hackergadgets meshcore-console package.)")
+        return
+    print("\nThis removes ONLY the bridge service and its helper script.")
+    print("It does NOT remove meshcore-console or the radio stack.")
+    if not confirm("Remove the bridge service now?", default_yes=True):
+        print("Cancelled.")
+        return
+    systemctl_user("disable", "--now", UNIT_NAME)
+    try:
+        UNIT_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    systemctl_user("daemon-reload")
+    # Remove the installed helper copy (but not a repo checkout you ran from).
+    if INSTALL_PATH.exists() and os.path.abspath(__file__) != str(INSTALL_PATH):
+        try:
+            INSTALL_PATH.unlink()
+        except OSError:
+            pass
+    print(green("\nRemoved.") + " The radio is free again for the meshcore-console GUI.")
+    if MESHTERM_CONFIG.exists() and "[profiles.bridge]" in MESHTERM_CONFIG.read_text(errors="replace"):
+        print("Note: a [profiles.bridge] block remains in your MeshTerm config;")
+        print(f"      edit {MESHTERM_CONFIG} to remove it if you like.")
+
+
+def action_status(pre: Preflight) -> None:
+    print()
+    print(bold("Bridge service:"))
+    if not service_installed():
+        print("  not installed")
+    else:
+        print(f"  installed  {UNIT_PATH}")
+        print(f"  active:    {'yes' if service_active() else 'no'}")
+        print(f"  logs:      journalctl --user -u {UNIT_NAME} -f")
+    listening = port_listening(DEFAULT_HOST, DEFAULT_PORT)
+    print(f"\nEndpoint {DEFAULT_HOST}:{DEFAULT_PORT}: {'listening' if listening else 'not listening'}")
+    if listening:
+        print("  MeshTerm can connect now:  " + cmd(f"meshterm --tcp {DEFAULT_HOST}:{DEFAULT_PORT}"))
+
+
+def offer_meshterm_profile() -> None:
+    """Optionally add a MeshTerm TCP profile so bare `meshterm` connects here."""
+    if MESHTERM_CONFIG.exists() and "[profiles.bridge]" in MESHTERM_CONFIG.read_text(errors="replace"):
+        return  # already there
+    if not confirm(
+        f"\nAdd a 'bridge' profile to {MESHTERM_CONFIG} so you can just run "
+        "`meshterm`?",
+        default_yes=False,
+    ):
+        return
+    block = (
+        "\n# Added by meshterm-spi-bridge — the local SPI-radio bridge.\n"
+        "[profiles.bridge]\n"
+        f'host = "{DEFAULT_HOST}"\n'
+        f"tcp_port = {DEFAULT_PORT}\n"
+        'description = "Local SPI radio via meshterm-spi-bridge"\n'
+    )
+    try:
+        MESHTERM_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        with MESHTERM_CONFIG.open("a", encoding="utf-8") as fh:
+            fh.write(block)
+        print("Added [profiles.bridge]. It'll show up in MeshTerm's device")
+        print("picker as 'bridge' — just select it there, or run:  meshterm -p bridge")
+    except OSError as exc:
+        print(f"Couldn't write the profile ({exc}); add it by hand if you want it.")
+
+
+# --------------------------------------------------------------------------- #
+# Interactive menu
+# --------------------------------------------------------------------------- #
+
+
+def menu() -> int:
+    while True:
+        pre = Preflight()
+        print()
+        print(cyan(RULE))
+        print(bold(cyan(" MeshTerm SPI-radio bridge — setup")))
+        print(cyan(RULE))
+        print_caveats()
+        print()
+        pre.print()
+        print()
+        print(bold("What would you like to do?"))
+        print(f"  {bold('1')}) Run the bridge now   (stays in this terminal; Ctrl+C to stop)")
+        print(f"  {bold('2')}) Install as a service (starts on boot, restarts on failure)")
+        print(f"  {bold('3')}) Uninstall the service")
+        print(f"  {bold('4')}) Show status")
+        print(f"  {bold('5')}) Quit")
+        choice = ask("\n> ")
+        if choice == "1":
+            action_run_now(pre)
+        elif choice == "2":
+            action_install_service(pre)
+        elif choice == "3":
+            action_uninstall_service()
+        elif choice == "4":
+            action_status(pre)
+        elif choice in ("5", "q", "quit", "exit", ""):
+            print("Bye.")
+            return 0
+        else:
+            print("Please choose 1-5.")
+        ask("\nPress Enter to continue…")
+
+
+# --------------------------------------------------------------------------- #
+# The bridge itself (runs under the pymc_core interpreter via --run-bridge)
+# --------------------------------------------------------------------------- #
+
+
+def run_bridge(host: str, port: int, node_name: str) -> int:
+    import asyncio
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    log = logging.getLogger(APP_NAME)
+
+    try:
+        import pymc_core  # noqa: F401
+    except ImportError:
+        sys.stderr.write(
+            "This must run under a Python that has pymc_core. Run the menu instead "
+            "(it finds the right one), or set MESHTERM_PYMC_PYTHON.\n"
+        )
+        return 2
+
+    from pymc_core.companion import CompanionFrameServer, CompanionRadio
+
+    # Prefer the hackergadgets meshcore_console helpers (correct board pins +
+    # the SAME node identity the GUI uses). Fall back to a direct pymc_core
+    # setup for a generic install (e.g. a Waveshare HAT with pip'd pymc_core).
+    identity = None
+    radio = None
+    try:
+        from meshcore_console.meshcore.config import load_hardware_config_from_env
+        from meshcore_console.meshcore.paths import identity_key_path
+        from meshcore_console.meshcore.runtime import create_radio, import_pymc_core
+
+        SX1262Radio, _ES, _ESub, _MN, LocalIdentity = import_pymc_core()
+        hw = load_hardware_config_from_env()
+        log.info("radio config %s", hw.to_log_string())
+        radio = create_radio(SX1262Radio, hw, log.info)
+        key_path = identity_key_path()
+        if key_path.exists():
+            identity = LocalIdentity(key_path.read_bytes())
+            log.info("using existing node identity at %s", key_path)
+        radio_config = {
+            "frequency": hw.frequency, "bandwidth": hw.bandwidth,
+            "spreading_factor": hw.spreading_factor, "coding_rate": hw.coding_rate,
+            "tx_power": hw.tx_power,
+        }
+    except ImportError:
+        log.info("meshcore_console not present — using direct pymc_core defaults")
+        from pymc_core.hardware.sx1262_wrapper import SX1262Radio
+        from pymc_core.protocol.identity import LocalIdentity
+
+        radio = SX1262Radio(
+            bus_id=int(os.environ.get("MESHCORE_BUS_ID", 1)),
+            cs_id=int(os.environ.get("MESHCORE_CS_ID", 0)),
+            cs_pin=int(os.environ.get("MESHCORE_CS_PIN", -1)),
+            reset_pin=int(os.environ.get("MESHCORE_RESET_PIN", 25)),
+            busy_pin=int(os.environ.get("MESHCORE_BUSY_PIN", 24)),
+            irq_pin=int(os.environ.get("MESHCORE_IRQ_PIN", 26)),
+            frequency=int(os.environ.get("MESHCORE_FREQUENCY", 910_525_000)),
+            tx_power=int(os.environ.get("MESHCORE_TX_POWER", 22)),
+            spreading_factor=int(os.environ.get("MESHCORE_SPREADING_FACTOR", 7)),
+            bandwidth=int(os.environ.get("MESHCORE_BANDWIDTH", 62_500)),
+            coding_rate=int(os.environ.get("MESHCORE_CODING_RATE", 5)),
+        )
+        radio_config = {
+            "frequency": 910_525_000, "bandwidth": 62_500,
+            "spreading_factor": 7, "coding_rate": 5, "tx_power": 22,
+        }
+        key_path = HOME / ".local" / "share" / APP_NAME / "identity.key"
+        if key_path.exists():
+            identity = LocalIdentity(key_path.read_bytes())
+
+    if identity is None:
+        # No persisted identity anywhere — mint one and save it so the node
+        # keeps a stable identity across restarts.
+        from pymc_core.protocol.identity import LocalIdentity as _LI
+
+        tmp = _LI()
+        seed = tmp.get_signing_key_bytes()
+        save_path = HOME / ".local" / "share" / APP_NAME / "identity.key"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_bytes(seed)
+        identity = _LI(seed)
+        log.info("generated a new node identity at %s", save_path)
+
+    async def _main() -> int:
+        # radio.begin() with backoff — GPIO lines may still be held briefly by
+        # a just-closed session.
+        import time
+
+        for attempt in range(4):
+            log.info("radio.begin() attempt %d/4", attempt + 1)
+            try:
+                if not radio.begin():
+                    raise RuntimeError("radio.begin() returned False")
+                break
+            except SystemExit:
+                if attempt == 3:
+                    raise RuntimeError("GPIO pins still busy after retries")
+                try:
+                    radio.cleanup()
+                except Exception:
+                    pass
+                time.sleep(2.0 * (attempt + 1))
+        log.info("radio ready")
+
+        companion = CompanionRadio(radio, identity, node_name=node_name, radio_config=radio_config)
+        await companion.start()
+        pub = companion.get_public_key()
+        log.info("node identity %s… (hash 0x%02x, name %r)", pub.hex()[:16], pub[0], node_name)
+
+        server = CompanionFrameServer(
+            bridge=companion,
+            companion_hash=f"{pub[0]:02x}",
+            port=port,
+            bind_address=host,
+            local_hash=pub[0],
+            device_model="pyMC-spi-bridge",
+        )
+        await server.start()
+        log.info("READY — connect with:  meshterm --tcp %s:%d", host, port)
+
+        import signal
+
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:
+                pass
+        try:
+            await stop.wait()
+        finally:
+            log.info("shutting down…")
+            try:
+                await server.stop()
+                await companion.stop()
+            except Exception:
+                pass
+        return 0
+
+    try:
+        return asyncio.run(_main())
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:  # surface a clean message, not a traceback wall
+        log.error("bridge failed: %s", exc)
+        return 1
+
+
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Expose an SPI-attached MeshCore radio to MeshTerm over TCP."
+    )
+    ap.add_argument("--check", action="store_true", help="run prerequisite checks and exit")
+    ap.add_argument("--run", action="store_true", help="run the bridge now (finds the runtime)")
+    ap.add_argument("--run-bridge", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--host", default=DEFAULT_HOST)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--name", default=DEFAULT_NODE_NAME)
+    args = ap.parse_args()
+
+    # Internal: we've already been re-execed under the pymc_core interpreter.
+    if args.run_bridge:
+        return run_bridge(args.host, args.port, args.name)
+
+    if args.check:
+        Preflight().print()
+        return 0
+
+    if args.run:
+        pre = Preflight()
+        pre.print()
+        action_run_now(pre)
+        return 0
+
+    return menu()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
