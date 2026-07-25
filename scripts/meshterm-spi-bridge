@@ -594,6 +594,73 @@ def _patch_pymc_ack_compat(log) -> None:
     log.info("compat: AckHandler patched to accept >4-byte ACK payloads")
 
 
+def _wire_contact_persistence(companion, log) -> None:
+    """Keep the node's contact list across bridge restarts.
+
+    pymc_core's ContactStore is memory-only, so a restart forgot every contact
+    and DMs failed with ERR_CODE_NOT_FOUND until the peer was heard again.
+    Reload the last snapshot at startup and re-snapshot after every mutation.
+    """
+    import json
+
+    store = getattr(companion, "contacts", None)
+    if store is None or not hasattr(store, "load_from_dicts"):
+        log.warning("contact persistence not wired (no contact store)")
+        return
+
+    path = HOME / ".local" / "share" / APP_NAME / "contacts.json"
+
+    def to_rec(c) -> dict:
+        rec = {
+            "public_key": c.public_key.hex(),
+            "name": c.name,
+            "adv_type": c.adv_type,
+            "flags": c.flags,
+            "out_path_len": c.out_path_len,
+            "out_path": c.out_path.hex() if c.out_path else "",
+            "last_advert_timestamp": c.last_advert_timestamp,
+            "lastmod": c.lastmod,
+            "gps_lat": c.gps_lat,
+            "gps_lon": c.gps_lon,
+            "sync_since": c.sync_since,
+        }
+        if c.last_advert_packet:
+            rec["last_advert_packet"] = c.last_advert_packet.hex()
+        return rec
+
+    if path.exists():
+        try:
+            store.load_from_dicts(json.loads(path.read_text()))
+            log.info("restored %d contact(s) from %s", store.get_count(), path)
+        except Exception as exc:
+            log.warning("could not restore contacts (%s)", exc)
+
+    def save() -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps([to_rec(c) for c in store.get_all()]))
+            tmp.replace(path)
+        except Exception as exc:
+            log.warning("could not save contacts (%s)", exc)
+
+    def wrap(name: str) -> None:
+        orig = getattr(store, name, None)
+        if orig is None:
+            return
+
+        def wrapped(*args, _orig=orig, **kwargs):
+            result = _orig(*args, **kwargs)
+            save()
+            return result
+
+        setattr(store, name, wrapped)
+
+    for name in ("add", "add_or_overwrite", "update", "remove", "clear"):
+        wrap(name)
+    log.info("contact persistence at %s", path)
+
+
 def run_bridge(host: str, port: int, node_name: str) -> int:
     import asyncio
     import logging
@@ -701,6 +768,7 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
 
         companion = CompanionRadio(radio, identity, node_name=node_name, radio_config=radio_config)
         await companion.start()
+        _wire_contact_persistence(companion, log)
         pub = companion.get_public_key()
         log.info("node identity %s… (hash 0x%02x, name %r)", pub.hex()[:16], pub[0], node_name)
 
