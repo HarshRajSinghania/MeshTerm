@@ -16,6 +16,7 @@ from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.channel_store import ChannelStore
 from .core.config import DeviceProfile, Settings
+from .core.contact_store import ContactStore
 from .core.courier_store import CourierStore
 from .core.mute_store import MuteStore
 from .core.remote_store import RemoteStore
@@ -69,6 +70,9 @@ class AppContext:
         settings_store: Store for settings changed through MeshTerm, offered back on connect to
             a device that forgot them (a firmware-less radio bridge). Keyed by device public
             key; defaults to ``<config_dir>/settings.json`` when not injected.
+        contact_store: Store for contacts read through MeshTerm, merged back into the contact
+            lists for a device that forgot them (a firmware-less radio bridge). Keyed by device
+            public key; defaults to ``<config_dir>/contacts.json`` when not injected.
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -97,6 +101,7 @@ class AppContext:
     mute_store: Optional[MuteStore] = None
     channel_store: Optional[ChannelStore] = None
     settings_store: Optional[SettingsStore] = None
+    contact_store: Optional[ContactStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -147,6 +152,8 @@ class AppContext:
             self.channel_store = ChannelStore(self.settings.config_dir / "channels.json")
         if self.settings_store is None:
             self.settings_store = SettingsStore(self.settings.config_dir / "settings.json")
+        if self.contact_store is None:
+            self.contact_store = ContactStore(self.settings.config_dir / "contacts.json")
 
     @property
     def profile_name(self) -> Optional[str]:

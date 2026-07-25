@@ -130,9 +130,33 @@ class DeviceState:
             ):
                 return self._contacts
             device = await self._ctx.device()
-            self._contacts = await device.get_contacts()
+            self._contacts = await self._remember_and_merge(await device.get_contacts())
             self._contacts_at = time.monotonic()
             return self._contacts
+
+    async def _remember_and_merge(self, fetched: list["Contact"]) -> list["Contact"]:
+        """Record the contacts just read, then union in any the device has since forgotten.
+
+        A firmware-less radio bridge loses its contact table on restart, so MeshTerm remembers
+        every contact it reads (keyed by the device's own public key) and merges the missing ones
+        back into the list — leaving a firmware radio, which reports its whole table, untouched
+        (see :mod:`meshterm.core.contact_store`). Best-effort: a store or self-info hiccup just
+        returns the live list unchanged, never blocking the read.
+        """
+        store = getattr(self._ctx, "contact_store", None)
+        if store is None:
+            return fetched
+        from ..core.contact_store import merge_contacts
+
+        try:
+            pubkey = str((await self.self_info()).get("public_key") or "")
+        except Exception as exc:  # noqa: BLE001 - never block a contacts read on the store
+            self._ctx.log.debug("devstate: contact remember/merge skipped: %s", exc)
+            return fetched
+        if not pubkey:
+            return fetched
+        store.remember_all(pubkey, fetched)
+        return merge_contacts(store, pubkey, fetched)
 
     async def _refresh_contacts_quietly(self) -> None:
         """Background contacts refresh: update the cache, swallow a failure (keep the old list)."""
