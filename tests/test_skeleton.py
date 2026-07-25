@@ -298,6 +298,21 @@ async def test_mock_device_honors_forced_path() -> None:
     assert [h.node for h in result.hops] == ["3d", "f2", "3d", None]
 
 
+async def test_mock_device_remove_contact_drops_it_from_the_table() -> None:
+    """Removing a contact deletes it from the device's table (matched by public key)."""
+    device = MockDevice()
+    await device.connect()
+    before = await device.get_contacts()
+    alice = next(c for c in before if c.name == "Alice")
+    await device.remove_contact(alice)
+    after = await device.get_contacts()
+    assert "Alice" not in {c.name for c in after}
+    assert len(after) == len(before) - 1
+    # Removing one already gone is a no-op, not an error.
+    await device.remove_contact(alice)
+    assert len(await device.get_contacts()) == len(after)
+
+
 async def test_mock_device_blank_path_traces() -> None:
     """A blank/auto path still produces a successful, non-empty trace."""
     device = MockDevice()

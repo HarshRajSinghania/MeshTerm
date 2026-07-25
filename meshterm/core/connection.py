@@ -362,6 +362,23 @@ class Device(ABC):
         """
 
     @abstractmethod
+    async def remove_contact(self, node: Contact) -> None:
+        """Delete a contact from the device's contact table.
+
+        Addresses the contact by its public key, so it must carry one (a contact heard
+        as an advert always does). The node stays a *node* — its reception history and any
+        overheard traffic are untouched — it is only dropped from the device's list of
+        added, messageable contacts.
+
+        Args:
+            node: The contact to remove.
+
+        Raises:
+            DeviceCommandError: If the contact carries no public key to address it by, or
+                the device rejected the removal.
+        """
+
+    @abstractmethod
     async def get_tx_power(self) -> Optional[int]:
         """Return the current TX power level, or ``None`` if unknown."""
 
@@ -1420,6 +1437,11 @@ class MeshCoreDevice(Device):
             )
         return contacts
 
+    async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
+        mc = self._require()
+        pub = self._node_pubkey(node)  # raises DeviceCommandError if it has no key
+        self._ok(await mc.commands.remove_contact(pub))
+
     async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring
         info = await self.get_self_info()
         value = info.get("tx_power")
@@ -2198,6 +2220,11 @@ class MockDevice(Device):
 
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
         return list(self._contacts)
+
+    async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
+        await asyncio.sleep(0)
+        key = self._mock_key(node)
+        self._contacts = [c for c in self._contacts if self._mock_key(c) != key]
 
     async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring
         return self._tx_power

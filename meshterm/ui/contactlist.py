@@ -351,6 +351,7 @@ class ContactListScreen(SelectScreen):
         sort: ContactsSort,
         prompt: str = "",
         lead: Optional[list] = None,
+        tail: Optional[list] = None,
         footer_hint: str = _HINT,
         show_traced: bool = False,
     ) -> None:
@@ -368,6 +369,11 @@ class ContactListScreen(SelectScreen):
             prompt: An optional instruction shown above the list.
             lead: Rows (choices/separators) drawn above the column header — the Time
                 Machine's whole-mesh row and its section heading; ``None`` for none.
+            tail: Rows (choices/separators) drawn *below* the sorted contacts — the
+                Contacts screen's ``Purge stale contacts…`` action and its ``Back`` exit
+                group. They sit past every contact whatever the sort, and (being ordinary
+                choices) fall out of view while a type-to-filter narrows the list, exactly
+                like the Trophy case's delete rows. ``None`` for a pure pick-list.
             footer_hint: Footer key hint; the default advertises the full grammar.
             show_traced: Whether to draw the ``TRACED`` lane (last-traced age) between the
                 name and heard lanes — the Trace-target picker only. Pair it with a ``sort``
@@ -378,6 +384,7 @@ class ContactListScreen(SelectScreen):
         self._sort = sort
         self._show_traced = show_traced
         self._lead = list(lead) if lead else []
+        self._tail = list(tail) if tail else []
         # Provisional until the first render learns the true width (see render_body).
         self._name_w = _NAME_MIN
         self._hash_w = _HASH_MIN
@@ -390,10 +397,11 @@ class ContactListScreen(SelectScreen):
         )
 
     def _compose_items(self) -> list:
-        """The lead rows, the sort-aware column header, then the contact lanes.
+        """The lead rows, the sort-aware column header, the contact lanes, then any tail rows.
 
         Own-node rows lead the lanes and stay first whatever the sort: only the block
-        below them reorders (see :func:`_ordered`)."""
+        below them reorders (see :func:`_ordered`). Tail rows (a purge action, the exit
+        group) close the list, past every contact whatever the sort."""
         items: list = list(self._lead)
         items.append(Separator(_header(self._name_w, self._sort, self._show_traced)))
         pinned = [row for row in self._contact_rows if row.you]
@@ -408,6 +416,7 @@ class ContactListScreen(SelectScreen):
                     row.value,
                 )
             )
+        items.extend(self._tail)
         return items
 
     def _rebuild(self) -> None:

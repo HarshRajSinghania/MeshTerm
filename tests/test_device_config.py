@@ -243,7 +243,7 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     import re
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.contacts_screen import YOU, ContactsScreen
+    from meshterm.ui.contacts_screen import _BACK, _PURGE, YOU, ContactsScreen
     from meshterm.ui.tui.screen import CANCEL
 
     contacts = [
@@ -264,8 +264,10 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert "Alice" in body and "Bob" in body
     assert f"{7:>5}" in body  # Alice's overheard packets, right-aligned in its lane
     assert "never" in body  # Bob has no last_seen
-    # Each contact row carries the Contact itself, so Enter hands the whole record on.
-    assert all(isinstance(c.value, Contact) for c in choices[1:])
+    # Each contact row carries the Contact itself, so Enter hands the whole record on; the
+    # tail closes the list with the purge action and the Back exit row.
+    assert [c.value for c in choices[-2:]] == [_PURGE, _BACK]
+    assert all(isinstance(c.value, Contact) for c in choices[1:-2])
 
     # Plain arrows move the highlight without touching the sort.
     before = (screen._sort.column, screen._sort.ascending)
@@ -282,6 +284,45 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert resolved == [highlighted]
     screen.handle("escape")
     assert resolved == [highlighted, CANCEL]
+
+
+def test_purge_buckets_split_stale_from_never_heard() -> None:
+    """``stale_past`` counts heard-but-old contacts; never-heard falls only in its own bucket."""
+    from datetime import timedelta
+
+    from meshterm.core.models import Contact, utcnow
+    from meshterm.ui.contacts_screen import _DAY, never_heard, stale_past
+
+    now = utcnow()
+    fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=now - timedelta(hours=1))
+    old = Contact(name="Old", public_key="bb" * 32, last_seen=now - timedelta(days=45))
+    ancient = Contact(name="Ancient", public_key="cc" * 32, last_seen=now - timedelta(days=400))
+    unheard = Contact(name="Unheard", public_key="dd" * 32)  # no last_seen
+    contacts = [fresh, old, ancient, unheard]
+
+    # A week catches the two aged ones but not the fresh — and never the never-heard one.
+    week = {c.name for c in stale_past(contacts, 7 * _DAY)}
+    assert week == {"Old", "Ancient"}
+    # A year catches only the truly ancient.
+    assert {c.name for c in stale_past(contacts, 365 * _DAY)} == {"Ancient"}
+    # The never-heard bucket is exactly the contact with no advert time.
+    assert [c.name for c in never_heard(contacts)] == ["Unheard"]
+
+
+def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:
+    """A populated list closes with the purge action + Back; an empty one has no tail action."""
+    from meshterm.core.models import Contact
+    from meshterm.ui.contacts_screen import _BACK, _PURGE, ContactsScreen
+
+    populated = ContactsScreen(
+        "Us", "cc" * 32, [Contact(name="Alice", public_key="aa" * 32)], 1, {}, _contacts_sort()
+    )
+    tail_values = [c.value for c in populated._choices()][-2:]
+    assert tail_values == [_PURGE, _BACK]
+
+    empty = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort())
+    values = [c.value for c in empty._choices()]
+    assert _PURGE not in values  # nothing to purge — no action row
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:
