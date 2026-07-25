@@ -19,6 +19,7 @@ from .core.config import DeviceProfile, Settings
 from .core.courier_store import CourierStore
 from .core.mute_store import MuteStore
 from .core.remote_store import RemoteStore
+from .core.settings_store import SettingsStore
 from .core.watch_store import WatchStore
 from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
@@ -65,6 +66,9 @@ class AppContext:
         channel_store: Store for channels created through MeshTerm, replayed into a device
             that forgot them (a firmware-less radio bridge). Keyed by device public key;
             defaults to ``<config_dir>/channels.json`` when not injected.
+        settings_store: Store for settings changed through MeshTerm, offered back on connect to
+            a device that forgot them (a firmware-less radio bridge). Keyed by device public
+            key; defaults to ``<config_dir>/settings.json`` when not injected.
         mock: Whether the simulator device is in use.
         port_override: Explicit serial port (from ``--port`` or the interactive picker),
             overriding the profile.
@@ -92,6 +96,7 @@ class AppContext:
     courier_store: Optional[CourierStore] = None
     mute_store: Optional[MuteStore] = None
     channel_store: Optional[ChannelStore] = None
+    settings_store: Optional[SettingsStore] = None
     profile: Optional[DeviceProfile] = None
     mock: bool = False
     port_override: Optional[str] = None
@@ -140,6 +145,8 @@ class AppContext:
             self.mute_store = MuteStore(self.settings.config_dir / "mutes.json")
         if self.channel_store is None:
             self.channel_store = ChannelStore(self.settings.config_dir / "channels.json")
+        if self.settings_store is None:
+            self.settings_store = SettingsStore(self.settings.config_dir / "settings.json")
 
     @property
     def profile_name(self) -> Optional[str]:

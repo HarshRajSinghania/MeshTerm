@@ -578,6 +578,12 @@ async def _startup(ctx: AppContext) -> bool:
     # Float the skeleton card across that gap on any real link (see _busy_over_link).
     async with _busy_over_link(ctx, title="Starting up"):
         await _resume_monitor(ctx)
+    # A forgetful device (a firmware-less radio bridge) may have lost settings you saved through
+    # MeshTerm; offer to reconcile them on the splash before the menu paints. Quiet unless a
+    # connected device actually drifts from what's remembered (see settings_offer).
+    from .settings_offer import offer_remembered_settings
+
+    await offer_remembered_settings(ctx)
     return True
 
 

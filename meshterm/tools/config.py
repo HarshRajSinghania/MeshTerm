@@ -329,6 +329,11 @@ async def _apply_setting(
     value = parse_value(spec, raw, snapshot)
     await spec.apply(device, value, snapshot)
     snapshot[key] = value
+    # Remember what we set, keyed by the device's own public key, so a forgetful device (a
+    # firmware-less radio bridge) can be offered its settings back on the next connect (see
+    # meshterm.core.settings_store). Provenance-gated: only values changed through MeshTerm.
+    if ctx.settings_store is not None:
+        ctx.settings_store.remember(str(snapshot.get("public_key") or ""), key, value)
     ctx.ui.note(f"[ok]✓[/ok] [brand]{key}[/brand] = {format_value(spec, value)}")
     return 1
 
