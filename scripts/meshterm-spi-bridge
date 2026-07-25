@@ -562,6 +562,38 @@ def menu() -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _patch_pymc_ack_compat(log) -> None:
+    """Accept modern MeshCore ACKs that carry extra bytes after the CRC.
+
+    Newer firmware sends discrete ACK payloads longer than 4 bytes (the 4-byte
+    CRC first, then extras). pymc_core's AckHandler requires exactly 4 bytes
+    and drops the rest, so delivery confirmations never reach MeshTerm.
+    Override it to take the leading 4 bytes as the CRC — the same tolerant
+    parse pymc_core already uses for path-bundled ACKs.
+    """
+    try:
+        from pymc_core.node.handlers.ack import AckHandler
+    except Exception as exc:  # package layout changed — leave it alone
+        log.warning("ack compat shim not applied (%s)", exc)
+        return
+
+    async def process_discrete_ack(self, packet):
+        payload = packet.payload
+        self.log(f"Processing discrete ACK: payload_len={len(payload)}")
+        self.log(f"ACK payload (hex): {payload.hex().upper()}")
+        if len(payload) < 4:
+            self.log(f"Invalid ACK length: {len(payload)} bytes (expected >= 4)")
+            return None
+        crc = int.from_bytes(payload[:4], "little")
+        if len(payload) > 4:
+            self.log(f"ACK carries {len(payload) - 4} extra byte(s): {payload[4:].hex().upper()}")
+        self.log(f"Discrete ACK received: CRC={crc:08X}")
+        return crc
+
+    AckHandler.process_discrete_ack = process_discrete_ack
+    log.info("compat: AckHandler patched to accept >4-byte ACK payloads")
+
+
 def run_bridge(host: str, port: int, node_name: str) -> int:
     import asyncio
     import logging
@@ -579,6 +611,8 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
             "(it finds the right one), or set MESHTERM_PYMC_PYTHON.\n"
         )
         return 2
+
+    _patch_pymc_ack_compat(log)
 
     from pymc_core.companion import CompanionFrameServer, CompanionRadio
 
