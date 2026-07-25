@@ -481,6 +481,28 @@ class _StubSource:
         return None
 
 
+class _CapturingSession(_StubSession):
+    """Drives :func:`open_map` headless: captures the pushed screen, renders it once, then
+    replays a canned key sequence — so a test can assert on where the map opened and what
+    it did (or didn't) persist as the view moves."""
+
+    def __init__(self, cols: int, rows: int, keys: tuple[str, ...] = ()) -> None:
+        super().__init__(cols, rows)
+        self.keys = keys
+        self.screen = None
+        self.repainted = False
+
+    async def run_screen(self, screen):  # noqa: ANN001, ANN201
+        self.screen = screen
+        screen.render_body(self._cols)
+        for key in self.keys:
+            screen.handle(key)
+        return None
+
+    def request_full_repaint(self) -> None:
+        self.repainted = True
+
+
 def test_map_screen_renders_pans_zooms_and_resets() -> None:
     """The interactive screen fills its body, and wasd/zoom/reset move the viewport."""
     from meshterm.core.geo import Viewport
@@ -646,6 +668,53 @@ def test_map_screen_restores_and_persists_view() -> None:
 
     screen.handle("pageup")  # zooming in persists too
     assert saved[-1][2] == 13
+
+
+async def test_open_map_focus_centres_on_the_node_without_clobbering_the_saved_view(
+    ctx, monkeypatch
+) -> None:
+    """Opening the full map focused on a node (from its detail page) centres there, at the
+    inline preview's zoom — and, being a transient peek, never overwrites the persisted
+    'where you left the map' global view, even as the peek is panned and zoomed."""
+    from meshterm.core.geo import clamp_lat
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import open_map
+    from meshterm.ui.surface import TuiUi
+
+    monkeypatch.setattr("meshterm.ui.map_screen.basemap_source", lambda _c: _StubSource())
+    ctx.repo.set_map_view(10.0, 20.0, 8)  # where the user last left the global map
+
+    session = _CapturingSession(80, 24, keys=("right", "pageup"))  # pan + zoom the peek
+    ctx.ui = TuiUi(session)
+    await open_map(ctx, [MapMarker("Hub", 45.5, -73.6, is_repeater=True)], focus=(45.5, -73.6))
+
+    # Opened on the node, at the detail preview's zoom (min(13, max_zoom)).
+    assert session.screen._saved_view == (clamp_lat(45.5), -73.6, 13)
+    assert session.screen._on_view_change is None  # a focused peek wires no persistence
+    # Panning/zooming the peek left the global 'where you left the map' view untouched.
+    assert ctx.repo.get_map_view() == pytest.approx((10.0, 20.0, 8))
+    assert session.repainted  # cleaned the terminal on the way out, like the plain open
+
+
+async def test_open_map_without_focus_restores_and_persists_the_global_view(
+    ctx, monkeypatch
+) -> None:
+    """With no focus the full map is unchanged: it reopens where the user left it and pans
+    persist straight back to that global view."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import open_map
+    from meshterm.ui.surface import TuiUi
+
+    monkeypatch.setattr("meshterm.ui.map_screen.basemap_source", lambda _c: _StubSource())
+    ctx.repo.set_map_view(46.80, -71.20, 12)  # the saved view to reopen on
+
+    session = _CapturingSession(80, 24, keys=("right",))  # pan east
+    ctx.ui = TuiUi(session)
+    await open_map(ctx, [MapMarker("Hub", 46.8, -71.2)])
+
+    assert session.screen._viewport.zoom == 12  # reopened on the saved view, not a node fit
+    lat, lon, zoom = ctx.repo.get_map_view()
+    assert zoom == 12 and lon > -71.20  # the eastward pan persisted back to the global view
 
 
 def test_map_screen_scrubs_right_edge_after_move() -> None:

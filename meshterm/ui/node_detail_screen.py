@@ -835,7 +835,10 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             await open_trace(ctx, name or key, initial_spec=screen.selected_spec())
         elif action == "map":
             if markers:
-                await open_map(ctx, markers)
+                # Open centred on this node — the very spot the inline preview showed —
+                # not wherever the global map was last left. (The map action only exists
+                # when the node has a fix, so lat/lon are set here.)
+                await open_map(ctx, markers, focus=(lat, lon))
         elif action == "timemachine":
             if you:
                 await open_timemachine_self(ctx)

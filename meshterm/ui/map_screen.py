@@ -512,6 +512,7 @@ async def open_map(
     ctx: "AppContext",
     markers: list[MapMarker],
     *,
+    focus: Optional[tuple[float, float]] = None,
     fraction: float = DEFAULT_VIEW_FRACTION,
 ) -> None:
     """Open the interactive full-screen map over ``markers`` and run until dismissed.
@@ -522,6 +523,11 @@ async def open_map(
     Args:
         ctx: Shared application context (must be in the interactive menu).
         markers: The located mesh nodes to plot (non-empty).
+        focus: A ``(lat, lon)`` to open centred on — the node you opened the map from,
+            say — instead of the persisted "where you left the map" view. A focused open
+            is a transient peek: it deliberately wires no ``on_view_change``, so panning
+            around it never overwrites that saved view and the Map tool still reopens
+            where the user last left it.
         fraction: Fraction of the nodes the default view frames (see :class:`MapScreen`).
 
     Raises:
@@ -535,17 +541,31 @@ async def open_map(
     source = basemap_source(ctx)
     # Resolve the tile template/zoom in a worker thread so the UI thread never blocks.
     max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
-    screen = MapScreen(
-        session,
-        markers,
-        source,
-        max_zoom,
-        saved_view=ctx.repo.get_map_view(),
-        on_view_change=lambda vp: ctx.repo.set_map_view(
-            vp.center_lat, vp.center_lon, vp.zoom
-        ),
-        view_fraction=fraction,
-    )
+    if focus is not None:
+        # Open on the focused node — matching the detail preview's centre and zoom
+        # (``min(13, max_zoom)``) so the full map is visibly the same place, larger. No
+        # ``on_view_change``: a focused peek must leave the persisted global view alone.
+        lat, lon = focus
+        screen = MapScreen(
+            session,
+            markers,
+            source,
+            max_zoom,
+            saved_view=(clamp_lat(lat), lon, min(13, max_zoom)),
+            view_fraction=fraction,
+        )
+    else:
+        screen = MapScreen(
+            session,
+            markers,
+            source,
+            max_zoom,
+            saved_view=ctx.repo.get_map_view(),
+            on_view_change=lambda vp: ctx.repo.set_map_view(
+                vp.center_lat, vp.center_lon, vp.zoom
+            ),
+            view_fraction=fraction,
+        )
     try:
         await session.run_screen(screen)
     finally:
