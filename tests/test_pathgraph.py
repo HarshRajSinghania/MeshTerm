@@ -14,6 +14,7 @@ from meshterm.ui.pathgraph import (
     PathLayer,
     _assign_lanes,
     _balanced_x,
+    _bypass_vias,
     _coalesce_prefixes,
     _collapse,
     _layout_lanes,
@@ -491,6 +492,113 @@ def test_edge_pinned_relay_labels_are_not_dropped() -> None:
     plain = _ANSI.sub("", "\n".join(_render(layers, label_of=lambda n: names.get(n))))
     for name in names.values():
         assert name in plain, f"{name} was dropped near a canvas edge"
+
+
+def _vias_for(layers, width=60, max_rows=15):  # noqa: ANN001
+    """Run the pre-render pipeline through the bypass pass, as ``render_path_graph`` does.
+
+    Returns ``(vias, signed)``: the bypass via map keyed by unordered edge pair — each entry
+    ``[(skipped node, via signed lane), …]`` — and the packed signed lane per relay, so a test
+    can assert a via landed relative to the seated nodes.
+    """
+    drawn = _collapse(_coalesce_prefixes(layers))
+    seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    edges: set[tuple[str, str]] = set()
+    for seq in seqs:
+        for node in seq:
+            if node not in seen:
+                seen.add(node)
+                ordered.append(node)
+        edges.update(zip(seq, seq[1:]))
+    xfrac = _balanced_x(ordered, edges)
+    best = max(range(len(drawn)), key=lambda j: drawn[j].priority)
+    owner: dict[str, int] = {}
+    for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
+        for node in seqs[i]:
+            owner.setdefault(node, i)
+    span = width * 2 - 2 * _GRAPH_PAD_DOTS
+    col_of = lambda node: (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1  # noqa: E731
+    signed = _layout_lanes(
+        drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS
+    )
+    bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
+    vias = _bypass_vias(seqs, bidir, signed, col_of, max_rows, _LANE_PITCH_ROWS)
+    return vias, signed
+
+
+def test_subset_route_bypasses_the_relay_it_skips() -> None:
+    """ABCD beside ACD: the skip edge arcs around the unridden relay via a free flank lane.
+
+    The spine runs SRC → c1 → c2 → us with a balanced flank each side, so the endpoints ride
+    the spine's own lane and the subset route's SRC → c2 edge is a level run straight through
+    ``c1``'s marker — the Furthur → YUL-Cartierville shape, where the selected route lit the
+    spine's run through C14903 it never rides. The edge must bend around ``c1`` through a
+    virtual waypoint in its column — and on the flank ``x1`` does *not* occupy, since ``x1``
+    shares ``c1``'s column and its lane there is taken.
+    """
+    layers = [
+        PathLayer(("c1", "c2"), WHITE, 4),   # spine: SRC -> c1 -> c2 -> us
+        PathLayer(("x1", "c2"), GREY, 3),    # swaps c1 (x1 shares c1's column, one flank)
+        PathLayer(("c1", "y2"), GREY, 2),    # swaps c2 (the other flank — spine stays centred)
+        PathLayer(("c2",), GREY, 1),         # the subset: skips c1, rides c2
+    ]
+    vias, signed = _vias_for(layers)
+    [(skipped, lane)] = vias[frozenset((SRC_NODE, "c2"))]
+    assert skipped == "c1"  # the bypass shields exactly the relay the route skips
+    assert lane == -signed["x1"]  # x1 holds its flank of c1's column — the via takes the other
+
+
+def test_bypass_opens_a_lane_when_the_rows_afford_it() -> None:
+    """With no flank to borrow, the bypass opens one — the band grows and the arc rides it."""
+    layers = [
+        PathLayer(("aa", "bb", "cc"), WHITE, 4),  # the whole graph on one straight lane
+        PathLayer(("aa", "cc"), GREY, 2),         # the shortcut skipping bb
+    ]
+    vias, _signed = _vias_for(layers)
+    [(skipped, lane)] = vias[frozenset(("aa", "cc"))]
+    assert skipped == "bb"
+    assert lane == -1  # a fresh lane just off the spine — above on a dead heat
+    # And the render truly opens it: the endpoints leave the relays' row for the band centre.
+    lines = _render(layers, label_of=lambda _n: None)
+    (star,) = _marker_rows(lines, "★")
+    (relay_row,) = _marker_rows(lines, "●")  # all three relays still level on the spine
+    assert star < relay_row  # endpoints sit between the opened bypass lane and the spine
+
+
+def test_bypass_gives_up_when_the_rows_cannot_afford_a_lane() -> None:
+    """No free lane and no headroom: the honest level pass-over stands — never a taller band."""
+    layers = [
+        PathLayer(("aa", "bb", "cc"), WHITE, 4),
+        PathLayer(("aa", "cc"), GREY, 2),
+    ]
+    vias, _signed = _vias_for(layers, max_rows=5)  # too short for a second lane at full pitch
+    assert vias == {}
+
+
+def test_route_threads_bypass_vias_level_at_each_peak() -> None:
+    """A bent edge leaves level, peaks level on its via, and lands level — no corners."""
+    pts = _route("u", "v", {"u": (0, 9), "v": (80, 9)}, bidir=False, vias=[(40, 1)])
+    assert pts[0] == (0, 9) and pts[-1] == (80, 9)  # the markers still anchor the ends
+    assert (40, 1) in pts  # the via is an anchor the edge truly passes through
+    near_peak = [y for x, y in pts if 36 <= x <= 44]
+    assert near_peak and all(y <= 2.0 for y in near_peak)  # level over the skipped marker
+    assert pts[0][1] == pts[1][1] and pts[-1][1] == pts[-2][1]  # seated level at both ends
+
+
+def test_bypass_render_keeps_every_label() -> None:
+    """The arcs a bypass adds never crowd a name off the canvas."""
+    names = {"c1": "C14903", "c2": "Cartier", "x1": "Poly", "y2": "Upper"}
+    layers = [
+        PathLayer(("c1", "c2"), GREY, 4),
+        PathLayer(("x1", "c2"), GREY, 3),
+        PathLayer(("c1", "y2"), GREY, 2),
+        PathLayer(("c2",), WHITE, 1, emphasis=1),  # the subset selected, as on the node page
+    ]
+    plain = _ANSI.sub("", "\n".join(_render(layers, label_of=lambda n: names.get(n))))
+    for name in names.values():
+        assert name in plain, f"{name} was dropped from the graph"
 
 
 def test_a_subsumed_route_adds_no_duplicate_markers() -> None:

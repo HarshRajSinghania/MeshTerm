@@ -55,6 +55,14 @@ over and then settles. Concretely:
   that extra lane **folds** the relay onto the sibling's lane itself (weakest detours first,
   re-measuring after each), where the sibling's run passes over it — the legible-but-lossier
   last resort, never the default (see :func:`_layout_lanes`);
+* **bypasses** — the detour's mirror: beside the spine's ``A → B → C`` lives the shorter route
+  that *skips* ``B``, and with ``A`` and ``C`` seated on one lane its ``A→C`` edge is a level
+  run straight through the marker of the one node it doesn't ride — drawn, it reads as *via*
+  ``B``, the story the evidence rules out. Where the skipped node's own column has room — a
+  free lane just off it, or one the row budget affords opening — the edge bends around instead,
+  arcing through an unmarked *virtual waypoint* in that column, the same wider-arc grammar a
+  nested detour draws, so skipping reads as skipping (see :func:`_bypass_vias`); only a graph
+  with genuinely no room left keeps the level pass-over;
 * **diverge / converge** — the fan at each end is flow, not a switchboard: routes leave the
   origin overlapping on the centre line and peel off one by one to their lanes (the
   divergence), and mirror that back into us on the right (the convergence). Every edge draws
@@ -409,14 +417,24 @@ def render_path_graph(
         drawn, seqs, ordered_nodes, owner, best, col_of, max_rows, lane_pitch
     )
 
+    # A pair walked in *both* directions draws as the one honest vertical (the edge pass
+    # below) — and is likewise never bent around anything.
+    bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
+    # An edge that would run level straight through a marker it *skips* bends around it
+    # instead, through a virtual waypoint in the skipped node's own column — wherever the
+    # column has room (see :func:`_bypass_vias`). The via lanes join the band extent below,
+    # so the vertical sizing affords any lane a bypass opens.
+    vias = _bypass_vias(seqs, bidir, signed, col_of, max_rows, lane_pitch)
+    via_lanes = [lane for hops in vias.values() for _m, lane in hops]
+
     # The endpoints sit at the vertical centre of the compressed lane band, where the strongest
     # route runs through them as the graph's spine; the alternatives fan above and below. When the
     # flanks balance out evenly the spine's own lane *is* that centre and it runs dead straight;
     # when the band is lopsided (or even-numbered) the centre falls between lanes, and the best
     # path eases gently to reach the endpoints rather than seating the whole graph off-centre —
     # a lean the balancer keeps small by flattening the flanks first.
-    low = min(signed.values(), default=0)
-    high = max(signed.values(), default=0)
+    low = min([*signed.values(), *via_lanes], default=0)
+    high = max([*signed.values(), *via_lanes], default=0)
     max_lane = high - low
     centre_lane = max_lane / 2.0
     node_lane: dict[str, float] = {
@@ -466,15 +484,24 @@ def render_path_graph(
         node: (x_of(node), _mid_row(top + slot(node_lane[node]) * 4 * scale))
         for node in ordered_nodes
     }
+    # Each bypass via becomes a dot point at the skipped marker's exact x, seated on its own
+    # lane row through the same slot/snap the real nodes ride — the arc's level peak sits dead
+    # over the node it clears.
+    via_pts: dict[frozenset[str], list[tuple[float, float]]] = {
+        key: [
+            (float(pos[m][0]), float(_mid_row(top + slot(float(lane - low)) * 4 * scale)))
+            for m, lane in hops
+        ]
+        for key, hops in vias.items()
+    }
     # -- Edges. Collect every edge once, keyed by its unordered node pair: an edge two routes
     # share — or a pair walked in *both* directions — must draw a single time, else it silts up
     # as a doubled line a dot off itself (two routes' Bresenham runs never land on the exact
     # same dots). Each pair keeps the colour and draw rank of the strongest route through it —
     # by draw rank, so the *emphasised* (highlighted) route wins a shared edge over a merely
     # higher-priority spine, and the highlight paints the whole selected route rather than
-    # dropping out where it overlaps another. A two-way pair is flagged so it draws as the one
-    # honest vertical rather than a lane change.
-    bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
+    # dropping out where it overlaps another. A two-way pair (``bidir``, above) draws as the
+    # one honest vertical rather than a lane change.
     edge_style: dict[frozenset[str], tuple[int, RGB]] = {}
     for layer, seq in sorted(zip(drawn, seqs), key=lambda ls: _draw_rank(ls[0])):
         rank = _draw_rank(layer)
@@ -487,7 +514,9 @@ def render_path_graph(
     # two edges share and sits on top.
     for key, (rank, color) in sorted(edge_style.items(), key=lambda kv: kv[1][0]):
         u, v = tuple(key)
-        canvas.draw_line(_route(u, v, pos, key in bidir), color, rank)
+        canvas.draw_line(
+            _route(u, v, pos, key in bidir, via_pts.get(key, ())), color, rank
+        )
 
     # -- An arrow embedded in the trunk just before us, so the whole flow reads as a directed
     # run node → us (not a map you wander). A single glyph in the spine's own colour: it reserves
@@ -509,6 +538,7 @@ def _route(
     v: str,
     pos: dict[str, tuple[int, int]],
     bidir: bool,
+    vias: Sequence[tuple[float, float]] = (),
 ) -> list[tuple[float, float]]:
     """The point chain for one edge (dot coordinates), drawn as multilane-highway flow.
 
@@ -520,24 +550,34 @@ def _route(
     meet the climbing curve at a corner, and that corner draws a heavy braille *knee*, so the curve
     runs continuously node to node instead and the marker seats on the curve's own level end tangent.
     The endpoints, sitting at the centre of the lane band, make the origin's diverging peels and
-    us's converging merges fall out of this one rule — no endpoint special case. The lone exception
-    is ``bidir``: a pair walked both ways draws as a single straight segment between the markers (a
-    near-vertical when the layout stacks them), the one place an up-and-down line is the honest
-    picture.
+    us's converging merges fall out of this one rule — no endpoint special case.
+
+    ``vias`` are an edge's bypass waypoints (:func:`_bypass_vias`), threaded between the two
+    markers in x order: the run applies the same level-or-shift grammar anchor to anchor —
+    marker to via to via to marker — so a bypass eases out, sits level for an instant dead
+    over the marker it clears, and eases back in, never cutting through it. The lone exception
+    is ``bidir``: a pair walked both ways draws as a single straight segment between the markers
+    (a near-vertical when the layout stacks them), the one place an up-and-down line is the
+    honest picture — and never a bent one.
     """
     (xu, yu), (xv, yv) = pos[u], pos[v]
     if bidir:
         return [(xu, yu), (xv, yv)]
     if xu > xv:  # orient the trapezium left→right; balanced rank only ties, never inverts
         (xu, yu), (xv, yv) = (xv, yv), (xu, yu)
-    if yu == yv:
-        return [(xu, yu), (xv, yv)]
-    dx = xv - xu
-    shift = min(dx, max(_MIN_SHIFT_DOTS, round(dx * _CURVE_SPAN)))
-    stub = (dx - shift) // 2
-    # A bezier S across the whole gap (level tangents at both ends, so it eases out of and back
-    # into each marker with no corner — and no platform corner to pile a heavy knee).
-    return [(xu, yu), *_sbend(xu + stub, yu, xv - stub, yv), (xv, yv)]
+    anchors: list[tuple[float, float]] = [(xu, yu), *sorted(vias), (xv, yv)]
+    pts: list[tuple[float, float]] = [anchors[0]]
+    for (xa, ya), (xb, yb) in zip(anchors, anchors[1:]):
+        if ya == yb:
+            pts.append((xb, yb))
+            continue
+        dx = xb - xa
+        shift = min(dx, max(_MIN_SHIFT_DOTS, round(dx * _CURVE_SPAN)))
+        stub = (dx - shift) // 2
+        # A bezier S across the whole gap (level tangents at both ends, so it eases out of and
+        # back into each anchor with no corner — and no platform corner to pile a heavy knee).
+        pts.extend([*_sbend(xa + stub, ya, xb - stub, yb), (xb, yb)])
+    return pts
 
 
 def _sbend(
@@ -787,6 +827,110 @@ def _layout_lanes(
         # to a plain lane of its own), so the loop always runs out of detours and terminates.
         victim = min(nests, key=lambda i: drawn[i].priority)
         _fold_detour(victim, nests.pop(victim), seqs, owner, col_of)
+
+
+def _bypass_vias(
+    seqs: Sequence[tuple[str, ...]],
+    bidir: set[frozenset[str]],
+    signed: dict[str, int],
+    col_of: Callable[[str], int],
+    max_rows: int,
+    lane_pitch: int,
+) -> dict[frozenset[str], list[tuple[str, int]]]:
+    """Bend each edge that runs level through a marker it skips — where the column has room.
+
+    The subset pair is the trigger: beside an ``A → B → C → D`` route lives the shorter
+    ``A → C → D``, and with ``A`` and ``C`` seated on one lane the shorter route's ``A→C``
+    edge is a level run straight through ``B``'s cell — drawn, it reads as *via B*, the one
+    story the evidence rules out (worse still under emphasis, where the subset's highlight
+    repaints the spine's own run and the skipped relay looks selected). Any marker sitting
+    between an edge's ends on their shared lane is by construction a node that edge skips:
+    had the route visited it, the walk would hold ``A→B`` and ``B→C``, never ``A→C``. So each
+    such edge is given a *virtual waypoint* — an unmarked via point in the skipped node's own
+    column, on the innermost lane above or below it that is genuinely free — and the edge arcs
+    through the via instead: out, level for an instant over the skipped marker's shoulder, and
+    back — the same wider-arc grammar a nested detour draws, so a skip reads as a skip.
+
+    Room is measured, never assumed. A lane at that column is free when no marker seats there
+    and no route *runs level* through it across that column (a via on such a lane would peak
+    tangent on that route's line and read as touching it); and a via may open a lane *outside*
+    the current band only while the grown band still fits ``max_rows`` at full pitch
+    (:func:`_band_rows`) — the same budget the detour fold answers to. The innermost free lane
+    wins, the no-growth side breaking a depth tie (above on a dead heat); an edge whose skipped
+    column truly has no room — every lane taken, growth unaffordable — keeps today's level
+    pass-over, the honest last resort. Edges are visited in walk order (a set of string pairs
+    would iterate hash-seeded and let two runs claim a contested lane differently), so the
+    picture is identical on every repaint.
+
+    Returns ``{edge pair: [(skipped node, via signed lane), …]}``, vias left to right, in the
+    signed-lane space of ``signed``. The caller folds the via lanes into the band extent — so
+    the vertical sizing affords any lane a bypass opened — and seats each via at the skipped
+    node's exact x on that lane's row. Bidirectional pairs draw as the one honest vertical and
+    are never bent.
+    """
+    if not signed:
+        return {}
+    low = min(signed.values())
+    high = max(signed.values())
+    centre = (low + high) / 2.0  # the endpoints' lane — integral only when a lane truly is
+
+    def lane_of(node: str) -> float:
+        return centre if node in (SRC_NODE, DST_NODE) else float(signed[node])
+
+    cols = {node: col_of(node) for node in (*signed, SRC_NODE, DST_NODE)}
+
+    # Every drawn edge once, in walk order; the level ones keep their lane and column span.
+    level: list[tuple[frozenset[str], float, int, int]] = []
+    seen: set[frozenset[str]] = set()
+    for seq in seqs:
+        for u, v in zip(seq, seq[1:]):
+            key = frozenset((u, v))
+            if key in seen or key in bidir:
+                continue
+            seen.add(key)
+            if lane_of(u) == lane_of(v):
+                c0, c1 = sorted((cols[u], cols[v]))
+                level.append((key, lane_of(u), c0, c1))
+
+    # What a via must not land on: every seated marker, and every column a level run sweeps
+    # on its own lane (kissing another route's straight run reads as touching it).
+    taken: set[tuple[int, float]] = {(cols[n], float(seat)) for n, seat in signed.items()}
+    taken.add((cols[SRC_NODE], centre))
+    taken.add((cols[DST_NODE], centre))
+    for _key, lane, c0, c1 in level:
+        for col in range(c0 + 1, c1):
+            taken.add((col, lane))
+
+    vias: dict[frozenset[str], list[tuple[str, int]]] = {}
+    for key, lane, c0, c1 in level:
+        skipped = sorted(
+            (n for n, seat in signed.items() if float(seat) == lane and c0 < cols[n] < c1),
+            key=lambda n: cols[n],
+        )
+        for m in skipped:
+            # The innermost free lane each side of the skipped node, then the better of the
+            # two: shallower first, the side that keeps the band's height on a depth tie.
+            pick: Optional[tuple[int, int, int, int]] = None
+            for side, sign in ((0, -1), (1, 1)):
+                for depth in range(1, high - low + 3):
+                    cand = signed[m] + sign * depth
+                    if (cols[m], float(cand)) in taken:
+                        continue
+                    grows = int(cand < low or cand > high)
+                    if grows:
+                        n_lanes = max(high, cand) - min(low, cand) + 1
+                        if _band_rows(n_lanes, lane_pitch) > max_rows:
+                            break  # deeper on this side only grows further — give it up
+                    if pick is None or (depth, grows, side) < pick[:3]:
+                        pick = (depth, grows, side, cand)
+                    break  # the innermost free lane on this side is found
+            if pick is None:
+                continue  # no room anywhere — the level pass-over stands
+            via_lane = pick[3]
+            taken.add((cols[m], float(via_lane)))
+            low, high = min(low, via_lane), max(high, via_lane)
+            vias.setdefault(key, []).append((m, via_lane))
+    return vias
 
 
 def _assign_lanes(
