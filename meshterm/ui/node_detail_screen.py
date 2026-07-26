@@ -18,7 +18,9 @@ the node itself, in full:
     static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred on the node,
     grown to whatever rows the viewport spares. Its actions: ``Open full map`` (the full
     map opens centred here with its find filter seeded to this node, so it lights among
-    the rest) and ``Time machine``.
+    the rest), ``Time machine``, and ``Share contact`` — a popup contact card (QR code +
+    ``meshcore://`` link, see :func:`~meshterm.ui.config_editor.show_contact_card`),
+    offered whenever the node's full key is known.
   * **Routes** — the routes we've actually heard the node arrive over, drawn on the shared
     route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
     travelled, contact on the left, us on the right). Beneath the graph sits the *route
@@ -305,7 +307,8 @@ class NodeDetailScreen(Screen):
             routes: The Routes tab's route list + graph callbacks (or a muted note), or
                 ``None`` when there is no Routes tab (we never overhear our own node).
             info_actions: The Info tab's action rows (Open full map when there is a fix,
-                Time machine when the recorder holds history).
+                Time machine when the recorder holds history, Share contact when the full
+                key is known).
             trace_action: The Routes tab's ``Trace — auto route …`` action, shown only when
                 there are no routes to list (with routes listed, Enter on a route row is the
                 trace entry point), or ``None``.
@@ -790,6 +793,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
     )
     from ..services.topology import build_topology, _is_hex
     from ..tools.map import gather_markers
+    from .config_editor import show_contact_card
     from .map_screen import basemap_source, open_map
     from .surface import TuiUi
     from .timemachine_screen import open_timemachine_node, open_timemachine_self
@@ -969,6 +973,16 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         info_actions.append(
             _Action("timemachine", "⏳", "", f"Time machine — {hn.count} receptions")
         )
+    # The share card encodes the full 32-byte key; a prefix-only contact (heard but never
+    # synced from the device) has nothing scannable to offer, so the row only shows when
+    # the whole key is known.
+    full_key = key.lower().removeprefix("0x")
+    if len(full_key) == 64 and _is_hex(full_key):
+        info_actions.append(_Action("share", "📱", "", "Share contact — QR / link"))
+    try:
+        adv_type = int(node_type) if node_type is not None else 1
+    except (TypeError, ValueError):
+        adv_type = 1
     # With routes listed, each route row is its own trace entry point (Enter arms it); the
     # dedicated action only stands in when there is no route evidence to list.
     trace_action: Optional[_Action] = None
@@ -1009,6 +1023,8 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
                     focus=(lat, lon),
                     find=label if any(needle in m.label.casefold() for m in markers) else None,
                 )
+        elif action == "share":
+            await show_contact_card(ctx, label, full_key, adv_type)
         elif action == "timemachine":
             if you:
                 await open_timemachine_self(ctx)

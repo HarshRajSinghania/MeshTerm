@@ -71,6 +71,29 @@ def test_contact_share_url_defaults_to_companion_type() -> None:
     assert contact_share_url("n", "00" * 32).endswith("&type=1")
 
 
+async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
+    """The share popup is one floating view: a scannable QR code over the raw
+    ``meshcore://`` link, titled with the node's name."""
+    from types import SimpleNamespace
+
+    from meshterm.ui.config_editor import show_contact_card
+
+    calls: list = []
+
+    class _Ui:
+        async def view(self, renderable: Any, **kwargs: Any) -> None:
+            calls.append((renderable, kwargs))
+
+    await show_contact_card(SimpleNamespace(ui=_Ui()), "Hub", "AB" * 32, node_type=2)
+    ((renderable, kwargs),) = calls
+    assert kwargs["title"] == "Share Hub"
+    console = Console(width=200, record=True)  # wide enough that the link never wraps
+    console.print(renderable)
+    out = console.export_text()
+    assert f"meshcore://contact/add?name=Hub&public_key={'ab' * 32}&type=2" in out
+    assert "█" in out  # the QR actually drew its modules
+
+
 # -- coordinate parsing ----------------------------------------------------------
 
 

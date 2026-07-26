@@ -798,17 +798,26 @@ def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:
     )
 
 
-async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
-    """Show this node's contact card as a scannable QR code plus the raw URI."""
+async def show_contact_card(
+    ctx: "AppContext", name: str, public_key: str, node_type: int = 1
+) -> None:
+    """Pop up a node's contact card: a scannable QR code over the raw share link.
+
+    THE share-a-contact popup, used both for our own node (the advert menu's
+    ``Share QR / URI``) and for any full-keyed contact (the node detail page's
+    ``Share contact``): a phone scans the code — or the link is passed along as text —
+    and the companion app adds the node as a contact.
+
+    Args:
+        ctx: Shared application context (provides the UI surface).
+        name: The node's advertised name (the card's title and the link's name field).
+        public_key: The node's full public key as hex (the link is useless without it).
+        node_type: The MeshCore advert type byte (1 companion, 2 repeater, 3 room,
+            4 sensor).
+    """
     from .qr import qr_text
 
-    public_key = str(snapshot.get("public_key") or "")
-    if not public_key:
-        ctx.ui.note("[err]the device did not report a public key — nothing to share[/err]")
-        await ctx.ui.present(title="Share contact")
-        return
-    name = str(snapshot.get("name") or "this node")
-    url = contact_share_url(name, public_key, int(snapshot.get("adv_type") or 1))
+    url = contact_share_url(name, public_key, node_type)
     body = Group(
         Text("Scan to add this node as a contact:", style="muted"),
         Text(""),
@@ -817,6 +826,17 @@ async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
         Text(url, style="accent"),
     )
     await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")
+
+
+async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
+    """Show our own node's contact card from its ``SELF_INFO`` snapshot."""
+    public_key = str(snapshot.get("public_key") or "")
+    if not public_key:
+        ctx.ui.note("[err]the device did not report a public key — nothing to share[/err]")
+        await ctx.ui.present(title="Share contact")
+        return
+    name = str(snapshot.get("name") or "this node")
+    await show_contact_card(ctx, name, public_key, int(snapshot.get("adv_type") or 1))
 
 
 async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
