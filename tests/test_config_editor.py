@@ -91,7 +91,8 @@ async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
     console.print(renderable)
     out = console.export_text()
     assert f"meshcore://contact/add?name=Hub&public_key={'ab' * 32}&type=2" in out
-    assert "█" in out  # the QR actually drew its modules
+    # The QR actually drew its modules — braille dots, one per module.
+    assert any(0x2801 <= ord(ch) <= 0x28FF for ch in out)
 
 
 # -- coordinate parsing ----------------------------------------------------------
