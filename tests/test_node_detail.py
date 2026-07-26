@@ -136,13 +136,27 @@ def test_tab_strip_boxes_every_tab_on_top_and_lights_the_active_one() -> None:
 def test_tab_strip_bottom_is_a_continuous_rule_notched_at_the_active_tab() -> None:
     """The bottom border is flat under inactive tabs and opens only under the active one."""
     group = tab_strip(["Map", "Routes"], 1, width=20)
-    _, _, bot = group.renderables
-    # flat rule under "Map" (no corner of its own), then the notch opens/closes around
-    # "Routes" — up into the box, blank across its width (open into the page), back down.
-    assert bot.plain == "────────╰          ╯"
+    top, mid, bot = group.renderables
+    # flat rule under "Map" (no corner of its own), then the notch turns up (west+north,
+    # ╯) into "Routes", blank across its width (open into the page), back down (north+east,
+    # ╰) and on.
+    assert bot.plain == "────────╯          ╰"
+    # One continuous line: every cell reads accent, the active tab's colour, not a mix.
+    assert {r.style for r in bot.spans} == {"accent"}
 
     _, _, bot_first = tab_strip(["Map", "Routes"], 0, width=20).renderables
-    assert bot_first.plain == "╰       ╯───────────"  # notch now sits under the first tab
+    assert bot_first.plain == "╯       ╰───────────"  # notch now sits under the first tab
+
+
+def test_tab_strip_unselected_tabs_read_darker_than_muted() -> None:
+    """Inactive tab outlines use the dim ``faint`` shade, not the everyday ``muted`` one."""
+    top, mid, _ = tab_strip(["Map", "Routes"], 1, width=20).renderables
+    # "Map"'s own left corner and fill (columns 0-7); its right corner at column 8 is
+    # shared with the active "Routes" tab and reads accent, so it's excluded here.
+    map_styles = {s.style for s in top.spans if s.start < 8} | {
+        s.style for s in mid.spans if s.start < 8
+    }
+    assert map_styles == {"faint"}
 
 
 def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
@@ -155,10 +169,11 @@ def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
 
 
 def test_tab_strip_rule_fills_out_to_the_render_width() -> None:
-    """The bottom rule extends to the full render width, margin included."""
-    _, _, bot = tab_strip(["Map", "Routes"], 1, width=25).renderables
-    # 2-column left margin (there's room), then the 20-cell strip, then 3 cells of filler.
-    assert bot.plain == "  ────────╰          ╯───"
+    """The bottom rule extends to the full render width; unlike the tabs, it isn't indented
+    by the left margin — that margin is itself part of the one continuous line."""
+    top, _, bot = tab_strip(["Map", "Routes"], 1, width=25).renderables
+    assert top.plain.startswith("  ╭")  # the tab boxes sit indented...
+    assert bot.plain == "──────────╯          ╰───"  # ...but the rule fills straight through
     assert len(bot.plain) == 25
 
 

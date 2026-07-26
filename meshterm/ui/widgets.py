@@ -914,26 +914,30 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
 
     THE navigation header for a screen that pages one full-height view at a time between a
     handful of named views (the node detail page's ``Info`` / ``Routes``) instead of stacking
-    them. Every tab is always drawn as a full-topped box — muted by default, accent when
-    active — instead of only the active one; this keeps every tab's width fixed regardless
-    of which is selected, so switching tabs never shifts the labels that come after it. Tabs
-    share a vertical between neighbours (one glyph, not two), and each shared *top* corner is
-    drawn as if the tab to the left sits on top of the tab to the right: it "opens" (rounds
-    toward the tab starting there) only at the very first tab and at the active tab's own
-    left edge, and "closes" (rounds back, ceding the position to the tab on its left)
-    everywhere else — so the active tab is the one exception that always wins both of its top
-    corners, reading as lifted in front of its neighbours.
+    them. Every tab is always drawn as a full-topped box — a dim ``faint`` outline by
+    default, lit ``accent`` when active — instead of only the active one; this keeps every
+    tab's width fixed regardless of which is selected, so switching tabs never shifts the
+    labels that come after it. Tabs share a vertical between neighbours (one glyph, not
+    two), and each shared *top* corner is drawn as if the tab to the left sits on top of the
+    tab to the right: it "opens" (rounds toward the tab starting there) only at the very
+    first tab and at the active tab's own left edge, and "closes" (rounds back, ceding the
+    position to the tab on its left) everywhere else — so the active tab is the one exception
+    that always wins both of its top corners, reading as lifted in front of its neighbours.
 
-    The *bottom* border is a single continuous rule the inactive tabs sit flush against —
-    they get no corners or seams of their own down there, just plain muted line passing
-    behind them — broken only under the active tab, which is why it reads as merged into the
-    page below it: the rule steps up into ``╰``, leaves the active tab's width open (no
-    line — that gap *is* the page starting), then steps back down through ``╯`` and carries
-    on flat. A lone tab collapses to the plain accent heading
-    (:func:`~meshterm.ui.menus.section_heading`'s ``── Label ──`` form) since there is
-    nothing to switch between or layer. When there's slack in ``width``, the whole strip
-    sits two columns in from the left rather than flush against it. The owning screen
-    switches the active index (``Tab``/``Shift+Tab``); the strip itself is pure presentation.
+    The *bottom* border is a single continuous accent-coloured rule — it's one line, so it
+    carries one colour throughout, the active tab's — that the inactive tabs sit flush
+    against: they get no corners or seams of their own down there, just the rule passing
+    behind them, broken only under the active tab, which is why it reads as merged into the
+    page below it: the rule turns up into ``╯`` (closing off the flat run from the west,
+    turning north into the tab's wall), leaves the active tab's width open (no line — that
+    gap *is* the page starting), then turns back down through ``╰`` (the wall meeting the
+    flat run continuing east) and carries on flat. A lone tab collapses to the plain accent
+    heading (:func:`~meshterm.ui.menus.section_heading`'s ``── Label ──`` form) since there
+    is nothing to switch between or layer. When there's slack in ``width``, the tab boxes
+    (top and label rows) sit two columns in from the left; the bottom rule is one continuous
+    line regardless, so it fills that margin rather than being indented with them. The
+    owning screen switches the active index (``Tab``/``Shift+Tab``); the strip itself is
+    pure presentation.
 
     Args:
         labels: The tab names in display order.
@@ -960,35 +964,33 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
         return junction if junction == 0 or junction == active else junction - 1
 
     def top_style(junction: int) -> str:
-        return "accent" if top_owner(junction) == active else "muted"
+        return "accent" if top_owner(junction) == active else "faint"
 
-    def bot_glyph(junction: int) -> tuple[str, str]:
-        """The bottom rule's glyph at this junction: an accent step around the active tab,
-        else a flat muted pass-through — see the docstring's continuous-rule rule."""
+    def bot_glyph(junction: int) -> str:
+        """The bottom rule's glyph at this junction — a corner turning into/out of the
+        active tab's wall, else a flat pass-through. Always accent: see the docstring."""
         if junction == active:
-            return "╰", "accent"
+            return "╯"
         if junction == active + 1:
-            return "╯", "accent"
-        return "─", "muted"
+            return "╰"
+        return "─"
 
     top = Text(pad, no_wrap=True)
     mid = Text(pad, no_wrap=True)
-    bot = Text(pad, no_wrap=True)
+    bot = Text("─" * margin, style="accent", no_wrap=True)
     for i, label in enumerate(labels):
         opens = i == 0 or i == active
         top.append("╭" if opens else "╮", style=top_style(i))
         mid.append("│", style=top_style(i))
-        glyph, style = bot_glyph(i)
-        bot.append(glyph, style=style)
-        tab_style = "accent" if i == active else "muted"
+        bot.append(bot_glyph(i), style="accent")
+        tab_style = "accent" if i == active else "faint"
         top.append("─" * len(inner[i]), style=tab_style)
         mid.append(inner[i], style=tab_style)
-        bot.append(" " * len(inner[i]) if i == active else "─" * len(inner[i]), style=tab_style)
+        bot.append(" " * len(inner[i]) if i == active else "─" * len(inner[i]), style="accent")
     top.append("╮", style=top_style(n))
     mid.append("│", style=top_style(n))
-    glyph, style = bot_glyph(n)
-    bot.append(glyph, style=style)
-    bot.append("─" * max(0, width - len(bot.plain)), style="muted")
+    bot.append(bot_glyph(n), style="accent")
+    bot.append("─" * max(0, width - len(bot.plain)), style="accent")
     return Group(top, mid, bot)
 
 
