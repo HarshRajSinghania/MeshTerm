@@ -4,18 +4,21 @@ Reached by pressing Enter on any contact in the Contacts list (see
 :mod:`~meshterm.ui.contacts_screen`). Where the list is one aligned row per node, this is
 the node itself, in full:
 
-* **who it is** — its name in the node's own hue, its key with the routing hash lit, its
-  type, when it was first and last heard, how many packets we've overheard, its reception
-  SNR (median and best) and last RSSI, and where it sits — the fixed identity block pinned
-  at the top of the page;
+* **who it is** — a one-line identity header (its type glyph, its name in the node's own
+  hue, its type label), the only chrome pinned above the stage — so the stage keeps nearly
+  the whole screen;
 * **a tabbed stage** below it — one full-height view at a time, switched with ``←→`` (or
   ``Tab``/``Shift+Tab``) across a one-line tab strip (see
-  :func:`~meshterm.ui.widgets.tab_strip`). Rather than stack the location preview and the
-  route graph down one long scroll, each earns the whole stage:
+  :func:`~meshterm.ui.widgets.tab_strip`). Rather than stack the vitals, the location
+  preview, and the route graph down one long scroll, each view earns the whole stage:
 
-  * **Map** — a static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred
-    on the node with the rest of the mesh around it, shown when the node has advertised a
-    location. Its ``Open full map`` action sits right under it.
+  * **Info** — the node's vitals as labelled rows (its key with the routing hash lit, when
+    it was first and last heard, how many packets we've overheard, its reception SNR and
+    last RSSI, and where it sits), then — when the node has advertised a location — a
+    static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred on the node,
+    grown to whatever rows the viewport spares. Its actions: ``Open full map`` (the full
+    map opens centred here with its find filter seeded to this node, so it lights among
+    the rest) and ``Time machine``.
   * **Routes** — the routes we've actually heard the node arrive over, drawn on the shared
     route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
     travelled, contact on the left, us on the right). Beneath the graph sits the *route
@@ -29,19 +32,18 @@ the node itself, in full:
     (nothing transmits here — it opens the trace screen loaded with that path); when there
     is no route evidence to list, a ``🎯 Trace — auto route …`` action stands in.
 
-* **the ways in** — the tab's action rows: ``Open full map`` on the Map tab plus the
-  always-available ``Time machine`` (when the recorder holds history) and ``Back``. ``↑↓``
-  moves the cursor through them, Enter commits, Esc backs to the list.
+* **the ways in** — each tab's action rows (``↑↓`` moves the cursor through them, Enter
+  commits) and the shared ``Back`` closing every tab; Esc backs to the list.
 
-The page never scrolls as one long strip. The identity block, the tab strip, and the stage
-are pinned; the stage sizes itself to the terminal (the route graph compresses its lanes
-before it would overflow) and a faint rule closes it under its caption, so the drawn view
-and the rows below read as separate bands. The route list scrolls *inside* the leftover
-rows with faint ``↑ n more`` / ``↓ n more`` edge markers — the app-wide windowed-list
-pattern (see :class:`~meshterm.ui.tui.screen.ListWindow`; the variable-height rows get
-their own fit here) — so the graph, the selection driving it, and the action rows share
-one screen however many routes a busy node has. ``PgUp/PgDn`` page the cursor through
-the window.
+The page never scrolls as one long strip. The identity header, the tab strip, and the
+stage are pinned; the stage sizes itself to the terminal (the route graph compresses its
+lanes before it would overflow, the location preview grows into what the Info tab spares)
+and a faint rule closes it, so the drawn view and the rows below read as separate bands.
+The route list scrolls *inside* the leftover rows with faint ``↑ n more`` / ``↓ n more``
+edge markers — the app-wide windowed-list pattern (see
+:class:`~meshterm.ui.tui.screen.ListWindow`; the variable-height rows get their own fit
+here) — so the graph, the selection driving it, and the action rows share one screen
+however many routes a busy node has. ``PgUp/PgDn`` page the cursor through the window.
 
 The screen is a pure read-and-route view: it renders already-resolved display data and
 resolves an action token (the Trace token carrying the selected route's spec via
@@ -95,8 +97,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: Our own node's marker glyph and hue, matching the map/atlas star.
 _SELF_GLYPH = ("★", "#facc15")
 
-#: How many character rows the inline location preview draws.
-_MAP_ROWS = 7
+#: The inline location preview's row bounds: it grows into whatever the Info tab's
+#: viewport spares (the vitals and action rows are short), floored so a cramped terminal
+#: still shows a recognisable neighbourhood and capped so a tall one doesn't become all map.
+_MAP_MIN_ROWS = 5
+_MAP_MAX_ROWS = 13
 
 #: Route-graph tuning for the Routes tab. It draws the contact on the left and us on the
 #: right (node → us, so the graph reads left to right as the inbound direction its packets
@@ -244,8 +249,8 @@ class _Tab:
     """One tab in the stage's strip.
 
     Attributes:
-        name: The strip label (``Map`` / ``Routes``).
-        kind: Which stage it draws (``map`` / ``routes``).
+        name: The strip label (``Info`` / ``Routes``).
+        kind: Which stage it draws (``info`` / ``routes``).
     """
 
     name: str
@@ -264,8 +269,8 @@ class NodeDetailScreen(Screen):
     ``Shift+Tab``) switches which view fills the stage, and ``↑↓`` moves the cursor *within*
     the active tab — through its route list (on the Routes tab, the selection drives the
     graph highlight and Enter arms a trace on the picked route) and action rows. The page
-    itself never scrolls: the identity block, tab strip, and stage are pinned, the stage is
-    sized to the viewport, and the route list windows itself into the leftover rows —
+    itself never scrolls: the identity header, tab strip, and stage are pinned, the stage
+    is sized to the viewport, and the route list windows itself into the leftover rows —
     ``PgUp/PgDn`` page the cursor through it, ``Home/End`` jump it to the ends.
     """
 
@@ -281,7 +286,7 @@ class NodeDetailScreen(Screen):
         minimap: Optional[MiniMap] = None,
         map_caption: Optional[Text] = None,
         routes: Optional[_RoutesView] = None,
-        open_map_action: Optional[_Action] = None,
+        info_actions: Optional[list[_Action]] = None,
         trace_action: Optional[_Action] = None,
         tail_actions: Optional[list[_Action]] = None,
     ) -> None:
@@ -290,19 +295,21 @@ class NodeDetailScreen(Screen):
         Args:
             title: The screen heading (``Node — <name>``).
             header: The identity line: type glyph, the coloured name, its type label.
-            info_rows: ``(label, value)`` pairs for the fixed info block; each renders as
-                a muted label lane with the value hanging under itself when it wraps.
+            info_rows: ``(label, value)`` pairs for the Info tab's vitals block; each
+                renders as a muted label lane with the value hanging under itself when it
+                wraps.
             tabs: The stage tabs to offer, in strip order (empty = no stage, just actions).
-            minimap: The inline location preview for the Map tab, or ``None``.
+            minimap: The Info tab's inline location preview, or ``None`` (no advertised
+                fix).
             map_caption: A faint line under the preview (its centre/scale), when a map shows.
             routes: The Routes tab's route list + graph callbacks (or a muted note), or
                 ``None`` when there is no Routes tab (we never overhear our own node).
-            open_map_action: The Map tab's ``Open full map`` action, or ``None``.
+            info_actions: The Info tab's action rows (Open full map when there is a fix,
+                Time machine when the recorder holds history).
             trace_action: The Routes tab's ``Trace — auto route …`` action, shown only when
                 there are no routes to list (with routes listed, Enter on a route row is the
                 trace entry point), or ``None``.
-            tail_actions: The always-available actions closing every tab (Time machine when
-                there is history, then Back).
+            tail_actions: The always-available actions closing every tab (Back).
         """
         super().__init__()
         self.title = title
@@ -312,7 +319,7 @@ class NodeDetailScreen(Screen):
         self._minimap = minimap
         self._map_caption = map_caption
         self._routes = routes
-        self._open_map_action = open_map_action
+        self._info_actions = info_actions or []
         self._trace_action = trace_action
         self._tail_actions = tail_actions or []
         self._tab_index = 0
@@ -356,10 +363,10 @@ class NodeDetailScreen(Screen):
         return ""
 
     def consume_edge_scrub(self) -> int:
-        """Scrub the panel's right edge only while the braille Map tab is the one showing."""
+        """Scrub the panel's right edge only while the Info tab is showing its braille map."""
         if self._minimap is None or not self._tabs:
             return 0
-        return 2 if self._tabs[self._tab_index].kind == "map" else 0
+        return 2 if self._tabs[self._tab_index].kind == "info" else 0
 
     def handle(self, action: str, data: str = "") -> None:
         """Switch tab, move the cursor within a tab, commit a row, page the list, or leave."""
@@ -436,10 +443,10 @@ class NodeDetailScreen(Screen):
     def _focusables(self) -> list[tuple[str, object]]:
         """The active tab's cursor stops: ``("path", route_idx)`` and ``("action", _Action)``.
 
-        The route rows come first (Routes tab only) — each is itself the trace entry point —
-        with the auto-route Trace action standing in only when there are no routes to list;
-        the Map tab leads with Open full map. The shared tail (Time machine, Back) closes
-        every tab. A tab-less page (our own fix-less node) is just the tail.
+        On the Routes tab the route rows come first — each is itself the trace entry
+        point — with the auto-route Trace action standing in only when there are no routes
+        to list; the Info tab offers its own actions (Open full map, Time machine). The
+        shared tail (Back) closes every tab.
         """
         tab = self._tabs[self._tab_index] if self._tabs else None
         focus: list[tuple[str, object]] = []
@@ -447,8 +454,8 @@ class NodeDetailScreen(Screen):
             focus.extend(("path", i) for i in range(len(self._routes.routes)))
             if not self._routes.routes and self._trace_action is not None:
                 focus.append(("action", self._trace_action))
-        elif tab is not None and tab.kind == "map" and self._open_map_action is not None:
-            focus.append(("action", self._open_map_action))
+        elif tab is not None and tab.kind == "info":
+            focus.extend(("action", a) for a in self._info_actions)
         focus.extend(("action", a) for a in self._tail_actions)
         return focus
 
@@ -458,11 +465,11 @@ class NodeDetailScreen(Screen):
         """Render the pinned chrome, the sized-to-fit stage, and the windowed cursor rows.
 
         The viewport the frame recorded (:meth:`~meshterm.ui.tui.screen.Screen.note_viewport`)
-        is split three ways each paint: the pinned chrome (identity block, tab strip) and the
-        action rows take their fixed lines first, the stage takes what it needs of the rest
-        (the route graph's row ceiling shrinks to fit), and the route list windows itself
-        into the leftover lines — so nothing here ever pushes the graph or the actions off
-        the screen.
+        is split three ways each paint: the pinned chrome (identity header, tab strip) and
+        the action rows take their fixed lines first, the stage takes what it needs of the
+        rest (the route graph's row ceiling shrinks to fit, the Info tab's location preview
+        grows into what its rows spare), and the route list windows itself into the leftover
+        lines — so nothing here ever pushes the graph or the actions off the screen.
         """
         viewport = self._scroll_viewport
         focus = self._focusables()
@@ -471,18 +478,11 @@ class NodeDetailScreen(Screen):
         self._cursor = None
         self._list_hidden = False
 
-        # -- pinned chrome: the identity block, then the tab strip.
+        # -- pinned chrome: the identity header, then the tab strip. One line of air
+        # follows the strip inside each stage (the route graph's own top padding, the
+        # Info tab's leading blank) rather than here, so the strip never costs two.
         lines: list[str] = []
         lines.extend(render_lines(self._header, width))
-        for label, value in self._info_rows:
-            lines.extend(
-                render_hanging(
-                    Text(f"{label:<{_LABEL_LANE}}", style="muted"),
-                    value,
-                    width,
-                    indent=_LABEL_LANE,
-                )
-            )
         if self._tabs:
             lines.append("")
             lines.extend(
@@ -490,26 +490,32 @@ class NodeDetailScreen(Screen):
                     tab_strip([t.name for t in self._tabs], self._tab_index), width, no_wrap=True
                 )
             )
-            lines.append("")
 
         # The action rows are fixed chrome too — a leading blank, one line per row, a blank
-        # setting Back apart — struck before the stage draws so it can size against them.
+        # setting Back apart when rows precede it — struck before the stage draws so it can
+        # size against them.
         actions = [payload for _kind, payload in focus if _kind == "action"]
         action_lines = 1 + len(actions) + (
-            1 if any(a.key == "back" for a in actions if isinstance(a, _Action)) else 0
+            1
+            if len(actions) > 1
+            and any(a.key == "back" for a in actions if isinstance(a, _Action))
+            else 0
         )
 
         # -- the stage, sized to what the viewport leaves, closed by a faint rule.
         route_blocks: list[list[str]] = []
         tab = self._tabs[self._tab_index] if self._tabs else None
         if tab is not None:
-            if tab.kind == "map":
-                lines.extend(self._map_stage(width))
+            if tab.kind == "info":
+                budget = viewport - len(lines) - action_lines - 1  # the rule's line
+                lines.extend(self._info_stage(width, budget))
             else:
                 route_blocks = [
                     self._route_row_lines(route, i == self._row_index, width)
                     for i, route in enumerate(self._routes.routes if self._routes else [])
                 ]
+                if not route_blocks:
+                    lines.append("")  # the bare note pays for its own air under the strip
                 budget = viewport - len(lines) - action_lines - 1  # the rule's line
                 lines.extend(self._routes_stage(width, budget, route_blocks))
             # The rule closes the stage, so the drawn view and the rows below it read as
@@ -539,7 +545,7 @@ class NodeDetailScreen(Screen):
         base = len(route_blocks)
         for j, payload in enumerate(actions):
             assert isinstance(payload, _Action)
-            if payload.key == "back":
+            if payload.key == "back" and j > 0:
                 lines.append("")  # set the exit row apart, as the menus do
             selected = base + j == self._row_index
             if selected:
@@ -580,12 +586,30 @@ class NodeDetailScreen(Screen):
         self._list_top = top
         return top, count
 
-    def _map_stage(self, width: int) -> list[str]:
-        """The location preview and its faint caption."""
-        assert self._minimap is not None
-        lines = list(self._minimap.render(width, _MAP_ROWS))
-        if self._map_caption is not None:
-            lines.extend(render_lines(self._map_caption, width, no_wrap=True))
+    def _info_stage(self, width: int, budget: int) -> list[str]:
+        """The vitals block and, with a fix, the location preview grown to fit.
+
+        ``budget`` is the viewport lines left for the whole stage; the vitals rows never
+        truncate — it is the preview that flexes, taking whatever they and its caption
+        leave, clamped to ``[_MAP_MIN_ROWS, _MAP_MAX_ROWS]``.
+        """
+        lines: list[str] = [""]  # the stage's one line of air under the strip
+        for label, value in self._info_rows:
+            lines.extend(
+                render_hanging(
+                    Text(f"{label:<{_LABEL_LANE}}", style="muted"),
+                    value,
+                    width,
+                    indent=_LABEL_LANE,
+                )
+            )
+        if self._minimap is not None:
+            lines.append("")
+            caption = 1 if self._map_caption is not None else 0
+            rows = max(_MAP_MIN_ROWS, min(_MAP_MAX_ROWS, budget - len(lines) - caption))
+            lines.extend(self._minimap.render(width, rows))
+            if self._map_caption is not None:
+                lines.extend(render_lines(self._map_caption, width, no_wrap=True))
         return lines
 
     def _routes_stage(
@@ -931,25 +955,26 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             name_key=key,
         )
 
-    # -- the tabs (only the views that have content) and their action rows.
-    tabs: list[_Tab] = []
-    if minimap is not None:
-        tabs.append(_Tab(name="Map", kind="map"))
+    # -- the tabs (Info always; Routes only when there is a routes view) and their actions.
+    tabs: list[_Tab] = [_Tab(name="Info", kind="info")]
     if routes_view is not None:
         tabs.append(_Tab(name="Routes", kind="routes"))
 
-    open_map_action = _Action("map", "🌍", "", "Open full map") if minimap is not None else None
+    info_actions: list[_Action] = []
+    if minimap is not None:
+        info_actions.append(_Action("map", "🌍", "", "Open full map"))
+    if you:
+        info_actions.append(_Action("timemachine", "⏳", "", "Time machine — your activity"))
+    elif hn is not None:
+        info_actions.append(
+            _Action("timemachine", "⏳", "", f"Time machine — {hn.count} receptions")
+        )
     # With routes listed, each route row is its own trace entry point (Enter arms it); the
     # dedicated action only stands in when there is no route evidence to list.
     trace_action: Optional[_Action] = None
     if not you and node_id and not (routes_view is not None and routes_view.routes):
         trace_action = _Action("trace", "🎯", "", "Trace — auto route …")
-    tail_actions: list[_Action] = []
-    if you:
-        tail_actions.append(_Action("timemachine", "⏳", "", "Time machine — your activity"))
-    elif hn is not None:
-        tail_actions.append(_Action("timemachine", "⏳", "", f"Time machine — {hn.count} receptions"))
-    tail_actions.append(_Action("back", "", "", "Back"))
+    tail_actions = [_Action("back", "", "", "Back")]
 
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
     while True:
@@ -961,7 +986,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             minimap=minimap,
             map_caption=map_caption,
             routes=routes_view,
-            open_map_action=open_map_action,
+            info_actions=info_actions,
             trace_action=trace_action,
             tail_actions=tail_actions,
         )
@@ -973,9 +998,17 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         elif action == "map":
             if markers:
                 # Open centred on this node — the very spot the inline preview showed —
-                # not wherever the global map was last left. (The map action only exists
-                # when the node has a fix, so lat/lon are set here.)
-                await open_map(ctx, markers, focus=(lat, lon))
+                # not wherever the global map was last left — with the find filter seeded
+                # to it, so this node lights among the rest. Seed only when its label
+                # actually matches a marker; a needle nothing matches would dim everything.
+                # (The map action only exists when the node has a fix, so lat/lon are set.)
+                needle = label.casefold()
+                await open_map(
+                    ctx,
+                    markers,
+                    focus=(lat, lon),
+                    find=label if any(needle in m.label.casefold() for m in markers) else None,
+                )
         elif action == "timemachine":
             if you:
                 await open_timemachine_self(ctx)

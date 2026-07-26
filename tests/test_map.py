@@ -686,11 +686,17 @@ async def test_open_map_focus_centres_on_the_node_without_clobbering_the_saved_v
 
     session = _CapturingSession(80, 24, keys=("right", "pageup"))  # pan + zoom the peek
     ctx.ui = TuiUi(session)
-    await open_map(ctx, [MapMarker("Hub", 45.5, -73.6, is_repeater=True)], focus=(45.5, -73.6))
+    await open_map(
+        ctx,
+        [MapMarker("Hub", 45.5, -73.6, is_repeater=True)],
+        focus=(45.5, -73.6),
+        find="Hub",
+    )
 
     # Opened on the node, at the detail preview's zoom (min(13, max_zoom)).
     assert session.screen._saved_view == (clamp_lat(45.5), -73.6, 13)
     assert session.screen._on_view_change is None  # a focused peek wires no persistence
+    assert session.screen._filter == "Hub"  # the find opens seeded to the focused node
     # Panning/zooming the peek left the global 'where you left the map' view untouched.
     assert ctx.repo.get_map_view() == pytest.approx((10.0, 20.0, 8))
     assert session.repainted  # cleaned the terminal on the way out, like the plain open
@@ -715,6 +721,19 @@ async def test_open_map_without_focus_restores_and_persists_the_global_view(
     assert session.screen._viewport.zoom == 12  # reopened on the saved view, not a node fit
     lat, lon, zoom = ctx.repo.get_map_view()
     assert zoom == 12 and lon > -71.20  # the eastward pan persisted back to the global view
+
+
+def test_map_screen_seeded_find_behaves_like_a_typed_one() -> None:
+    """A seeded find matches, titles, and clears exactly as if the user had typed it."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    markers = [MapMarker("Hub", 45.5, -73.6), MapMarker("Far", 45.6, -73.5)]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14, find="Hub")
+    assert [m.label for m in screen._matches()] == ["Hub"]  # only the seed's node lights
+    assert "find: Hub" in screen.footer_hint  # the query shows, editable, as ever
+    screen.handle("escape")  # first Esc clears the find (not the map)
+    assert screen._filter == "" and len(screen._matches()) == 2
 
 
 def test_map_screen_scrubs_right_edge_after_move() -> None:

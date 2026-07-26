@@ -80,6 +80,7 @@ class MapScreen(Screen):
         saved_view: Optional[tuple[float, float, int]] = None,
         on_view_change: Optional[Callable[[Viewport], None]] = None,
         view_fraction: float = DEFAULT_VIEW_FRACTION,
+        find: str = "",
     ) -> None:
         """Create the map screen.
 
@@ -94,6 +95,9 @@ class MapScreen(Screen):
                 the caller can persist it. Deduplicated — only actual changes fire it.
             view_fraction: Fraction of the nodes the default frame (and ``r`` reset) fits —
                 the densest that many, so outliers don't dominate. See :meth:`geo.Viewport.fit`.
+            find: A find query to open with, exactly as if the user had typed it — the
+                matching nodes light and the rest dim (the node-detail page seeds its node's
+                name here). Editable and Esc-clearable like any typed find; ``""`` = off.
         """
         super().__init__()
         self.title = "Map"
@@ -109,8 +113,9 @@ class MapScreen(Screen):
         self._last_saved = saved_view
         #: The live find-as-you-type node filter ("" = off). Every printable key lands
         #: here — the map binds no letters to actions — and rendering highlights the
-        #: matching markers while dimming the rest.
-        self._filter = ""
+        #: matching markers while dimming the rest. A caller may seed it (``find``), which
+        #: behaves exactly like a query the user had already typed.
+        self._filter = find
         self._viewport: Optional[Viewport] = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
         # Ask the session to scrub the panel's right edge on the next paint (see
@@ -513,6 +518,7 @@ async def open_map(
     markers: list[MapMarker],
     *,
     focus: Optional[tuple[float, float]] = None,
+    find: Optional[str] = None,
     fraction: float = DEFAULT_VIEW_FRACTION,
 ) -> None:
     """Open the interactive full-screen map over ``markers`` and run until dismissed.
@@ -528,6 +534,8 @@ async def open_map(
             is a transient peek: it deliberately wires no ``on_view_change``, so panning
             around it never overwrites that saved view and the Map tool still reopens
             where the user last left it.
+        find: A find query to open with — the focused node's name, so it lights among the
+            rest exactly as if the user had typed it. ``None`` opens with the find off.
         fraction: Fraction of the nodes the default view frames (see :class:`MapScreen`).
 
     Raises:
@@ -553,6 +561,7 @@ async def open_map(
             max_zoom,
             saved_view=(clamp_lat(lat), lon, min(13, max_zoom)),
             view_fraction=fraction,
+            find=find or "",
         )
     else:
         screen = MapScreen(

@@ -398,7 +398,7 @@ def _header() -> Text:
 
 
 def _screen(**over) -> NodeDetailScreen:
-    """A node detail screen over hand-built display data (a Routes tab with a bare note)."""
+    """A node detail screen over hand-built display data (Info + a bare-note Routes tab)."""
     kwargs = dict(
         title="Node — Hub",
         header=_header(),
@@ -407,31 +407,34 @@ def _screen(**over) -> NodeDetailScreen:
             ("heard", Text("5m ago")),
             ("packets", Text("42")),
         ],
-        tabs=[_Tab("Routes", "routes")],
+        tabs=[_Tab("Info", "info"), _Tab("Routes", "routes")],
         minimap=None,
         map_caption=None,
         routes=_RoutesView(note="no route observed yet — trace to discover one"),
-        open_map_action=None,
+        info_actions=[_Action("timemachine", "⏳", "", "Time machine — 42 receptions")],
         trace_action=_Action("trace", "🎯", "", "Trace — auto route …"),
-        tail_actions=[
-            _Action("timemachine", "⏳", "", "Time machine — 42 receptions"),
-            _Action("back", "", "", "Back"),
-        ],
+        tail_actions=[_Action("back", "", "", "Back")],
     )
     kwargs.update(over)
     return NodeDetailScreen(**kwargs)
 
 
 def test_node_detail_screen_renders_its_sections() -> None:
-    """The page shows identity, info, the active tab, its stage, and the action rows."""
+    """The Info tab carries the vitals and its actions; Routes carries the stage + Trace."""
     screen = _screen()
     screen.note_viewport(30)
     body = _plain(screen.render_body(72))
-    assert "Hub" in body and "repeater" in body  # identity
-    assert "42" in body  # a packet tally from the info block
-    assert "── Routes ──" in body and "no route observed yet" in body  # the tab + its stage
-    assert "Trace" in body and "Time machine" in body and "Back" in body
+    assert "Hub" in body and "repeater" in body  # the pinned identity header
+    assert "── Info ──" in body and "42" in body  # the vitals moved into the Info tab
+    assert "Time machine" in body and "Back" in body  # the Info actions + shared tail
     assert "────────" in body  # the faint rule closing the stage
+    assert "no route observed yet" not in body  # the Routes stage waits on its own tab
+
+    screen.handle("right")
+    body = _plain(screen.render_body(72))
+    assert "── Routes ──" in body and "no route observed yet" in body
+    assert "Trace" in body and "Back" in body
+    assert "packets" not in body  # the vitals stay on the Info tab
     # Every rendered line fits the 72-column standard.
     for line in screen.render_body(72):
         assert len(_plain([line])) <= 72
@@ -447,10 +450,11 @@ def test_node_detail_screen_cursor_and_commit() -> None:
     assert screen.cursor_line() is None  # nothing rendered yet
     screen.note_viewport(30)
     screen.render_body(72)
-    # The cursor opens on the first row (the Trace action) and is always reported, so the
-    # frame can keep it visible on a terminal too short for the pinned layout.
+    # The cursor opens on the Info tab's first row (Time machine) and is always reported,
+    # so the frame can keep it visible on a terminal too short for the pinned layout.
     assert screen.cursor_line() is not None
-    screen.handle("down")  # onto "Time machine"
+    screen.handle("down")  # onto Back
+    screen.handle("up")  # and back onto Time machine
     screen.render_body(72)
     screen.handle("enter")
     assert resolved == ["timemachine"]
@@ -467,7 +471,6 @@ def test_node_detail_back_row_leaves_like_escape() -> None:
     screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
 
     screen.render_body(72)
-    screen.handle("down")  # Trace -> Time machine
     screen.handle("down")  # Time machine -> Back
     screen.handle("enter")
     assert resolved == [CANCEL]
@@ -488,7 +491,7 @@ def _two_routes() -> _RoutesView:
 
 def test_node_detail_screen_route_selection_arms_the_trace() -> None:
     """↑/↓ over the route rows moves the graph highlight and the spec a trace would arm on."""
-    screen = _screen(routes=_two_routes())
+    screen = _screen(routes=_two_routes(), tabs=[_Tab("Routes", "routes")])
     # Focusables: route 0, route 1, Time machine, Back — with routes listed, the rows are
     # the trace entry points, so no dedicated Trace action row renders.
     assert screen.selected_spec() == "3d,f2,3d"
@@ -504,7 +507,7 @@ def test_node_detail_screen_route_selection_arms_the_trace() -> None:
 
 def test_node_detail_enter_on_a_route_row_opens_its_trace() -> None:
     """Enter on any route row arms a trace on that route — no separate Trace row needed."""
-    screen = _screen(routes=_two_routes())
+    screen = _screen(routes=_two_routes(), tabs=[_Tab("Routes", "routes")])
     resolved: list = []
     screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
     screen.handle("down")  # onto route 1
@@ -524,13 +527,13 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
         label_of=lambda n: n[:2],
         label_rgb_of=lambda n: (200, 200, 200),
     )
-    screen = _screen(routes=routes)
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
     lines = screen.render_body(72)
     assert len(lines) <= 30  # the body fits the viewport — nothing scrolls off
     body = _plain(lines)
     assert "↓" in body and "more" in body  # the edge marker counts the hidden routes
-    assert "Time machine" in body and "Back" in body  # the pinned actions stay
+    assert "Back" in body  # the pinned tail never leaves
     assert "PgUp/PgDn scroll" in screen.footer_hint  # paging advertised only when needed
 
     # Walking the cursor to the last route slides the window down to keep it visible.
@@ -559,24 +562,25 @@ def test_node_detail_screen_tabs_switch_the_stage() -> None:
         markers=[MapMarker(label="Hub", lat=45.5, lon=-73.6, key="3d63aa")],
     )
     screen = _screen(
-        tabs=[_Tab("Map", "map"), _Tab("Routes", "routes")],
         minimap=mini,
         map_caption=Text("Hub · centred here", style="faint"),
     )
+    screen.note_viewport(30)
     assert "←→ tab" in screen.footer_hint  # two tabs, so the switch is advertised
-    # Opens on the Map tab: its preview and caption show, and its braille edge gets scrubbed.
+    # Opens on the Info tab: the vitals, the located preview's caption, and its braille
+    # edge scrub all belong to it.
     body = _plain(screen.render_body(72))
-    assert "── Map ──" in body and "centred here" in body
+    assert "── Info ──" in body and "centred here" in body
     assert screen.consume_edge_scrub() == 2
 
     screen.handle("right")  # switch to the Routes tab
     body = _plain(screen.render_body(72))
     assert "── Routes ──" in body and "no route observed yet" in body
-    assert screen.consume_edge_scrub() == 0  # the map isn't the showing tab now
+    assert screen.consume_edge_scrub() == 0  # the braille preview isn't showing now
 
 
 def test_node_detail_single_tab_hides_the_switch_hint() -> None:
     """A page with only one view drops the ←→ tab atom from its footer."""
-    screen = _screen()  # a lone Routes tab
+    screen = _screen(tabs=[_Tab("Info", "info")])  # our own node: no Routes tab
     assert "←→ tab" not in screen.footer_hint
     assert "↑↓ move" in screen.footer_hint and screen.footer_hint.endswith("Esc back")
