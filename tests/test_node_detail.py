@@ -572,6 +572,37 @@ def test_node_detail_enter_on_a_route_row_opens_its_trace() -> None:
     assert resolved == ["trace"] and screen.selected_spec() == "a1,f2,a1"
 
 
+def test_route_labels_light_through_a_coalesced_hop() -> None:
+    """A route drawn from a short hop id lights the wide marker the graph folds it into.
+
+    Route evidence reaches the page at mixed hash widths — a 1-byte trace hop (``3d``)
+    beside the same relay's full id on a sibling route. The graph coalesces the short id
+    into the one wide marker, so the label muting must test membership against the *drawn*
+    ids: keyed on the raw draw hops, the selected route's own relay rendered muted while
+    the white line rode straight through it (the TSFCT SUTTON-680M report).
+    """
+    lit: list[str] = []
+
+    def base_rgb(node: str) -> tuple[int, int, int]:
+        lit.append(node)  # the stage's muting wrapper only consults us for on-route nodes
+        return (200, 200, 200)
+
+    routes = _RoutesView(
+        routes=[
+            _Route(draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0", row=Text("wide")),
+            _Route(draw=("bf61f2fb1d9e", "3d"), spec="s1", row=Text("short")),
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=base_rgb,
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    screen.handle("down")  # select the short-hop route
+    screen.render_body(72)
+    assert "3d63c6429436" in lit  # the relay it rides through keeps its hue
+
+
 def test_node_detail_route_list_windows_inside_the_page() -> None:
     """With more routes than fit, the list windows with edge markers — the graph and the
     action rows never leave the screen, however many routes a busy node has."""

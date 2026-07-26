@@ -75,6 +75,7 @@ from .pathgraph import (
     LabelOf,
     LabelRgbOf,
     PathLayer,
+    _coalesce_prefixes,
     bidir_clusters,
     render_path_graph,
 )
@@ -649,7 +650,11 @@ class NodeDetailScreen(Screen):
         # A node keeps its name hue only while it sits on the selected route (its endpoints
         # always do); every other node in the fan fades its label to the same grey its line
         # went, so the picture reads as *this* route rather than the whole tangle.
-        on_route = set(rv.routes[sel].draw) | {SRC_NODE, DST_NODE}
+        # Membership is decided in the graph's own id space: the widget folds a short hop
+        # into the wide id it can only be among these routes (a 1-byte trace hop beside the
+        # same relay's full contact id), so the raw draw hops would grey the very marker the
+        # selected line rides through.
+        on_route = set(_coalesce_prefixes(layers)[sel].hops) | {SRC_NODE, DST_NODE}
         base_rgb = rv.label_rgb_of
         assert base_rgb is not None
 
