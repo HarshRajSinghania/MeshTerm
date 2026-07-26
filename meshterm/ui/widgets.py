@@ -910,19 +910,22 @@ def node_type_legend(indent: str = "") -> Text:
 
 
 def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
-    """A boxed tab strip: the active view drawn as a notebook tab, the rest sat beside it muted.
+    """A boxed tab strip: every tab always boxed, the active one lit on top of the rest.
 
     THE navigation header for a screen that pages one full-height view at a time between a
     handful of named views (the node detail page's ``Info`` / ``Routes``) instead of stacking
-    them. A blank line of air above the strip plus the strip's own line was already the going
-    rate, so the strip spends a third line on an actual tab shape instead of a plain heading:
-    the active label sits boxed in accent-coloured rounded corners, its bottom edge opening
-    into a full-width rule that reads as the seam between chrome and page. The inactive tabs
-    sit beside the box muted and unboxed, so the alternative view stays visible without
-    competing. A lone tab collapses to the plain accent heading
-    (:func:`~meshterm.ui.menus.section_heading`'s ``── Label ──`` form) since there is nothing
-    to switch between. The owning screen switches the active index (``←→``, with
-    ``Tab``/``Shift+Tab`` as a backup); the strip itself is pure presentation.
+    them. Every tab is always drawn as a full box — muted by default, accent when active —
+    instead of only the active one; this keeps every tab's width fixed regardless of which
+    is selected, so switching tabs never shifts the labels that come after it. Tabs share a
+    vertical between neighbours (one glyph, not two), and each shared corner is drawn as if
+    the tab to the left sits on top of the tab to the right: the corner "opens" (rounds
+    toward the tab starting there) only at the very first tab and at the active tab's own
+    left edge, and "closes" (rounds back, ceding the position to the tab on its left)
+    everywhere else — so the active tab is the one exception that always wins both of its
+    corners, reading as lifted in front of its neighbours. A lone tab collapses to the plain
+    accent heading (:func:`~meshterm.ui.menus.section_heading`'s ``── Label ──`` form) since
+    there is nothing to switch between or layer. The owning screen switches the active index
+    (``←→``, with ``Tab``/``Shift+Tab`` as a backup); the strip itself is pure presentation.
 
     Args:
         labels: The tab names in display order.
@@ -930,31 +933,41 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
         width: The strip's render width — the closing rule fills out to it.
 
     Returns:
-        A :class:`~rich.console.Group` of one line (a lone tab, or none) or three (the box's
-        top border, the boxed + muted labels, and the closing rule).
+        A :class:`~rich.console.Group` of one line (a lone tab, or none) or three (the shared
+        top border, the boxed labels, and the shared bottom border).
     """
     if not labels:
         return Group(Text(""))
     if len(labels) == 1:
         return Group(Text(f"── {labels[0]} ──", style="accent", no_wrap=True))
 
+    n = len(labels)
+    inner = [f"  {label}  " for label in labels]
+
+    def owner(junction: int) -> int:
+        """Which tab's corner glyph sits at this junction — see the docstring's layering rule."""
+        return junction if junction == 0 or junction == active else junction - 1
+
+    def corner_style(junction: int) -> str:
+        return "accent" if owner(junction) == active else "muted"
+
     top = Text(no_wrap=True)
     mid = Text(no_wrap=True)
     bot = Text(no_wrap=True)
     for i, label in enumerate(labels):
-        if i:
-            top.append("  ")
-            mid.append("  ")
-            bot.append("──", style="muted")
-        if i == active:
-            inner = f"  {label}  "
-            top.append("╭" + "─" * len(inner) + "╮", style="accent")
-            mid.append("│" + inner + "│", style="accent")
-            bot.append(("╰" if i == 0 else "┴") + "─" * len(inner) + "┴", style="accent")
-        else:
-            top.append(" " * len(label))
-            mid.append(label, style="muted")
-            bot.append("─" * len(label), style="muted")
+        opens = i == 0 or i == active
+        style = corner_style(i)
+        top.append("╭" if opens else "╮", style=style)
+        mid.append("│", style=style)
+        bot.append("╰" if opens else "╯", style=style)
+        tab_style = "accent" if i == active else "muted"
+        top.append("─" * len(inner[i]), style=tab_style)
+        mid.append(inner[i], style=tab_style)
+        bot.append("─" * len(inner[i]), style=tab_style)
+    last_style = corner_style(n)
+    top.append("╮", style=last_style)
+    mid.append("│", style=last_style)
+    bot.append("╯", style=last_style)
     bot.append("─" * max(0, width - len(bot.plain)), style="muted")
     return Group(top, mid, bot)
 

@@ -124,21 +124,30 @@ def test_signal_row_summarizes_snr_and_rssi() -> None:
 # --- the tab strip --------------------------------------------------------------
 
 
-def test_tab_strip_boxes_the_active_tab_and_mutes_the_rest() -> None:
-    """The active view reads as a boxed notebook tab; the others sit beside it bare."""
-    group = tab_strip(["Map", "Routes"], 1, width=17)
+def test_tab_strip_boxes_every_tab_and_lights_the_active_one() -> None:
+    """Every tab is always boxed; only the active tab's corners and fill read as lit."""
+    group = tab_strip(["Map", "Routes"], 1, width=20)
     top, mid, bot = group.renderables
-    assert mid.plain == "Map  │  Routes  │"  # active tab boxed, inactive bare
-    assert top.plain == "     ╭──────────╮"  # box top over "Routes" only
-    assert bot.plain == "─────┴──────────┴"  # rule joins the box's open bottom
-    assert len(top.plain) == len(mid.plain) == len(bot.plain) == 17  # no fill needed yet
+    assert mid.plain == "│  Map  │  Routes  │"  # both tabs boxed, sharing one vertical
+    assert top.plain == "╭───────╭──────────╮"  # active tab's left corner opens (wins the seam)
+    assert bot.plain == "╰───────╰──────────╯"  # mirrored on the bottom border
+    assert len(top.plain) == len(mid.plain) == len(bot.plain) == 20  # no fill needed yet
+
+
+def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
+    """Selecting a different tab only relights corners — no label ever shifts column."""
+    mid_first = tab_strip(["Map", "Routes"], 0, width=20).renderables[1]
+    mid_second = tab_strip(["Map", "Routes"], 1, width=20).renderables[1]
+    assert mid_first.plain == mid_second.plain == "│  Map  │  Routes  │"
+    top_first = tab_strip(["Map", "Routes"], 0, width=20).renderables[0]
+    assert top_first.plain == "╭───────╮──────────╮"  # first tab keeps the plain leading corner
 
 
 def test_tab_strip_rule_fills_out_to_the_render_width() -> None:
     """The closing rule under the strip extends to the full render width."""
-    _, _, bot = tab_strip(["Map", "Routes"], 1, width=20).renderables
-    assert bot.plain == "─────┴──────────┴───"  # 17 chars of box/rule, then 3 chars filler
-    assert len(bot.plain) == 20
+    _, _, bot = tab_strip(["Map", "Routes"], 1, width=25).renderables
+    assert bot.plain == "╰───────╰──────────╯─────"  # 20 chars of box/rule, then 5 chars filler
+    assert len(bot.plain) == 25
 
 
 def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
