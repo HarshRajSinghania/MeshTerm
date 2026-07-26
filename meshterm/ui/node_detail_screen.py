@@ -7,8 +7,8 @@ the node itself, in full:
 * **who it is** — a one-line identity header (its type glyph, its name in the node's own
   hue, its type label), the only chrome pinned above the stage — so the stage keeps nearly
   the whole screen;
-* **a tabbed stage** below it — one full-height view at a time, switched with ``←→`` (or
-  ``Tab``/``Shift+Tab``) across a boxed tab strip (see
+* **a tabbed stage** below it — one full-height view at a time, switched with
+  ``Tab``/``Shift+Tab`` across a boxed tab strip (see
   :func:`~meshterm.ui.widgets.tab_strip`). Rather than stack the vitals, the location
   preview, and the route graph down one long scroll, each view earns the whole stage:
 
@@ -267,9 +267,8 @@ class NodeDetailScreen(Screen):
     action's token for the opener to act on (a Trace token is paired with
     :meth:`selected_spec`); Esc resolves :data:`CANCEL` to leave.
 
-    Two axes of navigation, matching the app's spatial feel: ``←→`` (or ``Tab`` /
-    ``Shift+Tab``) switches which view fills the stage, and ``↑↓`` moves the cursor *within*
-    the active tab — through its route list (on the Routes tab, the selection drives the
+    Two axes of navigation, matching the app's spatial feel: ``Tab``/``Shift+Tab`` switches
+    which view fills the stage, and ``↑↓`` moves the cursor *within* the active tab — through its route list (on the Routes tab, the selection drives the
     graph highlight and Enter arms a trace on the picked route) and action rows. The page
     itself never scrolls: the identity header, tab strip, and stage are pinned, the stage
     is sized to the viewport, and the route list windows itself into the leftover rows —
@@ -346,7 +345,7 @@ class NodeDetailScreen(Screen):
         """Tab switch (when there are tabs to switch), move, open, list paging, Esc last."""
         parts: list[str] = []
         if len(self._tabs) >= 2:
-            parts.append("←→ tab")
+            parts.append("Tab/⇧Tab switch")
         parts.extend(("↑↓ move", "Enter open"))
         if self._list_hidden:
             parts.append("PgUp/PgDn scroll")
@@ -388,9 +387,9 @@ class NodeDetailScreen(Screen):
                     # CANCEL the opener's loop breaks on, not a "back" token the loop would
                     # ignore and re-show the page over.
                     self.resolve(CANCEL if payload.key == "back" else payload.key)
-        elif action in ("right", "tab"):
+        elif action == "tab":
             self._switch_tab(1)
-        elif action in ("left", "shift_tab"):
+        elif action == "shift_tab":
             self._switch_tab(-1)
         elif action == "up":
             if n:

@@ -124,14 +124,25 @@ def test_signal_row_summarizes_snr_and_rssi() -> None:
 # --- the tab strip --------------------------------------------------------------
 
 
-def test_tab_strip_boxes_every_tab_and_lights_the_active_one() -> None:
-    """Every tab is always boxed; only the active tab's corners and fill read as lit."""
+def test_tab_strip_boxes_every_tab_on_top_and_lights_the_active_one() -> None:
+    """Every tab is boxed across its top; only the active tab's corners/fill read as lit."""
     group = tab_strip(["Map", "Routes"], 1, width=20)
     top, mid, bot = group.renderables
     assert mid.plain == "│  Map  │  Routes  │"  # both tabs boxed, sharing one vertical
     assert top.plain == "╭───────╭──────────╮"  # active tab's left corner opens (wins the seam)
-    assert bot.plain == "╰───────╰──────────╯"  # mirrored on the bottom border
     assert len(top.plain) == len(mid.plain) == len(bot.plain) == 20  # no fill needed yet
+
+
+def test_tab_strip_bottom_is_a_continuous_rule_notched_at_the_active_tab() -> None:
+    """The bottom border is flat under inactive tabs and opens only under the active one."""
+    group = tab_strip(["Map", "Routes"], 1, width=20)
+    _, _, bot = group.renderables
+    # flat rule under "Map" (no corner of its own), then the notch opens/closes around
+    # "Routes" — up into the box, blank across its width (open into the page), back down.
+    assert bot.plain == "────────╰          ╯"
+
+    _, _, bot_first = tab_strip(["Map", "Routes"], 0, width=20).renderables
+    assert bot_first.plain == "╰       ╯───────────"  # notch now sits under the first tab
 
 
 def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
@@ -144,10 +155,17 @@ def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
 
 
 def test_tab_strip_rule_fills_out_to_the_render_width() -> None:
-    """The closing rule under the strip extends to the full render width."""
+    """The bottom rule extends to the full render width, margin included."""
     _, _, bot = tab_strip(["Map", "Routes"], 1, width=25).renderables
-    assert bot.plain == "╰───────╰──────────╯─────"  # 20 chars of box/rule, then 5 chars filler
+    # 2-column left margin (there's room), then the 20-cell strip, then 3 cells of filler.
+    assert bot.plain == "  ────────╰          ╯───"
     assert len(bot.plain) == 25
+
+
+def test_tab_strip_skips_the_margin_when_there_is_no_room() -> None:
+    """The two-column left margin only appears when the width has slack for it."""
+    top, _, _ = tab_strip(["Map", "Routes"], 1, width=20).renderables
+    assert top.plain.startswith("╭")  # width 20 == the strip's natural width, no slack
 
 
 def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
@@ -454,7 +472,7 @@ def test_node_detail_screen_renders_its_sections() -> None:
     assert "────────" in body  # the faint rule closing the stage
     assert "no route observed yet" not in body  # the Routes stage waits on its own tab
 
-    screen.handle("right")
+    screen.handle("tab")
     body = _plain(screen.render_body(72))
     assert "│  Routes  │" in body and "no route observed yet" in body
     assert "Trace" in body and "Back" in body
@@ -590,14 +608,14 @@ def test_node_detail_screen_tabs_switch_the_stage() -> None:
         map_caption=Text("Hub · centred here", style="faint"),
     )
     screen.note_viewport(30)
-    assert "←→ tab" in screen.footer_hint  # two tabs, so the switch is advertised
+    assert "Tab/⇧Tab switch" in screen.footer_hint  # two tabs, so the switch is advertised
     # Opens on the Info tab: the vitals, the located preview's caption, and its braille
     # edge scrub all belong to it.
     body = _plain(screen.render_body(72))
     assert "│  Info  │" in body and "centred here" in body
     assert screen.consume_edge_scrub() == 2
 
-    screen.handle("right")  # switch to the Routes tab
+    screen.handle("tab")  # switch to the Routes tab
     body = _plain(screen.render_body(72))
     assert "│  Routes  │" in body and "no route observed yet" in body
     assert screen.consume_edge_scrub() == 0  # the braille preview isn't showing now
