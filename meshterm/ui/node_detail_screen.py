@@ -8,7 +8,7 @@ the node itself, in full:
   hue, its type label), the only chrome pinned above the stage — so the stage keeps nearly
   the whole screen;
 * **a tabbed stage** below it — one full-height view at a time, switched with ``←→`` (or
-  ``Tab``/``Shift+Tab``) across a one-line tab strip (see
+  ``Tab``/``Shift+Tab``) across a boxed tab strip (see
   :func:`~meshterm.ui.widgets.tab_strip`). Rather than stack the vitals, the location
   preview, and the route graph down one long scroll, each view earns the whole stage:
 
@@ -481,16 +481,18 @@ class NodeDetailScreen(Screen):
         self._cursor = None
         self._list_hidden = False
 
-        # -- pinned chrome: the identity header, then the tab strip. One line of air
-        # follows the strip inside each stage (the route graph's own top padding, the
-        # Info tab's leading blank) rather than here, so the strip never costs two.
+        # -- pinned chrome: the identity header, then the tab strip (a lone tab collapses
+        # to one line; a multi-tab strip boxes the active tab across three). The budget
+        # below is struck from ``len(lines)`` after this, so either shape sizes correctly.
         lines: list[str] = []
         lines.extend(render_lines(self._header, width))
         if self._tabs:
             lines.append("")
             lines.extend(
                 render_lines(
-                    tab_strip([t.name for t in self._tabs], self._tab_index), width, no_wrap=True
+                    tab_strip([t.name for t in self._tabs], self._tab_index, width),
+                    width,
+                    no_wrap=True,
                 )
             )
 

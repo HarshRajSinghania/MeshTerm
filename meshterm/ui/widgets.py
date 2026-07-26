@@ -909,35 +909,54 @@ def node_type_legend(indent: str = "") -> Text:
     return legend
 
 
-def tab_strip(labels: Sequence[str], active: int) -> Text:
-    """A one-line tab strip: the active view lit like a section heading, the rest muted.
+def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
+    """A boxed tab strip: the active view drawn as a notebook tab, the rest sat beside it muted.
 
     THE navigation header for a screen that pages one full-height view at a time between a
-    handful of named views (the node detail page's ``Map`` / ``Routes``) instead of stacking
-    them. The active tab is drawn in the same accent ``── Label ──`` form the grouped select
-    lists give their section headings (:func:`~meshterm.ui.menus.section_heading`), so "the
-    view you are in" reads exactly like a section you have scrolled into; the inactive tabs sit
-    beside it muted, so the alternatives are visible without competing. A lone tab therefore
-    renders as a plain accent heading — the strip collapses gracefully when only one view has
-    content. The owning screen switches the active index (``←→``, with ``Tab``/``Shift+Tab`` as
-    a backup); the strip itself is pure presentation.
+    handful of named views (the node detail page's ``Info`` / ``Routes``) instead of stacking
+    them. A blank line of air above the strip plus the strip's own line was already the going
+    rate, so the strip spends a third line on an actual tab shape instead of a plain heading:
+    the active label sits boxed in accent-coloured rounded corners, its bottom edge opening
+    into a full-width rule that reads as the seam between chrome and page. The inactive tabs
+    sit beside the box muted and unboxed, so the alternative view stays visible without
+    competing. A lone tab collapses to the plain accent heading
+    (:func:`~meshterm.ui.menus.section_heading`'s ``── Label ──`` form) since there is nothing
+    to switch between. The owning screen switches the active index (``←→``, with
+    ``Tab``/``Shift+Tab`` as a backup); the strip itself is pure presentation.
 
     Args:
         labels: The tab names in display order.
         active: Index of the lit tab.
+        width: The strip's render width — the closing rule fills out to it.
 
     Returns:
-        A single-line :class:`~rich.text.Text` (no wrapping intended).
+        A :class:`~rich.console.Group` of one line (a lone tab, or none) or three (the box's
+        top border, the boxed + muted labels, and the closing rule).
     """
-    strip = Text(no_wrap=True)
+    if not labels:
+        return Group(Text(""))
+    if len(labels) == 1:
+        return Group(Text(f"── {labels[0]} ──", style="accent", no_wrap=True))
+
+    top = Text(no_wrap=True)
+    mid = Text(no_wrap=True)
+    bot = Text(no_wrap=True)
     for i, label in enumerate(labels):
         if i:
-            strip.append("    ")
+            top.append("  ")
+            mid.append("  ")
+            bot.append("──", style="muted")
         if i == active:
-            strip.append(f"── {label} ──", style="accent")
+            inner = f"  {label}  "
+            top.append("╭" + "─" * len(inner) + "╮", style="accent")
+            mid.append("│" + inner + "│", style="accent")
+            bot.append(("╰" if i == 0 else "┴") + "─" * len(inner) + "┴", style="accent")
         else:
-            strip.append(label, style="muted")
-    return strip
+            top.append(" " * len(label))
+            mid.append(label, style="muted")
+            bot.append("─" * len(label), style="muted")
+    bot.append("─" * max(0, width - len(bot.plain)), style="muted")
+    return Group(top, mid, bot)
 
 
 def _contacts_legend() -> Text:

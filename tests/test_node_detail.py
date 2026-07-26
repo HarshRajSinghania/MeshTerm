@@ -124,12 +124,27 @@ def test_signal_row_summarizes_snr_and_rssi() -> None:
 # --- the tab strip --------------------------------------------------------------
 
 
-def test_tab_strip_lights_the_active_tab_and_mutes_the_rest() -> None:
-    """The active view reads as an accent section heading; the others sit beside it plain."""
-    strip = tab_strip(["Map", "Routes"], 1)
-    assert strip.plain == "Map    ── Routes ──"  # active tab bracketed, inactive bare
-    lone = tab_strip(["Routes"], 0)
-    assert lone.plain == "── Routes ──"  # a single tab collapses to a plain heading
+def test_tab_strip_boxes_the_active_tab_and_mutes_the_rest() -> None:
+    """The active view reads as a boxed notebook tab; the others sit beside it bare."""
+    group = tab_strip(["Map", "Routes"], 1, width=17)
+    top, mid, bot = group.renderables
+    assert mid.plain == "Map  │  Routes  │"  # active tab boxed, inactive bare
+    assert top.plain == "     ╭──────────╮"  # box top over "Routes" only
+    assert bot.plain == "─────┴──────────┴"  # rule joins the box's open bottom
+    assert len(top.plain) == len(mid.plain) == len(bot.plain) == 17  # no fill needed yet
+
+
+def test_tab_strip_rule_fills_out_to_the_render_width() -> None:
+    """The closing rule under the strip extends to the full render width."""
+    _, _, bot = tab_strip(["Map", "Routes"], 1, width=20).renderables
+    assert bot.plain == "─────┴──────────┴───"  # 17 chars of box/rule, then 3 chars filler
+    assert len(bot.plain) == 20
+
+
+def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
+    """A single tab renders as the plain accent heading, no box needed."""
+    (lone,) = tab_strip(["Routes"], 0, width=40).renderables
+    assert lone.plain == "── Routes ──"
 
 
 # --- the folded-in route line ---------------------------------------------------
@@ -425,14 +440,14 @@ def test_node_detail_screen_renders_its_sections() -> None:
     screen.note_viewport(30)
     body = _plain(screen.render_body(72))
     assert "Hub" in body and "repeater" in body  # the pinned identity header
-    assert "── Info ──" in body and "42" in body  # the vitals moved into the Info tab
+    assert "│  Info  │" in body and "42" in body  # the vitals moved into the boxed Info tab
     assert "Time machine" in body and "Back" in body  # the Info actions + shared tail
     assert "────────" in body  # the faint rule closing the stage
     assert "no route observed yet" not in body  # the Routes stage waits on its own tab
 
     screen.handle("right")
     body = _plain(screen.render_body(72))
-    assert "── Routes ──" in body and "no route observed yet" in body
+    assert "│  Routes  │" in body and "no route observed yet" in body
     assert "Trace" in body and "Back" in body
     assert "packets" not in body  # the vitals stay on the Info tab
     # Every rendered line fits the 72-column standard.
@@ -570,12 +585,12 @@ def test_node_detail_screen_tabs_switch_the_stage() -> None:
     # Opens on the Info tab: the vitals, the located preview's caption, and its braille
     # edge scrub all belong to it.
     body = _plain(screen.render_body(72))
-    assert "── Info ──" in body and "centred here" in body
+    assert "│  Info  │" in body and "centred here" in body
     assert screen.consume_edge_scrub() == 2
 
     screen.handle("right")  # switch to the Routes tab
     body = _plain(screen.render_body(72))
-    assert "── Routes ──" in body and "no route observed yet" in body
+    assert "│  Routes  │" in body and "no route observed yet" in body
     assert screen.consume_edge_scrub() == 0  # the braille preview isn't showing now
 
 
