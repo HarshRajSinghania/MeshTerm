@@ -96,6 +96,27 @@ def test_paths_screen_draws_selected_path_white_over_gray() -> None:
     assert "38;2;255;255;255" in raw2 and "38;2;110;110;110" in raw2
 
 
+def test_paths_screen_graph_geometry_holds_still_across_the_selection() -> None:
+    """↑↓ repaint the fan's colours, never its shape — the Routes tab's rule.
+
+    Layout rank is first-heard order, so only ``emphasis`` follows the pick; the drawn
+    glyphs/lanes are byte-identical from every selection.
+    """
+    now = utcnow()
+    arrivals = [
+        Arrival(when=now, hops=("3d63",), snr=4.0),
+        Arrival(when=now + timedelta(seconds=2), hops=("a1b2", "77aa"), snr=-2.0),
+        Arrival(when=now + timedelta(seconds=4), hops=("a1b2", "5c5c", "77aa"), snr=1.0),
+    ]
+    screen = _screen(arrivals)
+    shapes = []
+    for _ in range(len(arrivals)):
+        shapes.append(_plain(screen._graph_lines(76)))
+        screen.handle("down")
+    assert len(set(shapes)) == 1, "the graph's shape moved when the selection did"
+    assert shapes[0].count("\n") > 1  # a genuine multi-lane fan, not one flat line
+
+
 def test_paths_screen_marks_a_repeater_relay_with_its_triangle() -> None:
     """A relay whose type resolves to a repeater draws ▲, not the generic dot."""
     screen = _screen(_arrivals(), type_of=lambda h: 2 if h == "3d63" else None)

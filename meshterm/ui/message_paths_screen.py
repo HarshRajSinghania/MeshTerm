@@ -278,15 +278,22 @@ class MessagePathsScreen(Screen):
         (:func:`~meshterm.ui.widgets.route_graph_style`): endpoints named, relays their
         own map marker where the type is known, each labelled by its first hash byte in
         the node's own hue.
+
+        Layout rank is fixed by first-heard order (the first path heard is always the spine),
+        exactly as the node detail's Routes tab fixes it by evidence order, so the fan's
+        geometry holds still as ↑↓ walk the arrivals — only the emphasis (which lane draws
+        white and on top) follows the pick.
         """
         selected = self._arrivals[self._index].hops
+        paths = self._paths()
         layers = [
             PathLayer(
                 hops=path,
                 color=_EDGE_SELECTED if path == selected else _EDGE_UNUSED,
-                priority=3 if path == selected else 2,
+                priority=len(paths) - i,
+                emphasis=1 if path == selected else 0,
             )
-            for path in self._paths()
+            for i, path in enumerate(paths)
         ]
         glyph_of, label_of, label_rgb_of = route_graph_style(
             resolve=self._resolve, self_name=self._self_name, source=self._source,
