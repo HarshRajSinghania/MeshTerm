@@ -425,11 +425,13 @@ def _screen(**over) -> NodeDetailScreen:
 def test_node_detail_screen_renders_its_sections() -> None:
     """The page shows identity, info, the active tab, its stage, and the action rows."""
     screen = _screen()
+    screen.note_viewport(30)
     body = _plain(screen.render_body(72))
     assert "Hub" in body and "repeater" in body  # identity
     assert "42" in body  # a packet tally from the info block
     assert "── Routes ──" in body and "no route observed yet" in body  # the tab + its stage
     assert "Trace" in body and "Time machine" in body and "Back" in body
+    assert "────────" in body  # the faint rule closing the stage
     # Every rendered line fits the 72-column standard.
     for line in screen.render_body(72):
         assert len(_plain([line])) <= 72
@@ -437,16 +439,18 @@ def test_node_detail_screen_renders_its_sections() -> None:
 
 
 def test_node_detail_screen_cursor_and_commit() -> None:
-    """↑/↓ move the cursor (pinned in view); Enter resolves its key, Esc cancels."""
+    """↑/↓ move the cursor (kept in view); Enter resolves its key, Esc cancels."""
     screen = _screen()
     resolved: list = []
     screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
 
-    # Opens un-pinned (top visible) with the cursor on the first row (the Trace action).
-    assert screen.cursor_line() is None
+    assert screen.cursor_line() is None  # nothing rendered yet
+    screen.note_viewport(30)
     screen.render_body(72)
+    # The cursor opens on the first row (the Trace action) and is always reported, so the
+    # frame can keep it visible on a terminal too short for the pinned layout.
+    assert screen.cursor_line() is not None
     screen.handle("down")  # onto "Time machine"
-    assert screen._pin_cursor and screen.cursor_line() is not None
     screen.render_body(72)
     screen.handle("enter")
     assert resolved == ["timemachine"]
@@ -469,9 +473,9 @@ def test_node_detail_back_row_leaves_like_escape() -> None:
     assert resolved == [CANCEL]
 
 
-def test_node_detail_screen_route_selection_arms_the_trace() -> None:
-    """↑/↓ over the route rows moves the graph highlight and the spec a Trace would arm on."""
-    routes = _RoutesView(
+def _two_routes() -> _RoutesView:
+    """A routes view with two selectable routes, the way the assembly hands them over."""
+    return _RoutesView(
         routes=[
             _Route(draw=("3d63c6429436",), spec="3d,f2,3d", row=Text("via Hub")),
             _Route(draw=("a1a1a1a1a1a1",), spec="a1,f2,a1", row=Text("via Alt")),
@@ -480,15 +484,71 @@ def test_node_detail_screen_route_selection_arms_the_trace() -> None:
         label_of=lambda n: n[:2],
         label_rgb_of=lambda n: (200, 200, 200),
     )
-    screen = _screen(routes=routes)
-    # Focusables: route 0, route 1, Trace, Time machine, Back. The best route arms by default.
+
+
+def test_node_detail_screen_route_selection_arms_the_trace() -> None:
+    """↑/↓ over the route rows moves the graph highlight and the spec a trace would arm on."""
+    screen = _screen(routes=_two_routes())
+    # Focusables: route 0, route 1, Time machine, Back — with routes listed, the rows are
+    # the trace entry points, so no dedicated Trace action row renders.
     assert screen.selected_spec() == "3d,f2,3d"
     screen.handle("down")  # onto route 1
     assert screen._route_sel == 1 and screen.selected_spec() == "a1,f2,a1"
-    screen.handle("down")  # onto the Trace action — the pick holds
+    screen.handle("down")  # onto Time machine — the pick holds
     assert screen.selected_spec() == "a1,f2,a1"
+    screen.note_viewport(30)
     body = _plain(screen.render_body(72))
-    assert "via Hub" in body and "via Alt" in body  # both route rows drew
+    assert "via Hub …" in body and "via Alt …" in body  # both rows drew, …-marked as openers
+    assert "Trace" not in body  # the auto-route stand-in only shows with no routes to list
+
+
+def test_node_detail_enter_on_a_route_row_opens_its_trace() -> None:
+    """Enter on any route row arms a trace on that route — no separate Trace row needed."""
+    screen = _screen(routes=_two_routes())
+    resolved: list = []
+    screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    screen.handle("down")  # onto route 1
+    screen.handle("enter")
+    assert resolved == ["trace"] and screen.selected_spec() == "a1,f2,a1"
+
+
+def test_node_detail_route_list_windows_inside_the_page() -> None:
+    """With more routes than fit, the list windows with edge markers — the graph and the
+    action rows never leave the screen, however many routes a busy node has."""
+    routes = _RoutesView(
+        routes=[
+            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", row=Text(f"route {i}"))
+            for i in range(12)
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes)
+    screen.note_viewport(30)
+    lines = screen.render_body(72)
+    assert len(lines) <= 30  # the body fits the viewport — nothing scrolls off
+    body = _plain(lines)
+    assert "↓" in body and "more" in body  # the edge marker counts the hidden routes
+    assert "Time machine" in body and "Back" in body  # the pinned actions stay
+    assert "PgUp/PgDn scroll" in screen.footer_hint  # paging advertised only when needed
+
+    # Walking the cursor to the last route slides the window down to keep it visible.
+    for _ in range(11):
+        screen.handle("down")
+    lines = screen.render_body(72)
+    assert len(lines) <= 30
+    assert "route 11" in _plain(lines) and screen.cursor_line() is not None
+
+
+def test_fit_blocks_walks_wrapped_rows_into_view() -> None:
+    """The variable-height fit keeps whole blocks, spends marker lines only when rows hide,
+    and walks the window down to the cursor's row."""
+    screen = _screen()
+    top, count = screen._fit_blocks([2, 2, 2, 2], 5, 3)  # cursor on the last 2-line row
+    assert top + count == 4 and top == 2  # slid to the tail; the last two rows fit
+    top, count = screen._fit_blocks([1, 1], 5, 0)
+    assert (top, count) == (0, 2)  # everything fits: no window, no markers
 
 
 def test_node_detail_screen_tabs_switch_the_stage() -> None:

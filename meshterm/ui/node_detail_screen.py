@@ -25,14 +25,23 @@ the node itself, in full:
     white in the graph while the rest go grey and every node not on it fades its label to
     grey, so the graph reads as *this* route through the fan. Only *good* routes are drawn —
     stale evidence and far-weaker outliers are dropped, so the list is the routes worth
-    trusting rather than every chain ever heard. The ``🎯 Trace this route …`` action arms
-    a trace on whichever route is selected (nothing transmits here — it opens the trace
-    screen loaded with that path).
+    trusting rather than every chain ever heard. Enter on a route arms a trace on it
+    (nothing transmits here — it opens the trace screen loaded with that path); when there
+    is no route evidence to list, a ``🎯 Trace — auto route …`` action stands in.
 
-* **the ways in** — the tab's action rows: ``Open full map`` / ``Trace this route`` plus the
+* **the ways in** — the tab's action rows: ``Open full map`` on the Map tab plus the
   always-available ``Time machine`` (when the recorder holds history) and ``Back``. ``↑↓``
-  moves the cursor through them, Enter commits, Esc backs to the list; ``PgUp/PgDn`` scroll
-  the page when the identity block and stage together overflow a short terminal.
+  moves the cursor through them, Enter commits, Esc backs to the list.
+
+The page never scrolls as one long strip. The identity block, the tab strip, and the stage
+are pinned; the stage sizes itself to the terminal (the route graph compresses its lanes
+before it would overflow) and a faint rule closes it under its caption, so the drawn view
+and the rows below read as separate bands. The route list scrolls *inside* the leftover
+rows with faint ``↑ n more`` / ``↓ n more`` edge markers — the app-wide windowed-list
+pattern (see :class:`~meshterm.ui.tui.screen.ListWindow`; the variable-height rows get
+their own fit here) — so the graph, the selection driving it, and the action rows share
+one screen however many routes a busy node has. ``PgUp/PgDn`` page the cursor through
+the window.
 
 The screen is a pure read-and-route view: it renders already-resolved display data and
 resolves an action token (the Trace token carrying the selected route's spec via
@@ -67,7 +76,7 @@ from .pathgraph import (
 )
 from .theme import name_style, snr_style
 from .tui.render import render_hanging, render_lines, render_to_ansi
-from .tui.screen import CANCEL, Screen
+from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
     _NODE_GLYPHS,
@@ -93,12 +102,21 @@ _MAP_ROWS = 7
 #: right (node → us, so the graph reads left to right as the inbound direction its packets
 #: travelled to reach us). A well-connected node offers several candidate paths at once, and
 #: cramming them into a short box compresses the lanes together — so this page keeps the shared
-#: lane pitch but grants a generous row budget, letting a busy node spread each route into its
-#: own clearly separated track instead of scaling the pitch down. The height is adaptive: it
-#: grows only with the number of distinct lanes, so a node with one or two routes still draws
-#: compact while a busy one earns the room it needs. The page scrolls (PgUp/PgDn), so a tall
-#: graph never crowds the route list off.
+#: lane pitch and lets the graph grow with its lanes, up to this ceiling. The real budget is
+#: struck per render against the terminal: the stage takes what the viewport leaves after the
+#: pinned chrome, the action rows, and the route list's guaranteed window — so the graph
+#: compresses its pitch before it would ever push the list or the actions off the screen, and
+#: this ceiling is only reached on a terminal tall enough to afford it.
 _PATH_MAX_ROWS = 22
+
+#: The fewest canvas rows the route graph is ever granted (the shared renderer's own floor);
+#: on a terminal too short for even this, the frame's cursor-follow keeps the active row in
+#: view rather than the stage shrinking into noise.
+_GRAPH_MIN_ROWS = 5
+
+#: Route-list lines the stage must leave room for before taking the rest of the viewport —
+#: enough for a couple of routes (or one wrapped one) to show beside the graph they light.
+_LIST_MIN_LINES = 4
 
 #: A drawn route is dropped as *stale* when its freshest-limiting link — the stalest hop it
 #: rides through — has not been heard in this many days. A route is only as current as its
@@ -245,9 +263,10 @@ class NodeDetailScreen(Screen):
     Two axes of navigation, matching the app's spatial feel: ``←→`` (or ``Tab`` /
     ``Shift+Tab``) switches which view fills the stage, and ``↑↓`` moves the cursor *within*
     the active tab — through its route list (on the Routes tab, the selection drives the
-    graph highlight) and action rows. The cursor is kept in view while ``↑↓`` are in use;
-    ``PgUp/PgDn/Home/End`` scroll the whole page, so the stage and its rows can be read on a
-    short terminal without losing the controls.
+    graph highlight and Enter arms a trace on the picked route) and action rows. The page
+    itself never scrolls: the identity block, tab strip, and stage are pinned, the stage is
+    sized to the viewport, and the route list windows itself into the leftover rows —
+    ``PgUp/PgDn`` page the cursor through it, ``Home/End`` jump it to the ends.
     """
 
     floating = False
@@ -279,7 +298,9 @@ class NodeDetailScreen(Screen):
             routes: The Routes tab's route list + graph callbacks (or a muted note), or
                 ``None`` when there is no Routes tab (we never overhear our own node).
             open_map_action: The Map tab's ``Open full map`` action, or ``None``.
-            trace_action: The Routes tab's ``Trace this route`` action, or ``None``.
+            trace_action: The Routes tab's ``Trace — auto route …`` action, shown only when
+                there are no routes to list (with routes listed, Enter on a route row is the
+                trace entry point), or ``None``.
             tail_actions: The always-available actions closing every tab (Time machine when
                 there is history, then Back).
         """
@@ -298,21 +319,26 @@ class NodeDetailScreen(Screen):
         self._row_index = 0
         #: The highlighted route on the Routes tab (drives the graph); tracks the cursor as
         #: it moves onto a route row and holds while it rests on an action row, so the graph
-        #: keeps showing the pick the Trace row would arm on.
+        #: keeps showing the last pick.
         self._route_sel = 0
-        self._pin_cursor = False  # open showing the top; only pin once ↑/↓ are used
         self._cursor: Optional[int] = None
+        #: The route list's window state: the first visible row, the rows the last fit
+        #: carried (the PgUp/PgDn stride), and whether any rows are hidden (gates the
+        #: footer's scroll atom).
+        self._list_top = 0
+        self._list_page = 1
+        self._list_hidden = False
 
     # --- input -----------------------------------------------------------------
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Tab switch (when there are tabs to switch), move, open, scroll, Esc last."""
+        """Tab switch (when there are tabs to switch), move, open, list paging, Esc last."""
         parts: list[str] = []
         if len(self._tabs) >= 2:
             parts.append("←→ tab")
         parts.extend(("↑↓ move", "Enter open"))
-        if self.content_overflows:
+        if self._list_hidden:
             parts.append("PgUp/PgDn scroll")
         parts.append("Esc back")
         return " · ".join(parts)
@@ -336,20 +362,22 @@ class NodeDetailScreen(Screen):
         return 2 if self._tabs[self._tab_index].kind == "map" else 0
 
     def handle(self, action: str, data: str = "") -> None:
-        """Switch tab, move the cursor within a tab, commit a row, scroll, or leave."""
+        """Switch tab, move the cursor within a tab, commit a row, page the list, or leave."""
         focus = self._focusables()
         n = len(focus)
         if action == "enter":
             if n:
                 kind, payload = focus[self._row_index % n]
-                if kind == "action":
+                if kind == "path":
+                    # A route row is itself the trace entry point: Enter arms a trace on the
+                    # route it names (the opener reads :meth:`selected_spec` for the pick).
+                    self.resolve("trace")
+                else:
                     assert isinstance(payload, _Action)
                     # Back leaves the page exactly as Esc does — it resolves the same
                     # CANCEL the opener's loop breaks on, not a "back" token the loop would
                     # ignore and re-show the page over.
                     self.resolve(CANCEL if payload.key == "back" else payload.key)
-                # A route row is inert on Enter: selecting it (the highlight + graph) is the
-                # whole interaction; the dedicated Trace row is what opens the trace flow.
         elif action in ("right", "tab"):
             self._switch_tab(1)
         elif action in ("left", "shift_tab"):
@@ -358,39 +386,42 @@ class NodeDetailScreen(Screen):
             if n:
                 self._row_index = (self._row_index - 1) % n
                 self._sync_route_sel(focus)
-                self._pin_cursor = True
         elif action == "down":
             if n:
                 self._row_index = (self._row_index + 1) % n
                 self._sync_route_sel(focus)
-                self._pin_cursor = True
         elif action == "pageup":
-            self._pin_cursor = False
-            self.scroll_pages(-1)
+            if n:
+                self._row_index = max(0, self._row_index - max(1, self._list_page))
+                self._sync_route_sel(focus)
         elif action in ("pagedown", "space"):
-            self._pin_cursor = False
-            self.scroll_pages(1)
+            if n:
+                self._row_index = min(n - 1, self._row_index + max(1, self._list_page))
+                self._sync_route_sel(focus)
         elif action in ("home", "ctrl_home"):
-            self._pin_cursor = False
-            self.scroll_to_top()
+            if n:
+                self._row_index = 0
+                self._sync_route_sel(focus)
         elif action in ("end", "ctrl_end"):
-            self._pin_cursor = False
-            self.scroll_to_bottom()
+            if n:
+                self._row_index = n - 1
+                self._sync_route_sel(focus)
         elif action == "escape":
             self.resolve(CANCEL)
 
     def cursor_line(self) -> Optional[int]:
-        """Keep the highlighted row visible while ↑/↓ are in use; free scroll otherwise."""
-        return self._cursor if self._pin_cursor else None
+        """The highlighted row's body line — the frame keeps it in view, which only matters
+        on a terminal too short for the pinned layout's minimums."""
+        return self._cursor
 
     def _switch_tab(self, delta: int) -> None:
-        """Move the active tab, resetting the cursor to that tab's top (and its stage in view)."""
+        """Move the active tab, resetting the cursor and list window to that tab's top."""
         if len(self._tabs) < 2:
             return
         self._tab_index = (self._tab_index + delta) % len(self._tabs)
         self._row_index = 0
         self._route_sel = 0
-        self._pin_cursor = False
+        self._list_top = 0
         self.scroll_to_top()
         self._sync_route_sel(self._focusables())
 
@@ -405,15 +436,16 @@ class NodeDetailScreen(Screen):
     def _focusables(self) -> list[tuple[str, object]]:
         """The active tab's cursor stops: ``("path", route_idx)`` and ``("action", _Action)``.
 
-        The route rows come first (Routes tab only), then the tab's own committing action
-        (Open full map / Trace this route), then the shared tail (Time machine, Back). A tab
-        with no stage (our own fix-less node) is just the tail.
+        The route rows come first (Routes tab only) — each is itself the trace entry point —
+        with the auto-route Trace action standing in only when there are no routes to list;
+        the Map tab leads with Open full map. The shared tail (Time machine, Back) closes
+        every tab. A tab-less page (our own fix-less node) is just the tail.
         """
         tab = self._tabs[self._tab_index] if self._tabs else None
         focus: list[tuple[str, object]] = []
         if tab is not None and tab.kind == "routes" and self._routes is not None:
             focus.extend(("path", i) for i in range(len(self._routes.routes)))
-            if self._trace_action is not None:
+            if not self._routes.routes and self._trace_action is not None:
                 focus.append(("action", self._trace_action))
         elif tab is not None and tab.kind == "map" and self._open_map_action is not None:
             focus.append(("action", self._open_map_action))
@@ -423,7 +455,23 @@ class NodeDetailScreen(Screen):
     # --- rendering -------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """Render the identity block, the active tab's stage, and its cursor rows."""
+        """Render the pinned chrome, the sized-to-fit stage, and the windowed cursor rows.
+
+        The viewport the frame recorded (:meth:`~meshterm.ui.tui.screen.Screen.note_viewport`)
+        is split three ways each paint: the pinned chrome (identity block, tab strip) and the
+        action rows take their fixed lines first, the stage takes what it needs of the rest
+        (the route graph's row ceiling shrinks to fit), and the route list windows itself
+        into the leftover lines — so nothing here ever pushes the graph or the actions off
+        the screen.
+        """
+        viewport = self._scroll_viewport
+        focus = self._focusables()
+        if focus:
+            self._row_index %= len(focus)
+        self._cursor = None
+        self._list_hidden = False
+
+        # -- pinned chrome: the identity block, then the tab strip.
         lines: list[str] = []
         lines.extend(render_lines(self._header, width))
         for label, value in self._info_rows:
@@ -435,12 +483,6 @@ class NodeDetailScreen(Screen):
                     indent=_LABEL_LANE,
                 )
             )
-
-        focus = self._focusables()
-        if focus:
-            self._row_index %= len(focus)
-        self._cursor = None
-
         if self._tabs:
             lines.append("")
             lines.extend(
@@ -449,29 +491,94 @@ class NodeDetailScreen(Screen):
                 )
             )
             lines.append("")
-            if self._tabs[self._tab_index].kind == "map":
+
+        # The action rows are fixed chrome too — a leading blank, one line per row, a blank
+        # setting Back apart — struck before the stage draws so it can size against them.
+        actions = [payload for _kind, payload in focus if _kind == "action"]
+        action_lines = 1 + len(actions) + (
+            1 if any(a.key == "back" for a in actions if isinstance(a, _Action)) else 0
+        )
+
+        # -- the stage, sized to what the viewport leaves, closed by a faint rule.
+        route_blocks: list[list[str]] = []
+        tab = self._tabs[self._tab_index] if self._tabs else None
+        if tab is not None:
+            if tab.kind == "map":
                 lines.extend(self._map_stage(width))
             else:
-                lines.extend(self._routes_stage(width))
-        lines.append("")
+                route_blocks = [
+                    self._route_row_lines(route, i == self._row_index, width)
+                    for i, route in enumerate(self._routes.routes if self._routes else [])
+                ]
+                budget = viewport - len(lines) - action_lines - 1  # the rule's line
+                lines.extend(self._routes_stage(width, budget, route_blocks))
+            # The rule closes the stage, so the drawn view and the rows below it read as
+            # separate bands rather than one run-on column.
+            lines.append(render_to_ansi(Text("─" * width, style="faint"), width))
 
-        for i, (kind, payload) in enumerate(focus):
-            selected = i == self._row_index
-            if kind == "path":
-                assert isinstance(payload, int)
-                if selected:
+        # -- the route list, windowed into whatever the stage left.
+        if route_blocks:
+            window = max(1, viewport - len(lines) - action_lines)
+            heights = [len(block) for block in route_blocks]
+            on_route = self._row_index if self._row_index < len(route_blocks) else None
+            top, count = self._fit_blocks(heights, window, on_route)
+            self._list_page = max(1, count)
+            if top > 0:
+                lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+            for i in range(top, top + count):
+                if i == self._row_index:
                     self._cursor = len(lines)
-                lines.extend(self._route_row_lines(self._routes.routes[payload], selected, width))
-            else:
-                assert isinstance(payload, _Action)
-                if payload.key == "back":
-                    lines.append("")  # set the exit row apart, as the menus do
-                if selected:
-                    self._cursor = len(lines)
-                lines.append(self._action_line(payload, selected, width))
+                lines.extend(route_blocks[i])
+            below = len(route_blocks) - top - count
+            if below > 0:
+                lines.append(render_to_ansi(ListWindow.marker(below, "below"), width))
+            self._list_hidden = top > 0 or below > 0
+
+        # -- the pinned action rows (the route rows precede them in focus order).
+        lines.append("")
+        base = len(route_blocks)
+        for j, payload in enumerate(actions):
+            assert isinstance(payload, _Action)
+            if payload.key == "back":
+                lines.append("")  # set the exit row apart, as the menus do
+            selected = base + j == self._row_index
+            if selected:
+                self._cursor = len(lines)
+            lines.append(self._action_line(payload, selected, width))
 
         self._scroll_total = max(1, len(lines))
         return lines
+
+    def _fit_blocks(self, heights: list[int], win: int, index: Optional[int]) -> tuple[int, int]:
+        """Settle the route-list window over variable-height rows: ``(top, count)`` to draw.
+
+        The hanging-wrap sibling of :meth:`~meshterm.ui.tui.screen.ListWindow.fit`: each row
+        is a whole block of rendered lines (a wrapped route never splits mid-hang), the faint
+        edge markers eat a window line exactly when rows hide beyond them, and the cursor's
+        row (``index``, or ``None`` while it rests on the action rows) is walked into view.
+
+        Args:
+            heights: Rendered line count per route row.
+            win: Lines the window may spend — on content and markers alike.
+            index: The cursor's route row to keep visible, or ``None`` to just clamp.
+        """
+        n = len(heights)
+        if sum(heights) <= win:
+            self._list_top = 0
+            return 0, n
+        top = max(0, min(self._list_top, n - 1))
+        if index is not None:
+            top = min(top, index)
+        while True:
+            above = 1 if top > 0 else 0
+            count = _fill(heights, top, win - above)
+            if top + count < n:  # rows hide below: the marker takes one of the lines
+                count = max(1, _fill(heights, top, win - above - 1))
+            if index is None or index < top + count:
+                break
+            top += 1  # walk the window down until the cursor's row is inside
+        self._list_top = top
+        return top, count
 
     def _map_stage(self, width: int) -> list[str]:
         """The location preview and its faint caption."""
@@ -481,9 +588,19 @@ class NodeDetailScreen(Screen):
             lines.extend(render_lines(self._map_caption, width, no_wrap=True))
         return lines
 
-    def _routes_stage(self, width: int) -> list[str]:
-        """The route-graph fan — the selected route white, its off-route nodes' labels faded —
-        or the muted note when there is no route evidence."""
+    def _routes_stage(
+        self, width: int, budget: int, route_blocks: list[list[str]]
+    ) -> list[str]:
+        """The route-graph fan, sized to fit — or the muted note when there is no evidence.
+
+        ``budget`` is what the viewport leaves for the stage *and* the route list together;
+        the graph's row ceiling is what remains after its caption/legend and the list's
+        guaranteed minimum (the lesser of :data:`_LIST_MIN_LINES` and what the rows actually
+        need), floored at :data:`_GRAPH_MIN_ROWS` — so the graph compresses its lane pitch
+        before the list would lose its window, and a busy node's fan only spreads out on a
+        terminal tall enough to afford it. The selected route draws white with its off-route
+        labels faded, as ever.
+        """
         rv = self._routes
         assert rv is not None
         if not rv.routes or rv.glyph_of is None:
@@ -511,6 +628,9 @@ class NodeDetailScreen(Screen):
         def label_rgb_of(node: str):
             return base_rgb(node) if node in on_route else _GREY
 
+        caption_lines = 1 + (1 if rv.legend else 0)
+        list_need = min(sum(len(block) for block in route_blocks), _LIST_MIN_LINES)
+        max_rows = max(_GRAPH_MIN_ROWS, min(_PATH_MAX_ROWS, budget - caption_lines - list_need))
         lines = list(
             render_path_graph(
                 layers,
@@ -518,7 +638,7 @@ class NodeDetailScreen(Screen):
                 glyph_of=rv.glyph_of,
                 label_of=rv.label_of,  # type: ignore[arg-type]
                 label_rgb_of=label_rgb_of,
-                max_rows=_PATH_MAX_ROWS,
+                max_rows=max_rows,
             )
         )
         caption = Text("node → you, as heard  ·  white = selected route", style="faint")
@@ -532,10 +652,13 @@ class NodeDetailScreen(Screen):
 
         The route keeps its per-node colours even when selected (the pointer, and the white
         line in the graph above, carry the selection) — unlike the plain action rows, which
-        go fully brand, since here the colour *is* the content.
+        go fully brand, since here the colour *is* the content. The trailing ``…`` is the
+        app-wide opens-further-prompts mark: Enter on the row arms a trace on it.
         """
         prefix = Text("❯ " if selected else "  ", style="brand" if selected else "")
-        return render_hanging(prefix, route.row, width, indent=2)
+        row = route.row.copy()
+        row.append(" …", style="muted")
+        return render_hanging(prefix, row, width, indent=2)
 
     def _action_line(self, action: _Action, selected: bool, width: int) -> str:
         """One action row: ``❯`` + icon + label, the whole row brand when it is the cursor's."""
@@ -548,6 +671,18 @@ class NodeDetailScreen(Screen):
         text.no_wrap = True
         text.truncate(width, overflow="ellipsis")
         return render_to_ansi(text, width)
+
+
+def _fill(heights: list[int], top: int, budget: int) -> int:
+    """How many whole blocks from ``top`` fit into ``budget`` lines (greedy, in order)."""
+    used = 0
+    count = 0
+    for h in heights[top:]:
+        if used + h > budget:
+            break
+        used += h
+        count += 1
+    return count
 
 
 # -- geographic helpers --------------------------------------------------------
@@ -804,9 +939,11 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
         tabs.append(_Tab(name="Routes", kind="routes"))
 
     open_map_action = _Action("map", "🌍", "", "Open full map") if minimap is not None else None
+    # With routes listed, each route row is its own trace entry point (Enter arms it); the
+    # dedicated action only stands in when there is no route evidence to list.
     trace_action: Optional[_Action] = None
-    if not you and node_id:
-        trace_action = _Action("trace", "🎯", "", _trace_label(routes_view))
+    if not you and node_id and not (routes_view is not None and routes_view.routes):
+        trace_action = _Action("trace", "🎯", "", "Trace — auto route …")
     tail_actions: list[_Action] = []
     if you:
         tail_actions.append(_Action("timemachine", "⏳", "", "Time machine — your activity"))
@@ -968,13 +1105,6 @@ def _contract_bidir_clusters(
             draw.append(cid)
         contracted.append(replace(route, draw=tuple(draw)))
     return contracted, clusters
-
-
-def _trace_label(routes: Optional["_RoutesView"]) -> str:
-    """The Trace action's row label — armed on the selected route, or auto with none drawn."""
-    if routes is not None and routes.routes:
-        return "Trace this route …"
-    return "Trace — auto route …"
 
 
 def _routes_view(
