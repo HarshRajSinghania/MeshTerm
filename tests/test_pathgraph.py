@@ -10,13 +10,13 @@ from meshterm.ui.pathgraph import (
     DST_NODE,
     SRC_NODE,
     _GRAPH_PAD_DOTS,
+    _LANE_PITCH_ROWS,
     PathLayer,
     _assign_lanes,
     _balanced_x,
     _coalesce_prefixes,
     _collapse,
-    _compress_lanes,
-    _fold_detours,
+    _layout_lanes,
     _route,
     render_path_graph,
 )
@@ -249,35 +249,14 @@ def test_every_label_shows_on_a_busy_graph() -> None:
         assert name in plain, f"{name} was dropped from the graph"
 
 
-def _owner_after_fold(layers, width=72):  # noqa: ANN001
-    """Build the per-node owner map and run the detour fold, as ``render_path_graph`` does."""
-    drawn = _collapse(_coalesce_prefixes(layers))
-    seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
-    ordered: list[str] = []
-    seen: set[str] = set()
-    edges: set[tuple[str, str]] = set()
-    for seq in seqs:
-        for node in seq:
-            if node not in seen:
-                seen.add(node)
-                ordered.append(node)
-        edges.update(zip(seq, seq[1:]))
-    xfrac = _balanced_x(ordered, edges)
-    owner: dict[str, int] = {}
-    for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
-        for node in seqs[i]:
-            owner.setdefault(node, i)
-    _fold_detours(drawn, seqs, owner, xfrac, width)
-    lanes = sum(1 for i in range(len(drawn)) if any(owner[n] == i for n in seqs[i]))
-    return owner, lanes
-
-
-def _packed_lanes(layers, width=60):  # noqa: ANN001
-    """Run the lane pipeline through compression, as ``render_path_graph`` does.
+def _packed_lanes(layers, width=60, max_rows=15):  # noqa: ANN001
+    """Run the lane pipeline through layout and compression, as ``render_path_graph`` does.
 
     Returns ``(signed, columns, route_lanes)``: the packed signed lane per relay (``0`` on the
     best spine, ``<0`` above, ``>0`` below), each relay's cell column, and how many lanes the
     per-path assignment used *before* packing — so a test can assert the pack squeezed them.
+    ``max_rows`` is the budget the layout weighs detours against: roomy by default (the
+    renderer's own default), pass it small to force the fold fallback.
     """
     drawn = _collapse(_coalesce_prefixes(layers))
     seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
@@ -296,12 +275,12 @@ def _packed_lanes(layers, width=60):  # noqa: ANN001
     for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
         for node in seqs[i]:
             owner.setdefault(node, i)
-    _fold_detours(drawn, seqs, owner, xfrac, width)
-    lane_of_path = _assign_lanes(drawn, seqs, owner, best)
-    route_lanes = max(lane_of_path.values()) + 1
+    route_lanes = max(_assign_lanes(drawn, seqs, owner, best).values()) + 1
     span = width * 2 - 2 * _GRAPH_PAD_DOTS
     col_of = lambda node: (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1  # noqa: E731
-    signed = _compress_lanes(ordered, lane_of_path, owner, best, col_of)
+    signed = _layout_lanes(
+        drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS
+    )
     columns = {node: col_of(node) for node in signed}
     return signed, columns, route_lanes
 
@@ -311,22 +290,42 @@ def _lane_count(signed) -> int:  # noqa: ANN001
     return max(signed.values()) - min(signed.values()) + 1
 
 
-def test_detour_path_rides_its_siblings_lane_not_a_new_one() -> None:
-    """A route that is a sibling *plus* one inserted relay folds onto that sibling's lane.
+def test_detour_nests_outside_its_sibling_when_rows_allow() -> None:
+    """A route that is a sibling *plus* one inserted relay arcs outside that sibling's lane.
 
-    ``cc`` inserts a relay before the ``bb`` its sibling also converges through. Given its own
-    lane on the far side of the best spine, it would drag that relay clear across the graph to
-    rejoin ``bb`` (the crossing). Folded, ``cc`` is re-owned to ``bb``'s lane — two lanes, no
-    crossing. This is the real YUL-Poly shape: CDN-FENDALL1 → UpperSalaberry.
+    ``cc`` inserts a relay before the ``bb`` its sibling also converges through. With rows to
+    spare the detour *nests*: ``cc`` takes the lane just outside ``bb``'s on the same flank, so
+    the sibling's straight SRC → bb run never passes over ``cc``'s marker and the detour reads
+    as the wider arc through ``cc`` it really is. This is the real YUL-Poly shape:
+    CDN-FENDALL1 → UpperSalaberry.
     """
     layers = [
         PathLayer(("xx",), WHITE, 3),          # best spine: SRC -> xx -> DST
         PathLayer(("bb",), GREY, 2),           # sibling:    SRC -> bb -> DST
         PathLayer(("cc", "bb"), GREY, 2),      # detour:     SRC -> cc -> bb -> DST
     ]
-    owner, lanes = _owner_after_fold(layers)
-    assert owner["cc"] == owner["bb"]  # cc rides bb's lane rather than earning its own
-    assert lanes == 2
+    signed, _columns, _route_lanes = _packed_lanes(layers)
+    assert signed["xx"] == 0  # the best route holds the spine
+    assert abs(signed["bb"]) == 1  # the sibling takes the first flank row
+    assert signed["cc"] == 2 * signed["bb"]  # cc one lane outside bb, same flank
+    assert _lane_count(signed) == 3
+
+
+def test_detour_folds_onto_its_siblings_lane_when_rows_are_tight() -> None:
+    """The nested lane is given up — cc rides bb's lane — only when the rows can't afford it.
+
+    The same YUL-Poly shape at a row budget too short for the nested third lane falls back to
+    the single-lane picture: ``cc`` is re-owned onto ``bb``'s lane as a waypoint the branch
+    dips through, and the band stays two lanes tall. The last resort, not the default.
+    """
+    layers = [
+        PathLayer(("xx",), WHITE, 3),
+        PathLayer(("bb",), GREY, 2),
+        PathLayer(("cc", "bb"), GREY, 2),
+    ]
+    signed, _columns, _route_lanes = _packed_lanes(layers, max_rows=8)
+    assert signed["cc"] == signed["bb"]  # folded: cc rides bb's lane
+    assert _lane_count(signed) == 2
 
 
 def test_disjoint_routes_are_never_folded() -> None:
@@ -336,16 +335,17 @@ def test_disjoint_routes_are_never_folded() -> None:
         PathLayer(("aa",), GREY, 2),
         PathLayer(("bb",), GREY, 2),
     ]
-    _owner, lanes = _owner_after_fold(layers)
-    assert lanes == 3
+    signed, _columns, _route_lanes = _packed_lanes(layers, max_rows=8)
+    assert _lane_count(signed) == 3  # even at a tight budget, disjoint routes are not merged
+    assert signed["aa"] == -signed["bb"]  # one flank each, balanced about the spine
 
 
-def test_two_detours_sharing_a_column_do_not_overprint() -> None:
-    """Two siblings inserting a relay at the same column can't both fold onto the shared lane.
+def test_two_detours_sharing_a_column_nest_at_distinct_depths() -> None:
+    """Two siblings inserting a relay at the same column stack outward — never one cell.
 
     ``cc`` and ``dd`` each sit one hop off the origin feeding the same ``bb``, so they share a
-    column; folding both onto ``bb``'s lane would stack two markers in one cell. Exactly one
-    folds; the other keeps a lane of its own.
+    column. Nested with room to spare, they take distinct rows outside ``bb``'s lane on its
+    flank; markers never overprint.
     """
     layers = [
         PathLayer(("xx",), WHITE, 3),
@@ -353,10 +353,29 @@ def test_two_detours_sharing_a_column_do_not_overprint() -> None:
         PathLayer(("cc", "bb"), GREY, 2),
         PathLayer(("dd", "bb"), GREY, 1),
     ]
-    owner, lanes = _owner_after_fold(layers)
-    folded = [n for n in ("cc", "dd") if owner[n] == owner["bb"]]
-    assert len(folded) == 1  # only one rides bb's lane; the other stays separate
-    assert lanes == 3
+    signed, columns, _route_lanes = _packed_lanes(layers)
+    assert columns["cc"] == columns["dd"]  # the two inserted relays truly share a column
+    assert signed["cc"] != signed["dd"]  # so they hold distinct rows — no overprint
+    for n in ("cc", "dd"):
+        assert signed[n] * signed["bb"] > 0 and abs(signed[n]) > abs(signed["bb"])
+
+
+def test_two_detours_sharing_a_column_do_not_overprint_when_folded() -> None:
+    """At a tight budget the fold still refuses to stack two markers in one cell.
+
+    Folding both ``cc`` and ``dd`` onto ``bb``'s lane would overprint their shared column, so
+    at most one folds; the other keeps a row of its own and the two stay on distinct lanes.
+    """
+    layers = [
+        PathLayer(("xx",), WHITE, 3),
+        PathLayer(("bb",), GREY, 2),
+        PathLayer(("cc", "bb"), GREY, 2),
+        PathLayer(("dd", "bb"), GREY, 1),
+    ]
+    signed, columns, _route_lanes = _packed_lanes(layers, max_rows=8)
+    assert columns["cc"] == columns["dd"]
+    assert signed["cc"] != signed["dd"]  # never stacked into one cell, however tight
+    assert _lane_count(signed) == 3
 
 
 def test_routes_pack_onto_shared_flanks_when_their_columns_differ() -> None:

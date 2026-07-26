@@ -47,6 +47,14 @@ over and then settles. Concretely:
   marker sits on its highest-priority path's lane, and a lower path that also rides it leans
   off its lane to meet the marker and back — which reads as the alternative *branching
   through the shared node*, exactly the story the evidence tells;
+* **detours** — a route heard as a sibling route *plus* an inserted relay is that sibling with
+  a detour, and the whole fan is measured against the row budget *before* its shape is
+  committed: while the rows allow, the detour **nests** — its inserted relay takes the lane
+  just outside its sibling's, on the same flank, so the sibling's straight run visibly skips
+  the relay and the detour reads as the wider arc through it. Only a viewport too short for
+  that extra lane **folds** the relay onto the sibling's lane itself (weakest detours first,
+  re-measuring after each), where the sibling's run passes over it — the legible-but-lossier
+  last resort, never the default (see :func:`_layout_lanes`);
 * **diverge / converge** — the fan at each end is flow, not a switchboard: routes leave the
   origin overlapping on the centre line and peel off one by one to their lanes (the
   divergence), and mirror that back into us on the right (the convergence). Every edge draws
@@ -389,25 +397,17 @@ def render_path_graph(
     for i in sorted(range(len(drawn)), key=lambda j: -drawn[j].priority):
         for node in seqs[i]:
             owner.setdefault(node, i)
-    # A path that is only a detour off a sibling (that sibling's route with an extra relay
-    # inserted) is subsumed too: its relay is re-owned onto the sibling's lane so it costs no
-    # band and needs no crossing to rejoin the shared node. See :func:`_fold_detours`.
-    _fold_detours(drawn, seqs, owner, xfrac, width)
-    lane_of_path = _assign_lanes(drawn, seqs, owner, best)
-
-    # Compress the per-path lanes onto the fewest rows the picture actually needs. A lane per
-    # path stacks the whole graph as tall as it has routes, even where the routes barely overlap
-    # — five routes through at most two nodes per column drew five lanes deep. So each off-spine
-    # node is slid to the innermost free lane *in its own column*, and the alternatives' flanks
-    # are balanced above/below so no flank stacks deep while the other sits empty: a column
-    # holding one off-spine node needs one off-spine row however many paths cross the graph, and
-    # only a column where several routes genuinely stack pays for the extra rows.
     span = width * 2 - 2 * _GRAPH_PAD_DOTS
 
     def col_of(node: str) -> int:
         return (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1
 
-    signed = _compress_lanes(ordered_nodes, lane_of_path, owner, best, col_of)
+    # Seat every node on a signed lane, sizing the whole fan against the row budget before
+    # committing to a shape: detour routes nest outside their sibling while the rows allow it,
+    # and fold onto the sibling's lane only as the last resort. See :func:`_layout_lanes`.
+    signed = _layout_lanes(
+        drawn, seqs, ordered_nodes, owner, best, col_of, max_rows, lane_pitch
+    )
 
     # The endpoints sit at the vertical centre of the compressed lane band, where the strongest
     # route runs through them as the graph's spine; the alternatives fan above and below. When the
@@ -670,38 +670,28 @@ def _longest_paths(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dic
     return depth
 
 
-def _fold_detours(
+def _detour_nests(
     drawn: Sequence[PathLayer],
     seqs: Sequence[tuple[str, ...]],
     owner: dict[str, int],
-    xfrac: dict[str, float],
-    width: int,
-) -> None:
-    """Re-own a *detour* path's extra relays onto the sibling lane it converges into.
+) -> dict[int, int]:
+    """Map each *detour* path to the sibling route it branches off — detection only.
 
     A route heard as another route *plus* an inserted relay or two — same convergence into us,
-    one extra hop on the way — shouldn't cost a whole extra lane. Given its own lane it would
-    sit on the far side of the best-centred spine from the sibling it rejoins, dragging its
-    inserted relay clear across the graph to meet the shared node (an avoidable crossing).
-
-    So when a bearing path's relays, minus the ones it alone owns, exactly match a
-    higher-or-equal-priority sibling's relays — and that sibling truly owns them (is their
-    lane) — the path is that sibling with a detour. Its owned relays are re-owned to the
-    sibling, riding its lane as waypoints the branch dips through, provided none shares a cell
-    column with a node *already on that lane* — including a detour folded there earlier, so two
-    siblings that insert a relay at the same column don't overprint (the second keeps its own
-    lane). The detour path then owns nothing, earns no lane, and reads as a branch *off* its
-    sibling instead of a track that crosses the graph to reach it. Mutates ``owner`` in place.
+    one extra hop on the way — is that sibling with a detour, not an independent track: a
+    bearing path whose relays, minus the ones it alone owns, exactly match a
+    higher-or-equal-priority sibling's relays, where that sibling truly owns them (is their
+    lane). What to *do* with the pair is the layout's call (:func:`_layout_lanes`): while the
+    row budget allows, the detour nests just outside its sibling's lane
+    (:func:`_compress_lanes`), and only a budget too tight for that folds it onto the sibling's
+    lane itself (:func:`_fold_detour`). Returns ``{detour_index: sibling_index}``, weakest
+    detours first in iteration order; ``owner`` is not modified.
     """
-    span = width * 2 - 2 * _GRAPH_PAD_DOTS
-
-    def col(node: str) -> int:
-        return (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1
-
     relays = [
         frozenset(n for n in seq if n not in (SRC_NODE, DST_NODE)) for seq in seqs
     ]
-    # Weakest first, so a marginal detour folds onto its stronger sibling, never the reverse.
+    nests: dict[int, int] = {}
+    # Weakest first, so a marginal detour pairs with its stronger sibling, never the reverse.
     for i in sorted(range(len(drawn)), key=lambda j: drawn[j].priority):
         own_i = {n for n in seqs[i] if owner[n] == i}
         residual = relays[i] - own_i
@@ -712,15 +702,91 @@ def _fold_detours(
                 continue
             if not all(owner[n] == q for n in relays[q]):  # q must own (be the lane of) them
                 continue
-            # Columns already committed on q's lane (its own relays plus any earlier fold).
-            q_cols = {
-                col(n) for n, o in owner.items() if o == q and n not in (SRC_NODE, DST_NODE)
-            }
-            new_cols = {col(n) for n in own_i}
-            if len(new_cols) == len(own_i) and q_cols.isdisjoint(new_cols):
-                for n in own_i:
-                    owner[n] = q
+            nests[i] = q
             break
+    return nests
+
+
+def _fold_detour(
+    i: int,
+    q: int,
+    seqs: Sequence[tuple[str, ...]],
+    owner: dict[str, int],
+    col_of: Callable[[str], int],
+) -> None:
+    """Re-own detour path ``i``'s extra relays onto its sibling ``q``'s lane — the last resort.
+
+    The single-lane picture a too-short viewport falls back to: the detour's owned relays are
+    re-owned to the sibling, riding its lane as waypoints the branch dips through — at the cost
+    of the sibling's own straight run passing over them — provided none shares a cell column
+    with a node *already on that lane* (including a detour folded there earlier, so two siblings
+    that insert a relay at the same column don't overprint; the refused one keeps its own lane).
+    The folded path then owns nothing, earns no lane, and costs no band. Mutates ``owner`` in
+    place.
+    """
+    own_i = {n for n in seqs[i] if owner[n] == i}
+    q_cols = {
+        col_of(n) for n, o in owner.items() if o == q and n not in (SRC_NODE, DST_NODE)
+    }
+    new_cols = {col_of(n) for n in own_i}
+    if len(new_cols) == len(own_i) and q_cols.isdisjoint(new_cols):
+        for n in own_i:
+            owner[n] = q
+
+
+def _band_rows(n_lanes: int, lane_pitch: int) -> int:
+    """The canvas rows a band of ``n_lanes`` needs at full pitch — the sizing block's mirror.
+
+    Mirrors ``render_path_graph``'s vertical sizing (its ``slot`` span plus the end margins) so
+    the lane layout can weigh a candidate shape against ``max_rows`` *before* committing to it,
+    rather than drawing it compressed and finding out.
+    """
+    max_lane = n_lanes - 1
+    if max_lane <= 0:
+        return 0
+    lane_rows = max_lane * lane_pitch + (1 if max_lane % 2 == 1 else 0)
+    return ceil((lane_rows * 4 + 2 * _GRAPH_END_DOTS) / 4)
+
+
+def _layout_lanes(
+    drawn: Sequence[PathLayer],
+    seqs: Sequence[tuple[str, ...]],
+    ordered_nodes: list[str],
+    owner: dict[str, int],
+    best: int,
+    col_of: Callable[[str], int],
+    max_rows: int,
+    lane_pitch: int,
+) -> dict[str, int]:
+    """Seat every relay on a signed lane, spending rows on detours before folding them.
+
+    The whole fan is weighed against the row budget before the shape is committed: the detour
+    routes (:func:`_detour_nests`) first *nest* — each keeps its own lane just outside the
+    sibling it branches off (:func:`_compress_lanes`), so the sibling's straight run visibly
+    skips the inserted relay rather than passing over its marker. Only when that band would not
+    fit ``max_rows`` at full pitch is a detour *folded* onto its sibling's lane
+    (:func:`_fold_detour`) — weakest first, one at a time, re-laying and re-measuring until the
+    band fits or no detours remain — so the everything-on-one-lane picture is the last resort,
+    never the default. Whatever still overflows after every fold is the honest minimum and is
+    left to the renderer's pitch compression. Mutates ``owner`` in place where it folds.
+
+    Returns ``{node: signed_lane}`` for every relay — ``0`` the spine, ``<0`` above, ``>0``
+    below — as :func:`_compress_lanes` yields it.
+    """
+    nests = _detour_nests(drawn, seqs, owner)
+    while True:
+        lane_of_path = _assign_lanes(drawn, seqs, owner, best)
+        signed = _compress_lanes(ordered_nodes, lane_of_path, owner, best, col_of, nests)
+        if not nests:
+            return signed
+        lanes = max(signed.values(), default=0) - min(signed.values(), default=0) + 1
+        if _band_rows(lanes, lane_pitch) <= max_rows:
+            return signed
+        # Too tall for the viewport: fold the weakest detour onto its sibling's lane and try
+        # again. A fold the column guard refuses still leaves the nest map (the route reverts
+        # to a plain lane of its own), so the loop always runs out of detours and terminates.
+        victim = min(nests, key=lambda i: drawn[i].priority)
+        _fold_detour(victim, nests.pop(victim), seqs, owner, col_of)
 
 
 def _assign_lanes(
@@ -802,6 +868,7 @@ def _compress_lanes(
     owner: dict[str, int],
     best: int,
     col_of: Callable[[str], int],
+    nests: Optional[dict[int, int]] = None,
 ) -> dict[str, int]:
     """Squeeze the per-path lanes onto the fewest rows, one node at a time within each column.
 
@@ -824,10 +891,20 @@ def _compress_lanes(
     the straight spine; the returned lanes are signed offsets from it (``<0`` above, ``>0``
     below), which the caller shifts to a ``0``-based band.
 
+    A *nested* detour (``nests``, from :func:`_detour_nests`) is held a whole lane **outside**
+    the flank sibling it branches off: its route is pinned to the sibling's side and its own
+    relays take a depth *floor* one past the sibling's, so the sibling's straight run — which
+    sweeps through the detour relay's column on its own lane — never passes over the relay's
+    marker. The detour then reads as the wider arc it is: out past the sibling, through its
+    inserted relay, and back in to the shared node. (A detour off the *spine* needs no floor —
+    the first flank row is already outside lane ``0``.)
+
     Returns ``{node: signed_lane}`` for every relay (endpoints are placed on the band centre by
-    the caller, not here). A node a column holds alone off the spine always lands on ``±1``, so
-    a sparse multi-route graph collapses to the three-lane spine-and-two-flanks it really is.
+    the caller, not here). A node a column holds alone off the spine always lands on ``±1`` —
+    or ``±2`` when it is a nested detour's — so a sparse multi-route graph collapses to the
+    three-lane spine-and-two-flanks it really is.
     """
+    nests = nests or {}
     best_lane = lane_of_path[best]
     relays = [node for node in ordered_nodes if node not in (SRC_NODE, DST_NODE)]
     spine = {node for node in relays if owner[node] == best}
@@ -841,8 +918,16 @@ def _compress_lanes(
     cols_of_route = {
         r: {col_of(node) for node in off_spine if owner[node] == r} for r in routes
     }
+    # A nested detour's own relays sit a lane outside its sibling's (the floor), on the same
+    # flank (the tie); a detour whose sibling is the spine is just an ordinary flank route.
+    floor = {r: 1 for r in routes}
+    tie: dict[int, int] = {}
+    for d, s in nests.items():
+        if d in floor and s in floor:
+            floor[d] = floor[s] + 1
+            tie[d] = s
     orig_side = {r: (1 if lane_of_path[r] - best_lane > 0 else -1) for r in routes}
-    side = _balance_sides(routes, cols_of_route, orig_side)
+    side = _balance_sides(routes, cols_of_route, orig_side, floor, tie)
 
     rank = {r: i for i, r in enumerate(routes)}  # nearest-to-spine order within a flank
     columns: dict[int, list[str]] = {}
@@ -851,11 +936,21 @@ def _compress_lanes(
 
     signed: dict[str, int] = {node: 0 for node in spine}
     for members in columns.values():
-        above = sorted((n for n in members if side[owner[n]] < 0), key=lambda n: rank[owner[n]])
-        below = sorted((n for n in members if side[owner[n]] > 0), key=lambda n: rank[owner[n]])
-        for depth, node in enumerate(above, start=1):
+        above = sorted(
+            (n for n in members if side[owner[n]] < 0),
+            key=lambda n: (floor[owner[n]], rank[owner[n]]),
+        )
+        below = sorted(
+            (n for n in members if side[owner[n]] > 0),
+            key=lambda n: (floor[owner[n]], rank[owner[n]]),
+        )
+        depth = 0
+        for node in above:
+            depth = max(depth + 1, floor[owner[node]])
             signed[node] = -depth
-        for depth, node in enumerate(below, start=1):
+        depth = 0
+        for node in below:
+            depth = max(depth + 1, floor[owner[node]])
             signed[node] = depth
     return signed
 
@@ -864,6 +959,8 @@ def _balance_sides(
     routes: list[int],
     cols_of_route: dict[int, set[int]],
     orig_side: dict[int, int],
+    floor: dict[int, int],
+    tie: dict[int, int],
 ) -> dict[int, int]:
     """Choose a flank (``-1`` above / ``+1`` below the spine) for each alternative route.
 
@@ -874,6 +971,9 @@ def _balance_sides(
     — a needlessly tall band. So the routes are 2-coloured, exhaustively while they are few
     (:data:`_MAX_BALANCE_ROUTES`; past it the jog-order sides stand):
 
+    * a nested detour is pinned to its sibling's flank (``tie``) — nesting outside the sibling
+      is the point, so a colouring that strands the pair apart is not a candidate — and a
+      column's stack is measured with the detour's depth *floor*, so its outside row counts;
     * never above the **ceiling** the jog order itself draws — balancing may flatten a band, never
       grow one. A column that genuinely stacks three nodes forces one flank two deep whatever the
       colouring, and filling the other flank to match it (prettier, but taller) is refused;
@@ -888,33 +988,49 @@ def _balance_sides(
     """
     if not routes:
         return {}
+    # The jog-order baseline, with each nested detour pulled onto its sibling's flank — the
+    # tie-respecting shape the ceiling and the agreement tie-break are both measured against
+    # (and the one assignment guaranteed to survive its own ceiling).
+    forced = dict(orig_side)
+    for d, s in tie.items():
+        forced[d] = forced[s]
     if len(routes) > _MAX_BALANCE_ROUTES:
-        return dict(orig_side)
+        return forced
 
     def flanks(assign: dict[int, int]) -> tuple[int, int]:
-        above: dict[int, int] = {}
-        below: dict[int, int] = {}
-        for r in routes:
-            stack = above if assign[r] < 0 else below
-            for col in cols_of_route[r]:
-                stack[col] = stack.get(col, 0) + 1
-        return max(above.values(), default=0), max(below.values(), default=0)
+        deep = {-1: 0, 1: 0}
+        for sign in (-1, 1):
+            cols: dict[int, list[int]] = {}
+            for r in routes:
+                if assign[r] == sign:
+                    for col in cols_of_route[r]:
+                        cols.setdefault(col, []).append(r)
+            for members in cols.values():
+                # The same innermost-out stacking the pack applies: floors push a nested
+                # detour's row outward even where the column holds nothing else.
+                depth = 0
+                for f in sorted(floor[r] for r in members):
+                    depth = max(depth + 1, f)
+                deep[sign] = max(deep[sign], depth)
+        return deep[-1], deep[1]
 
-    orig_above, orig_below = flanks(orig_side)
+    orig_above, orig_below = flanks(forced)
     ceiling = orig_above + orig_below  # the jog order's band height − 1; never draw taller
 
     best_assign: Optional[dict[int, int]] = None
     best_key: Optional[tuple[int, int, int]] = None
     for combo in product((-1, 1), repeat=len(routes)):
         assign = dict(zip(routes, combo))
+        if any(assign[d] != assign[s] for d, s in tie.items()):  # a nest split off its sibling
+            continue
         deep_above, deep_below = flanks(assign)
         if deep_above + deep_below > ceiling:  # taller than the jog order would draw — reject
             continue
-        agree = sum(1 for r in routes if assign[r] == orig_side[r])
+        agree = sum(1 for r in routes if assign[r] == forced[r])
         key = (max(deep_above, deep_below), abs(deep_above - deep_below), -agree)
         if best_key is None or key < best_key:
             best_key, best_assign = key, assign
-    assert best_assign is not None  # orig_side always meets its own ceiling
+    assert best_assign is not None  # `forced` honours the ties and meets its own ceiling
     return best_assign
 
 
