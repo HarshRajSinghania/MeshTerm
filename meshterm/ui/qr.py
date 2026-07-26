@@ -6,11 +6,12 @@ one and comfortably fits an interactive window. Modules are always drawn black o
 background (with the mandatory quiet-zone border), so a phone camera reads the code no
 matter what colour theme the terminal itself is using.
 
-:func:`qr_braille` is the dense variant: one braille dot per module packs a 2×4 block of
-modules into every cell — half the columns and a quarter of the rows of the half-block
-form. The trade is ink coverage: a braille dot is a dot, not a filled cell, so dark
-regions carry white in-between and scanning leans on the camera's tolerance for
-dot-style codes.
+:func:`qr_quad` is the dense variant: quadrant mosaic glyphs (``▘▚▛█``…) pack a 2×2
+block of modules into every cell — half the columns of the half-block form at the same
+row count. Ink stays solid (every dark module is a filled quarter-cell), so it scans
+exactly as well as the half-block render, just drawn smaller. (A braille one-dot-per-
+module form was tried first: it drew even smaller but the dots' white surrounds starve
+the scanner of ink, and phones would not read it.)
 """
 
 from __future__ import annotations
@@ -33,11 +34,27 @@ _GLYPH = {
 #: contrast holds regardless of the surrounding terminal palette.
 _STYLE = "black on white"
 
-#: Braille dot bit for each (column, row) of a cell's 2×4 module block, rows top-down —
-#: the Unicode block numbers dots 1,2,3,7 down the left column and 4,5,6,8 down the
-#: right (``braillechart`` keeps the same tables flipped bottom-up for bar math; QR
-#: rows arrive top-down, so these stay in raster order).
-_BRAILLE_BITS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
+#: Quadrant glyph for each (top-left, top-right, bottom-left, bottom-right) dark-module
+#: quartet — the sixteen 2×2 mosaics Unicode provides (space and the half/full blocks
+#: fill the patterns the Block Elements quadrant range skips).
+_QUAD = {
+    (False, False, False, False): " ",
+    (True, False, False, False): "▘",
+    (False, True, False, False): "▝",
+    (True, True, False, False): "▀",
+    (False, False, True, False): "▖",
+    (True, False, True, False): "▌",
+    (False, True, True, False): "▞",
+    (True, True, True, False): "▛",
+    (False, False, False, True): "▗",
+    (True, False, False, True): "▚",
+    (False, True, False, True): "▐",
+    (True, True, False, True): "▜",
+    (False, False, True, True): "▄",
+    (True, False, True, True): "▙",
+    (False, True, True, True): "▟",
+    (True, True, True, True): "█",
+}
 
 
 def qr_text(data: str, *, error: str = "m") -> Text:
@@ -68,14 +85,12 @@ def qr_text(data: str, *, error: str = "m") -> Text:
     return text
 
 
-def qr_braille(data: str, *, error: str = "m") -> Text:
-    """Render ``data`` as a QR code built from braille characters, one dot per module.
+def qr_quad(data: str, *, error: str = "m") -> Text:
+    """Render ``data`` as a QR code built from quadrant mosaics, 2×2 modules per cell.
 
-    Each cell carries a 2-wide × 4-tall block of modules, so the code draws at half the
-    width and a quarter of the height of :func:`qr_text` — small enough to leave room
-    around it even on the 40-column PicoCalc panel. Same black-on-white contract; the
-    empty cell is ``U+2800`` (the blank braille pattern) rather than a space so every
-    glyph comes from the one Unicode block and renders at one consistent width.
+    Half the width of :func:`qr_text` at the same row count, and every dark module is
+    still a solid quarter-cell of ink — the property a scanner actually needs — so the
+    smaller draw reads as well as the half-block form.
 
     Args:
         data: The string to encode.
@@ -88,23 +103,19 @@ def qr_braille(data: str, *, error: str = "m") -> Text:
 
     qr = segno.make(data, error=error)
     rows = [[bool(v) for v in row] for row in qr.matrix_iter(border=_BORDER)]
-    # Pad to whole cells with light modules: out to a multiple of 4 rows and 2 columns.
-    while len(rows) % 4:
+    # Pad to whole cells with light modules: out to an even row and column count.
+    if len(rows) % 2:
         rows.append([False] * len(rows[0]))
     if len(rows[0]) % 2:
         for row in rows:
             row.append(False)
 
     text = Text(no_wrap=True)
-    for band in zip(*(rows[i::4] for i in range(4)), strict=True):
-        line = ""
-        for x in range(0, len(band[0]), 2):
-            bits = 0
-            for col in (0, 1):
-                for dot_row in range(4):
-                    if band[dot_row][x + col]:
-                        bits |= _BRAILLE_BITS[col][dot_row]
-            line += chr(0x2800 + bits)
+    for top, bottom in zip(rows[0::2], rows[1::2], strict=True):
+        line = "".join(
+            _QUAD[(top[x], top[x + 1], bottom[x], bottom[x + 1])]
+            for x in range(0, len(top), 2)
+        )
         text.append(line, style=_STYLE)
         text.append("\n")
     return text

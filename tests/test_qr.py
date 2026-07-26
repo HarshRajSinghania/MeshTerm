@@ -1,8 +1,8 @@
-"""The terminal QR renderers: half-block and braille forms of the same matrix."""
+"""The terminal QR renderers: half-block and quadrant-mosaic forms of the same matrix."""
 
 import segno
 
-from meshterm.ui.qr import _BORDER, _BRAILLE_BITS, qr_braille, qr_text
+from meshterm.ui.qr import _BORDER, _QUAD, qr_quad, qr_text
 
 URL = "meshcore://contact/add?name=Test&public_key=" + "ab" * 32 + "&type=1"
 
@@ -22,20 +22,20 @@ def test_qr_text_matches_matrix() -> None:
             assert (top if y % 2 == 0 else bottom) == dark
 
 
-def test_qr_braille_matches_matrix() -> None:
-    """Every module maps to exactly its braille dot — one dot per module, raster order."""
+def test_qr_quad_matches_matrix() -> None:
+    """Every module maps to exactly its quarter of a mosaic glyph, raster order."""
     rows = _matrix(URL)
-    lines = qr_braille(URL).plain.rstrip("\n").split("\n")
+    lines = qr_quad(URL).plain.rstrip("\n").split("\n")
+    quarters = {glyph: quartet for quartet, glyph in _QUAD.items()}
     for y, row in enumerate(rows):
         for x, dark in enumerate(row):
-            cell = ord(lines[y // 4][x // 2]) - 0x2800
-            assert bool(cell & _BRAILLE_BITS[x % 2][y % 4]) == dark
+            quartet = quarters[lines[y // 2][x // 2]]
+            assert quartet[(y % 2) * 2 + (x % 2)] == dark
 
 
-def test_qr_braille_geometry() -> None:
-    """Whole-cell padding: every line is braille-block glyphs at half width, quarter height."""
+def test_qr_quad_geometry() -> None:
+    """Whole-cell padding: equal-length lines at half the matrix width and height."""
     rows = _matrix(URL)
-    lines = qr_braille(URL).plain.rstrip("\n").split("\n")
-    assert len(lines) == -(-len(rows) // 4)
+    lines = qr_quad(URL).plain.rstrip("\n").split("\n")
+    assert len(lines) == -(-len(rows) // 2)
     assert all(len(line) == -(-len(rows[0]) // 2) for line in lines)
-    assert all(0x2800 <= ord(ch) <= 0x28FF for line in lines for ch in line)

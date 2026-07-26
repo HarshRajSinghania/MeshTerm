@@ -815,13 +815,13 @@ async def show_contact_card(
         node_type: The MeshCore advert type byte (1 companion, 2 repeater, 3 room,
             4 sensor).
     """
-    from .qr import qr_braille
+    from .qr import qr_quad
 
     url = contact_share_url(name, public_key, node_type)
     body = Group(
         Text("Scan to add this node as a contact:", style="muted"),
         Text(""),
-        qr_braille(url),
+        qr_quad(url),
         Text(""),
         Text(url, style="accent"),
     )
