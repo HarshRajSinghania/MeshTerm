@@ -1,0 +1,637 @@
+"""Terminal font detection — can this terminal draw powerline path separators?
+
+The path-line widget (:mod:`~meshterm.ui.pathline`) can render a hop sequence as
+interlocking powerline segments — each hop a colour-filled chip, joined by the solid
+triangle U+E0B0 whose foreground is the previous chip's fill and whose background is
+the next's, the oh-my-posh look. That triangle lives in the Private Use Area, so it
+only draws when the *terminal's configured font* (or the terminal itself) supplies the
+glyph; a font without it shows tofu boxes. Nothing in-band can ask "do you have this
+glyph?" — a missing glyph still occupies its cell, so even cursor-position probes see
+nothing — which makes this an *out-of-band* detection problem: identify the terminal,
+read its configuration, and match the configured face against fonts known to carry the
+powerline block.
+
+Three sources of truth, in confidence order:
+
+* **An explicit override** — ``MESHTERM_POWERLINE`` (``1``/``full``, ``core``,
+  ``0``/``off``) always wins, the same gate pattern as ``MESHTERM_FULL_WIDTH``. The
+  user knows their glass better than any probe.
+* **The configured font**, resolved per terminal: Windows Terminal (``WT_SESSION`` +
+  ``WT_PROFILE_ID`` → the profile's ``font.face`` in ``settings.json``), VS Code's
+  integrated terminal (``TERM_PROGRAM=vscode`` → ``terminal.integrated.fontFamily``,
+  workspace over user, falling back to ``editor.fontFamily``), and classic conhost
+  (``GetCurrentConsoleFontEx`` — trusted only when no ConPTY host is detected, because
+  the hidden conhost under one reports a stub face, not what's on screen). The face is
+  matched against :data:`RECOMMENDED_FONTS` — the list MeshTerm recommends to users —
+  with the alias spellings Nerd Fonts ship under (``Hack Nerd Font Mono`` / ``Hack
+  NFM``), plus a generic "any Nerd Font" rule, since every Nerd Font patch carries the
+  full powerline block.
+* **The terminal's own renderer**: several terminals draw the core triangles
+  regardless of font — Windows Terminal falls back to its bundled Cascadia Code NF for
+  the symbol ranges (≥ 1.22), VS Code's terminal draws them as custom glyphs
+  (``terminal.integrated.customGlyphs``, default on), and kitty / WezTerm / Alacritty
+  ship built-in powerline glyphs. Those count as ``core`` support even when the
+  configured font matches nothing.
+
+Coverage comes in two levels: ``full`` (a Nerd Font patch — triangles *and* the
+extended block: rounded caps, slants) and ``core`` (just U+E0B0–U+E0B3, which many
+stock coder fonts — Fira Code, JetBrains Mono, Source Code Pro — include natively).
+The path widget only uses the core triangle, so ``core`` is enough to switch it on;
+``full`` is headroom for fancier chrome. When nothing can be known — an ssh session
+(the font lives on the far client's machine), an unrecognised terminal — the verdict
+is honestly ``unknown`` and callers should keep the plain-arrow rendering.
+
+Every probe is best-effort: unreadable settings, missing registry keys, or a failed
+Win32 call degrade the verdict, never raise. The result is a *hint that picks a
+default*, not a gate the user has to fight.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Callable, Iterable, Mapping, Optional
+
+#: Coverage levels a verdict (or a recommended font) can carry, strongest first.
+FULL = "full"
+CORE = "core"
+NONE = "none"
+UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class RecommendedFont:
+    """One font MeshTerm recommends for powerline path rendering.
+
+    Attributes:
+        name: The canonical display name (what a recommendation screen shows).
+        aliases: Normalised name prefixes that identify the family — every spelling a
+            terminal config might hold, lower-case with collapsed spaces (Nerd Fonts
+            deliberately ship several: ``hack nerd font mono`` and ``hack nfm`` are the
+            same file).
+        coverage: :data:`FULL` when the family carries the whole powerline block
+            (Nerd Font patches), :data:`CORE` when it ships just the four triangles.
+    """
+
+    name: str
+    aliases: tuple[str, ...]
+    coverage: str
+
+
+#: The fonts MeshTerm recommends, full-coverage Nerd Fonts first — order matters, the
+#: first alias hit wins, so ``JetBrainsMono Nerd Font`` must match its ``full`` entry
+#: before the plain ``JetBrains Mono`` prefix could claim it as ``core``.
+RECOMMENDED_FONTS: tuple[RecommendedFont, ...] = (
+    RecommendedFont(
+        "MesloLGM Nerd Font",
+        ("meslolgm nerd font", "meslolgs nerd font", "meslolgl nerd font",
+         "meslolgm nf", "meslolgs nf", "meslolgl nf",
+         "meslo lgm nerd font", "meslo lgs nerd font"),
+        FULL,
+    ),
+    RecommendedFont(
+        "Hack Nerd Font",
+        ("hack nerd font", "hack nf", "hack nfm", "hack nfp"),
+        FULL,
+    ),
+    RecommendedFont(
+        "CaskaydiaCove Nerd Font",
+        ("caskaydiacove nerd font", "caskaydiacove nf", "caskaydiacove nfm",
+         "caskaydiamono nerd font", "caskaydiamono nf", "caskaydia cove nerd font"),
+        FULL,
+    ),
+    RecommendedFont(
+        "Cascadia Code NF",
+        ("cascadia code nf", "cascadia mono nf"),
+        FULL,
+    ),
+    RecommendedFont(
+        "FiraCode Nerd Font",
+        ("firacode nerd font", "firacode nf", "firacode nfm", "fira code nerd font"),
+        FULL,
+    ),
+    RecommendedFont(
+        "JetBrainsMono Nerd Font",
+        ("jetbrainsmono nerd font", "jetbrainsmono nf", "jetbrainsmono nfm",
+         "jetbrains mono nerd font"),
+        FULL,
+    ),
+    RecommendedFont("Cascadia Code PL", ("cascadia code pl", "cascadia mono pl"), CORE),
+    RecommendedFont("Fira Code", ("fira code",), CORE),
+    RecommendedFont("JetBrains Mono", ("jetbrains mono",), CORE),
+    RecommendedFont("Source Code Pro", ("source code pro", "source code variable"), CORE),
+    RecommendedFont("Iosevka", ("iosevka",), CORE),
+)
+
+#: The catch-all for a patched font the explicit list doesn't spell out: any family
+#: whose name carries the Nerd Font branding — the long ``… Nerd Font [Mono|Propo]``
+#: or the v3 short suffixes ``NF``/``NFM``/``NFP`` — has the full powerline block.
+NERD_FONT_GENERIC = RecommendedFont("Nerd Font (patched)", (), FULL)
+
+_NERD_RE = re.compile(r"\bnerd font\b|\bnf[mp]?\b")
+
+
+@dataclass(frozen=True)
+class FontDetection:
+    """The configured terminal font, and which terminal it was read from.
+
+    Attributes:
+        face: The font family name as configured (unnormalised).
+        source: ``"windows-terminal"``, ``"vscode"``, or ``"conhost"``.
+    """
+
+    face: str
+    source: str
+
+
+@dataclass(frozen=True)
+class PowerlineSupport:
+    """The verdict: how confidently this terminal can draw powerline separators.
+
+    Attributes:
+        level: :data:`FULL`, :data:`CORE`, :data:`NONE`, or :data:`UNKNOWN`.
+        source: What decided it — ``"env"`` (the override), ``"font:<terminal>"``
+            (a configured face matched, or definitively didn't), ``"renderer:<terminal>"``
+            (the terminal draws the glyphs itself), ``"ssh"`` (the font lives on the far
+            client, unknowable), or ``"unknown"``.
+        face: The configured face when one was found, for the curious.
+        matched: The recommended-list entry the face matched, if any.
+    """
+
+    level: str
+    source: str
+    face: Optional[str] = None
+    matched: Optional[RecommendedFont] = None
+
+    @property
+    def capable(self) -> bool:
+        """Whether the core triangle (all the path widget needs) will draw."""
+        return self.level in (FULL, CORE)
+
+
+# --- name matching ---------------------------------------------------------------
+
+
+def primary_family(value: str) -> str:
+    """The first family of a CSS-style font list, unquoted.
+
+    VS Code stores ``"'Hack Nerd Font Mono', monospace"``; the first family is the
+    one the renderer tries first, so it is the one we judge.
+
+    Args:
+        value: A font-family setting value (single name or comma list).
+
+    Returns:
+        The first family with quotes and outer whitespace stripped.
+    """
+    first = value.split(",")[0]
+    return first.strip().strip("'\"").strip()
+
+
+def normalize_face(face: str) -> str:
+    """Fold a face name to its matchable form: lower-case, single-spaced, unquoted.
+
+    Args:
+        face: A font family name as a config file spells it.
+
+    Returns:
+        The normalised name (may be empty).
+    """
+    return " ".join(face.strip().strip("'\"").lower().split())
+
+
+def match_recommended(face: Optional[str]) -> Optional[RecommendedFont]:
+    """Match a configured face against the recommended-font list.
+
+    A face matches an entry when it *is* one of the entry's aliases or extends one as
+    a longer family name (``hack nerd font mono`` extends ``hack nerd font``); the
+    generic Nerd Font rule (:data:`NERD_FONT_GENERIC`) catches patched families the
+    explicit list doesn't spell out.
+
+    Args:
+        face: The configured font family (single name or comma list); ``None`` is a
+            polite no-op.
+
+    Returns:
+        The matched :class:`RecommendedFont`, or ``None`` when the face is unknown.
+    """
+    if not face:
+        return None
+    norm = normalize_face(primary_family(face))
+    if not norm:
+        return None
+    for spec in RECOMMENDED_FONTS:
+        if any(norm == alias or norm.startswith(alias + " ") for alias in spec.aliases):
+            return spec
+    if _NERD_RE.search(norm):
+        return NERD_FONT_GENERIC
+    return None
+
+
+# --- config-file reading ---------------------------------------------------------
+
+
+def _strip_jsonc(text: str) -> str:
+    """Strip ``//`` and ``/* */`` comments from JSON-with-comments, string-safely."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_string = False
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:  # keep the escaped char verbatim
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _read_jsonc(path: Path) -> Optional[dict]:
+    """Parse a JSONC settings file (comments, trailing commas), ``None`` on any failure.
+
+    Both Windows Terminal and VS Code write JSON-with-comments; a strict parser dies
+    on the first ``//``. Trailing commas are swept with a best-effort regex after the
+    string-aware comment strip (a *string* containing ``", }"`` could theoretically be
+    clipped — no font config holds one).
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+        data = json.loads(re.sub(r",\s*([}\]])", r"\1", _strip_jsonc(text)))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _profile_face(profile: object) -> Optional[str]:
+    """A Windows Terminal profile's configured face — new ``font.face`` or legacy
+    ``fontFace`` — or ``None`` when the profile leaves it to the defaults chain."""
+    if not isinstance(profile, dict):
+        return None
+    font = profile.get("font")
+    if isinstance(font, dict):
+        face = font.get("face")
+        if isinstance(face, list) and face:  # defensive: an array face takes its head
+            face = face[0]
+        if isinstance(face, str) and face.strip():
+            return face
+    legacy = profile.get("fontFace")
+    if isinstance(legacy, str) and legacy.strip():
+        return legacy
+    return None
+
+
+def _wt_settings_paths(environ: Mapping[str, str]) -> list[Path]:
+    """Candidate Windows Terminal ``settings.json`` locations (packaged, preview,
+    unpackaged), existing files only."""
+    local = environ.get("LOCALAPPDATA")
+    if not local:
+        return []
+    base = Path(local)
+    candidates: list[Path] = []
+    try:
+        packages = base / "Packages"
+        if packages.is_dir():
+            candidates.extend(
+                sorted(packages.glob("Microsoft.WindowsTerminal*/LocalState/settings.json"))
+            )
+    except OSError:
+        pass
+    candidates.append(base / "Microsoft" / "Windows Terminal" / "settings.json")
+    return [p for p in candidates if p.is_file()]
+
+
+def _windows_terminal_face(environ: Mapping[str, str]) -> str:
+    """The face Windows Terminal is rendering this session with.
+
+    Resolved the way the terminal itself does: the ``WT_PROFILE_ID`` profile's font,
+    else ``profiles.defaults``, else the built-in default ``Cascadia Mono``. An
+    unreadable settings file lands on the built-in default too — a pristine install
+    is exactly that.
+    """
+    guid = (environ.get("WT_PROFILE_ID") or "").strip().lower()
+    for path in _wt_settings_paths(environ):
+        data = _read_jsonc(path)
+        if data is None:
+            continue
+        profiles = data.get("profiles")
+        plist: list = []
+        defaults: object = {}
+        if isinstance(profiles, dict):
+            plist = profiles.get("list") or []
+            defaults = profiles.get("defaults") or {}
+        elif isinstance(profiles, list):  # the ancient flat-list schema
+            plist = profiles
+        profile = next(
+            (
+                p for p in plist
+                if isinstance(p, dict) and str(p.get("guid", "")).strip().lower() == guid
+            ),
+            None,
+        ) if guid else None
+        face = _profile_face(profile) or _profile_face(defaults)
+        if face:
+            return face
+        break  # a parsed settings file with no face set → the built-in default
+    return "Cascadia Mono"
+
+
+def _vscode_settings_paths(
+    environ: Mapping[str, str], start: Optional[Path]
+) -> list[Path]:
+    """VS Code settings files in precedence order: nearest workspace, then user
+    (stable and Insiders, per-platform locations), existing files only."""
+    paths: list[Path] = []
+    try:
+        here = (start or Path.cwd()).resolve()
+        for folder in (here, *here.parents):
+            candidate = folder / ".vscode" / "settings.json"
+            if candidate.is_file():
+                paths.append(candidate)
+                break
+    except OSError:
+        pass
+    roots: list[Path] = []
+    appdata = environ.get("APPDATA")
+    if appdata:
+        roots.append(Path(appdata))
+    home = environ.get("HOME") or environ.get("USERPROFILE")
+    if home:
+        roots.append(Path(home) / ".config")
+        roots.append(Path(home) / "Library" / "Application Support")
+    for root in roots:
+        for flavour in ("Code", "Code - Insiders"):
+            candidate = root / flavour / "User" / "settings.json"
+            if candidate.is_file():
+                paths.append(candidate)
+    return paths
+
+
+def _vscode_default_face() -> str:
+    """VS Code's per-platform default editor font family's first name."""
+    if sys.platform == "win32":
+        return "Consolas"
+    if sys.platform == "darwin":
+        return "Menlo"
+    return "Droid Sans Mono"
+
+
+def _vscode_face(environ: Mapping[str, str], start: Optional[Path] = None) -> str:
+    """The face VS Code's integrated terminal is rendering with.
+
+    ``terminal.integrated.fontFamily`` wins over ``editor.fontFamily`` (VS Code's own
+    fallback), and within each key the workspace file wins over the user file. The
+    stored value is a CSS-style comma list; the first family is judged.
+    """
+    paths = _vscode_settings_paths(environ, start)
+    settings = [data for data in (_read_jsonc(p) for p in paths) if data is not None]
+    for key in ("terminal.integrated.fontFamily", "editor.fontFamily"):
+        for data in settings:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return primary_family(value)
+    return _vscode_default_face()
+
+
+def _conhost_face() -> Optional[str]:
+    """The classic-console face via ``GetCurrentConsoleFontEx``, or ``None``.
+
+    Only meaningful on a *genuine* conhost — the caller gates on the absence of ConPTY
+    markers first, because the hidden conhost under Windows Terminal / VS Code reports
+    a stub face, not the glyphs on screen.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        if not kernel32.GetConsoleWindow():
+            return None
+
+        class _COORD(ctypes.Structure):
+            _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+
+        class _CONSOLE_FONT_INFOEX(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.ULONG),
+                ("nFont", wintypes.DWORD),
+                ("dwFontSize", _COORD),
+                ("FontFamily", wintypes.UINT),
+                ("FontWeight", wintypes.UINT),
+                ("FaceName", ctypes.c_wchar * 32),
+            ]
+
+        info = _CONSOLE_FONT_INFOEX()
+        info.cbSize = ctypes.sizeof(_CONSOLE_FONT_INFOEX)
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        if not kernel32.GetCurrentConsoleFontEx(handle, False, ctypes.byref(info)):
+            return None
+        return info.FaceName or None
+    except Exception:
+        return None
+
+
+# --- the ladder -------------------------------------------------------------------
+
+
+def detect_terminal_font(
+    environ: Optional[Mapping[str, str]] = None,
+    *,
+    cwd: Optional[Path] = None,
+    conhost_probe: Callable[[], Optional[str]] = _conhost_face,
+) -> Optional[FontDetection]:
+    """Identify the terminal and read the font it is configured to render with.
+
+    The ladder, most to least certain: Windows Terminal (``WT_SESSION`` names the app,
+    ``WT_PROFILE_ID`` the exact profile), VS Code (``TERM_PROGRAM=vscode``), then a
+    genuine classic conhost (no ConPTY markers, no ``TERM`` — a set ``TERM`` means some
+    other emulator is hosting the console) asked directly via Win32. Anything else —
+    an unrecognised terminal, an ssh session — is ``None``: the face is unknowable
+    from here.
+
+    Args:
+        environ: The environment to inspect (defaults to ``os.environ``).
+        cwd: Where the VS Code workspace walk starts (defaults to the process cwd).
+        conhost_probe: The classic-console face reader (injectable for tests).
+
+    Returns:
+        The configured face and its source, or ``None`` when no source applies.
+    """
+    env = os.environ if environ is None else environ
+    if env.get("WT_SESSION"):
+        return FontDetection(_windows_terminal_face(env), "windows-terminal")
+    if (env.get("TERM_PROGRAM") or "").lower() == "vscode":
+        return FontDetection(_vscode_face(env, cwd), "vscode")
+    if not env.get("TERM") and not env.get("TERM_PROGRAM"):
+        face = conhost_probe()
+        if face:
+            return FontDetection(face, "conhost")
+    return None
+
+
+def _renderer_backed(environ: Mapping[str, str]) -> Optional[str]:
+    """The terminal id when the terminal draws the core triangles itself.
+
+    Windows Terminal falls back to its bundled Cascadia Code NF for the powerline
+    symbol ranges (≥ 1.22), VS Code's terminal draws them as custom glyphs
+    (``terminal.integrated.customGlyphs``, default on), and kitty / WezTerm /
+    Alacritty ship built-in powerline glyphs — on those, the separators render
+    whatever the configured font holds.
+    """
+    if environ.get("WT_SESSION"):
+        return "windows-terminal"
+    term_program = (environ.get("TERM_PROGRAM") or "").lower()
+    if term_program == "vscode":
+        return "vscode"
+    if term_program == "wezterm" or environ.get("WEZTERM_EXECUTABLE"):
+        return "wezterm"
+    if environ.get("KITTY_WINDOW_ID") or environ.get("TERM") == "xterm-kitty":
+        return "kitty"
+    if environ.get("ALACRITTY_WINDOW_ID") or environ.get("ALACRITTY_SOCKET") \
+            or environ.get("TERM") == "alacritty":
+        return "alacritty"
+    return None
+
+
+def _powerline_support(
+    environ: Optional[Mapping[str, str]] = None,
+    *,
+    cwd: Optional[Path] = None,
+    conhost_probe: Callable[[], Optional[str]] = _conhost_face,
+) -> PowerlineSupport:
+    """The uncached verdict (see :func:`powerline_support` for the ladder)."""
+    env = os.environ if environ is None else environ
+    override = (env.get("MESHTERM_POWERLINE") or "").strip().lower()
+    if override in {"0", "off", "no", "none", "false"}:
+        return PowerlineSupport(NONE, "env")
+    if override in {"1", "on", "yes", "true", "full"}:
+        return PowerlineSupport(FULL, "env")
+    if override == "core":
+        return PowerlineSupport(CORE, "env")
+
+    detected = detect_terminal_font(env, cwd=cwd, conhost_probe=conhost_probe)
+    matched = match_recommended(detected.face) if detected else None
+    if detected and matched:
+        return PowerlineSupport(
+            matched.coverage, f"font:{detected.source}", detected.face, matched
+        )
+    backed = _renderer_backed(env)
+    if backed:
+        return PowerlineSupport(
+            CORE, f"renderer:{backed}", detected.face if detected else None
+        )
+    if detected:  # a face we could read, matching nothing, on a terminal with no fallback
+        return PowerlineSupport(NONE, f"font:{detected.source}", detected.face)
+    if env.get("SSH_CONNECTION") or env.get("SSH_TTY") or env.get("SSH_CLIENT"):
+        return PowerlineSupport(UNKNOWN, "ssh")
+    return PowerlineSupport(UNKNOWN, "unknown")
+
+
+@lru_cache(maxsize=1)
+def powerline_support() -> PowerlineSupport:
+    """The session's powerline verdict, decided once and cached.
+
+    The ladder: the ``MESHTERM_POWERLINE`` override, then the configured font matched
+    against :data:`RECOMMENDED_FONTS`, then a renderer that draws the glyphs itself,
+    then an honest ``none`` (face read, no match, no fallback) or ``unknown`` (ssh, or
+    a terminal we can't identify). Cached because the environment and settings files
+    don't change mid-session; tests exercise :func:`_powerline_support` directly.
+
+    Returns:
+        The :class:`PowerlineSupport` verdict.
+    """
+    return _powerline_support(os.environ)
+
+
+def powerline_enabled() -> bool:
+    """Whether path lines should default to powerline separators (see ``.capable``)."""
+    return powerline_support().capable
+
+
+# --- installed-font scan ----------------------------------------------------------
+
+
+def _installed_families() -> Iterable[str]:
+    """Every installed font family name this platform will admit to, best-effort."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    key = winreg.OpenKey(
+                        root, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+                    )
+                except OSError:
+                    continue
+                with key:
+                    for i in range(winreg.QueryInfoKey(key)[1]):
+                        try:
+                            name = winreg.EnumValue(key, i)[0]
+                        except OSError:
+                            break
+                        # "Hack Nerd Font Mono (TrueType)" → "Hack Nerd Font Mono"
+                        yield name.split(" (")[0]
+        except Exception:
+            return
+        return
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["fc-list", ":", "family"], capture_output=True, text=True, timeout=2
+        )
+        for line in result.stdout.splitlines():
+            for family in line.split(","):
+                if family.strip():
+                    yield family.strip()
+    except Exception:
+        return
+
+
+def installed_recommended() -> Optional[RecommendedFont]:
+    """The best recommended font *installed* on this machine, selected or not.
+
+    The weaker, always-available check that a future recommendation screen splits its
+    message on: "not installed — here's the list" versus "installed but not selected
+    in your terminal's profile" versus "active". Prefers :data:`FULL` coverage over
+    :data:`CORE`; returns ``None`` when nothing recommended is installed (or the
+    platform offers no way to ask).
+    """
+    best: Optional[RecommendedFont] = None
+    for family in _installed_families():
+        matched = match_recommended(family)
+        if matched is None:
+            continue
+        if matched.coverage == FULL:
+            return matched
+        best = best or matched
+    return best
