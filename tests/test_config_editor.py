@@ -91,8 +91,7 @@ async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
     console.print(renderable)
     out = console.export_text()
     assert f"meshcore://contact/add?name=Hub&public_key={'ab' * 32}&type=2" in out
-    # The QR actually drew its modules — quadrant mosaics, 2×2 modules per glyph.
-    assert "█" in out
+    assert "█" in out  # the QR actually drew its modules
 
 
 # -- coordinate parsing ----------------------------------------------------------
