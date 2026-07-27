@@ -8,13 +8,13 @@ caller), a :class:`PathLine` separates *what the hops are* from *how the line is
 drawn*, so every surface the survey found can eventually route through it:
 
 * **Two separator styles.** ``plain`` joins hops with muted ``→`` arrows — today's
-  look, unchanged. ``powerline`` renders each hop as a colour-filled chip joined by
-  the solid-triangle separator U+E0B0 (foreground = previous chip's fill, background
-  = next's — the interlocking oh-my-posh look, opening to a page-coloured gap where
-  two neighbours share a fill and the interlock would fuse them into one block), the
-  chip fill being the node's hash-derived hue
+  look, unchanged. ``powerline`` renders each hop as a colour-filled chip separated by
+  the solid-triangle U+E0B0 drawn on the page — the gapped oh-my-posh look: each chip
+  tapers out to a point and the page shows through the wedge behind it, so a route
+  reads as a row of distinct blocks rather than one fused ribbon. The
+  chip fill is the node's hash-derived hue
   (:func:`~meshterm.ui.theme.node_style`), our own node the pure ``you`` white, a
-  keyless hop grey. ``auto`` (the default) picks powerline exactly
+  faded hop dark slate, a keyless hop grey. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
@@ -438,17 +438,24 @@ class PathLine:
     def _turn_seam(self) -> Optional[int]:
         """The hop index a fold would read best at — where the route turns — or ``None``.
 
-        Two things mark a turn. A dimmed tail is one: the composed outbound leg ends
-        and the mirrored return begins (see :attr:`PathHop.dim`). A walked boomerang is
+        Two things mark a turn. A dimmed *tail* is one: the composed outbound leg ends
+        and the mirrored return begins (see :attr:`PathHop.dim`). It is read as the run
+        of faded hops that reaches the end of the line, not merely the first faded hop —
+        a route's opening ``★`` fades too (setting out from us is nobody's choice
+        either), and that lone fixture at the head marks nothing. A walked boomerang is
         the other — nothing is dimmed once a trace has actually answered, but the hop
         sequence is its own mirror, so its middle *is* that same turn; folding the plan
         and the walk that answered it in the same place keeps the two readings of one
         route looking like one route. Either way the fold needs real legs on both
-        sides — at least two hops each — so a path whose *only* dim hop is the
+        sides — at least two hops each — so a path whose only faded tail is the
         automatic landing back on us never widows it onto a line of its own; that lone
-        faded tail marks no turn, and the walk's own mirror still gets to name one.
+        hop marks no turn, and the walk's own mirror still gets to name one.
         """
-        seam = next((i for i, hop in enumerate(self._hops) if hop.dim), None)
+        seam: Optional[int] = len(self._hops)
+        while seam and self._hops[seam - 1].dim:
+            seam -= 1
+        if seam == len(self._hops):  # nothing faded at the tail
+            seam = None
         if seam is None or len(self._hops) - seam < 2:
             marks = [(hop.label, hop.annotation) for hop in self._hops]
             if len(marks) % 2 and marks == marks[::-1]:
@@ -523,7 +530,7 @@ class PathLine:
     def _render_chips(
         self, hops: list[PathHop], *, carry_in: bool = False, carry_on: bool = False
     ) -> Text:
-        """Powerline chips: each hop filled with its hue, seams interlocked.
+        """Powerline chips: each hop filled with its hue, a page-wide gap at every seam.
 
         The two outer ends say whether this line *is* the path or only part of it. A
         line that opens the path opens rounded (squared off where the font has no
@@ -558,27 +565,40 @@ class PathLine:
 
     @staticmethod
     def _seam(before: str, after: str) -> str:
-        """One seam's style: interlocked into the next fill, or open onto the page.
+        """One seam's style: the previous chip's point, open onto the page.
 
-        Two ways to draw the point. Interlocked — the previous fill *on* the next
-        one — is the tighter look and the default. But two neighbours can land on the
-        same fill (a hue collision, a run of dimmed hops, two keyless greys), and then
-        an interlock is invisible: one fused block where the route has two nodes.
-        Those open onto the page instead, the taper leaving the sliver of background
-        that says where one chip ends and the next begins.
+        The point is drawn in the previous fill with *no* background of its own, so the
+        page shows through the wedge it tapers out of — the small gap oh-my-posh leaves
+        between segments. The alternative (interlocking the point into the next chip's
+        fill) packs the row tighter, but it fuses the route into one continuous ribbon,
+        and two neighbours that happen to land on the same fill — a hue collision, a run
+        of faded hops, two keyless greys — then read as a single block where the route
+        has two nodes. One gap, every seam: a chip is always a chip.
+
+        Args:
+            before: The fill the seam tapers out of (the previous chip's).
+            after: The fill the next chip opens on — no longer part of the seam, kept
+                so callers still read as "this seam, between these two fills".
         """
-        return before if before == after else f"{before} on {after}"
+        return before
 
     def _chip_fill(self, hop: PathHop) -> str:
-        """A chip's fill colour: override, white you, dim slate, hue, keyless grey."""
+        """A chip's fill colour: override, dim slate, white you, hue, keyless grey.
+
+        The fade outranks identity — including our own. A dimmed hop is one nobody
+        composed (an automatic landing back home, a mirrored return leg), and the white
+        ``you`` chip is the loudest thing on the line: our automatic end must recede
+        with the rest of the automatic half, not shout over the hops that *are* news.
+        Plain mode says the same thing by fading the name.
+        """
         if hop.style:
             resolved = _style_hex(hop.style)
             if resolved:
                 return resolved
-        if hop.you:
-            return _YOU_BG
         if hop.dim:
             return _DIM_BG
+        if hop.you:
+            return _YOU_BG
         if hop.key:
             return _style_hex(node_style(hop.key)) or _KEYLESS_BG
         return _KEYLESS_BG
@@ -656,9 +676,10 @@ def path_line(
         bare_self: Draw our own device (a ``None`` hop) as the bare
             :data:`SELF_GLYPH`. For a surface whose route *always* begins and ends on
             us, the name and hash on both ends say nothing the reader doesn't know,
-            and cost the cells the hops in between need. A ``★`` in the *last*
-            position also fades: coming home closes every route automatically, so
-            that end is no more composed than a resolved return leg is.
+            and cost the cells the hops in between need. Both stars also fade: setting
+            out from us and coming home to us are fixtures of every such route, no more
+            composed — or removable — than a mirrored return leg is, so they wear the
+            same automatic grey.
         mode: The :class:`PathLine` mode (``"auto"``/``"powerline"``/``"plain"``).
 
     Returns:
@@ -670,8 +691,11 @@ def path_line(
         dim = dim_from is not None and i >= dim_from
         if hop is None:
             if bare_self:
-                homecoming = i == len(shown) - 1  # nobody composed the way back to us
-                built.append(PathHop(SELF_GLYPH, you=True, dim=dim or homecoming))
+                # Both our ends are fixed: a route leaves us and comes home to us, and
+                # neither end is anybody's to compose or remove. So the stars fade like
+                # every other automatic hop — the colour on the line belongs to the
+                # nodes actually being chosen.
+                built.append(PathHop(SELF_GLYPH, you=True, dim=True))
                 continue
             note = _shorten(device_hash, hash_bytes) if (show_hash and device_hash) else None
             built.append(

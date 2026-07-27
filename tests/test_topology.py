@@ -23,6 +23,7 @@ from meshterm.persistence.repository import (
 from meshterm.services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
 from meshterm.services.topology import build_topology, collapse_width, render_custom_spec
 from meshterm.ui.path_composer import AUTO_SPEC, FetchNeighbours, PathComposerScreen
+from meshterm.ui.pathline import SELF_GLYPH
 from meshterm.ui.tui.screen import CANCEL
 
 US = "aaaaaaaaaaaa"
@@ -392,7 +393,9 @@ async def test_probe_paths_defaults_to_one_trace_per_candidate() -> None:
 # --- path composer ---------------------------------------------------------------------
 
 
-def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True, cursor=None):  # noqa: ANN001
+def _composer(  # noqa: ANN001
+    topo, hops=None, fetch_nodes=frozenset(), target=True, cursor=None, resolve=None
+):
     """A composer over ``topo`` — pinned on Far (target mode) or target-less."""
     pinned = (
         dict(
@@ -411,6 +414,7 @@ def _composer(topo, hops=None, fetch_nodes=frozenset(), target=True, cursor=None
         hops=list(hops or []),
         cursor=cursor,
         fetch_nodes=fetch_nodes,
+        **({"resolve": resolve} if resolve is not None else {}),
         **pinned,
     )
     screen.note_viewport(30)  # the frame records the dialog budget before each paint
@@ -443,7 +447,7 @@ def test_composer_windows_rows_under_the_pinned_route_preview() -> None:
     screen = _composer(_topo(trace_paths=walks, contacts=[FAR]))
     screen.note_viewport(9)  # a short dialog budget: preview + heading + a few rows
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
-    assert "Us (aa)" in body  # the route preview is pinned, never scrolled out
+    assert SELF_GLYPH in body  # the route preview is pinned, never scrolled out
     assert "↓" in body and "more" in body  # hidden rows are counted at the edge
     screen.handle("end")  # cursor to the last action row — the window follows
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
@@ -604,22 +608,46 @@ async def test_composer_commits_spec_auto_and_cancel() -> None:
     assert cancelled.future.result() is CANCEL
 
 
-def test_composer_path_mode_opens_us_to_us_without_auto() -> None:
-    """Target-less, the preview is just ``us → us`` and there is no Auto action.
+def test_composer_path_mode_opens_star_to_star_without_auto() -> None:
+    """Target-less, the preview is just ``★ → ★`` and there is no Auto action.
 
-    Only the final landing back on us dims — the hops (and the opening endpoint)
-    are all the user's to compose, and with no destination there is nothing for
-    the device to route to.
+    Both ends are our own node, bare and faded: a walk always leaves us and comes home
+    to us, and neither end is the user's to compose or remove — the automatic grey says
+    so. With no destination there is nothing for the device to route to either.
     """
     screen = _composer(_topo(), target=False)
     assert screen.title == "Compose path"  # no target to name
     preview = screen._route_preview().text(cursor_arrow=screen._cursor)
-    assert preview.plain == "Us (aa) → Us (aa)"  # endpoints carry our hash
-    faint = sum(
-        span.end - span.start for span in preview.spans if "faint" in str(span.style)
-    )
-    assert 0 < faint < len(preview.plain)  # some dimming (the landing), never all
+    assert preview.plain == f"{SELF_GLYPH} → {SELF_GLYPH}"  # our name and hash go unsaid
+    stars = [
+        str(span.style) for span in preview.spans
+        if preview.plain[span.start : span.end] == SELF_GLYPH
+    ]
+    assert stars == ["faint", "faint"]  # read-only, like every auto-managed chip
     assert "Auto" not in _rows_plain(screen)
+
+
+def test_composer_names_an_ambiguous_hop_through_the_owning_screens_resolver() -> None:
+    """A short hop the topology won't name still reads as a name, with its hash beside it.
+
+    A 1-byte hop that prefix-matches two contacts is ambiguous, so the topology refuses
+    to guess and keeps it as the bare hash — which left the suggestion list proposing
+    opaque hex for nodes the trace window behind it was happily naming. The owning
+    screen's resolver is the fallback, so both surfaces say the same thing.
+    """
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60)  # makes a bare "3d" ambiguous
+    topo = _topo(trace_paths=[_traced(("3d", 12.0), (None, 12.0))],
+                 contacts=[REPEATER, twin])
+    assert topo.display_name("3d") is None  # two contacts match: the graph won't pick
+
+    import re
+
+    blind = _composer(topo, target=False)
+    assert "Hub" not in _rows_plain(blind)  # without a fallback: bare hex, as before
+
+    named = _composer(topo, target=False, resolve=lambda h: "Hub" if h == "3d" else h)
+    body = re.sub(r"\x1b\[[0-9;]*m", "", _rows_plain(named))
+    assert "Hub (3d)" in body  # the name, and the hash it is addressed by beside it
 
 
 async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim() -> None:

@@ -857,7 +857,9 @@ class TraceScreen(Screen):
 
         Both ends go bare (``bare_self``): every walk on this screen leaves us and comes
         back to us, so naming ourselves twice would only push the hops that *are* news
-        out of the lane.
+        out of the lane. Named hops go bare of their hash too: this lane answers *which
+        nodes*, and the hex it would repeat after every name is already spelled out
+        verbatim, at the width it goes on the air, in the ``path`` lane below.
 
         Args:
             current: The newest successful trace of this session, if any.
@@ -871,7 +873,7 @@ class TraceScreen(Screen):
         if current is not None:
             route = _route_path(
                 current, self._device_label, self._resolve, self._device_hash,
-                bare_self=True,
+                bare_self=True, show_hash=False,
             )
             return route.wrapped(width, indent=indent)
         planned = self._planned_route()
@@ -883,7 +885,7 @@ class TraceScreen(Screen):
         if self._previous is not None:
             route = _route_path(
                 self._previous, self._device_label, self._resolve, self._device_hash,
-                bare_self=True,
+                bare_self=True, show_hash=False,
             )
             lines = route.wrapped(width, indent=indent)
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
@@ -930,7 +932,12 @@ class TraceScreen(Screen):
             try:
                 prompt = Text("This walk crosses ", style="warn")
                 prompt.append_text(
-                    _link_text(edge[0], edge[1], self._device_label, self._resolve)
+                    # The hashes read at the width the screen addresses hops by, like
+                    # every other node this session shows.
+                    _link_text(
+                        edge[0], edge[1], self._device_label, self._resolve,
+                        self._width_bytes(), self._device_hash,
+                    )
                 )
                 prompt.append(" twice in the same direction, ", style="warn")
                 prompt.append(
@@ -964,7 +971,8 @@ class TraceScreen(Screen):
         seam (the turn). A path walk's spec is the whole route (hand-composed, or the
         last stored walk), so every hop renders in full colour and only the automatic
         landing back on us stays faint. Our own endpoints go bare, as in
-        :meth:`_route_value` — the arrow alone.
+        :meth:`_route_value` — the arrow alone — and so does every hop's hash: the lane
+        names nodes, and the spec below it is the hex, verbatim.
         """
         spec, _ = self._effective_spec()
         tokens = [h.strip() for h in spec.split(",") if h.strip()]
@@ -980,7 +988,7 @@ class TraceScreen(Screen):
             self._resolve,
             prefix_bytes=8,  # spec tokens are the addressed slices: light them whole
             self_name=self._device_label,
-            show_hash=True,
+            show_hash=False,
             dim_from=1 + len(outbound),
             bare_self=True,
         )
@@ -1632,6 +1640,7 @@ async def _open_session(
                 hops=seed,
                 cursor=seed_cursor,
                 fetch_nodes=frozenset(fetchable),
+                resolve=resolve,  # name a hop the topology left ambiguous, as we do
             )
             result = await session.run_screen(screen)
             if result is CANCEL:

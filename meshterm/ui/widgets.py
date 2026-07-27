@@ -562,6 +562,7 @@ def _route_path(
     device_hash: Optional[str] = None,
     *,
     bare_self: bool = False,
+    show_hash: bool = True,
 ) -> PathLine:
     """A trace's walked route as THE path widget's line object.
 
@@ -578,6 +579,11 @@ def _route_path(
         bare_self: Draw both ``us`` endpoints as their bare arrow — for a surface (the
             trace screens' route lane) where a walk starting and ending on us is the
             premise, not news.
+        show_hash: Annotate each *named* hop with the hash it was addressed by. On for
+            the scripted table output, where the hash is half the answer; off for the
+            live screens, whose route lane reads as the sequence of nodes and leaves
+            the hex to the wire-spec lane below it. Unnamed hops always show their
+            hash — it is the only identity they have.
 
     Returns:
         The route's :class:`~meshterm.ui.pathline.PathLine` (hopless — reading
@@ -591,7 +597,7 @@ def _route_path(
     hops = [None if not node or node == device_label else node for node in nodes]
     return path_line(
         hops, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
-        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
+        show_hash=show_hash, hash_bytes=hash_bytes, device_hash=device_hash,
         bare_self=bare_self,
     )
 

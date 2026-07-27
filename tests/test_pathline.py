@@ -86,9 +86,10 @@ def test_empty_path_reads_as_the_callers_word() -> None:
     assert PathLine([], mode="plain").wrapped(40)[0].plain == "direct"
 
 
-def test_chips_interlock_fills_through_the_separator() -> None:
-    """Each seam's triangle wears the previous chip's fill as foreground on the next
-    chip's fill as background; the last points into the page (foreground only)."""
+def test_chips_are_separated_by_a_gap_not_an_interlock() -> None:
+    """Every seam's triangle carries only a foreground — the previous chip's fill — so
+    the page shows through the wedge and the chips read as separate blocks (the
+    oh-my-posh gap), interior seams and the closing edge alike."""
     alice_fill = node_style("aa").split()[-1]
     line = PathLine(
         [PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline"
@@ -97,7 +98,7 @@ def test_chips_interlock_fills_through_the_separator() -> None:
     assert text.plain == f" Alice {POWERLINE_SEP} you {POWERLINE_SEP}"
     seam_styles = [str(s.style) for s in text.spans
                    if text.plain[s.start:s.end] == POWERLINE_SEP]
-    assert seam_styles == [f"{alice_fill} on #ffffff", "#ffffff"]
+    assert seam_styles == [alice_fill, "#ffffff"]  # no "on": nothing behind the point
 
 
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
@@ -340,19 +341,19 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     assert all(text.cell_len <= 20 for text in wrapped)
 
 
-def test_same_fill_neighbours_get_the_open_seam() -> None:
-    """Two chips of one colour — a hue collision, a run of dimmed hops — would fuse
-    into a single block behind an interlocked seam, so theirs opens onto the page and
-    leaves a visible gap. Chips of different fills keep interlocking."""
-    same = PathLine([PathHop("A", key="aa"), PathHop("B", key="aa")], mode="powerline")
+def test_every_seam_opens_onto_the_page_whatever_the_fills() -> None:
+    """One gap rule, no exceptions: a seam never takes a background, so two chips of
+    one colour — a hue collision, a run of dimmed hops — can't fuse into a single block,
+    and two chips of different colours are still visibly two chips."""
     hue = _style_hex(node_style("aa"))
+    same = PathLine([PathHop("A", key="aa"), PathHop("B", key="aa")], mode="powerline")
     seam = next(s for s in same.text().spans if same.text().plain[s.start] == POWERLINE_SEP)
     assert str(seam.style) == hue  # foreground only: the page shows through the taper
 
     apart = PathLine([PathHop("A", key="aa"), PathHop("B", key="77")], mode="powerline")
     text = apart.text()
     seams = [str(s.style) for s in text.spans if text.plain[s.start] == POWERLINE_SEP]
-    assert seams[0] == f"{hue} on {_style_hex(node_style('77'))}"
+    assert seams[0] == hue  # the fill it tapers out of, and nothing behind it
 
     dimmed = PathLine([PathHop("A", dim=True), PathHop("B", dim=True)], mode="powerline")
     text = dimmed.text()
@@ -360,18 +361,30 @@ def test_same_fill_neighbours_get_the_open_seam() -> None:
     assert " on " not in gaps[0]  # a dimmed return leg reads as hops, not one bar
 
 
-def test_bare_self_stands_us_on_a_star_and_fades_the_way_home() -> None:
-    """``bare_self`` replaces our name and hash with the app-wide ★ at both ends. The
-    one we set out from stays the you white; the one we land back on fades, because
-    coming home closes every route automatically — nobody composed it."""
+def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
+    """``bare_self`` replaces our name and hash with the app-wide ★ at both ends, and
+    both fade: setting out from us and landing back on us are fixtures of the route,
+    not choices, so they wear the same automatic grey as a mirrored return leg —
+    and, in chips, the same dark slate rather than the loud you white."""
     hops = [None, *(f"{i:02x}aa" for i in range(6)), None]
-    text = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,
-                     device_hash="a1b2", bare_self=True, mode="plain").text()
+    line = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,
+                     device_hash="a1b2", bare_self=True, mode="plain")
+    text = line.text()
     body = " → ".join(f"{i:02x}aa" for i in range(6))
     assert text.plain == f"{SELF_GLYPH} → {body} → {SELF_GLYPH}"
     assert "Me" not in text.plain and "a1b2" not in text.plain
     stars = [s for s in text.spans if text.plain[s.start : s.end] == SELF_GLYPH]
-    assert [str(s.style) for s in stars] == ["you", "faint"]  # out in white, home grey
+    assert [str(s.style) for s in stars] == ["faint", "faint"]
+    chips = PathLine(line.hops, mode="powerline").text()
+    star_fills = [str(s.style) for s in chips.spans
+                  if chips.plain[s.start : s.end] == SELF_GLYPH]
+    assert all("#ffffff" not in fill for fill in star_fills)  # never the you white
+
+    wrapped = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                        mode="powerline").wrapped(28, indent=2)
+    assert len(wrapped) > 1
+    assert all(text.plain[2 + WRAP_OFFSET] == POWERLINE_SEP for text in wrapped[1:])
+    assert all(text.cell_len <= 28 for text in wrapped)
 
     lines = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
                       mode="powerline").wrapped(28, indent=2)

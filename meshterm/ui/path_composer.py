@@ -1,7 +1,7 @@
 """The trace path composer: build a forced route hop by hop, guided by observed links.
 
 A floating dialog over a live trace screen. The route under construction reads across
-the top — ``us → hop → … → us`` — and beneath it sits a suggestion list: the nodes the
+the top — ``★ → hop → … → ★`` — and beneath it sits a suggestion list: the nodes the
 topology evidence says the path's current tail can hear, strongest observed link first
 (see :meth:`~meshterm.services.topology.MeshTopology.next_hops`). Every link is
 bidirectional evidence, so a path that was ever *received* through two nodes proposes
@@ -17,7 +17,7 @@ sent to the device is one walk that ends within our earshot):
   yours to choose. An *Auto* action hands routing back to the device.
 * **Path mode** (*Trace path* — no target at all): the whole walk is yours, hop by
   hop, until the route comes back within earshot of us — only the final landing on
-  our own node is filled in (and dimmed). The preview opens as just ``us → us``.
+  our own node is filled in (and dimmed). The preview opens as just ``★ → ★``.
   There is no *Auto* action, because with no destination there is nothing for the
   device to route to.
 
@@ -46,10 +46,14 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
   under the preview: still walkable, but no longer a *trail*, so the trophy case
   will ignore it (the no-cheat rule — see :mod:`~meshterm.services.records`).
 
-Nodes and the route preview render through the shared path widget
-(:func:`~meshterm.ui.widgets.path_text`, trace flavour) — ``Name (hash)`` with names
-in their app-wide hues and our own node the white ``you`` — so a node reads the same
-wherever it appears. The suggestion list scrolls in a window under the pinned route
+Nodes render through the shared path widget in the trace flavour — ``Name (hash)``
+with names in their app-wide hues, the hash at the session's chosen path-hash width,
+and a hop the topology can't name falling back to the owning screen's own resolver
+(see :meth:`PathComposerScreen._resolve_entry`), so a node reads the same here as in
+the trace window this dialog floats over. The route preview is that same trace-window
+route lane, live: :mod:`~meshterm.ui.pathline` chips (or arrows), wrapped at hop
+boundaries, our two ends the bare ``★``, and no hash repeated after a name — the hex
+is on the *Use this path* row, verbatim. The suggestion list scrolls in a window under the pinned route
 preview (faint ``↑/↓ n more`` markers at its edges; PgUp/PgDn stride by a windowful),
 so the route under construction never leaves the screen.
 """
@@ -68,7 +72,7 @@ from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .pathline import PathLine, path_line
-from .widgets import _age_seconds, _format_age, path_text
+from .widgets import NodeResolver, _age_seconds, _format_age, _identity, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
 #: empty-spec convention). Only meaningful in target mode; a path walk has no target
@@ -146,6 +150,7 @@ class PathComposerScreen(Screen):
         hops: Optional[list[str]] = None,
         cursor: Optional[int] = None,
         fetch_nodes: frozenset[str] = frozenset(),
+        resolve: NodeResolver = _identity,
     ) -> None:
         """Build the composer.
 
@@ -171,6 +176,9 @@ class PathComposerScreen(Screen):
             fetch_nodes: Canonical ids whose live neighbour table can be fetched
                 (repeater contacts with a public key); when the path's tail is one of
                 them, the *fetch neighbours* row appears.
+            resolve: The owning screen's node resolver — the fallback that names a hop
+                the topology can't (see :meth:`_resolve_entry`), so the composer reads
+                the same names the screen that opened it does.
         """
         super().__init__()
         self.title = f"Compose path — {target_label}" if target_label else "Compose path"
@@ -180,6 +188,7 @@ class PathComposerScreen(Screen):
         self._device_label = device_label
         self._device_hash = (device_hash or "").lower().removeprefix("0x")
         self._topology = topology
+        self._resolve = resolve
         self._width_bytes = width_bytes
         self._hops: list[str] = list(hops or [])
         #: The insertion cursor: which joining arrow of the editable leg it sits on.
@@ -314,10 +323,23 @@ class PathComposerScreen(Screen):
         return node
 
     def _resolve_entry(self, entry: str) -> str:
-        """Resolve a preview entry to its display name (the target by its label)."""
+        """Resolve an entry to its display name — the target's label, else a node's.
+
+        Two resolvers, in order, because they answer different questions. The topology
+        names a node it has *identified*: a hop hash that prefix-matches exactly one
+        contact is that contact, so its canonical id carries the name. But a short hash
+        — a 1-byte hop, the common case at the protocol's default width — often matches
+        several contacts, and rather than guess, the topology keeps it as itself and
+        knows no name for it. The owning screen's resolver
+        (:func:`~meshterm.services.trace_runner.make_node_resolver`) is the same
+        first-match lookup the trace screens name their walked hops by, so falling back
+        to it means a node the trace window shows as *YUL-Poly* is *YUL-Poly* here too,
+        instead of a bare ``3d`` the reader has to decode. Nothing is invented: an
+        unmatched hash comes back unchanged and renders as a hash.
+        """
         if self._target_id is not None and entry == (self._target_hash or self._target_id):
             return self._target_label or entry
-        return self._topology.display_name(entry) or entry
+        return self._topology.display_name(entry) or self._resolve(entry) or entry
 
     def _node_text(self, node: str, *, dim: bool = False) -> Text:
         """One route node through THE path widget, the trace presentation.
@@ -343,15 +365,26 @@ class PathComposerScreen(Screen):
     def _route_preview(self) -> "PathLine":
         """The route under construction, endpoints filled in automatically.
 
-        THE path widget in the trace flavour: target mode shows the composed
-        outbound in full colour, then the pinned target and the mirrored return
-        resolved and dimmed right alongside it (``dim_from``) — the dimming reads
-        as "this half isn't yours to compose". Path mode shows every composed hop
-        in full colour (they are all yours) between our own node at both ends,
-        with only the final landing back on us dimmed. The caller renders the line
-        with the insertion cursor riding the arrow it stands on (``cursor_arrow``),
-        a reverse-video ``→`` — which pins the preview to plain arrows: an editor
-        needs the seams its cursor sits in.
+        THE path widget, drawn exactly as the trace screen that opened this dialog
+        draws its route lane — the composer is a live preview of that lane, so the two
+        must be the same picture. Target mode shows the composed outbound in full
+        colour, then the pinned target and the mirrored return resolved and dimmed
+        right alongside it (``dim_from``) — the dimming reads as "this half isn't yours
+        to compose". Path mode shows every composed hop in full colour (they are all
+        yours) between our own node at both ends, with only the final landing back on
+        us dimmed.
+
+        Both our ends go bare (``bare_self``): a composed walk always leaves us and
+        comes home to us, so the ``★`` says it in one cell and leaves the rest of the
+        dialog's width to the hops being chosen. Named hops show no hash either — the
+        wire spec on the *Use this path* row is the hex, verbatim and at the width it
+        goes on the air, so repeating it after every name would only crowd the route
+        this dialog exists to shape. An unnamed hop still reads as its hash, truncated
+        to the session's chosen path-hash width.
+
+        The caller renders the line with the insertion cursor riding the arrow it
+        stands on (``cursor_arrow``), a reverse-video ``→`` — which pins the preview to
+        plain arrows: an editor needs the seams its cursor sits in.
         """
         entries: list[Optional[str]] = [None]
         entries.extend(self._path_entry(hop) for hop in self._hops)
@@ -362,9 +395,10 @@ class PathComposerScreen(Screen):
         return path_line(
             entries, self._resolve_entry,
             prefix_bytes=self._width_bytes, self_name=self._device_label,
-            show_hash=True, hash_bytes=self._width_bytes,
+            hash_bytes=self._width_bytes,
             device_hash=self._device_hash or None,
             dim_from=(2 if self._mirrored else 1) + len(self._hops),
+            bare_self=True,
         )
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -393,9 +427,8 @@ class PathComposerScreen(Screen):
         if kind == "hop":
             return self._suggestion_text(payload)
         if kind == "fetch":
-            name = self._topology.display_name(str(payload)) or str(payload)[:12]
             text = Text("⇣ Fetch neighbours from ", style="")
-            text.append(name, style="brand")
+            text.append_text(self._node_text(str(payload)))  # named like every other row
             text.append("  (asks the repeater over the mesh)", style="muted")
             return text
         if payload == _USE:

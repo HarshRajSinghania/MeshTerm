@@ -658,6 +658,7 @@ async def open_tx_optimize(
             target_hash=admin_hash,
             target_label=admin_node.name,
             hops=[topo.canonical(h) or h for h in screen.route_hops],
+            resolve=resolve,  # name a hop the topology left ambiguous, as we do
         )
         result = await session.run_screen(composer)
         if result is CANCEL or not isinstance(result, str):

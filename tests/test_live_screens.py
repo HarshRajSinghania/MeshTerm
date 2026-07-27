@@ -669,8 +669,8 @@ def test_route_lane_wraps_at_hop_boundaries_under_its_own_column() -> None:
     """A route too wide for the lane breaks between hops, never inside one.
 
     Every continuation hangs under the value column (never back at column zero), the
-    line it continues from ends on the ``→`` cue, and no name is ever parted from the
-    hash it is addressed by.
+    line it continues from ends on the ``→`` cue, and every name survives whole — the
+    lane names nodes and leaves the hex to the ``path`` lane below it.
     """
     names = {"3d": "YUL-Cartierville", "f2": "Mile-End-Rooftop", "27": "Beaubien-Sud"}
     screen, _ = _trace_screen(mode="path")
@@ -681,8 +681,9 @@ def test_route_lane_wraps_at_hop_boundaries_under_its_own_column() -> None:
     assert all(len(line) <= 60 for line in lines)
     assert all(line.startswith(" " * 7) for line in lines[1:])  # hanging, not column 0
     assert all(line.rstrip().endswith("→") for line in lines[:-1])
-    for hop, name in names.items():  # every name still carries its own hash, whole
-        assert any(f"{name} ({hop})" in line for line in lines)
+    for hop, name in names.items():  # names whole, and no hash trailing any of them
+        assert any(name in line for line in lines)
+        assert all(f"({hop})" not in line for line in lines)
 
 
 def test_path_lane_breaks_the_wire_spec_after_a_comma() -> None:
