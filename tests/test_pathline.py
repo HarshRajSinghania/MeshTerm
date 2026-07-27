@@ -11,13 +11,28 @@ from __future__ import annotations
 import pytest
 
 import meshterm.ui.pathline as pathline
-from meshterm.ui.pathline import POWERLINE_SEP, PathHop, PathLine
+from meshterm.ui.pathline import POWERLINE_SEP, PathHop, PathLine, path_line
 from meshterm.ui.theme import node_style
+from meshterm.ui.widgets import path_text
 
 
 def _styles(text) -> dict[str, str]:  # noqa: ANN001
     """Map each styled slice of a Text to its style string, for spot checks."""
     return {text.plain[s.start:s.end]: str(s.style) for s in text.spans}
+
+
+def _char_styles(text) -> list[tuple[str, str]]:  # noqa: ANN001
+    """Every character paired with its effective span style — exact-parity checks.
+
+    Span *boundaries* may legally differ between two builders (one appends a hash in
+    two pieces, the other in one); what must agree is the style each character lands
+    under, so the comparison is per cell, not per span.
+    """
+    styles = [""] * len(text.plain)
+    for span in text.spans:
+        for i in range(span.start, span.end):
+            styles[i] = str(span.style)
+    return list(zip(text.plain, styles))
 
 
 def test_plain_mode_matches_the_app_wide_arrow_presentation() -> None:
@@ -140,6 +155,48 @@ def test_wrapped_breaks_at_hops_under_a_hanging_indent() -> None:
     lines = PathLine(hops, mode="plain").wrapped(16, indent=2)
     assert [line.plain for line in lines] == ["AAAA → BBBB →", "  CCCC → DDDD"]
     assert all(line.cell_len <= 16 for line in lines)
+
+
+def test_path_line_factory_matches_path_text_character_for_character() -> None:
+    """The migration bridge: the trace flavour — device endpoints with annotated
+    hashes, a named hop, a prefix-lit unnamed hop, a dimmed tail — renders through
+    ``path_line`` exactly as ``path_text`` renders it, character and style alike."""
+    names = {"aa11bb": "Alice", "3d63ab": "YUL"}
+    hops = [None, "aa11bb", "77ccddee", "3d63ab", None]
+    kwargs = dict(
+        prefix_bytes=2, self_name="Me", show_hash=True, hash_bytes=3,
+        device_hash="A1B2C3D4", dim_from=3,
+    )
+    old = path_text(hops, lambda h: names.get(h, h), **kwargs)
+    new = path_line(hops, lambda h: names.get(h, h), mode="plain", **kwargs).text()
+    assert _char_styles(new) == _char_styles(old)
+
+
+def test_path_line_factory_matches_path_text_hash_as_name_flavour() -> None:
+    """The message-paths flavour: an unnamed hop standing as its own muted identity
+    hash, annotated with its addressed byte — same parity guarantee."""
+    names = {"3d63abcdef00": "YUL"}
+    hops = ["3d63abcdef00", "e839f2aabb11"]
+    kwargs = dict(prefix_bytes=3, show_hash=True, hash_bytes=1, hash_as_name=True)
+    old = path_text(hops, lambda h: names.get(h, h), **kwargs)
+    new = path_line(hops, lambda h: names.get(h, h), mode="plain", **kwargs).text()
+    assert _char_styles(new) == _char_styles(old)
+    assert path_line([], lambda h: h).text().plain == path_text([], lambda h: h).plain
+
+
+def test_wrapped_carries_the_cursor_even_onto_a_line_break() -> None:
+    """A cursor render is plain even for a powerline line; a cursor sitting mid-group
+    reverse-videos its arrow, and one sitting exactly on the break rides that line's
+    trailing cue — the insertion point is always visible."""
+    hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
+    line = PathLine(hops, mode="powerline")
+    mid = line.wrapped(16, indent=2, cursor_arrow=0)
+    assert [text.plain for text in mid] == ["AAAA → BBBB →", "  CCCC → DDDD"]
+    assert any(str(s.style) == "selected" for s in mid[0].spans)
+    assert all(POWERLINE_SEP not in text.plain for text in mid)
+    on_break = line.wrapped(16, indent=2, cursor_arrow=1)  # the seam that broke
+    assert str(on_break[0].spans[-1].style) == "selected"
+    assert not any(str(s.style) == "selected" for s in on_break[1].spans)
 
 
 def test_wrapped_chip_lines_each_close_their_pointed_edge() -> None:

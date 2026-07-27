@@ -40,10 +40,11 @@ an insertion point lives *between* hops and chips fuse that seam shut.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from rich.text import Text
 
+from ..core.models import LOCAL_DEVICE_LABEL
 from .termfont import powerline_enabled
 from .theme import MESH_THEME, node_style
 
@@ -149,6 +150,11 @@ class PathLine:
         self._separator = separator
         self._empty = empty
 
+    @property
+    def hops(self) -> list[PathHop]:
+        """The hops, for callers that splice lines together (endpoints + relays)."""
+        return list(self._hops)
+
     # --- the three shapes ---------------------------------------------------------
 
     def text(self, *, cursor_arrow: Optional[int] = None) -> Text:
@@ -196,7 +202,9 @@ class PathLine:
         last.truncate(width, overflow="ellipsis")
         return last
 
-    def wrapped(self, width: int, *, indent: int = 0) -> list[Text]:
+    def wrapped(
+        self, width: int, *, indent: int = 0, cursor_arrow: Optional[int] = None
+    ) -> list[Text]:
         """The line broken at hop boundaries, hanging under ``indent`` columns.
 
         The hanging-indent convention: the caller lays its label lane on the first
@@ -210,6 +218,9 @@ class PathLine:
         Args:
             width: The full line budget, indent included.
             indent: The hanging-indent column the continuations align under.
+            cursor_arrow: The composer's insertion cursor, as in :meth:`text` (0-based
+                seam index). Forces plain arrows; a cursor sitting exactly on a line
+                break lands on that line's trailing cue, so it is always visible.
 
         Returns:
             The lines, in order (a single ``empty`` note when there are no hops).
@@ -217,13 +228,13 @@ class PathLine:
         if not self._hops:
             return [Text(self._empty, style="muted")]
         budget = max(1, width - indent)
-        plain = self._resolved_mode() != "powerline"
+        plain = cursor_arrow is not None or self._resolved_mode() != "powerline"
         trail = Text.assemble((" →", "muted")) if plain else Text()
 
         groups: list[list[PathHop]] = [[]]
         for hop in self._hops:
             candidate = groups[-1] + [hop]
-            rendered = self._render(candidate)
+            rendered = self._render(candidate, force_plain=plain)
             # Reserve the continuation cue: any line but the last will carry it.
             if groups[-1] and rendered.cell_len + trail.cell_len > budget:
                 groups.append([hop])
@@ -231,14 +242,23 @@ class PathLine:
                 groups[-1] = candidate
 
         lines: list[Text] = []
+        base = 0  # the global index of the group's first hop, for cursor mapping
         for i, group in enumerate(groups):
+            local: Optional[int] = None
+            if cursor_arrow is not None and 0 <= cursor_arrow - base < len(group) - 1:
+                local = cursor_arrow - base
             line = Text() if i == 0 else Text(" " * indent)
-            body = self._render(group)
+            body = self._render(group, cursor_arrow=local, force_plain=plain)
             if body.cell_len > budget:
                 body.truncate(budget, overflow="ellipsis")
             line.append_text(body)
             if plain and i < len(groups) - 1:
-                line.append_text(trail.copy())
+                if cursor_arrow == base + len(group) - 1:  # the cursor rides the break
+                    line.append(" ")
+                    line.append("→", style="selected")
+                else:
+                    line.append_text(trail.copy())
+            base += len(group)
             lines.append(line)
         return lines
 
@@ -250,9 +270,15 @@ class PathLine:
             return self._mode
         return "powerline" if powerline_enabled() else "plain"
 
-    def _render(self, hops: list[PathHop], *, cursor_arrow: Optional[int] = None) -> Text:
+    def _render(
+        self,
+        hops: list[PathHop],
+        *,
+        cursor_arrow: Optional[int] = None,
+        force_plain: bool = False,
+    ) -> Text:
         """Join ``hops`` in the effective mode (plain whenever a cursor is asked)."""
-        if cursor_arrow is None and self._resolved_mode() == "powerline":
+        if not force_plain and cursor_arrow is None and self._resolved_mode() == "powerline":
             return self._render_chips(hops)
         return self._render_plain(hops, cursor_arrow)
 
@@ -334,3 +360,87 @@ class PathLine:
             text.append(f" ({hop.annotation})", style=f"{soft} on {fill}")
         text.append(" ", style=f"on {fill}")
         return text
+
+
+def _shorten(value: str, hash_bytes: Optional[int]) -> str:
+    """Bare lowercase hex, truncated to ``hash_bytes`` bytes (whole when falsy)."""
+    raw = value.lower().removeprefix("0x")
+    return raw[: hash_bytes * 2] if hash_bytes else raw
+
+
+def path_line(
+    hops: Sequence[Optional[str]],
+    resolve: Callable[[str], Optional[str]] = lambda hop: hop,
+    *,
+    prefix_bytes: int = 0,
+    self_name: Optional[str] = None,
+    empty: str = "direct",
+    show_hash: bool = False,
+    hash_bytes: Optional[int] = None,
+    device_hash: Optional[str] = None,
+    dim_from: Optional[int] = None,
+    hash_as_name: bool = False,
+    mode: str = "auto",
+) -> PathLine:
+    """Build a :class:`PathLine` from raw hop hashes — ``path_text``'s vocabulary.
+
+    The migration bridge: every parameter means exactly what it means to
+    :func:`~meshterm.ui.widgets.path_text` (see there for the full rendering rules),
+    so a call site swaps builders without changing what it says — a named hop reads
+    ``Name`` (annotated ``Name (3d)`` under ``show_hash``), an unnamed hop its
+    prefix-lit hash (or its muted identity hash under ``hash_as_name``), ``None`` is
+    our own device in white, ``dim_from`` fades a resolved tail. The plain rendering
+    is character- and style-identical to ``path_text``; what the swap buys is the
+    :class:`PathLine` shapes (ellipsized / wrapped) and the powerline mode.
+
+    Args:
+        hops: The hops in propagation order — hex hashes, ``None`` marking our own
+            device (empty strings are skipped; ``dim_from`` counts rendered hops).
+        resolve: Maps a hop hash to a friendly name when known.
+        prefix_bytes: Path-hash width to light in unnamed hops' hashes (0 = none).
+        self_name: Our own node's name — white when a resolved name matches it, and
+            naming any ``None`` device hop.
+        empty: The muted text shown when there are no hops (e.g. ``"direct"``).
+        show_hash: Annotate named hops (and, with ``device_hash``, our device) with
+            their hash in parentheses — the trace presentation.
+        hash_bytes: Truncate shown/annotated hashes to this byte width.
+        device_hash: Our own device's key, annotated onto ``None`` hops when
+            ``show_hash`` is on.
+        dim_from: Fade hops at/after this rendered index (``None`` dims nothing).
+        hash_as_name: Present each unnamed hop as its muted identity hash at the
+            ``prefix_bytes`` width, annotated with its addressed byte.
+        mode: The :class:`PathLine` mode (``"auto"``/``"powerline"``/``"plain"``).
+
+    Returns:
+        The assembled :class:`PathLine`.
+    """
+    shown = [h for h in hops if h is None or h]
+    built: list[PathHop] = []
+    for i, hop in enumerate(shown):
+        dim = dim_from is not None and i >= dim_from
+        if hop is None:
+            note = _shorten(device_hash, hash_bytes) if (show_hash and device_hash) else None
+            built.append(
+                PathHop(self_name or LOCAL_DEVICE_LABEL, you=True, annotation=note, dim=dim)
+            )
+            continue
+        named = resolve(hop)
+        if named and named != hop:
+            built.append(PathHop(
+                named,
+                key=hop,
+                you=bool(self_name and named == self_name),
+                annotation=_shorten(hop, hash_bytes) if show_hash else None,
+                dim=dim,
+            ))
+            continue
+        compact = _shorten(hop, hash_bytes)
+        if dim:  # a faded unnamed hop shows its compact hash, exactly as path_text does
+            built.append(PathHop(compact, key=hop, dim=True))
+        elif hash_as_name:
+            identity = _shorten(hop, prefix_bytes or None)
+            note = compact if (show_hash and compact and compact != identity) else None
+            built.append(PathHop(identity, annotation=note))
+        else:
+            built.append(PathHop(compact, key=hop, lit_bytes=prefix_bytes))
+    return PathLine(built, mode=mode, empty=empty)
