@@ -1213,13 +1213,16 @@ def _scenario_path(
     :class:`~meshterm.services.topology.PathScenario` stores), so the row reads as
     the whole route rather than a fragment the reader has to mentally close.
     Renders through the shared path widget, so every hop wears its own key hue (an
-    unnamed hop its prefix-lit hash) instead of the old single-colour smear.
+    unnamed hop its prefix-lit hash) instead of the old single-colour smear — and, as
+    in the route lane above it, our own end goes bare: every candidate starts from us,
+    so the word would be the same on every row and the cells are the candidates'.
     """
     route = path_line(
         [None, *scenario.hops, target_id],
         topo.display_name,
         prefix_bytes=width_bytes,
         self_name=device_label,
+        bare_self=True,
     )
     return route.text()
 

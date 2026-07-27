@@ -1147,7 +1147,8 @@ def _scenario_topo() -> object:
 
 
 def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
-    """The pathline names the whole boomerang leg, not just the stored intermediate hops."""
+    """The pathline draws the whole boomerang leg, not just the stored intermediate
+    hops — our own end bare, since every candidate starts from us."""
     topo = _scenario_topo()
     scenario = PathScenario(
         label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
@@ -1155,17 +1156,17 @@ def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
     text = _scenario_path(
         scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
     )
-    assert text.plain == "YUL-Me → Hub → Far"
+    assert text.plain == "→ Hub → Far"
 
 
 def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
-    """A direct (no-repeaters) scenario's pathline is just us and the target — no gap."""
+    """A direct (no-repeaters) scenario's pathline is just our arrow and the target."""
     topo = _scenario_topo()
     scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
     text = _scenario_path(
         scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
     )
-    assert text.plain == "YUL-Me → Far"
+    assert text.plain == "→ Far"
 
 
 def test_scenario_detail_carries_provenance_snr_and_samples() -> None:

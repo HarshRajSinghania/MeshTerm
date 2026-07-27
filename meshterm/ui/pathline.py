@@ -34,9 +34,10 @@ drawn*, so every surface the survey found can eventually route through it:
   ``highlighted_hash`` two-tone), the ``dim`` fade for resolved return legs, and an
   explicit style override for context colourings that outrank identity. Chips keep
   the exact same words as arrows — only colours and separators change — so a route
-  reads identically whichever mode drew it. A hop with *no* label is drawn as pure
-  seam — the arrow alone, no chip, no word — which is how a surface says "this end
-  is us" without spending cells on saying so (see ``bare_self``).
+  reads identically whichever mode drew it. A hop with *no* label draws as its seam
+  and (in chip mode) the padding every chip wears — a bit of arrow and a stub of its
+  own colour, no word — which is how a surface says "this end is us" without spending
+  cells on saying so (see ``bare_self``).
 
 Existing call sites still render through ``path_text``; migrating them here is a
 separate, per-surface pass. The composer's insertion cursor is the one deliberate
@@ -56,15 +57,12 @@ from ..core.models import LOCAL_DEVICE_LABEL
 from .termfont import powerline_enabled
 from .theme import MESH_THEME, node_style
 
-#: The powerline solid right-pointing triangle (U+E0B0) — the male point every chip
-#: seam is drawn with, deliberately from the *core* set so every recommended font
-#: qualifies (the rounded caps at U+E0B4+ exist only in full Nerd Font patches).
+#: The powerline solid right-pointing triangle (U+E0B0) — the only glyph the widget
+#: draws, seam and closing edge alike, deliberately from the *core* set so every
+#: recommended font qualifies (the rounded caps at U+E0B4+ exist only in full Nerd
+#: Font patches). A path only ever flows one way, so the point only ever faces right;
+#: what changes is whether it lands on a field (a seam) or on the page (an edge).
 POWERLINE_SEP = "\ue0b0"
-
-#: Its mirror (U+E0B2, core too): the female point opening a *wrapped* line's first
-#: chip, so a continuation never reads as a fresh path. Only the very first chip of the
-#: whole line keeps the plain square left edge.
-POWERLINE_CAP = "\ue0b2"
 
 #: The plain-mode joining arrow, exactly as ``path_text`` draws it today.
 _ARROW = " → "
@@ -94,9 +92,9 @@ class PathHop:
     Attributes:
         label: What is shown — a resolved name, or a hash standing as the node's
             identity (set ``lit_bytes`` for the two-tone prefix in that case). An
-            empty label (with no annotation) makes the hop *bare*: it draws as its
-            seam alone — a bit of arrow, no chip, no word — which is how a route
-            whose ends are obviously us says so without spending cells on it.
+            empty label (with no annotation) makes the hop *bare*: its seam and its
+            padding are all that is drawn — a bit of arrow, no word — which is how a
+            route whose ends are obviously us says so without spending cells on it.
         key: Any known prefix of the node's key/hash — picks the hash-derived hue
             (its first byte, so every prefix agrees). ``None`` renders muted/grey:
             colour is reserved for keyed identities.
@@ -234,10 +232,11 @@ class PathLine:
         content column is uniformly ``width - indent`` wide. Plain-mode lines that
         continue end with the separator's own mark — a trailing ``→`` for an
         arrow-joined path, the bare ``,`` for a comma-joined wire spec — the "path
-        goes on" cue; chip lines always close with their pointed edge and *open*, from
-        the second line down, with the female one (:data:`POWERLINE_CAP`), so a
-        continuation is never mistakable for a path starting over. A single hop wider
-        than the content column stands alone, truncated with an ellipsis.
+        goes on" cue; chip lines always close with their pointed edge and, from the
+        second line down, open by redrawing the seam the break interrupted — the point
+        arriving out of the previous line's last fill — so a continuation is never
+        mistakable for a path starting over. A single hop wider than the content column
+        stands alone, truncated with an ellipsis.
 
         Where the breaks fall is chosen for how it *reads* (see :meth:`_flow` and
         :meth:`_turn_seam`), not by cramming each line full: the fold takes the
@@ -274,12 +273,14 @@ class PathLine:
 
         lines: list[Text] = []
         base = 0  # the global index of the group's first hop, for cursor mapping
+        carried: Optional[str] = None  # the fill a continuation reopens its seam from
         for i, group in enumerate(groups):
             local: Optional[int] = None
             if cursor_arrow is not None and 0 <= cursor_arrow - base < len(group) - 1:
                 local = cursor_arrow - base
             line = Text() if i == 0 else Text(" " * indent)
-            body = self._render(group, cursor_arrow=local, force_plain=plain, cap=bool(i))
+            body = self._render(group, cursor_arrow=local, force_plain=plain, cap=carried)
+            carried = None if plain else self._chip_fill(group[-1])
             # A lone hop too wide for the column is truncated — leaving room for the
             # cue it still has to carry, so even that line stays inside the width. A
             # column too narrow to hold both drops the cue: content wins the cells.
@@ -315,18 +316,19 @@ class PathLine:
             ``(cells, join, tail, lead)`` — each hop's cells, the cells one join between
             two hops costs, the cells a line always closes with (the chip mode's pointed
             edge; nothing in arrow mode), and the cells every line *after the first*
-            opens with (chip mode's female cap).
+            opens with (chip mode's reopened seam).
 
         Note:
             Joins are measured at their full width even where a bare neighbour trims one
-            (:meth:`_join`), and the closing edge is charged even to a line ending bare —
-            an over-estimate of a cell, which packs a hair early and never overflows.
+            (:meth:`_join`) — an over-estimate of a cell, which packs a hair early and
+            never overflows.
         """
         if plain:
             widths = [self._plain_hop(hop).cell_len for hop in hops]
             return widths, cell_len(self._separator), 0, 0
         widths = [self._chip(hop, self._chip_fill(hop)).cell_len for hop in hops]
-        return widths, cell_len(POWERLINE_SEP), cell_len(POWERLINE_SEP), cell_len(POWERLINE_CAP)
+        sep = cell_len(POWERLINE_SEP)
+        return widths, sep, sep, sep
 
     @staticmethod
     def _fill(
@@ -349,7 +351,7 @@ class PathLine:
             last: Cells held back on a line ending at the *final* hop — ``0`` when the
                 path really ends there (nothing follows to cue), ``reserve`` when this
                 is only one leg of a path that goes on.
-            lead: Cells every line but the first opens with (the female cap).
+            lead: Cells every line but the first opens with (the reopened seam).
 
         Returns:
             How many hops each line takes; a hop too wide for ``budget`` gets a line of
@@ -442,7 +444,7 @@ class PathLine:
         *,
         cursor_arrow: Optional[int] = None,
         force_plain: bool = False,
-        cap: bool = False,
+        cap: Optional[str] = None,
     ) -> Text:
         """Join ``hops`` in the effective mode (plain whenever a cursor is asked).
 
@@ -505,37 +507,39 @@ class PathLine:
             text.append(f" ({hop.annotation})", style=note_style)
         return text
 
-    def _render_chips(self, hops: list[PathHop], *, cap: bool = False) -> Text:
+    def _render_chips(self, hops: list[PathHop], *, cap: Optional[str] = None) -> Text:
         """Powerline chips: each hop filled with its hue, seams interlocked.
 
         Args:
             hops: The hops of this one line, in order.
-            cap: Open the line with the female point (:data:`POWERLINE_CAP`) in the
-                first chip's own fill — the mark of a wrapped continuation, where the
-                whole line's very first chip instead keeps its square left edge.
+            cap: The fill of the chip this line continues from — a wrapped line opens
+                by redrawing the seam the break interrupted, so its first chip is
+                landed *into* rather than started. ``None`` (the whole line's first
+                chip) keeps the square left edge.
         """
         fills = [self._chip_fill(hop) for hop in hops]
         text = Text()
-        if cap:
-            text.append(POWERLINE_CAP, style=fills[0])
+        if cap is not None:
+            text.append(POWERLINE_SEP, style=self._seam(cap, fills[0]))
         for i, hop in enumerate(hops):
             if i:
-                # Two ways to draw a seam. Interlocked — the point in the previous
-                # fill *on* the next one — is the tighter look and the default. But
-                # two neighbours can land on the same fill (a hue collision, a run of
-                # dimmed hops, two keyless greys), and then an interlocked seam is
-                # invisible: one fused block where the route has two nodes. Those get
-                # the open seam instead — the point over the page, leaving the sliver
-                # of background that says where one chip ends and the next begins. A
-                # bare hop takes it too: it has no field for the arrow to land in, so
-                # that lone arrowhead *is* the endpoint.
-                fused = _bare(hop) or fills[i - 1] == fills[i]
-                style = fills[i - 1] if fused else f"{fills[i - 1]} on {fills[i]}"
-                text.append(POWERLINE_SEP, style=style)
+                text.append(POWERLINE_SEP, style=self._seam(fills[i - 1], fills[i]))
             text.append_text(self._chip(hop, fills[i]))
-        if not _bare(hops[-1]):
-            text.append(POWERLINE_SEP, style=fills[-1])  # the pointed edge into the page
+        text.append(POWERLINE_SEP, style=fills[-1])  # the pointed edge into the page
         return text
+
+    @staticmethod
+    def _seam(before: str, after: str) -> str:
+        """One seam's style: interlocked into the next fill, or open onto the page.
+
+        Two ways to draw the point. Interlocked — the previous fill *on* the next
+        one — is the tighter look and the default. But two neighbours can land on the
+        same fill (a hue collision, a run of dimmed hops, two keyless greys), and then
+        an interlock is invisible: one fused block where the route has two nodes.
+        Those open onto the page instead, the taper leaving the sliver of background
+        that says where one chip ends and the next begins.
+        """
+        return before if before == after else f"{before} on {after}"
 
     def _chip_fill(self, hop: PathHop) -> str:
         """A chip's fill colour: override, white you, dim slate, hue, keyless grey."""
@@ -554,10 +558,9 @@ class PathLine:
     def _chip(self, hop: PathHop, fill: str) -> Text:
         """One chip: same words as arrow mode, dark ink on the identity fill.
 
-        A bare hop draws no chip at all — its seam alone carries it (see :meth:`_render_chips`).
+        A bare hop keeps the padding every chip wears — it just has no words between
+        them, so it reads as a stub of its own colour rather than as nothing at all.
         """
-        if _bare(hop):
-            return Text()
         ink = _DIM_FG if hop.dim else _CHIP_FG
         soft = _DIM_FG if hop.dim else _CHIP_FG_SOFT
         text = Text()
@@ -603,8 +606,8 @@ def path_line(
     so a call site swaps builders without changing what it says — a named hop reads
     ``Name`` (annotated ``Name (3d)`` under ``show_hash``), an unnamed hop its
     prefix-lit hash (or its muted identity hash under ``hash_as_name``), ``None`` is
-    our own device in white — or, under ``bare_self``, its bit of arrow and nothing
-    else — and ``dim_from`` fades a resolved tail. The plain rendering
+    our own device in white — or, under ``bare_self``, its bit of arrow and no words
+    at all — and ``dim_from`` fades a resolved tail. The plain rendering
     is character- and style-identical to ``path_text``; what the swap buys is the
     :class:`PathLine` shapes (ellipsized / wrapped) and the powerline mode.
 

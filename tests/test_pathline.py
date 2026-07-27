@@ -13,9 +13,7 @@ import random
 import pytest
 
 import meshterm.ui.pathline as pathline
-from meshterm.ui.pathline import (
-    POWERLINE_CAP, POWERLINE_SEP, PathHop, PathLine, _style_hex, path_line,
-)
+from meshterm.ui.pathline import POWERLINE_SEP, PathHop, PathLine, _style_hex, path_line
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
 
@@ -296,15 +294,20 @@ def test_wrapped_carries_the_cursor_even_onto_a_line_break() -> None:
     assert not any(str(s.style) == "selected" for s in on_break[1].spans)
 
 
-def test_wrapped_chip_lines_close_male_and_open_female() -> None:
+def test_wrapped_chip_lines_reopen_the_seam_the_break_interrupted() -> None:
     """Chip wrapping never splits a chip; every line ends on the pointed edge, and
-    every line *but the first* opens on its mirror — the continuation's own mark, so
-    only the path's very first chip shows a square left edge."""
-    hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
+    every line *but the first* opens on the seam the break cut — the point arriving
+    out of the previous line's last fill, so only the path's very first chip shows a
+    square left edge. The point always faces the way the path flows."""
+    hops = [PathHop(label, key=key) for label, key in
+            (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))]
     lines = PathLine(hops, mode="powerline").wrapped(18, indent=2)
     assert len(lines) == 2
     assert lines[0].plain.startswith(" AAAA")  # the square edge: this is the start
-    assert lines[1].plain.startswith("  " + POWERLINE_CAP)  # …and this is a carry-on
+    assert lines[1].plain[2] == POWERLINE_SEP  # …and this is a carry-on
+    carried = next(s for s in lines[1].spans if s.start == 2)
+    assert str(carried.style) == \
+        f"{_style_hex(node_style('77'))} on {_style_hex(node_style('3d'))}"
     assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
     assert all(line.cell_len <= 18 for line in lines)
 
@@ -329,24 +332,25 @@ def test_same_fill_neighbours_get_the_open_seam() -> None:
     assert " on " not in gaps[0]  # a dimmed return leg reads as hops, not one bar
 
 
-def test_bare_hops_draw_as_their_seam_alone() -> None:
-    """An empty label spends no cells: arrow mode drops the padding it would have sat
-    in, chip mode gives it no chip at all — the arrow into the page *is* the hop."""
+def test_bare_hops_keep_their_padding_and_spend_no_words() -> None:
+    """An empty label costs no words: arrow mode drops the padding it would have sat
+    in, chip mode keeps only the stub of colour every chip is padded with."""
     hops = [PathHop("", you=True), PathHop("Alice", key="aa"), PathHop("", you=True)]
     assert PathLine(hops, mode="plain").text().plain == "→ Alice →"
 
     chips = PathLine(hops, mode="powerline").text()
-    assert chips.plain == POWERLINE_SEP + " Alice " + POWERLINE_SEP
+    hue = _style_hex(node_style("aa"))
+    assert chips.plain == f"  {POWERLINE_SEP} Alice {POWERLINE_SEP}  {POWERLINE_SEP}"
     styles = [str(span.style) for span in chips.spans]
-    # The leading seam is us pointing into Alice's field; the trailing one is Alice's
-    # own point into the page — the closing edge a named tail would have added.
-    assert styles[0] == f"#ffffff on {_style_hex(node_style('aa'))}"
-    assert styles[-1] == _style_hex(node_style("aa"))
+    assert styles[0] == "on #ffffff"  # our stub: the you white, two cells of padding
+    assert f"#ffffff on {hue}" in styles  # the seam out of it, into Alice's field
+    assert f"{hue} on #ffffff" in styles  # and back out of Alice, into ours
+    assert styles[-1] == "#ffffff"  # the closing edge, pointing into the page
 
 
 def test_bare_self_endpoints_survive_wrapping() -> None:
     """``bare_self`` strips our name and hash from a route's ends; a line that wraps
-    still opens on the female point, and a widowed bare end still draws one."""
+    still opens on the seam it broke, and every line still fits its column."""
     hops = [None, *(f"{i:02x}aa" for i in range(6)), None]
     line = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,
                      device_hash="a1b2", bare_self=True, mode="plain")
@@ -357,5 +361,5 @@ def test_bare_self_endpoints_survive_wrapping() -> None:
     lines = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
                       mode="powerline").wrapped(28, indent=2)
     assert len(lines) > 1
-    assert all(line.plain.startswith("  " + POWERLINE_CAP) for line in lines[1:])
+    assert all(line.plain[2] == POWERLINE_SEP for line in lines[1:])
     assert all(line.cell_len <= 28 for line in lines)
