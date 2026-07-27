@@ -10,9 +10,11 @@ drawn*, so every surface the survey found can eventually route through it:
 * **Two separator styles.** ``plain`` joins hops with muted ``→`` arrows — today's
   look, unchanged. ``powerline`` renders each hop as a colour-filled chip joined by
   the solid-triangle separator U+E0B0 (foreground = previous chip's fill, background
-  = next's — the interlocking oh-my-posh look), the chip fill being the node's
-  hash-derived hue (:func:`~meshterm.ui.theme.node_style`), our own node the pure
-  ``you`` white, a keyless hop grey. ``auto`` (the default) picks powerline exactly
+  = next's — the interlocking oh-my-posh look, opening to a page-coloured gap where
+  two neighbours share a fill and the interlock would fuse them into one block), the
+  chip fill being the node's hash-derived hue
+  (:func:`~meshterm.ui.theme.node_style`), our own node the pure ``you`` white, a
+  keyless hop grey. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
@@ -518,9 +520,17 @@ class PathLine:
             text.append(POWERLINE_CAP, style=fills[0])
         for i, hop in enumerate(hops):
             if i:
-                # A bare hop has no field for the arrow to land in, so the seam points
-                # into the page instead: that lone arrowhead *is* the endpoint.
-                style = fills[i - 1] if _bare(hop) else f"{fills[i - 1]} on {fills[i]}"
+                # Two ways to draw a seam. Interlocked — the point in the previous
+                # fill *on* the next one — is the tighter look and the default. But
+                # two neighbours can land on the same fill (a hue collision, a run of
+                # dimmed hops, two keyless greys), and then an interlocked seam is
+                # invisible: one fused block where the route has two nodes. Those get
+                # the open seam instead — the point over the page, leaving the sliver
+                # of background that says where one chip ends and the next begins. A
+                # bare hop takes it too: it has no field for the arrow to land in, so
+                # that lone arrowhead *is* the endpoint.
+                fused = _bare(hop) or fills[i - 1] == fills[i]
+                style = fills[i - 1] if fused else f"{fills[i - 1]} on {fills[i]}"
                 text.append(POWERLINE_SEP, style=style)
             text.append_text(self._chip(hop, fills[i]))
         if not _bare(hops[-1]):

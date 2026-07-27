@@ -309,6 +309,26 @@ def test_wrapped_chip_lines_close_male_and_open_female() -> None:
     assert all(line.cell_len <= 18 for line in lines)
 
 
+def test_same_fill_neighbours_get_the_open_seam() -> None:
+    """Two chips of one colour — a hue collision, a run of dimmed hops — would fuse
+    into a single block behind an interlocked seam, so theirs opens onto the page and
+    leaves a visible gap. Chips of different fills keep interlocking."""
+    same = PathLine([PathHop("A", key="aa"), PathHop("B", key="aa")], mode="powerline")
+    hue = _style_hex(node_style("aa"))
+    seam = next(s for s in same.text().spans if same.text().plain[s.start] == POWERLINE_SEP)
+    assert str(seam.style) == hue  # foreground only: the page shows through the taper
+
+    apart = PathLine([PathHop("A", key="aa"), PathHop("B", key="77")], mode="powerline")
+    text = apart.text()
+    seams = [str(s.style) for s in text.spans if text.plain[s.start] == POWERLINE_SEP]
+    assert seams[0] == f"{hue} on {_style_hex(node_style('77'))}"
+
+    dimmed = PathLine([PathHop("A", dim=True), PathHop("B", dim=True)], mode="powerline")
+    text = dimmed.text()
+    gaps = [str(s.style) for s in text.spans if text.plain[s.start] == POWERLINE_SEP]
+    assert " on " not in gaps[0]  # a dimmed return leg reads as hops, not one bar
+
+
 def test_bare_hops_draw_as_their_seam_alone() -> None:
     """An empty label spends no cells: arrow mode drops the padding it would have sat
     in, chip mode gives it no chip at all — the arrow into the page *is* the hop."""
