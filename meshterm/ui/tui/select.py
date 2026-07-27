@@ -32,16 +32,28 @@ class Choice:
             resolves the list with a :class:`DeleteRequest` wrapping this row's value instead
             of choosing it, so the caller can run a remove flow and re-open the list. Off by
             default, so an ordinary list ignores Delete.
+        detail: An optional second line, drawn hanging under ``title`` at the pointer's
+            indent — context that doesn't belong in the selectable line itself (a route's
+            weakest SNR/sample count/provenance tag, say). Never scrolls or wraps; it
+            ellipsizes on its own if too wide. ``None`` (the default) draws nothing, so an
+            ordinary row stays exactly one line. May be a zero-argument callable like
+            ``title``.
     """
 
     title: Union[str, Text, Callable[[], Union[str, Text]]]
     value: Any
     deletable: bool = False
+    detail: Union[str, Text, Callable[[], Union[str, Text]], None] = None
 
     @property
     def label(self) -> Union[str, Text]:
         """The row's current text, resolving a callable title on each read."""
         return self.title() if callable(self.title) else self.title
+
+    @property
+    def detail_label(self) -> Optional[Union[str, Text]]:
+        """The row's current detail line, resolving a callable on each read."""
+        return self.detail() if callable(self.detail) else self.detail
 
 
 @dataclass
@@ -345,6 +357,8 @@ class SelectScreen(Screen):
         for item in self._items:
             label = item.title if isinstance(item, Separator) else item.label
             widths.append(cell_len(_plain(label)) + 2)  # + the "❯ " / "  " pointer column
+            if isinstance(item, Choice) and item.detail_label is not None:
+                widths.append(cell_len(_plain(item.detail_label)) + 2)  # same hanging indent
         return max(widths, default=20) + 8
 
     def render_body(self, width: int) -> list[str]:
@@ -379,6 +393,9 @@ class SelectScreen(Screen):
         self._sticky_headers = []
         if self._filter:
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
+        # A row's detail line (see Choice.detail) can make it two lines tall, so the cursor
+        # is tracked inline as rows are drawn rather than derived from the row index.
+        cursor_at: Optional[int] = None
         for item in rows:
             if isinstance(item, Separator):
                 # A Text title carries its own spans (a two-colour column header); a plain
@@ -391,6 +408,8 @@ class SelectScreen(Screen):
                 lines.append(sep)
                 continue
             is_sel = item is selected
+            if is_sel:
+                cursor_at = len(lines)
             pointer = "❯ " if is_sel else "  "
             style = "brand" if is_sel else ""
             label = item.label
@@ -409,12 +428,22 @@ class SelectScreen(Screen):
             text.overflow = "ellipsis"
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
+            detail = item.detail_label if isinstance(item, Choice) else None
+            if detail is not None and _plain(detail):
+                # Hangs under the row at the pointer's own indent — never scrolls or
+                # wraps, just ellipsizes on its own if it's too wide to fit.
+                detail_text = detail if isinstance(detail, Text) else Text(detail)
+                line = Text("  ")
+                line.append_text(detail_text)
+                line.no_wrap = True
+                line.overflow = "ellipsis"
+                line.truncate(width)
+                lines.append(render_to_ansi(line, width))
         if not choices:
             lines.append(render_to_ansi(Text("no matches", style="muted"), width))
         # Remember where the highlighted row landed so the session can keep it in view,
         # shifted past any prompt lines drawn above the list.
-        base_cursor = _cursor_line(rows, selected, bool(self._filter))
-        self._cursor = None if base_cursor is None else base_cursor + prefix
+        self._cursor = None if cursor_at is None else cursor_at + prefix
         return lines
 
     def cursor_line(self) -> Optional[int]:
@@ -616,24 +645,3 @@ class ReorderScreen(Screen):
                 super().handle("escape")  # Back resolves CANCEL, same as Esc
         elif action == "escape":
             super().handle("escape")
-
-
-def _cursor_line(rows: list, selected: Optional[Choice], filtered: bool) -> Optional[int]:
-    """Compute the rendered body line index of the selected row.
-
-    Args:
-        rows: The displayed rows (choices and separators).
-        selected: The currently highlighted choice, if any.
-        filtered: Whether a filter line precedes the rows (offsetting every row by one).
-
-    Returns:
-        The zero-based line index of the highlighted row, or ``None`` if nothing is
-        selected.
-    """
-    if selected is None:
-        return None
-    offset = 1 if filtered else 0
-    for i, item in enumerate(rows):
-        if item is selected:
-            return i + offset
-    return None

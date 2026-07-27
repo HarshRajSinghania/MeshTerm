@@ -26,13 +26,16 @@ the node itself, in full:
     travelled, contact on the left, us on the right). Beneath the graph sits the *route
     list*: one selectable row per distinct route (the firmware's learned route and the
     observed alternatives, the strongest marked ``★ best``), each spelled out through THE
-    path widget with a hanging wrap. ``↑↓`` moves the selection; the picked route lights
-    white in the graph while the rest go grey and every node not on it fades its label to
-    grey, so the graph reads as *this* route through the fan. Only *good* routes are drawn —
-    stale evidence and far-weaker outliers are dropped, so the list is the routes worth
-    trusting rather than every chain ever heard. Enter on a route arms a trace on it
-    (nothing transmits here — it opens the trace screen loaded with that path); when there
-    is no route evidence to list, a ``🎯 Trace — auto route …`` action stands in.
+    path widget as a single hash-chain line, its bottleneck SNR / sample count / tag hanging
+    on the line below. ``↑↓`` moves the selection; the picked route lights white in the graph
+    while the rest go grey and every node not on it fades its label to grey, so the graph
+    reads as *this* route through the fan. A pathline too wide for the lane never wraps —
+    the highlighted row instead scrolls horizontally (``←→``) to read it to the end; an
+    unselected long row just ellipsizes. Only *good* routes are drawn — stale evidence and
+    far-weaker outliers are dropped, so the list is the routes worth trusting rather than
+    every chain ever heard. Enter on a route arms a trace on it (nothing transmits here — it
+    opens the trace screen loaded with that path); when there is no route evidence to list, a
+    ``🎯 Trace — auto route …`` action stands in.
 
 * **the ways in** — each tab's action rows (``↑↓`` moves the cursor through them, Enter
   commits) and the shared ``Back`` closing every tab; Esc backs to the list.
@@ -62,6 +65,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
@@ -80,7 +84,7 @@ from .pathgraph import (
     render_path_graph,
 )
 from .theme import name_style, snr_style
-from .tui.render import render_hanging, render_lines, render_to_ansi
+from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
 from .pathline import PathHop, PathLine, path_line
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
@@ -156,6 +160,26 @@ _GREY = (120, 120, 120)
 #: any real hop, mirroring the graph's own endpoint sentinels.
 _CLUSTER_NODE = "\x00clu"
 
+#: Columns a route row's pathline and its hanging context line indent by — the ``"❯ "``/
+#: ``"  "`` pointer's own width, so the context lines up under the path it belongs to.
+_ROUTE_INDENT = 2
+
+#: The app-wide opens-further-prompts mark, trailing every route row's pathline (Enter on
+#: it arms a trace). Applied at render time rather than baked into :attr:`_Route.path`, so
+#: measuring/cropping the raw hash chain for horizontal scroll never has to account for it.
+_OPENS_MARKER = " …"
+
+#: Cells one ←/→ press horizontally scrolls the highlighted route's pathline (see
+#: :meth:`NodeDetailScreen.handle`) — the same step the app-wide select list's ``hscroll``
+#: uses.
+_HSCROLL_STEP = 8
+
+#: Cursor moves that abandon a route's in-progress horizontal scroll — each row scrolls on
+#: its own, so leaving it resets the shift rather than carrying it to whatever row is next.
+_HSHIFT_RESET_ACTIONS = frozenset({
+    "up", "down", "pageup", "pagedown", "home", "ctrl_home", "end", "ctrl_end",
+})
+
 
 @dataclass(slots=True)
 class _Action:
@@ -184,15 +208,19 @@ class _Route:
             the left endpoint and our star on the right. Empty = a straight zero-hop shot.
         spec: The forced-path spec a trace arms on when this route is selected (the symmetric
             round trip through these hops); ``""`` lets the trace screen auto-resolve.
-        row: The pre-rendered route line — the whole path named through THE path widget,
-            contact → relays → us, with the bottleneck SNR / sample count and a ``★ best`` or
-            ``device route`` tag trailing. Shown hanging-wrapped, so a long route lines up
-            under itself.
+        path: The pre-rendered pathline — the whole route named through THE path widget,
+            contact → relays → us — with the trailing opens-further-prompts mark applied at
+            render time (:data:`_OPENS_MARKER`), not baked in here. One line, never wrapped:
+            the highlighted row instead horizontally scrolls to read a long hash chain past
+            the lane's width, and an unselected row simply ellipsizes.
+        context: The line shown hanging under ``path`` — the bottleneck SNR, sample count,
+            and a ``★ best`` / ``device route`` tag — empty when a route earns none of them.
     """
 
     draw: tuple[str, ...]
     spec: str
-    row: Text
+    path: Text
+    context: Text
 
 
 @dataclass(slots=True)
@@ -338,20 +366,55 @@ class NodeDetailScreen(Screen):
         self._list_top = 0
         self._list_page = 1
         self._list_hidden = False
+        #: The highlighted route's pathline horizontal scroll (cells shifted in, ``←/→``);
+        #: resets whenever the cursor leaves that row (see :data:`_HSHIFT_RESET_ACTIONS`).
+        self._hshift = 0
+        #: The last render width, so the footer hint can tell whether the highlighted
+        #: route's pathline actually overflows (nothing does before the first paint).
+        self._last_width = 0
 
     # --- input -----------------------------------------------------------------
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Tab switch (when there are tabs to switch), move, open, list paging, Esc last."""
+        """Tab switch (when there are tabs to switch), move, open, list/pathline scroll, Esc last.
+
+        The scroll atom folds ``PgUp/PgDn`` and ``←→`` into one when both apply (a busy node's
+        list is windowed *and* its highlighted route overflows) rather than stacking two atoms
+        and risking the 72-column hint budget.
+        """
         parts: list[str] = []
         if len(self._tabs) >= 2:
             parts.append("Tab/⇧Tab switch")
         parts.extend(("↑↓ move", "Enter open"))
-        if self._list_hidden:
+        hscroll = self._selected_route_overflows()
+        if self._list_hidden and hscroll:
+            parts.append("PgUp/PgDn/←→ scroll")
+        elif self._list_hidden:
             parts.append("PgUp/PgDn scroll")
+        elif hscroll:
+            parts.append("←→ scroll")
         parts.append("Esc back")
         return " · ".join(parts)
+
+    def _selected_route_overflows(self) -> bool:
+        """Whether the highlighted route's pathline is too wide for the list's content lane.
+
+        Gates both the ``←→`` scroll and its footer atom — a pathline that fits has nowhere
+        to scroll. Measured against the last render width (``0`` before the first paint, so
+        nothing reads as overflowing until a real width is known).
+        """
+        if self._last_width <= 0 or self._routes is None:
+            return False
+        tab = self._tabs[self._tab_index] if self._tabs else None
+        if tab is None or tab.kind != "routes":
+            return False
+        routes = self._routes.routes
+        if not routes or not (0 <= self._row_index < len(routes)):
+            return False
+        avail = max(1, self._last_width - _ROUTE_INDENT)
+        total = cell_len(routes[self._row_index].path.plain) + cell_len(_OPENS_MARKER)
+        return total > avail
 
     def selected_spec(self) -> str:
         """The forced-path spec of the currently-highlighted route (``""`` = auto).
@@ -375,6 +438,8 @@ class NodeDetailScreen(Screen):
         """Switch tab, move the cursor within a tab, commit a row, page the list, or leave."""
         focus = self._focusables()
         n = len(focus)
+        if action in _HSHIFT_RESET_ACTIONS:
+            self._hshift = 0  # leaving a row abandons its scroll — each one rides its own
         if action == "enter":
             if n:
                 kind, payload = focus[self._row_index % n]
@@ -416,8 +481,18 @@ class NodeDetailScreen(Screen):
             if n:
                 self._row_index = n - 1
                 self._sync_route_sel(focus)
+        elif action == "left":
+            if self._on_route_row(focus):
+                self._hshift = max(0, self._hshift - _HSCROLL_STEP)
+        elif action == "right":
+            if self._on_route_row(focus):
+                self._hshift += _HSCROLL_STEP  # clamped to the pathline's tail at render
         elif action == "escape":
             self.resolve(CANCEL)
+
+    def _on_route_row(self, focus: list[tuple[str, object]]) -> bool:
+        """Whether the cursor currently rests on a route row (as opposed to an action row)."""
+        return bool(focus) and focus[self._row_index % len(focus)][0] == "path"
 
     def cursor_line(self) -> Optional[int]:
         """The highlighted row's body line — the frame keeps it in view, which only matters
@@ -432,6 +507,7 @@ class NodeDetailScreen(Screen):
         self._row_index = 0
         self._route_sel = 0
         self._list_top = 0
+        self._hshift = 0
         self.scroll_to_top()
         self._sync_route_sel(self._focusables())
 
@@ -475,6 +551,7 @@ class NodeDetailScreen(Screen):
         lines — so nothing here ever pushes the graph or the actions off the screen.
         """
         viewport = self._scroll_viewport
+        self._last_width = width
         focus = self._focusables()
         if focus:
             self._row_index %= len(focus)
@@ -681,17 +758,45 @@ class NodeDetailScreen(Screen):
         return lines
 
     def _route_row_lines(self, route: _Route, selected: bool, width: int) -> list[str]:
-        """One route row: a ``❯`` pointer when picked, the route hanging-wrapped under itself.
+        """One route row: a ``❯``-pointed pathline, its context hanging on the line below.
 
         The route keeps its per-node colours even when selected (the pointer, and the white
         line in the graph above, carry the selection) — unlike the plain action rows, which
         go fully brand, since here the colour *is* the content. The trailing ``…`` is the
-        app-wide opens-further-prompts mark: Enter on the row arms a trace on it.
+        app-wide opens-further-prompts mark: Enter on the row arms a trace on it. The
+        pathline never hop-wraps — it is one line, cropped: the highlighted row rides
+        :attr:`_hshift` (``←→``, see :meth:`handle`) so a hash chain wider than the lane can
+        still be read to its end, while every other row (and the context line under any row)
+        just ellipsizes. The context — bottleneck SNR, sample count, the ``★ best`` /
+        ``device route`` tag — is dropped entirely when a route earns none of it.
         """
-        prefix = Text("❯ " if selected else "  ", style="brand" if selected else "")
-        row = route.row.copy()
-        row.append(" …", style="muted")
-        return render_hanging(prefix, row, width, indent=2)
+        indent = _ROUTE_INDENT
+        avail = max(1, width - indent)
+        pointer = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        marked = route.path.copy()
+        marked.append(_OPENS_MARKER, style="muted")
+        if selected and self._hshift:
+            total = cell_len(marked.plain)
+            self._hshift = max(0, min(self._hshift, max(0, total - avail)))
+            path = crop_cells(marked, self._hshift, avail)
+        else:
+            path = marked
+            path.no_wrap = True
+            path.overflow = "ellipsis"
+            path.truncate(avail)
+        line1 = Text()
+        line1.append_text(pointer)
+        line1.append_text(path)
+        lines = [render_to_ansi(line1, width)]
+        if route.context.plain:
+            context = route.context.copy()
+            context.no_wrap = True
+            context.overflow = "ellipsis"
+            context.truncate(avail)
+            line2 = Text(" " * indent)
+            line2.append_text(context)
+            lines.append(render_to_ansi(line2, width))
+        return lines
 
     def _action_line(self, action: _Action, selected: bool, width: int) -> str:
         """One action row: ``❯`` + icon + label, the whole row brand when it is the cursor's."""
@@ -961,8 +1066,10 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             key_of=make_name_key_resolver(contacts, stored_names),
             style=route_graph_style,
             self_name=self_name,
+            self_key=self_key,
             node_label=label,
             name_key=key,
+            hash_bytes=prefix_bytes,
         )
 
     # -- the tabs (Info always; Routes only when there is a routes view) and their actions.
@@ -1061,6 +1168,12 @@ def _signal_row(hn) -> Optional[Text]:  # noqa: ANN001 - Optional[HeardNode]
     return text if text.plain else None
 
 
+def _hop_hash(key: Optional[str], fallback: str, hash_bytes: int) -> str:
+    """A key's hash at ``hash_bytes`` width, or ``fallback`` when there is no usable key."""
+    hex_key = (key or "").lower().removeprefix("0x")
+    return hex_key[: hash_bytes * 2] if hex_key else fallback
+
+
 def _route_line(
     node_label: str,
     name_key: str,
@@ -1069,38 +1182,50 @@ def _route_line(
     weakest: Optional[float],
     samples: int,
     *,
-    resolve,
     self_name: Optional[str],
-) -> Text:
-    """One route rendered as a full line: contact → relays → us, then its context and tag.
+    self_key: Optional[str],
+    hash_bytes: int,
+) -> tuple[Text, Text]:
+    """One route as ``(path, context)`` — the pathline, and the line it hangs its context under.
 
     The whole route reads left to right in the graph's own direction (contact on the left, us
-    on the right), so the row and the drawn line cross-read. The line is one
-    :class:`~meshterm.ui.pathline.PathLine` — the contact and our own node anchoring the two
-    ends in their own hues (the contact's key-derived, us the white ``you``), the relays at a
-    1-byte hash width, each ``name (3d)`` — the trace presentation, as powerline chips where
-    the terminal can draw them. The bottleneck SNR and sample count trail as muted context,
-    and a ``★ best`` / ``device route`` tag marks the winner and the firmware's learned route.
+    on the right), so the row and the drawn line cross-read. ``path`` is one
+    :class:`~meshterm.ui.pathline.PathLine` — every hop, endpoints included, shown as its hash
+    at our own node's path-hash-mode width rather than a resolved name, so the line reads as
+    the same key-derived identity the graph's chips and column colours already use, and at the
+    width the device itself carries per hop, as powerline chips where the terminal can draw
+    them. ``context`` is the bottleneck SNR, sample count, and a ``★ best`` / ``device route``
+    tag marking the winner and the firmware's learned route — kept off the pathline itself so
+    a long hash chain never crowds it out, and empty when a route earns none of them.
     """
+    hash_bytes = max(hash_bytes, 1)  # an unknown mode still needs a real width to slice
     relays = path_line(
-        list(reversed(hops_out)), resolve, prefix_bytes=1, self_name=self_name,
-        show_hash=True, hash_bytes=1,
+        list(reversed(hops_out)), lambda _hop: None, prefix_bytes=hash_bytes,
+        self_name=self_name, hash_bytes=hash_bytes,
     )
-    text = PathLine([
-        PathHop(node_label, key=name_key),
+    path = PathLine([
+        PathHop(_hop_hash(name_key, node_label, hash_bytes), key=name_key, lit_bytes=hash_bytes),
         *relays.hops,
-        PathHop(self_name or "us", you=True),
+        PathHop(_hop_hash(self_key, self_name or "us", hash_bytes), you=True),
     ]).text()
+
+    atoms: list[Text] = []
     if weakest is not None:
-        text.append("  ·  weakest ", style="muted")
-        text.append(f"{weakest:+.1f} dB", style=snr_style(weakest))
+        snr = Text("weakest ", style="muted")
+        snr.append(f"{weakest:+.1f} dB", style=snr_style(weakest))
+        atoms.append(snr)
     if samples:
-        text.append(f"  ·  {samples}×", style="muted")
+        atoms.append(Text(f"{samples}×", style="muted"))
     if tag == "best":
-        text.append("   ★ best", style="brand")
+        atoms.append(Text("★ best", style="brand"))
     elif tag == "device":
-        text.append("   device route", style="accent")
-    return text
+        atoms.append(Text("device route", style="accent"))
+    context = Text()
+    for i, atom in enumerate(atoms):
+        if i:
+            context.append("  ·  ", style="muted")
+        context.append_text(atom)
+    return path, context
 
 
 def _cluster_presentation(members: tuple[str, ...], type_of) -> _Cluster:  # noqa: ANN001
@@ -1174,8 +1299,10 @@ def _routes_view(
     key_of,
     style,
     self_name,
+    self_key,
     node_label,
     name_key,
+    hash_bytes,
 ) -> _RoutesView:
     """Build the Routes tab's selectable routes (node → us) + graph callbacks, or a muted note.
 
@@ -1247,11 +1374,11 @@ def _routes_view(
     routes: list[_Route] = []
     for hops_out, tag, weakest, samples in entries:
         spec = render_forced_spec(hops_out, target_hash, width_bytes) if target_hash else ""
-        row = _route_line(
+        path, context = _route_line(
             node_label, name_key, hops_out, tag, weakest, samples,
-            resolve=resolve, self_name=self_name,
+            self_name=self_name, self_key=self_key, hash_bytes=hash_bytes,
         )
-        routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, row=row))
+        routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, path=path, context=context))
 
     # The legend explains the typed relay marks, so it is decided on the members' real types —
     # before contraction folds a dense cluster's members behind one synthetic id.

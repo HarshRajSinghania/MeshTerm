@@ -2008,3 +2008,54 @@ def test_select_without_hscroll_ignores_left_right() -> None:
     screen.handle("right")
     screen.handle("left")
     assert screen.render_body(40) == before and screen._hshift == 0
+
+
+# --- row detail lines (opt-in) -------------------------------------------------------
+
+
+def test_select_choice_detail_hangs_under_its_row() -> None:
+    """A Choice.detail draws as a second, indented line right under its title."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    screen = SelectScreen(
+        "pick", [Choice("first row", 1, detail="weakest -6.0 dB  ·  3×"), Choice("second", 2)]
+    )
+    lines = _row_plains(screen, 40)
+    idx = next(i for i, ln in enumerate(lines) if "first row" in ln)
+    assert lines[idx + 1].startswith("  weakest -6.0 dB")
+    assert "second" in lines[idx + 2]
+
+
+def test_select_choice_without_detail_draws_one_line() -> None:
+    """A Choice with no detail (the default, or one resolving empty) stays a single line."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    screen = SelectScreen("pick", [Choice("first row", 1), Choice("second", 2, detail="")])
+    lines = _row_plains(screen, 40)
+    assert lines[1].strip() == "second"
+
+
+def test_select_cursor_tracks_the_highlight_past_a_detail_line() -> None:
+    """The cursor lands on the title line even when an earlier row grew a detail line."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    screen = SelectScreen(
+        "pick",
+        [Choice("first row", 1, detail="has detail"), Choice("second", 2)],
+        default=2,
+    )
+    lines = _row_plains(screen, 40)
+    assert screen.cursor_line() == next(i for i, ln in enumerate(lines) if "second" in ln)
+
+
+def test_select_hscroll_leaves_the_detail_line_unshifted() -> None:
+    """←→ slides the highlighted row's title only — its detail line never scrolls."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    long_title = "row-one-" + "x" * 60 + "-tail"
+    screen = SelectScreen(
+        "pick", [Choice(long_title, 1, detail="weakest -6.0 dB")], hscroll=True
+    )
+    screen.handle("right")
+    lines = _row_plains(screen, 40)
+    assert "weakest -6.0 dB" in lines[1]

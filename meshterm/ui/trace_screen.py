@@ -61,11 +61,18 @@ whatever you make it, and nothing transmits until you say so. An action list dri
 Layout, top to bottom: the walked route (live when a reply has landed, else the route
 the next Trace will walk — composed by hand, or auto-resolved from the device's learned
 route or the stored history and labelled with that provenance — else the most recent
-stored trace), the run's robust aggregates, the
+stored trace), the run's robust aggregates, the wire spec that route amounts to, the
 action list, then the results — per-hop median SNR with quality bars and the
 individual traces newest-first — scrolling in a window beneath the pinned controls:
 PgUp/PgDn/Home/End slide it (↑/↓ belong to the action cursor), and faint ``↑/↓ n
 more`` markers count what the window hides.
+
+Both path lanes draw through THE path widget (:mod:`~meshterm.ui.pathline`) and break
+at hop boundaries under their own value column: a route folds between nodes — never
+parting a name from the hash it is addressed by, and preferring the turn where a
+boomerang's mirrored return begins — while the spec below it folds after a comma,
+never mid-hash. Whatever a route's provenance is (an auto plan's source, a previous
+walk's timestamp) hangs on the line under it rather than crowding its right edge.
 
 Every trace is persisted exactly like a scripted run: one ``runs`` row per trace,
 recorded under it, so the stored history reads the same no matter which front end
@@ -91,11 +98,11 @@ from ..services.topology import render_forced_spec
 from .braillechart import meter
 from .menus import back_rows
 from .theme import snr_style
-from .tui.render import render_hanging, render_lines, render_to_ansi
+from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner
-from .pathline import path_line
-from .widgets import NodeResolver, _link_text, _route_text, highlighted_hash, path_text
+from .pathline import PathHop, PathLine, path_line
+from .widgets import NodeResolver, _link_text, _route_path, highlighted_hash
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -136,6 +143,63 @@ TraceOnce = Callable[
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
 #: The sample-count flow shares the shape and simply always resolves ``None``.
 PathFlow = Callable[[str], Awaitable[Optional[str]]]
+
+#: The route lane's label column: the word plus its padding. Its width is the column
+#: the route's wrapped continuations (and its provenance note) hang under.
+_ROUTE_LANE = "route  "
+
+#: The path lane's label column — the aggregate block's own label width, so the wire
+#: spec starts, and hangs, in the same column as the numbers above it.
+_PATH_LANE = "path            "
+
+
+def _lane_lines(label: str, value: list[Text], width: int) -> list[str]:
+    """Render a labelled lane whose value hangs, already broken, under its own column.
+
+    The counterpart to :func:`~meshterm.ui.tui.render.render_hanging` for values that
+    know their own line breaks: :meth:`~meshterm.ui.pathline.PathLine.wrapped` hands
+    back lines that hop-wrap and carry their indent, so re-wrapping them here would
+    only undo that. The label rides the first line; the rest are drawn as given.
+
+    Args:
+        label: The lane's label column, padding included (the value hangs under it).
+        value: The value's lines — first bare, continuations self-indented.
+        width: The render width; lines are cropped, never folded.
+
+    Returns:
+        The rendered ANSI lines.
+    """
+    lines: list[str] = []
+    for i, line in enumerate(value):
+        row = Text(label, style="muted") if i == 0 else Text()
+        row.append_text(line)
+        lines.append(render_to_ansi(row, width, no_wrap=True))
+    return lines
+
+
+def _note(text: str, indent: int, *, style: str = "faint") -> Text:
+    """A lane's trailing note — provenance, a stamp, a count — on its own hanging line."""
+    return Text(" " * indent + text, style=style)
+
+
+def _spec_line(spec: str) -> PathLine:
+    """The literal wire spec as a path line: comma-joined, each hop in its own hue.
+
+    Exactly the characters the radio is handed (``3d63,7f21,3d63``) — the lane's whole
+    point is being the verbatim spec, so it stays plain-mode text rather than becoming
+    chips. What THE path widget adds is the app-wide key colouring (each addressed
+    slice lit in its own key-derived hue instead of one flat brand smear) and hop-
+    boundary wrapping, so a spec too long for its column breaks after a comma.
+
+    Args:
+        spec: The wire spec (comma-separated hex hop hashes; blanks tolerated).
+
+    Returns:
+        The spec's :class:`~meshterm.ui.pathline.PathLine`, comma-separated.
+    """
+    tokens = [t.strip() for t in spec.split(",") if t.strip()]
+    hops = [PathHop(t, key=t, lit_bytes=len(t) // 2) for t in tokens]
+    return PathLine(hops, mode="plain", separator=",")
 
 
 def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
@@ -678,18 +742,12 @@ class TraceScreen(Screen):
         """
         stats = TraceStats.from_traces(self._target, self._traces)
         current = next((t for t in reversed(self._traces) if t.success), None)
-        # The route hangs under its own value block when it wraps (the app-wide
-        # labelled-row rule), so a long walk never folds back to column zero.
-        lines = render_hanging(
-            Text("route  ", style="muted"), self._route_line(current), width, indent=7
-        )
+        # Both path lanes break at hop boundaries under their own value column (the
+        # app-wide labelled-row rule): a long walk never folds back to column zero,
+        # and never splits a name from its hash or a wire spec mid-hash.
+        lines = _lane_lines(_ROUTE_LANE, self._route_value(current, width), width)
         lines.extend(render_lines(Group(Text(), self._summary(stats)), width))
-        # The path lane hangs under its own value block like the route above it, so a
-        # long wire spec never folds back to column zero.
-        lines.extend(render_hanging(
-            Text("path            ", style="muted"), self._path_value(current), width,
-            indent=16,
-        ))
+        lines.extend(_lane_lines(_PATH_LANE, self._path_value(current, width), width))
         lines.append("")
         self._cursor: Optional[int] = None
         for i, key in enumerate(self._actions):
@@ -787,29 +845,53 @@ class TraceScreen(Screen):
             text.style = "brand"
         return text
 
-    def _route_line(self, current: Optional[TraceResult]) -> Text:
-        """The route: live when a reply has landed, else planned, else the stored one.
+    def _route_value(self, current: Optional[TraceResult], width: int) -> list[Text]:
+        """The route lane's value lines: the path, hop-wrapped, then its provenance.
 
-        The label lane ("route  ") is added by the caller, which renders this body
-        with a hanging indent so wrapped routes align under themselves.
+        The route itself is live once a reply has landed, else the plan the next Trace
+        walks, else the last stored walk, else a muted note. Whichever it is, it breaks
+        at hop boundaries under the lane's own column — a name never parts from its
+        hash, and a boomerang folds at its turn — while the provenance (where an auto
+        plan came from, when a previous walk ran) takes the line below rather than
+        crowding the route's right edge.
+
+        Both ends go bare (``bare_self``): every walk on this screen leaves us and comes
+        back to us, so naming ourselves twice would only push the hops that *are* news
+        out of the lane.
+
+        Args:
+            current: The newest successful trace of this session, if any.
+            width: The full body width; the lines fit it, indent included.
+
+        Returns:
+            The value's lines — the first bare (the label rides it), continuations
+            already carrying the lane's indent.
         """
+        indent = len(_ROUTE_LANE)
         if current is not None:
-            return _route_text(current, self._device_label, self._resolve, self._device_hash)
+            route = _route_path(
+                current, self._device_label, self._resolve, self._device_hash,
+                bare_self=True,
+            )
+            return route.wrapped(width, indent=indent)
         planned = self._planned_route()
         if planned is not None:
-            return planned
+            lines = planned.wrapped(width, indent=indent)
+            if self._effective_spec()[1] and self._auto_source:
+                lines.append(_note(f"(auto · {self._auto_source})", indent))
+            return lines
         if self._previous is not None:
-            line = _route_text(
-                self._previous, self._device_label, self._resolve, self._device_hash
+            route = _route_path(
+                self._previous, self._device_label, self._resolve, self._device_hash,
+                bare_self=True,
             )
+            lines = route.wrapped(width, indent=indent)
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
-            # On its own line so a long route never squeezes the stamp off the
-            # right edge.
-            line.append(f"\n(previous · {stamp})", style="faint")
-            return line
+            lines.append(_note(f"(previous · {stamp})", indent))
+            return lines
         if self._mode == "path":
-            return Text("none — compose a path to walk", style="muted")
-        return Text("unknown — press Enter to trace", style="muted")
+            return [Text("none — compose a path to walk", style="muted")]
+        return [Text("unknown — press Enter to trace", style="muted")]
 
     def _effective_spec(self) -> tuple[str, bool]:
         """The wire spec the next Trace walks, and whether auto resolution supplied it.
@@ -871,20 +953,20 @@ class TraceScreen(Screen):
 
         asyncio.ensure_future(run())
 
-    def _planned_route(self) -> Optional[Text]:
+    def _planned_route(self) -> Optional[PathLine]:
         """The route the next Trace walks as a preview, or ``None`` without one.
 
-        Renders the literal wire spec through the shared path widget — the whole
-        walk, since the trace protocol has no separate return-path field. In target
-        mode the spec is the symmetric boomerang (outbound hops, the target, those
-        hops mirrored): its second half is dimmed via the widget's ``dim_from``,
-        reading as "this part isn't yours to compose". A path walk's spec is the
-        whole route (hand-composed, or the last stored walk), so every hop renders
-        in full colour and only the automatic landing back on us stays faint. An
-        auto-resolved spec carries a faint provenance line naming where the route
-        came from.
+        Renders the literal wire spec through THE path widget — the whole walk, since
+        the trace protocol has no separate return-path field. In target mode the spec
+        is the symmetric boomerang (outbound hops, the target, those hops mirrored):
+        its second half is dimmed via the widget's ``dim_from``, reading as "this part
+        isn't yours to compose" — and, when the line wraps, giving the fold its natural
+        seam (the turn). A path walk's spec is the whole route (hand-composed, or the
+        last stored walk), so every hop renders in full colour and only the automatic
+        landing back on us stays faint. Our own endpoints go bare, as in
+        :meth:`_route_value` — the arrow alone.
         """
-        spec, auto = self._effective_spec()
+        spec, _ = self._effective_spec()
         tokens = [h.strip() for h in spec.split(",") if h.strip()]
         if not tokens:
             return None
@@ -893,19 +975,15 @@ class TraceScreen(Screen):
             outbound, return_leg = tokens[: mid + 1], tokens[mid + 1 :]
         else:
             outbound, return_leg = tokens, []
-        text = path_text(
+        return path_line(
             [None, *outbound, *return_leg, None],
             self._resolve,
             prefix_bytes=8,  # spec tokens are the addressed slices: light them whole
             self_name=self._device_label,
             show_hash=True,
             dim_from=1 + len(outbound),
+            bare_self=True,
         )
-        if auto and self._auto_source:
-            # On its own line (like the previous-trace stamp) so a long route
-            # never squeezes the provenance off the right edge.
-            text.append(f"\n(auto · {self._auto_source})", style="faint")
-        return text
 
     def _displayed_hop_count(self, current: Optional[TraceResult]) -> Optional[int]:
         """How many nodes the displayed route passes through, endpoints excluded.
@@ -939,21 +1017,40 @@ class TraceScreen(Screen):
             ("median RTT      ", "muted"), (rtt, ""),
         )
 
-    def _path_value(self, current: Optional[TraceResult]) -> Text:
-        """The ``path`` lane's value: the wire spec (or its auto/none note) + hop count."""
-        value = Text()
+    def _path_value(self, current: Optional[TraceResult], width: int) -> list[Text]:
+        """The ``path`` lane's value lines: the wire spec (or its note) + hop count.
+
+        A pinned spec is the verbatim string the radio is handed, drawn through THE
+        path widget (:func:`_spec_line`) so it breaks after a comma instead of
+        splitting a hash in half; the auto/none states stay prose. The hop count
+        trails the last line, dropping to a line of its own only when it doesn't fit.
+
+        Args:
+            current: The newest successful trace of this session, if any — its walked
+                route is what the count describes once one has landed.
+            width: The full body width; the lines fit it, indent included.
+
+        Returns:
+            The value's lines, indented like :meth:`_route_value`'s.
+        """
+        indent = len(_PATH_LANE)
         if self._path_spec:
-            value.append(self._path_spec, style="brand")
+            lines = _spec_line(self._path_spec).wrapped(width, indent=indent)
         elif self._effective_spec()[1] and self._auto_source:
-            value.append(f"auto · {self._auto_source}", style="muted")
+            lines = [Text(f"auto · {self._auto_source}", style="muted")]
         elif self._mode == "path":
-            value.append("none — compose a path first", style="muted")
+            lines = [Text("none — compose a path first", style="muted")]
         else:
-            value.append("auto — path-less (unknown target)", style="muted")
+            lines = [Text("auto — path-less (unknown target)", style="muted")]
         hops = self._displayed_hop_count(current)
         if hops is not None:
-            value.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
-        return value
+            count = f"{hops} hop{'s' if hops != 1 else ''}"
+            used = lines[-1].cell_len + (indent if len(lines) == 1 else 0)
+            if used + len(count) + 4 <= width:
+                lines[-1].append(f"  · {count}", style="muted")
+            else:
+                lines.append(_note(count, indent, style="muted"))
+        return lines
 
     def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
         """The per-hop median SNRs with quality bars, in path order."""
@@ -1107,6 +1204,54 @@ def _best_observed(topo: Any, target_hash: str) -> Optional[tuple[tuple[str, ...
     return scenario.hops, source
 
 
+def _scenario_path(
+    scenario: Any, topo: Any, target_id: str, *, device_label: str, width_bytes: int
+) -> Text:
+    """A scenario's pathline: us, the candidate hops, and the target — one line.
+
+    Full boomerang endpoints included (not just the intermediate hops a
+    :class:`~meshterm.services.topology.PathScenario` stores), so the row reads as
+    the whole route rather than a fragment the reader has to mentally close.
+    Renders through the shared path widget, so every hop wears its own key hue (an
+    unnamed hop its prefix-lit hash) instead of the old single-colour smear.
+    """
+    route = path_line(
+        [None, *scenario.hops, target_id],
+        topo.display_name,
+        prefix_bytes=width_bytes,
+        self_name=device_label,
+    )
+    return route.text()
+
+
+def _scenario_detail(scenario: Any) -> Text:
+    """The line hanging under a scenario's pathline: its provenance and evidence.
+
+    The device route and the direct shot keep their short provenance tag (observed
+    candidates *are* their hop sequence, so they carry none); then the bottleneck
+    SNR and sample count a trace would expect to measure, or ``unobserved`` when
+    the evidence graph has nothing to say about it yet.
+    """
+    atoms: list[Text] = []
+    if scenario.source in ("device", "direct"):
+        style = "accent" if scenario.source == "device" else "muted"
+        atoms.append(Text(scenario.label, style=style))
+    if scenario.weakest_snr is not None:
+        snr = Text("weakest ", style="muted")
+        snr.append(f"{scenario.weakest_snr:+.1f} dB", style=snr_style(scenario.weakest_snr))
+        atoms.append(snr)
+    if scenario.samples:
+        atoms.append(Text(f"{scenario.samples}×", style="muted"))
+    elif scenario.score == 0:
+        atoms.append(Text("unobserved", style="faint"))
+    detail = Text()
+    for i, atom in enumerate(atoms):
+        if i:
+            detail.append("  ·  ", style="muted")
+        detail.append_text(atom)
+    return detail
+
+
 async def open_trace(ctx: "AppContext", target: str, *, initial_spec: str = "") -> int:
     """Open the live *Trace target* screen for ``target`` and run it until dismissed.
 
@@ -1185,13 +1330,7 @@ async def _open_session(
     from ..core.connection import DeviceAuthenticationError
     from ..core.models import LOCAL_DEVICE_LABEL, Contact, NeighbourInfo
     from ..services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
-    from ..services.topology import (
-        MeshTopology,
-        PathScenario,
-        _is_hex,
-        build_topology,
-        collapse_width,
-    )
+    from ..services.topology import MeshTopology, _is_hex, build_topology, collapse_width
     from .path_composer import FetchNeighbours, PathComposerScreen
     from .surface import TuiUi
     from .tui import CANCEL, Choice, SelectScreen, Separator
@@ -1582,37 +1721,6 @@ async def _open_session(
             sample_count = int(picked)
         return None
 
-    def scenario_title(scenario: PathScenario, topo: MeshTopology) -> Text:
-        """One scenario as a select row: the route itself, and its observed evidence.
-
-        Observed candidates *are* their hop sequence, so the row leads with the route
-        and no label; the device route and the direct shot keep their short labels —
-        that provenance is the point of offering them. The route renders through the
-        shared path widget, so every hop wears its own key hue (an unnamed hop its
-        prefix-lit hash) instead of the old single-colour smear.
-        """
-        route = path_line(
-            list(scenario.hops), topo.display_name, prefix_bytes=width_bytes
-        )
-        if scenario.source == "observed":
-            text = route.text()
-        else:
-            styles = {"device": "accent", "direct": "muted"}
-            text = Text(scenario.label, style=styles.get(scenario.source, ""))
-            if scenario.hops:
-                text.append("  via ", style="muted")
-                text.append_text(route.text())
-            else:
-                text.append("  no repeaters", style="muted")
-        if scenario.weakest_snr is not None:
-            text.append("  ·  weakest ", style="muted")
-            text.append(f"{scenario.weakest_snr:+.1f} dB", style=snr_style(scenario.weakest_snr))
-        if scenario.samples:
-            text.append(f"  ·  {scenario.samples}×", style="muted")
-        elif scenario.score == 0:
-            text.append("  ·  unobserved", style="faint")
-        return text
-
     def outcome_title(rank: int, outcome: ProbeOutcome) -> Text:
         """One probed candidate as a ranked select row: one measured trace, not a guess."""
         stats = outcome.stats
@@ -1756,7 +1864,14 @@ async def _open_session(
         ]
         for scenario in scenarios:
             items.append(
-                Choice(title=scenario_title(scenario, topo), value=("use", scenario))
+                Choice(
+                    title=_scenario_path(
+                        scenario, topo, target_id,
+                        device_label=device_label, width_bytes=width_bytes,
+                    ),
+                    detail=_scenario_detail(scenario),
+                    value=("use", scenario),
+                )
             )
         items.append(Separator(" "))
         items.append(

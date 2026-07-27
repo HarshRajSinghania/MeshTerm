@@ -8,14 +8,19 @@ and headless (the same approach as ``test_tui``).
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import timedelta
 
 import pytest
 
-from meshterm.core.models import Hop, TraceResult, TraceStats, TxLevelResult, TxOptResult, utcnow
+from meshterm.core.models import Contact, Hop, TraceResult, TraceStats, TxLevelResult, \
+    TxOptResult, utcnow
+from meshterm.services.topology import PathScenario, build_topology
 from meshterm.ui.braillechart import _METER_SLIM
 from meshterm.ui.theme import snr_style
-from meshterm.ui.trace_screen import _BAR_WIDTH, OPEN_TROPHY_CASE, TraceScreen, snr_bar
+from meshterm.ui.trace_screen import (
+    _BAR_WIDTH, OPEN_TROPHY_CASE, TraceScreen, _scenario_detail, _scenario_path, snr_bar,
+)
 from meshterm.ui.tx_screen import TxSweepScreen
 
 # The slim meter's fill glyphs (the SNR bar draws through the shared braille meter).
@@ -58,9 +63,14 @@ def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceRe
     )
 
 
+#: SGR escapes, stripped out of rendered lines so assertions read as plain text (a
+#: per-hop-coloured path splits its own characters across a dozen colour runs).
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _plain(lines: list[str]) -> str:
-    """Join rendered ANSI lines and strip nothing — assertions use substring checks."""
-    return "\n".join(lines)
+    """Join rendered lines with their colour escapes stripped, for substring checks."""
+    return _ANSI.sub("", "\n".join(lines))
 
 
 # --- snr_bar -------------------------------------------------------------------
@@ -365,8 +375,9 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
     assert screen._path_spec == "3d,f2,3d"
     body = _plain(screen.render_body(100))
     assert "3d,f2,3d" in body
-    # the planned route previews outbound *and* the resolved, dimmed return leg
-    assert body.count("Us") >= 2
+    # the planned route previews outbound *and* the resolved, dimmed return leg,
+    # our own ends spending no words — just their bit of arrow
+    assert "route  → 3d → f2 → 3d →" in body
     assert body.count("3d") >= 2
 
 
@@ -628,7 +639,10 @@ async def test_escaping_mid_run_skips_the_record_dialog() -> None:
 
 
 def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
-    """A palindromic target-mode spec dims its second half; hand walks never dim."""
+    """A palindromic target-mode spec dims its second half; hand walks never dim.
+
+    Both ends are ours, so both go bare: the line opens and closes on a lone arrow.
+    """
     screen, _ = _trace_screen()
 
     def faint_cells(text) -> int:  # noqa: ANN001
@@ -637,18 +651,50 @@ def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
         )
 
     screen._path_spec = "3d,f2,3d"  # symmetric boomerang: the mirror is dimmed
-    symmetric = screen._planned_route()
-    assert symmetric.plain == "Us → 3d → f2 → 3d → Us"
+    symmetric = screen._planned_route().text()
+    assert symmetric.plain == "→ 3d → f2 → 3d →"
     screen._path_spec = "3d,f2,27"  # a stale hand walk: every hop is the user's
-    custom = screen._planned_route()
-    assert custom.plain == "Us → 3d → f2 → 27 → Us"
+    custom = screen._planned_route().text()
+    assert custom.plain == "→ 3d → f2 → 27 →"
     assert faint_cells(symmetric) > faint_cells(custom)
 
     # In path mode even a there-and-back-the-same-way walk is fully hand-composed,
     # so a palindrome must NOT read as "not yours to compose".
     walk, _ = _trace_screen(mode="path")
     walk._path_spec = "3d,f2,3d"
-    assert faint_cells(walk._planned_route()) == faint_cells(custom)
+    assert faint_cells(walk._planned_route().text()) == faint_cells(custom)
+
+
+def test_route_lane_wraps_at_hop_boundaries_under_its_own_column() -> None:
+    """A route too wide for the lane breaks between hops, never inside one.
+
+    Every continuation hangs under the value column (never back at column zero), the
+    line it continues from ends on the ``→`` cue, and no name is ever parted from the
+    hash it is addressed by.
+    """
+    names = {"3d": "YUL-Cartierville", "f2": "Mile-End-Rooftop", "27": "Beaubien-Sud"}
+    screen, _ = _trace_screen(mode="path")
+    screen._resolve = lambda h: names.get(h, h)
+    screen._path_spec = "3d,f2,27"
+    lines = [line.plain for line in screen._route_value(None, 60)]
+    assert len(lines) > 1  # it really did wrap at this width
+    assert all(len(line) <= 60 for line in lines)
+    assert all(line.startswith(" " * 7) for line in lines[1:])  # hanging, not column 0
+    assert all(line.rstrip().endswith("→") for line in lines[:-1])
+    for hop, name in names.items():  # every name still carries its own hash, whole
+        assert any(f"{name} ({hop})" in line for line in lines)
+
+
+def test_path_lane_breaks_the_wire_spec_after_a_comma() -> None:
+    """The spec lane stays the verbatim wire string, folding only at its commas."""
+    screen, _ = _trace_screen(mode="path")
+    screen._path_spec = "3d63ab99,7f21cd01,27aa1122,f2c20099"
+    lines = [line.plain for line in screen._path_value(None, 44)]
+    assert len(lines) > 1
+    assert all(len(line) <= 44 for line in lines)
+    assert lines[0].endswith(",")  # the comma is the cue, not an arrow
+    spec = "".join(line.strip() for line in lines)
+    assert spec.startswith(screen._path_spec)  # character for character, hop count after
 
 
 def test_summary_appends_the_displayed_hop_count() -> None:
@@ -670,9 +716,11 @@ def test_auto_resolved_route_renders_with_its_provenance() -> None:
     screen, _ = _trace_screen(
         auto_spec=lambda: "3d63,f2c2,aabb,f2c2,3d63", auto_source="last trace · Jul 09 14:32"
     )
-    plan = screen._planned_route().plain
-    assert "Us → 3d63 → f2c2 → aabb → f2c2 → 3d63 → Us" in plan
-    assert "(auto · last trace · Jul 09 14:32)" in plan
+    plan = screen._planned_route().text().plain
+    assert "→ 3d63 → f2c2 → aabb → f2c2 → 3d63 →" in plan
+    # The provenance hangs on its own line under the route, not inside the path itself.
+    route = "\n".join(line.plain for line in screen._route_value(None, 100))
+    assert route.endswith("(auto · last trace · Jul 09 14:32)")
     body = _plain(screen.render_body(100))
     assert "auto · last trace · Jul 09 14:32" in body  # the summary's path row
     assert "· 5 hops" in body
@@ -682,8 +730,8 @@ def test_composed_path_outranks_the_auto_route() -> None:
     """A hand-composed spec replaces the auto plan everywhere — display and wire."""
     screen, _ = _trace_screen(auto_spec=lambda: "aabb", auto_source="device route")
     screen._path_spec = "3d63,aabb,3d63"
-    plan = screen._planned_route().plain
-    assert "Us → 3d63 → aabb → 3d63 → Us" in plan
+    plan = screen._planned_route().text().plain
+    assert "→ 3d63 → aabb → 3d63 →" in plan
     assert "(auto ·" not in plan
     assert screen._effective_spec() == ("3d63,aabb,3d63", False)
 
@@ -730,9 +778,9 @@ async def test_trace_screen_path_mode_arms_from_the_previous_walk() -> None:
     body = _plain(screen.render_body(100))
     assert "Trace — one transmission" in body  # armed, not "compose a path first"
     assert "auto · last walk · Jul 09 14:32" in body  # the summary's path row
-    plan = screen._planned_route().plain
-    assert "Us → 3d → f2 → Us" in plan
-    assert "(auto · last walk · Jul 09 14:32)" in plan
+    plan = screen._planned_route().text().plain
+    assert "→ 3d → f2 →" in plan
+    assert "(auto · last walk · Jul 09 14:32)" in body  # hanging under the route
     screen.handle("enter")  # the cursor opens on Trace
     assert screen._running
     await screen._worker
@@ -767,7 +815,7 @@ async def test_reverse_flips_a_path_walk_and_restarts_the_run() -> None:
     assert screen._path_spec == "27,f2,3d"  # end-for-end
     assert screen._traces == []  # the forward aggregates cleared
     assert screen._total_traces == 1  # the session count survives the restart
-    assert "Us → 27 → f2 → 3d → Us" in screen._planned_route().plain
+    assert "→ 27 → f2 → 3d →" in screen._planned_route().text().plain
 
 
 def test_reverse_adopts_and_flips_the_visible_auto_walk() -> None:
@@ -779,7 +827,7 @@ def test_reverse_adopts_and_flips_the_visible_auto_walk() -> None:
     screen._index = screen._actions.index("reverse")
     screen.handle("enter")
     assert screen._path_spec == "f2,3d"  # the shown auto walk, flipped and pinned
-    assert "Us → f2 → 3d → Us" in screen._planned_route().plain
+    assert "→ f2 → 3d →" in screen._planned_route().text().plain
 
 
 def test_reverse_is_inert_without_a_reversible_path() -> None:
@@ -1082,3 +1130,70 @@ def test_parse_tx_range_clamps_and_rejects() -> None:
     assert parse_tx_range("2-99") == (12, 28)  # clamped to the firmware window
     assert parse_tx_range("24-14") is None
     assert parse_tx_range("banana") is None
+
+
+# --- explore-paths scenario rows --------------------------------------------------
+
+_US = "aaaaaaaaaaaa"
+_HUB = Contact(name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63c6429436")
+_FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c24f54551e")
+
+
+def _scenario_topo() -> object:
+    return build_topology(
+        self_id=_US + "0" * 52, contacts=[_HUB, _FAR],
+        trace_paths=[], packet_paths=[], neighbour_links=[],
+    )
+
+
+def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
+    """The pathline names the whole boomerang leg, not just the stored intermediate hops."""
+    topo = _scenario_topo()
+    scenario = PathScenario(
+        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
+    )
+    text = _scenario_path(
+        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+    )
+    assert text.plain == "YUL-Me → Hub → Far"
+
+
+def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
+    """A direct (no-repeaters) scenario's pathline is just us and the target — no gap."""
+    topo = _scenario_topo()
+    scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
+    text = _scenario_path(
+        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+    )
+    assert text.plain == "YUL-Me → Far"
+
+
+def test_scenario_detail_carries_provenance_snr_and_samples() -> None:
+    """The device/direct provenance tag, weakest SNR, and sample count all show, in order."""
+    scenario = PathScenario(
+        label="device route", hops=("3d63c6429436",), source="device", score=2.0,
+        weakest_snr=-6.0, samples=3,
+    )
+    detail = _scenario_detail(scenario)
+    assert "device route" in detail.plain
+    assert "weakest -6.0 dB" in detail.plain
+    assert "3×" in detail.plain
+
+
+def test_scenario_detail_observed_carries_no_provenance_tag() -> None:
+    """An observed candidate's detail line skips the tag — the route itself is the point."""
+    scenario = PathScenario(
+        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
+        weakest_snr=-4.0, samples=2,
+    )
+    detail = _scenario_detail(scenario)
+    assert "observed" not in detail.plain
+    assert "weakest -4.0 dB" in detail.plain
+
+
+def test_scenario_detail_unscored_scenario_reads_unobserved() -> None:
+    """A scenario with no evidence at all (score 0, no samples) reads plainly unobserved."""
+    scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
+    detail = _scenario_detail(scenario)
+    assert "direct" in detail.plain
+    assert "unobserved" in detail.plain

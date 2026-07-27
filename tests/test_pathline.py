@@ -8,10 +8,14 @@ cell budget — so these tests assert rendered strings and span styles, not vibe
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 import meshterm.ui.pathline as pathline
-from meshterm.ui.pathline import POWERLINE_SEP, PathHop, PathLine, path_line
+from meshterm.ui.pathline import (
+    POWERLINE_CAP, POWERLINE_SEP, PathHop, PathLine, _style_hex, path_line,
+)
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
 
@@ -157,6 +161,99 @@ def test_wrapped_breaks_at_hops_under_a_hanging_indent() -> None:
     assert all(line.cell_len <= 16 for line in lines)
 
 
+def test_wrapped_evens_the_lines_instead_of_widowing_the_tail() -> None:
+    """A hop that misses the first line by a cell doesn't get stranded alone below it.
+
+    Greedy packing would cram ``us → a → b →`` and widow ``us``; the fold takes the
+    same number of lines either way, so it spreads the hops across them instead.
+    """
+    hops = [PathHop(label) for label in ("us", "alpha", "bravo", "us")]
+    lines = PathLine(hops, mode="plain").wrapped(20, indent=0)
+    assert [line.plain for line in lines] == ["us → alpha →", "bravo → us"]
+
+
+def test_wrapped_folds_a_faded_return_leg_at_its_turn() -> None:
+    """A boomerang breaks where it turns — composed leg above, its echo below.
+
+    The dimmed hops are the mirrored return, so folding there gives the wrapped route
+    a shape instead of an arbitrary mid-leg seam. It is only taken when free: here the
+    turn fold costs no more lines than the greedy break would.
+    """
+    out = [PathHop(n) for n in ("me", "north-relay", "east-relay", "dest")]
+    back = [PathHop(n, dim=True) for n in ("east-relay", "north-relay", "me")]
+    lines = PathLine(out + back, mode="plain").wrapped(40, indent=0)
+    assert [line.plain for line in lines] == [
+        "me → north-relay → east-relay → dest →",  # out, ending on the target
+        "east-relay → north-relay → me",  # and the mirror it comes home by
+    ]
+
+
+def test_wrapped_folds_a_walked_boomerang_at_its_turn_too() -> None:
+    """A trace that answered dims nothing, but its route is still its own mirror.
+
+    So the turn is found from the hop sequence itself, and the walk folds exactly
+    where the plan that armed it folded — one route, one shape.
+    """
+    walked = [PathHop(n) for n in ("me", "north-relay", "east-relay", "dest")]
+    walked += [PathHop(n) for n in ("east-relay", "north-relay", "me")]
+    lines = PathLine(walked, mode="plain").wrapped(46, indent=0)
+    assert [line.plain for line in lines] == [
+        "me → north-relay → east-relay → dest →",
+        "east-relay → north-relay → me",
+    ]
+
+
+def test_wrapped_never_folds_before_a_lone_faded_landing() -> None:
+    """A path whose only dim hop is the automatic landing home keeps it on a real line.
+
+    Path-mode walks dim just that last ``us``; folding at "the fade" there would widow
+    it, so the seam needs two hops on each side to count as a turn.
+    """
+    hops = [PathHop(label) for label in ("us", "alpha", "bravo", "charlie")]
+    hops.append(PathHop("us", dim=True))
+    lines = PathLine(hops, mode="plain").wrapped(26, indent=0)
+    assert len(lines) == 2
+    assert lines[-1].plain != "us"
+    assert lines[-1].plain.endswith("→ us")
+
+
+def test_wrapped_lines_always_fit_their_width() -> None:
+    """No mix of hops, mode, width, or indent ever produces a line past the budget.
+
+    Lines are fitted arithmetically from per-hop measurements rather than by rendering
+    every candidate group, so this sweeps that model against what actually gets drawn —
+    over-wide lone hops (truncated, cue included) and chip lines (which carry a closing
+    edge no arrow line has) are where the two would drift apart.
+    """
+    rng = random.Random(7)
+    for _ in range(200):
+        hops = [
+            PathHop(
+                "N" * rng.randint(1, 16),
+                key=f"{i:02x}aa",
+                annotation=f"{i:02x}" if rng.random() < 0.5 else None,
+                dim=rng.random() < 0.3,
+                you=rng.random() < 0.2,
+                lit_bytes=rng.choice((0, 1, 2)),
+            )
+            for i in range(rng.randint(1, 9))
+        ]
+        for mode in ("plain", "powerline"):
+            for width, indent in ((20, 0), (34, 2), (47, 7), (72, 16)):
+                lines = PathLine(hops, mode=mode).wrapped(width, indent=indent)
+                assert all(line.cell_len <= width for line in lines)
+
+
+def test_wrapped_continuation_cue_follows_the_separator() -> None:
+    """A comma-joined line (the trace screen's wire spec) continues on a comma, not an
+    arrow — the cue is the separator's own mark, so the spec stays verbatim."""
+    hops = [PathHop(label) for label in ("3d63ab99", "7f21cd01", "27aa1122")]
+    lines = PathLine(hops, mode="plain", separator=",").wrapped(20, indent=2)
+    assert lines[0].plain.endswith(",")
+    assert "→" not in "".join(line.plain for line in lines)
+    assert "".join(line.plain.strip() for line in lines) == "3d63ab99,7f21cd01,27aa1122"
+
+
 def test_path_line_factory_matches_path_text_character_for_character() -> None:
     """The migration bridge: the trace flavour — device endpoints with annotated
     hashes, a named hop, a prefix-lit unnamed hop, a dimmed tail — renders through
@@ -199,11 +296,46 @@ def test_wrapped_carries_the_cursor_even_onto_a_line_break() -> None:
     assert not any(str(s.style) == "selected" for s in on_break[1].spans)
 
 
-def test_wrapped_chip_lines_each_close_their_pointed_edge() -> None:
-    """Chip wrapping never splits a chip; every line ends on the pointed edge."""
+def test_wrapped_chip_lines_close_male_and_open_female() -> None:
+    """Chip wrapping never splits a chip; every line ends on the pointed edge, and
+    every line *but the first* opens on its mirror — the continuation's own mark, so
+    only the path's very first chip shows a square left edge."""
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
-    lines = PathLine(hops, mode="powerline").wrapped(16, indent=2)
+    lines = PathLine(hops, mode="powerline").wrapped(18, indent=2)
     assert len(lines) == 2
-    assert lines[1].plain.startswith("  ")
+    assert lines[0].plain.startswith(" AAAA")  # the square edge: this is the start
+    assert lines[1].plain.startswith("  " + POWERLINE_CAP)  # …and this is a carry-on
     assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
-    assert all(line.cell_len <= 16 for line in lines)
+    assert all(line.cell_len <= 18 for line in lines)
+
+
+def test_bare_hops_draw_as_their_seam_alone() -> None:
+    """An empty label spends no cells: arrow mode drops the padding it would have sat
+    in, chip mode gives it no chip at all — the arrow into the page *is* the hop."""
+    hops = [PathHop("", you=True), PathHop("Alice", key="aa"), PathHop("", you=True)]
+    assert PathLine(hops, mode="plain").text().plain == "→ Alice →"
+
+    chips = PathLine(hops, mode="powerline").text()
+    assert chips.plain == POWERLINE_SEP + " Alice " + POWERLINE_SEP
+    styles = [str(span.style) for span in chips.spans]
+    # The leading seam is us pointing into Alice's field; the trailing one is Alice's
+    # own point into the page — the closing edge a named tail would have added.
+    assert styles[0] == f"#ffffff on {_style_hex(node_style('aa'))}"
+    assert styles[-1] == _style_hex(node_style("aa"))
+
+
+def test_bare_self_endpoints_survive_wrapping() -> None:
+    """``bare_self`` strips our name and hash from a route's ends; a line that wraps
+    still opens on the female point, and a widowed bare end still draws one."""
+    hops = [None, *(f"{i:02x}aa" for i in range(6)), None]
+    line = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,
+                     device_hash="a1b2", bare_self=True, mode="plain")
+    assert line.text().plain.startswith("→ 00aa")
+    assert line.text().plain.endswith("05aa →")
+    assert "Me" not in line.text().plain
+
+    lines = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                      mode="powerline").wrapped(28, indent=2)
+    assert len(lines) > 1
+    assert all(line.plain.startswith("  " + POWERLINE_CAP) for line in lines[1:])
+    assert all(line.cell_len <= 28 for line in lines)

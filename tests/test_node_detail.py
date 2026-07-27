@@ -192,36 +192,50 @@ def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
 # --- the folded-in route line ---------------------------------------------------
 
 
-def test_route_line_reads_contact_to_us_with_relays_named() -> None:
-    """A route row runs contact → relays → us, each relay named and hash-tagged, tag trailing."""
-    resolve = make_node_resolver([HUB, FAR])
-    line = _route_line(
+def test_route_line_shows_hashes_not_names() -> None:
+    """The pathline runs contact → relays → us, every hop by its hash; the tag trails on context."""
+    path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "device", None, 0,
-        resolve=resolve, self_name="Us",
-    ).plain
-    assert line.startswith("Far")  # the contact anchors the left
-    assert "Hub" in line and "(3d)" in line  # the relay named + its first-byte tag
-    assert line.rstrip().endswith("device route")  # the firmware-route tag trails
-    assert "Us" in line  # our own node anchors the right
+        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+    )
+    line = path.plain
+    assert line.startswith("f2")  # the contact anchors the left, by hash
+    assert "3d" in line  # the relay's first-byte hash
+    assert "Far" not in line and "Hub" not in line  # names are not resolved into the line
+    assert "aa" in line  # our own node anchors the right, by hash
+    assert context.plain == "device route"  # the firmware-route tag, off the pathline itself
+
+
+def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
+    """A device carrying 3-byte routing hashes shows 3-byte hops, not the 1-byte default."""
+    path, _context = _route_line(
+        "Far", FAR.public_key, ("3d63c6429436",), "", None, 0,
+        self_name="Us", self_key=US + "0" * 52, hash_bytes=3,
+    )
+    line = path.plain
+    assert "f2c24f" in line  # the contact's hash at 3 bytes
+    assert "3d63c6" in line  # the relay's hash at 3 bytes
+    assert "aaaaaa" in line  # our own node's hash at 3 bytes
 
 
 def test_route_line_marks_the_best_route_and_its_context() -> None:
-    """The winner wears ★ best and trails its bottleneck SNR and sample count."""
-    resolve = make_node_resolver([HUB, FAR])
-    line = _route_line(
+    """The winner wears ★ best and trails its bottleneck SNR and sample count, on the context line."""
+    _path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "best", 6.5, 4,
-        resolve=resolve, self_name="Us",
-    ).plain
+        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+    )
+    line = context.plain
     assert "★ best" in line and "weakest" in line and "6.5" in line and "4×" in line
 
 
 def test_route_line_direct_route_has_no_relay() -> None:
     """A zero-hop route reads contact → us with nothing between them."""
-    line = _route_line(
+    path, _context = _route_line(
         "Far", FAR.public_key, (), "best", None, 0,
-        resolve=make_node_resolver([FAR]), self_name="Us",
-    ).plain
-    assert "Far" in line and "Us" in line and "→" in line
+        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+    )
+    line = path.plain
+    assert "f2" in line and "aa" in line and "→" in line
 
 
 # --- the routes view (list + graph callbacks) -----------------------------------
@@ -249,8 +263,10 @@ def _view(topo, suggested, device_route, target, node_label, contacts, name_key=
         resolve=make_node_resolver(contacts),
         type_of=make_node_type_resolver(contacts),
         key_of=make_name_key_resolver(contacts),
-        style=route_graph_style, self_name="Us", node_label=node_label,
+        style=route_graph_style, self_name="Us", self_key=US + "0" * 52,
+        node_label=node_label,
         name_key=name_key or (target + "0" * 52),
+        hash_bytes=1,
     )
 
 
@@ -268,7 +284,9 @@ def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
         empty, empty.scenarios("f2c24f54551e"), None, None, "f2c24f54551e", "f2c24f54551e", 1,
         resolve=make_node_resolver([FAR]), type_of=make_node_type_resolver([FAR]),
         key_of=make_name_key_resolver([FAR]), style=route_graph_style, self_name="Us",
+        self_key=US + "0" * 52,
         node_label="Far", name_key=FAR.public_key,
+        hash_bytes=1,
     )
     assert not note.routes and "no route observed" in note.note
 
@@ -396,15 +414,15 @@ def test_contract_bidir_clusters_folds_a_knot_but_keeps_the_rows() -> None:
     from meshterm.ui.node_detail_screen import _contract_bidir_clusters
 
     routes = [
-        _Route(draw=("aa", "bb", "cc"), spec="s1", row=Text("A B C")),
-        _Route(draw=("cc", "bb", "aa"), spec="s2", row=Text("C B A")),
+        _Route(draw=("aa", "bb", "cc"), spec="s1", path=Text("A B C"), context=Text("")),
+        _Route(draw=("cc", "bb", "aa"), spec="s2", path=Text("C B A"), context=Text("")),
     ]
     new, clusters = _contract_bidir_clusters(routes, lambda _n: 2)  # all repeaters
     (cid, cluster), = clusters.items()
     assert cluster.label == "3 repeaters" and cluster.glyph == "▲"
     assert [r.draw for r in new] == [(cid,), (cid,)]  # members folded to the one cluster stop
     assert [r.spec for r in new] == ["s1", "s2"]  # traces still arm on the real path
-    assert [r.row.plain for r in new] == ["A B C", "C B A"]  # the list keeps the full order
+    assert [r.path.plain for r in new] == ["A B C", "C B A"]  # the list keeps the full order
 
 
 def test_contract_leaves_a_two_node_pair_and_unclustered_routes_alone() -> None:
@@ -412,8 +430,8 @@ def test_contract_leaves_a_two_node_pair_and_unclustered_routes_alone() -> None:
     from meshterm.ui.node_detail_screen import _contract_bidir_clusters
 
     routes = [
-        _Route(draw=("aa", "bb"), spec="s1", row=Text("A B")),
-        _Route(draw=("bb", "aa"), spec="s2", row=Text("B A")),
+        _Route(draw=("aa", "bb"), spec="s1", path=Text("A B"), context=Text("")),
+        _Route(draw=("bb", "aa"), spec="s2", path=Text("B A"), context=Text("")),
     ]
     new, clusters = _contract_bidir_clusters(routes, lambda _n: 2)
     assert clusters == {}
@@ -426,8 +444,8 @@ def test_contract_labels_a_mixed_cluster_generically() -> None:
     from meshterm.ui.node_detail_screen import _contract_bidir_clusters
 
     routes = [
-        _Route(draw=("aa", "bb", "cc"), spec="", row=Text("")),
-        _Route(draw=("cc", "bb", "aa"), spec="", row=Text("")),
+        _Route(draw=("aa", "bb", "cc"), spec="", path=Text(""), context=Text("")),
+        _Route(draw=("cc", "bb", "aa"), spec="", path=Text(""), context=Text("")),
     ]
     _new, clusters = _contract_bidir_clusters(routes, lambda n: {"aa": 2, "bb": 3, "cc": 4}[n[:2]])
     (_cid, cluster), = clusters.items()
@@ -537,8 +555,8 @@ def _two_routes() -> _RoutesView:
     """A routes view with two selectable routes, the way the assembly hands them over."""
     return _RoutesView(
         routes=[
-            _Route(draw=("3d63c6429436",), spec="3d,f2,3d", row=Text("via Hub")),
-            _Route(draw=("a1a1a1a1a1a1",), spec="a1,f2,a1", row=Text("via Alt")),
+            _Route(draw=("3d63c6429436",), spec="3d,f2,3d", path=Text("via Hub"), context=Text("")),
+            _Route(draw=("a1a1a1a1a1a1",), spec="a1,f2,a1", path=Text("via Alt"), context=Text("")),
         ],
         glyph_of=lambda n: ("●", "#ffffff"),
         label_of=lambda n: n[:2],
@@ -560,6 +578,88 @@ def test_node_detail_screen_route_selection_arms_the_trace() -> None:
     body = _plain(screen.render_body(72))
     assert "via Hub …" in body and "via Alt …" in body  # both rows drew, …-marked as openers
     assert "Trace" not in body  # the auto-route stand-in only shows with no routes to list
+
+
+def test_node_detail_screen_context_hangs_under_the_pathline() -> None:
+    """The weakest/samples/tag context draws on its own line, indented under the pathline."""
+    routes = _RoutesView(
+        routes=[
+            _Route(
+                draw=("3d63c6429436",), spec="3d,f2,3d",
+                path=Text("f2 3d aa"),
+                context=Text("weakest -6.0 dB  ·  3×  ·  ★ best"),
+            ),
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    lines = screen.render_body(72)
+    body = _plain(lines)
+    assert "f2 3d aa …" in body  # the pathline, opens-marked
+    assert "weakest -6.0 dB" in body and "★ best" in body  # the context, drawn too
+    path_idx = next(i for i, l in enumerate(lines) if "f2 3d aa" in _plain([l]))
+    assert _plain([lines[path_idx]]).startswith("❯ f2 3d aa")  # the pointer leads the pathline
+    context_line = _plain([lines[path_idx + 1]])
+    assert context_line.startswith("  weakest")  # hanging two columns under it, no pointer
+
+
+def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() -> None:
+    """A route with no weakest SNR, sample count, or tag draws just its pathline — no bare
+    hanging line under it."""
+    routes = _RoutesView(
+        routes=[_Route(draw=(), spec="", path=Text("f2 aa"), context=Text(""))],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    lines = screen.render_body(72)
+    path_idx = next(i for i, l in enumerate(lines) if "f2 aa" in _plain([l]))
+    # The very next line is already the next chunk of chrome (the rule/actions), not a blank
+    # or muted context line — nothing hangs under a route that earned no context.
+    assert not _plain([lines[path_idx + 1]]).strip().startswith("weakest")
+
+
+def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
+    """A pathline too wide for the lane scrolls with ←/→ on the highlighted row only; moving
+    the cursor off it abandons the scroll, and an unselected long row just ellipsizes."""
+    long_path = Text("f2 " + " ".join(f"{i:02x}" for i in range(40)) + " aa")
+    routes = _RoutesView(
+        routes=[
+            _Route(draw=("3d",), spec="s0", path=long_path.copy(), context=Text("")),
+            _Route(draw=("a1",), spec="s1", path=Text("f2 3d aa"), context=Text("")),
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    body = _plain(screen.render_body(72))
+    assert "f2 00 01 02" in body  # unscrolled, the chain's start shows
+    assert "←→ scroll" in screen.footer_hint  # the overflow earns the footer atom
+
+    screen.handle("right")
+    screen.handle("right")
+    body = _plain(screen.render_body(72))
+    assert "f2 00 01 02" not in body  # the view has shifted away from the start
+
+    screen.handle("left")
+    body = _plain(screen.render_body(72))
+    assert "f2 00 01 02" not in body  # one step back, still short of the start
+
+    screen.handle("down")  # onto route 1 — abandons route 0's scroll, short row can't scroll
+    screen.render_body(72)
+    assert "←→ scroll" not in screen.footer_hint  # route 1's short pathline earns no hint
+
+    screen.handle("up")  # back onto route 0
+    body = _plain(screen.render_body(72))
+    assert "f2 00 01 02" in body  # the shift reset, back at the start
+    assert "←→ scroll" in screen.footer_hint  # route 0 overflows again
 
 
 def test_node_detail_enter_on_a_route_row_opens_its_trace() -> None:
@@ -589,8 +689,8 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
 
     routes = _RoutesView(
         routes=[
-            _Route(draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0", row=Text("wide")),
-            _Route(draw=("bf61f2fb1d9e", "3d"), spec="s1", row=Text("short")),
+            _Route(draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0", path=Text("wide"), context=Text("")),
+            _Route(draw=("bf61f2fb1d9e", "3d"), spec="s1", path=Text("short"), context=Text("")),
         ],
         glyph_of=lambda n: ("●", "#ffffff"),
         label_of=lambda n: n[:2],
@@ -608,7 +708,7 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
     action rows never leave the screen, however many routes a busy node has."""
     routes = _RoutesView(
         routes=[
-            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", row=Text(f"route {i}"))
+            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
             for i in range(12)
         ],
         glyph_of=lambda n: ("●", "#ffffff"),

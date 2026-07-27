@@ -40,6 +40,7 @@ from ..core.models import (
 from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
 from .mapcanvas import RGB, parse_hex
 from .pathgraph import DST_NODE, GlyphOf, LabelOf, LabelRgbOf, SRC_NODE
+from .pathline import PathLine, path_line
 from .theme import name_style, node_style, snr_style
 
 if TYPE_CHECKING:
@@ -554,18 +555,59 @@ def route_graph_style(
     return glyph_of, label_of, label_rgb_of
 
 
+def _route_path(
+    result: TraceResult,
+    device_label: str = LOCAL_DEVICE_LABEL,
+    resolve: NodeResolver = _identity,
+    device_hash: Optional[str] = None,
+    *,
+    bare_self: bool = False,
+) -> PathLine:
+    """A trace's walked route as THE path widget's line object.
+
+    The same route :func:`_route_text` renders — this hands back the
+    :class:`~meshterm.ui.pathline.PathLine` itself, so a surface with room to spare
+    can wrap it at hop boundaries (:meth:`~meshterm.ui.pathline.PathLine.wrapped`)
+    rather than taking the one-liner and folding it mid-name.
+
+    Args:
+        result: The trace whose route to build.
+        device_label: Name to show for our own device at the path's endpoints.
+        resolve: Maps a raw hop hash to a friendly contact name when known.
+        device_hash: Our own device's key/hash, annotated onto its endpoints when known.
+        bare_self: Draw both ``us`` endpoints as their bare arrow — for a surface (the
+            trace screens' route lane) where a walk starting and ending on us is the
+            premise, not news.
+
+    Returns:
+        The route's :class:`~meshterm.ui.pathline.PathLine` (hopless — reading
+        ``no hops recorded`` — when the trace recorded none).
+    """
+    edges = result.edges(device_label)
+    if not edges:
+        return PathLine([], empty="no hops recorded")
+    hash_bytes = result.path_hash_bytes
+    nodes = [edges[0].origin] + [edge.destination for edge in edges]
+    hops = [None if not node or node == device_label else node for node in nodes]
+    return path_line(
+        hops, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
+        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
+        bare_self=bare_self,
+    )
+
+
 def _route_text(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
     device_hash: Optional[str] = None,
 ) -> Text:
-    """Render a trace's walked route through THE path widget.
+    """Render a trace's walked route through THE path widget, on one line.
 
     Shows the path the trace actually walked — the forced path, or the route the
-    device resolved when auto-routing — as a :func:`path_text` in the trace
-    presentation: each node annotated by its hash at the command's path-hash width,
-    our own device bracketing both ends, e.g.
+    device resolved when auto-routing — in the trace presentation: each node
+    annotated by its hash at the command's path-hash width, our own device
+    bracketing both ends, e.g.
     ``Me (a1b2) → Alice (3d63) → Bob (f2a1) → Me (a1b2)``.
 
     Args:
@@ -577,16 +619,7 @@ def _route_text(
     Returns:
         A :class:`Text` with the node sequence, or a muted note when no hops exist.
     """
-    edges = result.edges(device_label)
-    if not edges:
-        return Text("no hops recorded", style="muted")
-    hash_bytes = result.path_hash_bytes
-    nodes = [edges[0].origin] + [edge.destination for edge in edges]
-    hops = [None if not node or node == device_label else node for node in nodes]
-    return path_text(
-        hops, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
-        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
-    )
+    return _route_path(result, device_label, resolve, device_hash).text()
 
 
 def _hop_medians_table(
