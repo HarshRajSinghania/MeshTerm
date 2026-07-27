@@ -94,6 +94,7 @@ from .theme import snr_style
 from .tui.render import render_hanging, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner
+from .pathline import path_line
 from .widgets import NodeResolver, _link_text, _route_text, highlighted_hash, path_text
 
 if TYPE_CHECKING:
@@ -682,7 +683,13 @@ class TraceScreen(Screen):
         lines = render_hanging(
             Text("route  ", style="muted"), self._route_line(current), width, indent=7
         )
-        lines.extend(render_lines(Group(Text(), self._summary(stats, current)), width))
+        lines.extend(render_lines(Group(Text(), self._summary(stats)), width))
+        # The path lane hangs under its own value block like the route above it, so a
+        # long wire spec never folds back to column zero.
+        lines.extend(render_hanging(
+            Text("path            ", style="muted"), self._path_value(current), width,
+            indent=16,
+        ))
         lines.append("")
         self._cursor: Optional[int] = None
         for i, key in enumerate(self._actions):
@@ -918,32 +925,35 @@ class TraceScreen(Screen):
             return sum(1 for h in self._previous.hops if h.node)
         return None
 
-    def _summary(self, stats: TraceStats, current: Optional[TraceResult]) -> Text:
-        """The session's aggregates plus the current path, label-aligned."""
+    def _summary(self, stats: TraceStats) -> Text:
+        """The session's aggregate lanes, label-aligned (the path lane hangs apart)."""
         snr = stats.median_min_snr
         snr_text = (
             Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("—")
         )
         rtt = f"{stats.median_rtt_ms:.0f} ms" if stats.median_rtt_ms is not None else "—"
         rate = f"{stats.success_rate:.0%} ({stats.successes}/{stats.samples})"
-        summary = Text.assemble(
+        return Text.assemble(
             ("success rate    ", "muted"), (rate if stats.samples else "—", ""), ("\n", ""),
             ("median min SNR  ", "muted"), snr_text, ("\n", ""),
-            ("median RTT      ", "muted"), (rtt, ""), ("\n", ""),
-            ("path            ", "muted"),
+            ("median RTT      ", "muted"), (rtt, ""),
         )
+
+    def _path_value(self, current: Optional[TraceResult]) -> Text:
+        """The ``path`` lane's value: the wire spec (or its auto/none note) + hop count."""
+        value = Text()
         if self._path_spec:
-            summary.append(self._path_spec, style="brand")
+            value.append(self._path_spec, style="brand")
         elif self._effective_spec()[1] and self._auto_source:
-            summary.append(f"auto · {self._auto_source}", style="muted")
+            value.append(f"auto · {self._auto_source}", style="muted")
         elif self._mode == "path":
-            summary.append("none — compose a path first", style="muted")
+            value.append("none — compose a path first", style="muted")
         else:
-            summary.append("auto — path-less (unknown target)", style="muted")
+            value.append("auto — path-less (unknown target)", style="muted")
         hops = self._displayed_hop_count(current)
         if hops is not None:
-            summary.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
-        return summary
+            value.append(f"  · {hops} hop{'s' if hops != 1 else ''}", style="muted")
+        return value
 
     def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
         """The per-hop median SNRs with quality bars, in path order."""
@@ -1577,17 +1587,21 @@ async def _open_session(
 
         Observed candidates *are* their hop sequence, so the row leads with the route
         and no label; the device route and the direct shot keep their short labels —
-        that provenance is the point of offering them.
+        that provenance is the point of offering them. The route renders through the
+        shared path widget, so every hop wears its own key hue (an unnamed hop its
+        prefix-lit hash) instead of the old single-colour smear.
         """
-        names = [topo.display_name(h) or h for h in scenario.hops]
+        route = path_line(
+            list(scenario.hops), topo.display_name, prefix_bytes=width_bytes
+        )
         if scenario.source == "observed":
-            text = Text(" → ".join(names), style="brand")
+            text = route.text()
         else:
             styles = {"device": "accent", "direct": "muted"}
             text = Text(scenario.label, style=styles.get(scenario.source, ""))
-            if names:
+            if scenario.hops:
                 text.append("  via ", style="muted")
-                text.append(" → ".join(names))
+                text.append_text(route.text())
             else:
                 text.append("  no repeaters", style="muted")
         if scenario.weakest_snr is not None:
@@ -1759,6 +1773,7 @@ async def _open_session(
                 prompt="Choose the outbound leg — the return mirrors it.",
                 footer_hint="↑↓ move · Enter adopt/probe · Esc back",
                 wrap=False,
+                hscroll=True,  # a long candidate row slides under ←→ instead of truncating
             )
         )
         if picked is CANCEL or picked is None or picked[0] == "back":
@@ -1789,6 +1804,7 @@ async def _open_session(
                 result_items,
                 footer_hint="↑↓ move · Enter adopt path · Esc keep current",
                 wrap=False,
+                hscroll=True,  # ranked rows carry whole specs — let ←→ read the tail
             )
         )
         if adopted is CANCEL or adopted is None:
