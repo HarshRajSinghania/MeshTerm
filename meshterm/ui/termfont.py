@@ -576,6 +576,19 @@ def powerline_enabled() -> bool:
     return powerline_support().capable
 
 
+def powerline_full() -> bool:
+    """Whether the *extended* block is there too — the rounded caps at U+E0B4+.
+
+    Only a Nerd Font patch carries them, so this is strictly narrower than
+    :func:`powerline_enabled`: a stock coder font (Fira Code, JetBrains Mono) draws
+    the core triangles natively and nothing beyond, and a terminal that supplies the
+    separators from its own renderer is only promising those four. Callers use it for
+    chrome that must degrade — :mod:`~meshterm.ui.pathline` rounds a path's two outer
+    ends when it is true and squares them off when it isn't.
+    """
+    return powerline_support().level == FULL
+
+
 # --- installed-font scan ----------------------------------------------------------
 
 

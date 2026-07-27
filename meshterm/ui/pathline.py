@@ -34,10 +34,10 @@ drawn*, so every surface the survey found can eventually route through it:
   ``highlighted_hash`` two-tone), the ``dim`` fade for resolved return legs, and an
   explicit style override for context colourings that outrank identity. Chips keep
   the exact same words as arrows — only colours and separators change — so a route
-  reads identically whichever mode drew it. A hop with *no* label draws as its seam
-  and (in chip mode) the padding every chip wears — a bit of arrow and a stub of its
-  own colour, no word — which is how a surface says "this end is us" without spending
-  cells on saying so (see ``bare_self``).
+  reads identically whichever mode drew it. A surface whose route always starts and
+  ends on us can ask for ``bare_self``, replacing our name and hash with the app-wide
+  ``★`` — the reader already knows who both ends are, and the cells belong to the hops
+  that *are* news.
 
 Existing call sites still render through ``path_text``; migrating them here is a
 separate, per-surface pass. The composer's insertion cursor is the one deliberate
@@ -54,7 +54,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.models import LOCAL_DEVICE_LABEL
-from .termfont import powerline_enabled
+from .termfont import powerline_enabled, powerline_full
 from .theme import MESH_THEME, node_style
 
 #: The powerline solid right-pointing triangle (U+E0B0) — the only glyph the widget
@@ -63,6 +63,17 @@ from .theme import MESH_THEME, node_style
 #: Font patches). A path only ever flows one way, so the point only ever faces right;
 #: what changes is whether it lands on a field (a seam) or on the page (an edge).
 POWERLINE_SEP = "\ue0b0"
+
+#: The rounded caps (U+E0B6 opening, U+E0B4 closing) that finish a path's two outer
+#: ends as a lozenge. These live in the *extended* block, which only a full Nerd Font
+#: patch carries (:func:`~meshterm.ui.termfont.powerline_full`) — a terminal with just
+#: the core four squares those ends off instead of showing tofu.
+POWERLINE_ROUND_OPEN = ""
+POWERLINE_ROUND_CLOSE = ""
+
+#: Our own node, wherever a surface asks for it stripped of name and hash
+#: (``bare_self``): the app-wide ``★`` — the same mark the map plants on us.
+SELF_GLYPH = "★"
 
 #: The plain-mode joining arrow, exactly as ``path_text`` draws it today.
 _ARROW = " → "
@@ -90,11 +101,9 @@ class PathHop:
     """One hop of a path line — the semantics, independent of how it is drawn.
 
     Attributes:
-        label: What is shown — a resolved name, or a hash standing as the node's
-            identity (set ``lit_bytes`` for the two-tone prefix in that case). An
-            empty label (with no annotation) makes the hop *bare*: its seam and its
-            padding are all that is drawn — a bit of arrow, no word — which is how a
-            route whose ends are obviously us says so without spending cells on it.
+        label: What is shown — a resolved name, a hash standing as the node's
+            identity (set ``lit_bytes`` for the two-tone prefix in that case), or the
+            bare :data:`SELF_GLYPH` where a surface has no need to name us.
         key: Any known prefix of the node's key/hash — picks the hash-derived hue
             (its first byte, so every prefix agrees). ``None`` renders muted/grey:
             colour is reserved for keyed identities.
@@ -117,11 +126,6 @@ class PathHop:
     lit_bytes: int = 0
     dim: bool = False
     style: Optional[str] = None
-
-
-def _bare(hop: PathHop) -> bool:
-    """Is this hop drawn as pure seam? (An empty label with nothing to annotate.)"""
-    return not hop.label and not hop.annotation
 
 
 def _style_hex(style: str) -> Optional[str]:
@@ -267,20 +271,21 @@ class PathLine:
             # The outbound leg's own last line still continues into the return, so it
             # holds the cue back where the whole path's final line doesn't.
             legs = self._flow(self._hops[:seam], budget, plain, len(cue), len(cue))
-            legs += self._flow(self._hops[seam:], budget, plain, len(cue), 0)
+            legs += self._flow(self._hops[seam:], budget, plain, len(cue), 0, carry_in=True)
             if len(legs) <= len(groups):  # the turn folds for free — take it
                 groups = legs
 
         lines: list[Text] = []
         base = 0  # the global index of the group's first hop, for cursor mapping
-        carried: Optional[str] = None  # the fill a continuation reopens its seam from
         for i, group in enumerate(groups):
             local: Optional[int] = None
             if cursor_arrow is not None and 0 <= cursor_arrow - base < len(group) - 1:
                 local = cursor_arrow - base
             line = Text() if i == 0 else Text(" " * indent)
-            body = self._render(group, cursor_arrow=local, force_plain=plain, cap=carried)
-            carried = None if plain else self._chip_fill(group[-1])
+            body = self._render(
+                group, cursor_arrow=local, force_plain=plain,
+                carry_in=bool(i), carry_on=i < len(groups) - 1,
+            )
             # A lone hop too wide for the column is truncated — leaving room for the
             # cue it still has to carry, so even that line stays inside the width. A
             # column too narrow to hold both drops the cue: content wins the cells.
@@ -301,7 +306,9 @@ class PathLine:
 
     # --- where the breaks fall --------------------------------------------------------
 
-    def _measure(self, hops: list[PathHop], plain: bool) -> tuple[list[int], int, int, int]:
+    def _measure(
+        self, hops: list[PathHop], plain: bool
+    ) -> tuple[list[int], int, int, int, int]:
         """Each hop's own width, plus what joining, opening and closing a line costs.
 
         Fitting hops to a column is arithmetic once every hop has been measured once —
@@ -313,22 +320,18 @@ class PathLine:
             plain: Measure as arrow text rather than as chips.
 
         Returns:
-            ``(cells, join, tail, lead)`` — each hop's cells, the cells one join between
-            two hops costs, the cells a line always closes with (the chip mode's pointed
-            edge; nothing in arrow mode), and the cells every line *after the first*
-            opens with (chip mode's reopened seam).
-
-        Note:
-            Joins are measured at their full width even where a bare neighbour trims one
-            (:meth:`_join`) — an over-estimate of a cell, which packs a hair early and
-            never overflows.
+            ``(cells, join, tail, lead, head)`` — each hop's cells, the cells one join
+            between two hops costs, the cells a line always closes with (chip mode's
+            edge; nothing in arrow mode), the cells every line *after the first* opens
+            with (chip mode's reopened seam), and the cells the *first* line opens with
+            (chip mode's rounded cap, nothing where the font has none).
         """
         if plain:
-            widths = [self._plain_hop(hop).cell_len for hop in hops]
-            return widths, cell_len(self._separator), 0, 0
+            return [self._plain_hop(hop).cell_len for hop in hops],                 cell_len(self._separator), 0, 0, 0
         widths = [self._chip(hop, self._chip_fill(hop)).cell_len for hop in hops]
         sep = cell_len(POWERLINE_SEP)
-        return widths, sep, sep, sep
+        head = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
+        return widths, sep, sep, sep, head
 
     @staticmethod
     def _fill(
@@ -339,6 +342,7 @@ class PathLine:
         reserve: int,
         last: int,
         lead: int = 0,
+        head: int = 0,
     ) -> list[int]:
         """Pack hop widths into lines of ``budget`` cells, greedily, never splitting one.
 
@@ -352,13 +356,15 @@ class PathLine:
                 path really ends there (nothing follows to cue), ``reserve`` when this
                 is only one leg of a path that goes on.
             lead: Cells every line but the first opens with (the reopened seam).
+            head: Cells the first line opens with (the rounded cap, when drawn).
 
         Returns:
             How many hops each line takes; a hop too wide for ``budget`` gets a line of
             its own (the caller truncates it).
         """
         sizes: list[int] = []
-        width = count = 0
+        count = 0
+        width = head
         for i, cell in enumerate(cells):
             grown = width + cell + (join if count else 0)
             held = last if i == len(cells) - 1 else reserve
@@ -371,7 +377,13 @@ class PathLine:
         return sizes
 
     def _flow(
-        self, hops: list[PathHop], budget: int, plain: bool, reserve: int, last: int
+        self,
+        hops: list[PathHop],
+        budget: int,
+        plain: bool,
+        reserve: int,
+        last: int,
+        carry_in: bool = False,
     ) -> list[list[PathHop]]:
         """Break ``hops`` into the fewest lines, then even those lines out.
 
@@ -389,22 +401,26 @@ class PathLine:
             plain: Render as arrows rather than chips.
             reserve: Cells held back on a line for the continuation cue it carries.
             last: Cells held back on the line the hops end on (see :meth:`_fill`).
+            carry_in: These hops are a *later* leg of a path already under way, so
+                even their first line opens as a continuation, not as a beginning.
 
         Returns:
             The hops grouped per line.
         """
-        cells, join, tail, lead = self._measure(hops, plain)
-        lines = len(self._fill(cells, join, tail, budget, reserve, last, lead))
+        cells, join, tail, lead, head = self._measure(hops, plain)
+        if carry_in:
+            head = lead
+        lines = len(self._fill(cells, join, tail, budget, reserve, last, lead, head))
         low, high = 1, budget
         while low < high:  # the narrowest column still taking `lines` rows
             mid = (low + high) // 2
-            if len(self._fill(cells, join, tail, mid, reserve, last, lead)) <= lines:
+            if len(self._fill(cells, join, tail, mid, reserve, last, lead, head)) <= lines:
                 high = mid
             else:
                 low = mid + 1
         groups: list[list[PathHop]] = []
         at = 0
-        for size in self._fill(cells, join, tail, low, reserve, last, lead):
+        for size in self._fill(cells, join, tail, low, reserve, last, lead, head):
             groups.append(hops[at : at + size])
             at += size
         return groups
@@ -419,10 +435,11 @@ class PathLine:
         and the walk that answered it in the same place keeps the two readings of one
         route looking like one route. Either way the fold needs real legs on both
         sides — at least two hops each — so a path whose *only* dim hop is the
-        automatic landing back on us never widows it onto a line of its own.
+        automatic landing back on us never widows it onto a line of its own; that lone
+        faded tail marks no turn, and the walk's own mirror still gets to name one.
         """
         seam = next((i for i, hop in enumerate(self._hops) if hop.dim), None)
-        if seam is None:
+        if seam is None or len(self._hops) - seam < 2:
             marks = [(hop.label, hop.annotation) for hop in self._hops]
             if len(marks) % 2 and marks == marks[::-1]:
                 seam = len(marks) // 2 + 1  # the first hop of the way home
@@ -444,15 +461,16 @@ class PathLine:
         *,
         cursor_arrow: Optional[int] = None,
         force_plain: bool = False,
-        cap: Optional[str] = None,
+        carry_in: bool = False,
+        carry_on: bool = False,
     ) -> Text:
         """Join ``hops`` in the effective mode (plain whenever a cursor is asked).
 
-        ``cap`` marks a wrapped continuation and only means anything to chips; arrow
-        mode says the same thing with the trailing cue the line above ends on.
+        The two carry flags mark a wrapped line's ends and only mean anything to
+        chips; arrow mode says the same thing with the trailing cue.
         """
         if not force_plain and cursor_arrow is None and self._resolved_mode() == "powerline":
-            return self._render_chips(hops, cap=cap)
+            return self._render_chips(hops, carry_in=carry_in, carry_on=carry_on)
         return self._render_plain(hops, cursor_arrow)
 
     def _render_plain(self, hops: list[PathHop], cursor_arrow: Optional[int]) -> Text:
@@ -460,30 +478,15 @@ class PathLine:
         text = Text()
         for i, hop in enumerate(hops):
             if i:
-                gap = self._join(hops[i - 1], hop)
+                gap = self._separator
                 if cursor_arrow is not None and i - 1 == cursor_arrow:
-                    mark = gap.strip()
                     text.append(gap[: len(gap) - len(gap.lstrip())])
-                    text.append(mark, style="selected")
+                    text.append(gap.strip(), style="selected")
                     text.append(gap[len(gap.rstrip()) :])
                 else:
                     text.append(gap, style="faint" if hop.dim else "muted")
             text.append_text(self._plain_hop(hop))
         return text
-
-    def _join(self, before: PathHop, after: PathHop) -> str:
-        """The separator between two hops, minus the padding a bare neighbour vacates.
-
-        A bare hop takes no cells, so the space the separator holds for it would sit
-        against the line's edge: ``us → a → us`` with bare ends reads ``→ a →``, the
-        arrows alone standing for the endpoints.
-        """
-        gap = self._separator
-        if _bare(before):
-            gap = gap.lstrip()
-        if _bare(after):
-            gap = gap.rstrip()
-        return gap
 
     def _plain_hop(self, hop: PathHop) -> Text:
         """One arrow-mode hop: label in its identity style, annotation muted."""
@@ -507,25 +510,40 @@ class PathLine:
             text.append(f" ({hop.annotation})", style=note_style)
         return text
 
-    def _render_chips(self, hops: list[PathHop], *, cap: Optional[str] = None) -> Text:
+    def _render_chips(
+        self, hops: list[PathHop], *, carry_in: bool = False, carry_on: bool = False
+    ) -> Text:
         """Powerline chips: each hop filled with its hue, seams interlocked.
+
+        The two outer ends say whether this line *is* the path or only part of it. A
+        line that opens the path opens rounded (squared off where the font has no
+        rounded caps); one that continues a wrapped path opens on the break's other
+        half. A line that ends the path closes rounded; one the path outruns closes on
+        the point, the same "goes on" cue arrow mode spells with a trailing ``→``.
 
         Args:
             hops: The hops of this one line, in order.
-            cap: The fill of the chip this line continues from — a wrapped line opens
-                by redrawing the seam the break interrupted, so its first chip is
-                landed *into* rather than started. ``None`` (the whole line's first
-                chip) keeps the square left edge.
+            carry_in: This line continues a wrapped path (it does not open one).
+            carry_on: The path continues past this line (it does not end here).
         """
         fills = [self._chip_fill(hop) for hop in hops]
+        rounded = powerline_full()
         text = Text()
-        if cap is not None:
-            text.append(POWERLINE_SEP, style=self._seam(cap, fills[0]))
+        if carry_in:
+            # The break's other half: the page notched into this chip's left edge, so
+            # the line reads as arriving. Reverse video paints the notch in the
+            # terminal's own background — the only way to name the page's colour
+            # without knowing it — so not a trace of the line above bleeds into this
+            # one, and the point still faces the way the path flows.
+            text.append(POWERLINE_SEP, style=f"{fills[0]} reverse")
+        elif rounded:
+            text.append(POWERLINE_ROUND_OPEN, style=fills[0])
         for i, hop in enumerate(hops):
             if i:
                 text.append(POWERLINE_SEP, style=self._seam(fills[i - 1], fills[i]))
             text.append_text(self._chip(hop, fills[i]))
-        text.append(POWERLINE_SEP, style=fills[-1])  # the pointed edge into the page
+        close = POWERLINE_SEP if carry_on or not rounded else POWERLINE_ROUND_CLOSE
+        text.append(close, style=fills[-1])  # the edge into the page: pointed or round
         return text
 
     @staticmethod
@@ -558,9 +576,7 @@ class PathLine:
     def _chip(self, hop: PathHop, fill: str) -> Text:
         """One chip: same words as arrow mode, dark ink on the identity fill.
 
-        A bare hop keeps the padding every chip wears — it just has no words between
-        them, so it reads as a stub of its own colour rather than as nothing at all.
-        """
+"""
         ink = _DIM_FG if hop.dim else _CHIP_FG
         soft = _DIM_FG if hop.dim else _CHIP_FG_SOFT
         text = Text()
@@ -606,8 +622,8 @@ def path_line(
     so a call site swaps builders without changing what it says — a named hop reads
     ``Name`` (annotated ``Name (3d)`` under ``show_hash``), an unnamed hop its
     prefix-lit hash (or its muted identity hash under ``hash_as_name``), ``None`` is
-    our own device in white — or, under ``bare_self``, its bit of arrow and no words
-    at all — and ``dim_from`` fades a resolved tail. The plain rendering
+    our own device in white — or, under ``bare_self``, the lone ``★`` — and
+    ``dim_from`` fades a resolved tail. The plain rendering
     is character- and style-identical to ``path_text``; what the swap buys is the
     :class:`PathLine` shapes (ellipsized / wrapped) and the powerline mode.
 
@@ -627,10 +643,12 @@ def path_line(
         dim_from: Fade hops at/after this rendered index (``None`` dims nothing).
         hash_as_name: Present each unnamed hop as its muted identity hash at the
             ``prefix_bytes`` width, annotated with its addressed byte.
-        bare_self: Draw our own device (a ``None`` hop) with no words at all — just
-            its bit of arrow. For a surface whose route *always* begins and ends on
+        bare_self: Draw our own device (a ``None`` hop) as the bare
+            :data:`SELF_GLYPH`. For a surface whose route *always* begins and ends on
             us, the name and hash on both ends say nothing the reader doesn't know,
-            and cost the cells the hops in between need.
+            and cost the cells the hops in between need. A ``★`` in the *last*
+            position also fades: coming home closes every route automatically, so
+            that end is no more composed than a resolved return leg is.
         mode: The :class:`PathLine` mode (``"auto"``/``"powerline"``/``"plain"``).
 
     Returns:
@@ -642,7 +660,8 @@ def path_line(
         dim = dim_from is not None and i >= dim_from
         if hop is None:
             if bare_self:
-                built.append(PathHop("", you=True, dim=dim))
+                homecoming = i == len(shown) - 1  # nobody composed the way back to us
+                built.append(PathHop(SELF_GLYPH, you=True, dim=dim or homecoming))
                 continue
             note = _shorten(device_hash, hash_bytes) if (show_hash and device_hash) else None
             built.append(

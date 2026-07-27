@@ -376,8 +376,8 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
     body = _plain(screen.render_body(100))
     assert "3d,f2,3d" in body
     # the planned route previews outbound *and* the resolved, dimmed return leg,
-    # our own ends spending no words — just their bit of arrow
-    assert "route  → 3d → f2 → 3d →" in body
+    # our own ends spending no words — just the star that stands for us
+    assert "route  ★ → 3d → f2 → 3d → ★" in body
     assert body.count("3d") >= 2
 
 
@@ -652,10 +652,10 @@ def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
 
     screen._path_spec = "3d,f2,3d"  # symmetric boomerang: the mirror is dimmed
     symmetric = screen._planned_route().text()
-    assert symmetric.plain == "→ 3d → f2 → 3d →"
+    assert symmetric.plain == "★ → 3d → f2 → 3d → ★"
     screen._path_spec = "3d,f2,27"  # a stale hand walk: every hop is the user's
     custom = screen._planned_route().text()
-    assert custom.plain == "→ 3d → f2 → 27 →"
+    assert custom.plain == "★ → 3d → f2 → 27 → ★"
     assert faint_cells(symmetric) > faint_cells(custom)
 
     # In path mode even a there-and-back-the-same-way walk is fully hand-composed,
@@ -1156,17 +1156,17 @@ def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
     text = _scenario_path(
         scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
     )
-    assert text.plain == "→ Hub → Far"
+    assert text.plain == "★ → Hub → Far"
 
 
 def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
-    """A direct (no-repeaters) scenario's pathline is just our arrow and the target."""
+    """A direct (no-repeaters) scenario's pathline is just our star and the target."""
     topo = _scenario_topo()
     scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
     text = _scenario_path(
         scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
     )
-    assert text.plain == "→ Far"
+    assert text.plain == "★ → Far"
 
 
 def test_scenario_detail_carries_provenance_snr_and_samples() -> None:
