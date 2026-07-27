@@ -41,7 +41,8 @@ from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN
 from ..core.models import Contact, TraceResult, TxLevelResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..services.topology import build_topology, render_custom_spec
-from .theme import snr_style
+from .pathline import PathHop, PathLine, path_line
+from .theme import name_style, snr_style
 from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
@@ -96,6 +97,8 @@ class TxSweepScreen(Screen):
         session: Any,
         tx_min: int,
         tx_max: int,
+        admin_key: Optional[str] = None,
+        target_key: Optional[str] = None,
         step: int = 3,
         samples: int = 3,
         run_sweep: Callable[[], None] = lambda: None,
@@ -113,6 +116,8 @@ class TxSweepScreen(Screen):
             device_label: Our own node's name, opening the route line.
             device_hash: Our own public key, so the route endpoints carry a hash.
             resolve: Maps a hop's raw hash to a friendly contact name when known.
+            admin_key: The tuned node's key/hash, so its name wears its own hue.
+            target_key: The target's key/hash, likewise.
             session: The running TUI session (for repaints).
             tx_min: Initial low end of the sweep window.
             tx_max: Initial high end of the sweep window.
@@ -129,6 +134,8 @@ class TxSweepScreen(Screen):
         self.title = f"TX optimize — {admin_label} → {target_label}"
         self._admin_label = admin_label
         self._target_label = target_label
+        self._admin_key = admin_key
+        self._target_key = target_key
         self._device_label = device_label
         self._device_hash = device_hash
         self._resolve = resolve
@@ -337,7 +344,7 @@ class TxSweepScreen(Screen):
 
     def render_body(self, width: int) -> list[str]:
         """Render the header, the action list, the level chart, and the outcome."""
-        lines = render_lines(self._header(), width)
+        lines = self._header_lines(width)
         lines.append("")
         self._cursor: Optional[int] = None
         actions = self._actions
@@ -373,10 +380,9 @@ class TxSweepScreen(Screen):
         text = Text("❯ " if selected else "  ", style="brand" if selected else "")
         if key == "route":
             text.append("✎ ", style="brand")
-            hops = len(self.route_hops)
-            if hops:
-                via = " → ".join(self._hop_name(h) for h in self.route_hops)
-                text.append(f"Route — via {via}")
+            if self.route_hops:
+                text.append("Route — via ")
+                text.append_text(path_line(list(self.route_hops), self._resolve).text())
             else:
                 text.append(f"Route — direct to {self._admin_label}")
         elif key == "range":
@@ -404,51 +410,59 @@ class TxSweepScreen(Screen):
             text.style = "brand"
         return text
 
-    def _header(self) -> Text:
-        """The tuned link, the measured route, the sweep window, and the login state."""
-        header = Text.assemble(
-            ("tuning   ", "muted"), (self._admin_label, "brand"),
-            (" → ", "muted"), (self._target_label, "brand"), ("\n", ""),
-            ("route    ", "muted"),
+    def _header_lines(self, width: int) -> list[str]:
+        """The header lanes: tuned link, measured route, sweep window, login state.
+
+        The route renders through THE path widget and wraps at hop boundaries under
+        its own value column (the hanging-indent rule) instead of folding back to
+        column zero; the tuned link above it wears the same key hues as the route.
+        """
+        tuning = Text.assemble(
+            ("tuning   ", "muted"),
+            (self._admin_label, name_style(self._admin_label, self._admin_key)),
+            (" → ", "muted"),
+            (self._target_label, name_style(self._target_label, self._target_key)),
         )
-        header.append_text(self._route_line())
-        header.append("\n")
-        header.append("sweep    ", style="muted")
-        header.append(
+        lines = [render_to_ansi(tuning, width, no_wrap=True)]
+        route = self._route_line().wrapped(width, indent=9)
+        first = Text("route    ", style="muted")
+        first.append_text(route[0])
+        lines.append(render_to_ansi(first, width, no_wrap=True))
+        lines.extend(render_to_ansi(cont, width, no_wrap=True) for cont in route[1:])
+        rest = Text("sweep    ", style="muted")
+        rest.append(
             f"TX {self.tx_min}–{self.tx_max} · step {self.step} · "
             f"{self.samples} trace{'s' if self.samples != 1 else ''}/level"
         )
         if self.login_text:
-            header.append("\n")
-            header.append("login    ", style="muted")
-            header.append(self.login_text)
+            rest.append("\n")
+            rest.append("login    ", style="muted")
+            rest.append(self.login_text)
         if self._result is not None and self._result.original_tx is not None:
-            header.append("\n")
-            header.append("was      ", style="muted")
-            header.append(f"TX {self._result.original_tx}")
-        return header
+            rest.append("\n")
+            rest.append("was      ", style="muted")
+            rest.append(f"TX {self._result.original_tx}")
+        lines.extend(render_lines(rest, width))
+        return lines
 
-    def _route_line(self) -> Text:
+    def _route_line(self) -> PathLine:
         """The walk one measurement makes: out through the tuned link, mirrored home.
 
         The outbound leg — us, any composed hops, the tuned node, the target — draws
-        in full colour; the return (the outbound mirrored back, the trace boomerang
-        the optimizer actually flies) is dimmed, reading as "not yours to compose".
+        in full colour (each name in its own key hue, us the white ``you``); the
+        return (the outbound mirrored back, the trace boomerang the optimizer
+        actually flies) is dimmed, reading as "not yours to compose".
         """
-        text = Text(self._device_label, style="accent")
+        hops: list[PathHop] = [PathHop(self._device_label, you=True)]
         for hop in self.route_hops:
-            text.append(" → ", style="muted")
-            text.append(self._hop_name(hop), style="brand")
-        text.append(" → ", style="muted")
-        text.append(self._admin_label, style="brand")
-        text.append(" → ", style="muted")
-        text.append(self._target_label, style="brand")
-        for hop in (self._admin_label, *(self._hop_name(h) for h in reversed(self.route_hops))):
-            text.append(" → ", style="faint")
-            text.append(hop, style="faint")
-        text.append(" → ", style="faint")
-        text.append(self._device_label, style="faint")
-        return text
+            hops.append(PathHop(self._hop_name(hop), key=hop))
+        hops.append(PathHop(self._admin_label, key=self._admin_key))
+        hops.append(PathHop(self._target_label, key=self._target_key))
+        hops.append(PathHop(self._admin_label, key=self._admin_key, dim=True))
+        for hop in reversed(self.route_hops):
+            hops.append(PathHop(self._hop_name(hop), key=hop, dim=True))
+        hops.append(PathHop(self._device_label, you=True, dim=True))
+        return PathLine(hops)
 
     def _hop_name(self, hop: str) -> str:
         """A route hop's friendly name when known, else its raw hash."""
@@ -612,6 +626,8 @@ async def open_tx_optimize(
         session=session,
         tx_min=ctx.settings.tx_opt_min,
         tx_max=ctx.settings.tx_opt_max,
+        admin_key=admin_hash,
+        target_key=target_hex,
     )
     screen.login_text = login_text()
 
