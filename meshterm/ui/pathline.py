@@ -95,6 +95,12 @@ _DIM_FG = "#94a3b8"
 #: rendered as a dim pseudo-hop so it recedes in both modes.
 _ELISION = "⋯"
 
+#: Extra columns a wrapped line steps in past the hanging indent. The continuation
+#: marks (a trailing ``→``, a notched chip edge) say the path goes on; the step says
+#: it at a glance, from the shape of the block alone — a route that folds reads as one
+#: value that ran long, not as a second value stacked under the first.
+WRAP_OFFSET = 2
+
 
 @dataclass(frozen=True)
 class PathHop:
@@ -232,8 +238,9 @@ class PathLine:
 
         The hanging-indent convention: the caller lays its label lane on the first
         line, so that line is returned *without* the indent prefix while every
-        continuation starts with ``indent`` spaces; all lines fit ``width`` and the
-        content column is uniformly ``width - indent`` wide. Plain-mode lines that
+        continuation starts with ``indent`` spaces — plus :data:`WRAP_OFFSET`, the
+        step that makes a fold legible as a fold. Every line fits ``width``.
+        Plain-mode lines that
         continue end with the separator's own mark — a trailing ``→`` for an
         arrow-joined path, the bare ``,`` for a comma-joined wire spec — the "path
         goes on" cue; chip lines always close with their pointed edge and, from the
@@ -281,7 +288,8 @@ class PathLine:
             local: Optional[int] = None
             if cursor_arrow is not None and 0 <= cursor_arrow - base < len(group) - 1:
                 local = cursor_arrow - base
-            line = Text() if i == 0 else Text(" " * indent)
+            step = 0 if i == 0 else WRAP_OFFSET
+            line = Text() if i == 0 else Text(" " * (indent + step))
             body = self._render(
                 group, cursor_arrow=local, force_plain=plain,
                 carry_in=bool(i), carry_on=i < len(groups) - 1,
@@ -290,7 +298,7 @@ class PathLine:
             # cue it still has to carry, so even that line stays inside the width. A
             # column too narrow to hold both drops the cue: content wins the cells.
             continues = i < len(groups) - 1 and 0 < cell_len(cue) < budget
-            room = budget - (cell_len(cue) if continues else 0)
+            room = budget - step - (cell_len(cue) if continues else 0)
             if body.cell_len > room:
                 body.truncate(room, overflow="ellipsis")
             line.append_text(body)
@@ -355,7 +363,8 @@ class PathLine:
             last: Cells held back on a line ending at the *final* hop — ``0`` when the
                 path really ends there (nothing follows to cue), ``reserve`` when this
                 is only one leg of a path that goes on.
-            lead: Cells every line but the first opens with (the reopened seam).
+            lead: Cells every line but the first opens with — the reopened seam plus
+                the :data:`WRAP_OFFSET` step it hangs past the indent.
             head: Cells the first line opens with (the rounded cap, when drawn).
 
         Returns:
@@ -408,6 +417,7 @@ class PathLine:
             The hops grouped per line.
         """
         cells, join, tail, lead, head = self._measure(hops, plain)
+        lead += WRAP_OFFSET  # every continuation steps in past the hanging indent
         if carry_in:
             head = lead
         lines = len(self._fill(cells, join, tail, budget, reserve, last, lead, head))

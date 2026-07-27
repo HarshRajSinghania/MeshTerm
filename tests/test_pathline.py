@@ -14,8 +14,8 @@ import pytest
 
 import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
-    POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, PathHop,
-    PathLine, _style_hex, path_line,
+    POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH,
+    WRAP_OFFSET, PathHop, PathLine, _style_hex, path_line,
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
@@ -155,10 +155,11 @@ def test_ellipsized_last_resort_truncates_a_single_giant_hop() -> None:
 
 def test_wrapped_breaks_at_hops_under_a_hanging_indent() -> None:
     """Plain lines that continue end with the ``→`` cue; continuations hang at the
-    indent; every line respects the full width."""
+    indent, stepped in by :data:`WRAP_OFFSET`; every line respects the full width."""
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
     lines = PathLine(hops, mode="plain").wrapped(16, indent=2)
-    assert [line.plain for line in lines] == ["AAAA → BBBB →", "  CCCC → DDDD"]
+    assert [line.plain for line in lines] == ["AAAA → BBBB →", "    CCCC → DDDD"]
+    assert lines[1].plain.startswith(" " * (2 + WRAP_OFFSET))
     assert all(line.cell_len <= 16 for line in lines)
 
 
@@ -170,7 +171,7 @@ def test_wrapped_evens_the_lines_instead_of_widowing_the_tail() -> None:
     """
     hops = [PathHop(label) for label in ("us", "alpha", "bravo", "us")]
     lines = PathLine(hops, mode="plain").wrapped(20, indent=0)
-    assert [line.plain for line in lines] == ["us → alpha →", "bravo → us"]
+    assert [line.plain for line in lines] == ["us → alpha →", "  bravo → us"]
 
 
 def test_wrapped_folds_a_faded_return_leg_at_its_turn() -> None:
@@ -185,7 +186,7 @@ def test_wrapped_folds_a_faded_return_leg_at_its_turn() -> None:
     lines = PathLine(out + back, mode="plain").wrapped(40, indent=0)
     assert [line.plain for line in lines] == [
         "me → north-relay → east-relay → dest →",  # out, ending on the target
-        "east-relay → north-relay → me",  # and the mirror it comes home by
+        "  east-relay → north-relay → me",  # and the mirror it comes home by
     ]
 
 
@@ -200,7 +201,7 @@ def test_wrapped_folds_a_walked_boomerang_at_its_turn_too() -> None:
     lines = PathLine(walked, mode="plain").wrapped(46, indent=0)
     assert [line.plain for line in lines] == [
         "me → north-relay → east-relay → dest →",
-        "east-relay → north-relay → me",
+        "  east-relay → north-relay → me",
     ]
 
 
@@ -289,7 +290,7 @@ def test_wrapped_carries_the_cursor_even_onto_a_line_break() -> None:
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
     line = PathLine(hops, mode="powerline")
     mid = line.wrapped(16, indent=2, cursor_arrow=0)
-    assert [text.plain for text in mid] == ["AAAA → BBBB →", "  CCCC → DDDD"]
+    assert [text.plain for text in mid] == ["AAAA → BBBB →", "    CCCC → DDDD"]
     assert any(str(s.style) == "selected" for s in mid[0].spans)
     assert all(POWERLINE_SEP not in text.plain for text in mid)
     on_break = line.wrapped(16, indent=2, cursor_arrow=1)  # the seam that broke
@@ -304,14 +305,15 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     line above bleeds down. The point always faces the way the path flows."""
     hops = [PathHop(label, key=key) for label, key in
             (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))]
-    lines = PathLine(hops, mode="powerline").wrapped(18, indent=2)
+    lines = PathLine(hops, mode="powerline").wrapped(20, indent=2)
     assert len(lines) == 2
     assert lines[0].plain.startswith(" AAAA")  # the square edge: this is the start
-    assert lines[1].plain[2] == POWERLINE_SEP  # …and this is a carry-on
-    carried = next(s for s in lines[1].spans if s.start == 2)
+    step = 2 + WRAP_OFFSET
+    assert lines[1].plain[:step].isspace() and lines[1].plain[step] == POWERLINE_SEP
+    carried = next(s for s in lines[1].spans if s.start == step)
     assert str(carried.style) == f"{_style_hex(node_style('3d'))} reverse"
     assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
-    assert all(line.cell_len <= 18 for line in lines)
+    assert all(line.cell_len <= 20 for line in lines)
 
 
 def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) -> None:  # noqa: ANN001
@@ -333,7 +335,7 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     assert len(wrapped) == 2
     assert wrapped[0].plain.startswith(POWERLINE_ROUND_OPEN)  # the path opens here…
     assert wrapped[0].plain.endswith(POWERLINE_SEP)  # …but does not end here
-    assert wrapped[1].plain[2] == POWERLINE_SEP  # picked up mid-path…
+    assert wrapped[1].plain[2 + WRAP_OFFSET] == POWERLINE_SEP  # picked up mid-path…
     assert wrapped[1].plain.endswith(POWERLINE_ROUND_CLOSE)  # …and closed off
     assert all(text.cell_len <= 20 for text in wrapped)
 
@@ -374,5 +376,5 @@ def test_bare_self_stands_us_on_a_star_and_fades_the_way_home() -> None:
     lines = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
                       mode="powerline").wrapped(28, indent=2)
     assert len(lines) > 1
-    assert all(line.plain[2] == POWERLINE_SEP for line in lines[1:])
+    assert all(line.plain[2 + WRAP_OFFSET] == POWERLINE_SEP for line in lines[1:])
     assert all(line.cell_len <= 28 for line in lines)
