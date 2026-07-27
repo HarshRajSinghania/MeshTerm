@@ -41,7 +41,8 @@ from .packet_viewer import (
 from .theme import name_style, snr_style
 from .tui.render import render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import NameKeyResolver, TypeOf, path_text
+from .pathline import path_line
+from .widgets import NameKeyResolver, TypeOf
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -275,21 +276,24 @@ class LiveFeedScreen(Screen):
         if top > 0:
             out.append(render_to_ansi(ListWindow.marker(top, "above"), width))
         for i in range(top, top + count):
-            row = self._feed_row(entries[i], i == self._selected, show_label)
+            row = self._feed_row(entries[i], i == self._selected, show_label, width)
             out.append(render_to_ansi(row, width, no_wrap=True))
         below = len(entries) - top - count
         if below > 0:
             out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
         return out
 
-    def _feed_row(self, entry: PacketEntry, selected: bool, show_label: bool) -> Text:
+    def _feed_row(
+        self, entry: PacketEntry, selected: bool, show_label: bool, width: int
+    ) -> Text:
         """Lay one feed row out in fixed lanes: time, class, node, reception, detail.
 
         The class lane leads with its two-cell icon; the textual label beside it is
         dropped wholesale on a narrow terminal (``show_label``), keeping the lanes
         aligned either way. The node name takes the app-wide palette hue (our own
-        node white, a bare hash muted). Never wraps — a long relay path ellipsizes
-        at the right edge instead of spilling a lone ``dBm`` onto its own line.
+        node white, a bare hash muted). Never wraps — the detail lane gets whatever
+        width the fixed lanes leave (``width``), so a long relay path elides its
+        middle hops there instead of spilling a lone ``dBm`` onto its own line.
         """
         row = Text(no_wrap=True, overflow="ellipsis")
         row.append("▸ " if selected else "  ", style="accent")
@@ -310,7 +314,7 @@ class LiveFeedScreen(Screen):
             f"  {entry.rssi:5.0f} dBm" if entry.rssi is not None else " " * 10,
             style="muted",
         )
-        note = self._feed_note(entry)
+        note = self._feed_note(entry, max(1, width - row.cell_len - 2))
         if note is not None:
             row.append("  ")
             row.append_text(note)
@@ -342,21 +346,23 @@ class LiveFeedScreen(Screen):
             return entry.where, "muted"  # an ack's code, or any other stray context
         return "—", "muted"
 
-    def _feed_note(self, entry: PacketEntry) -> Optional[Text]:
+    def _feed_note(self, entry: PacketEntry, budget: int) -> Optional[Text]:
         """The row's trailing detail: a packet's relay path, a message's conversation.
 
-        The path renders through the shared compact path widget, so a relayed frame's
-        ``via`` chain reads the same here as in the packet viewer and the chat paths.
+        The path renders through the shared path widget in its compact flavour, fitted
+        to the ``budget`` the row's fixed lanes leave: a chain too long for the lane
+        elides its *middle* hops behind ``⋯``, so the origin and the last relay — the
+        ends a right-edge cut would amputate — always survive.
         """
         if entry.kind == "packet" and entry.path is not None:
             note = Text("via ", style="muted")
             note.append_text(
-                path_text(
+                path_line(
                     entry.path.split(","),
                     self._resolve,
                     prefix_bytes=self._prefix_bytes,
                     self_name=self._self_name,
-                )
+                ).ellipsized(max(1, budget - 4))
             )
             return note
         if entry.kind == "message" and entry.where:

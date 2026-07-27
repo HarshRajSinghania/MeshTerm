@@ -81,6 +81,7 @@ from .pathgraph import (
 )
 from .theme import name_style, snr_style
 from .tui.render import render_hanging, render_lines, render_to_ansi
+from .pathline import PathHop, PathLine, path_line
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -90,7 +91,6 @@ from .widgets import (
     format_ago,
     highlighted_hash,
     node_type_legend,
-    path_text,
     tab_strip,
 )
 
@@ -1075,24 +1075,22 @@ def _route_line(
     """One route rendered as a full line: contact → relays → us, then its context and tag.
 
     The whole route reads left to right in the graph's own direction (contact on the left, us
-    on the right), so the row and the drawn line cross-read. The contact and our own node
-    anchor the two ends in their own hues (the contact's key-derived, us the white ``you``);
-    the relays in between render through THE path widget (:func:`~meshterm.ui.widgets.path_text`)
-    at a 1-byte hash width, each ``name (3d)`` — the trace presentation. The bottleneck SNR
-    and sample count trail as muted context, and a ``★ best`` / ``device route`` tag marks the
-    winner and the firmware's learned route.
+    on the right), so the row and the drawn line cross-read. The line is one
+    :class:`~meshterm.ui.pathline.PathLine` — the contact and our own node anchoring the two
+    ends in their own hues (the contact's key-derived, us the white ``you``), the relays at a
+    1-byte hash width, each ``name (3d)`` — the trace presentation, as powerline chips where
+    the terminal can draw them. The bottleneck SNR and sample count trail as muted context,
+    and a ``★ best`` / ``device route`` tag marks the winner and the firmware's learned route.
     """
-    text = Text()
-    text.append(node_label, style=name_style(node_label, name_key))
-    relays = path_text(
+    relays = path_line(
         list(reversed(hops_out)), resolve, prefix_bytes=1, self_name=self_name,
-        empty="", show_hash=True, hash_bytes=1,
+        show_hash=True, hash_bytes=1,
     )
-    if relays.plain:
-        text.append(" → ", style="muted")
-        text.append_text(relays)
-    text.append(" → ", style="muted")
-    text.append(self_name or "us", style="you")
+    text = PathLine([
+        PathHop(node_label, key=name_key),
+        *relays.hops,
+        PathHop(self_name or "us", you=True),
+    ]).text()
     if weakest is not None:
         text.append("  ·  weakest ", style="muted")
         text.append(f"{weakest:+.1f} dB", style=snr_style(weakest))
