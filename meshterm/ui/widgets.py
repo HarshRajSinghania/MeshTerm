@@ -1091,7 +1091,7 @@ def tx_opt_table(result: TxOptResult) -> Table:
         A Rich :class:`Table` of TX level, target SNR, success rate, and sample count.
     """
     table = Table(
-        title=f"TX sweep · {result.admin_node} -> {result.target}",
+        title=f"TX sweep · {result.admin_node} → {result.target}",
         border_style="muted",
         expand=False,
     )

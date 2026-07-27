@@ -680,6 +680,7 @@ async def open_records(ctx: "AppContext") -> dict:
             items,
             footer_hint="↑↓ move · Enter open · Esc back",
             wrap=False,
+            hscroll=True,  # a long walk's row slides under ←→ instead of dying at the fold
         )
         picked = await session.run_screen(browser)
         if picked is CANCEL or picked is None or picked[0] == "back":

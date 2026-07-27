@@ -539,14 +539,6 @@ class TraceResult:
             return None
         return min(h.snr for h in self.hops)
 
-    @property
-    def path_str(self) -> str:
-        """A compact ``a -> b -> c`` rendering of the resolved path."""
-        if not self.hops:
-            return self.target
-        nodes = [h.node or f"hop{h.index}" for h in self.hops]
-        return " -> ".join(nodes)
-
     def edges(self, device_label: str = LOCAL_DEVICE_LABEL) -> list["HopEdge"]:
         """Frame the per-hop SNR as directed ``origin -> destination`` edges.
 
