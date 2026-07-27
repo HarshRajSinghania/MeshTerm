@@ -507,7 +507,7 @@ def test_composer_preview_draws_the_cursor_on_its_arrow() -> None:
     screen = _composer(_topo(), hops=["3d63c6429436"], target=False)
 
     def cursor_at() -> list[int]:
-        text = screen._route_preview()
+        text = screen._route_preview().text(cursor_arrow=screen._cursor)
         return [s.start for s in text.spans if str(s.style) == "selected"]
 
     (end,) = cursor_at()  # exactly one cursor arrow
@@ -613,7 +613,7 @@ def test_composer_path_mode_opens_us_to_us_without_auto() -> None:
     """
     screen = _composer(_topo(), target=False)
     assert screen.title == "Compose path"  # no target to name
-    preview = screen._route_preview()
+    preview = screen._route_preview().text(cursor_arrow=screen._cursor)
     assert preview.plain == "Us (aa) → Us (aa)"  # endpoints carry our hash
     faint = sum(
         span.end - span.start for span in preview.spans if "faint" in str(span.style)

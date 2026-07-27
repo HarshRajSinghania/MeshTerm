@@ -67,6 +67,7 @@ from ..services.topology import MeshTopology, _is_hex, render_custom_spec, rende
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
+from .pathline import PathLine, path_line
 from .widgets import _age_seconds, _format_age, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
@@ -339,16 +340,18 @@ class PathComposerScreen(Screen):
             dim_from=0 if dim else None,
         )
 
-    def _route_preview(self) -> Text:
+    def _route_preview(self) -> "PathLine":
         """The route under construction, endpoints filled in automatically.
 
-        One :func:`path_text` in the trace flavour: target mode shows the composed
+        THE path widget in the trace flavour: target mode shows the composed
         outbound in full colour, then the pinned target and the mirrored return
         resolved and dimmed right alongside it (``dim_from``) — the dimming reads
         as "this half isn't yours to compose". Path mode shows every composed hop
         in full colour (they are all yours) between our own node at both ends,
-        with only the final landing back on us dimmed. The insertion cursor rides
-        the arrow it stands on (``cursor_arrow``), a reverse-video ``→``.
+        with only the final landing back on us dimmed. The caller renders the line
+        with the insertion cursor riding the arrow it stands on (``cursor_arrow``),
+        a reverse-video ``→`` — which pins the preview to plain arrows: an editor
+        needs the seams its cursor sits in.
         """
         entries: list[Optional[str]] = [None]
         entries.extend(self._path_entry(hop) for hop in self._hops)
@@ -356,13 +359,12 @@ class PathComposerScreen(Screen):
             entries.append(self._path_entry(self._target_id))
             entries.extend(self._path_entry(hop) for hop in reversed(self._hops))
         entries.append(None)
-        return path_text(
+        return path_line(
             entries, self._resolve_entry,
             prefix_bytes=self._width_bytes, self_name=self._device_label,
             show_hash=True, hash_bytes=self._width_bytes,
             device_hash=self._device_hash or None,
             dim_from=(2 if self._mirrored else 1) + len(self._hops),
-            cursor_arrow=self._cursor,
         )
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -410,7 +412,9 @@ class PathComposerScreen(Screen):
     def dialog_width(self) -> int:
         """Natural outer width hugging the widest row (compositor still caps it)."""
         widths = [cell_len(self.title), cell_len(self.footer_hint)]
-        widths.append(cell_len(self._route_preview().plain))
+        # Measured with the cursor so the width matches the body's plain render (a
+        # cursor arrow and a plain arrow are both three cells — never a mismatch).
+        widths.append(self._route_preview().text(cursor_arrow=self._cursor).cell_len)
         if first_repeated_edge(self._walk_nodes()) is not None:
             widths.append(cell_len(_NOT_A_TRAIL))
         for kind, payload in self._rows():
@@ -427,7 +431,15 @@ class PathComposerScreen(Screen):
         rows = self._rows()
         self._index = max(0, min(self._index, len(rows) - 1))
 
-        lines = render_lines(self._route_preview(), width)
+        # The preview breaks at hop boundaries under a 2-column hanging indent (never
+        # mid-name), the insertion cursor always on its seam — even when the seam is a
+        # line break, where it rides that line's trailing arrow.
+        lines = [
+            render_to_ansi(line, width, no_wrap=True)
+            for line in self._route_preview().wrapped(
+                width, indent=2, cursor_arrow=self._cursor
+            )
+        ]
         if first_repeated_edge(self._walk_nodes()) is not None:
             lines.extend(render_lines(Text(_NOT_A_TRAIL, style="warn"), width))
         lines.append("")
