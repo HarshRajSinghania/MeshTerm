@@ -23,8 +23,9 @@ from meshterm.persistence.repository import (
 from meshterm.services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
 from meshterm.services.topology import build_topology, collapse_width, render_custom_spec
 from meshterm.services.trace_runner import make_node_resolver
+import meshterm.ui.pathline as pathline
 from meshterm.ui.path_composer import AUTO_SPEC, FetchNeighbours, PathComposerScreen
-from meshterm.ui.pathline import SELF_GLYPH
+from meshterm.ui.pathline import CURSOR_GLYPH, SELF_GLYPH
 from meshterm.ui.tui.screen import CANCEL
 
 US = "aaaaaaaaaaaa"
@@ -507,18 +508,19 @@ def test_composer_suggestions_follow_the_cursor_anchor() -> None:
     assert all(s.node != "3d63c6429436" for s in screen._suggestions())
 
 
-def test_composer_preview_draws_the_cursor_on_its_arrow() -> None:
-    """One reverse-video arrow marks the insertion point, and it rides the cursor."""
+def test_composer_preview_stands_the_cursor_in_the_route() -> None:
+    """The insertion point is a hop of the route — the ``+`` slot the next node takes —
+    and ←/→ slide it along, one position at a time."""
     screen = _composer(_topo(), hops=["3d63c6429436"], target=False)
 
-    def cursor_at() -> list[int]:
-        text = screen._route_preview().text(cursor_arrow=screen._cursor)
-        return [s.start for s in text.spans if str(s.style) == "selected"]
+    def slot_at() -> int:
+        labels = [hop.label for hop in screen._route_preview().hops]
+        assert labels.count(CURSOR_GLYPH) == 1  # exactly one slot, always
+        return labels.index(CURSOR_GLYPH)
 
-    (end,) = cursor_at()  # exactly one cursor arrow
+    assert slot_at() == 2  # opens after us and the composed hop: inserting is appending
     screen.handle("left")
-    (home,) = cursor_at()
-    assert home < end  # the block slid left along the preview
+    assert slot_at() == 1  # slid home, before the hop it would now precede
 
 
 def test_composer_warns_when_the_walk_repeats_a_link() -> None:
@@ -609,17 +611,20 @@ async def test_composer_commits_spec_auto_and_cancel() -> None:
     assert cancelled.future.result() is CANCEL
 
 
-def test_composer_path_mode_opens_star_to_star_without_auto() -> None:
-    """Target-less, the preview is just ``★ → ★`` and there is no Auto action.
+def test_composer_path_mode_opens_star_to_star_without_auto(monkeypatch) -> None:  # noqa: ANN001
+    """Target-less, the preview is just ``★ → + → ★`` and there is no Auto action.
 
     Both ends are our own node, bare and faded: a walk always leaves us and comes home
     to us, and neither end is the user's to compose or remove — the automatic grey says
-    so. With no destination there is nothing for the device to route to either.
+    so. Between them waits the empty slot. With no destination there is nothing for the
+    device to route to either.
     """
+    monkeypatch.setattr(pathline, "powerline_enabled", lambda: False)  # assert the words
     screen = _composer(_topo(), target=False)
     assert screen.title == "Compose path"  # no target to name
-    preview = screen._route_preview().text(cursor_arrow=screen._cursor)
-    assert preview.plain == f"{SELF_GLYPH} → {SELF_GLYPH}"  # our name and hash go unsaid
+    preview = screen._route_preview().text()
+    # Our name and hash go unsaid; the slot says where the first hop would land.
+    assert preview.plain == f"{SELF_GLYPH} → {CURSOR_GLYPH} → {SELF_GLYPH}"
     stars = [
         str(span.style) for span in preview.spans
         if preview.plain[span.start : span.end] == SELF_GLYPH

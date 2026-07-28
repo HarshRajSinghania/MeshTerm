@@ -14,8 +14,8 @@ import pytest
 
 import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
-    POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH,
-    WRAP_OFFSET, PathHop, PathLine, _style_hex, path_line,
+    CURSOR_GLYPH, POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP,
+    SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine, _style_hex, path_line,
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
@@ -126,14 +126,18 @@ def test_auto_mode_follows_the_terminal_verdict(monkeypatch: pytest.MonkeyPatch)
     assert PathLine(hops).text().plain == "a → b"
 
 
-def test_cursor_arrow_forces_plain_and_reverse_videos_the_seam() -> None:
-    """The composer's insertion cursor needs a seam to sit in, so a cursor render
-    is always arrows — even in powerline mode — with the cursor arrow selected."""
-    hops = [PathHop("a"), PathHop("b")]
-    text = PathLine(hops, mode="powerline").text(cursor_arrow=0)
-    assert POWERLINE_SEP not in text.plain
-    assert text.plain == "a → b"
-    assert _styles(text)["→"] == "selected"
+def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
+    """The composer's insertion point is a slot *in* the route, not a gap between two
+    hops: it renders as a hop, so chips stay chips and arrows stay arrows."""
+    hops = [PathHop("a"), PathHop(CURSOR_GLYPH, cursor=True), PathHop("b")]
+    plain = PathLine(hops, mode="plain").text()
+    assert plain.plain == f"a → {CURSOR_GLYPH} → b"
+    assert _styles(plain)[CURSOR_GLYPH] == "selected"  # the reverse-video block
+
+    chips = PathLine(hops, mode="powerline").text()
+    assert chips.plain == f" a {POWERLINE_SEP * 2} {CURSOR_GLYPH} {POWERLINE_SEP * 2} b {POWERLINE_SEP}"
+    slot = next(s for s in chips.spans if chips.plain[s.start : s.end] == CURSOR_GLYPH)
+    assert str(slot.style).endswith(f"on {_style_hex('brand')}")  # the brand accent fill
 
 
 def test_ellipsized_elides_the_middle_and_keeps_both_endpoints() -> None:
@@ -287,19 +291,33 @@ def test_path_line_factory_matches_path_text_hash_as_name_flavour() -> None:
     assert path_line([], lambda h: h).text().plain == path_text([], lambda h: h).plain
 
 
-def test_wrapped_carries_the_cursor_even_onto_a_line_break() -> None:
-    """A cursor render is plain even for a powerline line; a cursor sitting mid-group
-    reverse-videos its arrow, and one sitting exactly on the break rides that line's
-    trailing cue — the insertion point is always visible."""
-    hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
-    line = PathLine(hops, mode="powerline")
-    mid = line.wrapped(16, indent=2, cursor_arrow=0)
-    assert [text.plain for text in mid] == ["AAAA → BBBB →", "    CCCC → DDDD"]
-    assert any(str(s.style) == "selected" for s in mid[0].spans)
-    assert all(POWERLINE_SEP not in text.plain for text in mid)
-    on_break = line.wrapped(16, indent=2, cursor_arrow=1)  # the seam that broke
-    assert str(on_break[0].spans[-1].style) == "selected"
-    assert not any(str(s.style) == "selected" for s in on_break[1].spans)
+def test_path_line_factory_splices_the_cursor_slot_at_a_hop_index() -> None:
+    """``cursor`` names the position a chosen hop would take, counted over the rendered
+    hops and applied after them — so the slot never shifts what its neighbours show."""
+    hops = [None, "aa11bb", "3d63ab", None]
+
+    def built(cursor) -> str:  # noqa: ANN001
+        line = path_line(hops, self_name="Me", bare_self=True, mode="plain", cursor=cursor)
+        return line.text().plain
+
+    assert built(None) == f"{SELF_GLYPH} → aa11bb → 3d63ab → {SELF_GLYPH}"
+    assert built(0) == f"{CURSOR_GLYPH} → {SELF_GLYPH} → aa11bb → 3d63ab → {SELF_GLYPH}"
+    assert built(2) == f"{SELF_GLYPH} → aa11bb → {CURSOR_GLYPH} → 3d63ab → {SELF_GLYPH}"
+    assert built(99).endswith(f"{SELF_GLYPH} → {CURSOR_GLYPH}")  # clamped to the tail
+
+
+def test_wrapped_carries_the_cursor_like_any_other_hop() -> None:
+    """A folded route can't strand its insertion point: the slot is a hop, so it lands
+    on a line of its own accord — wherever it stands, and whatever the mode."""
+    labels = ("AAAA", "BBBB", "CCCC", "DDDD")
+    for at in range(len(labels) + 1):
+        hops = [PathHop(label) for label in labels]
+        hops.insert(at, PathHop(CURSOR_GLYPH, cursor=True))
+        lines = PathLine(hops, mode="plain").wrapped(16, indent=2)
+        assert sum(text.plain.count(CURSOR_GLYPH) for text in lines) == 1
+        assert all(text.cell_len <= 16 for text in lines)
+        carried = next(t for t in lines if CURSOR_GLYPH in t.plain)
+        assert any(str(s.style) == "selected" for s in carried.spans)
 
 
 def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:

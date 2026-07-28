@@ -14,10 +14,12 @@ detail read together:
   through it. A node-type key sits under the graph. The row list carries the full names,
   so the graph's labels stay two cells wide and a many-path graph stays readable.
 * the **arrival list** beneath is one row per logged copy — time, reception SNR, and
-  the relay chain through the shared compact path widget, each named hop annotated
-  with the hash byte it is addressed by (``YUL-Poly (3d)``, the trace presentation);
-  an unknown relay stands in its own hash at the device's path-hash width, muted grey
-  and annotated with that byte (``e839f2 (e8)``).
+  the relay chain as a path line (:mod:`~meshterm.ui.pathline`): each relay a chip in
+  its own node hue, named where we know the node (``YUL-Poly``) and standing in its
+  own hash at the device's path-hash width where we don't (``e839f2``, keyless grey).
+  No hash is repeated after a name — the graph above is where the hash bytes live, and
+  a chip and its label share the node's colour, so the two halves cross-reference by
+  hue instead of by spelling the hex twice.
   ↑↓ move the selection (the graph's highlight follows); a row longer than the
   dialog **scrolls horizontally with ←→**, the whole line shifting under a ``…`` at
   whichever edge continues, and snaps back the moment the selection moves on.
@@ -35,6 +37,7 @@ from rich.text import Text
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
 from .pathgraph import PathLayer, render_path_graph
+from .pathline import path_line
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
@@ -43,7 +46,6 @@ from .widgets import (
     NodeResolver,
     TypeOf,
     node_type_legend,
-    path_text,
     route_graph_style,
 )
 
@@ -183,7 +185,8 @@ class MessagePathsScreen(Screen):
             self._scroll_total = len(lines)
             return lines
 
-        lines.append("")
+        # No blank line above the graph: its canvas already opens with air over the
+        # topmost lane, so a spacer here would read as two rows of margin.
         lines.extend(self._graph_lines(width))
         caption = Text("origin → you · white = selected path · labels = hash byte",
                        style="faint")
@@ -206,11 +209,13 @@ class MessagePathsScreen(Screen):
     def _row_text(self, arrival: Arrival) -> Text:
         """One arrival, unabridged: time, reception SNR, and its relay path.
 
-        Hops carry the trace presentation at the graph's grain: each named hop is
-        annotated with the hash byte it is addressed by (``YUL-Poly (3d)``); an unnamed
-        hop, having no name to show, stands in its own hash at the device's path-hash
-        width — muted grey, since colour is the "this is a name" signal — annotated with
-        that same byte (``e839f2 (e8)``), so the rows and the graph's labels cross-reference.
+        The relay chain is THE path line, so a route here is drawn exactly as a route
+        anywhere else — chips in each node's own hue where the terminal can draw them,
+        arrows where it can't. Hops read as names, nothing else: an unnamed hop, having
+        no name to show, stands in its own hash at the device's path-hash width (muted
+        grey — colour is the "this is a name" signal), and no hop repeats its hash after
+        its name. The hash bytes are the graph's job, one row up; what ties the two
+        together is the shared node hue, not a second spelling of the hex.
         """
         row = Text()
         row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
@@ -223,11 +228,11 @@ class MessagePathsScreen(Screen):
         if arrival.hops:
             row.append("via ", style="muted")
         row.append_text(
-            path_text(
+            path_line(
                 arrival.hops, self._resolve,
                 prefix_bytes=self._prefix_bytes, self_name=self._self_name,
-                empty="direct", show_hash=True, hash_bytes=1, hash_as_name=True,
-            )
+                empty="direct", hash_as_name=True,
+            ).text()
         )
         if arrival.resend:
             row.append(f"  (resend #{arrival.resend})", style="muted")

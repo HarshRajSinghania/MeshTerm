@@ -40,9 +40,11 @@ drawn*, so every surface the survey found can eventually route through it:
   that *are* news.
 
 Existing call sites still render through ``path_text``; migrating them here is a
-separate, per-surface pass. The composer's insertion cursor is the one deliberate
-mode exception: a render asked for ``cursor_arrow`` always draws plain arrows, since
-an insertion point lives *between* hops and chips fuse that seam shut.
+separate, per-surface pass. The composer's insertion cursor rides along as a hop in
+its own right (``cursor=True``, drawn as the :data:`CURSOR_GLYPH` slot): an insertion
+point *is* a position in the route, not a gap between two of them, so it measures,
+wraps and colours like every other hop — the preview keeps whichever mode the terminal
+earned, and a cursor can never be stranded on a line break.
 """
 
 from __future__ import annotations
@@ -74,6 +76,12 @@ POWERLINE_ROUND_CLOSE = ""
 #: Our own node, wherever a surface asks for it stripped of name and hash
 #: (``bare_self``): the app-wide ``★`` — the same mark the map plants on us.
 SELF_GLYPH = "★"
+
+#: The composer's insertion cursor, standing in the route as a hop of its own: the
+#: empty slot the next chosen hop drops into. A ``+`` because that is exactly what
+#: Enter does there — and because no node is ever named one, so the slot can't be
+#: misread as a hop that is already in the route.
+CURSOR_GLYPH = "+"
 
 #: The plain-mode joining arrow, exactly as ``path_text`` draws it today.
 _ARROW = " → "
@@ -123,6 +131,10 @@ class PathHop:
         style: Explicit colour override — a hex style (``"#rrggbb"``, attributes
             allowed) or theme name — for context colourings that outrank identity.
             Plain mode uses it as the label style; powerline as the chip fill.
+        cursor: This hop is an editor's insertion slot rather than a node — the
+            :data:`CURSOR_GLYPH` in the app's brand accent, the same colour the list
+            cursor (``❯``) below it wears, so the two halves of one gesture (the row
+            you pick, the slot it lands in) read as one thing.
     """
 
     label: str
@@ -132,6 +144,7 @@ class PathHop:
     lit_bytes: int = 0
     dim: bool = False
     style: Optional[str] = None
+    cursor: bool = False
 
 
 def _style_hex(style: str) -> Optional[str]:
@@ -186,21 +199,15 @@ class PathLine:
 
     # --- the three shapes ---------------------------------------------------------
 
-    def text(self, *, cursor_arrow: Optional[int] = None) -> Text:
+    def text(self) -> Text:
         """The full one-line rendering; overflow is the caller's call, per surface.
-
-        Args:
-            cursor_arrow: Draw this joining gap (0-based, between hops *j* and
-                *j+1*) as the composer's reverse-video insertion cursor. Forces
-                plain mode for the render — chips fuse the seam an insertion
-                point needs to sit in.
 
         Returns:
             A one-line :class:`Text` (the ``empty`` note when there are no hops).
         """
         if not self._hops:
             return Text(self._empty, style="muted")
-        return self._render(self._hops, cursor_arrow=cursor_arrow)
+        return self._render(self._hops)
 
     def ellipsized(self, width: int) -> Text:
         """The line fitted to ``width`` by eliding *middle* hops behind ``⋯``.
@@ -231,9 +238,7 @@ class PathLine:
         last.truncate(width, overflow="ellipsis")
         return last
 
-    def wrapped(
-        self, width: int, *, indent: int = 0, cursor_arrow: Optional[int] = None
-    ) -> list[Text]:
+    def wrapped(self, width: int, *, indent: int = 0) -> list[Text]:
         """The line broken at hop boundaries, hanging under ``indent`` columns.
 
         The hanging-indent convention: the caller lays its label lane on the first
@@ -258,9 +263,6 @@ class PathLine:
         Args:
             width: The full line budget, indent included.
             indent: The hanging-indent column the continuations align under.
-            cursor_arrow: The composer's insertion cursor, as in :meth:`text` (0-based
-                seam index). Forces plain arrows; a cursor sitting exactly on a line
-                break lands on that line's trailing cue, so it is always visible.
 
         Returns:
             The lines, in order (a single ``empty`` note when there are no hops).
@@ -268,7 +270,7 @@ class PathLine:
         if not self._hops:
             return [Text(self._empty, style="muted")]
         budget = max(1, width - indent)
-        plain = cursor_arrow is not None or self._resolved_mode() != "powerline"
+        plain = self._resolved_mode() != "powerline"
         # The continuation cue is the separator's own mark, minus the space the next
         # hop would have sat in: " → " reads " →", a wire spec's "," stays ",".
         cue = self._separator.rstrip() if plain else ""
@@ -283,15 +285,11 @@ class PathLine:
                 groups = legs
 
         lines: list[Text] = []
-        base = 0  # the global index of the group's first hop, for cursor mapping
         for i, group in enumerate(groups):
-            local: Optional[int] = None
-            if cursor_arrow is not None and 0 <= cursor_arrow - base < len(group) - 1:
-                local = cursor_arrow - base
             step = 0 if i == 0 else WRAP_OFFSET
             line = Text() if i == 0 else Text(" " * (indent + step))
             body = self._render(
-                group, cursor_arrow=local, force_plain=plain,
+                group, force_plain=plain,
                 carry_in=bool(i), carry_on=i < len(groups) - 1,
             )
             # A lone hop too wide for the column is truncated — leaving room for the
@@ -303,12 +301,7 @@ class PathLine:
                 body.truncate(room, overflow="ellipsis")
             line.append_text(body)
             if continues:
-                if cursor_arrow == base + len(group) - 1:  # the cursor rides the break
-                    line.append(cue[:-1])
-                    line.append(cue[-1], style="selected")
-                else:
-                    line.append(cue, style="muted")
-            base += len(group)
+                line.append(cue, style="muted")
             lines.append(line)
         return lines
 
@@ -478,32 +471,25 @@ class PathLine:
         self,
         hops: list[PathHop],
         *,
-        cursor_arrow: Optional[int] = None,
         force_plain: bool = False,
         carry_in: bool = False,
         carry_on: bool = False,
     ) -> Text:
-        """Join ``hops`` in the effective mode (plain whenever a cursor is asked).
+        """Join ``hops`` in the effective mode.
 
         The two carry flags mark a wrapped line's ends and only mean anything to
         chips; arrow mode says the same thing with the trailing cue.
         """
-        if not force_plain and cursor_arrow is None and self._resolved_mode() == "powerline":
+        if not force_plain and self._resolved_mode() == "powerline":
             return self._render_chips(hops, carry_in=carry_in, carry_on=carry_on)
-        return self._render_plain(hops, cursor_arrow)
+        return self._render_plain(hops)
 
-    def _render_plain(self, hops: list[PathHop], cursor_arrow: Optional[int]) -> Text:
+    def _render_plain(self, hops: list[PathHop]) -> Text:
         """Arrow-joined hops — ``path_text``'s presentation, hop by hop."""
         text = Text()
         for i, hop in enumerate(hops):
             if i:
-                gap = self._separator
-                if cursor_arrow is not None and i - 1 == cursor_arrow:
-                    text.append(gap[: len(gap) - len(gap.lstrip())])
-                    text.append(gap.strip(), style="selected")
-                    text.append(gap[len(gap.rstrip()) :])
-                else:
-                    text.append(gap, style="faint" if hop.dim else "muted")
+                text.append(self._separator, style="faint" if hop.dim else "muted")
             text.append_text(self._plain_hop(hop))
         return text
 
@@ -511,7 +497,11 @@ class PathLine:
         """One arrow-mode hop: label in its identity style, annotation muted."""
         note_style = "faint" if hop.dim else "muted"
         text = Text()
-        if hop.dim:
+        if hop.cursor:
+            # No chip fill to carry the accent, so the slot takes the app's reverse-video
+            # `selected` — the same block the editor's cursor has always been.
+            text.append(hop.label, style="selected")
+        elif hop.dim:
             text.append(hop.label, style="faint")
         elif hop.style:
             text.append(hop.label, style=hop.style)
@@ -610,14 +600,19 @@ class PathLine:
         return text
 
     def _chip_fill(self, hop: PathHop) -> str:
-        """A chip's fill colour: override, dim slate, white you, hue, keyless grey.
+        """A chip's fill: cursor accent, override, dim slate, white you, hue, grey.
 
-        The fade outranks identity — including our own. A dimmed hop is one nobody
-        composed (an automatic landing back home, a mirrored return leg), and the white
-        ``you`` chip is the loudest thing on the line: our automatic end must recede
-        with the rest of the automatic half, not shout over the hops that *are* news.
-        Plain mode says the same thing by fading the name.
+        The insertion slot outranks everything — it is the one chip that isn't a node,
+        and it wears the brand accent so it reads as chrome among identities rather than
+        as a hop with an unlucky hue. The fade comes next, outranking identity including
+        our own. A dimmed hop is one nobody composed (an automatic landing back home, a
+        mirrored return leg), and the white ``you`` chip is the loudest thing on the
+        line: our automatic end must recede with the rest of the automatic half, not
+        shout over the hops that *are* news. Plain mode says the same thing by fading
+        the name.
         """
+        if hop.cursor:
+            return _style_hex("brand") or _KEYLESS_BG
         if hop.style:
             resolved = _style_hex(hop.style)
             if resolved:
@@ -631,9 +626,7 @@ class PathLine:
         return _KEYLESS_BG
 
     def _chip(self, hop: PathHop, fill: str) -> Text:
-        """One chip: same words as arrow mode, dark ink on the identity fill.
-
-"""
+        """One chip: same words as arrow mode, dark ink on the identity fill."""
         ink = _DIM_FG if hop.dim else _CHIP_FG
         soft = _DIM_FG if hop.dim else _CHIP_FG_SOFT
         text = Text()
@@ -670,6 +663,7 @@ def path_line(
     dim_from: Optional[int] = None,
     hash_as_name: bool = False,
     bare_self: bool = False,
+    cursor: Optional[int] = None,
     mode: str = "auto",
 ) -> PathLine:
     """Build a :class:`PathLine` from raw hop hashes — ``path_text``'s vocabulary.
@@ -707,6 +701,11 @@ def path_line(
             out from us and coming home to us are fixtures of every such route, no more
             composed — or removable — than a mirrored return leg is, so they wear the
             same automatic grey.
+        cursor: Splice an editor's insertion slot (:data:`CURSOR_GLYPH`) in *at* this
+            rendered-hop index — the position a chosen hop would take, so index ``0``
+            opens the route and ``len`` closes it. Counted over rendered hops exactly
+            as ``dim_from`` is, and applied after them, so a slot never shifts what a
+            hop shows or fades. ``None`` draws no cursor.
         mode: The :class:`PathLine` mode (``"auto"``/``"powerline"``/``"plain"``).
 
     Returns:
@@ -748,4 +747,6 @@ def path_line(
             built.append(PathHop(identity, annotation=note))
         else:
             built.append(PathHop(compact, key=hop, lit_bytes=prefix_bytes))
+    if cursor is not None:
+        built.insert(max(0, min(cursor, len(built))), PathHop(CURSOR_GLYPH, cursor=True))
     return PathLine(built, mode=mode, empty=empty)

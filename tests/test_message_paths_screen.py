@@ -55,21 +55,21 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
 
 
 def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
-    """Graph relays carry their first hash byte, both paths at once; names stay
-    in the rows, annotated with the same byte."""
+    """Graph relays carry their first hash byte, both paths at once; the rows carry the
+    names alone — no hash repeated after one, the two tied together by the node's hue."""
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
     graph = body.split("origin →")[0]
     for byte in ("3d", "a1", "77"):  # every relay labelled, selected or not
         assert byte in graph
     assert "YUL-Cartier" not in graph and "Waymarker" not in graph
-    assert "YUL-Cartierville (3d)" in body  # the rows carry name + hash byte
-    assert "Waymarker (a1)" in body
+    assert "YUL-Cartierville" in body and "Waymarker" in body
+    assert "(3d)" not in body and "(a1)" not in body  # the hex lives on the graph
 
 
 def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
     """An unnamed relay stands in its own hash at the device's path-hash width, muted
-    grey and annotated with its addressed byte — not the bare one-byte prefix, lit."""
+    grey — not the bare one-byte prefix, lit, and never a hash annotated onto itself."""
     now = utcnow()
     arrivals = [
         Arrival(when=now, hops=("3d63",), snr=4.0),  # selected: a named relay
@@ -78,7 +78,7 @@ def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
     screen = _screen(arrivals, prefix_bytes=3)  # 3-byte routing → e839f2
     lines = screen.render_body(76)
     row = next(ln for ln in lines if "e839f2" in _plain([ln]))
-    assert "e839f2 (e8)" in _plain([row])  # mode-width identity, then the byte
+    assert "(e8)" not in _plain([row])  # the mode-width identity stands alone
     assert "38;2;148;163;184" in row  # muted grey over the hash
     assert "38;2;94;234;212" not in row  # never the brand highlight
     graph = _plain(lines).split("origin →")[0]

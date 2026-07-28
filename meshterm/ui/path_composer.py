@@ -17,7 +17,7 @@ sent to the device is one walk that ends within our earshot):
   yours to choose. An *Auto* action hands routing back to the device.
 * **Path mode** (*Trace path* — no target at all): the whole walk is yours, hop by
   hop, until the route comes back within earshot of us — only the final landing on
-  our own node is filled in (and dimmed). The preview opens as just ``★ → ★``.
+  our own node is filled in (and dimmed). The preview opens as just ``★ → + → ★``.
   There is no *Auto* action, because with no destination there is nothing for the
   device to route to.
 
@@ -25,12 +25,12 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
 
 * ↑/↓ move over suggestions and the action rows; Enter on a suggestion inserts it
   at the route's insertion cursor.
-* ←/→ slide that insertion cursor along the editable leg's joining arrows — drawn
-  as a reverse-video ``→`` — so a hop can be spliced in (to the cursor's right) or
-  removed (⌫, to its left) anywhere in the route, not just at the end. It opens on
-  the last arrow, where inserting is appending — the classic flow unchanged. The
-  suggestion list follows: it always proposes next hops from the node left of the
-  cursor.
+* ←/→ slide that insertion cursor along the editable leg — it rides *in* the route as
+  a hop of its own, the brand-accent ``+`` slot the next chosen node drops into — so a
+  hop can be spliced in (at the slot) or removed (⌫, to its left) anywhere in the
+  route, not just at the end. It opens at the end of the composed leg, where inserting
+  is appending — the classic flow unchanged. The suggestion list follows: it always
+  proposes next hops from the node left of the cursor.
 * Typing filters the suggestions by name or hash — and when the typed text is itself
   even-length hex, an *add custom hop* row appears, so a node we have never observed
   (or a bare hash from another tool) can be forced into the route.
@@ -493,9 +493,13 @@ class PathComposerScreen(Screen):
         this dialog exists to shape. An unnamed hop still reads as its hash, truncated
         to the session's chosen path-hash width.
 
-        The caller renders the line with the insertion cursor riding the arrow it
-        stands on (``cursor_arrow``), a reverse-video ``→`` — which pins the preview to
-        plain arrows: an editor needs the seams its cursor sits in.
+        The insertion cursor is *in* the route, not between two of its hops: the
+        ``+`` slot (:data:`~meshterm.ui.pathline.CURSOR_GLYPH`) sits where the next
+        chosen node will, in the brand accent the row cursor below it wears. Drawing an
+        insertion point as a position rather than as a gap is what lets the preview stay
+        the picture the trace window paints — chips and all, rather than falling back to
+        arrows for the sake of a seam to sit in — and lets a wrapped route carry the
+        cursor like any other hop instead of stranding it on a line break.
         """
         entries: list[Optional[str]] = [None]
         entries.extend(self._path_entry(hop) for hop in self._hops)
@@ -510,6 +514,9 @@ class PathComposerScreen(Screen):
             device_hash=self._device_hash or None,
             dim_from=(2 if self._mirrored else 1) + len(self._hops),
             bare_self=True,
+            # The entries open on our own ★, so arrow index k — the slot after display
+            # node k — is rendered-hop index k + 1.
+            cursor=self._cursor + 1,
         )
 
     def _suggestion_text(self, suggestion) -> Text:  # noqa: ANN001
@@ -556,9 +563,9 @@ class PathComposerScreen(Screen):
     def dialog_width(self) -> int:
         """Natural outer width hugging the widest row (compositor still caps it)."""
         widths = [cell_len(self.title), cell_len(self.footer_hint)]
-        # Measured with the cursor so the width matches the body's plain render (a
-        # cursor arrow and a plain arrow are both three cells — never a mismatch).
-        widths.append(self._route_preview().text(cursor_arrow=self._cursor).cell_len)
+        # The preview carries its own cursor slot, so the measured line is the drawn
+        # line — same hops, same mode, same width.
+        widths.append(self._route_preview().text().cell_len)
         if first_repeated_edge(self._walk_nodes()) is not None:
             widths.append(cell_len(_NOT_A_TRAIL))
         for kind, payload in self._rows():
@@ -576,13 +583,11 @@ class PathComposerScreen(Screen):
         self._index = max(0, min(self._index, len(rows) - 1))
 
         # The preview breaks at hop boundaries under a 2-column hanging indent (never
-        # mid-name), the insertion cursor always on its seam — even when the seam is a
-        # line break, where it rides that line's trailing arrow.
+        # mid-name, never mid-chip); the insertion slot is one of those hops, so it
+        # lands on a line like the rest and is always visible.
         lines = [
             render_to_ansi(line, width, no_wrap=True)
-            for line in self._route_preview().wrapped(
-                width, indent=2, cursor_arrow=self._cursor
-            )
+            for line in self._route_preview().wrapped(width, indent=2)
         ]
         if first_repeated_edge(self._walk_nodes()) is not None:
             lines.extend(render_lines(Text(_NOT_A_TRAIL, style="warn"), width))
