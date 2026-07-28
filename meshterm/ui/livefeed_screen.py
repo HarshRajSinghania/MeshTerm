@@ -3,12 +3,17 @@
 The interactive face of the ``livefeed`` tool — the dashboard's old feed panel,
 promoted to a first-class screen. One always-repainting list streams the latest
 packets, newest first: time, class (icon + label, icon alone on a narrow terminal),
-node, SNR/RSSI, and the trailing detail (a relayed frame's ``via`` chain, a message's
-conversation). Seeded from stored history so the screen opens full, then streamed
+node, SNR/RSSI, and a message's conversation. What a row deliberately does *not* carry
+is the relay path a frame rode in on: a route is a shape, not a lane, and squeezing one
+into the cells left at the right edge only ever produced a stub — so the route belongs
+to the packet viewer, which has the room to draw it as a wrapped path line over its
+graph. The feed's job is to say what arrived and how well it was heard; Enter says how
+it got here.
+
+Seeded from stored history so the screen opens full, then streamed
 live off the event hub. ``↑``/``↓`` walk the rows, PgUp/PgDn/Home/End page and jump
-them, ``←``/``→`` scroll the highlighted row sideways when it runs past the right edge
-(a long relay path read to its end without opening anything), and Enter opens the
-highlighted packet in the shared
+them, ``←``/``→`` scroll the highlighted row sideways on a terminal too narrow to hold
+it whole, and Enter opens the highlighted packet in the shared
 :class:`~meshterm.ui.packet_viewer.PacketViewer` — which then pages through the feed
 itself with the same ``↑``/``↓``, and, for an overheard channel-text packet naming a
 channel we hold the key for, decrypts it.
@@ -42,7 +47,6 @@ from .packet_viewer import (
 from .theme import name_style, snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .pathline import path_line
 from .widgets import NameKeyResolver, TypeOf
 
 if TYPE_CHECKING:
@@ -63,9 +67,11 @@ _FEED_NAME_WIDTH = 18
 #: packet under (``direct message``), so every label reads whole and the lanes hold.
 _FEED_CLASS_WIDTH = 14
 
-#: Terminal width below which the feed drops the textual class label and keeps only
-#: the two-cell icon, buying the name and reception lanes room (≤72-col care).
-_FEED_LABEL_MIN_WIDTH = 80
+#: Terminal width below which the feed drops the textual class label and keeps only the
+#: two-cell icon. It is exactly the width the full row occupies — with no route to make
+#: room for, every lane fits a 72-column screen, so the label (the row's most informative
+#: field now that it names the real class) is only ever dropped when it truly can't fit.
+_FEED_LABEL_MIN_WIDTH = 69
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
 #: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
@@ -344,16 +350,17 @@ class LiveFeedScreen(Screen):
         textual label beside it is dropped wholesale on a narrow terminal
         (``show_label``), keeping the lanes aligned either way. The node lane is then
         free to be about the node: its name in the app-wide palette hue (our own node
-        white, a bare hash muted), and a dash where nobody identified themselves. Never
-        wraps — the detail lane gets whatever width the fixed lanes leave (``width``).
+        white, a bare hash muted), and a dash where nobody identified themselves. No
+        relay path rides here — the whole row fits a 72-column screen precisely because
+        it doesn't try to, and the route is drawn properly one keypress away, in the
+        packet viewer.
 
-        A row that runs past the right edge is read by scrolling it, not by growing it.
-        An unhighlighted row simply elides its relay path's middle hops, keeping both
-        ends of the route in view; the *highlighted* row instead slides under ``←→``
-        (:attr:`_hshift`), carrying its detail whole so it can be read to the end — the
-        app-wide h-scroll convention, with the ``▸`` pointer lane pinned so the cursor
-        never scrolls away from the row it marks. The shift bound is measured here,
-        against the current width, so a resize can only clamp it back into range.
+        A row that runs past the right edge — a terminal narrower than the lanes need —
+        is read by scrolling it, not by growing it: the *highlighted* row slides under
+        ``←→`` (:attr:`_hshift`), the app-wide h-scroll convention, with the ``▸``
+        pointer lane pinned so the cursor never scrolls away from the row it marks. The
+        shift bound is measured here, against the current width, so a resize can only
+        clamp it back into range.
         """
         row = Text(no_wrap=True, overflow="ellipsis")
         row.append("▸ " if selected else "  ", style="accent")
@@ -382,9 +389,7 @@ class LiveFeedScreen(Screen):
             f"  {entry.rssi:5.0f} dBm" if entry.rssi is not None else " " * 10,
             style="muted",
         )
-        note = self._feed_note(
-            entry, None if selected else max(1, avail - body.cell_len - 2)
-        )
+        note = self._feed_note(entry)
         if note is not None:
             body.append("  ")
             body.append_text(note)
@@ -406,8 +411,8 @@ class LiveFeedScreen(Screen):
         class lane two columns left already says that, straight from
         :func:`~meshterm.ui.packet_viewer.class_marks`, and a row that spelled it twice
         was reading ``packet`` beside ``channel text`` as though they were two facts.
-        A relayed flood names no origin, so its lane says so with a dash and lets the
-        eye travel on to the ``via`` chain, which does name nodes.
+        A relayed flood names no origin, so its lane says so with a dash — the route that
+        would name nodes is the packet viewer's to draw, not a stub for this row to carry.
         """
         if entry.kind == "message":
             sender = _channel_sender(entry.text)
@@ -421,35 +426,22 @@ class LiveFeedScreen(Screen):
             return entry.where, "muted"  # an ack's code, or any other stray context
         return "—", "muted"
 
-    def _feed_note(self, entry: PacketEntry, budget: Optional[int]) -> Optional[Text]:
-        """The row's trailing detail: a packet's relay path, a message's conversation.
+    def _feed_note(self, entry: PacketEntry) -> Optional[Text]:
+        """The row's trailing detail — a message's conversation, and nothing else.
 
-        The path renders through THE path line. Given a ``budget`` — the cells the row's
-        fixed lanes leave — a chain too long for the lane elides its *middle* hops behind
-        ``⋯``, so the origin and the last relay (the ends a right-edge cut would amputate)
-        always survive. ``None`` asks for the chain whole instead: that is the highlighted
-        row, which scrolls sideways rather than eliding, so nothing may be dropped before
-        ``←→`` has had the chance to reveal it.
+        A relayed frame's route used to sit here, and it never fitted: whatever the fixed
+        lanes left it was a handful of cells, so the chain arrived elided to a stub that
+        named one hop and hinted at the rest. A route is a shape rather than a lane, and
+        it is one keypress away — the packet viewer draws it as a wrapped path line over
+        the route graph, with the room to say the whole thing. So the feed says what
+        arrived; Enter says how it got here.
 
         Args:
             entry: The packet the row describes.
-            budget: Cells the detail may occupy, or ``None`` for the full-length line.
 
         Returns:
             The detail to append, or ``None`` when the class carries none.
         """
-        if entry.kind == "packet" and entry.path is not None:
-            note = Text("via ", style="muted")
-            line = path_line(
-                entry.path.split(","),
-                self._resolve,
-                prefix_bytes=self._prefix_bytes,
-                self_name=self._self_name,
-            )
-            note.append_text(
-                line.text() if budget is None else line.ellipsized(max(1, budget - 4))
-            )
-            return note
         if entry.kind == "message" and entry.where:
             return Text(entry.where, style="muted")
         return None

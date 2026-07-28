@@ -74,17 +74,22 @@ def test_livefeed_live_events_land_in_the_feed() -> None:
     assert body.index("ack") < body.index("message") < body.index("advert")
 
 
-def test_livefeed_packet_rows_show_their_relay_path() -> None:
-    """An RX-log packet reads as its relay path, resolved to names where known.
+def test_livefeed_rows_leave_the_relay_path_to_the_viewer() -> None:
+    """A row says what arrived and how well it was heard; the route is Enter's job.
 
-    The path renders through the shared compact path widget, so each name carries its
-    own hue — assert on the stripped text, not the raw ANSI.
+    Whatever the fixed lanes left a route was never enough to draw one in — it arrived
+    elided to a stub — so the feed carries none, and the whole row fits a 72-column
+    screen with its class label intact.
     """
     screen = _screen()
     screen.on_event(
         MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0))
     )
-    assert "via YUL → Alice" in "\n".join(_stripped(screen.render_body(100)))
+    row = _stripped(screen.render_body(72))[1]
+    assert "via" not in row and "YUL" not in row  # no route, not even a stub of one
+    assert "📦 packet" in row                      # the class still reads in words at 72
+    assert "+1.0 dB" in row and "-90 dBm" in row   # …as does the reception it was heard at
+    assert len(row.rstrip()) <= 72
 
 
 def test_livefeed_class_lane_names_the_payload_class_once() -> None:
@@ -150,60 +155,60 @@ def test_livefeed_windows_inside_the_fixed_screen() -> None:
     assert "↓" in body and "more" in body  # hidden feed rows are counted below
 
 
-def _long_packet(**extra) -> Observation:
-    """A relayed packet whose ``via`` chain is far wider than any sane terminal."""
-    return _obs(kind="packet", path=",".join(f"{i:02d}aa" for i in range(12)), **extra)
+#: A terminal too narrow to hold the feed's fixed lanes — the only thing that makes a
+#: row overflow now that no route rides in it (see ``_FEED_LABEL_MIN_WIDTH``).
+_CRAMPED = 44
+
+
+def test_livefeed_the_whole_row_fits_a_72_column_screen() -> None:
+    """No row overflows at 72 — which is why ←→ has nothing to advertise there."""
+    screen = _screen(seed=[_obs(node="n0", kind="telemetry")])
+    for line in _stripped(screen.render_body(72))[1:]:
+        assert len(line.rstrip()) <= 72
+    assert screen._hmax == 0
+    assert "←→" not in screen.footer_hint
 
 
 def test_livefeed_highlighted_row_scrolls_sideways_to_its_tail() -> None:
-    """←→ slide the highlighted row so a long relay path reads to its last hop."""
-    screen = _screen(seed=[_long_packet()])
-    opening = _stripped(screen.render_body(100))[1]
+    """On a terminal too narrow for the lanes, ←→ slide the highlighted row to its end."""
+    screen = _screen(seed=[_obs()])
+    opening = _stripped(screen.render_body(_CRAMPED))[1]
     assert screen._hmax > 0  # the row does run past the right edge
-    assert "00aa" in opening and "11aa" not in opening  # …so its tail is off-screen
+    assert not opening.rstrip().endswith("dBm")  # …so its reception tail is off-screen
 
     for _ in range(40):  # → saturates at the row's own end, never past it
         screen.handle("right")
-    scrolled = _stripped(screen.render_body(100))[1]
+    scrolled = _stripped(screen.render_body(_CRAMPED))[1]
     assert screen._hshift == screen._hmax
     assert scrolled.startswith("▸ ")  # the pointer lane stays pinned while the row slides
-    assert scrolled.rstrip().endswith("11aa")  # the last hop is now readable
-    assert "Alice" not in scrolled  # …at the cost of the lanes that slid off the left
+    assert scrolled.rstrip().endswith("-90 dBm")  # the tail is now readable
+    assert opening[2:10] not in scrolled  # …at the cost of the time lane, slid off left
 
     for _ in range(40):
         screen.handle("left")
     assert screen._hshift == 0
-    assert _stripped(screen.render_body(100))[1] == opening  # back where it started
+    assert _stripped(screen.render_body(_CRAMPED))[1] == opening  # back where it started
 
 
 def test_livefeed_moving_the_selection_abandons_the_rows_scroll() -> None:
     """Each row scrolls on its own: landing on another packet starts it at its beginning."""
-    screen = _screen(seed=[_long_packet(age_s=1), _long_packet(age_s=0)])
-    screen.render_body(100)
+    screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
+    screen.render_body(_CRAMPED)
     screen.handle("right")
     assert screen._hshift > 0
     screen.handle("down")
     assert screen._hshift == 0
 
 
-def test_livefeed_only_the_highlighted_row_carries_its_path_whole() -> None:
-    """An unhighlighted row elides its middle hops; the one you can scroll keeps them."""
-    screen = _screen(seed=[_long_packet(age_s=1), _long_packet(age_s=0)])
-    rows = _stripped(screen.render_body(100))[1:3]
-    assert "⋯" not in rows[0]  # the highlighted row: whole, cropped at the edge
-    assert "⋯" in rows[1]      # the rest: middle elided so both ends survive
-
-
 def test_livefeed_advertises_line_scroll_only_where_it_acts() -> None:
     """←→ earns its footer atom exactly while the highlighted row overflows."""
-    short = _screen(seed=[_obs()])
-    short.render_body(100)
-    assert "←→" not in short.footer_hint
+    screen = _screen(seed=[_obs()])
+    screen.render_body(100)
+    assert "←→" not in screen.footer_hint  # a row with room to spare scrolls nowhere
 
-    long_row = _screen(seed=[_long_packet()])
-    long_row.render_body(100)
-    assert "←→ scroll line" in long_row.footer_hint
-    assert len(long_row.footer_hint) <= 72  # the screens-at-72 rule, fullest state
+    screen.render_body(_CRAMPED)
+    assert "←→ scroll line" in screen.footer_hint
+    assert len(screen.footer_hint) <= 72  # the screens-at-72 rule, fullest state
 
 
 def test_livefeed_without_a_device_reads_as_waiting() -> None:
