@@ -8,11 +8,11 @@ caller), a :class:`PathLine` separates *what the hops are* from *how the line is
 drawn*, so every surface the survey found can eventually route through it:
 
 * **Two separator styles.** ``plain`` joins hops with muted ``→`` arrows — today's
-  look, unchanged. ``powerline`` renders each hop as a colour-filled chip separated by
-  the solid-triangle U+E0B0 drawn on the page — the gapped oh-my-posh look: each chip
-  tapers out to a point and the page shows through the wedge behind it, so a route
-  reads as a row of distinct blocks rather than one fused ribbon. The
-  chip fill is the node's hash-derived hue
+  look, unchanged. ``powerline`` renders each hop as a colour-filled chip, seams drawn
+  as two solid triangles U+E0B0 — the previous chip tapering out to a point, the next
+  one notched inward out of its own fill, a sliver of bare page between them: the gapped
+  oh-my-posh look, where a route reads as a row of distinct blocks rather than one
+  fused ribbon. The chip fill is the node's hash-derived hue
   (:func:`~meshterm.ui.theme.node_style`), our own node the pure ``you`` white, a
   faded hop dark slate, a keyless hop grey. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
@@ -329,17 +329,19 @@ class PathLine:
 
         Returns:
             ``(cells, join, tail, lead, head)`` — each hop's cells, the cells one join
-            between two hops costs, the cells a line always closes with (chip mode's
-            edge; nothing in arrow mode), the cells every line *after the first* opens
-            with (chip mode's reopened seam), and the cells the *first* line opens with
-            (chip mode's rounded cap, nothing where the font has none).
+            between two hops costs (chip mode's seam is two: the point tapering out and
+            the notch cut into the next chip), the cells a line always closes with (chip
+            mode's edge; nothing in arrow mode), the cells every line *after the first*
+            opens with (chip mode's notch, the seam's second half redrawn), and the
+            cells the *first* line opens with (chip mode's rounded cap, nothing where
+            the font has none).
         """
         if plain:
             return [self._plain_hop(hop).cell_len for hop in hops],                 cell_len(self._separator), 0, 0, 0
         widths = [self._chip(hop, self._chip_fill(hop)).cell_len for hop in hops]
         sep = cell_len(POWERLINE_SEP)
         head = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
-        return widths, sep, sep, sep, head
+        return widths, sep * 2, sep, sep, head
 
     @staticmethod
     def _fill(
@@ -530,13 +532,15 @@ class PathLine:
     def _render_chips(
         self, hops: list[PathHop], *, carry_in: bool = False, carry_on: bool = False
     ) -> Text:
-        """Powerline chips: each hop filled with its hue, a page-wide gap at every seam.
+        """Powerline chips: each hop filled with its hue, a two-cell gap at every seam.
 
         The two outer ends say whether this line *is* the path or only part of it. A
         line that opens the path opens rounded (squared off where the font has no
         rounded caps); one that continues a wrapped path opens on the break's other
-        half. A line that ends the path closes rounded; one the path outruns closes on
-        the point, the same "goes on" cue arrow mode spells with a trailing ``→``.
+        half — which is exactly the seam's own second cell, so a fold looks like the
+        seam it interrupted. A line that ends the path closes rounded; one the path
+        outruns closes on the point, the same "goes on" cue arrow mode spells with a
+        trailing ``→``.
 
         Args:
             hops: The hops of this one line, in order.
@@ -547,40 +551,63 @@ class PathLine:
         rounded = powerline_full()
         text = Text()
         if carry_in:
-            # The break's other half: the page notched into this chip's left edge, so
-            # the line reads as arriving. Reverse video paints the notch in the
-            # terminal's own background — the only way to name the page's colour
-            # without knowing it — so not a trace of the line above bleeds into this
-            # one, and the point still faces the way the path flows.
-            text.append(POWERLINE_SEP, style=f"{fills[0]} reverse")
+            text.append_text(self._notch(fills[0]))  # the break's other half
         elif rounded:
             text.append(POWERLINE_ROUND_OPEN, style=fills[0])
         for i, hop in enumerate(hops):
             if i:
-                text.append(POWERLINE_SEP, style=self._seam(fills[i - 1], fills[i]))
+                text.append_text(self._seam(fills[i - 1], fills[i]))
             text.append_text(self._chip(hop, fills[i]))
         close = POWERLINE_SEP if carry_on or not rounded else POWERLINE_ROUND_CLOSE
         text.append(close, style=fills[-1])  # the edge into the page: pointed or round
         return text
 
-    @staticmethod
-    def _seam(before: str, after: str) -> str:
-        """One seam's style: the previous chip's point, open onto the page.
+    @classmethod
+    def _seam(cls, before: str, after: str) -> Text:
+        """The two cells between two chips: a point tapering out, a notch cut back in.
 
-        The point is drawn in the previous fill with *no* background of its own, so the
-        page shows through the wedge it tapers out of — the small gap oh-my-posh leaves
-        between segments. The alternative (interlocking the point into the next chip's
-        fill) packs the row tighter, but it fuses the route into one continuous ribbon,
-        and two neighbours that happen to land on the same fill — a hue collision, a run
-        of faded hops, two keyless greys — then read as a single block where the route
-        has two nodes. One gap, every seam: a chip is always a chip.
+        The previous chip's point carries *no* background, so the page shows through the
+        wedge it tapers into; the next chip's left edge then opens on the same point in
+        the page's own colour, notched inward out of its fill. Both faces angle the way
+        the path flows, and between them sits a sliver of bare page — the small gap
+        oh-my-posh leaves between its segments.
+
+        The alternative (one cell, the previous fill interlocked *on* the next) packs
+        the row tighter but fuses the route into a continuous ribbon, and two neighbours
+        that happen to land on the same fill — a hue collision, a run of faded hops, two
+        keyless greys — then read as a single block where the route has two nodes. One
+        gap, every seam: a chip is always a chip.
 
         Args:
             before: The fill the seam tapers out of (the previous chip's).
-            after: The fill the next chip opens on — no longer part of the seam, kept
-                so callers still read as "this seam, between these two fills".
+            after: The fill the seam notches back into (the next chip's).
+
+        Returns:
+            The seam's two cells, styled.
         """
-        return before
+        text = Text()
+        text.append(POWERLINE_SEP, style=before)
+        text.append_text(cls._notch(after))
+        return text
+
+    @staticmethod
+    def _notch(fill: str) -> Text:
+        """A chip's left edge: the point cut inward out of its own fill.
+
+        Reverse video paints the notch in the terminal's own background — the only way
+        to name the page's colour without knowing it — so nothing of whatever sits left
+        of the chip (the previous chip's taper, the line above a wrapped break) bleeds
+        into it, and the point still faces the way the path flows.
+
+        Args:
+            fill: The chip's fill colour, which the notch is cut out of.
+
+        Returns:
+            The one styled cell.
+        """
+        text = Text()
+        text.append(POWERLINE_SEP, style=f"{fill} reverse")
+        return text
 
     def _chip_fill(self, hop: PathHop) -> str:
         """A chip's fill colour: override, dim slate, white you, hue, keyless grey.

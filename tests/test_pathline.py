@@ -87,18 +87,21 @@ def test_empty_path_reads_as_the_callers_word() -> None:
 
 
 def test_chips_are_separated_by_a_gap_not_an_interlock() -> None:
-    """Every seam's triangle carries only a foreground — the previous chip's fill — so
-    the page shows through the wedge and the chips read as separate blocks (the
-    oh-my-posh gap), interior seams and the closing edge alike."""
+    """A seam is two points, not one interlock: the previous chip tapers out with no
+    background of its own (the page shows through the wedge), and the next chip's left
+    edge notches the same point back inward out of its own fill. The closing edge keeps
+    its single taper — nothing follows it to notch."""
     alice_fill = node_style("aa").split()[-1]
     line = PathLine(
         [PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline"
     )
     text = line.text()
-    assert text.plain == f" Alice {POWERLINE_SEP} you {POWERLINE_SEP}"
+    assert text.plain == f" Alice {POWERLINE_SEP * 2} you {POWERLINE_SEP}"
     seam_styles = [str(s.style) for s in text.spans
                    if text.plain[s.start:s.end] == POWERLINE_SEP]
-    assert seam_styles == [alice_fill, "#ffffff"]  # no "on": nothing behind the point
+    # taper out of Alice, notch into you (reverse = the page's own colour), closing edge
+    assert seam_styles == [alice_fill, "#ffffff reverse", "#ffffff"]
+    assert all(" on " not in style for style in seam_styles)  # never an interlock
 
 
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:

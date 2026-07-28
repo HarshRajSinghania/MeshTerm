@@ -22,6 +22,7 @@ from meshterm.persistence.repository import (
 )
 from meshterm.services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
 from meshterm.services.topology import build_topology, collapse_width, render_custom_spec
+from meshterm.services.trace_runner import make_node_resolver
 from meshterm.ui.path_composer import AUTO_SPEC, FetchNeighbours, PathComposerScreen
 from meshterm.ui.pathline import SELF_GLYPH
 from meshterm.ui.tui.screen import CANCEL
@@ -648,6 +649,54 @@ def test_composer_names_an_ambiguous_hop_through_the_owning_screens_resolver() -
     named = _composer(topo, target=False, resolve=lambda h: "Hub" if h == "3d" else h)
     body = re.sub(r"\x1b\[[0-9;]*m", "", _rows_plain(named))
     assert "Hub (3d)" in body  # the name, and the hash it is addressed by beside it
+
+
+def test_composer_merges_a_stub_and_its_full_id_into_one_suggestion() -> None:
+    """One node the graph holds twice reads — and is addressed — as one row.
+
+    ``3d`` prefix-matches two contacts, so the topology keeps it as its own vertex
+    rather than guessing, separate from the ``3d63c6429436`` its wider sightings landed
+    on. Once both are named, the list would propose the same node twice; they fold onto
+    the longer id, evidence pooled. The 3d-prefixed *twin* is a different name, so it
+    stays its own row — a shared prefix alone never merges two nodes.
+    """
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60, key_prefix="3d9900000000")
+    walks = [
+        _traced(("3d", 6.0), (None, 6.0)),            # the ambiguous stub
+        _traced(("3d63c6429436", 8.0), (None, 8.0)),  # the very same node, full id
+        _traced(("3d9900000000", 4.0), (None, 4.0)),  # a different node behind 3d
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, twin])
+    assert topo.display_name("3d") is None  # ambiguous: the graph won't fold it itself
+    assert {s.node for s in topo.next_hops(topo.self_id)} == {
+        "3d", "3d63c6429436", "3d9900000000",
+    }
+
+    screen = _composer(topo, target=False, resolve=make_node_resolver([REPEATER, twin]))
+    rows = screen._suggestions()
+    assert [r.node for r in rows] == ["3d63c6429436", "3d9900000000"]
+    assert rows[0].link.samples == 4  # both walks' out-and-back readings, pooled
+    assert rows[0].link.median_snr == 7.0  # 6.0 and 8.0 twice each
+
+
+def test_composer_steps_off_a_merged_node_with_all_its_evidence() -> None:
+    """Standing on the merged node sees everything *either* of its ids was heard by.
+
+    Folding the stub away must not fold its links away with it — otherwise merging
+    would quietly cost the composer whatever was only ever observed under the stub.
+    """
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60, key_prefix="3d9900000000")
+    walks = [
+        _traced(("3d", 6.0), ("f2", -5.0), ("3d", -5.5), (None, 6.0)),  # Far, via the stub
+        _traced(("3d63c6429436", 8.0), (None, 8.0)),                    # the full id
+        _traced(("3d9900000000", 4.0), (None, 4.0)),                    # the other 3d node
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, twin])
+    screen = _composer(topo, target=False, hops=["3d63c6429436"], resolve=make_node_resolver(
+        [REPEATER, FAR, twin]
+    ))
+    # Far was only ever heard through the stub, and is still offered from the full id.
+    assert [s.node for s in screen._suggestions()] == ["f2c24f54551e"]
 
 
 async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim() -> None:

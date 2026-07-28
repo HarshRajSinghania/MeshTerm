@@ -67,7 +67,9 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..services.records import first_repeated_edge
-from ..services.topology import MeshTopology, _is_hex, render_custom_spec, render_forced_spec
+from ..services.topology import (
+    HopSuggestion, Link, MeshTopology, _is_hex, render_custom_spec, render_forced_spec,
+)
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -189,6 +191,10 @@ class PathComposerScreen(Screen):
         self._device_hash = (device_hash or "").lower().removeprefix("0x")
         self._topology = topology
         self._resolve = resolve
+        #: Resolved display names by node id — see :meth:`_resolve_entry`.
+        self._names: dict[str, str] = {}
+        #: The graph ids each node reads as — see :meth:`_aliases`.
+        self._alias_cache: dict[str, set[str]] = {}
         self._width_bytes = width_bytes
         self._hops: list[str] = list(hops or [])
         #: The insertion cursor: which joining arrow of the editable leg it sits on.
@@ -228,14 +234,97 @@ class PathComposerScreen(Screen):
         """
         return self._hops[self._cursor - 1] if self._cursor else self._topology.self_id
 
+    def _same_node(self, a: str, b: str) -> bool:
+        """Whether two graph ids read as one node — same name, one prefixing the other.
+
+        The evidence graph keeps a hop hash it can't pin down as its own vertex: a
+        1-byte ``3d`` that prefix-matches two contacts stays ``3d``, separate from the
+        ``3d63c6429436`` its wider sightings landed on. Both are real ids with real
+        evidence, and the graph is right not to guess — but on screen, once the name
+        resolver has named them (see :meth:`_resolve_entry`), they are one row shown
+        twice. The test is deliberately both halves: a shared *name*, and one hash a
+        prefix of the other. Two unnamed hashes never merge (they resolve to
+        themselves, so the names differ) and two same-named nodes on unrelated keys —
+        a duplicate contact name, a renamed node — never merge either.
+
+        Args:
+            a: One node id.
+            b: The other.
+
+        Returns:
+            Whether the two should be shown, and addressed, as a single node.
+        """
+        if a == b:
+            return True
+        if not (a.startswith(b) or b.startswith(a)):
+            return False
+        named = self._resolve_entry(a)
+        return named != a and named == self._resolve_entry(b)
+
+    def _aliases(self, node: str) -> set[str]:
+        """Every id in the graph that reads as ``node`` — the stubs it is split across.
+
+        The other half of :meth:`_same_node`: a merged suggestion must also *stand* as
+        the merged node, so the next step out of it sees everything all its ids have
+        been heard talking to. Without this, folding ``3d`` into ``3d63c6429436`` would
+        quietly cost the composer whatever was only ever observed under the stub.
+
+        Cached per node, since this walks the whole graph and :meth:`_suggestions` runs
+        several times per keystroke (the row list, the dialog's width, the paint). The
+        topology is fixed for the screen's lifetime — a neighbour fetch builds a fresh
+        one — so the answer can't go stale under the cache.
+        """
+        ids = self._alias_cache.get(node)
+        if ids is not None:
+            return ids
+        ids = {node}
+        for link in self._topology.links():
+            for end in (link.a, link.b):
+                if end not in ids and self._same_node(end, node):
+                    ids.add(end)
+        self._alias_cache[node] = ids
+        return ids
+
+    def _pooled(self, one, other):  # noqa: ANN001, ANN201
+        """Fold two suggestions for the same node into one row, evidence pooled.
+
+        The surviving id is the longer of the two — the more specific identity, and the
+        one that addresses the node best when the spec is rendered. The readings behind
+        it are summed exactly as the topology pools evidence when it coalesces a stub
+        itself, so the row's ``n×`` and median SNR describe the whole node rather than
+        whichever half happened to rank first.
+        """
+        node = one.node if len(one.node) >= len(other.node) else other.node
+        stamps = [
+            link.last_seen for link in (one.link, other.link) if link.last_seen is not None
+        ]
+        ends = sorted((self._anchor(), node))
+        return HopSuggestion(
+            node=node,
+            link=Link(
+                a=ends[0], b=ends[1],
+                samples=one.link.samples + other.link.samples,
+                snrs=[*one.link.snrs, *other.link.snrs],
+                last_seen=max(stamps) if stamps else None,
+                sources=one.link.sources | other.link.sources,
+            ),
+            strength=max(one.strength, other.strength),
+        )
+
     def _suggestions(self) -> list:
-        """The current suggestion rows, filtered by the typed entry.
+        """The current suggestion rows — duplicates merged, filtered by the typed entry.
 
         Target mode excludes the target (the path implicitly turns at it) and every
         used hop (revisiting one on the outbound leg is never useful — the mirror
         already recrosses it). Path mode only excludes ourselves and the cursor's
         two neighbours (either would make the inserted hop a self-loop): a return
-        leg legitimately reuses outbound repeaters.
+        leg legitimately reuses outbound repeaters. Every exclusion covers the excluded
+        node's aliases too, so a stub of the anchor can't be proposed as a step off it.
+
+        Suggestions are gathered from all of the anchor's aliases and then folded
+        pairwise (:meth:`_same_node`, :meth:`_pooled`), so a node the graph holds under
+        both a stub and a full id appears once, with all of its evidence, ranked by its
+        best link.
 
         Returns:
             The (possibly filtered) :class:`~meshterm.services.topology.HopSuggestion`
@@ -248,16 +337,29 @@ class PathComposerScreen(Screen):
             exclude = frozenset(
                 {self._topology.self_id, self._anchor()} | ({after} if after else set())
             )
-        suggestions = self._topology.next_hops(self._anchor(), exclude=exclude)
+        merged: list = []
+        for tail in sorted(self._aliases(self._anchor()), key=len, reverse=True):
+            for suggestion in self._topology.next_hops(tail, exclude=exclude):
+                if any(self._same_node(suggestion.node, other) for other in exclude):
+                    continue
+                at = next(
+                    (i for i, m in enumerate(merged)
+                     if self._same_node(m.node, suggestion.node)),
+                    None,
+                )
+                if at is None:
+                    merged.append(suggestion)
+                else:
+                    merged[at] = self._pooled(merged[at], suggestion)
+        merged.sort(key=lambda s: (-s.strength, s.node))
         needle = self._entry.strip().lower()
         if needle:
-            suggestions = [
+            merged = [
                 s
-                for s in suggestions
-                if s.node.startswith(needle)
-                or needle in (self._topology.display_name(s.node) or "").lower()
+                for s in merged
+                if s.node.startswith(needle) or needle in self._resolve_entry(s.node).lower()
             ]
-        return suggestions[:_MAX_SUGGESTIONS]
+        return merged[:_MAX_SUGGESTIONS]
 
     def _custom_hex(self) -> Optional[str]:
         """The typed entry as an addable hex hop, or ``None`` when it isn't one."""
@@ -336,10 +438,19 @@ class PathComposerScreen(Screen):
         to it means a node the trace window shows as *YUL-Poly* is *YUL-Poly* here too,
         instead of a bare ``3d`` the reader has to decode. Nothing is invented: an
         unmatched hash comes back unchanged and renders as a hash.
+
+        Memoized: both resolvers scan the contact list, and this now runs over every
+        link in the graph on the way to each repaint (see :meth:`_aliases`). Neither
+        the topology nor the resolver changes while a composer is open — a neighbour
+        fetch builds a fresh screen — so the answers are stable for its lifetime.
         """
         if self._target_id is not None and entry == (self._target_hash or self._target_id):
             return self._target_label or entry
-        return self._topology.display_name(entry) or self._resolve(entry) or entry
+        named = self._names.get(entry)
+        if named is None:
+            named = self._topology.display_name(entry) or self._resolve(entry) or entry
+            self._names[entry] = named
+        return named
 
     def _node_text(self, node: str, *, dim: bool = False) -> Text:
         """One route node through THE path widget, the trace presentation.
