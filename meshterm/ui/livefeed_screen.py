@@ -24,6 +24,11 @@ it whole, and Enter opens the highlighted packet in the shared
 itself with the same ``↑``/``↓``, and, for an overheard channel-text packet naming a
 channel we hold the key for, decrypts it.
 
+The cursor's last stop, past the oldest packet, is the app's own exit group — a blank
+line and the bare word ``Back``, pinned to the foot of the screen so it is there to be
+seen and pressed however far the feed has scrolled. Enter on it leaves exactly as Esc
+does.
+
 The screen holds no subscriptions of its own — the opener (:func:`open_livefeed`)
 wires the hub subscription and the once-a-second repaint, and tears them down when
 the screen resolves. The newest packet is highlighted from the moment the screen
@@ -104,6 +109,12 @@ _FEED_LABEL_MIN_WIDTH = (
     2 + _TIME_LANE + _ICON_LANE + _FEED_CLASS_WIDTH + _LANE_GAP
     + _FEED_SUBJECT_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
 )
+
+#: Body lines the pinned exit group costs: the blank separator, then the ``Back`` row —
+#: the exact shape :func:`~meshterm.ui.menus.back_rows` gives a select list, struck from
+#: the feed's window so the group stays at the foot of the screen instead of scrolling
+#: with the packets.
+_EXIT_LINES = 2
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
 #: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
@@ -188,8 +199,9 @@ class LiveFeedScreen(Screen):
         self._feed: deque[PacketEntry] = deque(maxlen=_FEED_CAP)
         for obs in list(seed)[-_FEED_CAP:][::-1]:
             self._feed.append(PacketEntry.from_observation(obs))
-        #: The highlighted feed row. Starts on the newest packet (``None`` only when
-        #: the feed is empty) so a lone Esc always backs straight out of the screen.
+        #: The highlighted feed row, or ``None`` when the cursor rests on the ``Back``
+        #: row past the oldest packet — the screen's other cursor stop, and the only one
+        #: an empty feed offers. Starts on the newest packet.
         self._selected: Optional[int] = 0 if self._feed else None
         #: The feed's window within the fixed screen (its rows scroll under the heading).
         self._feed_window = ListWindow()
@@ -243,7 +255,7 @@ class LiveFeedScreen(Screen):
         return base
 
     def handle(self, action: str, data: str = "") -> None:
-        """Walk the feed, open the highlighted packet, scroll, or dismiss."""
+        """Walk the cursor, commit the row it rests on, scroll a row, or dismiss."""
         if action in _HSHIFT_RESET:
             self._hshift = 0  # moving off a row abandons its scroll
         if action == "up":
@@ -251,36 +263,19 @@ class LiveFeedScreen(Screen):
         elif action == "down":
             self._move_selection(1)
         elif action == "enter":
-            self._open_packet()
+            self._commit()
         elif action == "pageup":
-            # With a feed row highlighted the page keys walk the selection (a
-            # windowful at a time), so the highlight travels with the window; with
-            # none, they slide the feed window itself under the pinned heading.
-            if self._selected is not None:
-                self._select_index(self._selected - self._feed_window.page)
-            else:
-                self._feed_window.top -= self._feed_window.page
-                self._session.invalidate()
+            # The page keys walk the cursor a windowful at a time, so the highlight
+            # travels with the window rather than being left behind by it.
+            self._select_stop(self._cursor - self._feed_window.page)
         elif action in ("pagedown", "space"):
-            if self._selected is not None:
-                self._select_index(self._selected + self._feed_window.page)
-            else:
-                self._feed_window.top += self._feed_window.page
-                self._session.invalidate()
+            self._select_stop(self._cursor + self._feed_window.page)
         elif action in ("home", "ctrl_home"):
-            # With the feed highlight active, Home jumps to the newest packet;
-            # otherwise it slides the window to the feed's newest end (End mirrors).
-            if self._selected is not None:
-                self._select_index(0)
-            else:
-                self._feed_window.top = 0
-                self._session.invalidate()
+            # Home jumps to the newest packet; End to the list's last row, which — as on
+            # every list in the app — is the ``Back`` row (the oldest packet is one ↑ up).
+            self._select_stop(0)
         elif action in ("end", "ctrl_end"):
-            if self._selected is not None:
-                self._select_index(len(self._feed) - 1)
-            else:
-                self._feed_window.to_end()
-                self._session.invalidate()
+            self._select_stop(len(self._feed))
         elif action == "left":
             self._scroll_line(-_HSCROLL_STEP)
         elif action == "right":
@@ -295,19 +290,32 @@ class LiveFeedScreen(Screen):
             self._hshift = shift
             self._session.invalidate()
 
-    def _move_selection(self, delta: int) -> None:
-        """Move the feed highlight (the first press lands on the newest packet)."""
-        if not self._feed:
-            return
-        if self._selected is None:
-            self._select_index(0)
-        else:
-            self._select_index(self._selected + delta)
+    @property
+    def _cursor(self) -> int:
+        """The cursor as one index over the screen's stops: a feed row, else the ``Back`` row.
 
-    def _select_index(self, index: int) -> None:
-        """Highlight one feed row (clamped) and repaint."""
-        self._selected = max(0, min(index, len(self._feed) - 1))
+        The feed's rows number ``0 .. len(feed) - 1`` and the exit row sits one past them,
+        so every move is a clamp on this one number — and an empty feed leaves the ``Back``
+        row as the only stop there is.
+        """
+        return len(self._feed) if self._selected is None else self._selected
+
+    def _move_selection(self, delta: int) -> None:
+        """Step the cursor by ``delta`` rows (off the oldest packet lands it on ``Back``)."""
+        self._select_stop(self._cursor + delta)
+
+    def _select_stop(self, index: int) -> None:
+        """Move the cursor to one stop — a feed row, or the ``Back`` row past them — and repaint."""
+        index = max(0, min(index, len(self._feed)))
+        self._selected = index if index < len(self._feed) else None
         self._session.invalidate()
+
+    def _commit(self) -> None:
+        """Enter: open the highlighted packet, or leave when the cursor is on ``Back``."""
+        if self._selected is None:
+            self.resolve(None)  # the exit row leaves exactly as Esc does
+        else:
+            self._open_packet()
 
     def _open_packet(self) -> None:
         """Float the packet viewer over the highlighted feed row.
@@ -322,7 +330,7 @@ class LiveFeedScreen(Screen):
             # The feed may have grown since the snapshot; find the entry itself.
             for i, candidate in enumerate(self._feed):
                 if candidate is entry:
-                    self._select_index(i)
+                    self._select_stop(i)
                     return
 
         viewer = PacketViewer(
@@ -339,25 +347,42 @@ class LiveFeedScreen(Screen):
     # --- rendering ---------------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """The status line and column header, then the feed's window under them.
+        """The status line and column header, the feed's window, then the exit group.
 
-        Both chrome lines are pinned by construction rather than by the base screen's
-        sticky-header machinery: the feed windows *inside* the space they leave (see
-        :meth:`_feed_lines`), so the body never scrolls and the header can never travel
-        off the top of it.
+        Every line but the feed's own is pinned by construction rather than by the base
+        screen's sticky-header machinery: the chrome above and below is struck from the
+        viewport first and the feed windows *inside* what is left (see
+        :meth:`_feed_lines`), so the body never scrolls — the header can't travel off the
+        top of it, and ``Back`` can't sink past the bottom.
         """
-        if self._selected is not None and self._feed:
-            self._selected = min(self._selected, len(self._feed) - 1)
-        else:
+        if self._selected is not None:
+            self._selected = min(self._selected, len(self._feed) - 1) if self._feed else None
+        if self._selected is None:
             self._hmax = 0  # nothing highlighted scrolls, so nothing advertises ←→
         show_label = width >= _FEED_LABEL_MIN_WIDTH
         lines = [render_to_ansi(self._heading(), width, no_wrap=True)]
         if self._feed:  # a header over nothing is noise; the empty note speaks for itself
             lines.append(render_to_ansi(self._column_header(show_label), width, no_wrap=True))
-        win = max(1, self._scroll_viewport - len(lines))
+        win = max(1, self._scroll_viewport - len(lines) - _EXIT_LINES)
         lines.extend(self._feed_lines(width, win, show_label))
+        lines.extend(self._exit_lines(width))
         self._scroll_total = max(1, len(lines))
         return lines
+
+    def _exit_lines(self, width: int) -> list[str]:
+        """The pinned exit group: one blank separator, then the bare word ``Back``.
+
+        The very rows :func:`~meshterm.ui.menus.back_rows` gives a select list, drawn here
+        by hand because the feed is a rendered screen rather than a list of choices — same
+        blank line, same bare word, no arrow and no icon, and the same ``❯`` cursor over a
+        brand row when it is the stop the cursor rests on.
+        """
+        selected = self._selected is None
+        row = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        row.append("Back")
+        if selected:
+            row.style = "brand"
+        return ["", render_to_ansi(row, width, no_wrap=True)]
 
     def _heading(self) -> Text:
         """The feed's pinned status line, with a live-light for the hub."""
