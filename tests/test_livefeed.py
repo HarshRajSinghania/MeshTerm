@@ -87,8 +87,14 @@ def test_livefeed_packet_rows_show_their_relay_path() -> None:
     assert "via YUL → Alice" in "\n".join(_stripped(screen.render_body(100)))
 
 
-def test_livefeed_names_a_relayed_packet_by_its_payload_class() -> None:
-    """A relayed packet naming no origin reads as its payload class, never a bare '?'."""
+def test_livefeed_class_lane_names_the_payload_class_once() -> None:
+    """A raw frame is filed under what it *is*, and the node lane doesn't repeat it.
+
+    ``packet`` names only the event family the frame arrived in, so the class lane
+    reads its parsed payload class — the very label the viewer's card headlines. The
+    node lane is then free to be about the node, and an origin-less flood says so with
+    a dash rather than standing the class in a second time.
+    """
     screen = _screen()
     raw = {"payload_typename": "TRACE", "route_typename": "FLOOD"}
     screen.on_event(
@@ -96,9 +102,12 @@ def test_livefeed_names_a_relayed_packet_by_its_payload_class() -> None:
             _obs(node="", kind="packet", snr=1.0, path="3d63,a1b2", raw=raw)
         )
     )
-    body = _plain(screen.render_body(100))
-    assert "trace" in body  # the payload-class gloss stands in for the missing identity
-    assert "?" not in body  # …instead of the useless placeholder
+    row = _stripped(screen.render_body(100))[1]
+    assert "🎯 trace" in row       # the class lane, under the payload class's own icon
+    assert row.count("trace") == 1  # said once, not once per lane
+    assert "packet" not in row      # …and never as the generic event family
+    assert "—" in row               # the node lane: nobody identified themselves
+    assert "?" not in row           # …but never the useless placeholder
 
 
 def test_livefeed_names_a_channel_message_by_its_sender() -> None:

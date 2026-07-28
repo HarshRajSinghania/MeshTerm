@@ -69,7 +69,7 @@ _PAYLOAD_GLOSS = {
     "ADVERT": "advert",
     "GRP_TXT": "channel text",
     "GRP_DATA": "channel data",
-    "ANON_REQ": "anonymous request",
+    "ANON_REQ": "anon request",
     "PATH": "path",
     "TRACE": "trace",
     "MULTIPART": "multipart",
@@ -216,24 +216,36 @@ def payload_class(raw: Optional[dict]) -> Optional[str]:
     return _PAYLOAD_GLOSS.get(typename, typename.lower())
 
 
-def class_chrome(entry: PacketEntry) -> tuple[str, str]:
-    """The class headline every packet leads with: a two-cell icon and an UPPERCASE label.
+def class_marks(entry: PacketEntry) -> tuple[str, str]:
+    """What a packet actually *is*: its two-cell icon and its plain-case class label.
 
-    A raw ``packet`` frame's class is its parsed payload class — ``CHANNEL TEXT``,
-    ``TRACE``, … — under its :data:`PAYLOAD_ICONS` glyph; a typename this table has
-    never heard of keeps the fallback mark and shouts the raw typename; a class-less
-    frame stays a plain ``PACKET``. Every other kind is its own class (``ADVERT``,
-    ``MESSAGE``, …) under the shared :data:`KIND_ICONS` glyph.
+    The one place the app decides which class a listed packet belongs to, so the viewer's
+    headline and the feed's class lane can never disagree. A raw ``packet`` frame's class
+    is its *parsed payload* class — ``channel text``, ``trace``, … — under its
+    :data:`PAYLOAD_ICONS` glyph, because ``packet`` alone names only the event family the
+    frame arrived in, not the thing it carries; a typename this table has never heard of
+    keeps the fallback mark and shows the raw typename; a class-less frame stays a plain
+    ``packet``. Every other kind is its own class (``advert``, ``message``, …) under the
+    shared :data:`KIND_ICONS` glyph.
     """
     if entry.kind == "packet":
         raw = entry.raw if isinstance(entry.raw, dict) else {}
         typename = raw.get("payload_typename")
         if typename:
             icon = PAYLOAD_ICONS.get(typename, DEFAULT_ICON)
-            label = _PAYLOAD_GLOSS.get(typename, typename.lower()).upper()
-            return icon, label
-        return KIND_ICONS["packet"], "PACKET"
-    return kind_icon(entry.kind), entry.kind.upper()
+            return icon, _PAYLOAD_GLOSS.get(typename, typename.lower())
+        return KIND_ICONS["packet"], "packet"
+    return kind_icon(entry.kind), entry.kind
+
+
+def class_chrome(entry: PacketEntry) -> tuple[str, str]:
+    """The class headline the viewer's card leads with — :func:`class_marks`, shouted.
+
+    The card's first row is a headline, so it takes the UPPERCASE treatment; a list lane
+    reads the same class in its own plain case straight from :func:`class_marks`.
+    """
+    icon, label = class_marks(entry)
+    return icon, label.upper()
 
 
 def node_label(
