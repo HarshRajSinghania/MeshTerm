@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -130,10 +130,13 @@ CREATE TABLE IF NOT EXISTS observations (
     lon         REAL,
     path        TEXT,             -- 'packet' rows: comma-separated relay-hop hex hashes
     observed_at TEXT    NOT NULL,
-    chan_hash   TEXT,             -- overheard GRP_TXT frames: channel-hash fingerprint (hex)
+    chan_hash   TEXT,             -- overheard channel frames: channel-hash fingerprint (hex)
     cipher_mac  TEXT,             -- …its 2-byte MAC (hex)
     crypted     TEXT,             -- …its ciphertext (hex), so a stored channel text still decrypts
-    payload_typename TEXT         -- 'packet' rows: the frame's payload class (GRP_TXT/TRACE/…)
+    payload_typename TEXT,        -- 'packet' rows: the frame's payload class (GRP_TXT/TRACE/…)
+    dest        TEXT,             -- …the recipient's key hash, for an addressed class (hex)
+    src         TEXT,             -- …the sender's key hash, or its whole key (anon request)
+    tag         TEXT              -- …the frame's own token: an ack's checksum, a trace's tag
 );
 
 -- One chat message, sent or received, on a channel or with a contact. Unlike the other
@@ -231,6 +234,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # origin node — so the dashboard feed can read "channel text" / "trace" instead of
         # a bare "?" even when seeded from history. Older rows carry NULL (class unknown).
         conn.execute("ALTER TABLE observations ADD COLUMN payload_typename TEXT")
+    if "dest" not in observation_cols:
+        # v12 -> v13: 'packet' rows keep what the frame addressed — the recipient's key
+        # hash, the sender's (a hash, or the whole key an anonymous request carries), and
+        # the token a tokened class stands on: an ack's checksum, a trace's tag. Decoded
+        # from the frame body (see meshterm.core.frames), which only a live event carries,
+        # so — exactly like the channel-text crypto trio above — a replayed row would
+        # otherwise have nowhere to keep it and the feed's subject lane would go blank the
+        # moment it was seeded from history. Older rows carry NULL until re-heard.
+        conn.execute("ALTER TABLE observations ADD COLUMN dest TEXT")
+        conn.execute("ALTER TABLE observations ADD COLUMN src TEXT")
+        conn.execute("ALTER TABLE observations ADD COLUMN tag TEXT")
     if "public_key" not in observation_cols:
         # v11 -> v12: adverts carry the transmitting node's full public key, but only its
         # 12-hex prefix was ever stored as the node id. Keep that prefix as the canonical id

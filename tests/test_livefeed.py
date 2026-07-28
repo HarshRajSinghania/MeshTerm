@@ -24,12 +24,18 @@ class _FakeSession:
         self.repaints += 1
 
 
-def _screen(seed=None, active=True) -> LiveFeedScreen:
+#: Nodes the feed's resolver can name, by the hash a frame addresses them with (one byte)
+#: and by the wider prefixes an advert carries.
+_KNOWN = {"a1b2": "Alice", "3d63": "YUL", "a1": "Alice", "3d": "YUL", "c0": "Us"}
+
+
+def _screen(seed=None, active=True, **kwargs) -> LiveFeedScreen:
     screen = LiveFeedScreen(
         session=_FakeSession(),
-        resolve=lambda h: {"a1b2": "Alice", "3d63": "YUL"}.get(h, ""),
+        resolve=lambda h: _KNOWN.get(h, ""),
         seed=list(seed or []),
         hub_active=lambda: active,
+        **kwargs,
     )
     screen.note_viewport(48)  # the frame records this before every real paint
     return screen
@@ -105,30 +111,31 @@ def test_livefeed_rows_leave_the_relay_path_to_the_viewer() -> None:
 
 
 def test_livefeed_class_lane_names_the_payload_class_once() -> None:
-    """A raw frame is filed under what it *is*, and the node lane doesn't repeat it.
+    """A raw frame is filed under what it *is*, and the subject lane doesn't repeat it.
 
     ``packet`` names only the event family the frame arrived in, so the class lane
     reads its parsed payload class — the very label the viewer's card headlines. The
-    node lane is then free to be about the node, and an origin-less flood says so with
-    a dash rather than standing the class in a second time.
+    subject lane is then free to be about the packet's own subject, and a class that
+    carries nothing to be about says so with a dash rather than standing the class in a
+    second time.
     """
     screen = _screen()
-    raw = {"payload_typename": "TRACE", "route_typename": "FLOOD"}
+    raw = {"payload_typename": "MULTIPART", "route_typename": "FLOOD"}
     screen.on_event(
         MeshEvent.observation_event(
             _obs(node="", kind="packet", snr=1.0, path="3d63,a1b2", raw=raw)
         )
     )
     row = _rows(screen, 100)[0]
-    assert "🎯 trace" in row       # the class lane, under the payload class's own icon
-    assert row.count("trace") == 1  # said once, not once per lane
-    assert "packet" not in row      # …and never as the generic event family
-    assert "—" in row               # the node lane: nobody identified themselves
-    assert "?" not in row           # …but never the useless placeholder
+    assert "🧩 multipart" in row       # the class lane, under the payload class's own icon
+    assert row.count("multipart") == 1  # said once, not once per lane
+    assert "packet" not in row          # …and never as the generic event family
+    assert "—" in row                   # the subject lane: the class is about nothing
+    assert "?" not in row               # …but never the useless placeholder
 
 
 def test_livefeed_names_a_channel_message_by_its_sender() -> None:
-    """A channel message's ``Name:`` prefix names the node lane, not the bare channel."""
+    """A channel message's ``Name:`` prefix names the subject lane, not the bare channel."""
     screen = _screen()
     screen.on_event(
         MeshEvent.message_event(Message(text="Alice: hi all", channel=3, is_channel=True))
@@ -138,16 +145,102 @@ def test_livefeed_names_a_channel_message_by_its_sender() -> None:
     assert "ch 3" in body           # …with the channel kept as the trailing context
 
 
+def test_livefeed_unsigned_channel_post_is_filed_under_its_channel() -> None:
+    """With nobody signing it, a channel message is about the channel — named, once."""
+    screen = _screen(channel_names={3: "Alerts"})
+    screen.on_event(
+        MeshEvent.message_event(Message(text="beep boop", channel=3, is_channel=True))
+    )
+    row = _rows(screen, 100)[0]
+    assert "Alerts" in row          # the channel name, not its slot number
+    assert row.count("Alerts") == 1  # …and the trailing note doesn't say it again
+    assert "ch 3" not in row
+
+
+def test_livefeed_channel_frame_is_about_its_channel() -> None:
+    """An overheard channel frame is filed under the channel whose key confirms its MAC."""
+    from Crypto.Hash import HMAC, SHA256
+
+    from meshterm.core.channels import channel_hash, derive_secret
+
+    secret = derive_secret("Public")
+    crypted = bytes(range(16))
+    mac = HMAC.new(secret, digestmod=SHA256)
+    mac.update(crypted)
+    raw = {
+        "payload_typename": "GRP_TXT", "chan_hash": channel_hash(secret),
+        "cipher_mac": mac.digest()[:2].hex(), "crypted": crypted.hex(),
+    }
+    screen = _screen(channels=[("Public", secret)])
+    screen.on_event(MeshEvent.observation_event(_obs(node="", kind="packet", raw=raw)))
+    assert "Public" in _rows(screen, 100)[0]
+
+    # A channel we hold no key for can only be named by the fingerprint it advertised —
+    # never by a name, since a fingerprint alone is not proof of which channel it is.
+    other = _screen(channels=[("Public", secret)])
+    other.on_event(
+        MeshEvent.observation_event(_obs(node="", kind="packet", raw={**raw, "chan_hash": "a3"}))
+    )
+    row = _rows(other, 100)[0]
+    assert "hash a3" in row and "Public" not in row
+
+
+def test_livefeed_addressed_frame_is_about_its_two_ends() -> None:
+    """A frame that names a recipient reads as sender → recipient, resolved to names."""
+    screen = _screen(self_name="Us")
+    raw = {"payload_typename": "TEXT_MSG", "dest_hash": "c0", "src_hash": "a1"}
+    screen.on_event(MeshEvent.observation_event(_obs(node="", kind="packet", raw=raw)))
+    row = _rows(screen, 100)[0]
+    assert "📩 direct message" in row
+    assert "Alice → Us" in row  # …including us, when a frame is addressed to us
+
+    # A pair too wide for the lane spends its cells on the addressee: the sender drops to
+    # the hash it was named by rather than the recipient being the half cut off.
+    wide = _screen()
+    wide._resolve = lambda h: {"a1": "Alice-With-A-Long-Name", "3d": "YUL-Cartierville"}.get(h, "")
+    wide.on_event(
+        MeshEvent.observation_event(
+            _obs(node="", kind="packet",
+                 raw={"payload_typename": "REQ", "dest_hash": "3d", "src_hash": "a1"})
+        )
+    )
+    assert "a1 → YUL-Cartierv" in _rows(wide, 100)[0]
+
+
+def test_livefeed_tokened_classes_are_about_their_token() -> None:
+    """An ack names the message it answers; a trace names its tag. Neither says "packet"."""
+    screen = _screen()
+    screen.on_event(
+        MeshEvent.observation_event(
+            _obs(node="", kind="packet", age_s=1,
+                 raw={"payload_typename": "TRACE", "trace_tag": "5f3c2a10"})
+        )
+    )
+    screen.on_event(
+        MeshEvent.observation_event(
+            _obs(node="", kind="packet",
+                 raw={"payload_typename": "ACK", "ack_crc": "9b71e004"})
+        )
+    )
+    acked, traced = _rows(screen, 100)[:2]
+    assert "for 9b71e004" in acked
+    assert "tag 5f3c2a10" in traced
+
+
 def test_livefeed_column_header_sits_over_the_lanes_it_names() -> None:
     """The header names each lane, and every label lands on the values beneath it."""
     screen = _screen(seed=[_obs(node="3d63", kind="telemetry", snr=12.8, rssi=-105.0)])
     header, row = _stripped(screen.render_body(72))[1:3]
-    assert header.split() == ["TIME", "CLASS", "NODE", "SNR", "RSSI"]
+    assert header.split() == ["TIME", "CLASS", "SUBJECT", "SNR", "RSSI"]
     # Measured in display cells, not characters — the class icon is one character wide
     # but two cells, so a character index would report every later lane one column early.
-    assert _col(header, "TIME") == _col(row, "03:")
+    # The clock is read off the row itself: a literal needle would only match during the
+    # minute it was written in.
+    stamp = re.search(r"\d\d:\d\d:\d\d", row)
+    assert stamp is not None
+    assert _col(header, "TIME") == _col(row, stamp.group(0))
     assert _col(header, "CLASS") == _col(row, "telemetry") - _ICON_LANE
-    assert _col(header, "NODE") == _col(row, "YUL")
+    assert _col(header, "SUBJECT") == _col(row, "YUL")
     # The two readings right-align their number, so their labels end where the digits do.
     assert _col(header, "SNR") + 3 == _col(row, "+12.8") + 5
     assert _col(header, "RSSI") + 4 == _col(row, "-105") + 4

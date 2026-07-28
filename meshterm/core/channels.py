@@ -319,6 +319,54 @@ class DecryptedText:
     attempt: int
 
 
+def identify_channel(
+    chan_hash: str,
+    cipher_mac: str,
+    crypted: str,
+    channels: Iterable[tuple[str, bytes]],
+) -> Optional[tuple[str, bytes]]:
+    """Name the channel an overheard frame belongs to, confirming the key by its MAC.
+
+    The frame names its channel only by :func:`channel_hash`'s one-byte fingerprint, and
+    a fingerprint is not proof: 256 buckets hold every channel on the air, so several
+    can — and on a busy mesh do — collide on one. The MAC is the proof. Every candidate
+    with a matching fingerprint is HMAC-checked against the ciphertext, exactly as the
+    firmware does before decoding anything, and only a channel whose key reproduces the
+    frame's own MAC is named.
+
+    Naming is all this does, which is what makes it usable on a frame we have no business
+    decrypting: a channel *datagram* carries the same envelope as a channel text but a
+    body that is not text at all, and a feed lane only ever wanted the channel's name.
+    :func:`decrypt_channel_text` is this same confirmation followed by the decode.
+
+    Args:
+        chan_hash: The frame's channel-hash fingerprint (2 hex chars).
+        cipher_mac: The frame's MAC, hex-encoded (2 bytes).
+        crypted: The frame's ciphertext, hex-encoded.
+        channels: Candidate channels to try, as ``(name, secret)`` pairs.
+
+    Returns:
+        The channel's ``(name, effective key)``, or ``None`` when no known channel's MAC
+        matches — a channel we don't hold the key for, or a bare fingerprint collision.
+    """
+    try:
+        mac = bytes.fromhex(cipher_mac)
+        msg = bytes.fromhex(crypted)
+    except ValueError:
+        return None
+    if not msg:
+        return None
+    for name, secret in channels:
+        key = effective_secret(name, secret)
+        if channel_hash(key) != chan_hash:
+            continue
+        mac_check = HMAC.new(key, digestmod=_SHA256)
+        mac_check.update(msg)
+        if mac_check.digest()[:2] == mac:
+            return name, key
+    return None  # unknown channel, or the fingerprint collided and the key doesn't match
+
+
 def decrypt_channel_text(
     chan_hash: str,
     cipher_mac: str,
@@ -327,10 +375,9 @@ def decrypt_channel_text(
 ) -> Optional[DecryptedText]:
     """Recover a GRP_TXT frame's plaintext against a set of known channels.
 
-    Mirrors the firmware's own decode of an overheard channel-text packet: the frame
-    names its channel only by :func:`channel_hash`'s one-byte fingerprint — several
-    channels can collide on it — so every same-fingerprint candidate is tried and its
-    2-byte MAC checked before its key is trusted to decrypt anything. A frame from a
+    Mirrors the firmware's own decode of an overheard channel-text packet: the channel is
+    first *confirmed* by MAC (:func:`identify_channel` — a fingerprint alone can collide),
+    and only the key that proved itself is trusted to decrypt anything. A frame from a
     channel not in ``channels`` (or whose fingerprint matches but MAC doesn't — a
     genuine collision) simply yields ``None``, same as firmware that doesn't know the
     channel either.
@@ -346,29 +393,23 @@ def decrypt_channel_text(
         matches or the ciphertext is malformed.
     """
     try:
-        mac = bytes.fromhex(cipher_mac)
         msg = bytes.fromhex(crypted)
     except ValueError:
         return None
     if not msg or len(msg) % AES.block_size:
         return None  # not a whole number of blocks: not a decryptable GRP_TXT body
-    for name, secret in channels:
-        key = effective_secret(name, secret)
-        if channel_hash(key) != chan_hash:
-            continue
-        mac_check = HMAC.new(key, digestmod=_SHA256)
-        mac_check.update(msg)
-        if mac_check.digest()[:2] != mac:
-            continue  # fingerprint collided but the key doesn't actually match
-        plain = AES.new(key, AES.MODE_ECB).decrypt(msg)
-        timestamp = int.from_bytes(plain[0:4], "little")
-        attempt = plain[4] & 0x03
-        text = plain[5:].strip(b"\x00").decode("utf-8", "ignore")
-        sent_at = None
-        if timestamp:
-            try:
-                sent_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            except (OverflowError, OSError, ValueError):
-                sent_at = None
-        return DecryptedText(channel_name=name, text=text, sent_at=sent_at, attempt=attempt)
-    return None
+    identified = identify_channel(chan_hash, cipher_mac, crypted, channels)
+    if identified is None:
+        return None
+    name, key = identified
+    plain = AES.new(key, AES.MODE_ECB).decrypt(msg)
+    timestamp = int.from_bytes(plain[0:4], "little")
+    attempt = plain[4] & 0x03
+    text = plain[5:].strip(b"\x00").decode("utf-8", "ignore")
+    sent_at = None
+    if timestamp:
+        try:
+            sent_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            sent_at = None
+    return DecryptedText(channel_name=name, text=text, sent_at=sent_at, attempt=attempt)

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import (
     PATH_TRACE_TARGET,
     ChatMessage,
@@ -56,25 +57,39 @@ ACTIVITY_DRAWN_BUCKETS = 24
 def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     """Rebuild the minimal raw payload a stored ``packet`` observation is read back with.
 
-    Two things a live RX-log event carried in its raw payload are kept per row: the
-    frame's payload class (``payload_typename``), so a list can name what the packet is,
-    and — for an overheard ``GRP_TXT`` frame — the three crypto fields it decrypts from
-    (fingerprint, MAC, ciphertext), so a channel we hold the key for stays readable
-    straight from history via the same code path a fresh frame takes. A row that stored
-    neither carries no raw (``None``), exactly as before.
+    What a live RX-log event carried in its raw payload is kept per row, under the very
+    keys the event used, so a replayed frame and a fresh one read identically all the way
+    up: the frame's payload class (``payload_typename``), so a list can name what the
+    packet is; an overheard channel frame's three crypto fields (fingerprint, MAC,
+    ciphertext), so a channel we hold the key for stays readable straight from history;
+    and what the frame addressed (:mod:`~meshterm.core.frames`) — the recipient, the
+    sender, the token — restored to the key each was decoded under. The stored sender is
+    a hash or a whole public key, and the stored token an ack's checksum or a trace's tag;
+    the value's own width and the frame's class say which, so neither needed a second
+    column to be told apart. A row that stored none of it carries no raw (``None``).
     """
     typename = _row_value(row, "payload_typename")
     chan_hash = row["chan_hash"]
-    if not typename and not chan_hash:
+    dest = _row_value(row, "dest")
+    src = _row_value(row, "src")
+    tag = _row_value(row, "tag")
+    if not any((typename, chan_hash, dest, src, tag)):
         return None
     raw: dict = {}
     if typename:
         raw["payload_typename"] = typename
     if chan_hash:
-        raw.setdefault("payload_typename", "GRP_TXT")
+        raw.setdefault("payload_typename", "GRP_TXT")  # pre-v10 rows: only channel text kept one
         raw["chan_hash"] = chan_hash
         raw["cipher_mac"] = row["cipher_mac"]
         raw["crypted"] = row["crypted"]
+    if dest:
+        raw["dest_hash"] = dest
+    if src:
+        # A hash is one byte; anything longer is the whole key an anonymous request carries.
+        raw["src_key" if len(src) > 2 * ENDPOINT_HASH_BYTES else "src_hash"] = src
+    if tag:
+        raw["trace_tag" if typename == "TRACE" else "ack_crc"] = tag
     return raw
 
 
@@ -930,10 +945,18 @@ class Repository:
         path the packet traversed — the raw material of the topology graph (see
         :meth:`packet_paths`).
 
-        An overheard channel-text (``GRP_TXT``) frame also keeps the three fields the
-        packet viewer decrypts from — the channel-hash fingerprint, the 2-byte MAC, and
-        the ciphertext — lifted out of the raw payload so a channel we hold the key for
-        is still readable when the feed is later seeded from stored history.
+        An overheard channel frame also keeps the three fields the packet viewer decrypts
+        from — the channel-hash fingerprint, the 2-byte MAC, and the ciphertext — lifted
+        out of the raw payload so a channel we hold the key for is still readable when the
+        feed is later seeded from stored history, and so a channel *datagram*, which the
+        library never breaks out at all, can still be named by the key its MAC confirms.
+
+        What the frame addressed is kept the same way, and for the same reason: the
+        recipient's key hash, the sender's (a hash, or the whole key an anonymous request
+        carries), and a tokened class's own token — an ack's checksum, a trace's tag. All
+        three are decoded from the frame body (:mod:`~meshterm.core.frames`) that only a
+        live event carries, so a replayed row would otherwise lose everything it had to
+        say about itself.
 
         Args:
             run_id: The owning run.
@@ -942,17 +965,23 @@ class Repository:
         chan_hash = cipher_mac = crypted = None
         raw = obs.raw if isinstance(obs.raw, dict) else {}
         # The payload class identifies a relayed 'packet' that names no origin node — kept
-        # for every packet, not only channel text; the crypto trio is kept for GRP_TXT alone.
+        # for every packet, not only the classed ones the fields below apply to.
         typename = raw.get("payload_typename") if obs.kind == "packet" else None
-        if raw.get("payload_typename") == "GRP_TXT":
+        if typename in CHANNEL_CLASSES:
             chan_hash = raw.get("chan_hash")
             cipher_mac = raw.get("cipher_mac")
             crypted = raw.get("crypted")
+        # One column each for the three shapes of addressing: the sender is a hash or a
+        # whole key (its length says which), the token an ack's checksum or a trace's tag
+        # (the payload class says which) — so neither needs a column of its own.
+        dest = raw.get("dest_hash") if typename else None
+        src = (raw.get("src_key") or raw.get("src_hash")) if typename else None
+        tag = (raw.get("ack_crc") or raw.get("trace_tag")) if typename else None
         self._conn.execute(
             "INSERT INTO observations "
             "(run_id, node, public_key, name, kind, node_type, snr, rssi, lat, lon, path, "
-            "observed_at, chan_hash, cipher_mac, crypted, payload_typename) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "observed_at, chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
@@ -970,6 +999,9 @@ class Repository:
                 cipher_mac,
                 crypted,
                 typename,
+                dest,
+                src,
+                tag,
             ),
         )
         self._conn.commit()
@@ -1007,7 +1039,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag "
             "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
             (since.isoformat(), limit),
         ).fetchall()
@@ -1033,7 +1065,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag "
             "FROM observations WHERE kind = 'packet' AND observed_at >= ? "
             "AND observed_at <= ? ORDER BY observed_at ASC LIMIT ?",
             (start.isoformat(), end.isoformat(), limit),

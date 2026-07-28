@@ -264,3 +264,65 @@ def test_packet_viewer_graph_names_a_known_origin_else_a_question_mark() -> None
     nameless = PacketEntry(when=utcnow(), kind="packet", path="3d63")
     body2 = _plain(_viewer(nameless).render_body(80))
     assert "?" in body2  # an origin-less flood draws a plain "?" endpoint
+
+
+def test_packet_viewer_lays_out_what_a_frame_addressed() -> None:
+    """A frame that names no origin still names its two ends — as rows, not raw hex.
+
+    The endpoints come out of the frame body (``meshterm.core.frames``), so the card can
+    say who a relayed direct message was for even though the class carries no origin node.
+    """
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="3d63",
+        raw={
+            "payload_typename": "TEXT_MSG", "route_typename": "FLOOD",
+            "dest_hash": "c0", "src_hash": "a1",
+        },
+    )
+    viewer = PacketViewer(
+        [entry], 0, resolve=lambda h: {"c0": "Waymarker", "a1": "Alice"}.get(h, ""),
+        prefix_bytes=1, self_name="Waymarker",
+    )
+    lines = _stripped(viewer.render_body(80))
+    to_row = next(l for l in lines if l.startswith("to"))
+    from_row = next(l for l in lines if l.startswith("from"))
+    assert "Waymarker" in to_row and "c0" in to_row  # the name, then the hash it was named by
+    assert "Alice" in from_row and "a1" in from_row
+    # …and neither is repeated by the generic raw dump at the foot of the card.
+    assert _plain(lines).count("dest_hash") == 0
+
+
+def test_packet_viewer_names_a_tokened_frame_by_its_token() -> None:
+    """An ack points at the message it answers; a trace at its own tag."""
+    ack = PacketEntry(
+        when=utcnow(), kind="packet", path="3d63",
+        raw={"payload_typename": "ACK", "ack_crc": "9b71e004"},
+    )
+    assert "9b71e004" in _plain(_viewer(ack).render_body(80))
+
+    trace = PacketEntry(
+        when=utcnow(), kind="packet", path="3d63",
+        raw={"payload_typename": "TRACE", "trace_tag": "5f3c2a10"},
+    )
+    body = _plain(_viewer(trace).render_body(80))
+    assert "tag" in body and "5f3c2a10" in body
+
+
+def test_packet_viewer_names_a_channel_datagram_by_its_confirmed_channel() -> None:
+    """A datagram's body is not text, but the MAC that guards it still names its channel."""
+    secret = derive_secret("Public")
+    crypted = bytes(range(16))
+    mac = HMAC.new(secret, digestmod=SHA256)
+    mac.update(crypted)
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="3d63",
+        raw={
+            "payload_typename": "GRP_DATA", "chan_hash": channel_hash(secret),
+            "cipher_mac": mac.digest()[:2].hex(), "crypted": crypted.hex(),
+        },
+    )
+    body = _plain(_viewer(entry, channels=[("Public", secret)]).render_body(80))
+    assert "💽 CHANNEL DATA" in body and "Public" in body
+
+    unknown = _plain(_viewer(entry).render_body(80))  # no keys held: named by fingerprint only
+    assert "unknown" in unknown and "Public" not in unknown

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
+from .frames import frame_addressing
 from .models import (
     NODE_TYPE_CHAT,
     NODE_TYPE_REPEATER,
@@ -2785,6 +2786,12 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
     relay) is still adjacency evidence. Frames that carry neither an origin nor any path
     teach us nothing about topology and map to ``None``.
 
+    Origin-less does not mean featureless, though: what the frame *addresses* is decoded
+    out of its undecoded body (:func:`~meshterm.core.frames.frame_addressing`) and merged
+    into the raw payload — the recipient and sender hashes of a direct message or request,
+    an anonymous request's whole sender key, a channel datagram's envelope, an ack's
+    checksum, a trace's tag — so every class has something to say about itself downstream.
+
     Args:
         event: A meshcore ``RX_LOG_DATA`` event (anything exposing a ``payload`` mapping).
 
@@ -2806,6 +2813,11 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
     origin = payload.get("adv_key")
     if not origin and not hops:
         return None  # neither endpoint nor relays: no topology content
+    # What the frame addresses — the recipient, the sender, the channel, the token it
+    # carries — read out of the body the library leaves undecoded for every class but
+    # advert and channel text (see :mod:`~meshterm.core.frames`). Merged in under its own
+    # keys so a class that names no origin node still says what it is *about*.
+    payload.update(frame_addressing(payload))
     ident = str(origin).lower().removeprefix("0x") if origin else None
     node = ident[:12] if ident else None
     public_key = ident if ident and len(ident) > 12 else None  # keep the whole adv_key

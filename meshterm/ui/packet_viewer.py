@@ -5,7 +5,9 @@ the rows share this module's per-kind chrome — a colour and a two-cell icon pe
 class — and every row can open into the same viewer: a centered dialog over the list
 that lays the packet out in full, flavoured by kind. An advert shows the node's
 identity, type, and location; telemetry shows the node and its reported values; an
-RX-logged packet shows its parsed class and route plus the relay path it rode in on —
+RX-logged packet shows its parsed class and route, what it was addressed to (the
+recipient and sender read out of the frame body — see :mod:`~meshterm.core.frames` — or
+the token a trace or an ack stands on), plus the relay path it rode in on —
 as a ``via`` chain on THE path line (:mod:`~meshterm.ui.pathline`), wrapping at hop
 boundaries under its own lane, and, when it actually crossed a relay, as THE route graph
 (:mod:`~meshterm.ui.pathgraph`): origin → relays → us, the same layered picture the
@@ -36,7 +38,7 @@ from rich.console import RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from ..core.channels import decrypt_channel_text
+from ..core.channels import decrypt_channel_text, identify_channel
 from ..core.models import NODE_TYPE_LABELS, Observation
 from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
@@ -88,6 +90,7 @@ _RAW_ROW_SKIP = frozenset({
     "pkt_payload", "pkt_hash", "raw_hex", "payload", "payload_length", "recv_time",
     "chan_hash", "cipher_mac", "crypted", "message", "msg_hash", "sender_timestamp",
     "attempt", "txt_type",
+    "dest_hash", "src_hash", "src_key", "trace_tag", "ack_crc",
     "adv_key", "adv_name", "adv_type", "adv_lat", "adv_lon",
 })
 
@@ -159,6 +162,8 @@ class PacketEntry:
         path: A ``packet`` row's relay path: comma-separated hop hashes in propagation
             order (empty = arrived direct; ``None`` = the class carries no path).
         where: A message's conversation (``ch 3`` / ``direct``) or an ack's code.
+        channel: A channel message's slot index — the fact behind ``where``'s prose, kept
+            apart from it so a list can name the channel rather than number it.
         text: A message's body, when it is known.
         raw: The raw event payload, for the values a class-specific layout can't name.
     """
@@ -174,6 +179,7 @@ class PacketEntry:
     node_type: Optional[int] = None
     path: Optional[str] = None
     where: Optional[str] = None
+    channel: Optional[int] = None
     text: Optional[str] = None
     raw: Optional[dict] = None
 
@@ -206,7 +212,7 @@ def payload_class(raw: Optional[dict]) -> Optional[str]:
     Maps the frame's ``payload_typename`` (``GRP_TXT``, ``TRACE``, …) through
     :data:`_PAYLOAD_GLOSS` — the one identifying thing a relayed flood carries when it
     names no origin node, so a packet list can read "channel text" / "trace" instead of a
-    bare ``?``. Shared by the viewer's "class" row and the dashboard feed's node lane.
+    bare ``?``.
     """
     if not isinstance(raw, dict):
         return None
@@ -654,12 +660,13 @@ class PacketViewer(Screen):
         )
 
     def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
-        """A raw ``packet`` entry's parsed class/route, relay path, and — for a
-        channel-text frame naming a channel we hold the key for — its plaintext.
+        """A raw ``packet`` entry's addressing, parsed class/route, relay path, and — for a
+        channel frame naming a channel we hold the key for — its channel and plaintext.
         """
         raw = entry.raw if isinstance(entry.raw, dict) else {}
         rows: list[tuple[str, RenderableType]] = []
         typename = raw.get("payload_typename")  # class itself leads the card (class_chrome)
+        rows.extend(self._addressing_rows(raw))
         route = raw.get("route_typename")
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))
@@ -678,7 +685,72 @@ class PacketViewer(Screen):
             rows.append(("", revisits))
         if typename == "GRP_TXT":
             rows.extend(self._decrypt_rows(raw))
+        elif typename == "GRP_DATA":
+            # A datagram's body is not text, so there is nothing to decode for a reader —
+            # but the same MAC that would authorise decrypting it names its channel.
+            named = identify_channel(
+                raw.get("chan_hash") or "", raw.get("cipher_mac") or "",
+                raw.get("crypted") or "", self._channels,
+            )
+            if named is not None:
+                rows.append(("channel", Text(named[0], style="brand")))
+            elif raw.get("chan_hash"):
+                rows.append((
+                    "channel",
+                    Text(f"unknown (hash {raw['chan_hash']})", style="muted"),
+                ))
         return rows
+
+    def _addressing_rows(self, raw: dict) -> list[tuple[str, RenderableType]]:
+        """Who a frame was for, who it says it was from, and the token it carries.
+
+        The fields :mod:`~meshterm.core.frames` reads out of the frame body, laid out as
+        the card's own rows rather than left to the raw dump at the bottom — a recipient is
+        a node, and a node belongs under a resolved name and THE hash widget, not as a bare
+        hex value in a debug list. Each endpoint is named by one byte of its key, so the
+        name is the same good guess a relay hop's is (and the lit hash beside it says
+        exactly which byte was matched); an anonymous request's sender carries its whole
+        key, which resolves outright.
+
+        Args:
+            raw: The frame's raw payload.
+
+        Returns:
+            The rows to slot ahead of the route/via block (empty for a class that
+            addresses nothing).
+        """
+        rows: list[tuple[str, RenderableType]] = []
+        dest = raw.get("dest_hash")
+        if dest:
+            rows.append(("to", self._endpoint(dest)))
+        src = raw.get("src_key") or raw.get("src_hash")
+        if src:
+            rows.append(("from", self._endpoint(src)))
+        if raw.get("trace_tag"):
+            rows.append(("tag", Text(raw["trace_tag"], style="muted")))
+        if raw.get("ack_crc"):
+            # An ack identifies the message it answers, by that message's own checksum.
+            rows.append(("acks", Text(raw["ack_crc"], style="muted")))
+        return rows
+
+    def _endpoint(self, value: str) -> Text:
+        """One end of an addressed frame: its resolved name, then the key it was named by.
+
+        The ``from`` row's own presentation, minus the node-type glyph — a one-byte hash
+        is too thin an identity to plant a type mark on. A node we can't name shows the
+        hash alone, lit by :func:`~meshterm.ui.widgets.highlighted_hash` like every other
+        hash on the card.
+        """
+        text = Text()
+        named = self._resolve(value)
+        if named and named != value:
+            style = "you" if self._self_name and named == self._self_name else name_style(
+                named, value
+            )
+            text.append(named, style=style)
+            text.append("  ")
+        text.append_text(highlighted_hash(value, self._prefix_bytes or 1))
+        return text
 
     def _decrypt_rows(self, raw: dict) -> list[tuple[str, RenderableType]]:
         """Try every known channel's key against an overheard channel-text frame.

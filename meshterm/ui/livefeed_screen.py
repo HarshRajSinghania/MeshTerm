@@ -3,12 +3,18 @@
 The interactive face of the ``livefeed`` tool — the dashboard's old feed panel,
 promoted to a first-class screen. One always-repainting list streams the latest
 packets, newest first: time, class (icon + label, icon alone on a narrow terminal),
-node, SNR/RSSI, and a message's conversation. What a row deliberately does *not* carry
+subject, SNR/RSSI, and a message's conversation. What a row deliberately does *not* carry
 is the relay path a frame rode in on: a route is a shape, not a lane, and squeezing one
 into the cells left at the right edge only ever produced a stub — so the route belongs
 to the packet viewer, which has the room to draw it as a wrapped path line over its
 graph. The feed's job is to say what arrived and how well it was heard; Enter says how
 it got here.
+
+The subject lane is contextual: it holds whatever the *class* of packet is about (see
+:meth:`LiveFeedScreen._feed_subject`). An advert or a telemetry frame is about the node
+that sent it, so the lane names the node — but a channel text is about its channel, a
+direct message or a request about the two nodes it travels between, a trace about its
+tag. Only a class that genuinely says nothing about itself leaves the lane empty.
 
 Seeded from stored history so the screen opens full, then streamed
 live off the event hub. ``↑``/``↓`` walk the rows, PgUp/PgDn/Home/End page and jump
@@ -28,12 +34,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from rich.text import Text
 
-from ..core.channels import split_channel_sender
+from ..core.channels import identify_channel, split_channel_sender
 from ..core.events import EventKind, MeshEvent
+from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import Observation, utcnow
 from ..persistence.repository import OBSERVATION_WINDOW
 from .menus import fit_cells
@@ -44,6 +51,7 @@ from .packet_viewer import (
     class_marks,
     node_label,
 )
+from .pathline import PathHop, PathLine
 from .theme import name_style, snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -60,8 +68,12 @@ _REFRESH_S = 1.0
 #: history depth, not layout).
 _FEED_CAP = 100
 
-#: The feed's fixed node-name lane width; longer names ellipsize so the columns hold.
-_FEED_NAME_WIDTH = 18
+#: The feed's fixed subject-lane width; anything longer ellipsizes so the columns hold.
+#: Sized for a node name, which is what most classes put here — and wide enough that the
+#: two endpoints of an addressed frame still read as ``a1 → YUL-Cartierv…`` rather than
+#: collapsing to bare hashes. Widening it would push the row past the 72-column screen
+#: the lanes are budgeted for, so the cells the lane can't hold are the viewer's to spend.
+_FEED_SUBJECT_WIDTH = 18
 
 #: The class lane's fixed width — wide enough for the longest class the app files a
 #: packet under (``direct message``), so every label reads whole and the lanes hold.
@@ -90,7 +102,7 @@ _RSSI_LANE = _LANE_GAP + _READING_W + len(" dBm")
 #: field now that it names the real class) is only ever dropped when it truly can't fit.
 _FEED_LABEL_MIN_WIDTH = (
     2 + _TIME_LANE + _ICON_LANE + _FEED_CLASS_WIDTH + _LANE_GAP
-    + _FEED_NAME_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
+    + _FEED_SUBJECT_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
 )
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
@@ -132,6 +144,7 @@ class LiveFeedScreen(Screen):
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
         channels: Sequence[tuple[str, bytes]] = (),
+        channel_names: Optional[Mapping[int, str]] = None,
         type_of: Optional[TypeOf] = None,
         key_of: Optional[NameKeyResolver] = None,
     ) -> None:
@@ -145,9 +158,13 @@ class LiveFeedScreen(Screen):
             hub_active: Zero-arg callable: whether the event hub is pumping.
             prefix_bytes: The hash width to light in the packet viewer's keys.
             self_name: Our own node's name, drawn white wherever it appears.
-            channels: The device's configured channels, as ``(name, secret)`` pairs,
-                handed to each opened :class:`~meshterm.ui.packet_viewer.PacketViewer`
-                so it can attempt to decrypt an overheard channel-text packet.
+            channels: The device's configured channels, as ``(name, secret)`` pairs. The
+                subject lane names an overheard channel frame's channel by whichever of
+                these keys reproduces its MAC, and each opened
+                :class:`~meshterm.ui.packet_viewer.PacketViewer` decrypts with them.
+            channel_names: The device's channel names by slot index, so a channel message
+                the radio decoded for us can be filed under the same channel name an
+                overheard frame on it is — rather than under its slot number.
             type_of: Maps a relay hash to its node type, handed to the packet viewer so a
                 relayed packet's route graph marks a repeater ``▲`` (etc.) over a dot.
             key_of: Maps a sender's display name back to its node's key (see
@@ -163,6 +180,7 @@ class LiveFeedScreen(Screen):
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._channels = channels
+        self._channel_names: Mapping[int, str] = channel_names or {}
         self._type_of = type_of
         self._key_of: NameKeyResolver = key_of or (lambda name: None)
         #: The feed: latest events of every class as data, newest first — rendered
@@ -194,6 +212,7 @@ class LiveFeedScreen(Screen):
             entry = PacketEntry(
                 when=utcnow(), kind="message", node=msg.sender, snr=msg.snr,
                 where=f"ch {msg.channel}" if msg.is_channel else "direct",
+                channel=msg.channel if msg.is_channel else None,
                 text=msg.text, raw=msg.raw,
             )
         elif event.kind == EventKind.ACK and event.ack is not None:
@@ -360,6 +379,11 @@ class LiveFeedScreen(Screen):
         these are signposts, not controls. On a terminal too narrow for the class label
         the header drops its ``CLASS`` too, leaving the icon lane unlabelled rather than
         clipping a word into three cells.
+
+        The subject lane's label names the lane's *job*, not one class's answer to it:
+        what a packet is about is a node for an advert, a channel for a channel text, a
+        pair of endpoints for a direct message. ``SUBJECT`` is the word that stays true
+        down the whole column.
         """
         header = Text("  ", style="muted")  # the pointer lane
         header.append(fit_cells("TIME", _TIME_LANE))
@@ -368,7 +392,7 @@ class LiveFeedScreen(Screen):
             if show_label
             else " " * _ICON_LANE
         )
-        header.append(fit_cells("NODE", _FEED_NAME_WIDTH + _LANE_GAP))
+        header.append(fit_cells("SUBJECT", _FEED_SUBJECT_WIDTH + _LANE_GAP))
         # The two readings right-align their number, so their labels do too — each sits
         # over the digits it names rather than over the sign column ahead of them.
         header.append(fit_cells("SNR", _READING_W, align="right"))
@@ -398,19 +422,18 @@ class LiveFeedScreen(Screen):
     def _feed_row(
         self, entry: PacketEntry, selected: bool, show_label: bool, width: int
     ) -> Text:
-        """Lay one feed row out in fixed lanes: time, class, node, reception, detail.
+        """Lay one feed row out in fixed lanes: time, class, subject, reception, detail.
 
         The class lane says what the packet *is*, straight from
         :func:`~meshterm.ui.packet_viewer.class_marks` — so a raw frame reads
         ``📻 channel text``, the class the viewer's card headlines, rather than the
         ``📦 packet`` event family it merely arrived in. Its icon always shows; the
         textual label beside it is dropped wholesale on a narrow terminal
-        (``show_label``), keeping the lanes aligned either way. The node lane is then
-        free to be about the node: its name in the app-wide palette hue (our own node
-        white, a bare hash muted), and a dash where nobody identified themselves. No
-        relay path rides here — the whole row fits a 72-column screen precisely because
-        it doesn't try to, and the route is drawn properly one keypress away, in the
-        packet viewer.
+        (``show_label``), keeping the lanes aligned either way. The subject lane beside it
+        then answers what the packet is *about*, in whatever terms its class deals in
+        (:meth:`_feed_subject`). No relay path rides here — the whole row fits a
+        72-column screen precisely because it doesn't try to, and the route is drawn
+        properly one keypress away, in the packet viewer.
 
         The highlight is the app's own: the ``❯`` pointer and a brand base style under the
         whole row, exactly as every select list draws its cursor. The lanes keep their own
@@ -441,10 +464,11 @@ class LiveFeedScreen(Screen):
                 style=KIND_STYLES.get(entry.kind, "brand"),
             )
             body.append(" " * _LANE_GAP)  # the lane's gutter — the longest class fills it
-        label, style = node_label(entry, self._resolve, self._self_name)
-        if label == "?":
-            label, style = self._feed_subject(entry)  # no node identity: name what we can
-        body.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
+        subject = self._feed_subject(entry)
+        # The lane fits like every other: cells, not characters, ellipsis on overflow —
+        # but as a Text, so a subject built of several styled pieces keeps them.
+        subject.truncate(_FEED_SUBJECT_WIDTH, overflow="ellipsis", pad=True)
+        body.append_text(subject)
         body.append(" " * _LANE_GAP)
         body.append(
             f"{entry.snr:+{_READING_W}.1f} dB" if entry.snr is not None
@@ -473,29 +497,156 @@ class LiveFeedScreen(Screen):
             row.style = "brand"
         return row
 
-    def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
-        """Name the node lane when an entry carries no resolvable node identity.
+    def _feed_subject(self, entry: PacketEntry) -> Text:
+        """What this packet is *about*, in the terms its own class deals in.
 
-        Rather than a useless ``?``, the lane reads the most identifying thing the entry
-        still carries: the sender a channel message named itself with, then an ack's
-        code. What it deliberately does *not* do is stand in the packet's class — the
-        class lane two columns left already says that, straight from
+        The lane used to be a node lane, which suited the two classes that name a node and
+        left every other one reading ``—``: on a real mesh that is half the traffic —
+        the direct messages, requests, responses, path returns, acks and traces that
+        relay past us naming no origin. Each of those is about *something*, just not
+        about a node, so the lane asks each class its own question:
+
+        * **advert, telemetry, a direct message we received** — about the node that sent
+          it, so the lane names the node (:func:`~meshterm.ui.packet_viewer.node_label`):
+          its palette hue, our own node white, a bare hash muted.
+        * **channel text and channel data** — about the *channel*, named by the key whose
+          MAC confirms the frame (:func:`~meshterm.core.channels.identify_channel`); a
+          channel we hold no key for falls back to the fingerprint it advertises.
+        * **direct message, request, response, returned path, anonymous request** —
+          about the pair of nodes it travels between, drawn as ``sender → recipient``
+          (:meth:`_endpoints`).
+        * **ack** — about the message it acknowledges, named by that message's checksum.
+        * **trace** — about the walk it is collecting, named by its tag.
+        * **a channel message** — about whoever signed it, else the channel it arrived on.
+
+        What the lane deliberately does *not* do is stand in the packet's class: the class
+        lane two columns left already says that, straight from
         :func:`~meshterm.ui.packet_viewer.class_marks`, and a row that spelled it twice
-        was reading ``packet`` beside ``channel text`` as though they were two facts.
-        A relayed flood names no origin, so its lane says so with a dash — the route that
-        would name nodes is the packet viewer's to draw, not a stub for this row to carry.
+        read ``packet`` beside ``channel text`` as though they were two facts. A class that
+        genuinely says nothing about itself still gets the honest dash.
+
+        Args:
+            entry: The packet the row describes.
+
+        Returns:
+            The lane's content, unsized — the caller fits it to the lane.
         """
+        label, style = node_label(entry, self._resolve, self._self_name)
+        if label != "?":  # the packet named a node: that is what it is about
+            return Text(label, style=style)
         if entry.kind == "message":
-            sender = _channel_sender(entry.text)
-            if sender:
-                ours = self._self_name and sender == self._self_name
-                # A resolvable sender takes its key-derived hue; a stranger stays
-                # muted — colour is reserved for keyed identities.
-                return sender, ("you" if ours else name_style(sender, self._key_of(sender)))
-            return "channel", "muted"
+            return self._message_subject(entry)
+
+        raw = entry.raw if isinstance(entry.raw, dict) else {}
+        if raw.get("payload_typename") in CHANNEL_CLASSES:
+            return self._channel_subject(raw)
+        if raw.get("dest_hash"):
+            return self._endpoints(raw)
+        if raw.get("trace_tag"):
+            return self._token("tag", raw["trace_tag"])
+        if raw.get("ack_crc"):
+            # An ack names no node at all — what it identifies is the message it answers.
+            return self._token("for", raw["ack_crc"])
         if entry.where:
-            return entry.where, "muted"  # an ack's code, or any other stray context
-        return "—", "muted"
+            return Text(entry.where, style="muted")  # a delivery ack's code
+        return Text("—", style="muted")
+
+    def _message_subject(self, entry: PacketEntry) -> Text:
+        """A chat message's subject: whoever signed it, else the channel it arrived on."""
+        sender = _channel_sender(entry.text)
+        if sender:
+            ours = self._self_name and sender == self._self_name
+            # A resolvable sender takes its key-derived hue; a stranger stays muted —
+            # colour is reserved for keyed identities.
+            style = "you" if ours else name_style(sender, self._key_of(sender))
+            return Text(sender, style=style)
+        channel = self._channel_names.get(entry.channel) if entry.channel is not None else None
+        if channel:  # an unsigned post: the channel it landed on is what it is about
+            return Text(channel, style="brand")  # named exactly as an overheard frame's is
+        if entry.where:
+            return Text(entry.where, style="muted")  # …or the slot, when we can't name it
+        return Text("—", style="muted")
+
+    def _channel_subject(self, raw: dict) -> Text:
+        """A channel frame's subject: its channel, named by the key its MAC confirms.
+
+        The frame names its channel only by a one-byte fingerprint, which several channels
+        can share — so a name is only shown once a key we hold has reproduced the frame's
+        own MAC (:func:`~meshterm.core.channels.identify_channel`), never on a fingerprint
+        match alone. A channel we hold no key for reads as the fingerprint it advertised,
+        under the app's word for a short derived id: ``hash a3``. That is deliberately not
+        spelled ``ch a3`` — a message row's ``ch 3`` is a *slot*, and two different numbers
+        wearing one prefix in the same column would be worse than saying nothing.
+        """
+        named = identify_channel(
+            raw.get("chan_hash") or "", raw.get("cipher_mac") or "",
+            raw.get("crypted") or "", self._channels,
+        )
+        if named is not None:
+            return Text(named[0], style="brand")
+        if raw.get("chan_hash"):
+            return self._token("hash", raw["chan_hash"])
+        return Text("—", style="muted")
+
+    def _endpoints(self, raw: dict) -> Text:
+        """An addressed frame's subject: the two nodes it travels between.
+
+        Drawn as ``sender → recipient`` on THE hop-sequence widget
+        (:mod:`~meshterm.ui.pathline`), so the endpoints of a delivery read exactly as the
+        hops of a route do — resolved to contact names, each in its key-derived hue, our
+        own node white the moment a frame is addressed to (or from) us. Plain arrows, not
+        chips: this is a lane inside a table row, and a chip's padding would cost the very
+        cells the names need.
+
+        Both endpoints are named by a single byte of their key — the same one-byte identity
+        a relay hop carries, with the same collision odds — so a name here is a good guess,
+        not a proof, and the frame's own hashes are always one keypress away in the viewer.
+        An anonymous request is the exception in our favour: it carries its sender's *whole*
+        key, which resolves exactly, and (unresolved) is shown cut to the same one byte
+        as everything else in the lane rather than 64 hex digits nobody can read at a
+        glance.
+
+        When both names don't fit the lane the recipient keeps its name and the sender
+        drops to its hash: the frame is *addressed*, so the addressee is the half worth
+        the cells.
+        """
+        dest = raw.get("dest_hash") or ""
+        src = raw.get("src_key") or raw.get("src_hash") or ""
+        if not src:
+            return self._token("to", dest)
+        named = PathLine([self._hop(src), self._hop(dest)], mode="plain").text()
+        if named.cell_len <= _FEED_SUBJECT_WIDTH:
+            return named
+        # Too wide: the sender drops to its hash, so the addressee keeps its name whole (or
+        # as much of it as the lane holds) instead of being the half that gets amputated.
+        return PathLine([self._hop(src, named=False), self._hop(dest)], mode="plain").text()
+
+    def _hop(self, value: str, *, named: bool = True) -> PathHop:
+        """One endpoint as a path hop: its contact name, or its one-byte hash in that hue.
+
+        Args:
+            value: The endpoint's key hash (or, for an anonymous request's sender, its
+                whole key — shown cut to the lane's one-byte width when it can't be named).
+            named: Resolve it at all. ``False`` forces the hash, for the crowded-lane
+                fallback that spends the cells on the other end.
+        """
+        short = value[: 2 * ENDPOINT_HASH_BYTES]
+        name = self._resolve(value) if named else None
+        if name and name != value:
+            return PathHop(name, key=value, you=bool(self._self_name and name == self._self_name))
+        return PathHop(short, key=value, lit_bytes=ENDPOINT_HASH_BYTES)
+
+    @staticmethod
+    def _token(word: str, value: str) -> Text:
+        """A frame's own token under the one word that says what it is.
+
+        A trace's tag, an ack's checksum, a channel's fingerprint: hex that identifies
+        something without being a node's identity, so it takes no palette hue — the
+        qualifier recedes into ``faint`` and the value itself stays muted-legible.
+        """
+        text = Text(f"{word} ", style="faint")
+        text.append(value, style="muted")
+        return text
 
     def _feed_note(self, entry: PacketEntry) -> Optional[Text]:
         """The row's trailing detail — a message's conversation, and nothing else.
@@ -507,15 +658,21 @@ class LiveFeedScreen(Screen):
         the route graph, with the room to say the whole thing. So the feed says what
         arrived; Enter says how it got here.
 
+        A conversation the subject lane already stood in for is not repeated here: an
+        unsigned channel post files itself *under* its channel, and a row that named the
+        same conversation twice read as two facts.
+
         Args:
             entry: The packet the row describes.
 
         Returns:
             The detail to append, or ``None`` when the class carries none.
         """
-        if entry.kind == "message" and entry.where:
-            return Text(entry.where, style="muted")
-        return None
+        if entry.kind != "message" or not entry.where:
+            return None
+        if entry.channel is not None and not _channel_sender(entry.text):
+            return None  # the subject lane is already the conversation
+        return Text(entry.where, style="muted")
 
 
 async def open_livefeed(ctx: "AppContext") -> None:
@@ -542,6 +699,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
     contacts = []
     self_name: Optional[str] = None
     channels: list[tuple[str, bytes]] = []
+    channel_names: dict[int, str] = {}
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
             # Through the session cache: contacts and the channel-slot probe are the two
@@ -549,7 +707,9 @@ async def open_livefeed(ctx: "AppContext") -> None:
             # is what keeps navigation snappy over Bluetooth.
             contacts = await ctx.devstate.contacts()
             self_name = (await ctx.devstate.self_info()).get("name") or None
-            channels = [(s.name, s.secret) for s in await ctx.devstate.channel_slots()]
+            slots = await ctx.devstate.channel_slots()
+            channels = [(s.name, s.secret) for s in slots]
+            channel_names = {s.idx: s.name for s in slots}
     except Exception:  # noqa: BLE001 - the feed renders fine without contact names
         contacts = []
     # Contacts first, every name the recorder ever overheard as the fallback — the
@@ -568,6 +728,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
         prefix_bytes=prefix_bytes,
         self_name=self_name,
         channels=channels,
+        channel_names=channel_names,
         type_of=type_of,
         key_of=key_of,
     )
