@@ -21,8 +21,10 @@ drawn*, so every surface the survey found can eventually route through it:
 * **Three overflow answers**, matching the three patterns the surfaces already use:
   :meth:`PathLine.text` is the full one-liner (for callers that ellipsize or
   h-scroll it themselves), :meth:`PathLine.ellipsized` fits a width by eliding
-  *middle* hops behind a ``⋯`` mark — both endpoints survive, unlike a tail
-  truncation that amputates the destination — and :meth:`PathLine.wrapped` breaks
+  hops behind a ``⋯`` mark, on whichever side it is told to eat into
+  (:data:`ELIDE_TAIL` by default — both endpoints survive, unlike a plain tail
+  truncation that amputates the destination; :data:`ELIDE_HEAD` for a breadcrumb
+  trail, which anchors on where the walk *is*) — and :meth:`PathLine.wrapped` breaks
   at hop boundaries under a hanging indent (never mid-name, never mid-chip),
   folding where the route *means* something: the fewest lines it can take, evened
   out across them rather than greedily crammed, and preferring the seam where the
@@ -104,9 +106,16 @@ _YOU_BG = "#ffffff"
 _DIM_BG = "#334155"
 _DIM_FG = "#94a3b8"
 
-#: The mark standing in for elided middle hops (see :meth:`PathLine.ellipsized`) —
-#: rendered as a dim pseudo-hop so it recedes in both modes.
+#: The mark standing in for elided hops (see :meth:`PathLine.ellipsized`) — rendered as
+#: a dim pseudo-hop so it recedes in both modes.
 _ELISION = "⋯"
+
+#: Which side of a path an :meth:`PathLine.ellipsized` fit eats into. ``ELIDE_TAIL`` is
+#: the route reading — the origin anchors the line, the destination is rescued off the
+#: far end, and the mark lands in the middle. ``ELIDE_HEAD`` is the trail reading — the
+#: last hop anchors the line and everything before it goes, origin included.
+ELIDE_TAIL = "tail"
+ELIDE_HEAD = "head"
 
 #: Extra columns a wrapped line steps in past the hanging indent. The continuation
 #: marks (a trailing ``→``, a notched chip edge) say the path goes on; the step says
@@ -214,16 +223,28 @@ class PathLine:
             return Text(self._empty, style="muted")
         return self._render(self._hops)
 
-    def ellipsized(self, width: int) -> Text:
-        """The line fitted to ``width`` by eliding *middle* hops behind ``⋯``.
+    def ellipsized(self, width: int, *, elide: str = ELIDE_TAIL) -> Text:
+        """The line fitted to ``width`` by eliding hops behind a ``⋯`` mark.
 
-        Endpoints matter most — a route reads origin and destination first — so the
-        fit keeps the first hop and as much of the tail as possible, then drops the
-        head too if it must, and only as a last resort truncates a single over-long
-        hop the classic way.
+        ``elide`` names the *side* the mark eats into — which end of the path pays for
+        the overflow:
+
+        * :data:`ELIDE_TAIL` (the default) anchors the line on its head: the origin
+          holds and hops go from the tail end. The destination is rescued out of that
+          side along with as much of the run before it as fits, so the ``⋯`` settles in
+          the *middle* and both endpoints survive — a route reads origin and
+          destination first, and a plain right-truncation would amputate the second.
+          The origin is only given up if even that won't fit, and a lone over-long hop
+          is truncated the classic way as the last resort.
+        * :data:`ELIDE_HEAD` anchors the line on its tail: the last hop holds and hops
+          go from the head end, the origin among them, with no endpoint rescued. A
+          breadcrumb trail's news is where the walk *is*; where it set out from is
+          exactly the part worth losing.
 
         Args:
             width: The cell budget the returned line must fit in.
+            elide: Which side the ``⋯`` eats into — :data:`ELIDE_TAIL` (the default,
+                keeping both endpoints) or :data:`ELIDE_HEAD` (keeping the tail alone).
 
         Returns:
             A one-line :class:`Text` no wider than ``width``.
@@ -233,7 +254,10 @@ class PathLine:
             return full
         mark = PathHop(_ELISION, dim=True)
         count = len(self._hops)
-        for head in (1, 0):
+        # The heads worth trying, most-rescued first: a tail-side elision spares the
+        # origin while it fits and gives it up only when it must; a head-side one is
+        # eating the head on purpose, so it never spares it at all.
+        for head in ((0,) if elide == ELIDE_HEAD else (1, 0)):
             for tail in range(count - 1 - head, 0, -1):
                 kept = self._hops[:head] + [mark] + self._hops[-tail:]
                 candidate = self._render(kept)

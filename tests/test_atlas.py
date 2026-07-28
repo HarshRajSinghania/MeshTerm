@@ -269,16 +269,25 @@ def test_atlas_walking_to_an_earlier_node_drops_the_loop() -> None:
 
 
 def test_atlas_trail_drops_the_head_not_the_tail_when_narrow() -> None:
-    """A trail too long for the line loses its head behind a leading …, keeping the focus."""
+    """A trail too long for the line loses its head behind a leading ⋯, snapped right."""
     screen = _screen(_topo())
     us = screen._topo.self_id
     yul = screen._topo.canonical(YUL.public_key)
     alice = screen._topo.canonical(ALICE.public_key)
     screen._trail = [us, yul, alice]
-    text = screen._trail_text(20).plain  # too narrow for the whole "Homestead › … › Alice"
-    assert text.startswith("…")
+    width = 20  # too narrow for the whole "Homestead › YUL-Cartierville › Alice"
+    text = screen._trail_text(width).plain
+    assert text.lstrip().startswith("⋯")
     assert text.endswith("Alice")  # the focus is always kept
     assert "Homestead" not in text  # the head was dropped, not the tail
+    assert len(text) == width  # the surviving tail snaps flush to the right edge
+
+
+def test_atlas_trail_sits_left_until_it_overflows() -> None:
+    """A trail that fits is left-aligned; only an elided one snaps to the right edge."""
+    screen = _screen(_topo())
+    screen._trail = [screen._topo.self_id]
+    assert screen._trail_text(40).plain == "Homestead"
 
 
 def test_atlas_trail_names_carry_their_node_hues() -> None:

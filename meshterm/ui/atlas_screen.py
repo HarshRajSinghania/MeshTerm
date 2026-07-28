@@ -34,11 +34,13 @@ only its immediate neighbourhood:
   PgUp/PgDn a windowful.
 
 **Enter walks**: the highlighted neighbour becomes the new focus, the breadcrumb trail
-across the top grows (``you › YUL-Cartierville › …``, each name in its node's own hue),
-and **⌫ steps back** along it. Walking to a node already on the trail truncates the stack
-to its first appearance — the loop you walked to get back there is dropped rather than
-recorded — and when the trail outgrows the line its *head* is dropped behind a leading
-``…`` so the focus stays visible. **Home** refocuses our own node. **Typing finds** — a
+across the top grows (a :mod:`~meshterm.ui.pathline` path line — powerline chips where the
+terminal draws them, ``you › YUL-Cartierville › …`` where it doesn't, each name in its
+node's own hue), and **⌫ steps back** along it. Walking to a node already on the trail
+truncates the stack to its first appearance — the loop you walked to get back there is
+dropped rather than recorded — and when the trail outgrows the line it neither wraps nor
+scrolls: its *head* goes behind a leading ``⋯`` and the rest snaps flush right, so the
+focus and the steps just taken stay in view. **Home** refocuses our own node. **Typing finds** — a
 global filter over every node in
 the graph, islands included; Enter teleports the focus to the highlighted match (the
 trail restarts there, since the walk didn't cross the gap). Esc peels find first, the
@@ -64,6 +66,7 @@ from ..services.topology import Link, MeshTopology
 from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
+from .pathline import ELIDE_HEAD, PathHop, PathLine
 from .theme import name_style, node_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_to_ansi
@@ -466,42 +469,41 @@ class AtlasScreen(Screen):
         ]
 
     def _trail_text(self, width: int) -> Text:
-        """The breadcrumb trail, each name in its own key-derived hue, tail-anchored.
+        """The breadcrumb trail as a path line: one line, tail-anchored, never wrapped.
 
-        Names carry the app-wide per-node hue (ours the white ``you``, a nameless node
-        muted), the focus bold. When the whole trail won't fit on the line the *head* is
-        dropped behind a leading ``…`` — never the tail — so the focus and the steps that
-        led to it are always the ones kept in view.
+        The walk *is* a path — us, then every node stepped through, ending on the focus —
+        so it renders through :class:`~meshterm.ui.pathline.PathLine` like every other hop
+        sequence in the app: powerline chips wherever the terminal can draw them, the
+        trail's own ``›`` arrows where it can't. Each hop wears its node's key-derived hue
+        (ours the white ``you``; a node known only by a bare hash stays muted — colour is
+        reserved for keyed identities), so the trail and the rows below it agree on who is
+        who.
+
+        The line neither wraps nor scrolls. When the walk outgrows the width the fit eats
+        into its *head* (:data:`~meshterm.ui.pathline.ELIDE_HEAD`) rather than a route's
+        usual tail: the oldest steps disappear behind a leading ``⋯`` and what survives
+        snaps flush against the **right** edge, so the focus and the steps that just led
+        to it are the ones always in view. A long walk therefore reads as a line that
+        grows rightward until it meets the margin and then starts shedding its oldest
+        steps, rather than one that pushes the focus off the end.
         """
-        nodes = self._trail
-        sep = " › "
+        line = PathLine([self._trail_hop(node) for node in self._trail], separator=" › ")
+        full = line.text()
+        if full.cell_len <= width:
+            return full
+        fitted = line.ellipsized(width, elide=ELIDE_HEAD)
+        snapped = Text(" " * max(0, width - fitted.cell_len))  # snap the tail to the edge
+        snapped.append_text(fitted)
+        return snapped
 
-        def width_of(start: int) -> int:
-            total = cell_len("…") + cell_len(sep) if start else 0  # the leading "… › "
-            for k in range(start, len(nodes)):
-                total += cell_len(sep) if k > start else 0
-                total += cell_len(self._label(nodes[k]))
-            return total
-
-        start = 0
-        while start < len(nodes) - 1 and width_of(start) > width:
-            start += 1
-
-        trail = Text()
-        if start:
-            trail.append("…" + sep, style="muted")
-        for k in range(start, len(nodes)):
-            if k > start:
-                trail.append(sep, style="muted")
-            last = k == len(nodes) - 1
-            trail.append(self._label(nodes[k]), style=self._trail_style(nodes[k], last))
-        trail.truncate(width, overflow="ellipsis")  # guard a lone label wider than the line
-        return trail
-
-    def _trail_style(self, node: str, last: bool) -> str:
-        """A trail name's style: its key hue (ours white, a nameless node muted), focus bold."""
-        base = self._list_name_style(node)
-        return f"bold {base}" if last else base
+    def _trail_hop(self, node: str) -> PathHop:
+        """One walked step as a path hop: its display name in its own identity colour."""
+        style = self._list_name_style(node)
+        return PathHop(
+            self._label(node),
+            key=None if style in ("you", "muted") else node,
+            you=style == "you",
+        )
 
     def _focus_line(self, depths: dict[str, int]) -> Text:
         """Who is in focus: glyph, name with its parenthesized hash, distance, and recency.

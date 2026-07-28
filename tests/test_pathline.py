@@ -14,7 +14,7 @@ import pytest
 
 import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
-    CURSOR_GLYPH, POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP,
+    CURSOR_GLYPH, ELIDE_HEAD, POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP,
     SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine, _style_hex, path_line,
 )
 from meshterm.ui.theme import node_style
@@ -151,6 +151,20 @@ def test_ellipsized_elides_the_middle_and_keeps_both_endpoints() -> None:
     assert fitted.plain.startswith("AAAA")
     assert fitted.plain.endswith("FFFF")
     assert "⋯" in fitted.plain
+
+
+def test_ellipsized_eats_the_head_when_told_to() -> None:
+    """A breadcrumb's news is where the walk *is*, so ``ELIDE_HEAD`` spares the origin
+    nothing: the fit keeps as much of the tail as the width holds, behind a ``⋯``."""
+    hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF")]
+    line = PathLine(hops, mode="plain")
+    fits = line.ellipsized(200, elide=ELIDE_HEAD).plain
+    assert fits == line.text().plain  # fits → untouched, whichever side would give
+    fitted = line.ellipsized(25, elide=ELIDE_HEAD)
+    assert fitted.cell_len <= 25
+    assert fitted.plain.startswith("⋯")  # the origin goes too, unlike the tail-side fit
+    assert fitted.plain.endswith("FFFF")
+    assert "AAAA" not in fitted.plain
 
 
 def test_ellipsized_last_resort_truncates_a_single_giant_hop() -> None:
