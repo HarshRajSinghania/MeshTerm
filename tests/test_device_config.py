@@ -205,6 +205,38 @@ def test_contacts_table_breaks_metric_ties_by_name_ascending() -> None:
     assert order(ascending=False) == ["Bob", "Alice", "Charlie"]
 
 
+async def test_contacts_tool_opens_sorted_by_heard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Contacts list opens most-recently-heard first — who's out there now, not a roll call."""
+    from meshterm.tools.contacts import ContactsTool
+    from meshterm.ui import widgets
+
+    captured: dict = {}
+
+    def fake_table(self_name, self_key, contacts, prefix_bytes, counts, sort):
+        captured["sort"] = sort
+        return ""
+
+    monkeypatch.setattr(widgets, "contacts_table", fake_table)
+
+    class _Devstate:
+        async def self_info(self) -> dict:
+            return {"name": "Us", "public_key": "aa" * 32}
+
+        async def contacts(self) -> list:
+            return []
+
+        async def path_hash_mode(self) -> int:
+            return 0
+
+    class _Ctx:
+        devstate = _Devstate()
+        repo = type("R", (), {"heard_nodes": staticmethod(lambda: [])})()
+        ui = type("U", (), {"show": staticmethod(lambda *r: None)})()
+
+    await ContactsTool().run(_Ctx(), {})  # type: ignore[arg-type]
+    assert (captured["sort"].column, captured["sort"].ascending) == ("heard", True)
+
+
 def _contacts_sort(name: str = "name"):
     """The interactive Contacts screen's sort: the shared contact list's four-column ring."""
     from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING

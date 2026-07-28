@@ -56,7 +56,10 @@ class ContactsTool(Tool):
 
         self_name = str(info.get("name") or "this node")
         self_key = str(info.get("public_key") or "")
-        sort_name = str(params.get("sort") or "name")
+        # Opens most-recently-heard first: the list's job is "who's out there right now",
+        # and a freshest-first order answers that on sight — an A→Z roll call doesn't. The
+        # Ctrl+arrows re-sort from there (and ``--sort`` picks the CLI's order).
+        sort_name = str(params.get("sort") or "heard")
 
         # In the menu, hand the list to the interactive screen so the Ctrl+arrows re-sort it
         # live — its ring spans the shared contact list's four columns (hash included); on the
@@ -84,7 +87,7 @@ class ContactsTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _contacts(
             sort: str = typer.Option(
-                "name", "--sort", "-s", help="Order contacts by: name, heard, packets"
+                "heard", "--sort", "-s", help="Order contacts by: heard, name, packets"
             ),
         ) -> None:
             run_tool_command(self, {"sort": sort})
