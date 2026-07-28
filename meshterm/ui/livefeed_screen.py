@@ -67,11 +67,31 @@ _FEED_NAME_WIDTH = 18
 #: packet under (``direct message``), so every label reads whole and the lanes hold.
 _FEED_CLASS_WIDTH = 14
 
+# The remaining lanes, as the row and its column header both measure them — one set of
+# numbers so a header label can never drift off the values it names, and so a lane a
+# packet left empty pads to exactly the width it would have filled.
+#: Cells between adjacent lanes.
+_LANE_GAP = 2
+#: ``HH:MM:SS`` plus the gap that follows it.
+_TIME_LANE = 8 + _LANE_GAP
+#: The class icon and its trailing space (all the class lane keeps on a narrow terminal).
+_ICON_LANE = 3
+#: Cells a reception reading right-aligns its number in — the ``%+5.1f``/``%5.0f`` field
+#: both lanes are built on, and the slot their column headers sit over.
+_READING_W = 5
+#: ``+13.2 dB`` — the number field, then its unit.
+_SNR_LANE = _READING_W + len(" dB")
+#: ``    -61 dBm`` — the lane gap, the number field, then its unit.
+_RSSI_LANE = _LANE_GAP + _READING_W + len(" dBm")
+
 #: Terminal width below which the feed drops the textual class label and keeps only the
 #: two-cell icon. It is exactly the width the full row occupies — with no route to make
 #: room for, every lane fits a 72-column screen, so the label (the row's most informative
 #: field now that it names the real class) is only ever dropped when it truly can't fit.
-_FEED_LABEL_MIN_WIDTH = 69
+_FEED_LABEL_MIN_WIDTH = (
+    2 + _TIME_LANE + _ICON_LANE + _FEED_CLASS_WIDTH + _LANE_GAP
+    + _FEED_NAME_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
+)
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
 #: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
@@ -300,14 +320,23 @@ class LiveFeedScreen(Screen):
     # --- rendering ---------------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """The pinned heading, then the feed's window filling the viewport."""
+        """The status line and column header, then the feed's window under them.
+
+        Both chrome lines are pinned by construction rather than by the base screen's
+        sticky-header machinery: the feed windows *inside* the space they leave (see
+        :meth:`_feed_lines`), so the body never scrolls and the header can never travel
+        off the top of it.
+        """
         if self._selected is not None and self._feed:
             self._selected = min(self._selected, len(self._feed) - 1)
         else:
             self._hmax = 0  # nothing highlighted scrolls, so nothing advertises ←→
+        show_label = width >= _FEED_LABEL_MIN_WIDTH
         lines = [render_to_ansi(self._heading(), width, no_wrap=True)]
+        if self._feed:  # a header over nothing is noise; the empty note speaks for itself
+            lines.append(render_to_ansi(self._column_header(show_label), width, no_wrap=True))
         win = max(1, self._scroll_viewport - len(lines))
-        lines.extend(self._feed_lines(width, win))
+        lines.extend(self._feed_lines(width, win, show_label))
         self._scroll_total = max(1, len(lines))
         return lines
 
@@ -320,11 +349,39 @@ class LiveFeedScreen(Screen):
             heading.append("○ waiting for a device", style="muted")
         return heading
 
-    def _feed_lines(self, width: int, win: int) -> list[str]:
+    @staticmethod
+    def _column_header(show_label: bool) -> Text:
+        """The lane names, in the app's uppercase muted column-header voice.
+
+        Laid out lane for lane against :meth:`_feed_row`, the pointer column included, so
+        every label sits over the values it names. Nothing here sorts — the feed is a
+        stream, and its one order (newest first) is the status line's to state — so no
+        column carries the contact list's sort triangle or its lit active-column style;
+        these are signposts, not controls. On a terminal too narrow for the class label
+        the header drops its ``CLASS`` too, leaving the icon lane unlabelled rather than
+        clipping a word into three cells.
+        """
+        header = Text("  ", style="muted")  # the pointer lane
+        header.append(fit_cells("TIME", _TIME_LANE))
+        header.append(
+            fit_cells("CLASS", _ICON_LANE + _FEED_CLASS_WIDTH + _LANE_GAP)
+            if show_label
+            else " " * _ICON_LANE
+        )
+        header.append(fit_cells("NODE", _FEED_NAME_WIDTH + _LANE_GAP))
+        # The two readings right-align their number, so their labels do too — each sits
+        # over the digits it names rather than over the sign column ahead of them.
+        header.append(fit_cells("SNR", _READING_W, align="right"))
+        header.append(" " * (_SNR_LANE - _READING_W))
+        header.append(" " * _LANE_GAP)
+        header.append(fit_cells("RSSI", _READING_W, align="right"))
+        header.append(" " * (_RSSI_LANE - _LANE_GAP - _READING_W))
+        return header
+
+    def _feed_lines(self, width: int, win: int, show_label: bool) -> list[str]:
         """The feed's windowed rows: newest first, ``↑/↓ n more`` at the edges."""
         if not self._feed:
             return [render_to_ansi(Text("nothing heard yet", style="muted"), width)]
-        show_label = width >= _FEED_LABEL_MIN_WIDTH
         entries = list(self._feed)
         top, count = self._feed_window.fit(len(entries), win, self._selected)
         out: list[str] = []
@@ -355,43 +412,53 @@ class LiveFeedScreen(Screen):
         it doesn't try to, and the route is drawn properly one keypress away, in the
         packet viewer.
 
+        The highlight is the app's own: the ``❯`` pointer and a brand base style under the
+        whole row, exactly as every select list draws its cursor. The lanes keep their own
+        colours over it — the SNR its quality hue, a name its palette hue — because those
+        colours are the content; the pointer and the base tint are what say "this row".
+
         A row that runs past the right edge — a terminal narrower than the lanes need —
         is read by scrolling it, not by growing it: the *highlighted* row slides under
-        ``←→`` (:attr:`_hshift`), the app-wide h-scroll convention, with the ``▸``
+        ``←→`` (:attr:`_hshift`), the app-wide h-scroll convention, with the ``❯``
         pointer lane pinned so the cursor never scrolls away from the row it marks. The
         shift bound is measured here, against the current width, so a resize can only
         clamp it back into range.
         """
         row = Text(no_wrap=True, overflow="ellipsis")
-        row.append("▸ " if selected else "  ", style="accent")
+        row.append("❯ " if selected else "  ", style="brand" if selected else "")
         avail = max(1, width - 2)
 
         body = Text(no_wrap=True, overflow="ellipsis")
-        body.append(entry.when.astimezone().strftime("%H:%M:%S") + "  ", style="muted")
+        body.append(
+            fit_cells(entry.when.astimezone().strftime("%H:%M:%S"), _TIME_LANE),
+            style="muted",
+        )
         icon, class_label = class_marks(entry)
-        body.append(icon + " ")
+        body.append(fit_cells(icon, _ICON_LANE))
         if show_label:
             body.append(
                 fit_cells(class_label, _FEED_CLASS_WIDTH),
                 style=KIND_STYLES.get(entry.kind, "brand"),
             )
-            body.append("  ")  # the lane's own gutter — the longest class fills it exactly
+            body.append(" " * _LANE_GAP)  # the lane's gutter — the longest class fills it
         label, style = node_label(entry, self._resolve, self._self_name)
         if label == "?":
             label, style = self._feed_subject(entry)  # no node identity: name what we can
         body.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
-        body.append("  ")
+        body.append(" " * _LANE_GAP)
         body.append(
-            f"{entry.snr:+5.1f} dB" if entry.snr is not None else " " * 8,
+            f"{entry.snr:+{_READING_W}.1f} dB" if entry.snr is not None
+            else " " * _SNR_LANE,
             style=snr_style(entry.snr) if entry.snr is not None else "muted",
         )
         body.append(
-            f"  {entry.rssi:5.0f} dBm" if entry.rssi is not None else " " * 10,
+            f"{'':{_LANE_GAP}}{entry.rssi:{_READING_W}.0f} dBm"
+            if entry.rssi is not None else " " * _RSSI_LANE,
             style="muted",
         )
         note = self._feed_note(entry)
         if note is not None:
-            body.append("  ")
+            body.append(" " * _LANE_GAP)
             body.append_text(note)
 
         if selected:
@@ -400,6 +467,10 @@ class LiveFeedScreen(Screen):
             if self._hshift:
                 body = crop_cells(body, self._hshift, avail)
         row.append_text(body)
+        if selected:
+            # The brand tint rides *under* the row's spans (the select list's own
+            # convention), so the lanes keep their colours and only the gaps take it.
+            row.style = "brand"
         return row
 
     def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
