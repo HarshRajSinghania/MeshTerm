@@ -47,6 +47,19 @@ over and then settles. Concretely:
   marker sits on its highest-priority path's lane, and a lower path that also rides it leans
   off its lane to meet the marker and back — which reads as the alternative *branching
   through the shared node*, exactly the story the evidence tells;
+* **revisits** — that merge is right *across* paths (two routes rode one relay) and wrong
+  *within* one: a single walk that touches the same hop twice is not a node two routes share,
+  it is a **cycle**, and a left-to-right flow has nowhere to seat one. Ranked over the cyclic
+  edge set the balanced-x relaxation never settles, so the loop's members land in near-identical
+  columns — markers piled a cell apart, labels colliding, the back-edge dropping as a bare
+  vertical — while the relays outside it are squashed against the ends. ``allow_duplicate_nodes``
+  hands each revisit its own marker instead (see :func:`_split_revisits`), which keeps the flow
+  acyclic and draws the walk in its true order; the cost is that one node *may* appear twice,
+  so a caller that turns it on should say so on the surface (:func:`~meshterm.ui.widgets.
+  revisit_note`). It is opt-in because the choice is a caller's to make: a path we *composed*
+  (the Trophy case's scored walk) collapses a revisit deliberately, while an **observed** via
+  chain — hops named by a one-byte hash, where a repeat is as likely two colliding nodes as a
+  genuine loop — must be drawn as heard;
 * **detours** — a route heard as a sibling route *plus* an inserted relay is that sibling with
   a detour, and the whole fan is measured against the row budget *before* its shape is
   committed: while the rows allow, the detour **nests** — its inserted relay takes the lane
@@ -92,6 +105,12 @@ from .mapcanvas import RGB, MapCanvas, parse_hex
 #: Callers key their glyph/label callbacks on these for the two ends of every path.
 SRC_NODE = "\x00src"
 DST_NODE = "\x00dst"
+
+#: Joins a hop id to its occurrence index when ``allow_duplicate_nodes`` splits a path's
+#: revisits into their own markers. Leans on the same guarantee the endpoint sentinels do —
+#: NUL never appears in a hex hop id — so a qualified id can never collide with a real one,
+#: and :func:`_base_node` maps it back before any caller callback ever sees it.
+_OCCURRENCE_SEP = "\x00#"
 
 #: Text rows between adjacent lane markers — the pitch one lane maps to. At the default there
 #: are two blank rows padding each gap (room for a lane's label and its neighbour's), and an
@@ -326,6 +345,73 @@ def _is_hex(value: str) -> bool:
     return bool(value) and all(char in _HEX_DIGITS for char in value)
 
 
+def revisited_hops(hops: Sequence[str]) -> tuple[str, ...]:
+    """The hops one path touches more than once, in first-appearance order.
+
+    The test a caller applies before deciding to draw with ``allow_duplicate_nodes`` — and the
+    hops it then names in its warning (:func:`~meshterm.ui.widgets.revisit_note`), since a
+    graph drawing one node twice owes the reader that much. Judged on the ids as given: at the
+    one-byte width an observed via chain addresses its hops by, a repeat is as likely two
+    different nodes colliding on a hash byte as a packet genuinely walking a loop, and neither
+    the path nor this widget can tell them apart — which is exactly what the warning says.
+    """
+    counts: dict[str, int] = {}
+    for hop in hops:
+        if hop:
+            counts[hop] = counts.get(hop, 0) + 1
+    return tuple(hop for hop, seen in counts.items() if seen > 1)
+
+
+def _split_revisits(layers: Sequence[PathLayer]) -> list[PathLayer]:
+    """Give every revisit *within* a path its own node id, so no walk folds into a cycle.
+
+    The k-th occurrence of a hop in one layer becomes ``hop\\x00#k`` (the first keeps the bare
+    id), which leaves the flow acyclic and lets the balanced rank spread the walk evenly again.
+    Counting runs per layer but the qualifier is positional, so occurrence *k* of a hop means the
+    same id in every layer that reaches that far: two routes riding one relay once still merge on
+    the bare id — the diverge/converge story the widget exists to tell survives untouched, and
+    only a genuine within-path repeat splits.
+    """
+    split: list[PathLayer] = []
+    for layer in layers:
+        seen: dict[str, int] = {}
+        hops: list[str] = []
+        for hop in layer.hops:
+            nth = seen.get(hop, 0)
+            seen[hop] = nth + 1
+            hops.append(hop if nth == 0 else f"{hop}{_OCCURRENCE_SEP}{nth}")
+        split.append(PathLayer(tuple(hops), layer.color, layer.priority, layer.emphasis))
+    return split
+
+
+def _base_node(node: str) -> str:
+    """An occurrence-qualified internal id back to the caller's own node id (else unchanged)."""
+    return node.split(_OCCURRENCE_SEP, 1)[0]
+
+
+def _unqualified(
+    glyph_of: GlyphOf, label_of: LabelOf, label_rgb_of: LabelRgbOf
+) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
+    """Wrap the per-node callbacks so a split revisit reaches them as the node it really is.
+
+    Occurrence qualifiers are the widget's private bookkeeping: a caller supplies callbacks keyed
+    on its own hop ids and gets back a marker, a label and a hue per *node*, so both markers of a
+    revisited hop draw identically — the same glyph, the same name, the same colour — and the
+    picture says "here twice" rather than inventing a second identity.
+    """
+
+    def glyph(node: str) -> tuple[str, str]:
+        return glyph_of(_base_node(node))
+
+    def label(node: str) -> Optional[str]:
+        return label_of(_base_node(node))
+
+    def label_rgb(node: str) -> RGB:
+        return label_rgb_of(_base_node(node))
+
+    return glyph, label, label_rgb
+
+
 def _draw_rank(layer: PathLayer) -> int:
     """A layer's edge draw rank: emphasis dominates, layout priority breaks ties.
 
@@ -347,6 +433,7 @@ def render_path_graph(
     min_rows: int = 5,
     max_rows: int = 15,
     lane_pitch: int = _LANE_PITCH_ROWS,
+    allow_duplicate_nodes: bool = False,
 ) -> list[str]:
     """Draw the diverge/converge route-flow graph and return its ANSI lines.
 
@@ -370,6 +457,14 @@ def render_path_graph(
             so the endpoints land on an exact centred row. The row budget compresses the pitch
             when there are many lanes, and never stretches it when there are few. Defaults to
             :data:`_LANE_PITCH_ROWS`.
+        allow_duplicate_nodes: Draw a hop a path touches *twice* as two markers rather than
+            folding it into one. Off by default, because folding is right for a path the caller
+            composed. Turn it on for an **observed** walk, where the fold would make a cycle the
+            left-to-right flow cannot seat and the layout collapses (see the module docstring):
+            the walk then draws in its true order, at the cost of one node possibly appearing
+            twice — which the caller should flag on the surface (:func:`~meshterm.ui.widgets.
+            revisit_note`, over :func:`revisited_hops`). Relays shared *between* paths merge
+            either way.
 
     Returns:
         One ANSI string per canvas row (empty when there are no layers to draw).
@@ -378,6 +473,12 @@ def render_path_graph(
         return []
 
     drawn = _collapse(_coalesce_prefixes(layers))
+    if allow_duplicate_nodes:
+        # After the prefix/identical folds, so a revisit is counted over the ids actually drawn:
+        # a hop that only *looks* repeated at two hash widths coalesces to one id first, and is
+        # then correctly seen as the single visit it is.
+        drawn = _split_revisits(drawn)
+        glyph_of, label_of, label_rgb_of = _unqualified(glyph_of, label_of, label_rgb_of)
     seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
 
     # First-appearance order for every node, so the layout is identical on every repaint: a

@@ -39,7 +39,7 @@ from rich.text import Text
 
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
-from .pathgraph import PathLayer, render_path_graph
+from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import path_line
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
@@ -49,6 +49,7 @@ from .widgets import (
     NodeResolver,
     TypeOf,
     node_type_legend,
+    revisit_note,
     route_graph_style,
 )
 
@@ -199,6 +200,7 @@ class MessagePathsScreen(Screen):
                        style="faint")
         lines.append(render_to_ansi(caption, width, no_wrap=True))
         lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+        lines.extend(self._revisit_line(width))
         lines.append("")
         for i, arrival in enumerate(self._arrivals):
             if i == self._index:
@@ -320,4 +322,22 @@ class MessagePathsScreen(Screen):
         return render_path_graph(
             layers, width,
             glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+            allow_duplicate_nodes=True,
         )
+
+    def _revisit_line(self, width: int) -> list[str]:
+        """The ⚠ note when any drawn path touches one hop twice, else no line at all.
+
+        These paths are *overheard*, not composed: a repeated hop is real evidence, so the graph
+        draws each visit its own marker (``allow_duplicate_nodes``) rather than folding the walk
+        into a cycle it cannot seat. That leaves one name on two markers, which this explains —
+        once for the whole fan, naming every hop repeated anywhere in it, since the note belongs
+        to the picture rather than to whichever arrival ↑↓ happen to be resting on.
+        """
+        repeated: list[str] = []
+        for path in self._paths():
+            for hop in revisited_hops(path):
+                if hop not in repeated:
+                    repeated.append(hop)
+        note = revisit_note(repeated, self._resolve, self_name=self._self_name)
+        return [] if note is None else [render_to_ansi(note, width, no_wrap=True)]

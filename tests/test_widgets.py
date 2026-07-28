@@ -7,7 +7,7 @@ and every caller inherits it.
 
 from __future__ import annotations
 
-from meshterm.ui.widgets import _format_age, format_ago, path_text
+from meshterm.ui.widgets import _format_age, format_ago, path_text, revisit_note
 
 
 def test_format_age_is_the_bare_column_form() -> None:
@@ -162,3 +162,27 @@ def test_route_graph_source_label_takes_its_resolved_keys_hue() -> None:
         resolve=lambda h: h, self_name="us", source="Alice",
     )
     assert rgb_unknown(SRC_NODE) == (148, 163, 184)  # unresolvable origin stays muted
+
+
+def test_revisit_note_names_the_repeats_and_refuses_to_guess_why() -> None:
+    """The one line a graph drawing a node twice owes its reader — both readings, neither picked."""
+    note = revisit_note(["aa"], _resolve)
+    assert note is not None
+    assert note.plain == "⚠ Alice repeats — a loop, or two nodes sharing one hash"
+    styles = {note.plain[s.start : s.end]: str(s.style) for s in note.spans}
+    assert styles.get("⚠ ") == "warn"          # the app's warn mark, themed
+    assert styles.get("Alice") not in (None, "warn")  # the name keeps its own node hue
+
+
+def test_revisit_note_lists_every_repeated_hop() -> None:
+    """More than one hop repeated names them all, comma-joined, still one sentence."""
+    note = revisit_note(["aa", "3d"], _resolve)
+    assert note is not None
+    assert note.plain.startswith("⚠ Alice, YUL repeats — ")
+    assert len(note.plain) <= 72  # the footer/row budget every surface renders it inside
+
+
+def test_revisit_note_is_absent_when_nothing_repeats() -> None:
+    """No repeats, no line — the warning is evidence, never chrome."""
+    assert revisit_note([], _resolve) is None
+    assert revisit_note(()) is None

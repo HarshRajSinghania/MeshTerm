@@ -176,6 +176,32 @@ def test_packet_viewer_draws_a_relayed_packets_route_graph() -> None:
     assert "3d" in body and "a1" in body              # each relay labelled by its hash byte
 
 
+def test_packet_viewer_draws_a_revisited_hop_twice_and_warns() -> None:
+    """An overheard chain naming one hop twice draws it twice, and says why it did.
+
+    Folded to a single marker the walk would close a cycle the left-to-right flow cannot seat,
+    and the whole graph collapses into a pile one column wide. So the packet card splits the
+    revisit — and owes the reader the warning, because nothing in a one-byte hash can say
+    whether the repeat is a genuine loop or two different nodes colliding on that byte.
+    """
+    names = {"c1": "C14903", "8e": "MileEnd", "da": "Relais", "ee": "ParcEx"}
+    entry = PacketEntry(when=utcnow(), kind="packet", path="7f,c1,8e,da,ee,c1,27")
+    body = _plain(
+        PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(80)
+    )
+    assert "⚠" in body and "repeats" in body
+    assert "a loop, or two nodes sharing one hash" in body
+    assert body.count("C14903") == 3  # twice in the via row, once named in the warning
+    assert body.count("c1") == 2      # and both visits carry a marker label in the graph
+
+
+def test_packet_viewer_stays_quiet_when_every_hop_is_distinct() -> None:
+    """The revisit warning is not chrome: a normal relayed packet never shows it."""
+    entry = PacketEntry(when=utcnow(), kind="packet", path="3d63,a1b2")
+    body = _plain(_viewer(entry).render_body(80))
+    assert "⚠" not in body and "repeats" not in body
+
+
 def test_packet_viewer_skips_the_graph_for_a_direct_packet() -> None:
     """A packet with no relays says so in the via row and draws no (pointless) two-node graph."""
     entry = PacketEntry(when=utcnow(), kind="packet", path="")

@@ -60,6 +60,31 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     assert screen.cursor_line() is not None
 
 
+def test_paths_screen_warns_once_for_a_path_that_revisits_a_hop() -> None:
+    """A path touching one hop twice draws it twice, warned about once for the whole fan.
+
+    The note belongs to the picture, not to the arrival ↑↓ rest on, so it names every hop
+    repeated anywhere in the fan and says so a single time under the legend.
+    """
+    now = utcnow()
+    screen = _screen([
+        Arrival(when=now, hops=("3d63", "a1b2", "77aa", "3d63"), snr=4.0),
+        Arrival(when=now + timedelta(seconds=2), hops=("a1b2",), snr=-2.0),
+    ])
+    body = _plain(screen.render_body(76))
+    assert body.count("⚠") == 1
+    assert "YUL-Cartierville repeats — a loop, or two nodes sharing one hash" in body
+    graph = body.split("origin →")[0]
+    assert graph.count("3d") == 2  # both visits marked
+    assert graph.count("a1") == 1  # the relay the two paths *share* stays one marker
+
+
+def test_paths_screen_stays_quiet_when_no_path_revisits() -> None:
+    """Two paths crossing the same relay is sharing, not revisiting — nothing to warn about."""
+    body = _plain(_screen(_arrivals()).render_body(76))
+    assert "⚠" not in body
+
+
 def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
     """Graph relays carry their first hash byte, both paths at once; the rows carry the
     names alone — no hash repeated after one, the two tied together by the node's hue."""

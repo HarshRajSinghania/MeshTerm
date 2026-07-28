@@ -317,6 +317,56 @@ def path_text(
     return text
 
 
+def revisit_note(
+    repeats: Sequence[str],
+    resolve: NodeResolver = _identity,
+    *,
+    prefix_bytes: int = 0,
+    self_name: Optional[str] = None,
+) -> Optional[Text]:
+    """The warning a path that touches one hop twice owes its reader, or ``None`` for none.
+
+    A route graph drawn with ``allow_duplicate_nodes``
+    (:func:`~meshterm.ui.pathgraph.render_path_graph`) plants two markers carrying the same
+    name, and the ``via`` row above it names the same node twice — both honest, both confusing
+    left unexplained. This is the one line that explains them, and it refuses to pick between the
+    two readings, because nothing in the packet can: an observed chain addresses its hops by a
+    hash a single byte wide, so a repeat is as easily two different nodes colliding on that byte
+    as one node the packet genuinely passed twice. It names the repeated hops through THE path
+    widget (:func:`path_text`), so each reads in its own name hue exactly as it does in the
+    ``via`` row the reader is comparing against.
+
+    Takes the repeated hops rather than the path itself, so the caller decides what "repeated"
+    means for its surface: one path asks :func:`~meshterm.ui.pathgraph.revisited_hops`, while a
+    surface drawing a *fan* of paths must union each path's own revisits — a hop two different
+    routes share is not a revisit at all, and pooling their hops would libel it as one.
+
+    Args:
+        repeats: The hops to warn about, already known repeated (empty = no warning).
+        resolve: Maps a hop hash to a friendly name when known.
+        prefix_bytes: Path-hash width to light in an unnamed hop's hash (0 = none).
+        self_name: Our own node's name, so a repeat of *us* draws in the white ``you`` style.
+
+    Returns:
+        A one-line :class:`Text` fitting 72 cells for the paths a radio really carries, or
+        ``None`` when ``repeats`` is empty and there is nothing to warn about.
+    """
+    if not repeats:
+        return None
+    # The mark carries its own span rather than riding the Text's base style, so nothing that
+    # follows can inherit ``warn`` — the names keep their node hues and the prose stays muted.
+    note = Text()
+    note.append("⚠ ", style="warn")
+    for i, hop in enumerate(repeats):
+        if i:
+            note.append(", ", style="muted")
+        note.append_text(
+            path_text([hop], resolve, prefix_bytes=prefix_bytes, self_name=self_name)
+        )
+    note.append(" repeats — a loop, or two nodes sharing one hash", style="muted")
+    return note
+
+
 def _path_node(
     hop: Optional[str],
     resolve: NodeResolver,

@@ -226,9 +226,15 @@ class RecordDialog(Screen):
         (:func:`~meshterm.ui.pathgraph.render_path_graph`), the same shape the Message
         paths dialog draws a delivery over. Relays wear their own map marker (``▲``
         repeater, …) where the type is known. Nodes the walk passed through more than once
-        — a boomerang's mirrored return leg — collapse to their first appearance: the
-        layered graph can only seat a node once, and the route line below still
-        carries every hop, revisits and all.
+        — a boomerang's mirrored return leg — collapse to their first appearance, and the
+        route line below still carries every hop, revisits and all.
+
+        That collapse is a *deliberate* choice here, not the widget's limit: a graph can draw
+        each visit its own marker (``allow_duplicate_nodes``, which the observed-packet surfaces
+        turn on), and this one declines. A trophy record scores a path **we composed**, so
+        re-walking one node must never make the shape look bigger than the ground it covered —
+        one node, one marker, whatever the spec asked for. An overheard via chain has the
+        opposite duty: nothing there is ours to inflate, and a repeat is evidence.
         """
         seen: set[str] = set()
         hops: list[str] = []

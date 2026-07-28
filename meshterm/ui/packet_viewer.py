@@ -40,7 +40,7 @@ from ..core.channels import decrypt_channel_text
 from ..core.models import NODE_TYPE_LABELS, Observation
 from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
-from .pathgraph import PathLayer, render_path_graph
+from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import PathLine, path_line
 from .theme import name_style, snr_style
 from .trace_screen import snr_bar
@@ -55,6 +55,7 @@ from .widgets import (
     format_ago,
     highlighted_hash,
     node_type_legend,
+    revisit_note,
     route_graph_style,
 )
 
@@ -573,6 +574,14 @@ class PacketViewer(Screen):
         (an advert's ``adv_key``; other classes arrive origin-less, drawn ``?``), the right
         endpoint always us — the same layered route-graph widget the Message paths dialog
         and the Trophy case draw, in a single white path.
+
+        Drawn with ``allow_duplicate_nodes``, because this chain is *observed*: we did not
+        compose it, its hops are named by a one-byte hash, and a repeat among them is as likely
+        two colliding nodes as a genuine loop. Folding such a repeat into one marker would make
+        a cycle the left-to-right flow cannot seat — the walk collapses into a pile of markers
+        one column wide — so each visit takes its own marker and the chain draws in the order it
+        was heard. The ``via`` row's :func:`~meshterm.ui.widgets.revisit_note` says why a name
+        appears twice.
         """
         if entry.kind != "packet":
             return []
@@ -587,6 +596,7 @@ class PacketViewer(Screen):
         return render_path_graph(
             [PathLayer(hops=hops, color=_ROUTE_EDGE, priority=3)],
             width, glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+            allow_duplicate_nodes=True,
         )
 
     def _graph_source(self, entry: PacketEntry) -> Optional[str]:
@@ -646,6 +656,14 @@ class PacketViewer(Screen):
             "", Text("reception describes the last relay, not the origin",
                      style="faint"),
         ))
+        # A chain that names one hop twice reads as a mistake until it is explained; the graph
+        # below draws that hop twice too (see ``_graph_lines``), so the note covers both.
+        revisits = revisit_note(
+            revisited_hops([hop for hop in (entry.path or "").split(",") if hop]),
+            self._resolve, prefix_bytes=self._prefix_bytes, self_name=self._self_name,
+        )
+        if revisits is not None:
+            rows.append(("", revisits))
         if typename == "GRP_TXT":
             rows.extend(self._decrypt_rows(raw))
         return rows

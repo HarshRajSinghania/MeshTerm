@@ -11,15 +11,19 @@ from meshterm.ui.pathgraph import (
     SRC_NODE,
     _GRAPH_PAD_DOTS,
     _LANE_PITCH_ROWS,
+    _OCCURRENCE_SEP,
     PathLayer,
     _assign_lanes,
     _balanced_x,
+    _base_node,
     _bypass_vias,
     _coalesce_prefixes,
     _collapse,
     _layout_lanes,
     _route,
+    _split_revisits,
     render_path_graph,
+    revisited_hops,
 )
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -158,6 +162,117 @@ def test_endpoint_labels_may_leave_the_marker_row() -> None:
     # The name fits the 60-cell canvas, so it is kept whole — no fixed label budget clips it.
     assert "VeryLongStationName" in plain
     assert "…" not in plain
+
+
+def test_revisited_hops_names_only_within_path_repeats() -> None:
+    """The detector reports a hop touched twice by *one* path, in first-appearance order."""
+    assert revisited_hops(("7f", "c1", "8e", "da", "ee", "c1", "27")) == ("c1",)
+    assert revisited_hops(("aa", "bb", "aa", "cc", "bb")) == ("aa", "bb")
+    assert revisited_hops(("aa", "bb", "cc")) == ()
+    assert revisited_hops(()) == ()
+
+
+def test_revisited_path_folds_into_a_cycle_that_piles_its_relays() -> None:
+    """Why the flag exists: folded, a revisit makes a cycle the balanced rank cannot settle.
+
+    ``c1`` twice closes a loop over ``8e``/``da``/``ee``. Ranked over that cyclic edge set the
+    longest-path relaxation never reaches a fixed point, so the loop's members land within a
+    hair of each other — one column of piled markers — while the relays outside it are squashed
+    against the two ends. This pins the broken behaviour the flag is the escape from.
+
+    Thresholds are loose because the folded numbers are not even *stable*: the relaxation
+    iterates an edge **set**, which on an acyclic graph reaches the same fixed point whatever
+    the order and on this cycle simply stops wherever the sweep budget ran out. So the pile's
+    column swings with the interpreter's hash seed — the very frame-to-frame jumping the
+    first-appearance node order exists to prevent. What every seed agrees on is the shape
+    asserted here, and splitting the revisit is what restores the fixed point (see
+    :func:`test_allow_duplicate_nodes_keeps_x_strictly_rising_along_the_walk`).
+    """
+    hops = ("7f", "c1", "8e", "da", "ee", "c1", "27")
+    seq = (SRC_NODE, *hops, DST_NODE)
+    ordered = list(dict.fromkeys(seq))
+    x = _balanced_x(ordered, set(zip(seq, seq[1:])))
+    # Evenly spread, these eight nodes would sit 1/7 apart and the four loop members would
+    # span three of those gaps; folded, the whole loop fits inside a single one.
+    loop = [x[node] for node in ("c1", "8e", "da", "ee")]
+    assert max(loop) - min(loop) < 1 / 7
+    assert x["7f"] < 0.15 and x["27"] > 0.85  # its neighbours crushed against the ends
+
+
+def test_allow_duplicate_nodes_keeps_x_strictly_rising_along_the_walk() -> None:
+    """Split, the rank regains the fixed point — and with it the widget's ordering invariant.
+
+    ``_balanced_x`` promises the fraction rises strictly along every path, so edges only ever
+    run left to right. A folded revisit breaks that (the cycle leaves the relaxation short of
+    convergence, and even puts us at a lower rank than the hop before us); splitting restores
+    it, which is also what makes the layout reproducible between repaints.
+    """
+    hops = ("7f", "c1", "8e", "da", "ee", "c1", "27")
+    [layer] = _split_revisits([PathLayer(hops, WHITE, 3)])
+    seq = (SRC_NODE, *layer.hops, DST_NODE)
+    ordered = list(dict.fromkeys(seq))
+    x = _balanced_x(ordered, set(zip(seq, seq[1:])))
+    walked = [x[node] for node in seq]
+    assert walked == sorted(walked) and len(set(walked)) == len(walked)
+    assert x[SRC_NODE] == 0.0 and x[DST_NODE] == 1.0
+    # A single walk with nothing else to balance against spreads dead evenly end to end.
+    gaps = [b - a for a, b in zip(walked, walked[1:])]
+    assert max(gaps) - min(gaps) < 1e-9
+
+
+def test_allow_duplicate_nodes_spreads_a_revisited_path_evenly() -> None:
+    """Split, the same walk is an acyclic run again: every hop its own evenly-spaced column."""
+    hops = ("7f", "c1", "8e", "da", "ee", "c1", "27")
+    layers = [PathLayer(hops, WHITE, 3)]
+    plain = _ANSI.sub("", "\n".join(_render(layers)))
+    split = _ANSI.sub(
+        "",
+        "\n".join(
+            render_path_graph(
+                layers, 60, glyph_of=_glyph,
+                label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node[:2],
+                label_rgb_of=lambda _node: WHITE,
+                allow_duplicate_nodes=True,
+            )
+        ),
+    )
+    # Both visits of c1 draw their own marker, labelled identically — the node, twice.
+    assert split.count("c1") == 2
+    # Every other hop keeps exactly one marker: only the genuine revisit split.
+    for hop in ("7f", "8e", "da", "ee", "27"):
+        assert split.count(hop) == 1
+    # Folded, that second marker does not exist — and the pile is tight enough that the label
+    # placer sometimes cannot seat even the first one, so this is an at-most, not an exactly.
+    assert plain.count("c1") <= 1
+
+
+def test_allow_duplicate_nodes_still_merges_a_relay_two_paths_share() -> None:
+    """Splitting is *within* a path only: the diverge/converge story survives untouched.
+
+    Two routes riding one relay is the merge the widget exists for, and the flag must not
+    break it — ``zz`` stays a single marker both lanes pass through.
+    """
+    layers = [PathLayer(("aa", "zz"), WHITE, 4), PathLayer(("bb", "zz"), GREY, 2)]
+    plain = _ANSI.sub(
+        "",
+        "\n".join(
+            render_path_graph(
+                layers, 60, glyph_of=_glyph, label_of=lambda node: node[:2],
+                label_rgb_of=lambda _node: WHITE, allow_duplicate_nodes=True,
+            )
+        ),
+    )
+    assert plain.count("zz") == 1
+
+
+def test_split_revisits_qualifies_only_the_later_visits() -> None:
+    """The first visit keeps the caller's bare id; later ones take a private qualifier."""
+    [layer] = _split_revisits([PathLayer(("aa", "bb", "aa", "bb", "aa"), WHITE, 3)])
+    assert layer.hops == ("aa", "bb", f"aa{_OCCURRENCE_SEP}1", f"bb{_OCCURRENCE_SEP}1",
+                          f"aa{_OCCURRENCE_SEP}2")
+    assert layer.color == WHITE and layer.priority == 3
+    # Every qualified id maps back to the node the caller named it by.
+    assert [_base_node(hop) for hop in layer.hops] == ["aa", "bb", "aa", "bb", "aa"]
 
 
 def test_prefix_dupe_relay_folds_onto_its_only_wide_match() -> None:
