@@ -92,8 +92,8 @@ def test_livefeed_class_lane_names_the_payload_class_once() -> None:
 
     ``packet`` names only the event family the frame arrived in, so the class lane
     reads its parsed payload class — the very label the viewer's card headlines. The
-    node lane is then free to be about the node, and an origin-less flood says so with
-    a dash rather than standing the class in a second time.
+    trailing lane then goes straight to the route, because an origin-less flood has no
+    node to name and a placeholder would only spend the cells the route needs.
     """
     screen = _screen()
     raw = {"payload_typename": "TRACE", "route_typename": "FLOOD"}
@@ -106,8 +106,8 @@ def test_livefeed_class_lane_names_the_payload_class_once() -> None:
     assert "🎯 trace" in row       # the class lane, under the payload class's own icon
     assert row.count("trace") == 1  # said once, not once per lane
     assert "packet" not in row      # …and never as the generic event family
-    assert "—" in row               # the node lane: nobody identified themselves
-    assert "?" not in row           # …but never the useless placeholder
+    assert row.rstrip().endswith("via YUL → Alice")  # the lane is all route
+    assert "—" not in row and "?" not in row  # no placeholder for a node that isn't there
 
 
 def test_livefeed_names_a_channel_message_by_its_sender() -> None:
@@ -119,6 +119,33 @@ def test_livefeed_names_a_channel_message_by_its_sender() -> None:
     body = _plain(screen.render_body(100))
     assert "Alice" in body          # the parsed sender leads the row
     assert "ch 3" in body           # …with the channel kept as the trailing context
+
+
+def test_livefeed_subject_lane_opens_at_one_column_for_every_row() -> None:
+    """Named or not, the trailing lane starts in the same place — names stay scannable.
+
+    A named row spends its opening cells on the name; a nameless flood hands the whole
+    lane to its route. What must not move is where that lane begins, or a screenful of
+    rows stops reading as a column.
+    """
+    screen = _screen(seed=[
+        _obs(kind="advert", age_s=1),
+        _obs(node="", kind="packet", path="3d63,a1b2", age_s=0,
+             raw={"payload_typename": "GRP_TXT"}),
+    ])
+    flood, named = _stripped(screen.render_body(90))[1:3]  # newest (the flood) first
+    assert named.index("Alice") == flood.index("via")  # one lane, one opening column
+    assert "channel text" in flood and "advert" in named
+
+
+def test_livefeed_keeps_the_class_label_at_72_columns() -> None:
+    """The class label is the row's most informative field, so it survives a 72-col screen."""
+    screen = _screen(seed=[
+        _obs(node="", kind="packet", path="3d63", raw={"payload_typename": "GRP_TXT"}),
+    ])
+    row = _stripped(screen.render_body(72))[1]
+    assert "📻 channel text" in row  # the words, not just the icon
+    assert "YUL" in row              # …and the route still has room to name a node
 
 
 def test_livefeed_page_keys_move_the_feed_selection() -> None:
@@ -168,7 +195,7 @@ def test_livefeed_highlighted_row_scrolls_sideways_to_its_tail() -> None:
     assert screen._hshift == screen._hmax
     assert scrolled.startswith("▸ ")  # the pointer lane stays pinned while the row slides
     assert scrolled.rstrip().endswith("11aa")  # the last hop is now readable
-    assert "Alice" not in scrolled  # …at the cost of the lanes that slid off the left
+    assert opening[2:10] not in scrolled  # …at the cost of the time lane, slid off left
 
     for _ in range(40):
         screen.handle("left")

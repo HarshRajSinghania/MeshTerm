@@ -3,8 +3,9 @@
 The interactive face of the ``livefeed`` tool — the dashboard's old feed panel,
 promoted to a first-class screen. One always-repainting list streams the latest
 packets, newest first: time, class (icon + label, icon alone on a narrow terminal),
-node, SNR/RSSI, and the trailing detail (a relayed frame's ``via`` chain, a message's
-conversation). Seeded from stored history so the screen opens full, then streamed
+SNR/RSSI, and then whatever the row is *about* — a node that named itself followed by
+its detail, or, for the relayed flood traffic that names nobody at all, its ``via``
+chain given the whole lane. Seeded from stored history so the screen opens full, then streamed
 live off the event hub. ``↑``/``↓`` walk the rows, PgUp/PgDn/Home/End page and jump
 them, ``←``/``→`` scroll the highlighted row sideways when it runs past the right edge
 (a long relay path read to its end without opening anything), and Enter opens the
@@ -25,6 +26,7 @@ import asyncio
 from collections import deque
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.channels import split_channel_sender
@@ -56,16 +58,25 @@ _REFRESH_S = 1.0
 #: history depth, not layout).
 _FEED_CAP = 100
 
-#: The feed's fixed node-name lane width; longer names ellipsize so the columns hold.
-_FEED_NAME_WIDTH = 18
+#: The widest a name may grow in the trailing subject lane before it ellipsizes. Not a
+#: column — the lane is shared with the row's detail, so a name only takes the cells it
+#: needs, and this is the ceiling that stops one long name from swallowing the route
+#: behind it.
+_FEED_NAME_MAX = 18
 
 #: The class lane's fixed width — wide enough for the longest class the app files a
 #: packet under (``direct message``), so every label reads whole and the lanes hold.
 _FEED_CLASS_WIDTH = 14
 
-#: Terminal width below which the feed drops the textual class label and keeps only
-#: the two-cell icon, buying the name and reception lanes room (≤72-col care).
-_FEED_LABEL_MIN_WIDTH = 80
+#: Cells between the fixed lanes and the trailing subject, and between a name and the
+#: detail behind it — the feed's one lane gutter.
+_SUBJECT_GAP = 2
+
+#: Terminal width below which the feed drops the textual class label and keeps only the
+#: two-cell icon. The label is the row's most informative fixed field now that it names
+#: the real class, so it is held onto down to the width where the subject lane would stop
+#: being able to say anything (the fixed lanes plus a readable route).
+_FEED_LABEL_MIN_WIDTH = 68
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
 #: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
@@ -335,17 +346,25 @@ class LiveFeedScreen(Screen):
     def _feed_row(
         self, entry: PacketEntry, selected: bool, show_label: bool, width: int
     ) -> Text:
-        """Lay one feed row out in fixed lanes: time, class, node, reception, detail.
+        """Lay one feed row out: time, class, reception — then whatever it is *about*.
 
-        The class lane says what the packet *is*, straight from
-        :func:`~meshterm.ui.packet_viewer.class_marks` — so a raw frame reads
-        ``📻 channel text``, the class the viewer's card headlines, rather than the
-        ``📦 packet`` event family it merely arrived in. Its icon always shows; the
-        textual label beside it is dropped wholesale on a narrow terminal
-        (``show_label``), keeping the lanes aligned either way. The node lane is then
-        free to be about the node: its name in the app-wide palette hue (our own node
-        white, a bare hash muted), and a dash where nobody identified themselves. Never
-        wraps — the detail lane gets whatever width the fixed lanes leave (``width``).
+        Four fixed lanes carry the facts every packet has. The class lane says what the
+        packet *is*, straight from :func:`~meshterm.ui.packet_viewer.class_marks` — so a
+        raw frame reads ``📻 channel text``, the class the viewer's card headlines,
+        rather than the ``📦 packet`` event family it merely arrived in. Its icon always
+        shows; the textual label beside it is dropped wholesale on a narrow terminal
+        (``show_label``), keeping the lanes aligned either way.
+
+        Everything after the reception lanes is *one* lane, not two, because a packet
+        does not always have a node. Most of what a real mesh carries is relayed flood
+        traffic that names no origin at all, and a fixed node column spent those cells on
+        a dash for row after row while the route — the one thing such a frame does say —
+        was crushed against the right edge. So the trailing lane holds whatever the row
+        is about: a node that named itself (in the app-wide palette hue, our own node
+        white) followed by its detail, or, when nobody did, the ``via`` chain alone. It
+        still opens at a fixed column, so names stay scannable down the screen; what
+        changes is that a nameless row gives those cells to its route instead of to a
+        placeholder.
 
         A row that runs past the right edge is read by scrolling it, not by growing it.
         An unhighlighted row simply elides its relay path's middle hops, keeping both
@@ -369,11 +388,6 @@ class LiveFeedScreen(Screen):
                 style=KIND_STYLES.get(entry.kind, "brand"),
             )
             body.append("  ")  # the lane's own gutter — the longest class fills it exactly
-        label, style = node_label(entry, self._resolve, self._self_name)
-        if label == "?":
-            label, style = self._feed_subject(entry)  # no node identity: name what we can
-        body.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
-        body.append("  ")
         body.append(
             f"{entry.snr:+5.1f} dB" if entry.snr is not None else " " * 8,
             style=snr_style(entry.snr) if entry.snr is not None else "muted",
@@ -382,12 +396,29 @@ class LiveFeedScreen(Screen):
             f"  {entry.rssi:5.0f} dBm" if entry.rssi is not None else " " * 10,
             style="muted",
         )
+
+        subject = Text(no_wrap=True, overflow="ellipsis")
+        named = self._feed_name(entry)
+        if named is not None:
+            # Capped, not padded: a long name ellipsizes rather than starving the route
+            # behind it, but a short one hands its spare cells straight to that route.
+            name, style = named
+            if cell_len(name) > _FEED_NAME_MAX:
+                name = fit_cells(name, _FEED_NAME_MAX)
+            subject.append(name, style=style)
+        used = body.cell_len + _SUBJECT_GAP + subject.cell_len
         note = self._feed_note(
-            entry, None if selected else max(1, avail - body.cell_len - 2)
+            entry,
+            None if selected
+            else max(1, avail - used - (_SUBJECT_GAP if subject.cell_len else 0)),
         )
         if note is not None:
-            body.append("  ")
-            body.append_text(note)
+            if subject.cell_len:
+                subject.append(" " * _SUBJECT_GAP)
+            subject.append_text(note)
+        if subject.cell_len:
+            body.append(" " * _SUBJECT_GAP)
+            body.append_text(subject)
 
         if selected:
             self._hmax = max(0, body.cell_len - avail)
@@ -397,29 +428,32 @@ class LiveFeedScreen(Screen):
         row.append_text(body)
         return row
 
-    def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
-        """Name the node lane when an entry carries no resolvable node identity.
+    def _feed_name(self, entry: PacketEntry) -> Optional[tuple[str, str]]:
+        """Who the row is about, as ``(label, style)`` — or ``None`` when nobody is.
 
-        Rather than a useless ``?``, the lane reads the most identifying thing the entry
-        still carries: the sender a channel message named itself with, then an ack's
-        code. What it deliberately does *not* do is stand in the packet's class — the
-        class lane two columns left already says that, straight from
+        The node the packet identified itself as, if any; failing that, the most
+        identifying thing it still carries: the sender a channel message named itself
+        with, then an ack's code. Two things it deliberately does *not* do. It does not
+        stand in the packet's class — the class lane already says that, straight from
         :func:`~meshterm.ui.packet_viewer.class_marks`, and a row that spelled it twice
-        was reading ``packet`` beside ``channel text`` as though they were two facts.
-        A relayed flood names no origin, so its lane says so with a dash and lets the
-        eye travel on to the ``via`` chain, which does name nodes.
+        read ``packet`` beside ``channel text`` as though they were two facts. And it
+        does not reach for a placeholder: a relayed flood names no origin, so it returns
+        ``None`` and the trailing lane goes to its route, which does name nodes.
         """
+        label, style = node_label(entry, self._resolve, self._self_name)
+        if label != "?":
+            return label, style
         if entry.kind == "message":
             sender = _channel_sender(entry.text)
-            if sender:
-                ours = self._self_name and sender == self._self_name
-                # A resolvable sender takes its key-derived hue; a stranger stays
-                # muted — colour is reserved for keyed identities.
-                return sender, ("you" if ours else name_style(sender, self._key_of(sender)))
-            return "channel", "muted"
+            if not sender:
+                return None  # naming the conversation is the note's job, not a name's
+            ours = self._self_name and sender == self._self_name
+            # A resolvable sender takes its key-derived hue; a stranger stays muted —
+            # colour is reserved for keyed identities.
+            return sender, ("you" if ours else name_style(sender, self._key_of(sender)))
         if entry.where:
             return entry.where, "muted"  # an ack's code, or any other stray context
-        return "—", "muted"
+        return None
 
     def _feed_note(self, entry: PacketEntry, budget: Optional[int]) -> Optional[Text]:
         """The row's trailing detail: a packet's relay path, a message's conversation.
