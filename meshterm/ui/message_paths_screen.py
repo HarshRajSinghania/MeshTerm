@@ -13,16 +13,19 @@ detail read together:
   name's own colour, so the byte reads as that node and never crowds the line running
   through it. A node-type key sits under the graph. The row list carries the full names,
   so the graph's labels stay two cells wide and a many-path graph stays readable.
-* the **arrival list** beneath is one row per logged copy — time, reception SNR, and
-  the relay chain as a path line (:mod:`~meshterm.ui.pathline`): each relay a chip in
-  its own node hue, named where we know the node (``YUL-Poly``) and standing in its
-  own hash at the device's path-hash width where we don't (``e839f2``, keyless grey).
-  No hash is repeated after a name — the graph above is where the hash bytes live, and
-  a chip and its label share the node's colour, so the two halves cross-reference by
-  hue instead of by spelling the hex twice.
-  ↑↓ move the selection (the graph's highlight follows); a row longer than the
-  dialog **scrolls horizontally with ←→**, the whole line shifting under a ``…`` at
-  whichever edge continues, and snaps back the moment the selection moves on.
+* the **arrival list** beneath is two lines per logged copy. On top, alone on its lane
+  and introduced by nothing, the **route** as a path line (:mod:`~meshterm.ui.pathline`):
+  each relay a chip in its own node hue, named where we know the node (``YUL-Poly``) and
+  standing in its own hash at the device's path-hash width where we don't (``e839f2``,
+  keyless grey). No hash is repeated after a name — the graph above is where the hash
+  bytes live, and a chip and its label share the node's colour, so the two halves
+  cross-reference by hue instead of by spelling the hex twice. Under it, hanging muted,
+  the frame's own facts: time heard, reception SNR, and which resend it was.
+  The route is the line you pick — it is what one arrival differs from another by, and
+  what the graph highlights. ↑↓ move the selection (the graph's highlight follows); a
+  route longer than the dialog **scrolls horizontally with ←→**, the whole line shifting
+  under a ``…`` at whichever edge continues, and snaps back the moment the selection
+  moves on.
 
 Nothing here transmits; like the service beneath it, this is a read-model over what
 the radio already heard.
@@ -51,6 +54,10 @@ from .widgets import (
 
 #: Cells one ←/→ press shifts the selected row by.
 _HSTEP = 4
+
+#: Columns the reception-facts line hangs in under the route it belongs to — past the
+#: ``❯ `` pointer lane, so the pair reads as one arrival with its detail tucked under it.
+_DETAIL_INDENT = 4
 
 #: Edge colours: the selected path draws white over the unused paths' gray.
 _EDGE_SELECTED = (255, 255, 255)
@@ -199,53 +206,59 @@ class MessagePathsScreen(Screen):
                 lines.append(self._selected_line(arrival, width))
             else:
                 row = Text("  ")
-                row.append_text(self._row_text(arrival))
+                row.append_text(self._path_text(arrival))
                 lines.append(render_to_ansi(row, width, no_wrap=True))
+            detail = Text(" " * _DETAIL_INDENT)
+            detail.append_text(self._detail_text(arrival))
+            lines.append(render_to_ansi(detail, width, no_wrap=True))
         self._scroll_total = len(lines)
         return lines
 
     # -- the rows --
 
-    def _row_text(self, arrival: Arrival) -> Text:
-        """One arrival, unabridged: time, reception SNR, and its relay path.
+    def _path_text(self, arrival: Arrival) -> Text:
+        """One arrival's relay chain — the row's first line, and the one you pick.
 
-        The relay chain is THE path line, so a route here is drawn exactly as a route
-        anywhere else — chips in each node's own hue where the terminal can draw them,
-        arrows where it can't. Hops read as names, nothing else: an unnamed hop, having
-        no name to show, stands in its own hash at the device's path-hash width (muted
-        grey — colour is the "this is a name" signal), and no hop repeats its hash after
-        its name. The hash bytes are the graph's job, one row up; what ties the two
-        together is the shared node hue, not a second spelling of the hex.
+        The route gets the row's full width to itself, so no ``via`` introduces it: on a
+        lane that holds nothing else there is nothing to tell it apart from. It is THE
+        path line, so a route here is drawn exactly as a route anywhere else — chips in
+        each node's own hue where the terminal can draw them, arrows where it can't.
+        Hops read as names, nothing else: an unnamed hop, having no name to show, stands
+        in its own hash at the device's path-hash width (muted grey — colour is the
+        "this is a name" signal), and no hop repeats its hash after its name. The hash
+        bytes are the graph's job, one row up; what ties the two together is the shared
+        node hue, not a second spelling of the hex.
         """
-        row = Text()
-        row.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
-        row.append("  ")
+        return path_line(
+            arrival.hops, self._resolve,
+            prefix_bytes=self._prefix_bytes, self_name=self._self_name,
+            empty="direct", hash_as_name=True,
+        ).text()
+
+    def _detail_text(self, arrival: Arrival) -> Text:
+        """One arrival's reception facts — when it landed, how loudly, which copy.
+
+        The row's second line, hanging muted under the route it describes: the path is
+        what distinguishes one arrival from another (and what the graph above draws), so
+        it takes the lane, and the frame's own particulars step in beneath it.
+        """
+        text = Text(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
         if arrival.snr is not None:
-            row.append(f"{arrival.snr:+5.1f} dB", style=snr_style(arrival.snr))
-        else:
-            row.append(" " * 8)
-        row.append("  ")
-        if arrival.hops:
-            row.append("via ", style="muted")
-        row.append_text(
-            path_line(
-                arrival.hops, self._resolve,
-                prefix_bytes=self._prefix_bytes, self_name=self._self_name,
-                empty="direct", hash_as_name=True,
-            ).text()
-        )
+            text.append("  ")
+            text.append(f"{arrival.snr:+.1f} dB", style=snr_style(arrival.snr))
         if arrival.resend:
-            row.append(f"  (resend #{arrival.resend})", style="muted")
-        return row
+            text.append(f"  ·  resend #{arrival.resend}", style="muted")
+        return text
 
     def _selected_line(self, arrival: Arrival, width: int) -> str:
-        """The highlighted row: ``❯`` pointer, shifted by ``←→`` under edge ``…``.
+        """The highlighted path: ``❯`` pointer, shifted by ``←→`` under edge ``…``.
 
-        The whole line scrolls — timestamp and SNR included — and the shift bound
-        is measured here against the current width, so a resize can only ever leave
-        the row clamped back into range.
+        The picked line is the route — the one thing here long enough to need scrolling,
+        and the one the graph above highlights — and the shift bound is measured here
+        against the current width, so a resize can only ever leave the row clamped back
+        into range.
         """
-        full = self._row_text(arrival)
+        full = self._path_text(arrival)
         avail = max(1, width - 2)
         self._hmax = max(0, full.cell_len - avail)
         self._hshift = min(self._hshift, self._hmax)

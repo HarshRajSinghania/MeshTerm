@@ -42,12 +42,18 @@ def _arrivals() -> list[Arrival]:
 
 
 def test_paths_screen_renders_graph_rows_and_cursor() -> None:
-    """The quoted text, the graph endpoints, and one selectable row per arrival."""
+    """The quoted text, the graph endpoints, and two lines per arrival: the route you
+    pick, and the reception facts hanging under it."""
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
     assert "“on my way”" in body
     assert "Alice" in body and "Homestead" in body  # origin and us, on the graph
-    assert body.count("via") == 2  # one row per arrival
+    assert "via" not in body  # the route lane holds nothing but the route
+    rows = body.split("sensor\n\n")[1].split("\n")
+    assert len(rows) == 2 * len(_arrivals())
+    assert rows[0].startswith("❯ ") and "YUL-Cartierville" in rows[0]  # the picked route
+    assert rows[1].strip().startswith(_arrivals()[0].when.astimezone().strftime("%H:%M"))
+    assert "+4.0 dB" in rows[1]  # …with its time and SNR tucked beneath it
     assert "❯" in body
     assert "white = selected path" in body  # the graph caption
     assert "★ you" in body and "▲ repeater" in body  # the node-type legend
@@ -127,15 +133,20 @@ def test_paths_screen_marks_a_repeater_relay_with_its_triangle() -> None:
     assert "38;2;255;255;255" in raw and "38;2;110;110;110" in raw
 
 
-def test_paths_screen_scrolls_the_selected_line_sideways() -> None:
-    """→ shifts the whole selected row under a leading …; ↑↓ snap it back."""
+def test_paths_screen_scrolls_the_selected_route_sideways() -> None:
+    """→ shifts the selected *route* under a leading …; ↑↓ snap it back.
+
+    The reception facts under it never move — they always fit, and a lane that slid
+    with the route would make a long path look like it had lost its timestamp.
+    """
     now = utcnow()
     long = Arrival(when=now, hops=tuple(f"{i:02x}{i:02x}" for i in range(12)), snr=1.0)
     screen = _screen([long, Arrival(when=now, hops=(), snr=None)])
     narrow = 40
     before = _plain(screen.render_body(narrow))
     selected_before = next(ln for ln in before.split("\n") if ln.startswith("❯"))
-    assert screen._hmax > 0  # the row genuinely overflows at this width
+    assert screen._hmax > 0  # the route genuinely overflows at this width
+    assert "00" in selected_before and "0b" not in selected_before  # head shown, tail cut
     for _ in range(3):
         screen.handle("right")
     after = _plain(screen.render_body(narrow))
@@ -143,9 +154,9 @@ def test_paths_screen_scrolls_the_selected_line_sideways() -> None:
     assert selected_after != selected_before
     assert "…" in selected_after  # the left edge marks the hidden head
     stamp = long.when.astimezone().strftime("%H:%M:%S")
-    assert stamp in selected_before and stamp not in selected_after  # whole line shifts
+    assert stamp in after and stamp not in selected_after  # the facts hold their lane
     screen.handle("down")
-    assert screen._hshift == 0  # only the selected line stays scrolled
+    assert screen._hshift == 0  # only the selected route stays scrolled
 
 
 def test_paths_screen_direct_arrival_and_empty_state() -> None:
