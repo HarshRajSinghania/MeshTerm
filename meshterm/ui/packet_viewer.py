@@ -6,15 +6,17 @@ class — and every row can open into the same viewer: a centered dialog over th
 that lays the packet out in full, flavoured by kind. An advert shows the node's
 identity, type, and location; telemetry shows the node and its reported values; an
 RX-logged packet shows its parsed class and route plus the relay path it rode in on —
-as a ``via`` chain and, when it actually crossed a relay, as THE route graph
+as a ``via`` chain on THE path line (:mod:`~meshterm.ui.pathline`), wrapping at hop
+boundaries under its own lane, and, when it actually crossed a relay, as THE route graph
 (:mod:`~meshterm.ui.pathgraph`): origin → relays → us, the same layered picture the
 Message paths dialog and the Trophy case draw — and, for an overheard channel-text frame
 naming a channel we hold the key for, the decrypted text too (see
 :func:`~meshterm.core.channels.decrypt_channel_text`), even though the radio itself never
 decoded it for us; a message shows the sender, the
 conversation, and the text; an ack shows its code. Common to all: the class headline
-(icon + UPPERCASE class, first row of the card), the timestamp, the node (name coloured
-by the app-wide palette, key in the key widget), reception quality on the shared SNR
+(icon + UPPERCASE class, first row of the card), the timestamp, the node (under its
+shared node-type mark, name coloured by the app-wide palette, key in the key widget),
+reception quality on the shared SNR
 bar, and any leftover raw field the flavoured layout doesn't already show.
 
 When opened over a list the viewer pages through it in place — ``↑``/``↓`` step to
@@ -37,19 +39,22 @@ from rich.text import Text
 from ..core.channels import decrypt_channel_text
 from ..core.models import NODE_TYPE_LABELS, Observation
 from ..services.trace_runner import NodeResolver
+from .map_render import _SELF, _UNKNOWN
 from .pathgraph import PathLayer, render_path_graph
+from .pathline import PathLine, path_line
 from .theme import name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
 from .widgets import (
+    _DEFAULT_GLYPH,
+    _NODE_GLYPHS,
     NameKeyResolver,
     TypeOf,
     _age_seconds,
     format_ago,
     highlighted_hash,
     node_type_legend,
-    path_text,
     route_graph_style,
 )
 
@@ -500,6 +505,9 @@ class PacketViewer(Screen):
         if entry.node or entry.name:
             who = Text()
             label, style = node_label(entry, self._resolve, self._self_name)
+            glyph, glyph_style = self._node_marker(entry, style)
+            who.append(glyph, style=glyph_style)
+            who.append(" ")
             who.append(label, style=style)
             if entry.node and label != entry.node:
                 who.append("  ")
@@ -512,6 +520,33 @@ class PacketViewer(Screen):
         if entry.kind == "packet":
             rows.extend(self._packet_rows(entry))
         return rows
+
+    def _node_marker(self, entry: PacketEntry, style: str) -> tuple[str, str]:
+        """The node-type mark leading the ``from`` row — the app's shared node glyphs.
+
+        The same marks the map, the contact list and the route graph below plant on a
+        node (``★`` us, ``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` node), so a
+        packet's sender reads as the same *kind* of thing here as everywhere else — and
+        the ``type`` row underneath spells out in words what the glyph says at a glance.
+        The type comes from the packet itself when it carried one (an advert's), else
+        from what the contacts know about its hash; a node neither can type keeps the
+        ``○`` unknown ring rather than being passed off as a plain client.
+
+        Args:
+            entry: The packet whose sender is being marked.
+            style: The style :func:`node_label` gave the name — ``"you"`` marks us.
+
+        Returns:
+            The ``(glyph, style)`` pair, ready to append to the row.
+        """
+        if style == "you":
+            return _SELF
+        node_type = entry.node_type
+        if node_type is None and entry.node and self._type_of is not None:
+            node_type = self._type_of(entry.node)
+        if node_type is None:
+            return _UNKNOWN
+        return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
 
     def _tail_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """The rows below the route graph: location, the message/ack fields, the raw dump."""
@@ -579,9 +614,16 @@ class PacketViewer(Screen):
             line.append(f"{entry.rssi:.0f} dBm rssi", style="muted")
         return line
 
-    def _path_text(self, entry: PacketEntry) -> Text:
-        """A ``packet`` entry's relay path, rendered by the shared compact path widget."""
-        return path_text(
+    def _via_path(self, entry: PacketEntry) -> PathLine:
+        """A ``packet`` entry's relay chain as THE path line (:mod:`~meshterm.ui.pathline`).
+
+        Handed to the grid *unsized*: the line renders itself into whatever cell width
+        the value lane works out, folding at hop boundaries — never mid-name, never
+        mid-chip — and hanging its continuations under the value block. The dialog has
+        the rows to spend, so a long chain reads whole here, unlike the feed row behind
+        it, which has to elide its middle to stay on one line.
+        """
+        return path_line(
             (entry.path or "").split(","),
             self._resolve,
             prefix_bytes=self._prefix_bytes,
@@ -599,7 +641,7 @@ class PacketViewer(Screen):
         route = raw.get("route_typename")
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))
-        rows.append(("via", self._path_text(entry)))
+        rows.append(("via", self._via_path(entry)))
         rows.append((
             "", Text("reception describes the last relay, not the origin",
                      style="faint"),

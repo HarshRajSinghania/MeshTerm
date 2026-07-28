@@ -26,7 +26,10 @@ drawn*, so every surface the survey found can eventually route through it:
   at hop boundaries under a hanging indent (never mid-name, never mid-chip),
   folding where the route *means* something: the fewest lines it can take, evened
   out across them rather than greedily crammed, and preferring the seam where the
-  path fades from composed to mirrored when that fold is free.
+  path fades from composed to mirrored when that fold is free. A caller that doesn't
+  know its width — a value dropped into a label/value grid — hands the
+  :class:`PathLine` itself to Rich and gets the wrapped shape at whatever cell width
+  the layout works out (see :meth:`PathLine.__rich_console__`).
 * **The same hop semantics everywhere.** A :class:`PathHop` carries what the app's
   conventions need: the label (a name, or a hash standing as identity), the key any
   known prefix of which picks the hue, the ``you`` flag, the trace-flavour
@@ -53,6 +56,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from rich.cells import cell_len
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.measure import Measurement
 from rich.text import Text
 
 from ..core.models import LOCAL_DEVICE_LABEL
@@ -304,6 +309,39 @@ class PathLine:
                 line.append(cue, style="muted")
             lines.append(line)
         return lines
+
+    # --- the shape a Rich layout asks for -----------------------------------------
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Render into a Rich layout — a table cell, a group — as the wrapped shape.
+
+        The one shape a caller doesn't have to size itself. Dropped straight into a
+        label/value grid (the packet viewer's ``via`` row), the line folds at hop
+        boundaries to whatever cell width the layout works out for the value column,
+        hanging its continuations under the value block exactly as :meth:`wrapped`
+        lays them out — so a surface whose lane width is decided *by* the other rows
+        never has to compute it twice. A caller that already knows its width still
+        asks for a shape directly.
+        """
+        yield from self.wrapped(max(1, options.max_width))
+
+    def __rich_measure__(self, console: Console, options: ConsoleOptions) -> Measurement:
+        """How wide the line wants to be: the whole one-liner, down to one hop's cells.
+
+        The maximum is the unwrapped line — given the room, a route reads best without
+        folding at all. The minimum is the widest single hop plus the chrome every line
+        carries (a chip's closing edge, a continuation's reopened seam, the
+        :data:`WRAP_OFFSET` step): below that no column can hold a hop whole, so a
+        narrower lane is the layout choosing to crop rather than to wrap.
+        """
+        full = self.text().cell_len
+        if not self._hops:
+            return Measurement(full, full)
+        cells, _join, tail, lead, _head = self._measure(
+            self._hops, self._resolved_mode() != "powerline"
+        )
+        least = max(cells) + tail + lead + WRAP_OFFSET
+        return Measurement(min(least, full), full)
 
     # --- where the breaks fall --------------------------------------------------------
 

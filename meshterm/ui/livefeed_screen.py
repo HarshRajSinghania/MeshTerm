@@ -6,7 +6,9 @@ packets, newest first: time, class (icon + label, icon alone on a narrow termina
 node, SNR/RSSI, and the trailing detail (a relayed frame's ``via`` chain, a message's
 conversation). Seeded from stored history so the screen opens full, then streamed
 live off the event hub. ``↑``/``↓`` walk the rows, PgUp/PgDn/Home/End page and jump
-them, and Enter opens the highlighted packet in the shared
+them, ``←``/``→`` scroll the highlighted row sideways when it runs past the right edge
+(a long relay path read to its end without opening anything), and Enter opens the
+highlighted packet in the shared
 :class:`~meshterm.ui.packet_viewer.PacketViewer` — which then pages through the feed
 itself with the same ``↑``/``↓``, and, for an overheard channel-text packet naming a
 channel we hold the key for, decrypts it.
@@ -39,7 +41,7 @@ from .packet_viewer import (
     payload_class,
 )
 from .theme import name_style, snr_style
-from .tui.render import render_to_ansi
+from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .pathline import path_line
 from .widgets import NameKeyResolver, TypeOf
@@ -62,6 +64,18 @@ _FEED_NAME_WIDTH = 18
 #: the two-cell icon, buying the name and reception lanes room (≤72-col care).
 _FEED_LABEL_MIN_WIDTH = 76
 
+#: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
+#: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
+#: scrolls at the rate a row anywhere else does.
+_HSCROLL_STEP = 8
+
+#: Moves that abandon the highlighted row's horizontal scroll: each row scrolls on its
+#: own, exactly as an ``hscroll`` select list's rows do — landing on a new packet always
+#: starts it at its own beginning.
+_HSHIFT_RESET = frozenset({
+    "up", "down", "pageup", "pagedown", "space", "home", "ctrl_home", "end", "ctrl_end",
+})
+
 
 def _channel_sender(text: Optional[str]) -> Optional[str]:
     """The sender named by a channel message's ``Name: `` prefix, or ``None`` if absent.
@@ -78,7 +92,6 @@ class LiveFeedScreen(Screen):
     """The full-screen packet stream. Renders state; the opener feeds it."""
 
     floating = False
-    footer_hint = "↑↓ move · PgUp/PgDn/Home/End scroll · Enter open · Esc back"
 
     def __init__(
         self,
@@ -133,6 +146,11 @@ class LiveFeedScreen(Screen):
         self._selected: Optional[int] = 0 if self._feed else None
         #: The feed's window within the fixed screen (its rows scroll under the heading).
         self._feed_window = ListWindow()
+        #: The highlighted row's horizontal scroll (cells shifted in, ``←/→``) and how
+        #: far it can shift — measured against the width of the last paint, so a resize
+        #: can only ever clamp an in-progress scroll back into range.
+        self._hshift = 0
+        self._hmax = 0
 
     # --- live feed -----------------------------------------------------------------
 
@@ -163,8 +181,23 @@ class LiveFeedScreen(Screen):
 
     # --- input -----------------------------------------------------------------------
 
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The key hint, gaining ``←→ scroll line`` exactly while it would do something.
+
+        A row that already fits scrolls nowhere, so the atom stays hidden on it — the
+        same "advertise a key only where it acts" rule the select list's own ``hscroll``
+        hint follows.
+        """
+        base = "↑↓ PgUp/PgDn Home/End move · Enter open · Esc back"
+        if self._selected is not None and self._hmax > 0:
+            return "↑↓ PgUp/PgDn Home/End move · ←→ scroll line · Enter open · Esc back"
+        return base
+
     def handle(self, action: str, data: str = "") -> None:
         """Walk the feed, open the highlighted packet, scroll, or dismiss."""
+        if action in _HSHIFT_RESET:
+            self._hshift = 0  # moving off a row abandons its scroll
         if action == "up":
             self._move_selection(-1)
         elif action == "down":
@@ -200,8 +233,19 @@ class LiveFeedScreen(Screen):
             else:
                 self._feed_window.to_end()
                 self._session.invalidate()
+        elif action == "left":
+            self._scroll_line(-_HSCROLL_STEP)
+        elif action == "right":
+            self._scroll_line(_HSCROLL_STEP)
         elif action == "escape":
             self.resolve(None)
+
+    def _scroll_line(self, delta: int) -> None:
+        """Shift the highlighted row sideways (clamped to its own tail) and repaint."""
+        shift = max(0, min(self._hshift + delta, self._hmax))
+        if shift != self._hshift:
+            self._hshift = shift
+            self._session.invalidate()
 
     def _move_selection(self, delta: int) -> None:
         """Move the feed highlight (the first press lands on the newest packet)."""
@@ -250,6 +294,8 @@ class LiveFeedScreen(Screen):
         """The pinned heading, then the feed's window filling the viewport."""
         if self._selected is not None and self._feed:
             self._selected = min(self._selected, len(self._feed) - 1)
+        else:
+            self._hmax = 0  # nothing highlighted scrolls, so nothing advertises ←→
         lines = [render_to_ansi(self._heading(), width, no_wrap=True)]
         win = max(1, self._scroll_viewport - len(lines))
         lines.extend(self._feed_lines(width, win))
@@ -292,32 +338,51 @@ class LiveFeedScreen(Screen):
         dropped wholesale on a narrow terminal (``show_label``), keeping the lanes
         aligned either way. The node name takes the app-wide palette hue (our own
         node white, a bare hash muted). Never wraps — the detail lane gets whatever
-        width the fixed lanes leave (``width``), so a long relay path elides its
-        middle hops there instead of spilling a lone ``dBm`` onto its own line.
+        width the fixed lanes leave (``width``).
+
+        A row that runs past the right edge is read by scrolling it, not by growing it.
+        An unhighlighted row simply elides its relay path's middle hops, keeping both
+        ends of the route in view; the *highlighted* row instead slides under ``←→``
+        (:attr:`_hshift`), carrying its detail whole so it can be read to the end — the
+        app-wide h-scroll convention, with the ``▸`` pointer lane pinned so the cursor
+        never scrolls away from the row it marks. The shift bound is measured here,
+        against the current width, so a resize can only clamp it back into range.
         """
         row = Text(no_wrap=True, overflow="ellipsis")
         row.append("▸ " if selected else "  ", style="accent")
-        row.append(entry.when.astimezone().strftime("%H:%M:%S") + "  ", style="muted")
-        row.append(kind_icon(entry.kind) + " ")
+        avail = max(1, width - 2)
+
+        body = Text(no_wrap=True, overflow="ellipsis")
+        body.append(entry.when.astimezone().strftime("%H:%M:%S") + "  ", style="muted")
+        body.append(kind_icon(entry.kind) + " ")
         if show_label:
-            row.append(entry.kind.ljust(10), style=KIND_STYLES.get(entry.kind, "brand"))
+            body.append(entry.kind.ljust(10), style=KIND_STYLES.get(entry.kind, "brand"))
         label, style = node_label(entry, self._resolve, self._self_name)
         if label == "?":
             label, style = self._feed_subject(entry)  # no node identity: name what we can
-        row.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
-        row.append("  ")
-        row.append(
+        body.append(fit_cells(label, _FEED_NAME_WIDTH), style=style)
+        body.append("  ")
+        body.append(
             f"{entry.snr:+5.1f} dB" if entry.snr is not None else " " * 8,
             style=snr_style(entry.snr) if entry.snr is not None else "muted",
         )
-        row.append(
+        body.append(
             f"  {entry.rssi:5.0f} dBm" if entry.rssi is not None else " " * 10,
             style="muted",
         )
-        note = self._feed_note(entry, max(1, width - row.cell_len - 2))
+        note = self._feed_note(
+            entry, None if selected else max(1, avail - body.cell_len - 2)
+        )
         if note is not None:
-            row.append("  ")
-            row.append_text(note)
+            body.append("  ")
+            body.append_text(note)
+
+        if selected:
+            self._hmax = max(0, body.cell_len - avail)
+            self._hshift = min(self._hshift, self._hmax)
+            if self._hshift:
+                body = crop_cells(body, self._hshift, avail)
+        row.append_text(body)
         return row
 
     def _feed_subject(self, entry: PacketEntry) -> tuple[str, str]:
@@ -346,23 +411,33 @@ class LiveFeedScreen(Screen):
             return entry.where, "muted"  # an ack's code, or any other stray context
         return "—", "muted"
 
-    def _feed_note(self, entry: PacketEntry, budget: int) -> Optional[Text]:
+    def _feed_note(self, entry: PacketEntry, budget: Optional[int]) -> Optional[Text]:
         """The row's trailing detail: a packet's relay path, a message's conversation.
 
-        The path renders through the shared path widget in its compact flavour, fitted
-        to the ``budget`` the row's fixed lanes leave: a chain too long for the lane
-        elides its *middle* hops behind ``⋯``, so the origin and the last relay — the
-        ends a right-edge cut would amputate — always survive.
+        The path renders through THE path line. Given a ``budget`` — the cells the row's
+        fixed lanes leave — a chain too long for the lane elides its *middle* hops behind
+        ``⋯``, so the origin and the last relay (the ends a right-edge cut would amputate)
+        always survive. ``None`` asks for the chain whole instead: that is the highlighted
+        row, which scrolls sideways rather than eliding, so nothing may be dropped before
+        ``←→`` has had the chance to reveal it.
+
+        Args:
+            entry: The packet the row describes.
+            budget: Cells the detail may occupy, or ``None`` for the full-length line.
+
+        Returns:
+            The detail to append, or ``None`` when the class carries none.
         """
         if entry.kind == "packet" and entry.path is not None:
             note = Text("via ", style="muted")
+            line = path_line(
+                entry.path.split(","),
+                self._resolve,
+                prefix_bytes=self._prefix_bytes,
+                self_name=self._self_name,
+            )
             note.append_text(
-                path_line(
-                    entry.path.split(","),
-                    self._resolve,
-                    prefix_bytes=self._prefix_bytes,
-                    self_name=self._self_name,
-                ).ellipsized(max(1, budget - 4))
+                line.text() if budget is None else line.ellipsized(max(1, budget - 4))
             )
             return note
         if entry.kind == "message" and entry.where:

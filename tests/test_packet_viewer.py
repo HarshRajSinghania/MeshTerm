@@ -185,6 +185,48 @@ def test_packet_viewer_skips_the_graph_for_a_direct_packet() -> None:
     assert not any("⠀" <= ch <= "⣿" for ch in body)
 
 
+def test_packet_viewer_via_wraps_at_hop_boundaries_under_its_own_lane() -> None:
+    """A long ``via`` chain folds between hops, hanging under the value lane — never mid-name."""
+    names = {f"{i:02d}aa": f"Relay-Number-{i:02d}" for i in range(8)}
+    entry = PacketEntry(when=utcnow(), kind="packet", path=",".join(names))
+    lines = _stripped(
+        PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(72)
+    )
+    via_at = next(i for i, line in enumerate(lines) if line.startswith("via"))
+    end = next(i for i, line in enumerate(lines) if "reception describes" in line)
+    folded = lines[via_at:end]
+    assert len(folded) > 1  # a chain this long does not fit one lane
+    assert all(line.startswith(" " * 11) for line in folded[1:])  # hangs past the label lane
+    for name in names.values():
+        assert any(name in line for line in folded)  # every hop survives the fold whole
+    assert all(line.rstrip().endswith("→") for line in folded[:-1])  # the "goes on" cue
+    assert all(len(line.rstrip()) <= 72 for line in folded)
+
+
+def test_packet_viewer_from_row_leads_with_the_node_type_mark() -> None:
+    """The sender wears its shared node glyph — typed by the packet, by the contacts, or ``○``."""
+    from meshterm.core.models import NODE_TYPE_REPEATER
+
+    def from_row(viewer: PacketViewer) -> str:
+        return next(l for l in _stripped(viewer.render_body(80)) if l.startswith("from"))
+
+    advertised = PacketEntry(
+        when=utcnow(), kind="advert", node="3d63", name="YUL", node_type=NODE_TYPE_REPEATER
+    )
+    assert "▲ YUL" in from_row(_viewer(advertised))  # the type the packet itself carried
+
+    bare = PacketEntry(when=utcnow(), kind="packet", node="3d63", name="YUL")
+    assert "○ YUL" in from_row(_viewer(bare))  # nothing can type it: the unknown ring
+    typed = PacketViewer(
+        [bare], 0, resolve=lambda h: "", type_of=lambda h: NODE_TYPE_REPEATER
+    )
+    assert "▲ YUL" in from_row(typed)  # …until the contacts can
+
+    mine = PacketEntry(when=utcnow(), kind="advert", node="3d63", name="Waymarker")
+    ours = PacketViewer([mine], 0, resolve=lambda h: "", self_name="Waymarker")
+    assert "★ Waymarker" in from_row(ours)  # our own node keeps the app-wide star
+
+
 def test_packet_viewer_graph_names_a_known_origin_else_a_question_mark() -> None:
     """The graph's left endpoint is the resolved origin name, or ``?`` when the frame named none."""
     known = PacketEntry(when=utcnow(), kind="packet", node="c0ffee", path="3d63")
