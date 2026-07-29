@@ -52,16 +52,20 @@ as *four* (a two-column notch, worse than a lone emoji's one). Since the indicat
 shared across flags, they can only be handled as a whole category, never one country at a
 time; narrowing every indicator to one cell makes any flag sum to two in both authorities.
 
-A handful of VS16 sequences break the "width 1" verdict the other way. This terminal is not
-uniform: the probe ``☀️`` paints in one cell, but ``🛩️`` (a small airplane, U+1F6E9 U+FE0F)
-paints in *two*. Narrowing it along with the rest pulls its chat-row border a column short and
-smears the line, so those glyphs are carved back out into a curated *wide* set
-(:data:`_DEFAULT_WIDE_VS16`, extended without a code change via ``MESHTERM_WIDE_EMOJI``) that
-counts them two in **both** authorities — the mirror image of the lone-narrow allowlist, curated
-for the same reason: which VS16 a terminal draws wide is the font's business, not the codepoint's,
-and a cursor probe reads the PTY, not the renderer. Keyed on the *base* codepoint (the trailing
-``U+FE0F`` is skipped regardless), so a bare base airplane rides along too — rare, and the same
-trade the lone allowlist already makes.
+Some glyphs run the other way — this terminal draws them **two** cells where the authorities say
+one — and they are carved back out into a curated *wide* set (:data:`_DEFAULT_WIDE_BASE`, extended
+without a code change via ``MESHTERM_WIDE_EMOJI``) counted two in **both** authorities. A VS16
+sequence lands here when the "width 1" verdict is wrong for it: the renderer is not uniform — the
+probe ``☀️`` paints in one cell, but ``🛩️`` (a small airplane, U+1F6E9 U+FE0F) paints in two, and
+narrowing it along with the rest pulls its chat-row border a column short and smears the line. A
+*lone* codepoint lands here for a plainer reason: an emoji outside Emoji_Presentation whose
+East-Asian width is Neutral (``🛣``, U+1F6E3) is measured as one cell by Rich and wcwidth alike,
+yet the font draws it as a two-cell colour glyph — never narrowed, just never measured right, so
+it overruns its row by a column wherever the row pads to a width. Either way it is the mirror image
+of the lone-narrow allowlist, curated for the same reason: which glyph a terminal draws wide is the
+font's business, not the codepoint's, and a cursor probe reads the PTY, not the renderer. Keyed on
+the *base* codepoint (the trailing ``U+FE0F`` is skipped regardless), so a bare base airplane rides
+along with its VS16 form.
 """
 
 from __future__ import annotations
@@ -89,16 +93,28 @@ _PROBE = "☀️"
 #: the confirmed glyph and extended — no code change — through ``MESHTERM_NARROW_EMOJI``.
 _DEFAULT_NARROW_LONE = "👋"
 
-#: Base codepoints of VS16 emoji-presentation sequences this terminal draws *two* cells wide
-#: despite the narrow-VS16 verdict that width-1 calibration applies to every such sequence. The
-#: renderer is not uniform (see the module docstring): ``☀️`` — the calibration probe — paints in
-#: one cell, but ``🛩️`` (U+1F6E9 U+FE0F) paints in two, so blanket-narrowing it pulls its chat-row
-#: border a column short and smears the row. There is no rule separating the wide VS16 from the
-#: narrow — it is the font's glyph, not the codepoint, and a probe reads the PTY, not the renderer —
-#: so, the mirror of :data:`_DEFAULT_NARROW_LONE`, this is a curated set, seeded with the confirmed
-#: glyph and extended, no code change, through ``MESHTERM_WIDE_EMOJI``. Keyed on the base codepoint
+#: Base codepoints this terminal draws *two* cells wide where the width authorities say one.
+#: Two sources feed it, and both are the same font story:
+#:
+#: * a **VS16 sequence** the narrow-VS16 verdict gets wrong — the renderer is not uniform (see the
+#:   module docstring): ``☀️``, the calibration probe, paints in one cell, but ``🛩️``
+#:   (U+1F6E9 U+FE0F) paints in two, so blanket-narrowing it pulls its chat-row border a column
+#:   short and smears the row;
+#: * a **lone codepoint** Rich and wcwidth both already call one — the emoji outside
+#:   Emoji_Presentation, whose East-Asian width is Neutral (``🛣`` U+1F6E3, the Trophy case's
+#:   Longest-distance icon) — that the font nonetheless draws as a two-cell colour glyph. Nothing
+#:   narrowed these; they were never measured right in the first place, so they overrun their row
+#:   by a column on every screen that pads to a width.
+#:
+#: There is no rule separating either from its correctly-measured neighbours — it is the font's
+#: glyph, not the codepoint, and a probe reads the PTY, not the renderer — so, the mirror of
+#: :data:`_DEFAULT_NARROW_LONE`, this is a curated set, seeded with the confirmed glyphs and
+#: extended, no code change, through ``MESHTERM_WIDE_EMOJI``. Keyed on the base codepoint,
 #: because the trailing selector is skipped by both authorities either way.
-_DEFAULT_WIDE_VS16 = "\U0001f6e9"  # 🛩 airplane (U+1F6E9), drawn two-wide with its VS16 selector
+_DEFAULT_WIDE_BASE = (
+    "\U0001f6e9"  # 🛩 airplane (U+1F6E9), drawn two-wide with its VS16 selector
+    "\U0001f6e3"  # 🛣 motorway (U+1F6E3), drawn two-wide though both authorities measure one
+)
 
 #: Set once :func:`calibrate` has run so repeated calls are cheap no-ops.
 _CALIBRATED = False
@@ -130,18 +146,18 @@ def _narrow_lone_set() -> frozenset[str]:
     return frozenset(os.environ.get("MESHTERM_NARROW_EMOJI", _DEFAULT_NARROW_LONE))
 
 
-def _wide_vs16_set() -> frozenset[str]:
-    """The VS16 base codepoints to keep two cells wide (see :data:`_DEFAULT_WIDE_VS16`).
+def _wide_base_set() -> frozenset[str]:
+    """The base codepoints to measure two cells wide (see :data:`_DEFAULT_WIDE_BASE`).
 
     ``MESHTERM_WIDE_EMOJI`` overrides the default outright: set it to the base glyphs you have
-    confirmed this terminal draws two wide (e.g. ``MESHTERM_WIDE_EMOJI=🛩``), or to the empty
+    confirmed this terminal draws two wide (e.g. ``MESHTERM_WIDE_EMOJI=🛩🛣``), or to the empty
     string to trust the narrow-VS16 verdict for every sequence. A trailing variation selector is
     dropped, so pasting the whole rendered glyph (``🛩️``) still keys on the base and never counts
     the zero-width selector as a wide cell itself. Only consulted on the width-1 path (see
-    :func:`calibrate`); a terminal that already draws emoji two wide never narrowed them, so there
-    is nothing to carve back out.
+    :func:`calibrate`); a terminal that already draws emoji two wide measures these right on its
+    own, and nothing here would have narrowed them.
     """
-    listed = frozenset(os.environ.get("MESHTERM_WIDE_EMOJI", _DEFAULT_WIDE_VS16))
+    listed = frozenset(os.environ.get("MESHTERM_WIDE_EMOJI", _DEFAULT_WIDE_BASE))
     return listed - frozenset(_ZERO_WIDTH)
 
 
@@ -167,7 +183,7 @@ def calibrate(*, force_width: int | None = None) -> None:
     # width 2 (or unknown/None) -> Rich's default already matches; leave everything alone
     # (narrowing here would instead pull a correctly-wide emoji's border a column short).
     if width == 1:
-        _install_terminal_widths(_narrow_lone_set(), _wide_vs16_set())
+        _install_terminal_widths(_narrow_lone_set(), _wide_base_set())
 
 
 def _decide_vs16_width() -> int | None:

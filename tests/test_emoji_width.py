@@ -25,6 +25,7 @@ _CA = "🇨🇦"  # a flag: two Regional Indicators; prompt_toolkit miscounts it
 _CN = "🇨🇳"  # a second flag sharing the "C" indicator — the whole category must be handled
 _PLANE = "🛩️"  # a VS16 sequence this terminal draws two wide despite the narrow-VS16 verdict
 _PLANE_BASE = "\U0001f6e9"  # its base codepoint (no selector) — what the wide set is keyed on
+_ROAD = "\U0001f6e3"  # 🛣 a lone codepoint both authorities measure one, drawn two wide here
 
 
 def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
@@ -40,24 +41,26 @@ def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
     assert ew._narrow_lone_set() == frozenset()
 
 
-def test_wide_vs16_set_defaults_extends_and_disables(monkeypatch) -> None:
-    """The wide set seeds to the confirmed airplane base; the env var overrides it outright."""
+def test_wide_base_set_defaults_extends_and_disables(monkeypatch) -> None:
+    """The wide set seeds to the confirmed bases; the env var overrides it outright."""
     monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
-    assert _PLANE_BASE in ew._wide_vs16_set()
+    # Both sources of a wide base: a VS16 sequence the narrow verdict gets wrong (the airplane)
+    # and a lone codepoint both authorities under-measure at one cell (the motorway).
+    assert {_PLANE_BASE, _ROAD} <= ew._wide_base_set()
 
     # ✈ (U+2708) is a second VS16 airplane base; both list cleanly.
     monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "\U0001f6e9✈")
-    assert {"\U0001f6e9", "✈"} <= ew._wide_vs16_set()
+    assert {"\U0001f6e9", "✈"} <= ew._wide_base_set()
 
     # Pasting the whole rendered glyph keeps the base but strips the zero-width selector, so
     # the selector is never itself counted as a wide cell.
     monkeypatch.setenv("MESHTERM_WIDE_EMOJI", _PLANE)
-    wide = ew._wide_vs16_set()
+    wide = ew._wide_base_set()
     assert _PLANE_BASE in wide and "️" not in wide
 
     # Empty string trusts the narrow-VS16 verdict for every sequence.
     monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "")
-    assert ew._wide_vs16_set() == frozenset()
+    assert ew._wide_base_set() == frozenset()
 
 
 def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
@@ -74,6 +77,9 @@ def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
     # frames flush instead of collapsing to one and smearing the row.
     assert cell_len(_PLANE) == 2
     assert cell_len("hi 🛩️") == len("hi ") + 2
+    # A listed *lone* base is the same fix for a glyph nothing narrowed: Rich reads U+1F6E3 as
+    # one cell on its own, so a heading carrying it would overrun its row by a column.
+    assert ew._make_cell_len(frozenset(), frozenset(_ROAD))(_ROAD) == 2
 
 
 def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
@@ -89,6 +95,8 @@ def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
     # zero, so the whole glyph (and any line holding it) keeps the terminal's two cells.
     assert cache[_PLANE] == 2
     assert cache["🛩️ hi"] == 2 + len(" hi")
+    # And a listed lone base, which wcwidth also under-measures at one, lands on two as well.
+    assert ew._make_pt_cache(frozenset(), frozenset(_ROAD))[_ROAD] == 2
 
 
 def test_flags_measure_two_cells_in_both_authorities() -> None:
@@ -134,10 +142,12 @@ def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> N
         assert cells.cell_len(_DISH) == 2  # unlisted icon stays wide
         assert cells.cell_len(_CA) == 2  # flag handled by category, no allowlist entry
         assert cells.cell_len(_PLANE) == 2  # wide-VS16 exception carved back out of the narrowing
+        assert cells.cell_len(_ROAD) == 2  # a lone base the authorities under-measured at one
         assert get_cwidth(_WAVE) == 1  # pt now places the border a cell earlier
         assert get_cwidth(_DISH) == 2
         assert get_cwidth(_CA) == 2  # was 4 unpatched
         assert get_cwidth(_PLANE) == 2  # was 1 unpatched: the airplane smeared a cell short
+        assert get_cwidth(_ROAD) == 2  # likewise for the motorway, in the border authority
     finally:
         _restore(snap)
 
