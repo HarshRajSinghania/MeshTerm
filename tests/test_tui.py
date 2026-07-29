@@ -1896,60 +1896,81 @@ def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
     assert not _has_wide_glyph("✓ ✗ ⚠ … done")  # status marks: width 1
 
 
-def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
-    """prompt_toolkit paints differentially with a *relative* cursor — sound only while every
-    glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji in a chat line)
-    leaves the row's cursor model off; a later paint that skips the unchanged emoji then strands
-    stale cells to its right. So a composed frame carrying such a glyph drops pt's cached frame,
-    upgrading the next paint to a full erase_down + redraw. A frame of only width-1 glyphs keeps
-    the fast differential paint — this holds wherever the glyph is, floating dialog or not."""
+def _repaint_harness():
+    """A session wired to a fake pt app, plus its remembered 3-row frame of ``A`` cells."""
     import types
 
     from prompt_toolkit.data_structures import Size
     from prompt_toolkit.layout.screen import Char
     from prompt_toolkit.layout.screen import Screen as PtScreen
 
-    def _fake_app(last: PtScreen) -> types.SimpleNamespace:
-        return types.SimpleNamespace(
-            renderer=types.SimpleNamespace(_last_screen=last),
-            output=types.SimpleNamespace(get_size=lambda: Size(rows=10, columns=60)),
-            invalidate=lambda: None,
-        )
-
-    def _filled() -> PtScreen:
-        screen = PtScreen()
-        for row in range(3):
-            for x in range(10):
-                screen.data_buffer[row][x] = Char("A")
-        return screen
-
-    # An emoji anywhere in the composed frame drops the remembered frame, so the next paint is a
-    # full erase_down + redraw that leaves nothing stale behind.
+    remembered = PtScreen()
+    for row in range(3):
+        for x in range(10):
+            remembered.data_buffer[row][x] = Char("A")
     session = TuiSession()
-    session._app = _fake_app(_filled())
+    session._app = types.SimpleNamespace(
+        renderer=types.SimpleNamespace(_last_screen=remembered),
+        output=types.SimpleNamespace(get_size=lambda: Size(rows=10, columns=60)),
+        invalidate=lambda: None,
+    )
+    return session, remembered
+
+
+def _row_text(screen, row: int) -> str:
+    """The remembered frame's row as plain characters (the scrub's sentinel shows through)."""
+    return "".join(screen.data_buffer[row][x].char for x in range(10))
+
+
+def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
+    """prompt_toolkit paints differentially with a *relative* cursor — sound only while every
+    glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji in a chat line)
+    leaves the row's cursor model off; a later paint that skips the unchanged emoji then strands
+    stale cells to its right. With no remembered frame to compare against, a composed frame
+    carrying such a glyph drops pt's cached frame, upgrading the next paint to a full
+    erase_down + redraw. A frame of only width-1 glyphs keeps the fast differential paint —
+    this holds wherever the glyph is, floating dialog or not."""
+    session, _remembered = _repaint_harness()
     session._emit("Bob 👋 says hi")
     assert session._app.renderer._last_screen is None
 
     # A frame of only width-1 glyphs — plain text, node marks, chart braille — keeps the
     # efficient differential paint.
-    session = TuiSession()
-    last = _filled()
-    session._app = _fake_app(last)
+    session, remembered = _repaint_harness()
     session._emit("★ you  ▲ repeater  ● node  ⠿ chart")
-    assert session._app.renderer._last_screen is last
+    assert session._app.renderer._last_screen is remembered
+    session._emit("★ you  ▲ repeater  ● node  ⠿ chart · moved")  # changed, still all width-1
+    assert session._app.renderer._last_screen is remembered
+    assert _row_text(remembered, 0) == "A" * 10  # nothing scrubbed either
 
-    # An *unchanged* wide-glyph frame is exempt — this is the 1 Hz refresh, which re-renders
-    # an idle screen identically. Rewriting nothing needs no repaint, and erasing the terminal
-    # once a second on any emoji-bearing screen is exactly the flicker.
-    session = TuiSession()
-    last = _filled()
-    session._app = _fake_app(last)
-    session._emit("🎯 Farthest node")
-    assert session._app.renderer._last_screen is None
-    session._app.renderer._last_screen = last
-    session._emit("🎯 Farthest node")  # the timer tick: same frame, no repaint
-    assert session._app.renderer._last_screen is last
-    session._emit("🧳 Most nodes")  # a real change: back to the full repaint
+
+def test_only_the_rows_that_changed_are_repainted() -> None:
+    """A ticking header repaints the header, not the screen under it.
+
+    The requirement a wide glyph imposes is that its *row* be rewritten whole, from column 0;
+    pt steps down a row with a carriage return, so the misalignment can never reach the rows
+    below. The background composes one line per terminal row, so the rows that changed are
+    exactly what needs rewriting — and an idle frame changes none of them, which is what the
+    1 Hz refresh was flickering over.
+    """
+    session, remembered = _repaint_harness()
+    frame_1 = "🎯 Farthest node\nrow one\nrow two"
+    session._emit(frame_1)
+    assert session._app.renderer._last_screen is None  # nothing to compare against yet
+
+    session._app.renderer._last_screen = remembered
+    session._emit(frame_1)  # the timer tick: same frame, nothing touched at all
+    assert session._app.renderer._last_screen is remembered
+    assert [_row_text(remembered, y) for y in range(3)] == ["A" * 10] * 3
+
+    session._emit("🎯 Farthest node\nrow one changed\nrow two")
+    assert session._app.renderer._last_screen is remembered  # no erase, no full redraw
+    assert _row_text(remembered, 1) == "￿" * 10  # the one changed row, marked whole
+    assert _row_text(remembered, 0) == "A" * 10  # …and the rows around it left alone
+    assert _row_text(remembered, 2) == "A" * 10
+
+    # A frame whose height moved has no row mapping to trust — repaint everything.
+    session._emit("🎯 Farthest node\nrow one changed")
     assert session._app.renderer._last_screen is None
 
 

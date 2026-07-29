@@ -15,7 +15,7 @@ import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Optional, Sequence
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Size
@@ -195,6 +195,21 @@ _RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
 #: pool of centered-box floats (see :meth:`TuiSession._build_app`), sized well past the deepest
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
+
+def _changed_rows(before: str, after: str) -> Optional[list[int]]:
+    """Which lines of a full-screen frame differ, or ``None`` when they can't be compared.
+
+    Both frames are composed one line per terminal row (see
+    :func:`~meshterm.ui.tui.frame.compose_base`), so a line index *is* a row index — the
+    mapping :meth:`TuiSession._scrub_rows` needs. A differing line count means the frame's
+    height moved (a resize, a splash giving way to the framed layout) and no such mapping
+    holds; the caller falls back to repainting everything.
+    """
+    old, new = before.split("\n"), after.split("\n")
+    if len(old) != len(new):
+        return None
+    return [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+
 
 def _has_wide_glyph(text: str) -> bool:
     """Whether ``text`` holds a glyph prompt_toolkit reserves two cells for.
@@ -404,6 +419,45 @@ class TuiSession:
         """Scrub the terminal's rightmost ``count`` columns — a full-frame panel's edge."""
         cols, _ = self._size()
         self._scrub_columns(cols - count, cols)
+
+    def _scrub_rows(self, rows: Sequence[int]) -> bool:
+        """Force prompt_toolkit to rewrite these whole terminal rows on the next diff.
+
+        The row-wise twin of :meth:`_scrub_columns`, and the cheap form of the wide-glyph
+        repaint (:meth:`_emit`): every column of each listed row is sentinelled, so pt finds
+        the entire row changed and writes it from column 0 in one contiguous run — which is
+        the whole requirement for a row whose glyph the terminal draws narrower than pt
+        reserved. Rows that did not change are not touched at all, and nothing is erased.
+
+        Row-scoped is sound because pt's cursor is *relative*: stepping down a row emits
+        ``\\r\\n``, which returns the terminal to a true column 0 whatever the drift on the row
+        above, so a mis-measured row can never throw off the rows below it. The drift only
+        matters *within* a row, and a row rewritten whole never jumps inside itself.
+
+        Args:
+            rows: The terminal row indices to mark changed.
+
+        Returns:
+            Whether the scrub was applied — ``False`` when pt has no remembered frame to
+            scrub (it is already going to repaint everything) or the internals moved.
+        """
+        renderer = getattr(self._app, "renderer", None)
+        last = getattr(renderer, "_last_screen", None)
+        if last is None:
+            return False
+        cols, _ = self._size()
+        try:
+            from prompt_toolkit.layout.screen import Char
+
+            buffer = last.data_buffer
+            sentinel = Char("￿")  # a non-character; never equals real cell content
+            for y in rows:
+                row = buffer[y]
+                for x in range(cols):
+                    row[x] = sentinel
+        except Exception:  # noqa: BLE001 - a cosmetic scrub must never break rendering
+            return False
+        return True
 
     # --- async prompt helpers ------------------------------------------------
 
@@ -1123,42 +1177,49 @@ class TuiSession:
         return bool(self._float_layers())
 
     def _emit(self, text: str, layer: str = "base") -> ANSI:
-        """Wrap a composed frame as prompt_toolkit :class:`ANSI`, forcing a full repaint
-        when it holds a glyph the terminal may draw narrower than pt reserves for it *and*
-        the frame has actually changed.
+        """Wrap a composed frame as prompt_toolkit :class:`ANSI`, repainting whole *rows*
+        when it holds a glyph the terminal may draw narrower than pt reserves for it.
 
         prompt_toolkit paints differentially: it rewrites only the cells that changed since
         the last frame, and it steps the cursor *relative* to its own width model. That is
         sound only while every glyph is one cell wide. A width-2 glyph the terminal draws in
-        a single cell (an emoji in a chat line, a menu icon) leaves the terminal's cursor one
-        column left of pt's model for the rest of that row; on the next paint, any cell to the
-        emoji's right that pt repositions to — because the emoji itself didn't change and was
-        skipped — lands one column off, and the stale cell it should have overwritten lingers.
-        So when a frame carries such a glyph, drop pt's cached frame (:meth:`_invalidate_last_frame`)
-        so the next paint is a full ``erase_down`` + redraw: every cell is rewritten
-        contiguously, letting the terminal's own cursor advance keep the row aligned, and
-        nothing stale survives. Frames with only width-1 glyphs keep the fast differential
-        paint. This is checked per frame, so it covers a scroll, a resize, or a timer tick
-        alike — wherever the glyph is (a full-frame chat, a floating dialog, the overlay).
+        a single cell (an emoji in a chat line, a menu icon) leaves everything to its right on
+        that row one column left of where pt thinks it is; a later paint that jumps into the
+        row — skipping the unchanged emoji — writes at pt's column, one past the content it
+        meant to overwrite, and the stale cell lingers.
 
-        A frame that composed *identically* to the last one is exempt, and that is what keeps
-        the screen still. The app repaints on a 1 Hz timer to tick the header's pulse, so on
-        an emoji-bearing screen — the Trophy case, six discipline icons and a delete row —
-        every one of those ticks was erasing the terminal and rewriting it: a full-screen
-        blank-and-redraw once a second, with nothing to show for it. Nothing needs rewriting
-        when nothing changed — pt writes no cells, so its cursor cannot have drifted, and the
-        previous paint already left the terminal aligned.
+        The requirement that fixes is narrow: a row carrying such a glyph must be rewritten
+        *whole*, from column 0, so the terminal's own cursor advance re-lays it. It does not
+        need the screen erased, and it does not need the rows around it touched — pt steps
+        down a row with ``\\r\\n``, which returns the terminal to a true column 0 whatever the
+        drift above it, so the misalignment can never spread past the row it is on.
 
-        What matters is whether *any* layer changed, not whether the emoji is in the one that
-        did: a plain dialog moving over a base row that carries an emoji is rewritten from a
-        model of that row the terminal disagrees with. So a changed layer upgrades the paint
-        whenever anything currently drawn holds a wide glyph — and a layer that goes away is
-        a change too (:meth:`_reconcile_layers`).
+        So the changed rows are rewritten and nothing else is (:meth:`_scrub_rows`). Three
+        things narrow it to that:
+
+        * **Nothing changed → nothing to do.** The app repaints on a 1 Hz timer to tick the
+          header's pulse, and an idle screen composes identically each time. pt writes no
+          cells, so its cursor cannot drift; the previous paint already left the terminal
+          aligned. (This alone is the flicker: erasing an emoji-bearing screen and rewriting
+          it identically, once a second.)
+        * **No wide glyph drawn → nothing to do.** The plain differential paint is exact.
+        * **Otherwise, only the rows that changed.** The background composes one line per
+          terminal row, so its diff maps straight onto rows — a ticking header repaints the
+          header, not the screen under it. A *float* is a centred box whose rows the layout
+          places, not us, so a dialog changing (or closing — see :meth:`_reconcile_layers`)
+          still falls back to dropping pt's cached frame, as does a frame whose height moved.
+          Those are user-driven and occasional; the timer is neither.
         """
         entry = (text, _has_wide_glyph(text))
-        if self._layers.get(layer) != entry:
-            self._layers[layer] = entry
-            self._repaint_if_wide()
+        previous = self._layers.get(layer)
+        if previous == entry:
+            return ANSI(text)
+        self._layers[layer] = entry
+        if any(wide for _text, wide in self._layers.values()):
+            rows = _changed_rows(previous[0], text) if previous is not None else None
+            # The background's line i *is* terminal row i; nothing else can claim that.
+            if layer != "base" or rows is None or not self._scrub_rows(rows):
+                self._invalidate_last_frame()
         return ANSI(text)
 
     def _repaint_if_wide(self) -> None:
