@@ -44,6 +44,25 @@ from .prompt import (
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
+#: Every Ctrl-letter chord the app binds, keyed by the bare lowercase letter — the single
+#: source of truth for both halves of a chord's life: the ``Keys.Control*`` bindings folded
+#: into :data:`_KEY_ACTIONS` below, and the right-Ctrl rescue in :meth:`TuiSession._dispatch`
+#: (see :func:`_right_ctrl_down`), which promotes the bare letter a layout-claimed right Ctrl
+#: delivers as *text* back into the chord. Add a chord here and both Ctrl keys reach it — no
+#: second edit, no chord that works on one side of the keyboard only. ``quit`` and
+#: ``paste_clipboard`` are the session's own (answered in ``_dispatch``); the rest are actions
+#: forwarded to the top screen. A bare letter only reaches text while the right Ctrl is held
+#: when the layout has no third-level glyph for that key (i.e. it really is the chord) — a
+#: genuine third-level character arrives as some *other* glyph and never matches this table.
+#: ``m``/``i``/``h`` are not free: prompt_toolkit spells Enter, Tab and Backspace as
+#: ``Keys.ControlM``/``ControlI``/``ControlH``, so claiming them here would rebind those keys.
+_CTRL_LETTER_CHORDS: dict[str, str] = {
+    "c": "quit",
+    "p": "paths",
+    "r": "retry",
+    "v": "paste_clipboard",
+}
+
 #: Maps prompt_toolkit keys to the normalized action names screens understand.
 _KEY_ACTIONS: dict[Any, str] = {
     Keys.Up: "up",
@@ -72,8 +91,12 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.Delete: "delete",
     Keys.Tab: "tab",
     Keys.BackTab: "shift_tab",
-    Keys.ControlR: "retry",
-    Keys.ControlP: "paths",
+    # The Ctrl-letter chords, generated from the one table above so a chord can never be
+    # bound without its right-Ctrl rescue (or rescued into an action nothing binds).
+    **{
+        getattr(Keys, f"Control{letter.upper()}"): action
+        for letter, action in _CTRL_LETTER_CHORDS.items()
+    },
 }
 
 #: The plain navigation actions that have a Ctrl-chord sibling, for the right-Ctrl rescue
@@ -87,18 +110,6 @@ _CTRL_CHORDS: dict[str, str] = {
     "end": "ctrl_end",
     "pageup": "ctrl_pageup",
     "pagedown": "ctrl_pagedown",
-}
-
-#: The letter Ctrl chords (the ``Keys.Control*`` letter entries in :data:`_KEY_ACTIONS`),
-#: keyed by the bare lowercase letter a layout-claimed right Ctrl delivers as *text* instead.
-#: Same right-Ctrl rescue as :data:`_CTRL_CHORDS`, but promoting a typed letter rather than a
-#: navigation key — a bare ``r``/``p`` only reaches text while the right Ctrl is physically
-#: held when the layout has no third-level glyph for that key (i.e. it really is the chord); a
-#: genuine third-level character arrives as some *other* glyph and is never in this map. Keep
-#: in step with the ``Keys.ControlR``/``Keys.ControlP`` entries above.
-_CTRL_LETTER_CHORDS: dict[str, str] = {
-    "r": "retry",
-    "p": "paths",
 }
 
 
@@ -129,7 +140,7 @@ def _read_clipboard() -> str:
     """Best-effort read of the OS clipboard's Unicode text (Windows; ``""`` elsewhere).
 
     The fallback behind Ctrl-V on a terminal that delivers the key literally rather than as a
-    bracketed paste (see :meth:`TuiSession._key_bindings`): it pulls the clipboard's text
+    bracketed paste (see :meth:`TuiSession._dispatch`): it pulls the clipboard's text
     straight from the Win32 API. Every failure — a non-Windows platform, an empty or
     non-text clipboard, a clipboard busy elsewhere we couldn't open — collapses to ``""``, so
     the paste simply does nothing rather than raising into the key handler. Pointer-returning
@@ -1171,7 +1182,12 @@ class TuiSession:
     # --- input ---------------------------------------------------------------
 
     def _key_bindings(self) -> KeyBindings:
-        """Build the global key bindings that dispatch normalized actions to the top."""
+        """Build the global key bindings that dispatch normalized actions to the top.
+
+        Every key — navigation, Ctrl chord, typed character, pasted run — funnels through
+        :meth:`_dispatch`, which is what lets the right-Ctrl rescue there cover the whole app
+        rather than the screen actions only.
+        """
         kb = KeyBindings()
 
         def bind(key: Any, action: str) -> None:
@@ -1181,21 +1197,6 @@ class TuiSession:
 
         for key, action in _KEY_ACTIONS.items():
             bind(key, action)
-
-        @kb.add(Keys.ControlC)
-        def _quit(event: Any) -> None:  # noqa: ANN401
-            if self._app is not None:
-                self._app.exit()
-
-        @kb.add(Keys.ControlV)
-        def _paste_clipboard(event: Any) -> None:  # noqa: ANN401
-            # Some terminals deliver Ctrl-V as the literal control key — no bracketed-paste
-            # sequence, so no text on the event. Read the OS clipboard ourselves and hand the
-            # run to the top screen as a paste. Terminals that instead translate Ctrl-V into a
-            # bracketed paste never reach here — that lands in _typed below as a multi-char run.
-            text = _read_clipboard()
-            if text:
-                self._dispatch("paste", text)
 
         @kb.add(Keys.Any)
         def _typed(event: Any) -> None:  # noqa: ANN401
@@ -1215,20 +1216,41 @@ class TuiSession:
     def _dispatch(self, action: str, data: str = "") -> None:
         """Forward an action to the top screen and repaint.
 
-        A plain navigation key — or a bare ``r``/``p`` typed as text — arriving while the right
-        Ctrl key is physically held is promoted to its Ctrl chord first (see
-        :func:`_right_ctrl_down`, :data:`_CTRL_CHORDS`, :data:`_CTRL_LETTER_CHORDS`) — a no-op
-        when the console already reported the chord, and the rescue when a layout-claimed right
-        Ctrl stripped it.
+        Right Ctrl is read as Ctrl first, app-wide: a plain navigation key, or *any* bare
+        letter arriving as text, is promoted to its Ctrl chord while the right Ctrl key is
+        physically held (see :func:`_right_ctrl_down`, :data:`_CTRL_CHORDS`,
+        :data:`_CTRL_LETTER_CHORDS`) — a no-op when the console already reported the chord, and
+        the rescue when a layout-claimed right Ctrl stripped it to a bare character. Because
+        every binding funnels through here, the rescue covers the session's own chords too, not
+        just the screen actions: right Ctrl-V pastes into a compose line instead of typing a
+        ``v``, right Ctrl-C quits.
+
+        The two session-level actions are answered here rather than forwarded — no screen ever
+        sees ``quit`` or ``paste_clipboard``.
 
         The repaint keeps prompt_toolkit's fast differential paint; a frame carrying a glyph
         the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
         full repaint at compose time — see :meth:`_emit`.
         """
+        # The key-state probe comes last in each test, so it only runs for a key that could
+        # be a chord at all — not on every keystroke.
         if action in _CTRL_CHORDS and _right_ctrl_down():
             action = _CTRL_CHORDS[action]
         elif action == "text" and data.lower() in _CTRL_LETTER_CHORDS and _right_ctrl_down():
             action, data = _CTRL_LETTER_CHORDS[data.lower()], ""
+        if action == "quit":
+            if self._app is not None:
+                self._app.exit()
+            return
+        if action == "paste_clipboard":
+            # Some terminals deliver Ctrl-V as the literal control key — no bracketed-paste
+            # sequence, so no text on the event. Read the OS clipboard ourselves and hand the
+            # run to the top screen as a paste. Terminals that instead translate Ctrl-V into a
+            # bracketed paste never reach here — that lands in _typed as a multi-char run.
+            text = _read_clipboard()
+            if text:
+                self._dispatch("paste", text)
+            return
         top = self.top
         if top is not None:
             top.handle(action, data)

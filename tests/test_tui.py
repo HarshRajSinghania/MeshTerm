@@ -1653,6 +1653,62 @@ def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -
     assert seen == [("retry", ""), ("paths", ""), ("text", "x"), ("text", "r")]
 
 
+def test_right_ctrl_rescue_covers_the_sessions_own_chords(monkeypatch) -> None:
+    """The rescue is app-wide, not screen-actions-only: ^V and ^C are answered by the session
+    itself, and a layout-claimed right Ctrl must reach them too — right Ctrl-V pastes the
+    clipboard into a compose line rather than typing a ``v``, right Ctrl-C quits. Neither
+    pseudo-action is ever forwarded to a screen."""
+    from meshterm.ui.tui import session as session_mod
+
+    session = TuiSession()
+    seen: list[tuple[str, str]] = []
+
+    class Probe(ScrollScreen):
+        def handle(self, action: str, data: str = "") -> None:
+            seen.append((action, data))
+
+    class FakeApp:
+        def __init__(self) -> None:
+            self.exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+        def invalidate(self) -> None:
+            pass
+
+    session.push(Probe(Text("x")))
+    session._app = FakeApp()
+    monkeypatch.setattr(session_mod, "_read_clipboard", lambda: "pasted")
+
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: True)
+    session._dispatch("text", "v")  # ^V: clipboard reaches the screen as a paste
+    assert seen == [("paste", "pasted")]
+    session._dispatch("text", "c")  # ^C: quits, and nothing lands on the screen
+    assert seen == [("paste", "pasted")]
+    assert session._app.exited is True
+
+    monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: False)
+    session._dispatch("text", "v")  # released: a plain typed character again
+    assert seen[-1] == ("text", "v")
+
+
+def test_every_ctrl_letter_chord_is_bound_on_both_ctrl_keys() -> None:
+    """The chord table drives the prompt_toolkit bindings, so a chord can never be bound for
+    the left Ctrl without its right-Ctrl rescue (the drift the two used to be able to develop
+    when the letter map was maintained by hand)."""
+    from prompt_toolkit.keys import Keys
+
+    from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS
+
+    for letter, action in _CTRL_LETTER_CHORDS.items():
+        key = getattr(Keys, f"Control{letter.upper()}")
+        assert _KEY_ACTIONS[key] == action
+    # Enter/Tab/Backspace are spelled c-m/c-i/c-h: claiming those letters would rebind them.
+    assert not {"m", "i", "h"} & set(_CTRL_LETTER_CHORDS)
+    assert _KEY_ACTIONS[Keys.Enter] == "enter"
+
+
 def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
     """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
     emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
