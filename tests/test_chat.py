@@ -945,15 +945,20 @@ def _two_day_messages():
     return day1 + day2
 
 
-def test_chat_sticky_header_pins_the_governing_day_divider() -> None:
-    """The day divider above the top row pins there once it scrolls off (like the picker)."""
+def test_chat_sticky_block_pins_the_governing_day_divider() -> None:
+    """The day divider above the top row pins there once it scrolls off (like the picker).
+
+    A day is its divider and nothing else, so each block is that one row — where a select
+    list's heading may carry its description along.
+    """
     screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
     screen.render_body(60)
-    (idx0, div0), (idx1, div1) = screen._sticky_headers
-    assert screen.sticky_header(0) is None            # first divider is itself the top row
-    assert screen.sticky_header(idx1 - 1) == div0     # still within day one — its divider pins
-    assert screen.sticky_header(idx1) is None         # day two's divider is now the top row
-    assert screen.sticky_header(idx1 + 1) == div1     # scrolled past it — day two's pins
+    (idx0, day0), (idx1, day1) = screen._sticky_headers
+    assert len(day0) == 1 and len(day1) == 1          # one divider, no preamble under it
+    assert screen.sticky_block(0) == []               # first divider is itself the top row
+    assert screen.sticky_block(idx1 - 1) == day0      # still within day one — its divider pins
+    assert screen.sticky_block(idx1) == []            # day two's divider is now the top row
+    assert screen.sticky_block(idx1 + 1) == day1      # scrolled past it — day two's pins
 
 
 def test_chat_frame_pins_a_day_divider_when_stuck_to_the_newest() -> None:
@@ -1450,6 +1455,50 @@ async def test_picker_lists_companions_only(repo: Repository) -> None:
         and not it.value.is_channel
     ]
     assert "Ally" in direct and "Mystery" in direct and "Tower" not in direct
+
+
+async def test_picker_pins_its_column_header_over_the_group_heading(
+    repo: Repository,
+) -> None:
+    """Scrolled into Direct, the lane names stay overhead with ``👤 Direct`` under them."""
+    import re
+    from types import SimpleNamespace
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.tui import SelectScreen, frame
+
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    contacts = [
+        Contact(name=f"Peer{i:02d}", public_key=f"{i:02x}" + "0" * 62, node_type=1)
+        for i in range(12)
+    ]
+
+    class _Ui:
+        def __init__(self) -> None:
+            self.items = None
+
+        async def select(self, title, items, **kw):
+            self.items = items
+            return None
+
+    ctx = SimpleNamespace(
+        devstate=_PickerDevstate(contacts), repo=repo, ui=_Ui(), chat=_PickerChat()
+    )
+    await ChatTool()._pick_conversation(ctx)
+
+    header = ctx.ui.items[0]
+    assert header.pinned  # the lanes mean the same in both groups — pinned for the list
+    screen = SelectScreen("Chat", ctx.ui.items, wrap=False)
+    for _ in range(8):  # down past the Direct heading
+        screen.handle("down")
+    visible, above, _below = frame._visible_slice(screen, screen.render_body(72), 8)
+    top = [ansi.sub("", row).strip() for row in visible[:2]]
+    assert top[0].startswith("CONVERSATION") and top[0].endswith("LAST MESSAGE")
+    assert top[1] == "── 👤 Direct ──"
+    assert above is True
+    # Too narrow for the whole line, the trailing label shortens — never wraps.
+    assert header.text(50).endswith("LAST MSG")
+    assert "\n" not in header.text(40)
 
 
 async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:

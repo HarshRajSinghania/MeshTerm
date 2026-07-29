@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from meshterm import copyright_notice
+from meshterm.ui.menus import section_heading
 from meshterm.ui.tui import frame, glow
 from meshterm.ui.tui.glow import apply_corner_glow
 from meshterm.ui.tui.progress import ProgressScreen
@@ -222,9 +223,9 @@ def test_select_pageup_pagedown_jump_by_a_screenful() -> None:
 
 def _grouped_menu(default: object = None) -> SelectScreen:
     """A two-section menu long enough that each section scrolls past a small viewport."""
-    items: list = [Separator("── Channels ──")]
+    items: list = [section_heading("Channels")]
     items += [Choice(f"chan{i}", ("c", i)) for i in range(6)]
-    items += [Separator("── Direct ──")]
+    items += [section_heading("Direct")]
     items += [Choice(f"peer{i}", ("d", i)) for i in range(8)]
     return SelectScreen("pick", items, default=default)
 
@@ -254,6 +255,82 @@ def test_select_does_not_pin_a_heading_that_is_still_visible() -> None:
     assert above is False  # top of the list; no pinned duplicate and no "more above"
 
 
+def _trophy_shaped() -> SelectScreen:
+    """The Trophy case's shape: a heading, its description, then that board's rows."""
+    items: list = [section_heading("Longest haul")]
+    items += [Separator(f"   description line {i}", style="muted") for i in range(2)]
+    items += [Choice(f"rec{i}", ("l", i)) for i in range(6)]
+    items += [section_heading("Widest arc"), Separator("   no records yet", style="muted")]
+    items += [Choice(f"arc{i}", ("a", i)) for i in range(6)]
+    return SelectScreen("Trophy case", items, default=("l", 5), wrap=False)
+
+
+def _blocks(screen: SelectScreen) -> list[list[str]]:
+    """Each recorded sticky block's rows, as plain text."""
+    return [
+        [Text.from_ansi(line).plain.strip() for line in rows]
+        for _idx, rows in screen._sticky_headers
+    ]
+
+
+def test_select_blocks_a_heading_with_the_prose_written_under_it() -> None:
+    """A heading's landmark runs on through the separators that immediately follow it.
+
+    The Trophy case's shape: each discipline's ``── heading ──`` is followed by its wrapped
+    description, which explains the rows below and so belongs overhead with the heading —
+    while prose that follows a *row* (a stray note, the exit group's blank) labels nothing
+    and is no landmark at all.
+    """
+    screen = _trophy_shaped()
+    screen.render_body(40)
+    assert _blocks(screen) == [
+        ["── Longest haul ──", "description line 0", "description line 1"],
+        ["── Widest arc ──", "no records yet"],
+    ]
+
+
+def test_select_pins_a_block_row_only_once_it_has_scrolled_off() -> None:
+    """A block hands its rows over one at a time, so the pins continue into the body.
+
+    While the description is still the top content row the heading alone pins over it; once
+    both are gone the two pin together. Never the prose alone — the row that says *which*
+    section this is leads whatever is overhead.
+    """
+    screen = _trophy_shaped()
+    screen.render_body(40)
+    screen.note_metrics(total=20, viewport=12)
+    plain = lambda scroll: [  # noqa: E731 - a one-liner reader for the assertions below
+        Text.from_ansi(line).plain.strip() for line in screen.sticky_rows(scroll)
+    ]
+    assert plain(0) == []  # the heading is the top row itself; nothing to duplicate
+    assert plain(1) == ["── Longest haul ──"]  # its description is still on screen
+    assert plain(2) == ["── Longest haul ──", "description line 0"]
+    assert plain(4) == [
+        "── Longest haul ──", "description line 0", "description line 1",
+    ]
+    # A block never eats more than half the viewport — the rows go from the end, so the
+    # heading is the last thing a short terminal gives up.
+    screen.note_metrics(total=20, viewport=4)
+    assert plain(4) == ["── Longest haul ──", "description line 0"]
+    screen.note_metrics(total=20, viewport=2)
+    assert plain(4) == ["── Longest haul ──"]
+
+
+def test_select_pins_the_heading_not_the_prose_beneath_it() -> None:
+    """The pinned rows always *lead* with the heading, never the last muted line under it."""
+    screen = _trophy_shaped()
+    assert _top_plain(screen, viewport=6) == "── Longest haul ──"
+    # And the empty-state note can't stand in for its heading either.
+    assert _top_plain(_reselect(screen, ("a", 4)), viewport=6) == "── Widest arc ──"
+
+
+def _reselect(screen: SelectScreen, value: object) -> SelectScreen:
+    """Move a select screen's highlight to ``value`` (by walking Down to it)."""
+    while screen._choices()[screen._index].value != value:
+        screen.handle("down")
+    return screen
+
+
 def test_select_pinned_heading_keeps_the_last_row_reachable() -> None:
     """Even with a heading pinned, the bottom choice stays fully visible (not clipped)."""
     screen = _grouped_menu()
@@ -265,20 +342,114 @@ def test_select_pinned_heading_keeps_the_last_row_reachable() -> None:
     assert below is False  # and we know we're at the bottom
 
 
-def test_screen_sticky_header_picks_the_governing_recorded_header() -> None:
-    """The base Screen.sticky_header logic is generic over any recorded headers list.
+def _columned_menu(default: object = None) -> SelectScreen:
+    """A grouped menu led by a pinned column header, like the config editor's."""
+    items: list = [Separator("  SETTING          VALUE", pinned=True)]
+    items += [section_heading("Channels")]
+    items += [Choice(f"chan{i}", ("c", i)) for i in range(6)]
+    items += [section_heading("Direct")]
+    items += [Choice(f"peer{i}", ("d", i)) for i in range(8)]
+    return SelectScreen("pick", items, default=default, wrap=False)
+
+
+def test_select_pins_a_column_header_above_the_section_heading() -> None:
+    """A pinned column header rides the whole list, the governing heading under it."""
+    screen = _columned_menu(default=("d", 6))  # deep in the second section
+    lines = screen.render_body(40)
+    visible, above, _below = frame._visible_slice(screen, lines, 7)
+    assert [Text.from_ansi(row).plain.strip() for row in visible[:2]] == [
+        "SETTING          VALUE",  # the lanes, pinned for every section
+        "── Direct ──",  # over the section the highlight is in
+    ]
+    assert above is True
+    assert any("peer6" in Text.from_ansi(row).plain for row in visible)  # highlight in view
+    # The pinned header is no section landmark — only the two headings are.
+    assert _blocks(screen) == [["── Channels ──"], ["── Direct ──"]]
+
+
+def test_select_column_header_shows_itself_at_the_top_and_pins_alone() -> None:
+    """Unscrolled it just draws; past it, it pins even before any heading scrolls off."""
+    screen = _columned_menu()  # highlight on the first choice — the list sits at the top
+    lines = screen.render_body(40)
+    visible, above, _below = frame._visible_slice(screen, lines, 8)
+    assert Text.from_ansi(visible[0]).plain.strip() == "SETTING          VALUE"
+    assert above is False  # nothing pinned over the real row, nothing above it
+    # Scrolled one row on, the header pins while its own section heading is still the top
+    # content row — so it is the only pin.
+    assert screen.sticky_rows(1) == [screen._pinned_header[1]]
+
+
+def test_select_pinned_column_header_keeps_the_last_row_reachable() -> None:
+    """Two pinned rows still leave the bottom choice fully visible (not clipped)."""
+    screen = _columned_menu()
+    screen.handle("end")  # highlight the final choice
+    lines = screen.render_body(40)
+    visible, _above, below = frame._visible_slice(screen, lines, 7)
+    assert Text.from_ansi(visible[0]).plain.strip() == "SETTING          VALUE"
+    assert any("peer7" in Text.from_ansi(row).plain for row in visible)
+    assert below is False
+
+
+def test_select_resolves_a_width_aware_separator_at_the_render_width() -> None:
+    """A callable separator title is handed the render width, so a header can fit itself."""
+    screen = SelectScreen(
+        "pick", [Separator(lambda w: f"HEADER@{w}", pinned=True), Choice("row", 1)]
+    )
+    assert Text.from_ansi(screen.render_body(30)[0]).plain.strip() == "HEADER@30"
+    assert Text.from_ansi(screen.render_body(48)[0]).plain.strip() == "HEADER@48"
+    # Natural-width measurement asks for the fullest form, not a terminal-sized one, so the
+    # box is sized to the whole header and only the terminal can force it to abbreviate.
+    natural = SelectScreen(
+        "pick",
+        [Separator(lambda w: "H" * min(w, 120), pinned=True), Choice("row", 1)],
+        footer_hint="Esc back",
+    )
+    assert natural.dialog_width >= 120
+
+
+def test_select_pinned_header_crops_where_a_plain_separator_wraps() -> None:
+    """A pinned row must stay exactly one row: too wide, it ellipsizes rather than wraps."""
+    wide = "SETTING" + " " * 40 + "DESCRIPTION"
+    screen = SelectScreen("pick", [Separator(wide, pinned=True), Choice("row", 1)])
+    lines = screen.render_body(24)
+    assert screen._pinned_header == (0, lines[0])
+    assert Text.from_ansi(lines[0]).plain.rstrip().endswith("…")
+    assert len(lines) == 2  # the header and the one choice — nothing wrapped onto a row
+    # An ordinary separator still wraps, each row of it counted as its own body line.
+    plain = SelectScreen("pick", [Separator(wide), Choice("row", 1)])
+    assert len(plain.render_body(24)) == 3
+
+
+def test_screen_sticky_rows_stack_the_pinned_header_over_the_section_heading() -> None:
+    """The shared rule composing both pins: whole-list header first, then the section's."""
+    screen = Screen()
+    screen.note_metrics(total=40, viewport=12)
+    screen._pinned_header = (0, "COLUMNS")
+    screen._sticky_headers = [(1, ["A"]), (5, ["B"])]
+    assert screen.sticky_rows(0) == []  # nothing has scrolled off yet
+    assert screen.sticky_rows(1) == ["COLUMNS"]  # heading A is itself the top row
+    assert screen.sticky_rows(3) == ["COLUMNS", "A"]  # inside section A
+    assert screen.sticky_rows(9) == ["COLUMNS", "B"]  # below every heading → the last one
+    assert Screen().sticky_rows(9) == []  # nothing recorded → nothing pinned
+
+
+def test_screen_sticky_block_picks_the_governing_recorded_block() -> None:
+    """The base Screen.sticky_block logic is generic over any recorded landmark list.
 
     Both the select list and the chat transcript reuse it by populating ``_sticky_headers``;
-    this exercises the shared rule directly: pin the last header at or above the offset, unless
-    it *is* the top row or none sits above it.
+    this exercises the shared rule directly: take the last block starting at or above the
+    offset, and pin exactly the rows of it the offset has passed.
     """
     screen = Screen()
-    screen._sticky_headers = [(0, "A"), (5, "B"), (12, "C")]
-    assert screen.sticky_header(0) is None    # header A is itself the top row
-    assert screen.sticky_header(3) == "A"     # scrolled past A, before B → A governs
-    assert screen.sticky_header(5) is None     # header B is now the top row
-    assert screen.sticky_header(20) == "C"    # below every header → the last one pins
-    assert Screen().sticky_header(9) is None  # no recorded headers → nothing to pin
+    screen.note_metrics(total=40, viewport=12)
+    screen._sticky_headers = [(0, ["A"]), (5, ["B", "b"]), (12, ["C"])]
+    assert screen.sticky_block(0) == []    # block A is itself the top row
+    assert screen.sticky_block(3) == ["A"]  # scrolled past A, before B → A governs
+    assert screen.sticky_block(5) == []    # block B's heading is now the top row
+    assert screen.sticky_block(6) == ["B"]  # its second row is still on screen
+    assert screen.sticky_block(7) == ["B", "b"]  # both gone → both pin
+    assert screen.sticky_block(20) == ["C"]  # below every block → the last one pins
+    assert Screen().sticky_block(9) == []  # no recorded landmarks → nothing to pin
 
 
 def test_select_ctrl_page_jumps_between_sections() -> None:
@@ -313,7 +484,7 @@ def test_screen_section_scroll_walks_recorded_headers() -> None:
     """Ctrl+PageUp/PageDown move the scroll offset between recorded section boundaries."""
     screen = Screen()
     screen.note_metrics(total=100, viewport=10)
-    screen._sticky_headers = [(0, "A"), (20, "B"), (60, "C")]
+    screen._sticky_headers = [(0, ["A"]), (20, ["B"]), (60, ["C"])]
     screen.scroll_to_next_section()
     assert screen.scroll == 20  # from the top → start of section B
     screen.scroll_to_next_section()

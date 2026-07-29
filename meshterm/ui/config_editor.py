@@ -59,6 +59,7 @@ from .menus import (
     back_rows,
     confirm_discard,
     exit_rows,
+    lane_header,
     lane_row,
     menu_rows,
     section_heading,
@@ -341,12 +342,13 @@ def _menu_items(
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
 
-    # The header leads with two spaces to clear the select screen's pointer column, so
-    # each heading lands exactly over its lane.
+    # The shared editor header (menus.lane_header): each label over its own lane, clear of
+    # the pointer column, abbreviating rather than wrapping where the terminal is too narrow
+    # for the full words. It is pinned for the whole list — the lanes mean the same in every
+    # category — so a scrolled row keeps both its column header and its section heading
+    # overhead (see Screen.sticky_rows).
     items: list = [
-        Separator(
-            "  " + "SETTING".ljust(label_w + 2) + "VALUE".ljust(value_w + 2) + "DESCRIPTION"
-        )
+        Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)
     ]
     for category, rows in sections:
         items.append(section_heading(category))

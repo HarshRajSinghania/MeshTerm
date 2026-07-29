@@ -63,10 +63,17 @@ class Screen:
         """Initialize scroll state and the (later-assigned) result future."""
         self.scroll = 0
         self.future: Optional[asyncio.Future] = None
-        # (body-line index, rendered ANSI line) for each header eligible to be pinned to the
-        # top row once it scrolls off. A screen that wants sticky headers rebuilds this list
-        # while rendering its body (see :meth:`sticky_header`); the default is no headers.
-        self._sticky_headers: list[tuple[int, str]] = []
+        # (body-line index, rendered ANSI lines) for each section landmark eligible to be
+        # pinned to the top rows once it scrolls off. A block is usually one line — a section
+        # heading, a day divider — but may carry the rows that belong with it (a heading and
+        # the description under it), which pin together as they scroll off, in order. A screen
+        # that wants sticky headers rebuilds this list while rendering its body (see
+        # :meth:`sticky_block`); the default is no landmarks.
+        self._sticky_headers: list[tuple[int, list[str]]] = []
+        # The one header that pins for the *whole* list rather than for its section — a
+        # table's column header, which means nothing scrolled off (see :meth:`sticky_rows`).
+        # Recorded the same way, as (body-line index, rendered line); ``None`` for none.
+        self._pinned_header: Optional[tuple[int, str]] = None
         # The last render's body height and viewport, recorded by the frame (:meth:`note_metrics`)
         # so the shared scroll helpers can page by a screenful of the *current* terminal and
         # clamp to the content without every caller threading the sizes through.
@@ -136,30 +143,62 @@ class Screen:
         """
         return 0
 
-    def sticky_header(self, scroll: int) -> Optional[str]:
-        """An already-rendered body line to pin to the top row once ``scroll`` moves past it.
+    def sticky_block(self, scroll: int) -> list[str]:
+        """The already-rendered body lines to pin as ``scroll`` moves past a section landmark.
 
-        Lets a grouped list keep its current section heading in view after the heading itself
-        has scrolled off — a select screen's ``Channels``/``Direct`` divider, or the chat
-        transcript's ``── Wed Jul 8 ──`` day divider. ``scroll`` is the offset the body is
-        about to be sliced at; the frame draws the returned line as the top row.
+        Lets a grouped list keep its current section overhead after the section's own rows have
+        scrolled off — a select screen's ``Channels``/``Direct`` divider, the Trophy case's
+        discipline heading *and the description under it*, the chat transcript's
+        ``── Wed Jul 8 ──`` day divider. ``scroll`` is the offset the body is about to be
+        sliced at; the returned lines are drawn as top rows, under any whole-list header pinned
+        over them (:meth:`sticky_rows` composes them for the frame).
 
-        The shared rule: among the headers a screen recorded in :attr:`_sticky_headers` while
-        rendering, find the last one at or above ``scroll`` (the one *governing* the top visible
-        row) and pin it — unless it is itself the top visible row (nothing to duplicate) or there
-        is none above. A screen opts in simply by populating :attr:`_sticky_headers`; the empty
-        default means no pinning.
+        The shared rule: among the blocks a screen recorded in :attr:`_sticky_headers` while
+        rendering, find the last one starting at or above ``scroll`` (the one *governing* the
+        top visible row) and pin exactly the rows of it that ``scroll`` has passed. So a block
+        hands its rows over one at a time as they leave — the heading pins while its
+        description is still the top content row, and the two pin together once both are gone —
+        and the pinned rows always continue seamlessly into the body below. A screen opts in
+        simply by populating :attr:`_sticky_headers`; the empty default means no pinning.
+
+        A block never takes more than half the viewport: the rows are given up from the *end*,
+        so the heading — the row that says which section this is — is the last thing dropped on
+        a short terminal.
         """
-        governing: Optional[str] = None
-        governing_at = -1
-        for idx, line in self._sticky_headers:
-            if idx <= scroll:
-                governing, governing_at = line, idx
+        governing: Optional[tuple[int, list[str]]] = None
+        for entry in self._sticky_headers:
+            if entry[0] <= scroll:
+                governing = entry
             else:
-                break  # headers are recorded in body order; nothing past here can govern
-        if governing is None or governing_at == scroll:
-            return None  # no header above, or it's already the top visible row
-        return governing
+                break  # blocks are recorded in body order; nothing past here can govern
+        if governing is None:
+            return []  # no landmark above the top visible row
+        at, rows = governing
+        keep = max(1, self._scroll_viewport // 2)
+        return rows[: min(scroll - at, keep)]
+
+    def sticky_rows(self, scroll: int) -> list[str]:
+        """Every already-rendered line to pin above the body sliced at ``scroll``.
+
+        What the frame actually draws, top-down: the whole-list header from
+        :attr:`_pinned_header` (a table's column header — the lane names, which mean the
+        same everywhere in the list) once it has scrolled off, then the governing section
+        block from :meth:`sticky_block`. A screen with only section headings pins one
+        line; a grouped table pins both, so a scrolled row can still be read off its lanes
+        *and* placed in its group.
+
+        Args:
+            scroll: The offset the body is about to be sliced at.
+
+        Returns:
+            The lines to pin, in draw order (empty for nothing to pin). Each one costs the
+            body a row, so the frame reserves exactly as many as come back.
+        """
+        rows: list[str] = []
+        if self._pinned_header is not None and self._pinned_header[0] < scroll:
+            rows.append(self._pinned_header[1])
+        rows.extend(self.sticky_block(scroll))
+        return rows
 
     # --- input ---------------------------------------------------------------
 

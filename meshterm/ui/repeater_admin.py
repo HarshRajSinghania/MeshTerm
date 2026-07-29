@@ -36,7 +36,14 @@ from ..core.remote_config import (
     reply_is_error,
     settings_by_category,
 )
-from .menus import confirm_discard, exit_rows, lane_row, menu_rows, section_heading
+from .menus import (
+    confirm_discard,
+    exit_rows,
+    lane_header,
+    lane_row,
+    menu_rows,
+    section_heading,
+)
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
 from .tui.spinner import Spinner
@@ -239,10 +246,11 @@ def _menu_items(
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
 
+    # The same pinned, self-fitting header the local editor heads its lanes with: it stays
+    # on screen under the category headings for the whole list, and abbreviates instead of
+    # wrapping when a long cached value leaves the last label no room (menus.lane_header).
     items: list = [
-        Separator(
-            "  " + "SETTING".ljust(label_w + 2) + "VALUE".ljust(value_w + 2) + "DESCRIPTION"
-        )
+        Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)
     ]
     for category, rows in sections:
         items.append(section_heading(category))

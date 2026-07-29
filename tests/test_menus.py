@@ -10,10 +10,13 @@ from __future__ import annotations
 from rich.text import Text
 
 from meshterm.ui.menus import (
+    Lane,
     back_rows,
     changes_phrase,
+    column_header,
     exit_rows,
     fit_cells,
+    lane_header,
     menu_rows,
     section_heading,
 )
@@ -80,6 +83,54 @@ def test_section_heading_wears_the_dashes_and_accent() -> None:
 def test_changes_phrase_pluralizes() -> None:
     assert changes_phrase(1) == "1 staged change"
     assert changes_phrase(2) == "2 staged changes"
+
+
+def test_column_header_lays_each_label_over_its_lane() -> None:
+    """Lanes pad to their own width under the pointer indent, so labels sit over columns."""
+    header = column_header([Lane("NAME", 8), Lane("KEY", 6), Lane("HEARD")], 40)
+    assert header == "  NAME    KEY   HEARD"
+
+
+def test_column_header_abbreviates_from_the_right_to_fit() -> None:
+    """Too narrow for the full labels, lanes give their shorter forms — never a wrap."""
+    from rich.cells import cell_len
+
+    lanes = [Lane("SETTING", 10), Lane(("DESCRIPTION", "DESC", "?"))]
+    assert column_header(lanes, 40) == "  SETTING   DESCRIPTION"  # room for the full word
+    assert column_header(lanes, 20) == "  SETTING   DESC"  # one step shorter, and it fits
+    assert column_header(lanes, 13) == "  SETTING   ?"  # the last form still fits
+    # Nothing left to give: the line crops rather than wrapping onto a second row.
+    tight = column_header(lanes, 10)
+    assert cell_len(tight) == 10 and tight.endswith("…") and "\n" not in tight
+
+
+def test_column_header_only_shortens_the_lanes_it_has_to() -> None:
+    """A lane keeps its full label while a lane to its right can still give cells back."""
+    from rich.cells import cell_len
+
+    lanes = [Lane(("CONVERSATION", "CHAT"), 14), Lane(("LAST MESSAGE", "LAST MSG", "LAST"))]
+    assert column_header(lanes, 24) == "  CONVERSATION  LAST MSG"
+    assert column_header(lanes, 20) == "  CONVERSATION  LAST"
+    # Only once the right-hand lane is spent does the left one abbreviate — and a line that
+    # still cannot fit crops (its padded lanes have no cells to give), never wraps.
+    tight = column_header(lanes, 14)
+    assert tight.startswith("  CHAT") and tight.endswith("…") and cell_len(tight) == 14
+
+
+def test_lane_header_heads_the_editor_lanes_and_shortens_description() -> None:
+    """The shared editor header matches lane_row's lanes and abbreviates the last label."""
+    from meshterm.ui.menus import lane_row
+
+    row = lane_row("Node name", Text("MockCompanion"), "Advertised name", 12, 20)
+    header = lane_header(12, 20, 80)
+    assert header.startswith("  SETTING")
+    assert header.index("VALUE") == 2 + 12 + 2  # the pointer indent, then the label lane
+    assert header.index("DESCRIPTION") == 2 + 12 + 2 + 20 + 2
+    # The row's own lanes start where the header's labels do (both padded the same way,
+    # the header offset by the pointer column the rows draw for themselves).
+    assert row.plain.index("MockCompanion") == header.index("VALUE") - 2
+    assert row.plain.index("Advertised name") == header.index("DESCRIPTION") - 2
+    assert lane_header(12, 20, 44).endswith("DESC")  # no room for the word — abbreviate
 
 
 def test_fit_cells_measures_display_cells_not_characters() -> None:

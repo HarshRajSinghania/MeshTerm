@@ -96,7 +96,7 @@ from ..services import trace_runner
 from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
-from .menus import back_rows
+from .menus import back_rows, section_heading
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -1871,9 +1871,7 @@ async def _open_session(
             )
             return None
 
-        items: list = [
-            Separator("── Candidate paths · from received evidence ──", style="accent")
-        ]
+        items: list = [section_heading("Candidate paths · from received evidence")]
         for scenario in scenarios:
             items.append(
                 Choice(
@@ -1919,7 +1917,7 @@ async def _open_session(
         if not outcomes:
             return None
         result_items: list = [
-            Separator("── Ranked · reliability, then bottleneck SNR ──", style="accent")
+            section_heading("Ranked · reliability, then bottleneck SNR")
         ]
         for rank, outcome in enumerate(outcomes, start=1):
             result_items.append(Choice(title=outcome_title(rank, outcome), value=outcome))

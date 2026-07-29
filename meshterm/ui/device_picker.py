@@ -573,13 +573,15 @@ def _build_items(
     hardware_w = max(hardware_w, len("HARDWARE"))
 
     # A muted, aligned header. The leading spaces mirror the row pointer (2) and the star
-    # column (2) so the labels sit above their columns.
+    # column (2) so the labels sit above their columns. It leads the device rows as their
+    # landmark, so a long detection list keeps the lane names overhead as it scrolls.
     header = Separator(
         "    "
         + _pad("DEVICE", name_w)
         + "  " + _pad(port_label, port_w)
         + "  " + _pad("TYPE", type_w)
-        + "  " + "HARDWARE"
+        + "  " + "HARDWARE",
+        heading=True,
     )
 
     items: list = [header]

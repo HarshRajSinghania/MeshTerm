@@ -112,17 +112,46 @@ class Separator:
         title: The row's text — a plain string drawn uniformly in :attr:`style`, or a Rich
             :class:`~rich.text.Text` carrying its own spans (for a column header that lights
             just its active sort column, say), rendered as-authored with ``style`` ignored.
+            It may instead be a callable taking the **render width** and returning either
+            — unlike :attr:`Choice.title`'s zero-argument callable — so a column header can
+            size its labels to the terminal it is being drawn on (see
+            :func:`~meshterm.ui.menus.column_header`).
         style: Theme style a *string* title is drawn in. Section headings pass ``"accent"``
             so they read as highlighted landmarks; the default ``"muted"`` fits the
             structural rows (blank spacers, column-header lines, inline notes). A ``Text``
             title styles itself, so this is unused for one.
+        pinned: Whether this row stays on screen for the *whole* list once scrolled past,
+            above any section heading pinned under it — for a column header, whose lane
+            names mean the same in every section (see
+            :meth:`~meshterm.ui.tui.screen.Screen.sticky_rows`). Off by default: an
+            ordinary separator only pins while its own section is on screen. At most one
+            row per list should set it; the last one recorded wins.
+        heading: Whether this row is a *section landmark*: it re-pins to the top row while
+            its own section is scrolled through, and it delimits the Ctrl+PageUp/PageDown
+            section jumps. Off by default, because most separators label nothing below them
+            — a blank spacer, an empty-state note, a discipline's wrapped description — and
+            pinning one of those overhead would say nothing while costing a content row (and
+            would shadow the heading it sits under). Set through
+            :func:`~meshterm.ui.menus.section_heading`, or by hand on a column header that
+            *is* its block's only landmark.
     """
 
-    title: Union[str, Text]
+    title: Union[str, Text, Callable[[int], Union[str, Text]]]
     style: str = "muted"
+    pinned: bool = False
+    heading: bool = False
+
+    def text(self, width: int) -> Union[str, Text]:
+        """The row's content at ``width`` cells, resolving a width-aware title."""
+        return self.title(width) if callable(self.title) else self.title
 
 
 Item = "Choice | Separator"
+
+#: The width handed to a width-aware :class:`Separator` when a *natural* width is being
+#: measured rather than a real terminal one (:attr:`SelectScreen.dialog_width`) — wide
+#: enough that a self-fitting column header returns its fullest form.
+_UNBOUNDED = 10_000
 
 #: The navigation actions that move the highlight to another row, so an ``hscroll`` list
 #: drops the current row's horizontal shift (each row scrolls on its own — see
@@ -349,13 +378,15 @@ class SelectScreen(Screen):
         caps this to the space available, and this is only read for a *floating* select — the
         full-screen base menu is laid out by ``compose_base`` and ignores it. The footer is
         measured at its fullest — with the delete-hint atom folded in — so a deletable row
-        surfacing that hint never widens the box mid-navigation.
+        surfacing that hint never widens the box mid-navigation. A width-aware separator is
+        measured at its fullest too (see :data:`_UNBOUNDED`): the box asks for room for the
+        whole header, and the header only abbreviates once the *terminal* caps the box.
         """
         footer = _splice_hint(self._footer_base, self._delete_hint) if self._delete_hint \
             else self._footer_base
         widths = [cell_len(self.title), cell_len(footer), cell_len(self._prompt)]
         for item in self._items:
-            label = item.title if isinstance(item, Separator) else item.label
+            label = item.text(_UNBOUNDED) if isinstance(item, Separator) else item.label
             widths.append(cell_len(_plain(label)) + 2)  # + the "❯ " / "  " pointer column
             if isinstance(item, Choice) and item.detail_label is not None:
                 widths.append(cell_len(_plain(item.detail_label)) + 2)  # same hanging indent
@@ -387,10 +418,20 @@ class SelectScreen(Screen):
             lines.extend(plines)
             lines.append("")
             prefix = len(plines) + 1
-        # Record each section heading as a sticky-header candidate, so one that scrolls off is
-        # re-pinned to the top row by the base Screen.sticky_header. Separators survive
-        # filtering (see _rows), so the pinning keeps working while the list narrows.
+        # Record each section heading (a Separator that says it is one) as a sticky block, so
+        # one that scrolls off is re-pinned to the top rows by the base Screen.sticky_block —
+        # and a pinned separator (a column header) as the whole-list header pinned above it.
+        # A heading's block runs on through the separators that *immediately* follow it, before
+        # the section's first row: prose written there is the section's preamble (the Trophy
+        # case's "what this discipline scores"), so it belongs overhead with the heading rather
+        # than scrolling away from the rows it explains. Everything else — blank spacers,
+        # empty-state notes under a section that has rows, a stray line between choices — is
+        # the landmark of nothing and stays out of the running, so the rows pinned overhead
+        # are always the section that governs. Separators survive filtering (see _rows), so
+        # the pinning keeps working while the list narrows.
         self._sticky_headers = []
+        self._pinned_header = None
+        block: Optional[list[str]] = None  # the heading block still taking rows, if any
         if self._filter:
             lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
         # A row's detail line (see Choice.detail) can make it two lines tall, so the cursor
@@ -401,12 +442,31 @@ class SelectScreen(Screen):
                 # A Text title carries its own spans (a two-colour column header); a plain
                 # string is drawn uniformly in the separator's style. Separators never
                 # h-scroll — the shift rides the highlighted choice row alone.
-                title = item.title
-                heading = title if isinstance(title, Text) else Text(title, style=item.style)
-                sep = render_to_ansi(heading, width)
-                self._sticky_headers.append((len(lines), sep))
-                lines.append(sep)
+                title = item.text(width)
+                content = title if isinstance(title, Text) else Text(title, style=item.style)
+                if item.pinned:
+                    # A pinned header is drawn *outside* the body slice and is exactly one
+                    # row tall, so it crops like a row rather than wrapping — a column
+                    # header too wide for the terminal ellipsizes instead of stealing a
+                    # second reserved row from the content.
+                    drawn = [render_to_ansi(content, width, no_wrap=True)]
+                    # A whole-list header stands outside the section run too: it pins above
+                    # the section headings rather than taking a turn among them, and so is
+                    # no section boundary for the Ctrl+PageUp/PageDown jumps either.
+                    self._pinned_header = (len(lines), drawn[0])
+                else:
+                    # A prose separator (a note above a startup list) may wrap; each row it
+                    # takes is its own body line, so the viewport still counts them all — and
+                    # every one of them joins the block, wrapped continuations included.
+                    drawn = render_lines(content, width)
+                    if item.heading:
+                        block = list(drawn)
+                        self._sticky_headers.append((len(lines), block))
+                    elif block is not None:
+                        block.extend(drawn)  # the heading's preamble, pinned with it
+                lines.extend(drawn)
                 continue
+            block = None  # a row closes the heading's block; prose past here is its own
             is_sel = item is selected
             if is_sel:
                 cursor_at = len(lines)

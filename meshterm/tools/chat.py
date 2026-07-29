@@ -38,7 +38,7 @@ from ..core.models import (
 )
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui.chat import _MENTION, _split_channel_sender
-from ..ui.menus import fit_cells
+from ..ui.menus import Lane, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
 from ..ui.tui import Choice, DeleteRequest, Separator
 from ..ui.widgets import _NODE_GLYPHS, channel_glyph
@@ -148,9 +148,12 @@ class ChatTool(Tool):
             # colour rule); a name no contact or stored advert carries stays muted.
             key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
 
+            # The lane names pin for the whole picker (they mean the same in both groups),
+            # so scrolling into Direct keeps them overhead with that group's heading under
+            # them, instead of the header vanishing one row in — see Screen.sticky_rows.
             items: list = [
-                Separator(_picker_header()),
-                Separator("── 📡 Channels ──", style="accent"),
+                Separator(_picker_header, pinned=True),
+                section_heading("📡 Channels"),
             ]
             for conversation in channels:
                 items.append(
@@ -160,7 +163,7 @@ class ChatTool(Tool):
                     )
                 )
 
-            items.append(Separator("── 👤 Direct ──", style="accent"))
+            items.append(section_heading("👤 Direct"))
             if companions:
                 # List contacts by recency — those with messages first, newest exchange at
                 # the top — then the never-contacted ones alphabetically (see _recency_key).
@@ -623,20 +626,28 @@ _AGE_WIDTH = 3
 _PREVIEW_WIDTH = 40
 
 
-def _picker_header() -> str:
+def _picker_header(width: int) -> str:
     """Column headers over the picker's fixed lanes (see :func:`_title` for the layout).
 
-    Leading spaces cover the select screen's pointer column (2 cells, drawn on choice rows
-    but not separators) plus the marker lane (3 cells), so each header lands exactly over
-    its column. UNREAD borrows its lane's trailing gap — the badge lane itself is one cell
-    too narrow for the word — which still leaves a space before the age column.
+    The five-cell indent covers the select screen's pointer column (2 cells, drawn on choice
+    rows but not separators) plus the marker lane (3 cells), so each header lands exactly
+    over its column. UNREAD borrows its lane's trailing gap — the badge lane itself is one
+    cell too narrow for the word — which still leaves a space before the age column.
+
+    Resolved against the render width (the header row is pinned, so it must stay one row):
+    on a terminal too narrow for the whole line, ``LAST MESSAGE`` gives its cells back a
+    word at a time rather than the line wrapping or losing the label (see
+    :func:`~meshterm.ui.menus.column_header`).
     """
-    return (
-        "     "
-        + "CONVERSATION".ljust(_LABEL_WIDTH + 2)
-        + "UNREAD".ljust(_BADGE_WIDTH + 2)
-        + f"{'AGE':>{_AGE_WIDTH}}"
-        + "  LAST MESSAGE"
+    return column_header(
+        [
+            Lane("CONVERSATION", _LABEL_WIDTH + 2),
+            Lane("UNREAD", _BADGE_WIDTH + 2),
+            Lane("AGE", _AGE_WIDTH + 2),
+            Lane(("LAST MESSAGE", "LAST MSG", "LAST")),
+        ],
+        width,
+        indent=5,
     )
 
 

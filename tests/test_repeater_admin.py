@@ -294,3 +294,40 @@ def test_cli_screen_timeout_note_frees_the_prompt() -> None:
     screen.failed("no reply within 10 s")
     assert not screen.busy
     assert "no reply within 10 s" in "\n".join(screen.render_body(80))
+
+
+# --- the editor menu's column header --------------------------------------------------
+
+
+def test_admin_menu_pins_the_column_header_over_the_category() -> None:
+    """Scrolled deep, the lane names stay overhead with the category heading under them."""
+    import re
+
+    from meshterm.ui.repeater_admin import _menu_items
+    from meshterm.ui.tui import frame
+
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    title, items = _menu_items(NODE, {}, {})
+    screen = SelectScreen(title, items, wrap=False)
+    for _ in range(18):  # down past the first categories
+        screen.handle("down")
+    visible, above, _below = frame._visible_slice(screen, screen.render_body(72), 10)
+    top = [ansi.sub("", row).strip() for row in visible[:2]]
+    assert top[0].startswith("SETTING") and top[0].endswith("DESCRIPTION")
+    assert top[1].startswith("──")  # the category the highlighted row sits in
+    assert above is True
+
+
+def test_admin_menu_header_abbreviates_rather_than_wrapping() -> None:
+    """Too narrow for the whole line, the last label shortens — the header stays one row."""
+    from rich.cells import cell_len
+
+    from meshterm.ui.repeater_admin import _menu_items
+
+    _title, items = _menu_items(NODE, {}, {})
+    header = items[0]
+    assert header.pinned
+    full = header.text(100)
+    assert full.endswith("DESCRIPTION")
+    narrow = header.text(cell_len(full) - 2)
+    assert narrow.endswith("DESC") and "\n" not in narrow

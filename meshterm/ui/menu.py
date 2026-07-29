@@ -28,6 +28,7 @@ from ..persistence.logging import get_logger
 from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
+from .menus import section_heading
 from .theme import make_console
 from .widgets import battery_cell
 from .tui import (
@@ -432,7 +433,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         for tool in tools:
             if tool.category != current_category:
                 current_category = tool.category
-                items.append(Separator(f"── {current_category} ──", style="accent"))
+                items.append(section_heading(current_category))
             label = _label(tool)
             row = Text(label)
             row.append(" " * (name_w - cell_len(label) + 2))

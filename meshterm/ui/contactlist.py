@@ -403,7 +403,11 @@ class ContactListScreen(SelectScreen):
         below them reorders (see :func:`_ordered`). Tail rows (a purge action, the exit
         group) close the list, past every contact whatever the sort."""
         items: list = list(self._lead)
-        items.append(Separator(_header(self._name_w, self._sort, self._show_traced)))
+        # The lane names lead the contacts as their landmark, so they pin overhead while the
+        # list scrolls — a row deep in the sort can still be read off its columns.
+        items.append(
+            Separator(_header(self._name_w, self._sort, self._show_traced), heading=True)
+        )
         pinned = [row for row in self._contact_rows if row.you]
         rest = [row for row in self._contact_rows if not row.you]
         for row in (*pinned, *_ordered(rest, self._sort)):

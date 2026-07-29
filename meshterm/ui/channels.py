@@ -575,7 +575,9 @@ def _menu_items(
     items: list = []
     if slots:
         name_w = min(_NAME_WIDTH_MAX, max(len("CHANNEL"), *(len(s.name) for s in slots)))
-        items.append(Separator(_lanes_header(name_w)))
+        # The lane names are this block's only landmark (its section carries no ── heading ──),
+        # so they pin overhead while the slots scroll and give way to Organize/Add a channel.
+        items.append(Separator(_lanes_header(name_w), heading=True))
         for slot in slots:
             items.append(Choice(title=_slot_row(ctx, slot, stats, name_w), value=slot.idx))
     else:

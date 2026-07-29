@@ -263,9 +263,11 @@ class ChatScreen(Screen):
         view (channels only; direct threads never select).
         """
         lines: list[str] = []
-        # Record each day divider as a sticky-header candidate, so the divider governing the
-        # topmost visible message is re-pinned to the top row once it scrolls off — the same
-        # base Screen.sticky_header the conversation picker uses for its section headings.
+        # Record each day divider as a sticky block of its own one row, so the divider
+        # governing the topmost visible message is re-pinned to the top row once it scrolls
+        # off — the same base Screen.sticky_block the conversation picker uses for its
+        # section headings. A day has nothing to say beyond its date, so the block is the
+        # divider alone; a select list's heading may carry its description along.
         self._sticky_headers = []
         prev_group: Optional[tuple[bool, str]] = None
         prev_day = None
@@ -283,7 +285,7 @@ class ChatScreen(Screen):
                 divider = render_lines(
                     Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
                 )
-                self._sticky_headers.append((len(lines), divider[0]))
+                self._sticky_headers.append((len(lines), [divider[0]]))
                 lines += divider
             if new_day or group != prev_group:
                 if not new_day and lines:

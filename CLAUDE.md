@@ -60,6 +60,11 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   Editors with staged changes show `✓ Apply n staged changes` over
   `✗ Back — discard staged changes`.
 - Grouped-list section headings use `section_heading("Label")` → `── Label ──` accent.
+  That is also what makes a heading *sticky* (it pins to the top row while its section
+  scrolls, and the ^PgUp/^PgDn jumps step by it), so build them through it — a hand-rolled
+  `Separator` is no landmark. Prose written *directly under* a heading (a description of
+  what the section holds) is its preamble and pins with it, in order, as each row scrolls
+  off; prose after the section's first row labels nothing and never pins.
 - Label + description command rows go through `menu_rows` (two cell-aligned lanes,
   description muted). Editor rows (setting/value/description) go through `lane_row`.
 - A row that opens further prompts ends with `…`; a row that acts immediately doesn't.

@@ -20,15 +20,37 @@ from .render import render_lines
 from .screen import Screen
 
 
+#: How many times :func:`_visible_slice` re-settles the scroll against the rows a screen
+#: pins above it. Each pin costs a content row, so gaining one can push the highlighted row
+#: back out of view and call for another nudge; two or three passes always reach a fixed
+#: point at the pin counts screens actually use (a column header and a section heading).
+_PIN_SETTLE_PASSES = 3
+
+
+def _window_start(scroll: int, total: int, viewport: int, pinned: int) -> int:
+    """The body line the visible window starts at, given ``pinned`` reserved top rows.
+
+    Normally the scroll offset itself. Scrolled fully to the bottom, the reserved rows must
+    not cost the *last* body lines (a chat's input row would vanish exactly when the
+    transcript fills the screen), so the window slides down by as many rows as are pinned —
+    the lines it drops are at the top, right under the pins, where they are stale.
+    """
+    cap = max(1, viewport - pinned)
+    if scroll >= total - viewport and total > cap:
+        return min(scroll + pinned, total - cap)
+    return scroll
+
+
 def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[list[str], bool, bool]:
     """Clamp the screen's scroll and return the visible lines plus clip flags.
 
     Keeps the screen's cursor line in view (for select/text screens) and clamps the scroll
     offset to the content, then pads the slice to exactly ``viewport`` rows so the panel
-    always fills its allotted height. When the screen offers a sticky header (a grouped list's
-    section heading that has scrolled off), it is pinned to the top row: that reserves one row,
-    so the cursor is kept within the remaining ``viewport - 1`` and the bottom clamp is relaxed
-    by one so the final content row can still reach the last visible line.
+    always fills its allotted height. Any sticky rows the screen offers (a grouped list's
+    section heading that has scrolled off, over a table's column header — see
+    :meth:`Screen.sticky_rows`) are pinned to the top rows: each reserves one row, so the
+    cursor is kept within the remaining ``viewport - pinned`` and the bottom clamp is relaxed
+    by as many so the final content row can still reach the last visible line.
 
     Args:
         screen: The screen being rendered (its ``scroll`` is adjusted in place).
@@ -52,28 +74,32 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
             scroll = cursor - viewport + 1
     scroll = max(0, min(scroll, max(0, total - viewport)))
 
-    # A pinned section heading takes the top row, leaving one fewer for content; nudge the
-    # scroll down if the cursor would fall in that reserved row, then re-check the heading
-    # (crossing a section boundary can change which one is pinned, or drop it entirely).
-    sticky = screen.sticky_header(scroll) if scroll > 0 else None
-    if sticky is not None:
-        cap = max(1, viewport - 1)
-        if cursor is not None and cursor >= scroll + cap:
-            scroll = min(cursor - cap + 1, max(0, total - cap))
-            sticky = screen.sticky_header(scroll) if scroll > 0 else None
+    # Each pinned row takes a top row, leaving that many fewer for content: nudge the scroll
+    # down if the cursor would fall in the reserved rows, then re-ask — moving can change
+    # which heading governs (crossing a section boundary pins another, or none), and a pin
+    # gained that way reserves one more row, which can call for a further nudge. Settles
+    # within _PIN_SETTLE_PASSES, since a screen pins at most a column header and a heading.
+    pinned = screen.sticky_rows(scroll) if scroll > 0 else []
+    for _ in range(_PIN_SETTLE_PASSES):
+        cap = max(1, viewport - len(pinned))
+        if not pinned or cursor is None or cursor < scroll + cap:
+            break
+        scroll = min(cursor - cap + 1, max(0, total - cap))
+        pinned = screen.sticky_rows(scroll) if scroll > 0 else []
 
     screen.scroll = scroll
 
-    if sticky is not None:
-        cap = max(1, viewport - 1)
-        start = scroll
-        if scroll >= total - viewport and total > cap:
-            # Scrolled fully to the bottom: the pinned header's reserved row must not
-            # cost the *last* body line (a chat's input row would vanish exactly when
-            # the transcript fills the screen). Slide the window down one instead —
-            # the dropped row is at the top, right under the pin, where it's stale.
-            start = min(scroll + 1, total - cap)
-        visible = [sticky] + lines[start : start + cap]
+    if pinned:
+        start = _window_start(scroll, total, viewport, len(pinned))
+        if start != scroll:
+            # The window slid down off the scroll offset, so the pins must describe the row
+            # it now *starts* at — otherwise a section heading among the dropped lines would
+            # simply vanish instead of being pinned. Re-ask, then re-settle the start against
+            # however many rows that reserves (never unpinning: the slide depends on it).
+            pinned = screen.sticky_rows(start) or pinned
+            start = _window_start(scroll, total, viewport, len(pinned))
+        cap = max(1, viewport - len(pinned))
+        visible = pinned + lines[start : start + cap]
         more_below = start + cap < total
         visible = visible + [""] * (viewport - len(visible))
         return visible, True, more_below

@@ -441,6 +441,24 @@ async def test_editor_clean_close_needs_no_confirmation(ctx: AppContext) -> None
     assert await edit_config(ctx) is None
 
 
+async def test_editor_menu_pins_the_column_header_over_the_category(ctx: AppContext) -> None:
+    """Scrolled deep, the lane names stay overhead with the category heading under them."""
+    from meshterm.ui.tui import SelectScreen, frame
+
+    ui = _install(ctx, [("select", "__cancel__")])
+    assert await edit_config(ctx) is None
+    menu = ui.session.pushed[0]
+    # Re-open the same rows highlighting a row in the last category, so the list scrolls
+    # past both the column header and the earlier headings.
+    deep = SelectScreen(menu.title, menu._items, default="__advert_flood__", wrap=False)
+    visible, above, _below = frame._visible_slice(deep, deep.render_body(100), 6)
+    top = [_ANSI.sub("", row).strip() for row in visible[:2]]
+    assert top[0].startswith("SETTING") and top[0].endswith("DESCRIPTION")
+    assert top[1] == "── Background adverts ──"
+    assert above is True
+    assert any("Flood advert" in _ANSI.sub("", row) for row in visible)
+
+
 async def test_editor_location_typed_coordinates_stage_both_axes(ctx: AppContext) -> None:
     """Typing a coordinate pair stages latitude and longitude together."""
     _install(ctx, [

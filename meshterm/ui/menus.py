@@ -15,6 +15,9 @@ furniture, so the app's exit language and row alignment stay uniform by construc
   lanes, padded in display cells so double-width emoji can't skew the description
   column (the Device actions presentation).
 * :func:`lane_row` — one SETTING / VALUE / DESCRIPTION row for the editor-style lists.
+* :func:`column_header` / :class:`Lane` — the header line over a lane-aligned list, which
+  abbreviates its labels to fit a narrow terminal instead of wrapping or losing one, and
+  :func:`lane_header`, the ready-made header for :func:`lane_row`'s lanes.
 * :func:`changes_phrase` — ``"1 staged change"`` / ``"3 staged changes"``.
 * :func:`confirm_discard` — the shared are-you-sure dialog for leaving staged changes.
 
@@ -25,7 +28,8 @@ line above it; ``✓``/``✗`` (U+2713/U+2717) are THE status marks, styled ``ok
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Iterable, Sequence, Union
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -126,6 +130,90 @@ def lane_row(label: str, value: Text, help_text: str, label_w: int, value_w: int
     return row
 
 
+@dataclass(frozen=True)
+class Lane:
+    """One lane of a column header: its label, any shorter forms, and its width.
+
+    Attributes:
+        label: The lane's label — a plain string, or its forms longest-first
+            (``("DESCRIPTION", "DESC")``) for a lane that can give cells back on a narrow
+            terminal. Only a lane the line actually overruns is ever shortened.
+        width: Cells the label is padded to — the lane's own width *plus* the gap before
+            the next lane, so a label wider than its column absorbs that gap instead of
+            shifting every lane after it right (``UNREAD`` over a narrower badge lane).
+            Zero (the default) for a trailing lane, which just runs to the edge.
+    """
+
+    label: Union[str, Sequence[str]]
+    width: int = 0
+
+    @property
+    def forms(self) -> tuple[str, ...]:
+        """The lane's labels, longest first (a bare string is its own only form)."""
+        return (self.label,) if isinstance(self.label, str) else tuple(self.label)
+
+
+def column_header(lanes: Sequence[Lane], width: int, *, indent: int = 2) -> str:
+    """The column-header line over a lane-aligned list, fitted to ``width``.
+
+    THE header builder for every list that pads its rows into columns (the two setting
+    editors, the chat picker). Lanes are laid out left to right at their own widths, after
+    ``indent`` cells clearing the pointer column, so each label lands exactly over the lane
+    it names.
+
+    A header is one row and stays one row. Where the line overruns ``width`` the lanes fall
+    back to their shorter labels — from the right, since the fixed lanes are padded to their
+    rows' content and only a trailing lane can actually give a cell back — and a line that
+    still won't fit is ellipsized. It never wraps: a pinned header (see
+    :attr:`~meshterm.ui.tui.select.Separator.pinned`) is drawn outside the body slice, where
+    a second row would cost the content one.
+
+    Args:
+        lanes: The lanes in display order.
+        width: Cells the line has to fit into — the screen's render width.
+        indent: Leading pad in cells: the select screen's 2-cell pointer column, plus any
+            glyph lane the rows draw before their first value.
+
+    Returns:
+        The header line, at most ``width`` cells wide.
+    """
+    picked = [0] * len(lanes)
+
+    def line() -> str:
+        out = " " * indent
+        for lane, form in zip(lanes, picked):
+            label = lane.forms[form]
+            out += label + " " * max(0, lane.width - cell_len(label))
+        return out
+
+    at = len(lanes) - 1
+    while at >= 0 and cell_len(line()) > width:
+        if picked[at] + 1 < len(lanes[at].forms):
+            picked[at] += 1  # this lane has something shorter to offer — take it
+        else:
+            at -= 1  # spent; ask the lane to its left
+    text = line()
+    return fit_cells(text, width) if cell_len(text) > width else text
+
+
+def lane_header(label_w: int, value_w: int, width: int) -> str:
+    """The SETTING / VALUE / DESCRIPTION header over :func:`lane_row`'s lanes.
+
+    The row builder's header twin, shared by the two editor lists (device configuration
+    and repeater admin) so they head identical lanes identically. ``DESCRIPTION`` shortens
+    to ``DESC`` where the two value lanes leave it no room — long setting labels and a
+    staged ``current → new`` value can push the full word past a 72-column terminal.
+    """
+    return column_header(
+        [
+            Lane("SETTING", label_w + 2),
+            Lane("VALUE", value_w + 2),
+            Lane(("DESCRIPTION", "DESC")),
+        ],
+        width,
+    )
+
+
 def changes_phrase(count: int) -> str:
     """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
     return f"{count} staged change{'' if count == 1 else 's'}"
@@ -164,8 +252,13 @@ def section_heading(label: str) -> Separator:
     The one form every grouped list's headings take (the main menu's categories, the
     config editor's setting groups, Watchtower's Alerts/Watched nodes, Courier's
     Outbox/Finished), so sections read the same on every screen.
+
+    It is also what makes a heading a *landmark*: the row is marked
+    :attr:`~meshterm.ui.tui.select.Separator.heading`, so it re-pins to the top row once its
+    section scrolls under it and the Ctrl+PageUp/PageDown jumps step by it. Building the row
+    by hand is how a section loses that — go through here.
     """
-    return Separator(f"── {label} ──", style="accent")
+    return Separator(f"── {label} ──", style="accent", heading=True)
 
 
 def fit_cells(text: str, width: int, *, align: str = "left") -> str:
@@ -195,11 +288,14 @@ def fit_cells(text: str, width: int, *, align: str = "left") -> str:
 
 
 __all__ = [
+    "Lane",
     "back_rows",
     "changes_phrase",
+    "column_header",
     "confirm_discard",
     "exit_rows",
     "fit_cells",
+    "lane_header",
     "lane_row",
     "menu_rows",
     "section_heading",
