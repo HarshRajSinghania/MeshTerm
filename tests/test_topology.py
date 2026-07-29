@@ -104,6 +104,65 @@ def test_coalesce_leaves_a_genuinely_ambiguous_stub_alone() -> None:
     assert {"27", "27d4396a2967", "27e41e2d7cb5"} <= ids  # the stub stays its own node
 
 
+def test_coalesce_folds_an_ambiguous_stub_its_neighbourhood_elects() -> None:
+    """A stub the hash can't place is placed by the company it keeps.
+
+    ``3d`` opens both ``3d63…`` and ``3d99…``, so prefix alone is a coin toss — but the
+    stub carries links to Far and Leaf, and only ``3d63…`` is seen with either. Two
+    discriminating votes, none against, so the stub folds and pools its evidence.
+    """
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60)
+    walks = [
+        _traced(("3d63", 5.0), ("f2", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d63", 5.0), ("27d4", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d99", 5.0), (None, 5.0)),  # the rival is in the graph, just not out here
+        _traced(("3d", 5.0), ("f2", 5.0), ("3d", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("27d4", 5.0), ("3d", 5.0), (None, 5.0)),
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin])
+    ids = {node for link in topo.links() for node in (link.a, link.b)}
+    assert "3d" not in ids  # elected onto the node its neighbours agree it must be
+    assert {"3d63c6429436", "3d9900000000"} <= ids  # the rival is untouched
+    link = topo.link(topo.self_id, "3d63c6429436")
+    assert link is not None and link.samples == 8  # the stub's readings came with it
+
+
+def test_coalesce_leaves_a_contested_stub_standing() -> None:
+    """Neighbours pointing both ways mean the hash is pooling two nodes — leave it alone."""
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60)
+    edge = Contact(name="Edge", public_key="b1" + "0" * 62)
+    walks = [
+        _traced(("3d63", 5.0), ("f2", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d63", 5.0), ("27d4", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d99", 5.0), ("b1", 5.0), ("3d99", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("f2", 5.0), ("3d", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("27d4", 5.0), ("3d", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("b1", 5.0), ("3d", 5.0), (None, 5.0)),
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin, edge])
+    ids = {node for link in topo.links() for node in (link.a, link.b)}
+    # 2 votes to 1 is a plurality, not a verdict: the margin keeps the stub its own node.
+    assert {"3d", "3d63c6429436", "3d9900000000"} <= ids
+
+
+def test_coalesce_ignores_neighbours_both_candidates_share() -> None:
+    """Shared company is local density, not evidence — only discriminating neighbours vote."""
+    twin = Contact(name="Twin", public_key="3d99" + "0" * 60)
+    walks = [
+        _traced(("3d63", 5.0), ("f2", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d99", 5.0), ("f2", 5.0), ("3d99", 5.0), (None, 5.0)),
+        _traced(("3d63", 5.0), ("27d4", 5.0), ("3d63", 5.0), (None, 5.0)),
+        _traced(("3d99", 5.0), ("27d4", 5.0), ("3d99", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("f2", 5.0), ("3d", 5.0), (None, 5.0)),
+        _traced(("3d", 5.0), ("27d4", 5.0), ("3d", 5.0), (None, 5.0)),
+    ]
+    topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin])
+    ids = {node for link in topo.links() for node in (link.a, link.b)}
+    # Every neighbour of the stub is a neighbour of *both* candidates, so nobody can tell
+    # them apart and the stub is not guessed onto the busier one.
+    assert {"3d", "3d63c6429436", "3d9900000000"} <= ids
+
+
 def test_contact_routes_and_packet_paths_feed_the_graph() -> None:
     """Firmware-learned routes and RX-logged packet paths both count as evidence."""
     routed = Contact(

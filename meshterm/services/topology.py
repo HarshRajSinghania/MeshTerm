@@ -63,6 +63,15 @@ _HOP_PENALTY = 0.35
 _MAX_SCENARIOS = 5
 _MAX_SCENARIO_HOPS = 5
 
+#: The bar an ambiguous short hash must clear before it folds onto one of the nodes it
+#: could name (see :meth:`MeshTopology._corroborated_owner`): how many *discriminating*
+#: neighbours — ones that link to exactly one candidate — have to vote for the winner, and
+#: how far ahead of the runner-up it has to finish. Both are set to leave a contested stub
+#: alone: two independent neighbours agreeing with nothing dissenting is evidence, one is a
+#: coincidence, and a close second means the hash is probably pooling two nodes' traffic.
+_MIN_CORROBORATION = 2
+_CORROBORATION_MARGIN = 3
+
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
 
@@ -380,21 +389,36 @@ class MeshTopology:
         ranker offers a redundant weaker route through the stub.
 
         This closes the gap using the evidence the graph *actually holds* rather than the
-        whole contact list: a short id is merged into a longer node id present in the graph
-        when it is a strict prefix of **exactly one** of them (following a prefix chain —
-        ``65`` → ``6532`` → ``6532eb`` — to its longest end). A short id that opens two
-        distinct longer nodes (``c5`` → ``c5bc…`` and ``c5ba…``) is genuinely ambiguous and
-        is left as its own node; a short id that opens none (a node we have only ever heard
-        narrowly) keeps its width too — it is one node, merely under-named. Merging folds
-        the short id's links into the wide id's, summing samples, pooling SNR readings and
-        sources, and keeping the freshest sighting, so the wide node inherits every reading
-        the stub had gathered. Idempotent: a second call finds nothing left to merge.
+        whole contact list, in two passes of descending confidence:
+
+        1. **By prefix alone** (:meth:`_next_prefix_merge`) — a short id is merged into a
+           longer node id present in the graph when it is a strict prefix of **exactly
+           one** of them (following a prefix chain — ``65`` → ``6532`` → ``6532eb`` — to
+           its longest end). Nothing is inferred: the short can only mean that one node.
+        2. **By corroboration** (:meth:`_next_corroborated_merge`) — a short id that opens
+           two distinct longer nodes (``c5`` → ``c5bc…`` and ``c5ba…``) is ambiguous by
+           prefix, but the graph usually knows which one it is anyway: the stub carries the
+           links of whichever node it really was, so its *neighbourhood* names the owner.
+           Neighbours that can tell the candidates apart vote, and a decisive result folds
+           the stub onto the winner. See that method for the bar a vote has to clear.
+
+        The passes interleave: the graph changes with every merge, so an ambiguity can
+        resolve itself once a neighbouring stub folds, and the certain pass is always
+        re-run before the inferring one gets another turn.
+
+        A short id that opens no longer node at all (one we have only ever heard narrowly)
+        keeps its width — it is one node, merely under-named — and so does one whose vote
+        stays contested. Merging folds the short id's links into the wide id's, summing
+        samples, pooling SNR readings and sources, and keeping the freshest sighting, so
+        the wide node inherits every reading the stub had gathered. Idempotent: a second
+        call finds nothing left to merge.
 
         Called once at the end of :func:`build_topology`, so every consumer sees each node
         once. Safe for our own node (its 12-hex id is never a short prefix candidate).
         """
         while True:
-            merge = self._next_prefix_merge(self._node_ids())
+            nodes = self._node_ids()
+            merge = self._next_prefix_merge(nodes) or self._next_corroborated_merge(nodes)
             if merge is None:
                 return
             self._merge_node(*merge)
@@ -417,19 +441,105 @@ class MeshTopology:
         end inward over successive calls.
         """
         for short in sorted(nodes, key=len):
-            if len(short) >= 12:  # a full canonical id is never under-specified
-                continue
-            exts = [
-                other
-                for other in nodes
-                if other != short and len(other) > len(short) and other.startswith(short)
-            ]
+            exts = self._extensions(short, nodes)
             if not exts:
                 continue
             longest = max(exts, key=len)
             if all(longest.startswith(ext) for ext in exts):  # one node, not two
                 return short, longest
         return None
+
+    @staticmethod
+    def _extensions(short: str, nodes: set[str]) -> list[str]:
+        """Every node id in ``nodes`` that strictly extends the under-specified ``short``.
+
+        Empty for a full-width canonical id (12 hex is never under-specified) and for a
+        short id nothing in the graph extends.
+        """
+        if len(short) >= 12:
+            return []
+        return [
+            other
+            for other in nodes
+            if other != short and len(other) > len(short) and other.startswith(short)
+        ]
+
+    def _next_corroborated_merge(self, nodes: set[str]) -> Optional[tuple[str, str]]:
+        """The next ambiguous stub the *neighbourhood evidence* resolves, or ``None``.
+
+        Where :meth:`_next_prefix_merge` folds only what the hash alone settles, this
+        answers the case it walks away from: a short id like ``bf`` that opens two real
+        nodes (``bf61f2…`` and ``bfbeef…``). Prefix-wise that is a coin toss — but the stub
+        is not an empty label. It carries the links of whichever node it actually was, so
+        the company it keeps names its owner: every neighbour that can *tell the candidates
+        apart* — one it links to that links to exactly one candidate — is a vote, and the
+        rest (neighbours both candidates share, which two repeaters in the same city have
+        plenty of) abstain rather than drown the signal in local density.
+
+        The bar is deliberately high, because a wrong merge does what this whole routine
+        exists to prevent — attributes one node's evidence to another. The winner must draw
+        at least :data:`_MIN_CORROBORATION` discriminating votes *and* lead the runner-up by
+        :data:`_CORROBORATION_MARGIN`×, so a genuinely contested stub (one whose neighbours
+        point both ways, i.e. one that really is two nodes' traffic pooled under one hash)
+        stays exactly where it was: standing on its own, under-named but honest.
+
+        Shortest ids are offered first, matching :meth:`_next_prefix_merge`, and only the
+        *maximal* candidates run — a chain's inner links (``f0`` → ``f062eb`` →
+        ``f062eb…``) are the same node, so they never split their own vote.
+        """
+        adjacency = self._adjacency()
+        for short in sorted(nodes, key=len):
+            exts = self._extensions(short, nodes)
+            candidates = [
+                ext for ext in exts
+                if not any(other != ext and other.startswith(ext) for other in exts)
+            ]
+            if len(candidates) < 2:  # settled (or ignored) by the certain pass
+                continue
+            owner = self._corroborated_owner(short, candidates, adjacency)
+            if owner is not None:
+                return short, owner
+        return None
+
+    def _adjacency(self) -> dict[str, set[str]]:
+        """The graph as neighbour sets, for the questions link pairs answer awkwardly."""
+        adjacency: dict[str, set[str]] = {}
+        for a, b in self._links:
+            adjacency.setdefault(a, set()).add(b)
+            adjacency.setdefault(b, set()).add(a)
+        return adjacency
+
+    @staticmethod
+    def _corroborated_owner(
+        short: str, candidates: list[str], adjacency: dict[str, set[str]]
+    ) -> Optional[str]:
+        """Which candidate the stub's discriminating neighbours elect, if any.
+
+        A neighbour votes only when it separates the field — it neighbours exactly one
+        candidate — so shared company counts for nothing and the ``short``/candidate ids
+        themselves never vote for their own case. ``None`` means no decisive winner: too
+        few votes, or a runner-up close enough that the stub may well be both nodes'
+        traffic under one hash.
+
+        Args:
+            short: The under-specified id being resolved.
+            candidates: The distinct node ids it could name (two or more).
+            adjacency: Neighbour sets over the whole graph (see :meth:`_adjacency`).
+
+        Returns:
+            The elected candidate, or ``None`` to leave the stub standing.
+        """
+        field = set(candidates) | {short}
+        votes = dict.fromkeys(candidates, 0)
+        for neighbour in adjacency.get(short, ()) - field:
+            electors = [c for c in candidates if neighbour in adjacency.get(c, ())]
+            if len(electors) == 1:
+                votes[electors[0]] += 1
+        ranked = sorted(votes.items(), key=lambda pair: (-pair[1], pair[0]))
+        (winner, top), (_runner, second) = ranked[0], ranked[1]
+        if top < _MIN_CORROBORATION or top < _CORROBORATION_MARGIN * second:
+            return None
+        return winner
 
     def _merge_node(self, src: str, dst: str) -> None:
         """Relabel every link touching ``src`` onto ``dst``, folding shared links together."""
