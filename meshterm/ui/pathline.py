@@ -42,7 +42,9 @@ drawn*, so every surface the survey found can eventually route through it:
   reads identically whichever mode drew it. A surface whose route always starts and
   ends on us can ask for ``bare_self``, replacing our name and hash with the app-wide
   ``★`` — the reader already knows who both ends are, and the cells belong to the hops
-  that *are* news.
+  that *are* news. Those stars fade where the route is being *composed* (our two ends
+  are fixtures, not choices); a surface that only *shows* a walk passes ``dim_self=False``
+  and keeps us in the ``you`` white.
 
 Existing call sites still render through ``path_text``; migrating them here is a
 separate, per-surface pass. The composer's insertion cursor rides along as a hop in
@@ -725,6 +727,7 @@ def path_line(
     dim_from: Optional[int] = None,
     hash_as_name: bool = False,
     bare_self: bool = False,
+    dim_self: bool = True,
     cursor: Optional[int] = None,
     mode: str = "auto",
 ) -> PathLine:
@@ -759,10 +762,15 @@ def path_line(
         bare_self: Draw our own device (a ``None`` hop) as the bare
             :data:`SELF_GLYPH`. For a surface whose route *always* begins and ends on
             us, the name and hash on both ends say nothing the reader doesn't know,
-            and cost the cells the hops in between need. Both stars also fade: setting
-            out from us and coming home to us are fixtures of every such route, no more
-            composed — or removable — than a mirrored return leg is, so they wear the
-            same automatic grey.
+            and cost the cells the hops in between need.
+        dim_self: Fade the bare stars (the default). On a surface where the route is
+            something you *compose*, setting out from us and coming home to us are
+            fixtures — no more yours to choose or remove than a mirrored return leg —
+            so they wear the same automatic grey, and the colour on the line belongs to
+            the nodes actually being picked. Pass ``False`` where nothing is being
+            composed (a record of a walk already made): there is no "not yours" to say,
+            and our node then reads in the app-wide ``you`` white like everywhere else.
+            A ``dim_from`` that reaches a star still fades it either way.
         cursor: Splice an editor's insertion slot (:data:`CURSOR_GLYPH`) in *at* this
             rendered-hop index — the position a chosen hop would take, so index ``0``
             opens the route and ``len`` closes it. Counted over rendered hops exactly
@@ -779,11 +787,13 @@ def path_line(
         dim = dim_from is not None and i >= dim_from
         if hop is None:
             if bare_self:
-                # Both our ends are fixed: a route leaves us and comes home to us, and
-                # neither end is anybody's to compose or remove. So the stars fade like
-                # every other automatic hop — the colour on the line belongs to the
-                # nodes actually being chosen.
-                built.append(PathHop(SELF_GLYPH, you=True, dim=True))
+                # Where the route is being composed, both our ends are fixed — a walk
+                # leaves us and comes home to us, and neither end is anybody's to choose
+                # or remove — so the stars fade like every other automatic hop and the
+                # colour belongs to the nodes actually being picked. Where nothing is
+                # being composed (``dim_self=False``), that has nothing to say, and our
+                # own node keeps the app-wide ``you`` white.
+                built.append(PathHop(SELF_GLYPH, you=True, dim=dim_self or dim))
                 continue
             note = _shorten(device_hash, hash_bytes) if (show_hash and device_hash) else None
             built.append(

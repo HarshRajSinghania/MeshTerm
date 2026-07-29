@@ -21,9 +21,10 @@ from meshterm.core.admin_store import AdminStore
 from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import DiscoveredPath, Repository
-from meshterm.services.records import CATEGORY_BY_ID
+from meshterm.services.records import CATEGORIES, CATEGORY_BY_ID
 from meshterm.ui.records_screen import RecordDialog, WalkVertex, open_records
 from meshterm.ui.surface import TuiUi
+from meshterm.ui.tui import frame
 from meshterm.ui.tui.prompt import TypedConfirmDialog
 from meshterm.ui.tui.screen import CANCEL
 from meshterm.ui.tui.select import SelectScreen
@@ -94,6 +95,42 @@ def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
     assert graph.count("★") == 2  # our node marks both endpoints of the round trip
     assert "labels = hash byte" in body  # the graph's caption
     assert any("⠀" <= ch <= "⣿" for ch in body)  # braille edges are drawn
+
+
+def test_record_graph_is_only_as_tall_as_one_lane_needs() -> None:
+    """A walk is one path: the marker row, plus a label row only where a label landed.
+
+    The shared widget's default floor (5) reserves room for a fan of alternatives; nothing
+    here ever fans, so the walk sat in rows of blank canvas and pushed the route and the
+    actions down the card for nothing.
+    """
+    for record in (_record(), _record(route=(HUB_ID, FAR_ID, HUB_ID, FAR_ID, HUB_ID))):
+        lines = _dialog(record)._graph_lines(60)  # however many relays: still one lane
+        assert 0 < len(lines) <= 3
+        assert all(_plain([line]).strip() for line in lines)  # not a blank row among them
+
+
+def test_record_dialog_route_runs_unlabelled_across_the_whole_card() -> None:
+    """The route is THE path widget at full width — no ``route`` lane eating twelve cells.
+
+    Under a graph captioned ``you → … → you``, the line *is* the route; the label lane only
+    cost hops. It wraps at hop boundaries, so a long walk folds instead of truncating, and
+    our own two ends stand on the ★ the graph above already marks us with.
+    """
+    dialog = _dialog(_record(route=tuple([HUB_ID, FAR_ID] * 4)))
+    body = _plain(dialog.render_body(60)).splitlines()
+    spec_at = next(i for i, line in enumerate(body) if line.startswith("spec"))
+    # The route's own first line: the last one before the spec that isn't a hanging fold.
+    route_at = next(i for i in range(spec_at - 1, 0, -1) if not body[i].startswith("  "))
+    route = body[route_at:spec_at]
+    assert not route[0].startswith("route")  # no label lane
+    assert route[0].startswith("★")  # our end opens the walk on the app-wide star…
+    assert route[-1].endswith("★")  # …and closes it on the same
+    assert "Homestead" not in "".join(route)  # never our name, and never our key
+    assert "YUL-Cartierville" in "".join(route)  # the hops themselves are named in full
+    assert len(route) > 1  # it folded rather than truncating…
+    # …every fold hanging under the step, and the labelled lanes resume at the spec.
+    assert all(line.startswith("  ") for line in route[1:])
 
 
 def test_record_dialog_shows_the_node_type_legend() -> None:
@@ -328,6 +365,93 @@ async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx)
             task.cancel()
 
     assert result == {"records": 1}
+
+
+async def test_a_board_row_spends_its_cells_on_the_walk(tui_ctx) -> None:
+    """A record row leads with rank/day/score, then the walk with both ends bare.
+
+    Every record is a boomerang, so naming ourselves at both ends said nothing twice a row
+    and cost more cells than the whole score lane; the ends go to ``★`` and the score lane
+    is fitted to this board's own widest score instead of a fixed twelve.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    ctx.repo.record_discovery(
+        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID, HUB_ID),
+        score=2.0, stats={"hop_count": 3, "distinct_nodes": 2}, app_version="0.1.0",
+    )
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None
+        label = next(
+            choice.label for choice in browser._choices()
+            if isinstance(choice.value, tuple) and choice.value[0] == "open"
+        )
+        row = label.plain
+        assert row.startswith("#1 ")  # the standing on the board
+        assert "2 nodes" in row  # the score, in the discipline's unit
+        assert row.count("★") == 2  # our two ends, bare — never named twice a row
+        assert "Homestead" not in row  # …so the device name is nowhere on the line
+        # And those ends are *us*, in the you white — nothing here is ours to compose, so
+        # there is no "not yours" fade to wear.
+        stars = [s for s in label.spans if row[s.start : s.end] == "★"]
+        assert [str(s.style) for s in stars] == ["you", "you"]
+        assert "3d" in row and "f2" in row  # the hops, at the record's own hash width
+        # The lanes before the walk are held to what they say: a score lane fitted to this
+        # board's widest score (no dead padding), and the day without the minute the dialog
+        # carries — every cell they don't spend is a hop the route gets to show.
+        assert "2 nodes  ★" in row
+        assert ":" not in row[: row.index("★")]
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) -> None:
+    """Scrolling into a board keeps its ``── discipline ──`` heading *and* description overhead.
+
+    Every discipline heading is followed by its word-wrapped description — what that board
+    scores, which is exactly what a reader partway down it needs. The two pin as one block:
+    with every separator a pinning candidate, the *last muted line* under a heading won the
+    top row on its own and the heading never stuck — the first discipline's least of all,
+    since its description is what the very first scrolled row sits under.
+    """
+    ctx = tui_ctx
+    session = ctx.ui.session
+    for i in range(6):  # one full board, so its records outlast a short viewport
+        ctx.repo.record_discovery(
+            "grand_tour", 1, f"3d,{i:02x}", (HUB_ID, FAR_ID),
+            score=float(i + 1), stats={"hop_count": 2, "distinct_nodes": 2},
+            app_version="0.1.0",
+        )
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None
+        # Exactly the six disciplines are landmarks, each block led by its own heading and
+        # carrying the description written under it — nothing else is a candidate.
+        browser.render_body(72)
+        blocks = [[_plain([line]).strip() for line in rows]
+                  for _idx, rows in browser._sticky_headers]
+        assert [rows[0] for rows in blocks] == [f"── {c.icon} {c.title} ──" for c in CATEGORIES]
+        assert all(len(rows) >= 2 for rows in blocks)  # each carries its description too
+        # Highlighting deep in the one populated board scrolls its heading off the top of a
+        # short viewport; the heading leads what pins, its description under it.
+        for _ in range(4):
+            browser.handle("down")
+        visible, above, _below = frame._visible_slice(browser, browser.render_body(72), 10)
+        board = CATEGORY_BY_ID["grand_tour"]
+        assert _plain([visible[0]]).strip() == f"── {board.icon} {board.title} ──"
+        assert _plain([visible[1]]).strip().startswith(board.description[:20])
+        assert above is True
+        browser.resolve(("back", None, 0, None))
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(

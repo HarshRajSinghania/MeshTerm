@@ -6,15 +6,20 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
 (see :mod:`~meshterm.services.records`); this screen is where the survivors live.
 
 * the browser groups the six disciplines, each under its heading with a one-line
-  description of the game (word-wrapped when it must), then that discipline's records
-  ranked best-first — dated, scored in the discipline's own unit, with the walked route
-  through THE path widget. A discipline holding records at more than one hash width tags
-  each row with its width, since the widths are genuinely different games;
+  description of the game (word-wrapped when it must) — the two pin overhead together as
+  one block while that board scrolls, so a row deep in a discipline still says which game
+  it is winning and what that game scores — then the discipline's records ranked
+  best-first: the day, the score in the discipline's own unit, and the walk itself on THE
+  path widget with both ends bare (every record is a boomerang, so the cells go to the
+  hops). A discipline holding records at more than one hash width tags each row with its
+  width, since the widths are genuinely different games;
 * opening a record floats :class:`RecordDialog` — every stat the walk was measured by
   (the far point named with the node it reached), the walk drawn two ways: on THE route
-  graph (the Message paths dialog's shape, us at both ends) and, beside the stats, as the
-  enclosed area it swept on a braille mini-map (us and every positioned hop, coloured node
-  pins, no labels); then the full route and spec, and when/by which app version it was
+  graph (the Message paths dialog's shape, us at both ends, drawn no taller than one lane
+  needs) and, beside the stats, as the enclosed area it swept on a braille mini-map (us and
+  every positioned hop, coloured node pins, no labels); then the full route — the path
+  widget again, unlabelled across the card's whole width, wrapping at hop boundaries — and
+  the spec, and when/by which app version it was
   set. The card scrolls (PgUp/PgDn/Home/End) when it outgrows the terminal. From there
   *Trace this path* reopens Trace path with the record's route prefilled, so a claim
   worth re-testing is one Enter from the air again — and when that screen closes, the
@@ -33,6 +38,7 @@ import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Sequence
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.geo import haversine_km
@@ -40,8 +46,9 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
-from .menus import back_rows, section_heading
+from .menus import back_rows, fit_cells, section_heading
 from .pathgraph import PathLayer, render_path_graph
+from .pathline import path_line
 from .theme import name_style, snr_style
 from .tui.render import render_hanging, render_to_ansi
 from .tui.screen import Screen
@@ -51,7 +58,6 @@ from .widgets import (
     name_rgb,
     node_marker,
     node_type_legend,
-    path_text,
     route_graph_style,
     self_marker,
 )
@@ -67,6 +73,12 @@ _DESC_WRAP = 64
 #: on the canvas, so it needs no colour to set it apart — white just reads as "the walk".
 _WALK_EDGE = (255, 255, 255)
 
+#: Canvas rows a record's route graph draws in. One walk is one lane, so the graph is flat
+#: and needs only its marker row with a row either side for the labels — the shared widget's
+#: own default (5) leaves a scored walk sitting in two rows of blank canvas. A fan would grow
+#: past this on its own; nothing here ever fans.
+_GRAPH_ROWS = 3
+
 #: The area drawing's one body tone — a plain muted slate the enclosed region and its loop
 #: both draw in. Deliberately a single shade (no dimmer interior wash under a brighter rim):
 #: an even-odd fill shades only the enclosed side, and the coloured node pins carry the
@@ -81,6 +93,25 @@ _POLY_MIN_W = 16
 _POLY_MAX_W = 28
 _POLY_EXTRA_ROWS = 2
 _SIDE_BY_SIDE_MIN = 44
+
+
+def _drawn_rows(lines: list[str]) -> list[str]:
+    """``lines`` with the rows nothing actually landed on stripped from either end.
+
+    Both blocks the card stacks are drawn on a canvas sized for the worst case and then
+    filled: the stats' area drawing keeps :data:`_POLY_EXTRA_ROWS` in hand for a tall shape,
+    and the route graph pads a row either side of its markers for the labels. A shape that
+    comes out flat, or labels that all seat on one side, leave those rows empty — and an
+    empty row still costs a line of card, stacking up as a gap the layout never intended
+    (three blank lines between the stats and the graph where one was meant). Trimming happens
+    *after* the drawing, so nothing placed is ever lost: only rows that stayed blank go.
+    """
+    kept = list(lines)
+    while kept and not Text.from_ansi(kept[-1]).plain.strip():
+        kept.pop()
+    while kept and not Text.from_ansi(kept[0]).plain.strip():
+        kept.pop(0)
+    return kept
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +145,8 @@ class RecordDialog(Screen):
     drawn beside them on a braille mini-map (us at the origin, every positioned hop pinned
     in its own name hue, no labels) when the terminal has the room; below, the walk on THE
     route graph (us at both ends, relays wearing their map marker over a node-type key),
-    the route in full (wrapped, never truncated), and the
+    the route in full on THE path widget — no label lane, the card's whole width, wrapped
+    at hop boundaries and never truncated — and the
     record's provenance — when it was set and by which app version. The card scrolls
     (PgUp/PgDn/Home/End) when it outgrows the frame, while the arrows drive the actions.
     Two actions besides Back: *Trace this path* reopens Trace path with the record's route
@@ -235,6 +267,12 @@ class RecordDialog(Screen):
         re-walking one node must never make the shape look bigger than the ground it covered —
         one node, one marker, whatever the spec asked for. An overheard via chain has the
         opposite duty: nothing there is ours to inflate, and a repeat is evidence.
+
+        One walk is one lane, so the graph draws in :data:`_GRAPH_ROWS` — the marker row and
+        a row either side for the labels — rather than the widget's default, which reserves
+        room for a fan this canvas never carries and spends it on blank rows. Whichever of
+        those two label rows stays empty is handed back (:func:`_drawn_rows`), so the graph
+        sits exactly one blank line under the stats and the caption follows it directly.
         """
         seen: set[str] = set()
         hops: list[str] = []
@@ -248,11 +286,12 @@ class RecordDialog(Screen):
             source=self._device_label,
             type_of=self._type_of,
         )
-        return render_path_graph(
+        return _drawn_rows(render_path_graph(
             [PathLayer(hops=tuple(hops), color=_WALK_EDGE, priority=3)],
             width,
             glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
-        )
+            min_rows=_GRAPH_ROWS,
+        ))
 
     def _stat_lanes(self) -> list[Text]:
         """Every stat the walk was measured by, as label/value lanes (score → round trip).
@@ -314,7 +353,10 @@ class RecordDialog(Screen):
 
         With a drawable walk and room to spare, the polygon takes a fixed cell box on the
         right and the lanes are cropped to the column beside it; too narrow, or no shape,
-        and the lanes reclaim the whole width and the drawing is dropped.
+        and the lanes reclaim the whole width and the drawing is dropped. The block is
+        trimmed to the rows something landed on (:func:`_drawn_rows`), so a shape that comes
+        out flat hands its unused rows back instead of leaving the card gaping under the
+        last stat.
         """
         if not self._shape or width < _SIDE_BY_SIDE_MIN:
             return [render_to_ansi(lane, width, no_wrap=True) for lane in lanes]
@@ -331,7 +373,7 @@ class RecordDialog(Screen):
             row.append("  ")
             row.append_text(Text.from_ansi(poly[i]))
             out.append(render_to_ansi(row, width, no_wrap=True))
-        return out
+        return _drawn_rows(out)
 
     def _shape_lines(self, cell_w: int, cell_h: int) -> list[str]:
         """Draw the walk's enclosed area on a braille canvas: fill, loop, coloured pins.
@@ -390,16 +432,28 @@ class RecordDialog(Screen):
         lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
 
         lines.append("")
-        route = path_text(
+        # The walk itself, on THE path widget, across the card's whole width. No ``route``
+        # label lane: the line under a route graph captioned "you → … → you" is the route,
+        # and the twelve cells a label would take are hops the reader came here for. It wraps
+        # at hop boundaries (never mid-name, never mid-chip) rather than hanging under a lane.
+        # Our two ends stand on the app-wide ★ rather than repeating our name and key — the
+        # graph above already marks us with the same star at both ends, and the legend under
+        # it reads that star back as "you" — kept in the ``you`` white, since nothing about a
+        # walk already made is ours to compose.
+        route = path_line(
             [None, *record.route, None],
             self._resolve,
+            prefix_bytes=record.width_bytes,
             self_name=self._device_label,
             show_hash=True,
             hash_bytes=record.width_bytes,
             device_hash=self._device_hash,
+            bare_self=True,
+            dim_self=False,
         )
-        lines.extend(render_hanging(Text("route       ", style="muted"), route, width,
-                                    indent=12))
+        lines.extend(
+            render_to_ansi(line, width, no_wrap=True) for line in route.wrapped(width)
+        )
         spec = Text(record.spec, style="brand")
         spec.append(f"  ({record.width_bytes}-byte hops)", style="muted")
         lines.extend(render_hanging(Text("spec        ", style="muted"), spec, width,
@@ -594,30 +648,52 @@ async def open_records(ctx: "AppContext") -> dict:
             rows.append(Separator(f"   {line}", style="muted"))
         return rows
 
-    def browser_row(
-        rank: int, category: Category, record: DiscoveredPath, *, show_width: bool
-    ) -> Text:
-        """One record row: rank, date, score (width when it disambiguates), route."""
-        row = Text(f"#{rank}  ", style="muted")
-        row.append(record.discovered_at.astimezone().strftime("%b %d %H:%M"),
-                   style="muted")
-        row.append("  ")
+    def scored(category: Category, record: DiscoveredPath) -> str:
+        """A record's score in its discipline's unit, bounded where the walk was partial."""
         score = category.format_score(record.score)
         if category.id == "long_haul" and not record.stats.get("km_complete", True):
             score = "≥ " + score
-        row.append(f"{score:<12}", style="accent")
+        return score
+
+    def browser_row(
+        rank: int,
+        category: Category,
+        record: DiscoveredPath,
+        *,
+        show_width: bool,
+        score_w: int,
+    ) -> Text:
+        """One record row: rank, date, score (width when it disambiguates), then the walk.
+
+        The columns left of the walk are held to what they actually say — the day the record
+        was set (the dialog carries the time), and a score lane fitted to the widest score on
+        *this* board rather than a fixed twelve — because every cell they don't spend is a hop
+        the route gets to show. The walk itself draws on THE path widget with both ends bare
+        (:data:`~meshterm.ui.pathline.SELF_GLYPH`): a record is a boomerang by construction,
+        so naming ourselves twice per row would cost more cells than the whole score lane and
+        tell the reader what every other row already told them. Those stars keep the ``you``
+        white (``dim_self=False``) — the fade means "not yours to compose", and nothing on a
+        board of walks already made is being composed. Overflow stays the list's job — the
+        browser h-scrolls the highlighted row, so a long walk is read by sliding it, not by
+        eliding it here.
+        """
+        row = Text(f"#{rank} ", style="muted")
+        row.append(record.discovered_at.astimezone().strftime("%b %d"), style="muted")
+        row.append("  ")
+        row.append(fit_cells(scored(category, record), score_w), style="accent")
         if show_width:
-            row.append(f"{record.width_bytes} B  ", style="muted")
-        row.append(" ")
+            row.append(f" {record.width_bytes} B", style="muted")
+        row.append("  ")
         row.append_text(
-            path_text(
+            path_line(
                 [None, *record.route, None],
                 resolve,
-                self_name=device_label,
-                show_hash=True,
+                prefix_bytes=record.width_bytes,
                 hash_bytes=record.width_bytes,
-                device_hash=device_hash,
-            )
+                self_name=device_label,
+                bare_self=True,
+                dim_self=False,
+            ).text()
         )
         return row
 
@@ -664,9 +740,15 @@ async def open_records(ctx: "AppContext") -> dict:
             if not board:
                 items.append(Separator("   no records yet", style="muted"))
             show_width = len({r.width_bytes for r in board}) > 1
+            # The score lane is this board's own widest score — "3 nodes" and "+6.0 dB"
+            # measure differently, and a lane sized for the worst case everywhere would
+            # spend the difference on padding in front of every route.
+            score_w = max((cell_len(scored(category, r)) for r in board), default=0)
             for rank, record in enumerate(board, start=1):
                 items.append(Choice(
-                    title=browser_row(rank, category, record, show_width=show_width),
+                    title=browser_row(
+                        rank, category, record, show_width=show_width, score_w=score_w
+                    ),
                     value=("open", category, rank, record),
                 ))
         total = len(ctx.repo.discoveries())

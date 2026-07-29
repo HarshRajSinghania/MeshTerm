@@ -426,3 +426,29 @@ def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
     assert len(lines) > 1
     assert all(line.plain[2 + WRAP_OFFSET] == POWERLINE_SEP for line in lines[1:])
     assert all(line.cell_len <= 28 for line in lines)
+
+
+def test_bare_self_keeps_us_in_the_you_white_where_nothing_is_composed() -> None:
+    """``dim_self=False`` un-mutes the stars: the fade means "not yours to compose".
+
+    A surface that only *shows* a walk (the Trophy case's boards and record card) composes
+    nothing, so there is no "not yours" to say and our own node reads in the app-wide ``you``
+    white — the same identity colour it wears everywhere else. A ``dim_from`` that reaches a
+    star still fades it, so a mirrored return leg keeps its grey either way.
+    """
+    hops = [None, *(f"{i:02x}aa" for i in range(4)), None]
+    text = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                     dim_self=False, mode="plain").text()
+    stars = [s for s in text.spans if text.plain[s.start : s.end] == SELF_GLYPH]
+    assert [str(s.style) for s in stars] == ["you", "you"]
+    chips = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                      dim_self=False, mode="powerline").text()
+    fills = [str(s.style) for s in chips.spans
+             if chips.plain[s.start : s.end] == SELF_GLYPH]
+    assert all("#ffffff" in fill for fill in fills)  # the you white, as a chip fill
+
+    # The explicit fade still rules: a star inside a dimmed return leg stays grey.
+    faded = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                      dim_self=False, dim_from=3, mode="plain").text()
+    tail = [s for s in faded.spans if faded.plain[s.start : s.end] == SELF_GLYPH]
+    assert [str(s.style) for s in tail] == ["you", "faint"]
