@@ -1938,6 +1938,68 @@ def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
     session._emit("★ you  ▲ repeater  ● node  ⠿ chart")
     assert session._app.renderer._last_screen is last
 
+    # An *unchanged* wide-glyph frame is exempt — this is the 1 Hz refresh, which re-renders
+    # an idle screen identically. Rewriting nothing needs no repaint, and erasing the terminal
+    # once a second on any emoji-bearing screen is exactly the flicker.
+    session = TuiSession()
+    last = _filled()
+    session._app = _fake_app(last)
+    session._emit("🎯 Farthest node")
+    assert session._app.renderer._last_screen is None
+    session._app.renderer._last_screen = last
+    session._emit("🎯 Farthest node")  # the timer tick: same frame, no repaint
+    assert session._app.renderer._last_screen is last
+    session._emit("🧳 Most nodes")  # a real change: back to the full repaint
+    assert session._app.renderer._last_screen is None
+
+
+def test_a_changed_layer_repaints_over_a_still_wide_glyph_frame() -> None:
+    """Any layer changing upgrades the paint while a wide glyph is drawn *anywhere*.
+
+    A plain dialog moving over a base row that carries an emoji is rewritten from a model of
+    that row the terminal disagrees with, so it is the frame as a whole — not the layer that
+    happened to change — that decides. A layer *leaving* counts as a change too: a closing
+    dialog just stops rendering, and the cells it gives back to the base would otherwise be
+    rewritten piecemeal.
+    """
+    import types
+
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.layout.screen import Screen as PtScreen
+
+    session = TuiSession()
+    remembered = PtScreen()
+    session._app = types.SimpleNamespace(
+        renderer=types.SimpleNamespace(_last_screen=remembered),
+        output=types.SimpleNamespace(get_size=lambda: Size(rows=10, columns=60)),
+        invalidate=lambda: None,
+    )
+    session._emit("🎯 the board behind", "base")  # a wide glyph on the background
+    session._app.renderer._last_screen = remembered
+    session._emit("plain dialog, frame 1", "float0")  # no emoji of its own…
+    assert session._app.renderer._last_screen is None  # …but the frame carries one
+
+    session._app.renderer._last_screen = remembered
+    session._emit("plain dialog, frame 1", "float0")  # unchanged again → left alone
+    assert session._app.renderer._last_screen is remembered
+
+    # The dialog closes: one screen on the stack means no float layer this paint, so
+    # reconciling drops it — and, with the emoji-bearing base still drawn, the cells it hands
+    # back are repainted whole rather than piecemeal.
+    session.push(Screen())
+    session._app.renderer._last_screen = remembered
+    session._reconcile_layers()
+    assert "float0" not in session._layers
+    assert session._app.renderer._last_screen is None
+
+    # With nothing wide left drawn, a layer leaving costs no repaint at all.
+    session._layers.clear()
+    session._emit("plain base", "base")
+    session._emit("plain dialog", "float0")
+    session._app.renderer._last_screen = remembered
+    session._reconcile_layers()
+    assert session._app.renderer._last_screen is remembered
+
 
 def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:
     """``text(floating=True)`` floats as a centered popup even on an empty stack.

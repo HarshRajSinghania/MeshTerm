@@ -287,6 +287,12 @@ class TuiSession:
         # deliberately *not* on the screen stack: it hovers above every layer and is shown/
         # hidden by busy_overlay, independent of whatever screens are pushed.
         self._overlay: Optional[BusyOverlay] = None
+        # What each drawn layer last composed — ``layer -> (text, carries a wide glyph)`` — so
+        # :meth:`_emit` can tell a frame that actually changed from one the 1 Hz refresh just
+        # re-rendered identically, and can ask whether anything currently on screen needs the
+        # full-repaint treatment. Reconciled against the layers actually drawn on every paint
+        # (see :meth:`_reconcile_layers`).
+        self._layers: dict[str, tuple[str, bool]] = {}
 
     # --- stack ---------------------------------------------------------------
 
@@ -1116,9 +1122,10 @@ class TuiSession:
         """Whether any dialog floats over the background this frame."""
         return bool(self._float_layers())
 
-    def _emit(self, text: str) -> ANSI:
+    def _emit(self, text: str, layer: str = "base") -> ANSI:
         """Wrap a composed frame as prompt_toolkit :class:`ANSI`, forcing a full repaint
-        when it holds a glyph the terminal may draw narrower than pt reserves for it.
+        when it holds a glyph the terminal may draw narrower than pt reserves for it *and*
+        the frame has actually changed.
 
         prompt_toolkit paints differentially: it rewrites only the cells that changed since
         the last frame, and it steps the cursor *relative* to its own width model. That is
@@ -1133,13 +1140,55 @@ class TuiSession:
         nothing stale survives. Frames with only width-1 glyphs keep the fast differential
         paint. This is checked per frame, so it covers a scroll, a resize, or a timer tick
         alike — wherever the glyph is (a full-frame chat, a floating dialog, the overlay).
+
+        A frame that composed *identically* to the last one is exempt, and that is what keeps
+        the screen still. The app repaints on a 1 Hz timer to tick the header's pulse, so on
+        an emoji-bearing screen — the Trophy case, six discipline icons and a delete row —
+        every one of those ticks was erasing the terminal and rewriting it: a full-screen
+        blank-and-redraw once a second, with nothing to show for it. Nothing needs rewriting
+        when nothing changed — pt writes no cells, so its cursor cannot have drifted, and the
+        previous paint already left the terminal aligned.
+
+        What matters is whether *any* layer changed, not whether the emoji is in the one that
+        did: a plain dialog moving over a base row that carries an emoji is rewritten from a
+        model of that row the terminal disagrees with. So a changed layer upgrades the paint
+        whenever anything currently drawn holds a wide glyph — and a layer that goes away is
+        a change too (:meth:`_reconcile_layers`).
         """
-        if _has_wide_glyph(text):
-            self._invalidate_last_frame()
+        entry = (text, _has_wide_glyph(text))
+        if self._layers.get(layer) != entry:
+            self._layers[layer] = entry
+            self._repaint_if_wide()
         return ANSI(text)
+
+    def _repaint_if_wide(self) -> None:
+        """Upgrade this paint to a full repaint if any drawn layer holds a wide glyph."""
+        if any(wide for _text, wide in self._layers.values()):
+            self._invalidate_last_frame()
+
+    def _reconcile_layers(self) -> None:
+        """Forget the layers this paint won't draw, and treat their leaving as a change.
+
+        A float is hidden by dropping its window from the layout, so a closing dialog simply
+        stops calling :meth:`_emit` — nothing would otherwise notice it had gone, and the
+        cells it gives back to the base would be rewritten piecemeal over a row the terminal
+        may be drawing shifted. Called at the top of the paint, from the base layer, since
+        the background is composed before the floats above it.
+        """
+        live = {f"float{i}" for i in range(len(self._float_layers()))}
+        if self._base_screen() is not None:
+            live.add("base")
+        if self._overlay_visible():
+            live.add("overlay")
+        gone = [layer for layer in self._layers if layer not in live]
+        for layer in gone:
+            self._layers.pop(layer)
+        if gone:
+            self._repaint_if_wide()
 
     def _render_base(self) -> ANSI:
         """Render the persistent frame around the background screen."""
+        self._reconcile_layers()  # the paint starts here: the background composes first
         cols, rows = self._size()
         base = self._base_screen()
         if base is None:
@@ -1160,7 +1209,7 @@ class TuiSession:
         if index >= len(layers):
             return ANSI("")
         cols, rows = self._size()
-        return self._emit(frame.compose_dialog(layers[index], cols, rows))
+        return self._emit(frame.compose_dialog(layers[index], cols, rows), f"float{index}")
 
     def _overlay_visible(self) -> bool:
         """Whether the busy overlay should be painted this frame.
@@ -1177,7 +1226,7 @@ class TuiSession:
         """Render the busy overlay's skeleton card (only when :meth:`_overlay_visible`)."""
         if self._overlay is None:
             return ANSI("")
-        return self._emit(self._overlay.render())
+        return self._emit(self._overlay.render(), "overlay")
 
     # --- input ---------------------------------------------------------------
 
