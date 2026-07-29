@@ -1,6 +1,6 @@
 ---
 name: purge-test-data
-description: Purge simulator/mock node pollution from the default MeshTerm database. Run after any --mock CLI session or simulator test drive, and whenever fake nodes (Alice, Yagi-Repeater, hub-1, hopN hashes, a1b2c3d4… keys) show up in the atlas, dashboard, or trace history.
+description: Purge simulator/mock node pollution from the default MeshTerm database. Run after any --mock CLI session or simulator test drive, and whenever fake nodes (Alice, Yagi-Repeater, hub-1, hopN hashes, a1b2c3d4… keys) show up in the mesh walk, dashboard, or trace history.
 model: haiku
 ---
 
@@ -8,7 +8,7 @@ model: haiku
 
 `meshterm --mock` and simulator test drives write to the **real** default
 database (`~/.meshterm/meshterm.db`), polluting the history that feeds the
-atlas, dashboard, and trace suggestions. This skill removes exactly the rows
+mesh walk, dashboard, and trace suggestions. This skill removes exactly the rows
 carrying the simulator's fingerprints and nothing else.
 
 ## Run
@@ -47,5 +47,5 @@ stray narrow mock hop left behind is better than a purged real row.
 
 After **any** work that launched `meshterm --mock` (the verify skill's first
 stop) or exercised `MockDevice` against the default database. Do it in the
-same session, before handing back to the user — fake nodes in the atlas on
+same session, before handing back to the user — fake nodes in the mesh walk on
 real hardware are exactly what this prevents.

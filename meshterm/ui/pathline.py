@@ -188,7 +188,7 @@ class PathLine:
         mode: ``"auto"`` (powerline when the terminal can draw it — the default),
             ``"powerline"``, or ``"plain"``.
         separator: The plain-mode joiner. Defaults to the app-wide ``" → "``; a
-            surface with its own convention (the atlas trail's ``" › "``) may pass
+            surface with its own convention (the mesh walk trail's ``" › "``) may pass
             it. Ignored by powerline mode.
         empty: The muted text a hopless path reads as (``"direct"``).
     """

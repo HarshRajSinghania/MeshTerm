@@ -43,7 +43,7 @@ them instead of hand-rolling:
 | Quit | leave the app (main menu, device splash) — nowhere else |
 
 Node vs contact — the boundary: **node** is the hardware/participant sense — the map,
-atlas, heard-nodes, relay hops, graph vertices, and node *types* (client/repeater/room/
+mesh walk, heard-nodes, relay hops, graph vertices, and node *types* (client/repeater/room/
 sensor) all speak "node". **Contact** is the saved-identity sense — the Contacts screen,
 the courier recipient, anything you *address*. The reception/persistence layer
 (`observations.node`, `HeardNode`, `heard_nodes()`, `trace_hops.node`) stays "node"; the

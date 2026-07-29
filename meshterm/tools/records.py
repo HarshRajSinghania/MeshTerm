@@ -39,7 +39,7 @@ class TrophyCaseTool(Tool):
         """Open the browser; returning ``None`` completes the invocation with no run row.
 
         The screen reads stored records and transmits nothing (and logs no rows of its
-        own), so it lives in :meth:`prompt_params` and needs no logged run — the atlas /
+        own), so it lives in :meth:`prompt_params` and needs no logged run — the mesh walk /
         dashboard pattern.
 
         Args:

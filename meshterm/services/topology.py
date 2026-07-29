@@ -375,7 +375,7 @@ class MeshTopology:
         only when the prefix names *exactly one* contact — but the mesh holds two nodes
         whose keys both open ``27`` (``27d4…`` and ``27e4…``), so the bare ``27`` hop
         stays short and stands beside the wide ``27d4396a2967`` as a phantom second node.
-        Left alone that doubles the node on every surface the graph feeds — the atlas
+        Left alone that doubles the node on every surface the graph feeds — the mesh walk
         draws it twice, the route graph fans two lanes to one repeater, and the scenario
         ranker offers a redundant weaker route through the stub.
 
@@ -469,7 +469,7 @@ class MeshTopology:
     def links(self) -> list[Link]:
         """Every link the graph holds evidence for (no particular order).
 
-        The whole-graph view the Mesh Atlas draws; path queries should prefer
+        The whole-graph view the Mesh walk draws; path queries should prefer
         :meth:`next_hops` / :meth:`scenarios`, which rank and filter.
         """
         return list(self._links.values())

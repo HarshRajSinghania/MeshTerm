@@ -1,4 +1,4 @@
-"""Mesh atlas tests: the focus-and-walk browser over a hand-built topology.
+"""Mesh walk tests: the focus-and-walk browser over a hand-built topology.
 
 The screen is driven headless against a fake session, the same approach as the
 dashboard tests: render_body is pure lines-out, handle() is pure state, so walking,
@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
-from meshterm.ui.atlas_screen import AtlasScreen
+from meshterm.ui.walk_screen import WalkScreen
 
 US = "aa" * 6
 YUL = Contact(name="YUL-Cartierville", public_key="3d" * 32, node_type=2)
@@ -40,8 +40,8 @@ def _topo(*, with_island: bool = False) -> MeshTopology:
     return topo
 
 
-def _screen(topo: MeshTopology, cell_h: int = 24) -> AtlasScreen:
-    screen = AtlasScreen(
+def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
+    screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
         contacts={
@@ -61,7 +61,7 @@ def _plain(lines: list[str]) -> str:
 # --- rendering ----------------------------------------------------------------------------
 
 
-def test_atlas_opens_focused_on_us_with_the_link_list() -> None:
+def test_walk_opens_focused_on_us_with_the_link_list() -> None:
     """The default focus is our own node: canvas, legend, and its links beneath."""
     screen = _screen(_topo())
     body = _plain(screen.render_body(80))
@@ -69,10 +69,10 @@ def test_atlas_opens_focused_on_us_with_the_link_list() -> None:
     assert "Links" in body and "strongest observed first" in body
     assert "YUL-Cartierville" in body  # our one neighbour, as a selectable row
     assert "edge = SNR" in body  # the canvas legend
-    assert screen.title == "Mesh atlas — Homestead · 3 nodes · 2 links"
+    assert screen.title == "Mesh walk — Homestead · 3 nodes · 2 links"
 
 
-def test_atlas_link_rows_carry_snr_evidence_and_onward_count() -> None:
+def test_walk_link_rows_carry_snr_evidence_and_onward_count() -> None:
     """A neighbour row reads SNR, samples, source tags, age, and its onward links."""
     screen = _screen(_topo())
     body = _plain(screen.render_body(80))
@@ -85,7 +85,7 @@ def test_atlas_link_rows_carry_snr_evidence_and_onward_count() -> None:
     assert "…" not in row  # …and nothing about it elided
 
 
-def test_atlas_link_row_shrinks_the_key_before_the_name() -> None:
+def test_walk_link_row_shrinks_the_key_before_the_name() -> None:
     """A long name keeps its letters; the key gives ground first, on a byte boundary.
 
     When the row can't hold both a long name and the full 12-hex id, the key truncates to
@@ -98,7 +98,7 @@ def test_atlas_link_row_shrinks_the_key_before_the_name() -> None:
     topo = MeshTopology(US, contacts=[long_repeater])
     node = topo.canonical(long_repeater.public_key)
     topo.add_walk([topo.self_id, node], snrs=[4.0], when=utcnow(), source="trace")
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
         contacts={node: long_repeater},
@@ -116,7 +116,7 @@ def test_atlas_link_row_shrinks_the_key_before_the_name() -> None:
     assert "d4c3b2a1f0e9" not in row  # …but not the whole id — it was truncated
 
 
-def test_atlas_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
+def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     """A neighbour's name is drawn whole on the canvas, not clipped to a flat short cap.
 
     The fan pulls west of the edge and each label clamps to the room actually there, so a
@@ -131,7 +131,7 @@ def test_atlas_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     for c, snr in zip(long_names, (8.0, 1.0)):
         topo.add_walk([topo.self_id, topo.canonical(c.public_key)], snrs=[snr], when=when,
                       source="trace")
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
         contacts={topo.canonical(c.public_key): c for c in long_names},
@@ -145,14 +145,14 @@ def test_atlas_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     assert "Repeater-Downtown-01" in canvas  # 20 chars, whole
 
 
-def test_atlas_selected_link_lights_the_route_that_reaches_it() -> None:
+def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     """Selecting a link draws its edge *and* the approach into the focus at full strength.
 
     With every link stale (so an un-highlighted edge fades to half), the selected
     neighbour's edge and the came_from → focus approach are drawn undimmed — the lit
     route — while an unselected neighbour's edge stays faded.
     """
-    from meshterm.ui.atlas_screen import _snr_rgb
+    from meshterm.ui.walk_screen import _snr_rgb
 
     stale = utcnow() - timedelta(days=10)  # older than a week → _freshness 0.5
     yul = Contact(name="YUL", public_key="3d" * 32, node_type=2)
@@ -163,7 +163,7 @@ def test_atlas_selected_link_lights_the_route_that_reaches_it() -> None:
     topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")   # approach: green
     topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")   # amber
     topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")   # red
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
         contacts={topo.canonical(c.public_key): c for c in (yul, alice, bob)},
@@ -192,8 +192,8 @@ def test_atlas_selected_link_lights_the_route_that_reaches_it() -> None:
     assert code(_snr_rgb(-15.0)) not in canvas     # …and never reaches full strength
 
 
-def test_atlas_empty_graph_renders_guidance() -> None:
-    """With no evidence at all the screen explains how the atlas fills up."""
+def test_walk_empty_graph_renders_guidance() -> None:
+    """With no evidence at all the screen explains how the walk fills up."""
     topo = MeshTopology(US, contacts=[])
     screen = _screen(topo)
     body = _plain(screen.render_body(80))
@@ -204,7 +204,7 @@ def test_atlas_empty_graph_renders_guidance() -> None:
 # --- walking ------------------------------------------------------------------------------
 
 
-def test_atlas_enter_walks_and_grows_the_trail() -> None:
+def test_walk_enter_walks_and_grows_the_trail() -> None:
     """Enter focuses the highlighted neighbour; the breadcrumb trail reads the walk."""
     topo = _topo()
     screen = _screen(topo)
@@ -219,7 +219,7 @@ def test_atlas_enter_walks_and_grows_the_trail() -> None:
     assert "⌫ back" in body  # the row leading home is marked
 
 
-def test_atlas_backspace_steps_back_along_the_trail() -> None:
+def test_walk_backspace_steps_back_along_the_trail() -> None:
     """⌫ pops the trail one step; at the trail's start it does nothing."""
     topo = _topo()
     screen = _screen(topo)
@@ -232,7 +232,7 @@ def test_atlas_backspace_steps_back_along_the_trail() -> None:
     assert screen._trail == [topo.self_id]
 
 
-def test_atlas_walking_into_the_back_node_pops_instead_of_growing() -> None:
+def test_walk_walking_into_the_back_node_pops_instead_of_growing() -> None:
     """Enter on the trail-back row retraces rather than appending a ping-pong walk."""
     topo = _topo()
     screen = _screen(topo)
@@ -244,7 +244,7 @@ def test_atlas_walking_into_the_back_node_pops_instead_of_growing() -> None:
     assert screen._trail == [topo.self_id]  # popped, not [us, yul, us]
 
 
-def test_atlas_walking_to_an_earlier_node_drops_the_loop() -> None:
+def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
     """Revisiting a node already on the trail truncates the stack to its first appearance,
     dropping the circular stretch walked to get back there."""
     topo = MeshTopology(US, contacts=[YUL, ALICE])
@@ -268,7 +268,7 @@ def test_atlas_walking_to_an_earlier_node_drops_the_loop() -> None:
     assert screen._trail == [topo.self_id, yul]
 
 
-def test_atlas_trail_drops_the_head_not_the_tail_when_narrow() -> None:
+def test_walk_trail_drops_the_head_not_the_tail_when_narrow() -> None:
     """A trail too long for the line loses its head behind a leading ⋯, snapped right."""
     screen = _screen(_topo())
     us = screen._topo.self_id
@@ -283,14 +283,14 @@ def test_atlas_trail_drops_the_head_not_the_tail_when_narrow() -> None:
     assert len(text) == width  # the surviving tail snaps flush to the right edge
 
 
-def test_atlas_trail_sits_left_until_it_overflows() -> None:
+def test_walk_trail_sits_left_until_it_overflows() -> None:
     """A trail that fits is left-aligned; only an elided one snaps to the right edge."""
     screen = _screen(_topo())
     screen._trail = [screen._topo.self_id]
     assert screen._trail_text(40).plain == "Homestead"
 
 
-def test_atlas_trail_names_carry_their_node_hues() -> None:
+def test_walk_trail_names_carry_their_node_hues() -> None:
     """Trail names take the per-node key hue (ours the white you-style), the focus bold."""
     from meshterm.ui.theme import node_style
 
@@ -307,7 +307,7 @@ def test_atlas_trail_names_carry_their_node_hues() -> None:
     )
 
 
-def test_atlas_home_refocuses_us() -> None:
+def test_walk_home_refocuses_us() -> None:
     """Home resets the walk to our own node from anywhere."""
     topo = _topo()
     screen = _screen(topo)
@@ -317,7 +317,7 @@ def test_atlas_home_refocuses_us() -> None:
     assert screen._trail == [topo.self_id]
 
 
-def test_atlas_came_from_anchors_west_and_the_fan_stays_east() -> None:
+def test_walk_came_from_anchors_west_and_the_fan_stays_east() -> None:
     """The trail-back node sits at the far west; every fan node east of the focus."""
     topo = _topo()
     screen = _screen(topo)
@@ -332,7 +332,7 @@ def test_atlas_came_from_anchors_west_and_the_fan_stays_east() -> None:
     assert fx <= (80 * 2) // 3  # and the focus itself leans left
 
 
-def test_atlas_fan_rim_leaves_spread_east_not_curling_back() -> None:
+def test_walk_fan_rim_leaves_spread_east_not_curling_back() -> None:
     """The fan is a flattened arc: the top/bottom leaves reach well east too.
 
     On the old circular arc only the due-east leaf reached the far side; the rim leaves
@@ -365,9 +365,9 @@ def _hub_topo(spokes: int) -> MeshTopology:
     return topo
 
 
-def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
+def test_walk_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
     """Beyond the area's capacity, weaker neighbours fold into a single ``…`` node."""
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
     )
     screen.note_viewport(20)
@@ -379,9 +379,9 @@ def test_atlas_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
     assert len(screen._rows()) == 14
 
 
-def test_atlas_fan_stays_sparse_and_collapses_the_rest() -> None:
+def test_walk_fan_stays_sparse_and_collapses_the_rest() -> None:
     """The fan is kept deliberately sparse: even a modest hub sheds its weakest links."""
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(8), contacts={}, self_label="us"
     )
     screen.note_viewport(20)
@@ -389,7 +389,7 @@ def test_atlas_fan_stays_sparse_and_collapses_the_rest() -> None:
     assert "…" in canvas_part and "weaker" in canvas_part  # not all eight are drawn
 
 
-def test_atlas_labels_non_selected_nodes_to_the_right_of_their_icon() -> None:
+def test_walk_labels_non_selected_nodes_to_the_right_of_their_icon() -> None:
     """A fan node is named just to the right of its marker — the walk's reading way."""
     from meshterm.ui.mapcanvas import MapCanvas
 
@@ -402,9 +402,9 @@ def test_atlas_labels_non_selected_nodes_to_the_right_of_their_icon() -> None:
     assert all(cx > marker_cx for cx, _cy in canvas._label_cells)  # every cell east
 
 
-def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
+def test_walk_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
     """Highlighting a weak (collapsed) row surfaces its name at the ``…`` marker."""
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
     )
     screen.note_viewport(20)
@@ -417,9 +417,9 @@ def test_atlas_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> 
     assert "weaker" not in canvas_part  # ...replacing the "+n weaker" count
 
 
-def test_atlas_body_fits_the_viewport_and_windows_the_list() -> None:
+def test_walk_body_fits_the_viewport_and_windows_the_list() -> None:
     """The screen never outgrows the frame; only the link list scrolls, marked."""
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
     )
     screen.note_viewport(22)
@@ -430,9 +430,9 @@ def test_atlas_body_fits_the_viewport_and_windows_the_list() -> None:
     assert "Links" in body
 
 
-def test_atlas_pgdn_pages_the_highlight_by_the_list_window() -> None:
+def test_walk_pgdn_pages_the_highlight_by_the_list_window() -> None:
     """PgUp/PgDn stride by the list window, and the window follows the highlight."""
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
     )
     screen.note_viewport(22)
@@ -451,7 +451,7 @@ def test_atlas_pgdn_pages_the_highlight_by_the_list_window() -> None:
 # --- find ---------------------------------------------------------------------------------
 
 
-def test_atlas_find_lists_matches_and_teleports() -> None:
+def test_walk_find_lists_matches_and_teleports() -> None:
     """Typing filters every known node; Enter focuses the match and restarts the trail."""
     topo = _topo()
     screen = _screen(topo)
@@ -471,7 +471,7 @@ def test_atlas_find_lists_matches_and_teleports() -> None:
     assert screen._filter == ""
 
 
-def test_atlas_find_marks_islands() -> None:
+def test_walk_find_marks_islands() -> None:
     """A match with no path to us reads island, and focusing it says why."""
     screen = _screen(_topo(with_island=True))
     screen.render_body(80)
@@ -484,7 +484,7 @@ def test_atlas_find_marks_islands() -> None:
     assert "island — no observed path to you" in body
 
 
-def test_atlas_esc_peels_find_then_dismisses() -> None:
+def test_walk_esc_peels_find_then_dismisses() -> None:
     """Esc clears an active find first; the next Esc leaves the screen."""
     import asyncio
 

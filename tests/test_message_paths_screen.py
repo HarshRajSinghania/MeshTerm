@@ -1,6 +1,6 @@
 """Message-paths dialog tests: the graph-over-rows view behind the chat's ^P.
 
-Driven headless like the atlas tests: render_body is pure lines-out, handle() pure
+Driven headless like the mesh walk tests: render_body is pure lines-out, handle() pure
 state, so the selection cursor, the horizontal line scroll, and the selected-path
 labelling are all assertable without a terminal.
 """

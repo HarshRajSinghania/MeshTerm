@@ -1,13 +1,13 @@
-"""The Mesh atlas: walk the mesh's observed shape one node at a time.
+"""The Mesh walk: walk the mesh's observed shape one node at a time.
 
-The interactive face of the ``atlas`` tool. The trace path composer already distills
+The interactive face of the ``walk`` tool. The trace path composer already distills
 every fragment of topology we ever received — trace walks, firmware routes, RX-logged
 relay chains, repeater neighbour tables — into one evidence graph
 (:mod:`~meshterm.services.topology`); this screen is that graph made explorable. Nothing
-here transmits: the atlas is a reading of what the radio has already heard.
+here transmits: the walk is a reading of what the radio has already heard.
 
 Rather than plotting the whole mesh at once (which reads as a hairball the moment the
-graph grows), the atlas keeps one node *in focus* — our own, to begin with — and shows
+graph grows), the walk keeps one node *in focus* — our own, to begin with — and shows
 only its immediate neighbourhood:
 
 * the **canvas** — the majority of the screen, so the shape stays legible — anchors the
@@ -78,7 +78,7 @@ if TYPE_CHECKING:
 
 #: Horizontal / vertical dot-space margins the neighbour fan keeps clear of the canvas
 #: edge. The east margin holds a fan node's rightward label (see
-#: :meth:`AtlasScreen._label_right`); it is deliberately roomy — pulling the whole fan a
+#: :meth:`WalkScreen._label_right`); it is deliberately roomy — pulling the whole fan a
 #: little west of the edge — so even the tightest (due-east) marker has cells to name
 #: itself in full rather than clipping a long contact name, which the labels' room-to-edge
 #: clamp then spends wherever the fan leaves it.
@@ -136,14 +136,14 @@ _MORE = "\x00more"
 _MAX_MATCHES = 10
 
 #: The narrowest the neighbour/match list's name lane shrinks to. The lane is content-sized
-#: and flexes up to whatever the fixed lanes leave (see :meth:`AtlasScreen._lane_widths`),
+#: and flexes up to whatever the fixed lanes leave (see :meth:`WalkScreen._lane_widths`),
 #: so as much of a long name shows as the row can spare.
 _LIST_NAME_MIN = 10
 
 #: The *widest* the key lane spans — the whole 12-hex canonical id, addressed prefix lit in
 #: the node's hue (see :func:`highlighted_hash`). The lane flexes down from here on a byte
 #: boundary to hand a long name more room, but never below its lit hash (see
-#: :meth:`AtlasScreen._lane_widths`): the name loses letters before the hash does.
+#: :meth:`WalkScreen._lane_widths`): the name loses letters before the hash does.
 _LIST_HASH_W = 12
 
 #: Cells a link row spends *outside* its two flexing lanes (name and key), so those two can
@@ -205,8 +205,8 @@ def _freshness(last_seen: Optional[datetime], now: datetime) -> float:
     return 0.5
 
 
-class AtlasScreen(Screen):
-    """The full-screen atlas walker: a focus neighbourhood canvas over a link list."""
+class WalkScreen(Screen):
+    """The full-screen mesh walker: a focus neighbourhood canvas over a link list."""
 
     floating = False
 
@@ -219,7 +219,7 @@ class AtlasScreen(Screen):
         self_label: str,
         prefix_bytes: int = 0,
     ) -> None:
-        """Create the atlas over a built topology snapshot.
+        """Create the walk over a built topology snapshot.
 
         Args:
             session: The running TUI session (repaints).
@@ -447,8 +447,8 @@ class AtlasScreen(Screen):
         return max(4, height)
 
     def _compose_title(self, links: list[Link]) -> str:
-        """``Mesh atlas — focus`` plus the graph's status atoms."""
-        title = f"Mesh atlas — {self._label(self._focus)}"
+        """``Mesh walk — focus`` plus the graph's status atoms."""
+        title = f"Mesh walk — {self._label(self._focus)}"
         title += f" · {len(self._all_nodes())} nodes · {len(links)} links"
         if self._filter:
             matches = self._matches()
@@ -1002,7 +1002,7 @@ class AtlasScreen(Screen):
     def _marker_rgb(self, node: str) -> RGB:
         """The marker colour for a node: its key-derived hue, ours white, a keyless id grey.
 
-        The atlas colours every marker by *identity* — the app-wide per-node hue
+        The walk colours every marker by *identity* — the app-wide per-node hue
         (:func:`~meshterm.ui.theme.node_style`, keyed on the node's own key) — rather than
         by node *type*; the glyph *shape* (see :meth:`_glyph`) is what carries the type. Our
         own node keeps the pure-white ``you`` convention, and a non-hex placeholder id (our
@@ -1049,7 +1049,7 @@ class AtlasScreen(Screen):
         """A friendly explanation while the evidence graph is still empty."""
         lines = [
             Text(),
-            Text("The atlas has no evidence to draw yet.", style="accent"),
+            Text("This walk has no evidence to draw yet.", style="accent"),
             Text(),
             Text("Topology accrues passively as the mesh talks:", style="muted"),
             Text("  · every successful trace maps each link it walked", style="muted"),
@@ -1078,8 +1078,8 @@ class AtlasScreen(Screen):
         return self._topo.display_name(node) or node[:8]
 
 
-async def open_atlas(ctx: "AppContext") -> None:
-    """Build the evidence graph and run the full-screen atlas until dismissed.
+async def open_walk(ctx: "AppContext") -> None:
+    """Build the evidence graph and run the full-screen mesh walk until dismissed.
 
     Contacts and our own identity come from the device when one is reachable
     (best-effort — the stored evidence draws fine without them, just with hashes for
@@ -1097,7 +1097,7 @@ async def open_atlas(ctx: "AppContext") -> None:
     from .timemachine_screen import _routing_prefix_bytes
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
-        raise RuntimeError("the atlas is only available in the menu")
+        raise RuntimeError("the mesh walk is only available in the menu")
     session = ctx.ui.session
 
     contacts: list[Contact] = []
@@ -1126,7 +1126,7 @@ async def open_atlas(ctx: "AppContext") -> None:
         if canonical:
             by_id[canonical] = contact
 
-    screen = AtlasScreen(
+    screen = WalkScreen(
         session=session,
         topo=topo,
         contacts=by_id,

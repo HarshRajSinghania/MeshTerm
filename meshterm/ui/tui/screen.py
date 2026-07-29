@@ -272,7 +272,7 @@ class Screen:
 class ListWindow:
     """Scroll state for a list that scrolls *inside* a fixed screen.
 
-    The app-wide windowed-list pattern (established by the atlas's link list): the
+    The app-wide windowed-list pattern (established by the mesh walk's link list): the
     screen sizes its fixed chrome — headings, charts, action rows — to the frame's
     viewport (see :meth:`Screen.note_viewport`; the frame records it before
     ``render_body`` runs) and hands the leftover rows here; only the list's rows

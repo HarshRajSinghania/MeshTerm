@@ -61,7 +61,7 @@ def test_plain_mode_matches_the_app_wide_arrow_presentation() -> None:
 
 def test_plain_mode_annotation_dim_and_custom_separator() -> None:
     """The trace ``(3d)`` note rides muted; a dim hop (and the arrow into it) fades;
-    a surface's own separator — the atlas trail's ``›`` — passes straight through."""
+    a surface's own separator — the mesh walk trail's ``›`` — passes straight through."""
     line = PathLine(
         [PathHop("YUL", key="3d", annotation="3d"), PathHop("home", you=True, dim=True)],
         mode="plain",

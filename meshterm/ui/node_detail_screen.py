@@ -101,7 +101,7 @@ from .widgets import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..context import AppContext
 
-#: Our own node's marker glyph and hue, matching the map/atlas star.
+#: Our own node's marker glyph and hue, matching the map/mesh-walk star.
 _SELF_GLYPH = ("★", "#facc15")
 
 #: The inline location preview's row bounds: it grows into whatever the Info tab's

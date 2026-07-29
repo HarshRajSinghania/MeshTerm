@@ -1,14 +1,14 @@
-"""The ``atlas`` tool: the mesh's observed shape, explored one node at a time.
+"""The ``walk`` tool: the mesh's observed shape, explored one node at a time.
 
-Opens the full-screen Mesh atlas (see :mod:`meshterm.ui.atlas_screen`): a walkable
+Opens the full-screen Mesh walk (see :mod:`meshterm.ui.walk_screen`): a walkable
 browser over the evidence graph — trace walks, firmware routes, overheard relay
 chains, repeater neighbour tables. One node holds the focus, its neighbourhood draws
 as SNR-coloured braille edges on a small clean canvas, and its links list beneath as
 rows with quality bars and evidence; Enter walks the graph, ⌫ backtracks along the
 breadcrumb trail, and typing finds any node (islands included). The geographic map
-answers *where* the mesh is; the atlas answers *how it hangs together*.
+answers *where* the mesh is; the walk answers *how it hangs together*.
 
-Menu-only: the atlas is an interactive reading of stored evidence (and transmits
+Menu-only: the walk is an interactive reading of stored evidence (and transmits
 nothing), so there is no scripted one-shot to register — ``trace``-family commands
 already print path evidence in scripted runs.
 """
@@ -24,11 +24,11 @@ from .base import Tool, ToolResult, register
 
 
 @register
-class AtlasTool(Tool):
+class WalkTool(Tool):
     """See how the mesh hangs together: the observed link graph, walkable."""
 
-    name = "atlas"
-    title = "Mesh atlas"
+    name = "walk"
+    title = "Mesh walk"
     # A single-codepoint emoji (like every other tool icon), not a VS16 sequence: the
     # emoji-width calibration strips VS16 on terminals that render it narrow, which would
     # measure a 🕸️ one cell short of how it paints and drift this row's help text right of
@@ -40,7 +40,7 @@ class AtlasTool(Tool):
     order = 32  # beside Map: the logical shape next to the geographic one
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Run the atlas; there are never parameters to collect.
+        """Run the walk; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so
         returning ``None`` tells the menu the invocation is complete (the same
@@ -52,13 +52,13 @@ class AtlasTool(Tool):
         Returns:
             Always ``None``.
         """
-        from ..ui.atlas_screen import open_atlas
+        from ..ui.walk_screen import open_walk
 
-        await open_atlas(ctx)
+        await open_walk(ctx)
         return None
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Nothing runs here: the atlas lives inside :meth:`prompt_params`.
+        """Nothing runs here: the walk lives inside :meth:`prompt_params`.
 
         Args:
             ctx: Shared application context.
@@ -70,7 +70,7 @@ class AtlasTool(Tool):
         return ToolResult(summary={})
 
     def register_cli(self, app: typer.Typer) -> None:
-        """Register no CLI command — the atlas is an interactive, menu-only screen.
+        """Register no CLI command — the walk is an interactive, menu-only screen.
 
         Args:
             app: The Typer application (untouched).

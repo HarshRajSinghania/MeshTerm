@@ -2,7 +2,7 @@
 
 ``meshterm --mock`` (and headless test drives against the simulator) write to the
 same ``~/.meshterm/meshterm.db`` as real radio sessions, so mock nodes leak into
-the history that powers the atlas, the dashboard, and the trace suggestions. This
+the history that powers the mesh walk, the dashboard, and the trace suggestions. This
 script removes exactly the rows carrying the simulator's fingerprints — the
 :class:`MockDevice` identities in ``meshterm/core/connection.py`` — and nothing
 else. Real rows never match: the fingerprints are fixed synthetic keys, the
