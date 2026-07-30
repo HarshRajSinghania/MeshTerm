@@ -409,7 +409,8 @@ async def _pick_target(
         The chosen contact name, or ``None`` if cancelled. With no other contacts,
         falls back to a free-text prompt so a hex key prefix can be typed.
     """
-    from ..ui.tui import Choice, Separator
+    from ..ui.menus import back_rows
+    from ..ui.tui import Choice
     from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
     candidates = [c for c in contacts if c.name != admin.name]
@@ -435,8 +436,7 @@ async def _pick_target(
             key=lambda c: -(c.last_seen.timestamp() if c.last_seen else 0.0),
         )
     ]
-    items.append(Separator(" "))
-    items.append(Choice(title="Back", value=None))
+    items.extend(back_rows(None))
     choice = await ctx.ui.select(
         "TX optimize — measure at",
         items,
