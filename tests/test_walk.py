@@ -7,7 +7,6 @@ backtracking, find, and the canvas/list split are all assertable without a termi
 
 from __future__ import annotations
 
-import re
 from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
@@ -54,8 +53,7 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
     return screen
 
 
-def _plain(lines: list[str]) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 # --- rendering ----------------------------------------------------------------------------

@@ -63,8 +63,7 @@ def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> O
     )
 
 
-def _plain(lines: list[str]) -> str:
-    return "\n".join(lines)
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _stripped(lines: list[str]) -> list[str]:
@@ -359,7 +358,7 @@ def test_livefeed_windows_inside_the_fixed_screen() -> None:
     screen.note_viewport(24)
     lines = screen.render_body(100)
     assert len(lines) <= 24  # heading + feed window == the viewport, never more
-    body = _plain(_stripped(lines))
+    body = _plain(lines)
     assert "newest first" in body  # the pinned status line is still there
     assert "↓" in body and "more" in body  # hidden feed rows are counted below
 

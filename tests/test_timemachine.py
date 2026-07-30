@@ -68,12 +68,13 @@ def _seeded_repo(tmp_path: Path) -> Repository:
 
 
 def _plain(renderables, width: int = 90) -> str:
+    """Render the section renderables at ``width`` and read them back as plain text."""
     from rich.console import Group
 
     from meshterm.ui.tui.render import render_lines
+    from tests.conftest import plain
 
-    text = "\n".join(render_lines(Group(*renderables), width))
-    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return plain(render_lines(Group(*renderables), width))
 
 
 # --- the repository queries -------------------------------------------------------------

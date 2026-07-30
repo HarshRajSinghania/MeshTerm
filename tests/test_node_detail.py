@@ -9,7 +9,6 @@ evidence graph.
 
 from __future__ import annotations
 
-import re
 from types import SimpleNamespace
 
 from rich.text import Text
@@ -46,8 +45,7 @@ HUB = Contact(name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63
 FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c24f54551e")
 
 
-def _plain(lines: list[str]) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _FakeSession:

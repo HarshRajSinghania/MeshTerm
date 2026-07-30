@@ -46,8 +46,7 @@ def _loop_shape() -> list[WalkVertex]:
     ]
 
 
-def _plain(lines: list[str]) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _resolve(hop: str) -> str:

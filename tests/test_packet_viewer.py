@@ -20,8 +20,7 @@ def _stripped(lines: list[str]) -> list[str]:
     return [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
 
 
-def _plain(lines: list[str]) -> str:
-    return "\n".join(_stripped(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _grp_txt_entry(raw_extra: dict) -> PacketEntry:

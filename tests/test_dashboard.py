@@ -46,8 +46,7 @@ def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> O
     )
 
 
-def _plain(lines: list[str]) -> str:
-    return "\n".join(lines)
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _stripped(lines: list[str]) -> list[str]:
@@ -142,7 +141,7 @@ def test_dashboard_traffic_breaks_packets_out_by_payload_class() -> None:
         window=[_obs()],
         kinds={"advert": 4, "packet:GRP_TXT": 3, "packet:TRACE": 2, "packet": 1},
     )
-    body = _plain(_stripped(screen.render_body(100)))
+    body = _plain(screen.render_body(100))
     assert "channel text" in body and "trace" in body  # glossed, not raw typenames
     assert "GRP_TXT" not in body
     # The class-less remainder keeps a plain "packet" row alongside the classed ones.
@@ -157,7 +156,7 @@ def test_dashboard_traffic_disambiguates_raw_advert_and_ack_rows() -> None:
         window=[_obs()],
         kinds={"advert": 4, "packet:ADVERT": 2, "ack": 3, "packet:ACK": 1},
     )
-    body = _plain(_stripped(screen.render_body(100)))
+    body = _plain(screen.render_body(100))
     assert "raw advert" in body and "raw ack" in body
 
 

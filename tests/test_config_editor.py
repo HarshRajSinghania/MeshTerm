@@ -34,9 +34,7 @@ from meshterm.ui.tui.screen import CANCEL
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _plain(lines: list[str]) -> str:
-    """Strip ANSI escapes and join rendered lines for content assertions."""
-    return _ANSI.sub("", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _Fut:

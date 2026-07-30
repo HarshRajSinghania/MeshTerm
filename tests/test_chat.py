@@ -12,13 +12,7 @@ from pathlib import Path
 
 import pytest
 
-#: Strip ANSI SGR escapes so rendered transcript lines can be asserted as plain text.
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _strip_ansi(text: str) -> str:
-    """Remove ANSI color escapes from rendered lines for plain-text assertions."""
-    return _ANSI.sub("", text)
+from tests.conftest import plain as _strip_ansi  # THE strip-and-join screen reader
 
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.config import Settings

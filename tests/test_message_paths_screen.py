@@ -7,7 +7,6 @@ labelling are all assertable without a terminal.
 
 from __future__ import annotations
 
-import re
 from datetime import timedelta
 
 from meshterm.core.models import ChatMessage, utcnow
@@ -19,8 +18,7 @@ def _resolve(hop: str) -> str:
     return {"3d63": "YUL-Cartierville", "a1b2": "Waymarker"}.get(hop, hop)
 
 
-def _plain(lines: list[str]) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _screen(arrivals: list[Arrival], **kwargs) -> MessagePathsScreen:

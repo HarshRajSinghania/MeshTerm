@@ -1,4 +1,8 @@
-"""Shared fixtures: pin path rendering to plain arrows for every test.
+"""Shared fixtures and helpers: plain-text screen reading, and pinned path rendering.
+
+:func:`plain` is THE way a test reads a rendered screen — every screen test needs the
+same move (strip the ANSI colour escapes, join the rendered lines) before it can assert
+on content, and each file re-deriving it is how the copies drift.
 
 The powerline verdict is environmental — the suite may run inside VS Code or Windows
 Terminal (both chip-capable) or a bare CI shell (not) — and screen assertions must
@@ -9,11 +13,27 @@ specific tests pass explicit modes or monkeypatch the widget's own switch.
 
 from __future__ import annotations
 
-from typing import Iterator
+import re
+from typing import Iterable, Iterator, Union
 
 import pytest
 
 from meshterm.ui.termfont import powerline_support
+
+#: ANSI SGR escapes — the colour runs a rendered line carries between its characters.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(rendered: Union[str, Iterable[str]]) -> str:
+    """The plain-text form of rendered screen output, for content assertions.
+
+    Takes what a render handed back — a list of ANSI lines (joined with newlines) or a
+    single already-joined string — and strips the colour escapes, so assertions read
+    the screen the way a viewer does.
+    """
+    if not isinstance(rendered, str):
+        rendered = "\n".join(rendered)
+    return _ANSI.sub("", rendered)
 
 
 @pytest.fixture(autouse=True)

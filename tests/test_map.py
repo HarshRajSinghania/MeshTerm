@@ -26,12 +26,7 @@ from meshterm.tools.map import MapTool
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tile_14_4843_5861.mvt"
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _plain(lines: list[str]) -> str:
-    """Strip ANSI colour from rendered lines for content assertions."""
-    return "\n".join(_ANSI.sub("", line) for line in lines)
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 # -- MVT decoding -------------------------------------------------------------

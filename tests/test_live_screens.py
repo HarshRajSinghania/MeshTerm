@@ -8,7 +8,6 @@ and headless (the same approach as ``test_tui``).
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import timedelta
 
 import pytest
@@ -63,14 +62,7 @@ def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceRe
     )
 
 
-#: SGR escapes, stripped out of rendered lines so assertions read as plain text (a
-#: per-hop-coloured path splits its own characters across a dozen colour runs).
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _plain(lines: list[str]) -> str:
-    """Join rendered lines with their colour escapes stripped, for substring checks."""
-    return _ANSI.sub("", "\n".join(lines))
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 # --- snr_bar -------------------------------------------------------------------
