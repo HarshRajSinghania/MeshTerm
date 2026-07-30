@@ -34,14 +34,13 @@ from ..core.models import (
     Contact,
     Conversation,
     is_direct_messageable,
-    utcnow,
 )
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui.chat import _MENTION, _split_channel_sender
 from ..ui.menus import Lane, back_rows, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
 from ..ui.tui import Choice, DeleteRequest, Separator
-from ..ui.widgets import _NODE_GLYPHS, channel_glyph
+from ..ui.widgets import _NODE_GLYPHS, _age_seconds, _format_age, channel_glyph
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:
@@ -796,23 +795,15 @@ def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
 
 
 def _ago(when: Any) -> str:
-    """A compact relative age for a message time — ``now``, ``5m``, ``3h``, ``2d``, ``4w``.
+    """The column age for a message time, through THE grammar (``_format_age``).
 
-    Tolerates a naive timestamp (assumed UTC) so a stray one from the wire can't crash the
-    picker on the aware/naive subtraction.
+    One deliberate difference from the widget: a missing or naive timestamp (a stray one
+    from the wire) reads as a *blank* lane rather than ``never`` — the picker wants an
+    empty cell there, not a word.
     """
     if getattr(when, "tzinfo", None) is None:
         return ""
-    secs = max(0.0, (utcnow() - when).total_seconds())
-    if secs < 60:
-        return "now"
-    if secs < 3600:
-        return f"{int(secs // 60)}m"
-    if secs < 86400:
-        return f"{int(secs // 3600)}h"
-    if secs < 604800:
-        return f"{int(secs // 86400)}d"
-    return f"{int(secs // 604800)}w"
+    return _format_age(_age_seconds(when))
 
 
 def _history_table(label: str, messages: list[ChatMessage]) -> Table:
