@@ -183,7 +183,7 @@ class ChatTool(Tool):
                         )
                     )
             else:
-                items.append(Separator("  (no contacts yet — receive an advert first)"))
+                items.append(Separator("  no contacts yet — receive an advert first"))
 
             items.append(Separator(" "))
             items.append(Choice(title="Back", value="__back__"))

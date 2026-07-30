@@ -89,7 +89,7 @@ def _resolve_tcp(
 def _format_device_list(devices: list[DiscoveredDevice]) -> str:
     """Render discovered devices as an indented, human-readable bullet list."""
     if not devices:
-        return "  (no serial devices detected)"
+        return "  no serial devices detected"
     lines = []
     for d in devices:
         flag = " [likely LoRa]" if d.is_likely_lora else ""
