@@ -189,6 +189,38 @@ def test_select_callable_title_re_renders_live() -> None:
     assert "chan ● 3" in "\n".join(screen.render_body(40))
 
 
+def test_select_width_aware_title_fits_itself_to_the_row() -> None:
+    """A title taking the render width fits itself (a route middle-elides); the natural
+    form still feeds filtering and the dialog's own width measure."""
+    seen: list[int] = []
+
+    def fitted(width: int) -> str:
+        seen.append(width)
+        return "you → hub → far" if width >= 20 else "you ⋯ far"
+
+    screen = SelectScreen("pick", [Choice(fitted, 1)])
+    assert "you ⋯ far" in "\n".join(screen.render_body(12))
+    assert seen[-1] == 10  # the row's content area: the width less the 2-cell pointer
+    assert "you → hub → far" in "\n".join(screen.render_body(40))
+    assert screen.dialog_width > cell_len("you → hub → far")  # measured at its fullest
+    screen.handle("text", "hub")  # the filter reads the natural (unbounded) form
+    assert screen._rows() == screen._items
+
+
+def test_select_hscroll_highlight_keeps_the_natural_row() -> None:
+    """In an hscroll list the highlighted row skips self-fitting — ←→ slide the full
+    line — while every other row still elides itself to the width."""
+
+    def fitted(width: int) -> str:
+        return "start middle end" if width >= 20 else "start ⋯ end"
+
+    items = [Choice(fitted, 1), Choice(fitted, 2)]
+    screen = SelectScreen("pick", items, hscroll=True)
+    body = "\n".join(screen.render_body(14))
+    assert "start middl" in body  # the highlighted row: natural form, cropped by the screen
+    assert "start ⋯ end" in body  # the unhighlighted row fitted itself
+
+
 def test_select_filter_matches_callable_title() -> None:
     """Type-to-filter matches against a callable title's current text."""
     screen = SelectScreen("pick", [Choice(lambda: "alpha", 1), Choice("beta", 2)])

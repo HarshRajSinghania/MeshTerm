@@ -671,6 +671,7 @@ async def open_records(ctx: "AppContext") -> dict:
         *,
         show_width: bool,
         score_w: int,
+        width: int,
     ) -> Text:
         """One record row: rank, date, score (width when it disambiguates), then the walk.
 
@@ -682,9 +683,11 @@ async def open_records(ctx: "AppContext") -> dict:
         so naming ourselves twice per row would cost more cells than the whole score lane and
         tell the reader what every other row already told them. Those stars keep the ``you``
         white (``dim_self=False``) — the fade means "not yours to compose", and nothing on a
-        board of walks already made is being composed. Overflow stays the list's job — the
-        browser h-scrolls the highlighted row, so a long walk is read by sliding it, not by
-        eliding it here.
+        board of walks already made is being composed. A walk wider than ``width`` (the
+        row's render budget) middle-elides through ``PathLine.ellipsized`` so both endpoints
+        survive — a right truncation would amputate the return leg — while the *highlighted*
+        row keeps its natural length and h-scrolls under ←→, so the elided middle is read by
+        sliding it.
         """
         row = Text(f"#{rank} ", style="muted")
         row.append(record.discovered_at.astimezone().strftime("%b %d"), style="muted")
@@ -693,17 +696,16 @@ async def open_records(ctx: "AppContext") -> dict:
         if show_width:
             row.append(f" {record.width_bytes} B", style="muted")
         row.append("  ")
-        row.append_text(
-            path_line(
-                [None, *record.route, None],
-                resolve,
-                prefix_bytes=record.width_bytes,
-                hash_bytes=record.width_bytes,
-                self_name=device_label,
-                bare_self=True,
-                dim_self=False,
-            ).text()
+        walk = path_line(
+            [None, *record.route, None],
+            resolve,
+            prefix_bytes=record.width_bytes,
+            hash_bytes=record.width_bytes,
+            self_name=device_label,
+            bare_self=True,
+            dim_self=False,
         )
+        row.append_text(walk.ellipsized(max(8, width - row.cell_len)))
         return row
 
     async def delete_category_flow() -> None:
@@ -755,8 +757,14 @@ async def open_records(ctx: "AppContext") -> dict:
             score_w = max((cell_len(scored(category, r)) for r in board), default=0)
             for rank, record in enumerate(board, start=1):
                 items.append(Choice(
-                    title=browser_row(
-                        rank, category, record, show_width=show_width, score_w=score_w
+                    # Width-aware (see Choice.title): the row re-fits its walk to each
+                    # render width, middle-eliding rather than dying at the right edge.
+                    title=(
+                        lambda width, rank=rank, category=category, record=record,
+                        show_width=show_width, score_w=score_w: browser_row(
+                            rank, category, record,
+                            show_width=show_width, score_w=score_w, width=width,
+                        )
                     ),
                     value=("open", category, rank, record),
                 ))

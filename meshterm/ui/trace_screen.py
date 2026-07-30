@@ -1213,7 +1213,8 @@ def _best_observed(topo: Any, target_hash: str) -> Optional[tuple[tuple[str, ...
 
 
 def _scenario_path(
-    scenario: Any, topo: Any, target_id: str, *, device_label: str, width_bytes: int
+    scenario: Any, topo: Any, target_id: str, *, device_label: str, width_bytes: int,
+    width: Optional[int] = None,
 ) -> Text:
     """A scenario's pathline: us, the candidate hops, and the target — one line.
 
@@ -1224,6 +1225,8 @@ def _scenario_path(
     unnamed hop its prefix-lit hash) instead of the old single-colour smear — and, as
     in the route lane above it, our own end goes bare: every candidate starts from us,
     so the word would be the same on every row and the cells are the candidates'.
+    With a ``width`` budget the line middle-elides (``PathLine.ellipsized``) so both
+    endpoints survive a narrow terminal; ``None`` returns the full line.
     """
     route = path_line(
         [None, *scenario.hops, target_id],
@@ -1232,7 +1235,7 @@ def _scenario_path(
         self_name=device_label,
         bare_self=True,
     )
-    return route.text()
+    return route.text() if width is None else route.ellipsized(width)
 
 
 def _scenario_detail(scenario: Any) -> Text:
@@ -1875,9 +1878,15 @@ async def _open_session(
         for scenario in scenarios:
             items.append(
                 Choice(
-                    title=_scenario_path(
-                        scenario, topo, target_id,
-                        device_label=device_label, width_bytes=width_bytes,
+                    # Width-aware (see Choice.title): a long candidate middle-elides to
+                    # the terminal so both endpoints survive; the highlighted row keeps
+                    # its natural length and slides under ←→ instead.
+                    title=(
+                        lambda width, scenario=scenario: _scenario_path(
+                            scenario, topo, target_id,
+                            device_label=device_label, width_bytes=width_bytes,
+                            width=width,
+                        )
                     ),
                     detail=_scenario_detail(scenario),
                     value=("use", scenario),

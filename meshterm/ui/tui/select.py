@@ -8,6 +8,7 @@ arbitrary objects, so the same screen drives the main menu (tool names), the dev
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Union
 
@@ -18,6 +19,25 @@ from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
 
 
+def _wants_width(fn: Callable) -> bool:
+    """Whether a callable :attr:`Choice.title` takes the render width.
+
+    A title callable with at least one *required* positional parameter is the width-aware
+    form; one with none (including defaults-only signatures) stays the zero-argument
+    live-repaint form. Decided from the signature once at construction — never by trying
+    the call, so a ``TypeError`` raised *inside* a title can't be mistaken for arity.
+    """
+    try:
+        parameters = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):  # a builtin without an introspectable signature
+        return False
+    return any(
+        p.default is p.empty
+        and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        for p in parameters
+    )
+
+
 @dataclass
 class Choice:
     """One selectable row.
@@ -26,7 +46,10 @@ class Choice:
         title: Text shown for the row — a plain string or a Rich :class:`~rich.text.Text`
             (for a coloured segment such as an unread badge). Either may instead be a
             zero-argument callable resolved fresh on every repaint, so a row can track state
-            that changes while the list is open.
+            that changes while the list is open — or a callable taking the **render width**
+            (one required positional argument), the :class:`Separator` power extended to
+            rows: a route-bearing row can then middle-elide itself to the terminal
+            (``PathLine.ellipsized``) instead of being amputated at the right edge.
         value: Value returned when the row is chosen.
         deletable: Whether pressing Delete on this row asks to remove it. When set, Delete
             resolves the list with a :class:`DeleteRequest` wrapping this row's value instead
@@ -40,15 +63,25 @@ class Choice:
             ``title``.
     """
 
-    title: Union[str, Text, Callable[[], Union[str, Text]]]
+    title: Union[str, Text, Callable[[], Union[str, Text]], Callable[[int], Union[str, Text]]]
     value: Any
     deletable: bool = False
     detail: Union[str, Text, Callable[[], Union[str, Text]], None] = None
 
+    def __post_init__(self) -> None:
+        # The callable form's arity, read once — see _wants_width.
+        self._title_wants_width = callable(self.title) and _wants_width(self.title)
+
+    def text(self, width: int) -> Union[str, Text]:
+        """The row's content at ``width`` cells, resolving either callable form."""
+        if not callable(self.title):
+            return self.title
+        return self.title(width) if self._title_wants_width else self.title()
+
     @property
     def label(self) -> Union[str, Text]:
-        """The row's current text, resolving a callable title on each read."""
-        return self.title() if callable(self.title) else self.title
+        """The row's *natural* (unbounded) text — what filtering and measuring read."""
+        return self.text(_UNBOUNDED)
 
     @property
     def detail_label(self) -> Optional[Union[str, Text]]:
@@ -148,9 +181,10 @@ class Separator:
 
 Item = "Choice | Separator"
 
-#: The width handed to a width-aware :class:`Separator` when a *natural* width is being
-#: measured rather than a real terminal one (:attr:`SelectScreen.dialog_width`) — wide
-#: enough that a self-fitting column header returns its fullest form.
+#: The width handed to a width-aware :class:`Separator` or :class:`Choice` when a
+#: *natural* width is being measured rather than a real terminal one
+#: (:attr:`SelectScreen.dialog_width`, :attr:`Choice.label`) — wide enough that a
+#: self-fitting column header or self-eliding row returns its fullest form.
 _UNBOUNDED = 10_000
 
 #: The navigation actions that move the highlight to another row, so an ``hscroll`` list
@@ -386,7 +420,7 @@ class SelectScreen(Screen):
             else self._footer_base
         widths = [cell_len(self.title), cell_len(footer), cell_len(self._prompt)]
         for item in self._items:
-            label = item.text(_UNBOUNDED) if isinstance(item, Separator) else item.label
+            label = item.text(_UNBOUNDED)  # both row kinds measure at their fullest form
             widths.append(cell_len(_plain(label)) + 2)  # + the "❯ " / "  " pointer column
             if isinstance(item, Choice) and item.detail_label is not None:
                 widths.append(cell_len(_plain(item.detail_label)) + 2)  # same hanging indent
@@ -472,7 +506,14 @@ class SelectScreen(Screen):
                 cursor_at = len(lines)
             pointer = "❯ " if is_sel else "  "
             style = "brand" if is_sel else ""
-            label = item.label
+            # A width-aware title fits itself to the row's content area (the width less
+            # the 2-cell pointer). The exception is the highlighted row of an ``hscroll``
+            # list, which keeps its natural form: ←→ slide the full line, and a row that
+            # pre-elided itself would have nothing left to slide over.
+            if self._hscroll and is_sel:
+                label = item.label
+            else:
+                label = item.text(max(1, width - 2))
             # A Text label carries its own spans (e.g. a red badge); keep them and lay the
             # row's base style underneath, so the highlight tints the row while the badge
             # keeps its colour. A plain string is styled uniformly as before.
