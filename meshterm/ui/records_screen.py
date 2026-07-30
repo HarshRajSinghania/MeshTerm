@@ -94,6 +94,11 @@ _POLY_MAX_W = 28
 _POLY_EXTRA_ROWS = 2
 _SIDE_BY_SIDE_MIN = 44
 
+#: Cells the record card's label lane spans. Every labelled row on the card — the stat
+#: lanes, the spec row's hanging indent, the recorded line — shares this one column, so
+#: the values align whatever the label says.
+_LABEL_W = 12
+
 
 def _drawn_rows(lines: list[str]) -> list[str]:
     """``lines`` with the rows nothing actually landed on stripped from either end.
@@ -244,9 +249,14 @@ class RecordDialog(Screen):
         """Keep the selected action visible while arrowing; scroll free once paging."""
         return self._cursor if self._follow else None
 
+    @staticmethod
+    def _label(label: str) -> Text:
+        """The card's muted label lane, padded to :data:`_LABEL_W` cells."""
+        return Text(f"{label:<{_LABEL_W}}", style="muted")
+
     def _lane(self, label: str, value: Text) -> Text:
         """One label/value stat lane (label lane fixed so values align)."""
-        row = Text(f"{label:<12}", style="muted")
+        row = self._label(label)
         row.append_text(value)
         return row
 
@@ -456,8 +466,7 @@ class RecordDialog(Screen):
         )
         spec = Text(record.spec, style="brand")
         spec.append(f"  ({record.width_bytes}-byte hops)", style="muted")
-        lines.extend(render_hanging(Text("spec        ", style="muted"), spec, width,
-                                    indent=12))
+        lines.extend(render_hanging(self._label("spec"), spec, width, indent=_LABEL_W))
 
         stamp = record.discovered_at.astimezone().strftime("%b %d %Y %H:%M")
         when = Text(stamp)
