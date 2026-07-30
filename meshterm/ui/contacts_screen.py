@@ -261,7 +261,7 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
             f"Purge stale contacts — {len(contacts)} known",
             items,
             prompt="Remove contacts you haven't heard from in the chosen span.",
-            footer_hint="↑↓ move · Enter pick · Esc back",
+            footer_hint="↑↓ move · Enter select · Esc back",
             filterable=False,
             wrap=False,
         )

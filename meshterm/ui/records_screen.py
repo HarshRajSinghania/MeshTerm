@@ -191,7 +191,7 @@ class RecordDialog(Screen):
         """
         super().__init__()
         self.title = f"Record — {category.title} #{rank}"
-        self.footer_hint = "↑↓ move · PgUp/PgDn scroll · Enter commit · Esc back"
+        self.footer_hint = "↑↓ move · PgUp/PgDn scroll · Enter select · Esc back"
         self._record = record
         self._category = category
         self._resolve = resolve
@@ -714,7 +714,7 @@ async def open_records(ctx: "AppContext") -> dict:
             SelectScreen(
                 "Delete a discipline's records",
                 rows,
-                footer_hint="↑↓ move · Enter pick · Esc back",
+                footer_hint="↑↓ move · Enter select · Esc back",
                 filterable=False,
                 wrap=False,
             )

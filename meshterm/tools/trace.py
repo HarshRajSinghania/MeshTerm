@@ -180,7 +180,7 @@ class TraceTool(Tool):
             sort=ContactsSort.from_name(
                 "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
             ),
-            footer_hint="↑↓ move · ^←→↑↓ sort · type filter · Enter select · Esc back",
+            footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
             show_traced=True,
         )
         chosen = await ctx.ui.session.run_screen(picker)

@@ -86,6 +86,11 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 - Esc verb by surface: `Esc back` leaves a screen · `Esc close` dismisses a read-only
   floating view · `Esc cancel` abandons a prompt/dialog · `Esc keep` leaves a value
   picker unchanged · `Esc quit` only at the main menu.
+- Enter verb by action: `Enter open` when the row pushes a screen or dialog ·
+  `Enter select` when it picks a value or action row · `Enter set` in a value picker.
+  A more specific committing verb (`Enter adopt path`, `Enter add`) is fine; a synonym
+  of the generic three (`pick`, `choose`, `commit`) is not. The filter atom is always
+  `type to filter`.
 - Key notation: `↑↓ move` (include the verb), `^R`/`^End` for Ctrl chords, `⌫` for
   backspace, `⇧` for shift.
 

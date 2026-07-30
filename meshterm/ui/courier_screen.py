@@ -292,7 +292,7 @@ def _done_row(message: QueuedMessage) -> Text:
 
 #: The recipient picker's footer: the shared contact-list grammar with a committing Enter,
 #: Esc cancelling the queueing step it sits in.
-_PICK_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter select · Esc cancel"
+_PICK_HINT = "↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc cancel"
 
 
 class CourierRecipientScreen(ContactListScreen):

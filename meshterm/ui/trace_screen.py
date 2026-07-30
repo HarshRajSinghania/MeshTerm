@@ -1927,7 +1927,7 @@ async def _open_session(
             SelectScreen(
                 f"Probe results — {target_label}",
                 result_items,
-                footer_hint="↑↓ move · Enter adopt path · Esc keep current",
+                footer_hint="↑↓ move · Enter adopt path · Esc keep",
                 wrap=False,
                 hscroll=True,  # ranked rows carry whole specs — let ←→ read the tail
             )

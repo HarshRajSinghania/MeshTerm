@@ -95,7 +95,7 @@ TRACE_SORT_OPENS_ASCENDING: dict[str, bool] = {
 _SORT_ACTIVE = "bold #22d3ee"
 
 #: The default footer: navigation, the Ctrl+arrow sort, filtering, then Esc last.
-_HINT = "↑↓ move · ^←→↑↓ sort · type filter · Enter open · Esc back"
+_HINT = "↑↓ move · ^←→↑↓ sort · type to filter · Enter open · Esc back"
 
 
 @dataclass
