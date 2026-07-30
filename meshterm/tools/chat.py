@@ -353,7 +353,7 @@ class ChatTool(Tool):
             unsubscribe()
         return ToolResult(
             summary={"messages": seen},
-            message=f"[muted]stopped — saw {seen} message{'' if seen == 1 else 's'}[/muted]",
+            message=f"[muted]stopped — heard {seen} message{'' if seen == 1 else 's'}[/muted]",
         )
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
