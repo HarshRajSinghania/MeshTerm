@@ -34,7 +34,6 @@ from urllib.parse import quote
 
 from rich import box
 from rich.cells import cell_len
-from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
@@ -817,17 +816,14 @@ async def show_contact_card(
         node_type: The MeshCore advert type byte (1 companion, 2 repeater, 3 room,
             4 sensor).
     """
-    from .qr import qr_text
+    from .qr import share_popup
 
-    url = contact_share_url(name, public_key, node_type)
-    body = Group(
-        Text("Scan to add this node as a contact:", style="muted"),
-        Text(""),
-        qr_text(url),
-        Text(""),
-        Text(url, style="accent"),
+    await share_popup(
+        ctx,
+        name=name,
+        url=contact_share_url(name, public_key, node_type),
+        intro="Scan to add this node as a contact:",
     )
-    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")
 
 
 async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:

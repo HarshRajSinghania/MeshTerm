@@ -9,7 +9,13 @@ matter what colour theme the terminal itself is using.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from rich.console import Group
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from ..context import AppContext
 
 #: Quiet-zone width (modules) around the code. Scanners need at least 4 to lock on.
 _BORDER = 4
@@ -54,3 +60,26 @@ def qr_text(data: str, *, error: str = "m") -> Text:
         text.append(line, style=_STYLE)
         text.append("\n")
     return text
+
+
+async def share_popup(ctx: "AppContext", *, name: str, url: str, intro: str) -> None:
+    """THE share popup: a muted intro, the scannable code, then the URL to copy out.
+
+    One layout for every ``Share {name}`` surface — the channel share and the contact
+    card both come through here, so a change to how MeshTerm presents a share code (a
+    caption, a border, a "copied" affordance) lands on all of them at once.
+
+    Args:
+        ctx: Shared application context (provides the UI surface).
+        name: What is being shared — the popup's title reads ``Share {name}``.
+        url: The ``meshcore://…`` share URL, encoded as the QR code and printed under it.
+        intro: The one-line instruction above the code ("Scan to add this channel:").
+    """
+    body = Group(
+        Text(intro, style="muted"),
+        Text(""),
+        qr_text(url),
+        Text(""),
+        Text(url, style="accent"),
+    )
+    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")

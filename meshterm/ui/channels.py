@@ -63,7 +63,7 @@ from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
 from .braillechart import activity_peak, activity_sparkline
 from .menus import back_rows, fit_cells, menu_rows, section_heading
-from .qr import qr_text
+from .qr import share_popup
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
 
@@ -922,15 +922,7 @@ async def _show_share(
     ctx: "AppContext", name: str, secret: bytes, *, intro: str = "Scan to add this channel:"
 ) -> None:
     """Show the channel's QR code and its share URL in a dismissable window."""
-    url = share_url(name, secret)
-    body = Group(
-        Text(intro, style="muted"),
-        Text(""),
-        qr_text(url),
-        Text(""),
-        Text(url, style="accent"),
-    )
-    await ctx.ui.view(body, title=f"Share {name}", footer_hint="Esc close")
+    await share_popup(ctx, name=name, url=share_url(name, secret), intro=intro)
 
 
 async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
