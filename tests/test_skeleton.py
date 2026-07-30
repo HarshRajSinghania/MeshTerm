@@ -22,6 +22,26 @@ def test_clamp_tx_power() -> None:
     assert clamp_tx_power(14) == 14
 
 
+def test_advert_time_refuses_a_future_sender_clock() -> None:
+    """An advert stamp is hearsay from the sender's clock: plausible converts, future doesn't.
+
+    A node with a mis-set clock advertises timestamps from the future; taken at face value
+    the contact would read "heard now" and top every heard-sorted list until the wall clock
+    caught up. Ordinary skew (under the tolerance) stays: its age clamps to "now" briefly
+    and self-heals. The classic never-heard shapes (zero/absent/garbage) still map to None.
+    """
+    from meshterm.core.models import ADVERT_FUTURE_SKEW_S, advert_time, utcnow
+
+    past = int(utcnow().timestamp()) - 3600
+    when = advert_time(past)
+    assert when is not None and int(when.timestamp()) == past
+    assert advert_time(int(utcnow().timestamp()) + 60) is not None  # ordinary skew
+    assert advert_time(int(utcnow().timestamp()) + ADVERT_FUTURE_SKEW_S + 60) is None
+    assert advert_time(0) is None
+    assert advert_time(None) is None
+    assert advert_time("garbage") is None
+
+
 def test_trace_stats_aggregation() -> None:
     """Robust stats reflect successes and bottleneck SNR."""
     from meshterm.core.models import Hop
@@ -587,6 +607,34 @@ def _mc_with(contacts: dict, path_hash_mode: int = 2):
         commands = _Commands()
 
     return _MC()
+
+
+async def test_contact_with_future_advert_stamp_reads_as_never_heard() -> None:
+    """A contact whose advert was stamped by a wrong (future) clock arrives with no heard time.
+
+    The firmware stores the advert's embedded timestamp verbatim and only ever advances it
+    (its replay filter), so a bogus future stamp sticks until real time passes it — the
+    conversion refuses it here rather than showing the contact as "heard in the future".
+    """
+    from meshterm.core.connection import MeshCoreDevice
+    from meshterm.core.models import utcnow
+
+    now = int(utcnow().timestamp())
+    mc = _mc_with(
+        {
+            "Bogus-Clock": {
+                "adv_name": "Bogus-Clock",
+                "public_key": "aa" * 32,
+                "last_advert": now + 7 * 86400,
+            },
+            "Honest": {"adv_name": "Honest", "public_key": "bb" * 32, "last_advert": now - 300},
+        }
+    )
+    device = MeshCoreDevice(port="COM-test")
+    device._mc = mc
+    by_name = {c.name: c for c in await device.get_contacts()}
+    assert by_name["Bogus-Clock"].last_seen is None  # refused, not "heard in the future"
+    assert by_name["Honest"].last_seen is not None
 
 
 async def test_three_byte_route_appends_destination_hash() -> None:

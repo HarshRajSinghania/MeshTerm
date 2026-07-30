@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -130,7 +131,8 @@ class DeviceState:
             ):
                 return self._contacts
             device = await self._ctx.device()
-            self._contacts = await self._remember_and_merge(await device.get_contacts())
+            merged = await self._remember_and_merge(await device.get_contacts())
+            self._contacts = self._fill_heard(merged)
             self._contacts_at = time.monotonic()
             return self._contacts
 
@@ -157,6 +159,38 @@ class DeviceState:
             return fetched
         store.remember_all(pubkey, fetched)
         return merge_contacts(store, pubkey, fetched)
+
+    def _fill_heard(self, contacts: list["Contact"]) -> list["Contact"]:
+        """Fill each contact's missing last-heard time from our own recorded receptions.
+
+        A contact arrives with no ``last_seen`` when the firmware never caught an advert —
+        or when it reported one stamped implausibly far in the future by the *sender's*
+        clock, which :func:`~meshterm.core.models.advert_time` refuses rather than letting
+        the contact read "heard now" forever. Either way our observation history may still
+        hold first-hand evidence (stamped by *our* clock at reception), so it fills the gap
+        here — once, at the one point every screen fetches contacts through — and the heard
+        lanes, sorts, and the purge ladder all see the same honest value. A contact we have
+        truly never heard stays ``None`` and reads ``never``. Best-effort: a history read
+        failure just returns the list unfilled, never blocking the fetch.
+        """
+        if all(c.last_seen is not None for c in contacts):
+            return contacts
+        try:
+            heard = {
+                n.node: n.last_seen for n in self._ctx.repo.heard_nodes() if n.node
+            }
+        except Exception as exc:  # noqa: BLE001 - never block a contacts read on history
+            self._ctx.log.debug("devstate: last-heard fill skipped: %s", exc)
+            return contacts
+        filled: list["Contact"] = []
+        for contact in contacts:
+            if contact.last_seen is None:
+                ident = (contact.public_key or contact.key_prefix or "").lower()
+                when = heard.get(ident.removeprefix("0x")[:12])
+                if when is not None:
+                    contact = replace(contact, last_seen=when)
+            filled.append(contact)
+        return filled
 
     async def _refresh_contacts_quietly(self) -> None:
         """Background contacts refresh: update the cache, swallow a failure (keep the old list)."""

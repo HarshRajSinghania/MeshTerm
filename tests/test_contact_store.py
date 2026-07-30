@@ -22,7 +22,13 @@ from meshterm.core.admin_store import AdminStore
 from meshterm.core.config import Settings
 from meshterm.core.contact_store import ContactStore, RememberedContact, merge_contacts
 from meshterm.core.device_store import DeviceStore
-from meshterm.core.models import NODE_TYPE_CHAT, NODE_TYPE_REPEATER, Contact, is_direct_messageable
+from meshterm.core.models import (
+    NODE_TYPE_CHAT,
+    NODE_TYPE_REPEATER,
+    Contact,
+    is_direct_messageable,
+    utcnow,
+)
 from meshterm.persistence.repository import Repository
 
 PUB_A = "aa" * 32
@@ -150,6 +156,17 @@ def test_remembered_contact_round_trip() -> None:
     assert rebuilt.last_seen == heard
     assert rebuilt.node_type == NODE_TYPE_CHAT and rebuilt.lat == 45.5 and rebuilt.lon == -73.6
     assert rebuilt.route_hops is None  # a remembered contact floods until a path is relearned
+
+
+def test_remembered_future_advert_rebuilds_as_never_heard() -> None:
+    """A future-stamped epoch remembered before this guard existed rebuilds as unknown.
+
+    The stored epoch re-enters through ``models.advert_time``, so a poisoned value written
+    by an old session can't resurface a contact as "heard in the future" on a bridge.
+    """
+    future = int(utcnow().timestamp()) + 7 * 86400
+    entry = RememberedContact(public_key="cc" * 32, name="Bogus-Clock", last_advert=future)
+    assert entry.to_contact().last_seen is None
 
 
 # --- merge -------------------------------------------------------------------

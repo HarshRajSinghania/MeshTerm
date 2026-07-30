@@ -9,7 +9,7 @@ from __future__ import annotations
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 #: Label used for our own (local) device when framing a trace path's endpoints.
@@ -68,6 +68,45 @@ def utcnow() -> datetime:
         The current time in UTC.
     """
     return datetime.now(timezone.utc)
+
+
+#: How far into the future an advert timestamp may sit (seconds) before it is refused as a
+#: lie. An advert's timestamp is stamped by the *sender's* clock, and a mesh node with no
+#: time source can be minutes — or months — off; a couple of minutes of skew is ordinary and
+#: harmless (the age clamps to "now" until real time catches up), but anything beyond it
+#: would pin the contact at the top of every heard-sorted list, reading "now" for as long as
+#: the bogus timestamp stays ahead of the wall clock.
+ADVERT_FUTURE_SKEW_S = 300
+
+
+def advert_time(last_advert: object) -> Optional[datetime]:
+    """Convert an advert's Unix timestamp into a *plausible* UTC datetime, or ``None``.
+
+    THE converter for every ``last_advert`` epoch entering the app — the device's live
+    contact table and the cross-session contact store both pass through here — so the
+    plausibility rule lives in one place. The value is written by the advertising node's
+    own clock, which makes it hearsay: a zero/absent/garbage value means "never heard",
+    and a timestamp more than :data:`ADVERT_FUTURE_SKEW_S` ahead of our clock is a mis-set
+    sender clock and is refused the same way. Callers with their own reception evidence
+    (recorded observations) fill the resulting ``None`` from that instead — an honest
+    "when *we* heard it" beats a fictional "heard in the future".
+
+    Args:
+        last_advert: The raw ``last_advert`` field from a contact payload or stored entry.
+
+    Returns:
+        A timezone-aware UTC :class:`datetime`, or ``None`` when unknown or implausible.
+    """
+    try:
+        seconds = int(last_advert)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    when = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    if when > utcnow() + timedelta(seconds=ADVERT_FUTURE_SKEW_S):
+        return None
+    return when
 
 
 @dataclass(slots=True)

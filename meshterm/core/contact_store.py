@@ -29,11 +29,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .models import Contact
+from .models import Contact, advert_time
 
 
 def _norm(pubkey: str) -> str:
@@ -102,12 +101,11 @@ class RememberedContact:
 
         The learned route is dropped (``route_hops=None``): a remembered contact floods until
         the device relearns a path from received traffic, exactly as a freshly-heard one does.
+        The stored epoch re-enters through :func:`~meshterm.core.models.advert_time`, so a
+        future-stamped advert remembered before its sender's clock was corrected reads as
+        unknown rather than resurfacing as "heard in the future".
         """
-        last_seen = (
-            datetime.fromtimestamp(self.last_advert, tz=timezone.utc)
-            if self.last_advert
-            else None
-        )
+        last_seen = advert_time(self.last_advert)
         return Contact(
             name=self.name,
             public_key=self.public_key,

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from meshterm.core.models import Contact
 from meshterm.services.device_state import DeviceState, _CONTACTS_TTL_S
 
 
@@ -25,10 +27,13 @@ class FakeDevice:
         self.mode_calls = 0
         self.channel_calls = 0
         self.capacity_calls = 0
+        self.contact_rows: "list[Contact] | None" = None  # fixed table, when a test needs one
 
     async def get_contacts(self) -> list:
         self.contacts_calls += 1
-        return [f"contact-{self.contacts_calls}"]  # a fresh identity per fetch, to spot refreshes
+        if self.contact_rows is not None:
+            return list(self.contact_rows)
+        return [Contact(name=f"contact-{self.contacts_calls}")]  # fresh identity per fetch, to spot refreshes
 
     async def get_self_info(self) -> dict:
         self.self_info_calls += 1
@@ -51,8 +56,8 @@ class FakeDevice:
         return 8
 
 
-def _devstate(device: FakeDevice) -> DeviceState:
-    """A DeviceState over a fake ctx exposing just device() and a silent logger."""
+def _devstate(device: FakeDevice, heard: tuple = ()) -> DeviceState:
+    """A DeviceState over a fake ctx: device(), a silent logger, and a heard-node history."""
 
     async def device_getter():
         return device
@@ -60,6 +65,7 @@ def _devstate(device: FakeDevice) -> DeviceState:
     ctx = SimpleNamespace(
         device=device_getter,
         log=SimpleNamespace(debug=lambda *a, **k: None),
+        repo=SimpleNamespace(heard_nodes=lambda: list(heard)),
     )
     return DeviceState(ctx)  # type: ignore[arg-type]
 
@@ -112,7 +118,34 @@ def test_contacts_refresh_in_background_past_ttl() -> None:
         # Let the scheduled background refresh run.
         await asyncio.gather(*list(ds._tasks))
         assert dev.contacts_calls == 2  # refreshed behind the read
-        assert (await ds.contacts())[0] == "contact-2"  # now serving the fresh list
+        assert (await ds.contacts())[0].name == "contact-2"  # now serving the fresh list
+
+    asyncio.run(run())
+
+
+def test_missing_heard_times_fill_from_recorded_receptions() -> None:
+    """A contact with no plausible advert time gets the time *we* last heard it, if any.
+
+    The device's ``last_advert`` is stamped by the sender's clock and refused upstream when
+    implausible (see ``models.advert_time``), so a contact can arrive with no heard time
+    even though our own observation history holds first-hand receptions. The cache fills
+    that gap once, at the fetch — and never overrides a plausible device-reported time.
+    """
+    dev = FakeDevice()
+    device_says = datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc)
+    we_heard = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    dev.contact_rows = [
+        Contact(name="Bogus-Clock", public_key="aa" * 32, key_prefix="aa" * 6),
+        Contact(name="Honest", public_key="bb" * 32, key_prefix="bb" * 6, last_seen=device_says),
+        Contact(name="Quiet", public_key="cc" * 32, key_prefix="cc" * 6),
+    ]
+    ds = _devstate(dev, heard=(SimpleNamespace(node="aa" * 6, last_seen=we_heard),))
+
+    async def run() -> None:
+        by_name = {c.name: c for c in await ds.contacts()}
+        assert by_name["Bogus-Clock"].last_seen == we_heard  # filled from our own history
+        assert by_name["Honest"].last_seen == device_says  # a plausible device time stands
+        assert by_name["Quiet"].last_seen is None  # truly never heard stays never
 
     asyncio.run(run())
 
