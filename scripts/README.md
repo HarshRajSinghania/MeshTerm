@@ -1,12 +1,15 @@
 # scripts
 
-Device-side helpers for running MeshTerm on real hardware. Two independent targets
-live here, each self-contained:
+Device-side helpers for running MeshTerm on real hardware. Independent, self-contained
+targets live here:
 
 - **Calculinux device** (Luckfox Lyra / ClockworkPi PicoCalc) — one-time bring-up and
   the console font.
+- **XIAO nRF52840 UART radio** ([`xiao-radio/`](xiao-radio/)) — wire a Seeed XIAO +
+  Wio-SX1262 to the Lyra's hardware UART and run MeshTerm against it. Full build → flash →
+  setup guide with scripts. This is the way to give a PicoCalc a real MeshCore radio.
 - **SPI-attached radio bridge** (`meshterm-spi-bridge`) — expose a bare SPI LoRa chip
-  to MeshTerm as if it were a companion device.
+  to MeshTerm as if it were a companion device (uConsole AIO, Waveshare HATs).
 
 ## Calculinux device (Luckfox Lyra / ClockworkPi PicoCalc)
 
@@ -36,6 +39,25 @@ Two prerequisites the setup script checks for but cannot embed:
   so the script writes the iwd config (secrets stay in your environment, never in the repo).
 
 Both scripts are POSIX `sh`, idempotent, and safe to re-run.
+
+## XIAO nRF52840 UART radio — give a PicoCalc a real radio
+
+A **Seeed XIAO nRF52840 + Wio-SX1262** wired to the Luckfox Lyra's hardware UART1, running
+MeshCore companion firmware over `Serial1` (D6/D7). MeshTerm talks to it directly on
+`/dev/ttyS1` — no bridge process. Everything (parts, wiring, firmware build/flash, device
+setup, the *why*) is in [`xiao-radio/README.md`](xiao-radio/), with scripts for each step:
+
+| Script | Runs on | What it does |
+|---|---|---|
+| [`xiao-radio/build-firmware.sh`](xiao-radio/build-firmware.sh) | dev machine | clone + patch MeshCore, build the `_usb` env, emit the `.uf2` |
+| [`xiao-radio/flash.py`](xiao-radio/flash.py) | dev machine | flash the `.uf2` to the XIAO via its UF2 bootloader |
+| [`xiao-radio/lyra-setup.sh`](xiao-radio/lyra-setup.sh) | the Lyra (root) | boot-persistent UART1→GP4/GP5 mux service, `dialout`, default MeshTerm profile |
+| [`xiao-radio/uart1-mux.py`](xiao-radio/uart1-mux.py) | the Lyra | the matrix-IO register poke that routes UART1 to the header pads |
+
+Two things this depends on, both handled by the patch/guide: the firmware must bind the
+companion to `Serial1` **and** move I²C off D6/D7 (MeshCore maps it there and it steals the
+UART pins); and MeshTerm must include the platform-UART liveness fix (`serial_port_present`
+treats a soldered `/dev/ttyS1` as present).
 
 ## meshterm-spi-bridge — expose an SPI-attached radio
 

@@ -1,0 +1,29 @@
+diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
+index ef9b6bf..020c746 100644
+--- a/examples/companion_radio/main.cpp
++++ b/examples/companion_radio/main.cpp
+@@ -159,7 +159,8 @@ void setup() {
+ #ifdef BLE_PIN_CODE
+   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+ #else
+-  serial_interface.begin(Serial);
++  Serial1.begin(115200);            // companion protocol over hardware UART1 (D6=TX, D7=RX)
++  serial_interface.begin(Serial1);
+ #endif
+   the_mesh.startInterface(serial_interface);
+ #elif defined(RP2040_PLATFORM)
+diff --git a/variants/xiao_nrf52/platformio.ini b/variants/xiao_nrf52/platformio.ini
+index a085433..065b617 100644
+--- a/variants/xiao_nrf52/platformio.ini
++++ b/variants/xiao_nrf52/platformio.ini
+@@ -26,8 +26,8 @@ build_flags = ${nrf52_base.build_flags}
+   -D SX126X_DIO3_TCXO_VOLTAGE=1.8
+   -D SX126X_CURRENT_LIMIT=140
+   -D SX126X_RX_BOOSTED_GAIN=1
+-  -D PIN_WIRE_SCL=D6
+-  -D PIN_WIRE_SDA=D7
++  -D PIN_WIRE_SCL=16
++  -D PIN_WIRE_SDA=17
+   -D PIN_USER_BTN=PIN_BUTTON1
+   -D DISPLAY_CLASS=NullDisplayDriver
+ build_src_filter = ${nrf52_base.build_src_filter}
