@@ -300,6 +300,29 @@ def tcp_device(host: str, port: int, *, name: str = "") -> DiscoveredDevice:
     )
 
 
+def serial_device(port: str, *, name: str = "") -> DiscoveredDevice:
+    """Build the :class:`DiscoveredDevice` for a serial companion at ``port``.
+
+    A soldered platform-bus UART (e.g. ``/dev/ttyS1`` on the Luckfox Lyra) is not enumerated by
+    pyserial, so a scan never finds it; this is how a configured serial ``port`` enters the same
+    selection/remember/picker pipeline the discovered transports use — mirroring
+    :func:`tcp_device` for network companions. An optional ``name`` (the profile alias, or a
+    mesh node name learned on a prior connect) is carried to the picker's DEVICE column.
+
+    Args:
+        port: Serial port path (e.g. ``/dev/ttyS1`` or ``COM5``).
+        name: Optional friendly name for display.
+
+    Returns:
+        A serial :class:`DiscoveredDevice` ready to select or connect.
+    """
+    return DiscoveredDevice(
+        port=port,
+        description=name,
+        product=name or None,
+    )
+
+
 def _sort_key(device: DiscoveredDevice) -> tuple[int, str]:
     """Sort likely companions first, then bridges, then unknown; ties by target id."""
     return (_CONFIDENCE_RANK[device.confidence], device.target)

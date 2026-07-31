@@ -1210,6 +1210,62 @@ def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
     assert _TCP_ICON in top.plain  # marked with the network TYPE glyph
 
 
+def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
+    """A ``[profiles.*]`` serial entry (a soldered ``/dev/ttyS1``) shows up in the picker under
+    its alias, ready to select — even though pyserial's scan never produces that platform port."""
+    from meshterm.core.config import DeviceProfile
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui.device_picker import prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    profiles = {"picocalc": DeviceProfile(name="picocalc", port="/dev/ttyS1", baudrate=115200)}
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None  # skip past the smoke test
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    # Nothing scanned or remembered — the serial profile alone puts the port in the list.
+    asyncio.run(prompt_device(_Ui(), [], store, _never, profiles))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    device_rows = [r for r in rows if hasattr(r, "plain") and "picocalc" in r.plain]
+    assert device_rows, "the configured serial profile should be listed"
+    assert "/dev/ttyS1" in device_rows[0].plain  # its port sits in the address column
+
+
+def test_device_picker_serial_profile_yields_to_scanned_port(tmp_path) -> None:
+    """A serial profile whose port pyserial DOES enumerate is not double-listed — the scanned
+    row (with real USB metadata) wins over the bare profile."""
+    from meshterm.core.config import DeviceProfile
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import prompt_device
+
+    store = DeviceStore(tmp_path / "devices.json")
+    scanned = [DiscoveredDevice(port="/dev/ttyUSB0", product="XIAO", vid=0x2886, pid=0x8044)]
+    profiles = {"radio": DeviceProfile(name="radio", port="/dev/ttyUSB0")}
+
+    captured: dict = {}
+
+    class _Ui:
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+            captured["items"] = items
+            return None
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    asyncio.run(prompt_device(_Ui(), scanned, store, _never, profiles))
+    rows = [it.title for it in captured["items"] if isinstance(it, Choice)]
+    usb_rows = [r for r in rows if hasattr(r, "plain") and "/dev/ttyUSB0" in r.plain]
+    assert len(usb_rows) == 1, "the scanned port must not be duplicated by the profile"
+
+
 def test_device_picker_profile_yields_to_remembered_endpoint(tmp_path) -> None:
     """A profile at an already-remembered endpoint doesn't double-list — the richer row wins."""
     from meshterm.core.config import DeviceProfile

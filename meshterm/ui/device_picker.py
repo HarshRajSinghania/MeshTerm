@@ -32,6 +32,7 @@ from ..core.discovery import (
     DEFAULT_TCP_PORT,
     DiscoveredDevice,
     parse_tcp_endpoint,
+    serial_device,
     tcp_device,
 )
 from .logo import load_logo
@@ -301,6 +302,10 @@ async def prompt_device(
         # richer remembered row rather than being shadowed by the profile.
         listed = scanned + _remembered_tcp_devices(scanned, registry)
         listed += _profile_tcp_devices(listed, profiles)
+        # A serial profile on a soldered platform UART (e.g. /dev/ttyS1) is likewise not
+        # produced by the scan, so fold those in too — after the scanned set, so a port
+        # pyserial *does* enumerate keeps its richer scanned row rather than the bare profile.
+        listed += _profile_serial_devices(listed, profiles)
         # Preselect the remembered "last known good" device when it is currently attached/in range.
         default = next((d for d in listed if remembered and remembered.matches(d)), None)
 
@@ -418,6 +423,44 @@ def _profile_tcp_devices(
             continue
         seen.add(device.stable_id)
         rebuilt.append(device)
+    return rebuilt
+
+
+def _profile_serial_devices(
+    listed: list[DiscoveredDevice],
+    profiles: Optional[Mapping[str, DeviceProfile]],
+) -> list[DiscoveredDevice]:
+    """Rebuild configured serial profiles as :class:`DiscoveredDevice` rows for the picker.
+
+    A ``[profiles.<alias>]`` serial block names a companion on a fixed port. A soldered
+    platform-bus UART (e.g. ``/dev/ttyS1`` on the Luckfox Lyra) is invisible to pyserial's scan,
+    so without this it would only ever surface via ``meshterm --port``/``-p`` on the command
+    line, never in the interactive splash. Each such profile becomes a device carrying its alias
+    as the DEVICE-column name, listed like a scanned port and smoke-tested the same way —
+    mirroring :func:`_profile_tcp_devices` for network companions. De-duplication is by **port**
+    (a scanned USB device keys on its serial/VID:PID, not its port name): a profile whose port is
+    already present — pyserial *does* enumerate it, or it is remembered — is skipped so the
+    richer existing row wins rather than being duplicated by the bare profile.
+
+    Args:
+        listed: The devices already gathered (scanned + remembered + TCP profiles), for
+            de-duplication by port.
+        profiles: The configured profiles, or ``None`` when none are loaded.
+
+    Returns:
+        One serial :class:`DiscoveredDevice` per not-yet-listed serial profile, in profile order.
+    """
+    if not profiles:
+        return []
+    seen_ports = {d.port for d in listed if d.port}
+    rebuilt: list[DiscoveredDevice] = []
+    for profile in profiles.values():
+        if profile.is_tcp or profile.is_ble or not profile.port:
+            continue
+        if profile.port in seen_ports:
+            continue
+        seen_ports.add(profile.port)
+        rebuilt.append(serial_device(profile.port, name=profile.name))
     return rebuilt
 
 

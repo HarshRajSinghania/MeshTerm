@@ -572,6 +572,25 @@ def test_serial_port_present_assumes_up_on_enumeration_error(monkeypatch) -> Non
     assert connection.serial_port_present("COM11")
 
 
+def test_serial_port_present_platform_uart_by_path(monkeypatch) -> None:
+    """A soldered platform UART (e.g. ``/dev/ttyS1`` on the Luckfox Lyra) is invisible to
+    pyserial's ``comports()`` but its ``/dev`` char-device node persists — so an existing
+    ``/dev`` character device reads as present, while a vanished node (a real USB unplug of
+    ``/dev/ttyUSB*``) still reads as absent."""
+    pytest.importorskip("serial")
+    import os as _os
+    import stat as _stat
+
+    from serial.tools import list_ports
+
+    monkeypatch.setattr(list_ports, "comports", list)  # platform UARTs aren't enumerated -> []
+    monkeypatch.setattr(_os.path, "exists", lambda p: p == "/dev/ttyS1")
+    monkeypatch.setattr(_os, "stat", lambda p: SimpleNamespace(st_mode=_stat.S_IFCHR))
+
+    assert connection.serial_port_present("/dev/ttyS1")  # existing char device -> present
+    assert not connection.serial_port_present("/dev/ttyUSB9")  # node gone -> absent (unplug)
+
+
 async def test_wait_for_disconnect_fires_when_port_vanishes(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -291,9 +291,25 @@ def serial_port_present(port: str) -> bool:
     except Exception:  # noqa: BLE001 - pyserial absent (e.g. --mock env); can't tell, assume up
         return True
     try:
-        return any(info.device == port for info in list_ports.comports())
+        if any(info.device == port for info in list_ports.comports()):
+            return True
     except Exception:  # noqa: BLE001 - an enumeration failure must not fake a disconnect
         return True
+    # A soldered platform-bus UART (e.g. an SoC port like ``/dev/ttyS1`` on the Luckfox Lyra)
+    # is never enumerated by pyserial's Linux ``comports()`` — yet its device node persists for
+    # exactly as long as the port exists. A USB serial node, by contrast, is removed from the
+    # filesystem the instant the cable is pulled. So an existing ``/dev`` character device is a
+    # sound presence signal that never masks a real unplug (and stays Windows-safe: COM names
+    # are not filesystem paths, so this branch is skipped there).
+    try:
+        import os
+        import stat
+
+        if port.startswith("/dev/") and os.path.exists(port):
+            return stat.S_ISCHR(os.stat(port).st_mode)
+    except Exception:  # noqa: BLE001 - a stat hiccup must not fake a disconnect
+        return True
+    return False
 
 
 class Device(ABC):
