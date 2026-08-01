@@ -345,28 +345,33 @@ fi
 echo "persisted FONT=$FONT_NAME in $VCONSOLE (loads on every boot)"
 echo "A/B: 'setfont $OUT8' for 53x40, 'setfont $OUT' for 53x26; persist the winner in $VCONSOLE"
 
-# --- palette: program the 16 console slots to MeshTerm's colours ------------------------
-# The panel's VT layer is 16 fg / 8 bg palette slots -- no per-cell RGB -- so MeshTerm's
-# 16-slot theme (meshterm/ui/theme.MESH_THEME_16) is designed against the slot meanings
-# below, and this section programs the slots' actual RGB values. The palette file matches
-# theme.vtrgb_lines() exactly (a test keeps them in sync); the boot oneshot re-applies it
-# every start (same pattern as wifi-kick). setvtrgb does the work where kbd ships it; the
-# fallback printf speaks the kernel VT's own OSC palette sequences, so nothing is required.
+# --- palette -----------------------------------------------------------------------------
+# JP's decision (2026-08-01): the console keeps its STANDARD kernel palette -- black
+# background, stock hues -- and meshterm/ui/theme.MESH_THEME_16 is designed against those
+# (theme._VT_SLOTS). The custom tailwind-family remap P3 originally shipped is ARCHIVED,
+# one environment variable away in case he changes his mind:
+#
+#     MESHTERM_CUSTOM_PALETTE=1 sh calculinux-console-font.sh
+#
+# The opt-in block's values match theme.vtrgb_lines() / theme._VT_SLOTS_CUSTOM exactly (a
+# test keeps them in sync). A DEFAULT run removes any previously-installed remap and
+# resets the live palette to stock.
 VTRGB=/etc/vtrgb
 APPLIER=/usr/local/sbin/meshterm-vtrgb
 UNIT=/etc/systemd/system/meshterm-vtrgb.service
 
-echo "writing $VTRGB ..."
-cat > "$VTRGB" <<'EOF'
+if [ "${MESHTERM_CUSTOM_PALETTE:-0}" = 1 ]; then
+    echo "writing $VTRGB (custom palette opt-in) ..."
+    cat > "$VTRGB" <<'EOF'
 15,239,34,245,99,51,100,203,148,248,74,251,129,165,94,255
 23,68,197,158,102,65,116,213,163,113,222,191,140,180,234,255
 42,68,94,11,241,85,139,225,184,113,128,36,248,252,212,255
 EOF
 
-mkdir -p "$(dirname "$APPLIER")"
-cat > "$APPLIER" <<'EOF'
+    mkdir -p "$(dirname "$APPLIER")"
+    cat > "$APPLIER" <<'EOF'
 #!/bin/sh
-# Apply the MeshTerm console palette (slots documented in meshterm/ui/theme._VT_SLOTS).
+# Apply the MeshTerm custom console palette (meshterm/ui/theme._VT_SLOTS_CUSTOM).
 if command -v setvtrgb >/dev/null 2>&1; then
     exec setvtrgb /etc/vtrgb
 fi
@@ -374,11 +379,11 @@ fi
 TTY=${1:-/dev/tty1}
 printf '\033]P00f172a\033]P1ef4444\033]P222c55e\033]P3f59e0b\033]P46366f1\033]P5334155\033]P664748b\033]P7cbd5e1\033]P894a3b8\033]P9f87171\033]Pa4ade80\033]Pbfbbf24\033]Pc818cf8\033]Pda5b4fc\033]Pe5eead4\033]Pfffffff' > "$TTY"
 EOF
-chmod +x "$APPLIER"
+    chmod +x "$APPLIER"
 
-cat > "$UNIT" <<EOF
+    cat > "$UNIT" <<EOF
 [Unit]
-Description=MeshTerm console palette (16-slot vtrgb)
+Description=MeshTerm console palette (custom 16-slot vtrgb)
 After=systemd-vconsole-setup.service
 
 [Service]
@@ -389,9 +394,31 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable meshterm-vtrgb.service >/dev/null 2>&1 || true
-"$APPLIER" || echo "warning: could not apply the palette live (boot service will)"
-echo "palette installed ($VTRGB + boot oneshot)"
+    systemctl daemon-reload
+    systemctl enable meshterm-vtrgb.service >/dev/null 2>&1 || true
+    "$APPLIER" || echo "warning: could not apply the palette live (boot service will)"
+    echo "custom palette installed ($VTRGB + boot oneshot)"
+else
+    systemctl disable meshterm-vtrgb.service >/dev/null 2>&1 || true
+    rm -f "$UNIT" "$VTRGB" "$APPLIER"
+    systemctl daemon-reload 2>/dev/null || true
+    # Restore the STANDARD palette explicitly: a previous setvtrgb overwrote the
+    # kernel's *default* colormap, so the OSC reset (ESC ] R) alone would "reset"
+    # straight back to the custom values. Program the stock PC palette, then reset.
+    TTY=/dev/tty1
+    [ -c "$TTY" ] || TTY=/dev/tty0
+    if command -v setvtrgb >/dev/null 2>&1; then
+        STOCK=$(mktemp)
+        cat > "$STOCK" <<'EOF'
+0,170,0,170,0,170,0,170,85,255,85,255,85,255,85,255
+0,0,170,85,0,0,170,170,85,85,255,255,85,85,255,255
+0,0,0,0,170,170,170,170,85,85,85,85,255,255,255,255
+EOF
+        setvtrgb "$STOCK" || true
+        rm -f "$STOCK"
+    fi
+    printf '\033]P0000000\033]P1aa0000\033]P200aa00\033]P3aa5500\033]P40000aa\033]P5aa00aa\033]P600aaaa\033]P7aaaaaa\033]P8555555\033]P9ff5555\033]Pa55ff55\033]Pbffff55\033]Pc5555ff\033]Pdff55ff\033]Pe55ffff\033]Pfffffff\033]R' > "$TTY" 2>/dev/null || true
+    echo "palette: standard (custom remap removed; opt back in with MESHTERM_CUSTOM_PALETTE=1)"
+fi
 
 echo "done -- launch 'meshterm' to see braille charts, node glyphs, framed panels, and the > cursor."

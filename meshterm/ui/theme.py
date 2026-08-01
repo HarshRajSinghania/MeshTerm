@@ -90,11 +90,11 @@ MESH_THEME = Theme(
         # Node-type colours, used where the platform colours names by *type* instead of by
         # key (PicoCalc — see name_style). Defined in both themes so the names always
         # resolve; the regular platform simply never asks for them. Hues follow the map's
-        # marker language where the 16-slot palette can: repeaters the calm violet, sensors
-        # the map's orange; rooms take the brand teal and plain client nodes a quiet light
-        # grey, so infrastructure pops while the crowd stays calm.
-        "type.node": "#cbd5e1",
-        "type.repeater": "#a5b4fc",
+        # marker language: clients the map's pink, repeaters its violet, sensors its
+        # orange; rooms take a teal of their own (the map's white square is reserved for
+        # "you" in name contexts).
+        "type.node": "#f472b6",
+        "type.repeater": "#a78bfa",
         "type.room": "#5eead4",
         "type.sensor": "#fb923c",
         # The heard-age heat scale's quantized steps (hot → cold). The regular platform
@@ -108,60 +108,87 @@ MESH_THEME = Theme(
     }
 )
 
-#: The PicoCalc console's 16 palette slots and the RGB each is programmed to (via
-#: ``setvtrgb``; see :func:`vtrgb_lines` and the boot oneshot installed by
-#: ``scripts/calculinux-console-font.sh``). This table *is* the palette design:
+#: The PicoCalc console's 16 palette slots — the **standard kernel VT palette**, by JP's
+#: decision (2026-08-01): the console is not remapped, so other software looks stock and
+#: the black background stays black. :data:`MESH_THEME_16` is designed against these
+#: RGBs, and the fold's stray-truecolor quantizer matches against them. Rules that still
+#: bind:
 #:
-#: * Slots keep their conventional **hue families** (1/9 red, 2/10 green, 3/11
-#:   yellow-orange, 4/12 blue-indigo, 7/15 light/white, 8 grey) so other console
-#:   software — and Rich's own nearest-colour downsampling of any stray truecolor —
-#:   still lands somewhere sane; only the exact RGBs are retuned to MeshTerm's theme.
-#: * Two slots are repurposed outright for the theme's dark slates (5 ``track``,
-#:   6 ``faint``): the app never uses magenta or dim cyan, and three greys don't fit
-#:   in one "bright black" slot.
-#: * The kernel VT renders **bold as brightness**: ``bold`` on a 0–7 foreground jumps
-#:   it to slot N+8. Styles below therefore only combine ``bold`` with a slot whose
-#:   +8 partner is the same hue family — and never with 5/6, whose partners (13/14)
-#:   are unrelated colours.
+#: * The kernel VT renders **bold as brightness**: ``bold`` on a 0–7 foreground jumps it
+#:   to slot N+8. A style may only combine ``bold`` with a dim slot when the bright
+#:   partner keeps its meaning — and never with 5/6, whose partners are claimed by
+#:   *different* semantics here (5 purple = repeater names, 13 pink = client names;
+#:   6 cyan = room names/hint.brand, 14 bright cyan = brand).
 #: * Backgrounds can only address slots 0–7 (SGR 40–47).
 _VT_SLOTS: tuple[tuple[int, str, str], ...] = (
-    (0, "background", "#0f172a"),
+    (0, "background (black)", "#000000"),
+    (1, "red (hint.err)", "#aa0000"),
+    (2, "green (hint.ok)", "#00aa00"),
+    (3, "brown/orange (hint.warn, batt.mid, heat.cool, sensors)", "#aa5500"),
+    (4, "blue (hint.accent, bluetooth bg)", "#0000aa"),
+    (5, "purple (repeater names)", "#aa00aa"),
+    (6, "cyan (room names, hint.brand)", "#00aaaa"),
+    (7, "light grey (default text, heat.cold)", "#aaaaaa"),
+    (8, "dark grey (muted, faint, track)", "#555555"),
+    (9, "bright red (err)", "#ff5555"),
+    (10, "bright green (ok)", "#55ff55"),
+    (11, "bright yellow (warn, heat.warm)", "#ffff55"),
+    (12, "bright blue (accent)", "#5555ff"),
+    (13, "bright pink (client names — the map's pink, for free)", "#ff55ff"),
+    (14, "bright cyan (brand)", "#55ffff"),
+    (15, "white (you, heat.hot)", "#ffffff"),
+)
+
+#: The custom 16-slot remap P3 originally shipped (tailwind-family RGBs programmed via
+#: ``setvtrgb``) — **archived, not installed**: JP chose the standard palette but asked
+#: to keep this in case he changes his mind. Reinstall with
+#: ``MESHTERM_CUSTOM_PALETTE=1 sh scripts/calculinux-console-font.sh`` (whose opt-in
+#: block a test keeps byte-identical to :func:`vtrgb_lines`); MESH_THEME_16 would then
+#: want re-tuning against it (see git history at c6485c6 for the matching theme).
+_VT_SLOTS_CUSTOM: tuple[tuple[int, str, str], ...] = (
+    (0, "background slate", "#0f172a"),
     (1, "red (hint.err)", "#ef4444"),
     (2, "green (hint.ok)", "#22c55e"),
-    (3, "orange (hint.warn, batt.mid, sensors)", "#f59e0b"),
-    (4, "indigo (hint.accent, bluetooth bg)", "#6366f1"),
+    (3, "orange", "#f59e0b"),
+    (4, "indigo (hint.accent)", "#6366f1"),
     (5, "track slate (was magenta)", "#334155"),
     (6, "faint slate (was dim cyan)", "#64748b"),
-    (7, "light grey (title.muted, client nodes)", "#cbd5e1"),
+    (7, "light grey", "#cbd5e1"),
     (8, "muted grey", "#94a3b8"),
     (9, "err red", "#f87171"),
     (10, "ok green", "#4ade80"),
     (11, "warn amber", "#fbbf24"),
     (12, "accent indigo", "#818cf8"),
-    (13, "lavender (title.accent, repeaters)", "#a5b4fc"),
+    (13, "lavender", "#a5b4fc"),
     (14, "brand teal", "#5eead4"),
-    (15, "white (you)", "#ffffff"),
+    (15, "white", "#ffffff"),
 )
 
 
 def vtrgb_lines() -> str:
-    """The ``setvtrgb`` palette file content for :data:`_VT_SLOTS` (three CSV lines).
+    """The ``setvtrgb`` file content for the **archived custom** palette (three CSV lines).
 
-    ``setvtrgb`` takes one line of 16 decimal values per colour channel. The deploy
-    script carries this same content literally (a test keeps the two in sync), so a
-    fresh SD card gets the palette without running Python.
+    Not installed by default — see :data:`_VT_SLOTS_CUSTOM`. The deploy script's opt-in
+    block carries this same content literally (a test keeps the two in sync), so the
+    remap stays one environment variable away without running Python.
     """
     channels = []
     for shift in (16, 8, 0):
-        values = [(int(hex_.lstrip("#"), 16) >> shift) & 0xFF for _, _, hex_ in _VT_SLOTS]
+        values = [
+            (int(hex_.lstrip("#"), 16) >> shift) & 0xFF for _, _, hex_ in _VT_SLOTS_CUSTOM
+        ]
         channels.append(",".join(str(v) for v in values))
     return "\n".join(channels) + "\n"
 
 
 #: The 16-slot palette theme: the same style names as :data:`MESH_THEME`, expressed as
-#: ``color(N)`` references into :data:`_VT_SLOTS`. Kept literal (rather than derived) so
-#: a slot choice is reviewable next to its meaning; the bold-brightness and background
-#: rules it must obey are documented on :data:`_VT_SLOTS` and pinned by tests.
+#: ``color(N)`` references into :data:`_VT_SLOTS` — the **standard** VT palette. Kept
+#: literal (rather than derived) so a slot choice is reviewable next to its meaning; the
+#: bold-brightness and background rules it must obey are documented on
+#: :data:`_VT_SLOTS` and pinned by tests. Notable stock-palette wins: bright pink (13)
+#: is the map's client colour for free, and dim purple (5) stands in for the map's
+#: repeater violet. The cost: the three grey depths (muted/faint/track) all collapse
+#: onto slot 8 — the stock palette has exactly one dark grey.
 MESH_THEME_16 = Theme(
     {
         "brand": "bold color(14)",
@@ -176,36 +203,36 @@ MESH_THEME_16 = Theme(
         "warn": "bold color(11)",
         "err": "bold color(9)",
         "muted": "color(8)",
-        "title.accent": "bold color(13)",
+        "title.accent": "bold color(12)",
         "title.muted": "bold color(7)",
         "title.warn": "bold color(11)",
         "title.err": "bold color(9)",
         "title.ok": "bold color(10)",
         "title.brand": "bold color(14)",
         "hint.accent": "color(4)",
-        "hint.muted": "color(6)",
+        "hint.muted": "color(8)",
         "hint.warn": "color(3)",
         "hint.err": "color(1)",
         "hint.ok": "color(2)",
-        "hint.brand": "color(14)",
-        "faint": "color(6)",
-        "track": "color(5)",
+        "hint.brand": "color(6)",
+        "faint": "color(8)",
+        "track": "color(8)",
         "snr.good": "bold color(10)",
         "snr.ok": "bold color(11)",
         "snr.bad": "bold color(9)",
         "batt.high": "bold color(10)",
         "batt.mid": "color(3)",
         "batt.low": "bold color(9)",
-        "batt.dim": "color(5)",
-        "type.node": "color(7)",
-        "type.repeater": "color(13)",
-        "type.room": "color(14)",
+        "batt.dim": "color(8)",
+        "type.node": "color(13)",
+        "type.repeater": "color(5)",
+        "type.room": "color(6)",
         "type.sensor": "color(3)",
         "heat.hot": "bold color(15)",
         "heat.warm": "color(11)",
         "heat.cool": "color(3)",
-        "heat.cold": "color(8)",
-        "heat.never": "color(6)",
+        "heat.cold": "color(7)",
+        "heat.never": "color(8)",
     }
 )
 

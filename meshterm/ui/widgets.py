@@ -882,15 +882,17 @@ def _recency_gradient(secs: Optional[float]) -> str:
 def _recency_quantized(secs: Optional[float]) -> str:
     """PicoCalc's heat: the gradient collapsed onto the theme's four ``heat.*`` steps.
 
-    White within the hour, amber within six, orange within the day, muted beyond —
-    the gradient's own anchors, minus its red step (on a 16-slot console red is
-    reserved for errors). ``heat.never`` keeps never-heard a shade below ever-heard.
+    The boundaries are the plain human units (JP's spec: useful, easily understood):
+    white within the **quarter hour** (fresh — inside a typical advert interval),
+    yellow within the **hour**, orange within the **day**, default-grey beyond. No red
+    step — on the console red is reserved for errors. ``heat.never`` keeps never-heard
+    a shade below ever-heard.
     """
     if secs is None:
         return "heat.never"
-    if secs <= 3600:
+    if secs <= 900:
         return "heat.hot"
-    if secs <= 21600:
+    if secs <= 3600:
         return "heat.warm"
     if secs <= 86400:
         return "heat.cool"

@@ -143,9 +143,10 @@ PICOCALC = Platform(
     readable_cols=53,
     readable_rows=26,
     frame_border=False,
-    # P4 decides "keep pulse" once it can measure whether it still earns its cells at 53;
-    # conservatively excluded until then. Version is dropped outright (plan decision).
-    header_atoms=("device", "badges", "battery"),
+    # JP's call (2026-08-01, post-P7 review): the handheld's header brands the app —
+    # "MeshTerm vX" — rather than naming the device/port (on a soldered radio the port
+    # never changes), and the activity pulse takes whatever room remains.
+    header_atoms=("version", "badges", "pulse", "battery"),
     footer_fkeys=True,
     width_reclaim=False,
     emoji=False,

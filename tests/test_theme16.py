@@ -57,8 +57,9 @@ def test_theme16_uses_only_the_sixteen_slots() -> None:
 def test_theme16_bold_never_jumps_a_dim_slot_to_an_unrelated_bright_one() -> None:
     """The VT draws bold as brightness: bold on slots 0-7 lands on N+8.
 
-    Slots 5 and 6 are the repurposed dark slates whose +8 partners (lavender, teal) are
-    unrelated colours, so no style may combine bold with them.
+    Slots 5 and 6 carry semantics whose bright partners mean something *else* here
+    (5 purple = repeater names vs 13 pink = client names; 6 cyan = rooms/hint.brand vs
+    14 = brand), so no style may combine bold with them.
     """
     for name, style in _our_styles(MESH_THEME_16).items():
         if style.bold and style.color is not None and style.color.number in (5, 6):
@@ -77,12 +78,14 @@ def test_theme16_backgrounds_stay_in_the_dim_bank() -> None:
             )
 
 
-def test_deploy_script_carries_the_canonical_palette() -> None:
-    """`/etc/vtrgb` in the deploy script matches ``theme.vtrgb_lines()`` byte for byte,
-    and the no-kbd OSC fallback spells the same sixteen RGB values."""
+def test_deploy_script_carries_the_archived_custom_palette() -> None:
+    """The script's **opt-in** block matches ``theme.vtrgb_lines()`` byte for byte, and
+    its no-kbd OSC fallback spells the same sixteen RGB values — so the archived custom
+    palette stays one environment variable away, in sync with `_VT_SLOTS_CUSTOM`."""
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
+    assert "MESHTERM_CUSTOM_PALETTE" in script, "the opt-in gate vanished"
     assert theme.vtrgb_lines() in script, "scripts/calculinux-console-font.sh vtrgb drifted"
-    for index, (_, _, hex_) in enumerate(theme._VT_SLOTS):
+    for index, (_, _, hex_) in enumerate(theme._VT_SLOTS_CUSTOM):
         sequence = f"\\033]P{index:x}{hex_.lstrip('#').lower()}"
         assert sequence in script, f"OSC fallback missing slot {index}: {sequence}"
 
@@ -154,7 +157,7 @@ def test_fold_quantizes_embedded_truecolor_to_the_slots() -> None:
     set_platform(PICOCALC)
     folded = fold_text("\x1b[38;2;148;163;184m○\x1b[0m")
     assert "38;2;" not in folded
-    assert "\x1b[90m" in folded  # #94a3b8 is exactly slot 8 (muted)
+    assert "\x1b[37m" in folded  # #94a3b8 → nearest stock slot is 7 (#aaaaaa)
     background = fold_text("\x1b[48;2;94;234;212mX\x1b[0m")
     assert "48;2;" not in background
     assert re.search(r"\x1b\[4[0-7]m", background), background  # bg clamps to the dim bank

@@ -41,8 +41,9 @@ def test_bordered_frame_is_unchanged_on_regular() -> None:
     assert any("╭" in line or "┌" in line for line in plain), "regular keeps its Panel"
 
 
-def test_picocalc_header_drops_version_and_pulse() -> None:
-    """The header_atoms wiring: no brand/version mark, no pulse row under picocalc."""
+def test_picocalc_header_brands_the_app_not_the_device() -> None:
+    """The header_atoms wiring, per JP's spec: picocalc shows ``MeshTerm vX`` (a soldered
+    radio's port never changes, so the device segment earns nothing), regular keeps both."""
     from meshterm.ui.menu import _header_segments
 
     class _Badges:
@@ -58,13 +59,13 @@ def test_picocalc_header_drops_version_and_pulse() -> None:
         watchtower = _Badges()
 
     set_platform(PICOCALC)
-    segments = _header_segments(_Ctx(), {})
-    text = "".join(seg.plain for seg in segments)
-    assert "MeshTerm" not in text and "v" not in text.split()[0]
-    assert "simulator" in text
+    text = "".join(seg.plain for seg in _header_segments(_Ctx(), {}))
+    assert "MeshTerm" in text
+    assert "simulator" not in text  # the device atom is composed out
+    assert "pulse" in PICOCALC.header_atoms  # the sparkline takes the remaining room
     set_platform(REGULAR)
-    segments = _header_segments(_Ctx(), {})
-    assert "MeshTerm" in "".join(seg.plain for seg in segments)
+    text = "".join(seg.plain for seg in _header_segments(_Ctx(), {}))
+    assert "MeshTerm" in text and "simulator" in text
 
 
 def test_fkey_lane_resolution_and_banks() -> None:

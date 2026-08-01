@@ -17,7 +17,7 @@ from rich.text import Text
 from ..platforms import get_platform
 from .packet_viewer import KIND_ICONS, PAYLOAD_ICONS
 from .theme import _VT_SLOTS, fold_text, glyph, name_style, snr_style
-from .widgets import _NODE_GLYPHS, _recency_style, channel_glyph
+from .widgets import _recency_style, channel_glyph
 
 #: Demo identities for the name-colour row: (name, key, node type registered for it).
 #: Keys are synthetic and only ever registered inside the one-shot specimen process.
@@ -57,7 +57,7 @@ def specimen_lines() -> list[RenderableType]:
     lines.append(Text.assemble(("Specimen", "accent"), ("  ·  ", "muted"), platform.name))
     lines.append(Text())
     lines.append(_palette_row())
-    legend = Text("0 bg · 5 track · 6 faint · 8 muted · 15 you", style="muted")
+    legend = Text("stock palette · 8 muted · 13 clients · 15 you", style="muted")
     lines.append(legend)
     lines.append(Text())
 
@@ -66,11 +66,17 @@ def specimen_lines() -> list[RenderableType]:
         status.append(mark + " ", style=style)
     lines.append(status)
 
+    # The node marks wear the *type* styles (not the map's raw hex colours): on the
+    # console they resolve to exact palette slots, and the row then agrees with the
+    # names row below it. Raw hex here would also trip Rich's per-Style ANSI memo —
+    # a style first rendered by a truecolor console replays truecolor everywhere.
     nodes = Text("nodes   ")
     nodes.append("★ ", style="you")
-    for node_type, (mark, colour) in _NODE_GLYPHS.items():
-        nodes.append(mark + " ", style=colour)
-    nodes.append("○", style="muted")
+    for mark, style in (
+        ("● ", "type.node"), ("▲ ", "type.repeater"), ("■ ", "type.room"),
+        ("◉ ", "type.sensor"), ("○", "muted"),
+    ):
+        nodes.append(mark, style=style)
     lines.append(nodes)
 
     classes = Text("classes ")
