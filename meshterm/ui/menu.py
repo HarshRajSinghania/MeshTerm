@@ -25,6 +25,7 @@ from rich.text import Text
 from .. import __version__
 from ..context import AppContext
 from ..persistence.logging import get_logger
+from ..platforms import get_platform
 from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
@@ -325,8 +326,11 @@ async def run_menu(ctx: AppContext) -> None:
     """
     # Measure how this terminal renders emoji and align Rich to it, before
     # prompt_toolkit takes over the screen. This keeps every panel border — and
-    # every chat bubble — aligned regardless of the terminal's emoji widths.
-    calibrate_emoji_width()
+    # every chat bubble — aligned regardless of the terminal's emoji widths. Skipped
+    # outright on a platform that never draws emoji (PicoCalc): there is nothing to
+    # calibrate, and the probe writes escape sequences the console font can't shape.
+    if get_platform().emoji:
+        calibrate_emoji_width()
 
     header_cache: dict = {}
     session = TuiSession(header=lambda cols: _header(ctx, header_cache, cols))

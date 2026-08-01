@@ -24,6 +24,7 @@ from .core.device_store import DeviceStore
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging
 from .persistence.repository import Repository
+from .platforms import Resolution, resolve, set_platform
 from .tools import all_tools
 from .tools.base import Tool, ToolResult
 from .ui.theme import make_console
@@ -72,6 +73,10 @@ app = typer.Typer(
 # The context built by the callback and consumed by subcommands within one process.
 _state: Optional[AppContext] = None
 
+# The platform resolution the callback made, for the ``platform`` diagnostic subcommand
+# to report back (see :func:`platform_command`) without re-deriving it independently.
+_platform_resolution: Optional[Resolution] = None
+
 
 @app.callback(invoke_without_command=True)
 def main_callback(
@@ -93,6 +98,11 @@ def main_callback(
     db_path: Optional[Path] = typer.Option(None, "--db", help="SQLite database path"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress console logging"),
+    platform: Optional[str] = typer.Option(
+        None,
+        "--platform",
+        help="Force the UI platform (regular|picocalc) instead of auto-detecting it",
+    ),
 ) -> None:
     """Build the application context and dispatch to the menu or a subcommand.
 
@@ -107,8 +117,17 @@ def main_callback(
         db_path: Override the database location.
         json_output: Request machine-readable output from tools.
         quiet: Suppress console logging (file logging continues).
+        platform: Explicit ``--platform`` override; see :func:`meshterm.platforms.resolve`.
     """
-    global _state
+    global _state, _platform_resolution
+
+    # Resolved and installed first, before anything below it (make_console, the theme,
+    # the eventual TuiSession) reads the active platform.
+    try:
+        _platform_resolution = resolve(platform)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--platform") from exc
+    set_platform(_platform_resolution.platform)
 
     settings = Settings.load()
     if db_path is not None:
@@ -143,6 +162,24 @@ def main_callback(
         from .ui.menu import run_menu
 
         asyncio.run(_drive(run_menu(app_ctx), app_ctx))
+
+
+@app.command(name="platform")
+def platform_command() -> None:
+    """Print the resolved platform and every input the resolution looked at.
+
+    A diagnostic for the platform seam (see ``meshterm/platforms.py``): confirms which
+    flavour a given invocation would run as, and why — the ``--platform``/
+    ``MESHTERM_PLATFORM`` inputs, what ``/proc/device-tree/model`` reports (``None`` off
+    the actual hardware), and which of those decided it.
+    """
+    assert _platform_resolution is not None  # set by the callback that always runs first
+    r = _platform_resolution
+    console = make_console()
+    console.print(f"platform: [accent]{r.platform.name}[/accent]  (source: {r.source})")
+    console.print(f"  --platform:              {r.flag or '(not passed)'}")
+    console.print(f"  MESHTERM_PLATFORM:       {r.env or '(not set)'}")
+    console.print(f"  /proc/device-tree/model: {r.detected_model or '(unavailable)'}")
 
 
 def run_tool_command(tool: Tool, params: dict) -> None:

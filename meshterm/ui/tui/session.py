@@ -29,6 +29,7 @@ from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
 from rich.text import Text
 
+from ...platforms import get_platform
 from . import frame
 from .overlay import BusyOverlay
 from .progress import TuiProgress
@@ -178,18 +179,31 @@ def _read_clipboard() -> str:
         return ""
 
 
-#: Reclaim the terminal's final column. Some terminals (and prompt_toolkit's size probe on
-#: them) report the window one column narrower than it really is, so the frame is drawn to
-#: ``columns - 1`` and the true last column sits unused — visibly selectable to the right of
-#: the border. When this is on, :class:`_WidthExtendedOutput` tells both the renderer and the
-#: frame compositor the window is one column wider, and that final column gets drawn.
-#:
-#: This is a gate, not a certainty: it is *correct* only when the probe under-reports. On a
-#: terminal whose width probe is already right, the extra column falls off the real screen and
-#: the frame would wrap and tear, so it can be switched off with ``MESHTERM_FULL_WIDTH=0``.
-#: Kept as an env-var gate for now so it can graduate to a user setting once confirmed across
-#: terminals (TODO: thread through ``settings`` and the config editor).
-_RECLAIM_LAST_COLUMN = os.environ.get("MESHTERM_FULL_WIDTH", "1") != "0"
+def _reclaim_last_column() -> bool:
+    """Whether to reclaim the terminal's final column.
+
+    Some terminals (and prompt_toolkit's size probe on them) report the window one column
+    narrower than it really is, so the frame is drawn to ``columns - 1`` and the true last
+    column sits unused — visibly selectable to the right of the border. When this is on,
+    :class:`_WidthExtendedOutput` tells both the renderer and the frame compositor the
+    window is one column wider, and that final column gets drawn.
+
+    This is a gate, not a certainty: it is *correct* only when the probe under-reports. On a
+    terminal whose width probe is already right, the extra column falls off the real screen and
+    the frame would wrap and tear — which is exactly PicoCalc's exact-width console, so
+    :data:`~meshterm.platforms.PICOCALC` defaults this off. ``MESHTERM_FULL_WIDTH=0``/``=1``
+    remains an explicit override on top of the platform default for any terminal that needs
+    to disagree with its platform's usual verdict (TODO: thread through ``settings`` and the
+    config editor once confirmed further).
+
+    Read fresh on every call (never cached at import time) so it reflects whichever platform
+    :func:`~meshterm.platforms.set_platform` installed for this process — see that module's
+    docstring for why a cached/imported copy of the platform would go stale.
+    """
+    override = os.environ.get("MESHTERM_FULL_WIDTH")
+    if override is not None:
+        return override != "0"
+    return get_platform().width_reclaim
 
 #: How many stacked dialog layers the layout can float over the background at once. A fixed
 #: pool of centered-box floats (see :meth:`TuiSession._build_app`), sized well past the deepest
@@ -231,7 +245,7 @@ class _WidthExtendedOutput:
     adds a column. Because the whole render pipeline — prompt_toolkit's differential renderer
     and MeshTerm's own frame compositor (via :meth:`TuiSession._size`) — keys off
     ``output.get_size()``, this single override makes both use the reclaimed column in
-    lock-step. See :data:`_RECLAIM_LAST_COLUMN` for when this is right (and when it isn't).
+    lock-step. See :func:`_reclaim_last_column` for when this is right (and when it isn't).
     """
 
     def __init__(self, inner: Any) -> None:
@@ -1107,11 +1121,11 @@ class TuiSession:
         """The output the app renders to — optionally widened to reclaim the last column.
 
         Only the *real* terminal (``self._output is None``, so prompt_toolkit would build its
-        own output) is wrapped, and only when :data:`_RECLAIM_LAST_COLUMN` is on: a test that
-        supplies its own output keeps the exact size it set, so headless rendering stays
+        own output) is wrapped, and only when :func:`_reclaim_last_column` says on: a test
+        that supplies its own output keeps the exact size it set, so headless rendering stays
         deterministic. See :class:`_WidthExtendedOutput` for what the wrap does.
         """
-        if self._output is not None or not _RECLAIM_LAST_COLUMN:
+        if self._output is not None or not _reclaim_last_column():
             return self._output
         from prompt_toolkit.output.defaults import create_output
 

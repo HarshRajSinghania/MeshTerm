@@ -18,6 +18,7 @@ from typing import Iterable, Iterator, Union
 
 import pytest
 
+from meshterm.platforms import REGULAR, set_platform
 from meshterm.ui.termfont import powerline_support
 
 #: ANSI SGR escapes — the colour runs a rendered line carries between its characters.
@@ -42,3 +43,17 @@ def _plain_path_rendering(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     powerline_support.cache_clear()
     yield
     powerline_support.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_platform() -> Iterator[None]:
+    """Every test starts and ends on :data:`~meshterm.platforms.REGULAR`.
+
+    A test that calls ``set_platform(PICOCALC)`` (directly, or via the gallery harness)
+    can't leak that choice into whatever runs next — regular is the suite's baseline, the
+    same way it is the default for a process that never passes ``--platform``/
+    ``MESHTERM_PLATFORM`` (see :mod:`meshterm.platforms`).
+    """
+    set_platform(REGULAR)
+    yield
+    set_platform(REGULAR)

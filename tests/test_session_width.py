@@ -4,6 +4,10 @@ Some terminals (and prompt_toolkit's size probe on them) report the window one c
 narrower than it really is, so the frame's right border lands one short and the true last
 column sits unused. The session can report one extra column to close that gap. The wrapping
 output is pure and the resolver is a small branch, so both are assertable without a terminal.
+
+The default comes from the active :class:`~meshterm.platforms.Platform` (on, desktop; off,
+PicoCalc — reclaiming a phantom column on its exact-width console would tear the frame), and
+``MESHTERM_FULL_WIDTH`` remains an explicit override on top of that default either way.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from types import SimpleNamespace
 
 from prompt_toolkit.data_structures import Size
 
-import meshterm.ui.tui.session as session_mod
+from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.tui.session import TuiSession, _WidthExtendedOutput
 
 
@@ -36,17 +40,35 @@ def test_session_leaves_a_supplied_output_untouched() -> None:
     assert session._resolve_output() is dummy
 
 
-def test_session_wraps_the_real_terminal_when_enabled(monkeypatch) -> None:
-    """No supplied output + gate on → the real terminal output is width-extended."""
+def test_session_wraps_the_real_terminal_on_regular(monkeypatch) -> None:
+    """No supplied output + REGULAR (today's default) → the real terminal is width-extended."""
     fake = SimpleNamespace(get_size=lambda: Size(rows=30, columns=100))
     monkeypatch.setattr("prompt_toolkit.output.defaults.create_output", lambda: fake)
-    monkeypatch.setattr(session_mod, "_RECLAIM_LAST_COLUMN", True)
+    monkeypatch.delenv("MESHTERM_FULL_WIDTH", raising=False)
+    set_platform(REGULAR)
     out = TuiSession()._resolve_output()
     assert isinstance(out, _WidthExtendedOutput)
     assert out.get_size() == Size(rows=30, columns=101)
 
 
-def test_session_gate_off_uses_the_bare_terminal(monkeypatch) -> None:
-    """Gate off → the real terminal output is used untouched (pt builds its own)."""
-    monkeypatch.setattr(session_mod, "_RECLAIM_LAST_COLUMN", False)
+def test_session_leaves_the_bare_terminal_on_picocalc(monkeypatch) -> None:
+    """PICOCALC's exact-width console → no reclaim: a phantom column would tear the frame."""
+    monkeypatch.delenv("MESHTERM_FULL_WIDTH", raising=False)
+    set_platform(PICOCALC)
+    assert TuiSession()._resolve_output() is None
+
+
+def test_env_override_forces_reclaim_on_despite_picocalc(monkeypatch) -> None:
+    """``MESHTERM_FULL_WIDTH=1`` wins over PICOCALC's off-by-default."""
+    fake = SimpleNamespace(get_size=lambda: Size(rows=30, columns=100))
+    monkeypatch.setattr("prompt_toolkit.output.defaults.create_output", lambda: fake)
+    monkeypatch.setenv("MESHTERM_FULL_WIDTH", "1")
+    set_platform(PICOCALC)
+    assert isinstance(TuiSession()._resolve_output(), _WidthExtendedOutput)
+
+
+def test_env_override_forces_reclaim_off_despite_regular(monkeypatch) -> None:
+    """``MESHTERM_FULL_WIDTH=0`` wins over REGULAR's on-by-default."""
+    monkeypatch.setenv("MESHTERM_FULL_WIDTH", "0")
+    set_platform(REGULAR)
     assert TuiSession()._resolve_output() is None
