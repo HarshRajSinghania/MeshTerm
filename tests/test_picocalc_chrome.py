@@ -70,21 +70,27 @@ def test_picocalc_header_brands_the_app_not_the_device() -> None:
 
 def test_fkey_lane_resolution_and_banks() -> None:
     lane = DEFAULT_LANE
-    assert action_for(lane, 1) == "home" and action_for(lane, 6) == "end"
-    assert action_for(lane, 2) == "pageup" and action_for(lane, 7) == "pagedown"
+    # F4/F5 (commit/leave) are plain-key only — no Shift companion.
+    assert action_for(lane, 4) == "enter" and action_for(lane, 9) is None
+    assert action_for(lane, 5) == "escape" and action_for(lane, 10) is None
+    # F1/F2 carry the jump-to-top/end pair; paging rides their Shift bank.
+    assert action_for(lane, 1) == "home" and action_for(lane, 6) == "pageup"
+    assert action_for(lane, 2) == "end" and action_for(lane, 7) == "pagedown"
+    # F3 is the lone, unassigned slot a screen's own lane fills in.
     assert action_for(lane, 3) is None and action_for(lane, 8) is None
-    assert action_for(lane, 5) == "enter" and action_for(lane, 10) == "escape"
 
 
 def test_fkey_lane_text_fits_and_flips() -> None:
     primary = lane_text(DEFAULT_LANE)
     shifted = lane_text(DEFAULT_LANE, shifted=True)
-    assert cell_len(primary.plain) <= 53 and cell_len(shifted.plain) <= 53
-    assert "1 Top" in primary.plain and "5 OK" in primary.plain
-    assert "6 End" in shifted.plain and "10 Back" in shifted.plain
+    assert cell_len(primary.plain) == 53 and cell_len(shifted.plain) == 53
+    assert "F1 Top" in primary.plain and "F4 OK" in primary.plain and "F5 Back" in primary.plain
+    assert "F6 PgUp" in shifted.plain and "F7 PgDn" in shifted.plain
+    # F4/F5 have no Shift companion: their shifted chips (F9/F10) render unfilled.
+    assert "F9" in shifted.plain and "10" in shifted.plain
     wide = [FPair("Muchtoolonglabel", "a", "Muchtoolonglabel", "b")] * 5
-    assert cell_len(lane_text(wide).plain) <= 53  # clipped to the slot budget
-    assert cell_len(lane_text(wide, shifted=True).plain) <= 53
+    assert cell_len(lane_text(wide).plain) == 53  # clipped to the slot budget
+    assert cell_len(lane_text(wide, shifted=True).plain) == 53
 
 
 def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:

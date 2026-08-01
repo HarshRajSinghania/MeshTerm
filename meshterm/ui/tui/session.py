@@ -1389,8 +1389,14 @@ class TuiSession:
         # normal screen action; an unassigned slot, or a platform without the lane,
         # drops the press here.
         if len(action) in (2, 3) and action[0] == "f" and action[1:].isdigit():
+            number = int(action[1:])
+            if number > 5:
+                # However this resolves, the code only exists because Shift was
+                # physically down for the MCU to emit it — latch the lane's shifted
+                # display against the release/re-assert flicker (see modifier_watch).
+                modifier_watch.note_shift_bank_key()
             top = self.top or self._base_screen()
-            resolved = fkeys.action_for(top.fkey_lane, int(action[1:])) if top else None
+            resolved = fkeys.action_for(top.fkey_lane, number) if top else None
             if resolved is None:
                 return
             action = resolved

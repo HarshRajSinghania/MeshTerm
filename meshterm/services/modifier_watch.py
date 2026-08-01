@@ -6,6 +6,16 @@ the ``LSHIFT DOWN`` event arrives *before* the translated F-code (measured in P0
 watcher reads the raw evdev stream and tracks whether a Shift key is physically held, so
 the footer lane can flip to the F6–F10 bank's labels while the user is mid-chord.
 
+On-device use (JP, 2026-08-01) turned up a follow-on quirk: the lane can flip back to its
+unshifted bank the instant an F6–F10 code lands, even with Shift still physically held —
+consistent with the MCU's key-matrix scan releasing/re-asserting Shift around the chord
+rather than holding it down continuously through the translation. :func:`note_shift_bank_key`
+bridges that: the session calls it whenever an F6–F10 press actually resolves, and
+:func:`shift_down` latches ``True`` for a short grace window after, so a momentary dip in
+the raw signal can't flip the display mid-keystroke. The window is generous enough to
+outlast the flicker without noticeably outlasting the actual key release — the lane still
+self-corrects within one idle repaint (the 2 s picocalc tick) either way.
+
 Strictly an experiment layered over a working static lane, and built to disappear: it
 only ever engages when the platform asks for it (``Platform.modifier_watch``), the input
 device exists, and it is readable (the deploy user is in the ``input`` group on the device) — an ssh
@@ -19,6 +29,7 @@ from __future__ import annotations
 
 import struct
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -37,10 +48,39 @@ _SYS_INPUT = Path("/sys/class/input")
 _shift_down = False
 _thread: Optional[threading.Thread] = None
 
+#: How long a resolved F6–F10 keycode keeps :func:`shift_down` latched ``True`` after the
+#: raw signal drops — long enough to bridge the MCU's release/re-assert flicker around a
+#: chord, short enough that letting Shift go for real still reads as released well within
+#: one held keypress. See :func:`note_shift_bank_key`.
+_SHIFT_BANK_GRACE_S = 0.6
+
+_last_shift_bank_at: Optional[float] = None
+
 
 def shift_down() -> bool:
-    """Whether a Shift key is physically held right now (``False`` when not watching)."""
-    return _shift_down
+    """Whether a Shift key is physically held right now (``False`` when not watching).
+
+    Also ``True`` for :data:`_SHIFT_BANK_GRACE_S` after the last F6–F10 press resolved
+    (see :func:`note_shift_bank_key`), bridging a firmware quirk where the raw signal can
+    dip mid-chord even though Shift never actually came up.
+    """
+    if _shift_down:
+        return True
+    return (
+        _last_shift_bank_at is not None
+        and time.monotonic() - _last_shift_bank_at < _SHIFT_BANK_GRACE_S
+    )
+
+
+def note_shift_bank_key() -> None:
+    """Record that an F6–F10 keycode just resolved — proof Shift was physically down.
+
+    The MCU only ever emits these codes while Shift is held, so their arrival is stronger
+    evidence than the watcher's own raw state (see the module docstring). Call this from
+    wherever an F-key press resolves against the Shift bank (:meth:`TuiSession._dispatch`).
+    """
+    global _last_shift_bank_at
+    _last_shift_bank_at = time.monotonic()
 
 
 def _find_keyboard() -> Optional[Path]:

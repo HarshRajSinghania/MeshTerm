@@ -105,6 +105,12 @@ MESH_THEME = Theme(
         "heat.cool": "#fb923c",
         "heat.cold": "#94a3b8",
         "heat.never": "#64748b",
+        # The PicoCalc F-key lane's chip fills (see ui.tui.fkeys): gray for the plain
+        # F1-F5 bank, green while the Shift watcher reports F6-F10. White text on both —
+        # defined here too so the style names resolve on every platform, even though
+        # only PicoCalc's footer_fkeys ever asks for them.
+        "fkey.chip": "bold #ffffff on #475569",
+        "fkey.chip.shift": "bold #ffffff on #16a34a",
     }
 )
 
@@ -233,6 +239,11 @@ MESH_THEME_16 = Theme(
         "heat.cool": "color(3)",
         "heat.cold": "color(7)",
         "heat.never": "color(8)",
+        # The F-key lane's chip fills: light-grey background (the palette's only "gray"
+        # addressable as a background — see _VT_SLOTS) for the plain bank, green for the
+        # Shift bank, white text on both.
+        "fkey.chip": "bold color(15) on color(7)",
+        "fkey.chip.shift": "bold color(15) on color(2)",
     }
 )
 

@@ -63,9 +63,11 @@ class Screen:
     def fkey_lane(self):
         """The screen's F-key lane (the PicoCalc footer; see :mod:`~meshterm.ui.tui.fkeys`).
 
-        Five slots, F1–F5 with their F6–F10 opposites (the physical Shift bank). The
-        default duplicates the nav cluster — Fn-layered on the PicoCalc keyboard — plus
-        commit/leave; a screen with richer verbs overrides this property.
+        Five slots, F1–F5, each with an optional F6–F10 Shift-bank companion. The
+        default puts commit/leave on the prime F4/F5 pair (no Shift needed), the nav
+        cluster's jump-to-top/end on F1/F2 with paging as their Shift companions, and
+        leaves F3 as the one lone slot — the first a screen with its own verbs reaches
+        for. A screen with richer needs overrides this property.
         """
         from .fkeys import DEFAULT_LANE
 
