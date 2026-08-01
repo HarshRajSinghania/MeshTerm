@@ -31,6 +31,7 @@ from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
 from .menus import back_rows, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
+from .theme import glyph
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
 from .widgets import ContactsSort, _age_seconds, _contact_pkts, format_ago
@@ -229,14 +230,14 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
             Choice(lambda m=message: _waiting_row(ctx, m), ("msg", message.ident))
         )
     items.append(Separator(" "))  # space the action off the outbox rows above it
-    items.append(Choice("📨 Queue a message…", _QUEUE))
+    items.append(Choice(f"{glyph('📨')} Queue a message…", _QUEUE))
 
     if done:
         items.append(Separator(" "))
         items.append(section_heading("Finished"))
         for message in done[:15]:
             items.append(Choice(lambda m=message: _done_row(m), ("msg", message.ident)))
-        items.append(Choice("🗑 Clear finished", _CLEAR))
+        items.append(Choice(f"{glyph('🗑')} Clear finished", _CLEAR))
 
     items.extend(back_rows())  # a visible exit beside Esc
     return items

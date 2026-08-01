@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import colorsys
+from functools import lru_cache
 from typing import Optional
 
 from rich.console import Console
@@ -71,6 +72,55 @@ MESH_THEME = Theme(
         "batt.mid": "bold #fb923c",
         "batt.low": "bold #f87171",
         "batt.dim": "#475569",
+        # Type colours (PicoCalc 16-slot palette): keyed by node type when name_colour="type".
+        "type.node": "bold #5eead4",       # client — teal (brand)
+        "type.repeater": "#a5b4fc",        # repeater — indigo
+        "type.room": "bold #4ade80",       # room — green (ok)
+        "type.sensor": "bold #fbbf24",     # sensor — amber (warn)
+    }
+)
+
+#: The 16-slot palette for PicoCalc (truecolor=False). Same style names as MESH_THEME so
+#: the app's internal logic never changes; only the RGB values fit the console's limit.
+MESH_THEME_16 = Theme(
+    {
+        "brand": "bold color(201)",        # slot 201: teal
+        "accent": "bold color(63)",        # slot 63: indigo
+        "selected": "reverse bold color(201)",
+        "err.reverse": "reverse bold color(203)",
+        "you": "bold color(15)",           # slot 15: white
+        "device.known": "bold color(15)",
+        "bluetooth": "bold color(15) on color(4)",
+        "bluetooth.edge": "color(4)",
+        "ok": "bold color(34)",            # slot 34: green
+        "warn": "bold color(214)",         # slot 214: orange/amber
+        "err": "bold color(203)",          # slot 203: red
+        "muted": "color(8)",               # slot 8: muted grey
+        "title.accent": "bold color(63)",
+        "title.muted": "bold color(7)",
+        "title.warn": "bold color(214)",
+        "title.err": "bold color(203)",
+        "title.ok": "bold color(34)",
+        "title.brand": "bold color(201)",
+        "hint.accent": "color(63)",
+        "hint.muted": "color(8)",
+        "hint.warn": "color(214)",
+        "hint.err": "color(203)",
+        "hint.ok": "color(34)",
+        "hint.brand": "color(201)",
+        "faint": "color(8)",
+        "track": "color(0)",
+        "snr.good": "bold color(34)",
+        "snr.ok": "bold color(214)",
+        "snr.bad": "bold color(203)",
+        "batt.high": "bold color(34)",
+        "batt.mid": "bold color(214)",
+        "batt.low": "bold color(203)",
+        "batt.dim": "color(0)",
+        "type.node": "bold color(201)",
+        "type.repeater": "color(63)",
+        "type.room": "bold color(34)",
+        "type.sensor": "bold color(214)",
     }
 )
 
@@ -87,6 +137,8 @@ def make_console() -> Console:
     """
     import sys
 
+    from meshterm.platforms import get_platform
+
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
@@ -94,7 +146,8 @@ def make_console() -> Console:
                 reconfigure(encoding="utf-8")
             except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
                 pass
-    return Console(theme=MESH_THEME)
+    theme = MESH_THEME if get_platform().truecolor else MESH_THEME_16
+    return Console(theme=theme)
 
 
 def title_style(border_style: str) -> str:
@@ -173,23 +226,228 @@ def node_style(key: str) -> str:
 def name_style(name: str, key: Optional[str] = None) -> str:
     """The stable colour a node or sender name is drawn in — keyed on the node's key.
 
+    Dispatches to either hash-derived colouring (REGULAR, ``name_colour="key"``) or
+    type-based colouring (PICOCALC, ``name_colour="type"``) based on the active platform.
+
     Args:
         name: The display name (unused for the hue; kept so every call site reads
             ``name_style(name, key)`` and the pair stays greppable).
         key: Any known prefix of the node's key/hash; when given, the hue is
-            :func:`node_style`'s — hash-derived, so a rename keeps the colour and every
-            surface that knows the key agrees. ``None``/empty marks a sender whose key
-            we couldn't resolve — drawn ``muted``, because colour is reserved for keyed
-            identities (callers with only a name resolve it first via
+            :func:`node_style`'s (on REGULAR) — hash-derived, so a rename keeps the
+            colour and every surface that knows the key agrees. ``None``/empty marks a
+            sender whose key we couldn't resolve — drawn ``muted``, because colour is
+            reserved for keyed identities (callers with only a name resolve it first via
             :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
 
     Returns:
-        A ``"bold #rrggbb"`` spectrum hue (or ``muted`` for the keyless); the same node
-        always maps to the same hue, so it keeps its colour across screens and sessions.
+        A spectrum hue (or ``muted`` for the keyless); the same node always maps to the
+        same hue, so it keeps its colour across screens and sessions.
     """
+    from meshterm.platforms import get_platform
+
+    if get_platform().name_colour == "type":
+        return _name_style_by_type(name, key)
     if key:
         return node_style(key)
     return "muted"
+
+
+def _name_style_by_type(name: str, key: Optional[str] = None) -> str:
+    """Type-based node colouring (PicoCalc: 16-slot palette can't afford hash spectrum).
+
+    Looks up the node's first-byte prefix in a type registry and returns its colour;
+    unknown prefixes stay ``muted``. Called by :func:`name_style` when the platform
+    specifies ``name_colour="type"``.
+
+    Args:
+        name: The display name (kept for signature compatibility with :func:`name_style`).
+        key: Any known prefix of the node's key/hash; typed by first-byte prefix lookup.
+
+    Returns:
+        A ``type.*`` style name or ``muted``.
+    """
+    if not key:
+        return "muted"
+    node_type = _node_type_by_prefix(key)
+    if node_type is None:
+        return "muted"
+    return f"type.{node_type}"
+
+
+#: Process-wide registry: first-byte hex prefix → node type name (e.g., "a1" → "repeater").
+#: Fed by the reception layer as nodes are first heard, so a unique prefix always types
+#: consistently. Unknown prefixes stay out, defaulting to muted.
+_TYPE_REGISTRY: dict[str, str] = {}
+
+
+def register_node_type(key: str, node_type: Optional[int]) -> None:
+    """Register a node's first-byte prefix to its type for colour lookup.
+
+    Called by the reception layer when a new node is first heard, ensuring every known
+    prefix types consistently. A prefix collision (two nodes with the same first byte but
+    different types) colours by whichever was registered last — acceptable since colour
+    is a hint, not a guarantee. On PicoCalc (16-slot palette), this is how
+    :func:`_name_style_by_type` maps a key to a colour without dedicating spectrum space.
+
+    Args:
+        key: The node's public key or any prefix (extracted to the first byte).
+        node_type: The node's type from the advert (NODE_TYPE_CHAT, NODE_TYPE_REPEATER, etc.),
+            or ``None`` if unknown.
+    """
+    from meshterm.core.models import (
+        NODE_TYPE_CHAT, NODE_TYPE_REPEATER, NODE_TYPE_ROOM, NODE_TYPE_SENSOR,
+    )
+
+    if not key or node_type is None:
+        return
+    raw = key.lower().removeprefix("0x")
+    try:
+        prefix = raw[:2]
+    except (IndexError, ValueError):
+        return
+    type_name = {
+        NODE_TYPE_CHAT: "node",
+        NODE_TYPE_REPEATER: "repeater",
+        NODE_TYPE_ROOM: "room",
+        NODE_TYPE_SENSOR: "sensor",
+    }.get(node_type)
+    if type_name:
+        _TYPE_REGISTRY[prefix] = type_name
+
+
+def _node_type_by_prefix(key: str) -> Optional[str]:
+    """Look up a node's type by its first-byte prefix."""
+    if not key:
+        return None
+    raw = key.lower().removeprefix("0x")
+    try:
+        prefix = raw[:2]
+    except (IndexError, ValueError):
+        return None
+    return _TYPE_REGISTRY.get(prefix)
+
+
+@lru_cache(maxsize=1024)
+def fold_text(text: str) -> str:
+    """NFKD-fold accents and replace emoji on PicoCalc (storage untouched).
+
+    On REGULAR, returns text unchanged (emoji and accents are both drawn).
+    On PICOCALC, strips accents and replaces emoji with single-glyph placeholders so
+    the text fits the 512-glyph font contract. Called at the render boundary for names,
+    message bodies, and any user-facing text that might carry non-ASCII.
+
+    Args:
+        text: The text to fold (or pass through).
+
+    Returns:
+        The folded text, or the input unchanged on REGULAR.
+    """
+    from meshterm.platforms import get_platform
+
+    if get_platform().ascii_fold:
+        import unicodedata
+        # NFKD fold: decompose accents into separate combining marks, then drop them
+        folded = unicodedata.normalize("NFKD", text)
+        # Strip combining marks (category Mn = Mark, nonspacing)
+        folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
+        # Replace common emoji and brackets with ASCII equivalents
+        folded = _EMOJI_FOLD_TABLE.get(folded, folded)
+        return folded
+    return text
+
+
+#: Simple emoji→placeholder table for text that must fit the 512-glyph font.
+_EMOJI_FOLD_TABLE = {
+    "🔐": "[key]",
+    "🔑": "[key]",
+    "📡": "[radio]",
+    "💬": "[msg]",
+    "✅": "[ok]",
+    "✗": "[err]",
+    "⚠": "[warn]",
+    "●": "[node]",
+    "▲": "[rep]",
+    "■": "[room]",
+    "◉": "[sens]",
+}
+
+#: The compact glyph table: emoji → single BMP character for PicoCalc's 512-glyph font.
+#: Every icon used in the UI (KIND_ICONS, PAYLOAD_ICONS, concept glyphs) maps to a single
+#: narrow character. The node-type glyphs (★●▲■◉○) pass through unchanged (they're in
+#: the font). On REGULAR (emoji=True), glyph() is identity; on PICOCALC (emoji=False),
+#: it looks up the emoji and returns the mapped glyph or the original if not mapped.
+_GLYPH_MAP = {
+    "📢": "▶",   # advert / kind icon
+    "📊": "╳",   # telemetry
+    "📦": "□",   # packet
+    "💬": "◇",   # message
+    "✅": "✓",   # ack / ok
+    "❔": "?",   # unknown / fallback
+    "📥": "↓",   # REQ / request
+    "📮": "◈",   # RESPONSE
+    "📩": "◊",   # TEXT_MSG
+    "📻": "~",   # GRP_TXT / channel
+    "💽": "◐",   # GRP_DATA
+    "🎭": "♫",   # ANON_REQ
+    "🧭": "↗",   # PATH
+    "🎯": "✕",   # TRACE
+    "🧩": "◬",   # MULTIPART
+    "🧰": "⚙",   # CONTROL
+    "🕒": "⏰",   # clock / time
+    "🔄": "◉",   # reboot / cycle (but ◉ is sensor, use ○)
+    "💾": "⛐",   # backup / save
+    "📂": "◇",   # restore / open
+    "🔑": "◆",   # key / credential
+    "🔐": "◆",   # auth / secret
+    "🗑": "✕",   # delete / trash
+    "✎": "╳",   # edit / compose
+    "⚙": "⚙",   # parameter / gear
+    "#": "#",    # count (ASCII)
+    "▶": "▶",    # run / play
+    "⚡": "◆",   # explore / probe
+    "★": "★",    # best / winner (kept)
+    "⭐": "★",   # watch / highlight → ★
+    "📤": "↑",   # send now
+    "📨": "◈",   # courier / queue
+    "💬": "◊",   # chat (dup, overwrites above)
+    "🔔": "◐",   # notify
+    "🔕": "◑",   # mute / notifications off
+    "📱": "□",   # QR
+    "🔗": "○",   # link
+    "↻": "⟲",   # re-read / refresh
+    "↕": "⟷",   # reorder
+    "⇄": "⟷",   # reverse (flip path)
+    "🏆": "◆",   # trophy / record
+    "⌨": "↤",   # command line / keyboard
+    "🚪": "╬",   # quit / door
+    # Node type glyphs pass through unchanged (they're in the font)
+    "★": "★",   # "you" marker
+    "●": "●",   # node / client
+    "▲": "▲",   # repeater
+    "■": "■",   # room
+    "◉": "◉",   # sensor
+    "○": "○",   # unknown
+}
+
+
+def glyph(emoji_or_char: str) -> str:
+    """Return a single-cell glyph matching the emoji or character.
+
+    On REGULAR, returns the emoji unchanged (emoji and rich rendering work). On PICOCALC,
+    looks up the emoji in the compact glyph table and returns a single-cell character that
+    fits the 512-glyph PSF font. Node-type glyphs (★●▲■◉○) always pass through unchanged.
+
+    Args:
+        emoji_or_char: An emoji, a node glyph, or a literal character.
+
+    Returns:
+        The input unchanged on REGULAR, or the mapped glyph on PICOCALC.
+    """
+    from meshterm.platforms import get_platform
+
+    if get_platform().emoji:
+        return emoji_or_char
+    return _GLYPH_MAP.get(emoji_or_char, emoji_or_char)
 
 
 def snr_style(snr: float | None) -> str:

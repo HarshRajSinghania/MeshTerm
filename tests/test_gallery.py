@@ -495,3 +495,10 @@ def test_gallery_screen_fits_its_platform(
         lines = _plain(screen.render_body(cols)).splitlines()
         assert lines[-1].strip() == "Back", f"{entry.name}: exit row missing, got {lines[-1]!r}"
         assert lines[-2].strip() == "", f"{entry.name}: no blank separator before Back"
+
+    # P3 assertions: no-truecolor check (glyph-whitelist is handled per-screen as P3 work)
+    if platform.name == "picocalc":
+        # No truecolor SGR: platform.truecolor must be False on PICOCALC
+        assert not platform.truecolor, (
+            f"{entry.name} on picocalc requires truecolor=False, got {platform.truecolor}"
+        )

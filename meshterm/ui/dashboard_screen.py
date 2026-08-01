@@ -51,7 +51,7 @@ from .packet_viewer import (
     PAYLOAD_ICONS,
     _PAYLOAD_GLOSS,
 )
-from .theme import snr_style
+from .theme import glyph, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines
 from .tui.screen import Screen
@@ -91,15 +91,16 @@ def _traffic_chrome(bucket: str) -> tuple[str, str, str]:
     A decoded family keeps its kind icon, name, and colour; a ``packet:<TYPENAME>``
     bucket takes the payload class's icon and gloss over the calm muted ``packet``
     meter — colour keeps marking the decoded families, raw overheard stays quiet.
+    Icons are mapped to single glyphs on PICOCALC via :func:`~meshterm.ui.theme.glyph`.
     """
     if bucket.startswith("packet:"):
         typename = bucket.split(":", 1)[1]
         gloss = _PAYLOAD_GLOSS.get(typename, typename.lower())
         label = _RAW_GLOSS_CLASH.get(gloss, gloss)
-        return (
-            PAYLOAD_ICONS.get(typename, DEFAULT_ICON), label, KIND_STYLES["packet"],
-        )
-    return KIND_ICONS.get(bucket, DEFAULT_ICON), bucket, KIND_STYLES.get(bucket, "brand")
+        emoji = PAYLOAD_ICONS.get(typename, DEFAULT_ICON)
+        return glyph(emoji), label, KIND_STYLES["packet"]
+    emoji = KIND_ICONS.get(bucket, DEFAULT_ICON)
+    return glyph(emoji), bucket, KIND_STYLES.get(bucket, "brand")
 
 #: How many character cells a traffic lane's meter spans (48 half-step levels).
 _TRAFFIC_METER_CELLS = 24

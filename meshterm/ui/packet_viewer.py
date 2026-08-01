@@ -44,7 +44,7 @@ from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import PathLine, path_line
-from .theme import name_style, snr_style
+from .theme import glyph, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
@@ -202,8 +202,13 @@ class PacketEntry:
 
 
 def kind_icon(kind: str) -> str:
-    """The two-cell icon for a packet class (a fallback for unknown classes)."""
-    return KIND_ICONS.get(kind, DEFAULT_ICON)
+    """The icon for a packet class (a fallback for unknown classes).
+
+    Returns the emoji on REGULAR; on PICOCALC, the emoji is mapped to a single-cell
+    glyph from the 512-glyph font via :func:`~meshterm.ui.theme.glyph`.
+    """
+    emoji = KIND_ICONS.get(kind, DEFAULT_ICON)
+    return glyph(emoji)
 
 
 def payload_class(raw: Optional[dict]) -> Optional[str]:
@@ -223,7 +228,7 @@ def payload_class(raw: Optional[dict]) -> Optional[str]:
 
 
 def class_marks(entry: PacketEntry) -> tuple[str, str]:
-    """What a packet actually *is*: its two-cell icon and its plain-case class label.
+    """What a packet actually *is*: its icon and its plain-case class label.
 
     The one place the app decides which class a listed packet belongs to, so the viewer's
     headline and the feed's class lane can never disagree. A raw ``packet`` frame's class
@@ -232,15 +237,15 @@ def class_marks(entry: PacketEntry) -> tuple[str, str]:
     frame arrived in, not the thing it carries; a typename this table has never heard of
     keeps the fallback mark and shows the raw typename; a class-less frame stays a plain
     ``packet``. Every other kind is its own class (``advert``, ``message``, …) under the
-    shared :data:`KIND_ICONS` glyph.
+    shared :data:`KIND_ICONS` glyph. The emoji are mapped to single glyphs on PICOCALC.
     """
     if entry.kind == "packet":
         raw = entry.raw if isinstance(entry.raw, dict) else {}
         typename = raw.get("payload_typename")
         if typename:
-            icon = PAYLOAD_ICONS.get(typename, DEFAULT_ICON)
-            return icon, _PAYLOAD_GLOSS.get(typename, typename.lower())
-        return KIND_ICONS["packet"], "packet"
+            emoji = PAYLOAD_ICONS.get(typename, DEFAULT_ICON)
+            return glyph(emoji), _PAYLOAD_GLOSS.get(typename, typename.lower())
+        return glyph(KIND_ICONS["packet"]), "packet"
     return kind_icon(entry.kind), entry.kind
 
 
