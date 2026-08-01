@@ -30,7 +30,8 @@ from rich.console import RenderableType
 from rich.text import Text
 
 from ...platforms import get_platform
-from . import frame
+from ...services import modifier_watch
+from . import fkeys, frame
 from .overlay import BusyOverlay
 from .progress import TuiProgress
 from .prompt import (
@@ -92,6 +93,12 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.Delete: "delete",
     Keys.Tab: "tab",
     Keys.BackTab: "shift_tab",
+    # The function keys, for the PicoCalc's F-key lane (F6–F10 are its Shift bank —
+    # the MCU translates Shift+F1..F5 into these plain keycodes). The session resolves
+    # them against the top screen's lane in _dispatch; on platforms without the lane
+    # they resolve to nothing and fall away. Alt+Fn is the kernel's VT switch on the
+    # device and must never be bound.
+    **{getattr(Keys, f"F{n}"): f"f{n}" for n in range(1, 11)},
     # The Ctrl-letter chords, generated from the one table above so a chord can never be
     # bound without its right-Ctrl rescue (or rescued into an action nothing binds).
     **{
@@ -1048,6 +1055,12 @@ class TuiSession:
             main: The coroutine driving the session (typically the menu loop).
         """
         self._app = self._build_app()
+        if get_platform().modifier_watch:
+            # The Shift watcher flips the F-key lane's labels live. It reports from its
+            # own thread; hop onto the app loop for the repaint. Failure to engage (no
+            # device, no permission) just leaves the lane static — see the module doc.
+            loop = asyncio.get_running_loop()
+            modifier_watch.start(lambda: loop.call_soon_threadsafe(self.invalidate))
         box: dict[str, BaseException] = {}
 
         async def driver() -> None:
@@ -1286,7 +1299,13 @@ class TuiSession:
         if not base.chrome:
             return self._emit(frame.compose_startup(base, cols, rows))
         footer = self.top.footer_hint if self.top else base.footer_hint
-        return self._emit(frame.compose_base(self._header(cols), base, footer, cols, rows))
+        lane = None
+        if get_platform().footer_fkeys:
+            active = self.top or base
+            lane = fkeys.lane_text(active.fkey_lane, shifted=modifier_watch.shift_down())
+        return self._emit(
+            frame.compose_base(self._header(cols), base, footer, cols, rows, footer_lane=lane)
+        )
 
     def _render_float_layer(self, index: int) -> ANSI:
         """Render the ``index``-th floating dialog (bottom-to-top) as a centered box."""
@@ -1366,6 +1385,15 @@ class TuiSession:
         the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
         full repaint at compose time — see :meth:`_emit`.
         """
+        # An F-key resolves against the top screen's lane (see ui.tui.fkeys) into a
+        # normal screen action; an unassigned slot, or a platform without the lane,
+        # drops the press here.
+        if len(action) in (2, 3) and action[0] == "f" and action[1:].isdigit():
+            top = self.top or self._base_screen()
+            resolved = fkeys.action_for(top.fkey_lane, int(action[1:])) if top else None
+            if resolved is None:
+                return
+            action = resolved
         # The key-state probe comes last in each test, so it only runs for a key that could
         # be a chord at all — not on every keystroke.
         if action in _CTRL_CHORDS and _right_ctrl_down():

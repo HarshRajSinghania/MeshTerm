@@ -1,0 +1,100 @@
+"""The optional Shift-state watcher behind the PicoCalc F-key lane's live flip.
+
+The PicoCalc keyboard's MCU translates Shift+F1..F5 into plain F6–F10 keycodes, so the
+terminal never sees the Shift that produced them — but the kernel input device does, and
+the ``LSHIFT DOWN`` event arrives *before* the translated F-code (measured in P0). This
+watcher reads the raw evdev stream and tracks whether a Shift key is physically held, so
+the footer lane can flip to the F6–F10 bank's labels while the user is mid-chord.
+
+Strictly an experiment layered over a working static lane, and built to disappear: it
+only ever engages when the platform asks for it (``Platform.modifier_watch``), the input
+device exists, and it is readable (the deploy user is in the ``input`` group on the device) — an ssh
+session on any other machine, a permissions change, or any read error at all just means
+:func:`shift_down` stays ``False`` and the lane stays static. Hand-rolled 30-line evdev
+reader instead of the ``keyboard`` library: no dependency to build on the stripped image,
+and we need exactly two keycodes.
+"""
+
+from __future__ import annotations
+
+import struct
+import threading
+from pathlib import Path
+from typing import Callable, Optional
+
+#: struct input_event on 32-bit ARM: struct timeval (2 × long = 8 bytes), then
+#: __u16 type, __u16 code, __s32 value.
+_EVENT_FORMAT = "llHHi"
+_EVENT_SIZE = struct.calcsize(_EVENT_FORMAT)
+
+_EV_KEY = 0x01
+_KEY_LEFTSHIFT = 42
+_KEY_RIGHTSHIFT = 54
+
+#: Where the PicoCalc's keyboard MCU registers (same i2c chip as the battery; P0).
+_SYS_INPUT = Path("/sys/class/input")
+
+_shift_down = False
+_thread: Optional[threading.Thread] = None
+
+
+def shift_down() -> bool:
+    """Whether a Shift key is physically held right now (``False`` when not watching)."""
+    return _shift_down
+
+
+def _find_keyboard() -> Optional[Path]:
+    """The PicoCalc keyboard's event device, or ``None`` when it isn't this machine."""
+    try:
+        for entry in sorted(_SYS_INPUT.glob("event*")):
+            name = (entry / "device" / "name").read_text().strip().lower()
+            if "picocalc" in name:
+                return Path("/dev/input") / entry.name
+    except OSError:
+        pass
+    return None
+
+
+def start(on_change: Callable[[], None]) -> bool:
+    """Start the watcher thread if this machine has the keyboard; ``True`` if it engaged.
+
+    Args:
+        on_change: Called (from the watcher thread) whenever the Shift state flips —
+            the session wraps this in a thread-safe repaint request.
+    """
+    global _thread
+    if _thread is not None:
+        return True
+    device = _find_keyboard()
+    if device is None:
+        return False
+    try:
+        stream = open(device, "rb", buffering=0)
+    except OSError:
+        return False
+
+    def _watch() -> None:
+        global _shift_down
+        held = {_KEY_LEFTSHIFT: False, _KEY_RIGHTSHIFT: False}
+        while True:
+            try:
+                data = stream.read(_EVENT_SIZE)
+            except OSError:
+                break
+            if not data or len(data) < _EVENT_SIZE:
+                break
+            _, _, etype, code, value = struct.unpack(_EVENT_FORMAT, data)
+            if etype != _EV_KEY or code not in held:
+                continue
+            held[code] = value != 0  # 1 down, 2 auto-repeat, 0 up
+            now = any(held.values())
+            if now != _shift_down:
+                _shift_down = now
+                try:
+                    on_change()
+                except Exception:  # noqa: BLE001 - a repaint hiccup must not kill the watch
+                    pass
+
+    _thread = threading.Thread(target=_watch, name="modifier-watch", daemon=True)
+    _thread.start()
+    return True

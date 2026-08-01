@@ -59,6 +59,18 @@ class Screen:
     banner: Optional[Sequence[str]] = None
     footnote: Optional[str] = None
 
+    @property
+    def fkey_lane(self):
+        """The screen's F-key lane (the PicoCalc footer; see :mod:`~meshterm.ui.tui.fkeys`).
+
+        Five slots, F1–F5 with their F6–F10 opposites (the physical Shift bank). The
+        default duplicates the nav cluster — Fn-layered on the PicoCalc keyboard — plus
+        commit/leave; a screen with richer verbs overrides this property.
+        """
+        from .fkeys import DEFAULT_LANE
+
+        return DEFAULT_LANE
+
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""
         self.scroll = 0

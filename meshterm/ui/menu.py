@@ -155,10 +155,14 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         single line (see ``frame.compose_base``), so a too-narrow terminal chops the
         tail rather than wrapping.
     """
+    # Which items compose at all is platform data (see Platform.header_atoms): the
+    # PicoCalc's 53 columns drop the version mark and the pulse, keeping device, badges
+    # and battery. Read live — set_platform runs before the session, but tests swap.
+    atoms = get_platform().header_atoms
     # The battery gauge is pinned to the row's right edge, so reserve its width (plus a
     # leading separator) before the pulse claims the rest; a wider separator estimate for
     # the fit decision is harmless slack.
-    battery = _battery_segment(ctx)
+    battery = _battery_segment(ctx) if "battery" in atoms else Text()
     # The separator choice changes only the *joins*, never the segments themselves, so the
     # segments are built once and each candidate width is arithmetic: one separator per
     # segment (each is preceded by one, and a trailing one leads into the pulse). Building
@@ -183,6 +187,8 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         header.append(sep)
     # Two dot columns per cell: every cell left of the reserved tail shows two minutes.
     room = width - header_w - reserve
+    if "pulse" not in atoms:
+        room = 0
     if room > 0:
         # Buckets seeded from a previous session's stored history draw grey; only
         # traffic this session actually heard pulses green.
@@ -261,37 +267,42 @@ def _header_segments(ctx: AppContext, cache: dict) -> list[Text]:
         The segments in display order — the app mark, the device, then whichever badges
         have something to report. :func:`_header` writes one separator after each.
     """
+    atoms = get_platform().header_atoms
+    segments: list[Text] = []
     # Each segment starts as an unstyled Text and takes its styles per append. A base style
     # passed to the constructor would instead blanket everything appended after it, layering
     # the mark's brand under the version's muted.
-    mark = Text()
-    mark.append("MeshTerm", style="brand")
-    mark.append(f" v{__version__}", style="muted")
-    segments = [mark]
+    if "version" in atoms:
+        mark = Text()
+        mark.append("MeshTerm", style="brand")
+        mark.append(f" v{__version__}", style="muted")
+        segments.append(mark)
 
-    device = Text()
-    if ctx.mock:
-        device.append("simulator", style="warn")
-    else:
-        name, where = _device_label(ctx, cache)
-        device.append(name or "no device", style=None if name else "muted")
-        if where:
-            device.append(f" ({where})", style="muted")
-    segments.append(device)
+    if "device" in atoms:
+        device = Text()
+        if ctx.mock:
+            device.append("simulator", style="warn")
+        else:
+            name, where = _device_label(ctx, cache)
+            device.append(name or "no device", style=None if name else "muted")
+            if where:
+                device.append(f" ({where})", style="muted")
+        segments.append(device)
 
-    unread = ctx.chat.unread_total()
-    if unread:
-        badge = Text()
-        badge.append("●", style="err")
-        badge.append(f" {unread}", style="warn")
-        segments.append(badge)
-    alerts = ctx.watchtower.unacked_count()
-    if alerts:
-        # The Watchtower's badge: a triangle so it never reads as unread mail.
-        badge = Text()
-        badge.append("▲", style="err")
-        badge.append(f" {alerts}", style="warn")
-        segments.append(badge)
+    if "badges" in atoms:
+        unread = ctx.chat.unread_total()
+        if unread:
+            badge = Text()
+            badge.append("●", style="err")
+            badge.append(f" {unread}", style="warn")
+            segments.append(badge)
+        alerts = ctx.watchtower.unacked_count()
+        if alerts:
+            # The Watchtower's badge: a triangle so it never reads as unread mail.
+            badge = Text()
+            badge.append("▲", style="err")
+            badge.append(f" {alerts}", style="warn")
+            segments.append(badge)
     return segments
 
 

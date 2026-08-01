@@ -164,12 +164,38 @@ def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
     )
 
 
+def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) -> Text:
+    """The borderless frame's one-row title bar: title, a muted rule, clip arrows.
+
+    The Panel border's whole vocabulary — where you are (title) and whether the list
+    continues (the ``↑↓ more`` subtitle) — compressed into a single row so the body wins
+    back three rows and four columns on the PicoCalc. Shape: ``─ Title ───────── ↑↓``,
+    echoing :func:`~meshterm.ui.menus.section_heading`'s heading language.
+    """
+    bar = Text()
+    bar.append("─ ", style="hint.accent")
+    if screen.title:
+        bar.append(screen.title, style=title_style("accent"))
+        bar.append(" ", style=None)
+    tail = ""
+    if more_above or more_below:
+        tail = ("↑" if more_above else " ") + ("↓" if more_below else " ")
+    fill = cols - bar.cell_len - (len(tail) + 1 if tail else 0)
+    if fill > 0:
+        bar.append("─" * fill, style="hint.accent")
+    if tail:
+        bar.append(" " + tail, style="hint.accent")
+    bar.truncate(cols)
+    return bar
+
+
 def compose_base(
     header: RenderableType,
     base: Screen,
     footer_hint: str,
     cols: int,
     rows: int,
+    footer_lane: RenderableType | None = None,
 ) -> str:
     """Compose the full-screen ANSI view: header, the base screen's panel, and a footer.
 
@@ -179,25 +205,44 @@ def compose_base(
         footer_hint: The active screen's key hint, shown at the very bottom.
         cols: Terminal width.
         rows: Terminal height.
+        footer_lane: A pre-built footer row (the PicoCalc F-key lane) that replaces the
+            hint string when the platform runs fixed F-key hints.
 
     Returns:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
     """
+    platform = get_platform()
     # The header is a single status line: crop it to one row so a narrow terminal never
     # wraps it onto a second line (which would push the panel down and misreport its height).
     header_lines = render_lines(header, cols, no_wrap=True)
     header_h = len(header_lines)
-    viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
-    panel = _panel(base, cols - 4, viewport, active=True)
-    footer = Text.from_markup(f"[muted]{footer_hint}[/muted]")
+    footer = footer_lane if footer_lane is not None else Text.from_markup(
+        f"[muted]{footer_hint}[/muted]"
+    )
+    if platform.frame_border:
+        viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
+        panel: RenderableType = _panel(base, cols - 4, viewport, active=True)
+        body = render_lines(Group(panel, footer), cols)
+    else:
+        # Borderless chrome: a one-row title bar instead of the Panel's border and
+        # padding — the body wins the full terminal width and one extra row.
+        viewport = max(1, rows - header_h - 1 - 1)  # minus footer(1) and title bar(1)
+        base.note_viewport(viewport)
+        body_lines = base.render_body(cols)
+        visible, more_above, more_below = _visible_slice(base, body_lines, viewport)
+        bar = _title_bar(base, cols, more_above, more_below)
+        body = (
+            render_lines(bar, cols, no_wrap=True)
+            + visible
+            + render_lines(footer, cols, no_wrap=True)
+        )
     # The glow pass lights the outer frame *and* any tool panels nested in the body. It only
     # ever recolours truecolor foregrounds (see glow._advance_fg), so on a platform without
     # effects — which is also a platform without truecolor — it would scan every line of
     # every frame and hand back the identical list. Skipping it outright is the same picture
     # for none of the work. Read live rather than bound at import: set_platform() runs in the
     # CLI callback, long after this module is imported (see meshterm.platforms).
-    body = render_lines(Group(panel, footer), cols)
-    lines = header_lines + (apply_corner_glow(body) if get_platform().effects else body)
+    lines = header_lines + (apply_corner_glow(body) if platform.effects else body)
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
     if len(lines) > rows:
         lines = lines[:rows]

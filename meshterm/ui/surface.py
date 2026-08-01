@@ -42,6 +42,18 @@ _DIALOG_MAX_LINES = 3
 _DIALOG_MAX_CELLS = 76
 
 
+def _dialog_max_cells() -> int:
+    """The popup-qualifying width for the active platform.
+
+    The regular platform keeps the long-standing 76. On the PicoCalc the dialog frame
+    itself is capped at ``cols - 6 = 47`` outer (43 inner), so a line qualifying at 76
+    would wrap inside the box it was promoted into — the gate shrinks to match.
+    """
+    from ..platforms import get_platform
+
+    return _DIALOG_MAX_CELLS if get_platform().frame_border else 43
+
+
 def _collapse_to_message(buffered: list[RenderableType]) -> Optional[Text]:
     """Collapse small, text-only buffered output into one dialog message.
 
@@ -65,7 +77,7 @@ def _collapse_to_message(buffered: list[RenderableType]) -> Optional[Text]:
         lines.extend(item.split("\n") or [item])
     if len(lines) > _DIALOG_MAX_LINES:
         return None
-    if any(line.cell_len > _DIALOG_MAX_CELLS for line in lines):
+    if any(line.cell_len > _dialog_max_cells() for line in lines):
         return None
     return Text("\n").join(lines)
 
