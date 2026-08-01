@@ -26,7 +26,7 @@ import asyncio
 import math
 from typing import TYPE_CHECKING, Callable, Optional
 
-from ..core.geo import EARTH_RADIUS_KM, Viewport, clamp_lat
+from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
 from ..core.mvt import Layer
 from ..services.basemap import BasemapSource
 from .map_render import MapMarker, render_map
@@ -48,10 +48,6 @@ _PAN_DIRS: dict[str, tuple[int, int]] = {
 
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
-
-#: Default fraction of nodes the map frames on open — the densest half, so a few distant
-#: outliers don't zoom the whole mesh out to a continent. See :meth:`geo.Viewport.fit`.
-DEFAULT_VIEW_FRACTION = 0.5
 
 #: The zoom an Enter-to-frame homes in at when the matches set no extent of their own — a
 #: single node (or several at one spot) has nothing to frame, so Enter zooms to this

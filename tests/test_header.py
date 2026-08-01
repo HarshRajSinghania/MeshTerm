@@ -32,6 +32,25 @@ def test_header_shows_the_watchtower_badge() -> None:
     assert "▲" not in _header(_ctx(alerts=0), {}, 80).plain
 
 
+def test_header_segments_style_each_run_on_its_own() -> None:
+    """A segment's styles sit side by side, never layered one under the next.
+
+    The segments are built as their own ``Text`` objects and joined (see
+    :func:`~meshterm.ui.menu._header_segments`), which makes it easy to reach for a
+    constructor ``style=`` — but that becomes the object's *base* style and blankets
+    everything appended after it, so the version string would render brand-under-muted and
+    each badge's count would inherit its glyph's error red.
+    """
+    header = _header(_ctx(unread=3, alerts=2), {}, 120)
+    covering = {
+        header.plain[span.start : span.end]: span.style
+        for span in header.spans
+        if span.style in ("brand", "err")
+    }
+    assert covering.get("MeshTerm") == "brand"  # not "MeshTerm v1.2.3"
+    assert set(covering) == {"MeshTerm", "●", "▲"}  # neither badge's count is swept in
+
+
 def test_header_sparkline_fills_the_row_exactly() -> None:
     """Every cell the fixed segments leave is sparkline — no short rows, no overflow."""
     for width in (60, 100):

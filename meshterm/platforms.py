@@ -72,9 +72,20 @@ class Platform:
             header battery blink, the braille spinner. ``False`` drops to static chrome
             and a ``LINE`` spinner fallback — cheaper, and the glow already no-ops on a
             non-truecolor theme, so this just makes that explicit. Wired in P2/P3.
-        tick_s: The :class:`~prompt_toolkit.application.Application` refresh interval.
-            Both platforms start at today's 1.0s; PicoCalc's is revisited in P2 once
-            on-device CPU numbers exist to tune against.
+        tick_s: The :class:`~prompt_toolkit.application.Application` refresh interval — the
+            *idle* repaint cadence only, since every screen pushes its own repaint through
+            ``TuiSession.invalidate`` when its data actually moves. Composing one frame was
+            measured at 74 ms on the PicoCalc at 53×26 (110 ms at 53×40), so a 1 Hz idle
+            tick alone costs 7–11% of a core doing nothing; it ticks at half that rate
+            there. What drifts is cosmetic — the header's per-minute pulse and its packet
+            counter — and none of it is legible at one-second resolution anyway.
+        spinner_tick_s: Seconds between frames of a "working" spinner. The single source for
+            every animated wait in the app. The desktop's 0.12 s is not a rate this hardware
+            can hold: a PicoCalc frame would claim 62% of a core at 53×26, and at 53×40 its
+            110 ms of compose would leave under 10 ms of each interval for the work actually
+            being waited on — and before this phase's savings it did not fit at all, at
+            152 ms against a 120 ms budget. It slows to a cadence the hardware can hold
+            comfortably while still reading as alive.
         battery: Which source feeds the header's battery gauge — ``"companion"`` (read
             from the connected MeshCore device) or ``"host"`` (the PicoCalc's own sysfs
             ``power_supply`` driver, confirmed present in P0). Wired in P5.
@@ -98,6 +109,7 @@ class Platform:
     name_colour: str
     effects: bool
     tick_s: float
+    spinner_tick_s: float
     battery: str
     modifier_watch: bool
 
@@ -117,6 +129,7 @@ REGULAR = Platform(
     name_colour="key",
     effects=True,
     tick_s=1.0,
+    spinner_tick_s=0.12,
     battery="companion",
     modifier_watch=False,
 )
@@ -140,7 +153,8 @@ PICOCALC = Platform(
     truecolor=False,
     name_colour="type",
     effects=False,
-    tick_s=1.0,
+    tick_s=2.0,
+    spinner_tick_s=0.5,
     battery="host",
     modifier_watch=True,
 )

@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.geo import usable_fix
+from ..core.geo import DEFAULT_VIEW_FRACTION, usable_fix
 from ..core.models import NODE_TYPE_REPEATER
 from .base import Tool, ToolResult, register
 
@@ -64,7 +64,7 @@ class MapTool(Tool):
 
         interactive = isinstance(ctx.ui, TuiUi) and not params.get("static")
         if interactive:
-            from ..ui.map_screen import DEFAULT_VIEW_FRACTION, open_map
+            from ..ui.map_screen import open_map
 
             await open_map(
                 ctx, markers, fraction=params.get("fraction", DEFAULT_VIEW_FRACTION)
@@ -103,7 +103,7 @@ class MapTool(Tool):
 
         from ..core.geo import Viewport
         from ..ui.map_render import render_map
-        from ..ui.map_screen import DEFAULT_VIEW_FRACTION, basemap_source
+        from ..ui.map_screen import basemap_source
 
         cell_w = int(params.get("width") or min(ctx.console.size.width - 2, 160))
         cell_h = max(12, cell_w * 4 // 13)  # keep roughly the terminal's aspect
@@ -142,7 +142,6 @@ class MapTool(Tool):
             app: The Typer application.
         """
         from ..cli import run_tool_command
-        from ..ui.map_screen import DEFAULT_VIEW_FRACTION
 
         @app.command(name=self.name, help=self.help)
         def _map(

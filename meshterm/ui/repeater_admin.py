@@ -46,15 +46,12 @@ from .menus import (
 )
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
-from .tui.spinner import Spinner
+from .tui.spinner import Spinner, spinner_interval
 from .widgets import _age_seconds, _format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..core.connection import Device
-
-#: Seconds between spinner frames while a remote command is in flight.
-_SPINNER_INTERVAL = 0.12
 
 #: Seconds to wait for one remote reply. Repeaters answer over the mesh — multi-hop
 #: routes take seconds — so this is deliberately more patient than a local command.
@@ -470,7 +467,7 @@ async def _run_under_dialog(ctx: "AppContext", title: str, work) -> bool:
 
     async def animate() -> None:
         while True:
-            await asyncio.sleep(_SPINNER_INTERVAL)
+            await asyncio.sleep(spinner_interval())
             spinner.tick()
             session.invalidate()
 
@@ -608,7 +605,7 @@ async def _command_line(ctx: "AppContext", device: "Device", node: Contact) -> N
 
     async def animate() -> None:
         while True:
-            await asyncio.sleep(_SPINNER_INTERVAL)
+            await asyncio.sleep(spinner_interval())
             if screen.busy:
                 screen.tick()
                 session.invalidate()

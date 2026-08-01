@@ -14,6 +14,7 @@ from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
+from ...platforms import get_platform
 from ..theme import hint_style, title_style
 from .glow import apply_corner_glow
 from .render import render_lines
@@ -189,8 +190,14 @@ def compose_base(
     viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
     panel = _panel(base, cols - 4, viewport, active=True)
     footer = Text.from_markup(f"[muted]{footer_hint}[/muted]")
-    # The glow pass lights the outer frame *and* any tool panels nested in the body.
-    lines = header_lines + apply_corner_glow(render_lines(Group(panel, footer), cols))
+    # The glow pass lights the outer frame *and* any tool panels nested in the body. It only
+    # ever recolours truecolor foregrounds (see glow._advance_fg), so on a platform without
+    # effects — which is also a platform without truecolor — it would scan every line of
+    # every frame and hand back the identical list. Skipping it outright is the same picture
+    # for none of the work. Read live rather than bound at import: set_platform() runs in the
+    # CLI callback, long after this module is imported (see meshterm.platforms).
+    body = render_lines(Group(panel, footer), cols)
+    lines = header_lines + (apply_corner_glow(body) if get_platform().effects else body)
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
     if len(lines) > rows:
         lines = lines[:rows]

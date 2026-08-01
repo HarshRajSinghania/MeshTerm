@@ -13,6 +13,23 @@ from typing import Optional
 
 from rich.text import Text
 
+from ...platforms import get_platform
+
+
+def spinner_interval() -> float:
+    """Seconds a "working" animation should wait between frames, on this platform.
+
+    The single source of the app's spin cadence — every animated wait sleeps on this rather
+    than on its own constant, so the rate is one platform decision instead of five copies
+    drifting apart. Called at each tick rather than read into a module constant: a constant
+    would freeze whatever platform was active at *import* time, which is always the default
+    (``set_platform`` runs later, in the CLI callback — see :mod:`meshterm.platforms`).
+
+    Returns:
+        The active platform's :attr:`~meshterm.platforms.Platform.spinner_tick_s`.
+    """
+    return get_platform().spinner_tick_s
+
 
 class Spinner:
     """An animated spinner that cycles through a set of frame glyphs.
@@ -26,13 +43,19 @@ class Spinner:
     #: A plain ASCII cycle for terminals/fonts without Braille glyphs.
     LINE = "|/-\\"
 
-    def __init__(self, frames: str = BRAILLE, *, style: str = "accent") -> None:
+    def __init__(self, frames: Optional[str] = None, *, style: str = "accent") -> None:
         """Create a spinner resting on its first frame.
 
         Args:
-            frames: The glyphs to cycle through, one per animation frame.
+            frames: The glyphs to cycle through, one per animation frame. Defaults to the
+                active platform's cycle — :data:`BRAILLE` where effects are on, the
+                four-frame :data:`LINE` where they aren't. Resolved here, at construction,
+                so a spinner built after ``set_platform`` picks the right cycle and never
+                re-decides while it spins.
             style: The Rich style :meth:`text` applies to the current glyph.
         """
+        if frames is None:
+            frames = self.BRAILLE if get_platform().effects else self.LINE
         if not frames:
             raise ValueError("a spinner needs at least one frame")
         self._frames = frames

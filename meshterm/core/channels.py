@@ -20,8 +20,15 @@ from hashlib import sha256
 from typing import Iterable, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
-from Crypto.Cipher import AES
-from Crypto.Hash import HMAC, SHA256 as _SHA256
+# PyCryptodome is imported inside the two functions that need it, never here. Importing
+# it probes the host CPU's crypto feature set (``Crypto.Util._cpu_features``), which costs
+# a fifth of a second on the PicoCalc's Cortex-A7 — paid by *every* startup, because this
+# module reaches the boot path through a single constant: core.connection imports
+# CHANNEL_SLOT_PROBE_CAP, and core.channel_store imports the derivation helpers. Neither
+# decrypts anything at import. Deferring the import moves that cost onto the first
+# overheard channel frame, where the work is actually wanted; every later call is a
+# sys.modules dict hit, and both functions bind the names once per call rather than per
+# candidate channel, so the reception path pays effectively nothing.
 
 #: Matches the ``Name: message`` convention channel senders use to identify themselves
 #: (the protocol carries no sender field). The name is 1–20 non-colon characters and must
@@ -349,6 +356,8 @@ def identify_channel(
         The channel's ``(name, effective key)``, or ``None`` when no known channel's MAC
         matches — a channel we don't hold the key for, or a bare fingerprint collision.
     """
+    from Crypto.Hash import HMAC, SHA256 as _SHA256  # deferred: see the module header
+
     try:
         mac = bytes.fromhex(cipher_mac)
         msg = bytes.fromhex(crypted)
@@ -392,6 +401,8 @@ def decrypt_channel_text(
         The decrypted text and its channel, or ``None`` if no known channel's MAC
         matches or the ciphertext is malformed.
     """
+    from Crypto.Cipher import AES  # deferred: see the module header
+
     try:
         msg = bytes.fromhex(crypted)
     except ValueError:

@@ -234,7 +234,15 @@ def _has_wide_glyph(text: str) -> bool:
     marks (``▲●■``) and chart braille are width-1 everywhere, so they never trip this. The
     ``>= 0x1100`` guard skips the ASCII/Latin bulk of a frame before the width lookup, which
     matters because this runs over the whole composed frame on every repaint.
+
+    On a platform that draws no emoji the answer is ``False`` by construction — its console
+    font is a fixed 512-glyph set with no wide glyph in it, so nothing a frame can contain
+    would return ``True``. Answering from the platform instead of the text skips a
+    per-character scan of the entire frame on every repaint, and with it the scrub machinery
+    that a ``True`` would arm, leaving the cheap differential paint permanently in play.
     """
+    if not get_platform().emoji:
+        return False
     return any(ord(ch) >= 0x1100 and get_cwidth(ch) == 2 for ch in text)
 
 
@@ -1112,7 +1120,9 @@ class TuiSession:
             key_bindings=self._key_bindings(),
             full_screen=True,
             mouse_support=False,
-            refresh_interval=1.0,  # keep the live monitor counter in the header ticking
+            # Keeps the live monitor counter in the header ticking. Per-platform, so a host
+            # where an idle repaint is expensive can breathe more slowly between frames.
+            refresh_interval=get_platform().tick_s,
             input=self._input,
             output=self._resolve_output(),
         )

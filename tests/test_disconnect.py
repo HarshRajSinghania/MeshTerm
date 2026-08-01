@@ -704,7 +704,7 @@ async def test_handle_disconnect_auto_reconnects_when_port_returns(
     monkeypatch.setattr(connection, "serial_port_present", fake_present)
     monkeypatch.setattr(AppContext, "reconnect", fake_reconnect)
     monkeypatch.setattr(menu, "_LIVENESS_POLL_S", 0.0)
-    monkeypatch.setattr(menu, "_RECONNECT_SPINNER_S", 0.0)
+    monkeypatch.setattr(menu, "spinner_interval", lambda: 0.0)
 
     session = _FakeSession()
     try:
@@ -729,7 +729,7 @@ async def test_handle_disconnect_quits_when_user_presses_quit(
     # The port never comes back, so the only way out is the Quit button.
     monkeypatch.setattr(connection, "serial_port_present", lambda port: False)
     monkeypatch.setattr(menu, "_LIVENESS_POLL_S", 0.0)
-    monkeypatch.setattr(menu, "_RECONNECT_SPINNER_S", 0.0)
+    monkeypatch.setattr(menu, "spinner_interval", lambda: 0.0)
 
     session = _FakeSession()
 

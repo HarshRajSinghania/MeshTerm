@@ -582,7 +582,7 @@ async def test_direct_send_spins_until_the_ack_resolves(monkeypatch) -> None:
     """A pending direct message spins while the send is in flight, then settles on ✓."""
     from meshterm.ui.tui.spinner import Spinner
 
-    monkeypatch.setattr("meshterm.ui.chat._SPINNER_INTERVAL", 0.005)
+    monkeypatch.setattr("meshterm.ui.chat.spinner_interval", lambda: 0.005)
     session = _StubSession()
     release = asyncio.Event()
 

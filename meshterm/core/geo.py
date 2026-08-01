@@ -24,6 +24,18 @@ EARTH_RADIUS_KM = 6371.0088
 #: is ``TILE_PX * 2**zoom`` pixels square at a given zoom.
 TILE_PX = 256
 
+#: Default fraction of nodes a map view frames: the densest half, so a few distant outliers
+#: don't zoom the whole mesh out to a continent. See :meth:`Viewport.fit`.
+#:
+#: It lives here, beside the viewport maths it parameterises, rather than in the map screen
+#: that made it — the ``map`` subcommand needs it as a ``--fraction`` default at *CLI
+#: registration* time, which happens for every tool on every startup. Reaching into
+#: :mod:`meshterm.ui.map_screen` for it dragged the whole map stack (and, through the
+#: basemap's tile fetcher, ``urllib.request`` → ``http.client`` → ``ssl``) into every run,
+#: including runs that never open a map. This module is pure arithmetic and already on the
+#: boot path, so the constant is free here.
+DEFAULT_VIEW_FRACTION = 0.5
+
 
 @dataclass(frozen=True, slots=True)
 class BBox:

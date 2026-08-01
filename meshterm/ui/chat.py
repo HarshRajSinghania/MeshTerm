@@ -34,7 +34,7 @@ from .tui.prompt import (
 )
 from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
-from .tui.spinner import Spinner
+from .tui.spinner import Spinner, spinner_interval
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -55,9 +55,6 @@ _MENTION = re.compile(r"@\[([^\]]{1,20})\]")
 #: spinner instead (see :meth:`ChatScreen._delivery_glyph`).
 _DELIVERED = ("✓", "ok")
 _FAILED = ("✗", "err")
-
-#: Seconds between spinner frames on a message that is still awaiting its ack.
-_SPINNER_INTERVAL = 0.12
 
 #: The sender-prefix parser, shared app-wide from the protocol layer (the transcript,
 #: the conversation picker, the dashboard feed, and the message-paths matcher must all
@@ -684,7 +681,8 @@ class ChatScreen(Screen):
         """Await ``coro`` while animating the delivery spinner on the in-flight message.
 
         A background timer advances the shared spinner and repaints every
-        :data:`_SPINNER_INTERVAL` seconds, so a pending message's trailing glyph spins until
+        :func:`~meshterm.ui.tui.spinner.spinner_interval` seconds (the platform's spin
+        cadence), so a pending message's trailing glyph spins until
         the ack resolves. The timer is always cancelled (and awaited, so it can't outlive the
         send as a stray pending task) before returning. The spinner is cosmetic, so any hiccup
         in the animation is swallowed rather than allowed to break the send.
@@ -693,7 +691,7 @@ class ChatScreen(Screen):
 
         async def animate() -> None:
             while True:
-                await asyncio.sleep(_SPINNER_INTERVAL)
+                await asyncio.sleep(spinner_interval())
                 self._spinner.tick()
                 self._session.invalidate()
 

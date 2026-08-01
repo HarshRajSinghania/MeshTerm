@@ -100,15 +100,12 @@ from .menus import back_rows, section_heading
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .tui.spinner import Spinner
+from .tui.spinner import Spinner, spinner_interval
 from .pathline import PathHop, PathLine, path_line
 from .widgets import NodeResolver, _link_text, _route_path, highlighted_hash
 
 if TYPE_CHECKING:
     from ..context import AppContext
-
-#: Seconds between spinner frames while a trace or probe is in flight.
-_SPINNER_INTERVAL = 0.12
 
 #: How wide the per-hop SNR quality bars draw, in characters. Each character packs
 #: two fill steps (see :func:`snr_bar`), so the bar reads at 16-step resolution in
@@ -525,7 +522,7 @@ class TraceScreen(Screen):
     async def _animate(self) -> None:
         """Advance the in-flight spinner and repaint on a steady cadence, until cancelled."""
         while True:
-            await asyncio.sleep(_SPINNER_INTERVAL)
+            await asyncio.sleep(spinner_interval())
             self._spinner.tick()
             self._session.invalidate()
 
@@ -1534,7 +1531,7 @@ async def _open_session(
 
         async def animate() -> None:
             while True:
-                await asyncio.sleep(_SPINNER_INTERVAL)
+                await asyncio.sleep(spinner_interval())
                 spinner.tick()
                 session.invalidate()
 
@@ -1807,7 +1804,7 @@ async def _open_session(
 
         async def animate() -> None:
             while True:
-                await asyncio.sleep(_SPINNER_INTERVAL)
+                await asyncio.sleep(spinner_interval())
                 spinner.tick()
                 session.invalidate()
 

@@ -46,14 +46,11 @@ from .theme import name_style, snr_style
 from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
-from .tui.spinner import Spinner
+from .tui.spinner import Spinner, spinner_interval
 from .widgets import NodeResolver
 
 if TYPE_CHECKING:
     from ..context import AppContext
-
-#: Seconds between spinner frames while the sweep is measuring.
-_SPINNER_INTERVAL = 0.12
 
 #: Human phrasing for each optimizer phase reported through ``on_phase``.
 _PHASE_LABELS = {
@@ -963,7 +960,7 @@ async def _animate(
 ) -> None:
     """Advance the in-flight dialog's spinner and status on a steady cadence."""
     while True:
-        await asyncio.sleep(_SPINNER_INTERVAL)
+        await asyncio.sleep(spinner_interval())
         spinner.tick()
         flight.status = screen.phase_label()
         session.invalidate()

@@ -42,6 +42,7 @@ from .tui import (
     TuiSession,
 )
 from .tui.emoji_width import calibrate as calibrate_emoji_width
+from .tui.spinner import spinner_interval
 
 
 #: Grace period (seconds) allowed for the whole exit sequence — the full-screen unwind,
@@ -60,9 +61,6 @@ _LIVENESS_POLL_S = 2.0
 #: declaring the link lost, so a momentary enumeration gap (driver churn during a replug)
 #: can't fire a false "disconnected" prompt (seconds).
 _LIVENESS_CONFIRM_S = 0.4
-
-#: Seconds between frames of the reconnect dialog's spinner while it waits for the device.
-_RECONNECT_SPINNER_S = 0.12
 
 
 def _arm_exit_watchdog(seconds: float = _EXIT_WATCHDOG_S) -> None:
@@ -126,6 +124,11 @@ _SPARK_MIN_CELLS = 24
 #: many packets-per-minute, so a single stray reads as a small nub, not a full column.
 _HEADER_ACTIVITY_FLOOR = 3.0
 
+#: The header's default segment separator, and the tighter one it falls back to when the
+#: roomy form would squeeze the pulse below :data:`_SPARK_MIN_CELLS` (see :func:`_header`).
+_SEP_ROOMY = "  ·  "
+_SEP_COMPACT = " · "
+
 
 def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
@@ -156,15 +159,30 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     # leading separator) before the pulse claims the rest; a wider separator estimate for
     # the fit decision is harmless slack.
     battery = _battery_segment(ctx)
-    reserve = (cell_len("  ·  ") + battery.cell_len) if battery.cell_len else 0
-    sep = "  ·  "
-    header = _header_segments(ctx, cache, sep)
-    if width - header.cell_len - reserve < _SPARK_MIN_CELLS:
-        sep = " · "
-        header = _header_segments(ctx, cache, sep)
-        reserve = (cell_len(sep) + battery.cell_len) if battery.cell_len else 0
+    # The separator choice changes only the *joins*, never the segments themselves, so the
+    # segments are built once and each candidate width is arithmetic: one separator per
+    # segment (each is preceded by one, and a trailing one leads into the pulse). Building
+    # them twice to measure the second option was pure waste on exactly the narrow terminals
+    # that take the compact branch every repaint — the PicoCalc's 53 columns among them.
+    pieces = _header_segments(ctx, cache)
+    content = sum(piece.cell_len for piece in pieces)
+
+    def _measure(sep: str) -> tuple[int, int]:
+        """The joined header width and the right-edge reserve, for one separator."""
+        joined = content + len(pieces) * cell_len(sep)
+        return joined, (cell_len(sep) + battery.cell_len) if battery.cell_len else 0
+
+    sep = _SEP_ROOMY
+    header_w, reserve = _measure(sep)
+    if width - header_w - reserve < _SPARK_MIN_CELLS:
+        sep = _SEP_COMPACT
+        header_w, reserve = _measure(sep)
+    header = Text()
+    for piece in pieces:
+        header.append_text(piece)
+        header.append(sep)
     # Two dot columns per cell: every cell left of the reserved tail shows two minutes.
-    room = width - header.cell_len - reserve
+    room = width - header_w - reserve
     if room > 0:
         # Buckets seeded from a previous session's stored history draw grey; only
         # traffic this session actually heard pulses green.
@@ -189,7 +207,7 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         # gauge land against the edge. With no room for a pulse (a very narrow terminal),
         # pad instead so the gauge still sits in the corner rather than trailing the text.
         if room <= 0:
-            header.append(" " * max(0, width - header.cell_len - reserve))
+            header.append(" " * max(0, width - header_w - reserve))
         header.append(sep)
         header.append_text(battery)
     return header
@@ -220,49 +238,61 @@ def _battery_segment(ctx: AppContext) -> Text:
     reading = ctx.battery.reading()
     if reading is None:
         return Text()
-    frame = int(time.monotonic() / _BATTERY_ANIM_S)
+    # Frame 0 is the gauge's resting state: the true fill, unblinking. A platform without
+    # effects holds it there, so the charging sweep and the low-battery blink never run —
+    # both exist to catch the eye, and neither is worth a forced repaint (nor, on a 16-slot
+    # console, a colour swap) on hardware where the cells are dear.
+    frame = int(time.monotonic() / _BATTERY_ANIM_S) if get_platform().effects else 0
     return battery_cell(reading.percent, charging=reading.charging, frame=frame)
 
 
-def _header_segments(ctx: AppContext, cache: dict, sep: str) -> Text:
-    """The header's fixed segments — everything left of the pulse — at one separator width.
+def _header_segments(ctx: AppContext, cache: dict) -> list[Text]:
+    """The header's fixed segments — everything left of the pulse — unjoined.
 
-    Built twice per repaint at worst (roomy first, compact if the row is tight; see
-    :func:`_header`). The trailing separator is included, so the caller can append the
-    sparkline directly after it.
+    Separator-free by design: which separator fits depends on how wide these come out, and
+    the choice changes nothing about the segments themselves, so :func:`_header` measures
+    both options arithmetically off this one build and joins once.
 
     Args:
         ctx: The shared application context.
         cache: The device-label cache (see :func:`_device_label`).
-        sep: The separator between segments (``"  ·  "`` or the compact ``" · "``).
 
     Returns:
-        The fixed-left portion of the header row.
+        The segments in display order — the app mark, the device, then whichever badges
+        have something to report. :func:`_header` writes one separator after each.
     """
-    header = Text()
-    header.append("MeshTerm", style="brand")
-    header.append(f" v{__version__}", style="muted")
-    header.append(sep)
+    # Each segment starts as an unstyled Text and takes its styles per append. A base style
+    # passed to the constructor would instead blanket everything appended after it, layering
+    # the mark's brand under the version's muted.
+    mark = Text()
+    mark.append("MeshTerm", style="brand")
+    mark.append(f" v{__version__}", style="muted")
+    segments = [mark]
+
+    device = Text()
     if ctx.mock:
-        header.append("simulator", style="warn")
+        device.append("simulator", style="warn")
     else:
         name, where = _device_label(ctx, cache)
-        header.append(name or "no device", style=None if name else "muted")
+        device.append(name or "no device", style=None if name else "muted")
         if where:
-            header.append(f" ({where})", style="muted")
+            device.append(f" ({where})", style="muted")
+    segments.append(device)
+
     unread = ctx.chat.unread_total()
     if unread:
-        header.append(sep)
-        header.append("●", style="err")
-        header.append(f" {unread}", style="warn")
+        badge = Text()
+        badge.append("●", style="err")
+        badge.append(f" {unread}", style="warn")
+        segments.append(badge)
     alerts = ctx.watchtower.unacked_count()
     if alerts:
         # The Watchtower's badge: a triangle so it never reads as unread mail.
-        header.append(sep)
-        header.append("▲", style="err")
-        header.append(f" {alerts}", style="warn")
-    header.append(sep)
-    return header
+        badge = Text()
+        badge.append("▲", style="err")
+        badge.append(f" {alerts}", style="warn")
+        segments.append(badge)
+    return segments
 
 
 def _device_label(ctx: AppContext, cache: dict) -> tuple[str, str]:
@@ -878,7 +908,7 @@ async def _handle_disconnect(ctx: AppContext, session: TuiSession) -> bool:
 async def _animate_dialog(session: TuiSession, dialog: ReconnectDialog) -> None:
     """Advance the reconnect dialog's spinner and repaint on a steady cadence, until cancelled."""
     while True:
-        await asyncio.sleep(_RECONNECT_SPINNER_S)
+        await asyncio.sleep(spinner_interval())
         dialog.tick()
         session.invalidate()
 

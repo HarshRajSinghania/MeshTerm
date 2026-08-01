@@ -168,6 +168,52 @@ CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);
 """
 
 
+def _tune(conn: sqlite3.Connection) -> None:
+    """Apply the durability/throughput pragmas, on the safe side of every trade-off.
+
+    MeshTerm writes constantly and in tiny pieces — every packet the monitor hears becomes
+    an ``observations`` row — and its most constrained host (the PicoCalc) keeps its
+    database on an SD card, where SQLite's default of a full ``fsync`` per transaction
+    costs milliseconds *each*. Three pragmas move that cost without moving the risk:
+
+    * ``journal_mode=WAL`` — writers append to a log instead of rewriting the rollback
+      journal, which turns each insert's several synchronous seeks into one append, and
+      lets a reader (a screen redrawing) run against a writer (the monitor recording)
+      instead of blocking on it. This one is *persistent*: it lives in the database file,
+      so it survives into every later connection once set.
+    * ``synchronous=NORMAL`` — the actual latency win, but **only requested once WAL is
+      confirmed engaged**. Under WAL, NORMAL risks losing the last few transactions to a
+      power cut and nothing worse; under the rollback journal it can leave the file
+      *corrupt*. A PicoCalc running on a battery pack loses power for real, so on any
+      filesystem that refused WAL this stays at the default ``FULL`` — slow and intact
+      beats fast and unreadable.
+    * ``temp_store=MEMORY`` — sorts and temporary b-trees stay in RAM rather than landing
+      on the card. This workload's temporaries are small (screen-sized query results), so
+      the memory is bounded and the card sees strictly less traffic.
+
+    WAL can legitimately be unavailable — a read-only mount, or a filesystem without the
+    shared-memory primitive it needs — and SQLite reports that by *returning* the mode it
+    actually left the database in rather than raising, so the result is inspected instead
+    of trusted. Either way this is best-effort tuning: a database that will not take the
+    pragmas is still a perfectly working database, so nothing here is allowed to fail the
+    open.
+
+    Args:
+        conn: The freshly opened connection, before any schema work.
+    """
+    # Returns the resulting mode as a row — "wal" only if the switch actually took.
+    try:
+        mode = conn.execute("PRAGMA journal_mode = WAL;").fetchone()
+    except sqlite3.Error:  # pragma: no cover - filesystem-dependent
+        mode = None
+    if mode is not None and str(mode[0]).lower() == "wal":
+        conn.execute("PRAGMA synchronous = NORMAL;")
+    try:
+        conn.execute("PRAGMA temp_store = MEMORY;")
+    except sqlite3.Error:  # pragma: no cover - defensive; no known failure mode
+        pass
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open (creating if needed) the SQLite database and ensure the schema exists.
 
@@ -175,11 +221,13 @@ def connect(db_path: Path) -> sqlite3.Connection:
         db_path: Filesystem location of the database. Parent directories are created.
 
     Returns:
-        An open connection with ``Row`` factory and foreign keys enabled.
+        An open connection with ``Row`` factory, foreign keys enabled, and the
+        durability/throughput pragmas applied (see :func:`_tune`).
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    _tune(conn)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.executescript(_SCHEMA)
     _migrate(conn)
