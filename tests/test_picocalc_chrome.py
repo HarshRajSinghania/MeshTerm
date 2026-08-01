@@ -86,6 +86,29 @@ def test_fkey_lane_text_fits_and_flips() -> None:
     assert cell_len(lane_text(wide, shifted=True).plain) <= 53
 
 
+def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:
+    """The PicoCalc battery path: a true percent and charging flag straight from sysfs."""
+    from meshterm.services import battery_service
+
+    (tmp_path / "capacity").write_text("53\n")
+    (tmp_path / "status").write_text("Discharging\n")
+    (tmp_path / "voltage_now").write_text("4012000\n")
+    monkeypatch.setattr(battery_service, "_HOST_SUPPLY", tmp_path)
+    service = battery_service.BatteryService(ctx=None)
+    service._poll_host()
+    reading = service.reading()
+    assert reading is not None
+    assert (reading.percent, reading.charging, reading.millivolts) == (53, False, 4012)
+
+    (tmp_path / "status").write_text("Charging\n")
+    service._poll_host()
+    assert service.reading().charging is True
+
+    monkeypatch.setattr(battery_service, "_HOST_SUPPLY", tmp_path / "gone")
+    service._poll_host()
+    assert service.reading() is None  # unreadable supply = absent, header draws nothing
+
+
 def test_dialog_gate_shrinks_on_picocalc() -> None:
     from meshterm.ui.surface import _dialog_max_cells
 

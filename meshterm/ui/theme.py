@@ -669,8 +669,13 @@ _fold_impl: Callable[[str], str] = _no_fold
 @on_platform
 def _bind(platform: Platform) -> None:
     """Bind the theme's platform-dependent choices (runs now and on every switch)."""
-    global _ACTIVE_THEME, _name_impl, _glyph_impl, _fold_impl
+    global _ACTIVE_THEME, _name_impl, _glyph_impl, _fold_impl, _FOLD_TABLE
     _ACTIVE_THEME = MESH_THEME if platform.truecolor else MESH_THEME_16
     _name_impl = _name_style_by_key if platform.name_colour == "key" else _name_style_by_type
     _glyph_impl = _glyph_identity if platform.emoji else _glyph_compact
     _fold_impl = _fold_to_font if platform.ascii_fold else _no_fold
+    # The fold table's emoji pads are computed with cell_len at build time. Cell widths
+    # can be re-measured/patched (the emoji-width calibration on the regular platform),
+    # so a platform switch drops the table and cache rather than trusting stale pads.
+    _FOLD_TABLE = None
+    _fold_to_font.cache_clear()

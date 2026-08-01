@@ -32,8 +32,11 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import median
 from typing import TYPE_CHECKING, Optional
+
+from ..platforms import get_platform
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -67,6 +70,10 @@ _CHARGING_RISE_HOLD_MV = 8
 
 #: How many samples to retain — the trend window plus a little slack at the poll cadence.
 _TREND_SAMPLES = int(_TREND_WINDOW_S / POLL_S) + 2
+
+#: The PicoCalc's own battery gauge, a standard kernel ``power_supply`` driver
+#: (confirmed present in P0: ``capacity``, ``status``, Li-ion, uevent format).
+_HOST_SUPPLY = Path("/sys/class/power_supply/picocalc")
 
 #: Single-cell LiPo terminal-voltage → state-of-charge lookup ``(millivolts, percent)``,
 #: high to low. The discharge curve is far from a straight line — most of the usable charge
@@ -185,7 +192,16 @@ class BatteryService:
             await asyncio.sleep(POLL_S)
 
     async def _poll(self) -> None:
-        """One pass: read the pack, estimate charge, and re-derive the charging trend."""
+        """One pass: read the pack, estimate charge, and re-derive the charging trend.
+
+        Which pack depends on the platform (``Platform.battery``): the PicoCalc's gauge
+        reports the *handheld's* cells through the kernel's standard ``power_supply``
+        driver — a percent and a real charging flag, no estimation needed — while the
+        regular platform polls the connected companion radio over the mesh link.
+        """
+        if get_platform().battery == "host":
+            self._poll_host()
+            return
         ctx = self._ctx
         if not ctx.is_connected:
             return
@@ -209,6 +225,31 @@ class BatteryService:
             millivolts=mv,
             percent=battery_percent(mv),
             charging=charging,
+        )
+
+    def _poll_host(self) -> None:
+        """Read the host's own pack from sysfs (the PicoCalc's ``picocalc`` supply).
+
+        The driver is a standard ``power_supply``: ``capacity`` is a true percent and
+        ``status`` a real charging flag (verified in P0), so none of the companion
+        path's voltage-curve or trend estimation applies. An unreadable supply (driver
+        missing, permissions) reports *absent* and the header simply draws no gauge.
+        """
+        supply = _HOST_SUPPLY
+        try:
+            percent = int((supply / "capacity").read_text().strip())
+            status = (supply / "status").read_text().strip()
+        except (OSError, ValueError):
+            self._reading = None
+            return
+        try:  # informational only; the header draws percent + charging
+            mv = int((supply / "voltage_now").read_text().strip()) // 1000
+        except (OSError, ValueError):
+            mv = 0
+        self._reading = BatteryReading(
+            millivolts=mv,
+            percent=max(0, min(100, percent)),
+            charging=status == "Charging",
         )
 
     def _charging(self, now: float) -> bool:

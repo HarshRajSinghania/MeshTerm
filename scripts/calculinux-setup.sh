@@ -163,6 +163,11 @@ else
     (usermod -aG wheel "$DEPLOY_USER" 2>/dev/null || adduser "$DEPLOY_USER" wheel 2>/dev/null) || true
     info "no password set -- run:  passwd $DEPLOY_USER"
 fi
+# input -> the F-key lane's Shift watcher reads /dev/input (services/modifier_watch);
+# dialout/video match the working device (serial radios, framebuffer). All idempotent.
+for grp in input dialout video; do
+    (usermod -aG "$grp" "$DEPLOY_USER" 2>/dev/null || adduser "$DEPLOY_USER" "$grp" 2>/dev/null) || true
+done
 
 # --- 4. clone MeshTerm (read-only deploy key over SSH) ---------------------------------
 log "4/7  clone MeshTerm"
