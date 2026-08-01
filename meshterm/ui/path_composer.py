@@ -619,7 +619,11 @@ class PathComposerScreen(Screen):
                 note = "(no observed links from here — fetch the repeater's neighbours, or type a hex hash)"
             else:
                 note = "(no observed links from here — type a hex hash to force a hop)"
-            entries.append((None, render_to_ansi(Text(note, style="muted"), width)))
+            # One entry per wrapped line: a multi-line string in a single entry would
+            # smuggle a newline into the windowed list's row math (and past the width
+            # contract, which measures per line — at 53 columns the note wraps).
+            for note_line in render_lines(Text(note, style="muted"), width):
+                entries.append((None, note_line))
 
         win = max(3, self._scroll_viewport - len(lines))
         at = next(p for p, (row, _line) in enumerate(entries) if row == self._index)

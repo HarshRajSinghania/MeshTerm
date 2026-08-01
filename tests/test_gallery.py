@@ -47,6 +47,7 @@ from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
 from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
 from meshterm.ui.fontset import FONT_CODEPOINTS
+from meshterm.ui.tui import fkeys
 from meshterm.services.courier import CourierService
 from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
@@ -420,16 +421,12 @@ _COMBOS: list[tuple[Platform, int, int]] = [
 ]
 
 #: Entries that overflow PICOCALC's 53 columns today (a width overflow doesn't depend on
-#: row count, so one entry here covers both picocalc combos). This is P6's worklist, not a
-#: TODO comment — pull an entry out the moment its case reports XPASS instead of xfail.
-_KNOWN_WIDE: set[str] = {
-    "contacts",
-    "map",
-    "walk",
-    "livefeed",
-    "remote_cli",
-    "path_composer",
-}
+#: row count, so one entry here covers both picocalc combos). P6 emptied it — the whole
+#: P1 worklist graduated once the F-key lane replaced the per-screen hint strings and the
+#: path composer's wrapped empty-state note stopped smuggling a newline into one row —
+#: so every picocalc case is now a hard gate. A new screen that can't fit 53 goes here
+#: only with a ticket, never to stay.
+_KNOWN_WIDE: set[str] = set()
 
 #: Entries whose footer_hint already overflowed the *existing* 72-column standard before
 #: this platform seam existed. Not this phase's to fix: CLAUDE.md's 72-col rule predates
@@ -481,13 +478,23 @@ def test_gallery_screen_fits_its_platform(
     screen.note_viewport(max(1, rows - 4))  # mirrors compose_base's own viewport math
 
     _assert_fits(screen.render_body(cols), cols, "render_body")
-    # footer_hint may itself carry Rich markup (e.g. map's "[warn]offline[/warn]" tag), the
-    # same way compose_base renders it (`Text.from_markup(f"[muted]{footer_hint}[/muted]")")
-    # — so it must be parsed, not just ANSI-stripped, before measuring.
-    footer_plain = Text.from_markup(screen.footer_hint).plain
-    assert cell_len(footer_plain) <= cols, (
-        f"footer_hint renders to {cell_len(footer_plain)} cells, over {cols}: {footer_plain!r}"
-    )
+    # Assert the footer that is actually drawn on this platform. Regular draws each
+    # screen's footer_hint string (which may carry Rich markup — map's
+    # "[warn]offline[/warn]" — so parse before measuring). PicoCalc never draws the
+    # hint strings at all: the fixed F-key lane replaces them (Platform.footer_fkeys),
+    # so what must fit there is the screen's lane.
+    if platform.footer_fkeys:
+        lane = fkeys.lane_text(screen.fkey_lane)
+        shifted = fkeys.lane_text(screen.fkey_lane, shifted=True)
+        assert cell_len(lane.plain) <= cols, f"F-lane {cell_len(lane.plain)} cells: {lane.plain!r}"
+        assert cell_len(shifted.plain) <= cols, (
+            f"shifted F-lane {cell_len(shifted.plain)} cells: {shifted.plain!r}"
+        )
+    else:
+        footer_plain = Text.from_markup(screen.footer_hint).plain
+        assert cell_len(footer_plain) <= cols, (
+            f"footer_hint renders to {cell_len(footer_plain)} cells, over {cols}: {footer_plain!r}"
+        )
 
     composed = frame.compose_base(Text(""), screen, screen.footer_hint, cols, rows)
     _assert_fits(composed.split("\n"), cols, "compose_base")

@@ -342,6 +342,15 @@ class ContactListScreen(SelectScreen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The PicoCalc lane: sort column cycling on F3/F8 beside the shared defaults."""
+        from .tui.fkeys import DEFAULT_LANE, FPair
+
+        lane = list(DEFAULT_LANE)
+        lane[2] = FPair("Sort→", "ctrl_right", "←Sort", "ctrl_left")
+        return lane
+
     def __init__(
         self,
         title: str,

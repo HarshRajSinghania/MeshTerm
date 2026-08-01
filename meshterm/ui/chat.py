@@ -77,6 +77,15 @@ class ChatScreen(Screen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The PicoCalc lane: message paths and delivery retry on F3/F8."""
+        from .tui.fkeys import DEFAULT_LANE, FPair
+
+        lane = list(DEFAULT_LANE)
+        lane[2] = FPair("Paths", "paths", "Retry", "retry")
+        return lane
+
     def __init__(
         self,
         conversation: Conversation,
