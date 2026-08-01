@@ -75,7 +75,16 @@ meshterm --tcp 192.168.1.50 info
 
 # No radio attached? Use the built-in simulator for development.
 meshterm --mock
+
+# On a ClockworkPi PicoCalc (Luckfox Lyra / Calculinux) the handheld flavour is
+# auto-detected: a 53-column layout, a 16-slot palette, a compact glyph language on a
+# custom console font, and an F-key hint lane. Preview it anywhere, or inspect it:
+meshterm --mock --platform picocalc
+meshterm specimen
 ```
+
+Handheld bring-up (fonts, palette, boot services) lives in
+`scripts/calculinux-setup.sh` + `scripts/calculinux-console-font.sh`.
 
 ## Features
 

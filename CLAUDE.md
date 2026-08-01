@@ -5,7 +5,10 @@ prompt_toolkit session rendering Rich content (`meshterm/ui/`), tools register i
 menu (`meshterm/tools/`), services run in the background (`meshterm/services/`), and
 everything heard is recorded to SQLite (`meshterm/persistence/`).
 
-Run the tests with `python -m pytest -q`. Screens must stay readable at 72 columns.
+Run the tests with `python -m pytest -q`. Screens must stay readable at each platform's
+`readable_cols` — 72 regular, 53 PicoCalc (see **Platforms** below); the dual-platform
+gallery test (`tests/test_gallery.py`) is the enforcement point, and every picocalc case
+is a hard gate.
 
 ## Git workflow
 
@@ -146,3 +149,32 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 - Dialogs anchor slightly above true centre, sized for their populated state.
 - Radio traffic: single transmissions or a user-chosen sample count with cooldown pacing
   — never bursts.
+
+### Platforms
+
+One codebase, two flavours: **regular** (desktop/ssh, 72 cols, truecolor, emoji) and
+**picocalc** (the PicoCalc's 53×26/53×40 framebuffer console, 16 palette slots, a
+512-glyph font, no emoji). A frozen `Platform` spec (`meshterm/platforms.py`) resolves
+once at boot; consumers bind at platform-switch time via `platforms.on_platform` — never
+branch on the platform per frame, and never `from meshterm.platforms import PLATFORM`.
+
+- **Never emit a raw emoji or bare hex colour into picocalc output.** Icons go through
+  `theme.glyph()` (the compact map); everything else is caught by the render-boundary
+  fold (`theme.fold_text`, applied in `tui/render.render_to_ansi` and
+  `MapCanvas.to_ansi_lines`) — but the fold is the safety net, not the design.
+- The glyph contract is `ui/fontset.py` — the installed console font's exact codepoint
+  inventory, device-verified. A character outside it is a test failure, not a tofu box
+  found on-device. The font itself is built by `scripts/calculinux-console-font.sh`;
+  the two files move in the same commit.
+- The 16-slot palette is `theme._VT_SLOTS` (programmed via `/etc/vtrgb`; same script).
+  `MESH_THEME_16` speaks `color(0..15)` only; bold is brightness on the VT (never bold
+  slots 5/6); backgrounds stop at slot 7. Both themes define identical style names.
+- On picocalc, names colour by node **type** (`core/nodetypes` registry), heat
+  quantizes to the `heat.*` steps, and footer hints are replaced by the **F-key lane**
+  (`ui/tui/fkeys.py`): five `FPair` slots per screen, F1–F5 primary and F6–F10 their
+  paired opposites (physical Shift+F1..F5), labels ≤7 cells. Screens override
+  `fkey_lane` for their own verbs; slots 3/4 are the customary free pair.
+- `meshterm specimen` prints the whole visual language through the real funnels — the
+  acceptance card on-device, a preview under `--platform picocalc` on the desktop.
+- Dev loop: `meshterm --mock --platform picocalc` in a 53×40 window; the gallery and
+  `tests/test_theme16.py` carry the contracts.
