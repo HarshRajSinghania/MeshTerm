@@ -1,0 +1,267 @@
+"""The PicoCalc visual-language contracts: palette, glyph map, fold, and bindings.
+
+P3's deliverables are promises about *output* — only 16 palette slots, only glyphs the
+console font holds, layout that survives the translation — enforced screen-by-screen by
+the gallery. These tests pin the machinery itself: the two themes stay name-compatible,
+the 16-slot theme obeys the VT's bold-brightness and background rules, the deploy
+script's palette matches the canonical table, the font build script and the frozen
+inventory move together, and the platform bindings actually rebind.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from rich.cells import cell_len
+from rich.default_styles import DEFAULT_STYLES
+
+from meshterm.core import nodetypes
+from meshterm.core.nodetypes import node_type_name, register_node_type
+from meshterm.platforms import PICOCALC, REGULAR, set_platform
+from meshterm.ui import theme
+from meshterm.ui.fontset import FONT_CODEPOINTS
+from meshterm.ui.theme import MESH_THEME, MESH_THEME_16, fold_text, glyph, name_style
+
+_FONT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "calculinux-console-font.sh"
+
+
+# -- the two themes -------------------------------------------------------------------
+
+
+def test_both_themes_define_exactly_the_same_style_names() -> None:
+    """A style name a screen asks for must resolve on either platform."""
+    assert set(MESH_THEME.styles) == set(MESH_THEME_16.styles)
+
+
+def _our_styles(theme_obj):
+    """The style entries we declared (Rich merges its own DEFAULT_STYLES into a Theme)."""
+    return {
+        name: style
+        for name, style in theme_obj.styles.items()
+        if name not in DEFAULT_STYLES
+    }
+
+
+def test_theme16_uses_only_the_sixteen_slots() -> None:
+    """Every 16-slot style is built from ``color(0..15)`` — never hex, never the cube."""
+    for name, style in _our_styles(MESH_THEME_16).items():
+        for color in (style.color, style.bgcolor):
+            if color is None:
+                continue
+            assert color.number is not None and 0 <= color.number <= 15, (
+                f"{name!r} uses {color!r}, outside the 16 VT slots"
+            )
+
+
+def test_theme16_bold_never_jumps_a_dim_slot_to_an_unrelated_bright_one() -> None:
+    """The VT draws bold as brightness: bold on slots 0-7 lands on N+8.
+
+    Slots 5 and 6 are the repurposed dark slates whose +8 partners (lavender, teal) are
+    unrelated colours, so no style may combine bold with them.
+    """
+    for name, style in _our_styles(MESH_THEME_16).items():
+        if style.bold and style.color is not None and style.color.number in (5, 6):
+            raise AssertionError(
+                f"{name!r} is bold on slot {style.color.number}; the VT would draw "
+                f"slot {style.color.number + 8} instead"
+            )
+
+
+def test_theme16_backgrounds_stay_in_the_dim_bank() -> None:
+    """The VT has no bright backgrounds — SGR 40-47 only."""
+    for name, style in _our_styles(MESH_THEME_16).items():
+        if style.bgcolor is not None:
+            assert style.bgcolor.number <= 7, (
+                f"{name!r} background on slot {style.bgcolor.number}; the VT stops at 7"
+            )
+
+
+def test_deploy_script_carries_the_canonical_palette() -> None:
+    """`/etc/vtrgb` in the deploy script matches ``theme.vtrgb_lines()`` byte for byte,
+    and the no-kbd OSC fallback spells the same sixteen RGB values."""
+    script = _FONT_SCRIPT.read_text(encoding="utf-8")
+    assert theme.vtrgb_lines() in script, "scripts/calculinux-console-font.sh vtrgb drifted"
+    for index, (_, _, hex_) in enumerate(theme._VT_SLOTS):
+        sequence = f"\\033]P{index:x}{hex_.lstrip('#').lower()}"
+        assert sequence in script, f"OSC fallback missing slot {index}: {sequence}"
+
+
+# -- the compact glyph map ------------------------------------------------------------
+
+
+def test_every_glyph_map_target_is_in_the_console_font() -> None:
+    """The map may only hand out characters the 512-glyph font can draw."""
+    for emoji, compact in theme._GLYPH_MAP.items():
+        for ch in compact:
+            assert ord(ch) in FONT_CODEPOINTS, (
+                f"{emoji!r} maps to {compact!r}; {ch!r} is not in the console font"
+            )
+
+
+def test_glyph_map_targets_never_widen_their_icon() -> None:
+    """A compact form at most matches its emoji's measured width (the fold pads the rest)."""
+    for emoji, compact in theme._GLYPH_MAP.items():
+        assert cell_len(compact) <= cell_len(emoji), (
+            f"{emoji!r} ({cell_len(emoji)} cells) maps to wider {compact!r}"
+        )
+
+
+def test_glyph_is_identity_on_regular_and_compact_on_picocalc() -> None:
+    set_platform(REGULAR)
+    assert glyph("📡") == "📡"
+    set_platform(PICOCALC)
+    assert glyph("📡") == "☼"
+    assert glyph("★") == "★"  # node/status marks pass through — they are font-native
+
+
+# -- the render-boundary fold ---------------------------------------------------------
+
+
+def test_fold_is_identity_on_regular_even_after_picocalc_used_it() -> None:
+    """The bound impls may not leak cached picocalc folds into a regular render."""
+    set_platform(PICOCALC)
+    assert fold_text("café") == "cafe"
+    set_platform(REGULAR)
+    assert fold_text("café") == "café"
+
+
+def test_fold_strips_accents_and_preserves_cell_widths() -> None:
+    set_platform(PICOCALC)
+    for text in ("café ⚠", "Ĉu vi paroläs", "📡 Advert", "🗑 Clear", "…", "npo Waymarker 🇨🇦"):
+        folded = fold_text(text)
+        assert cell_len(folded) == cell_len(text), (text, folded)
+        for ch in folded:
+            assert ord(ch) in FONT_CODEPOINTS or ord(ch) < 0x20, (text, folded, ch)
+
+
+def test_fold_replaces_the_unmappable_at_width() -> None:
+    """CJK and unmapped emoji leave as ``?`` at their own width — never as tofu."""
+    set_platform(PICOCALC)
+    assert fold_text("你好") == "????"
+    assert cell_len(fold_text("🦕")) == cell_len("🦕")
+
+
+def test_fold_keeps_ansi_sequences_intact() -> None:
+    set_platform(PICOCALC)
+    line = "\x1b[1;93mwarn é\x1b[0m\nnext"
+    folded = fold_text(line)
+    assert folded == "\x1b[1;93mwarn e\x1b[0m\nnext"
+
+
+def test_fold_quantizes_embedded_truecolor_to_the_slots() -> None:
+    """Canvas-emitted truecolor (the braille rasters) lands on the nearest palette slot."""
+    set_platform(PICOCALC)
+    folded = fold_text("\x1b[38;2;148;163;184m○\x1b[0m")
+    assert "38;2;" not in folded
+    assert "\x1b[90m" in folded  # #94a3b8 is exactly slot 8 (muted)
+    background = fold_text("\x1b[48;2;94;234;212mX\x1b[0m")
+    assert "48;2;" not in background
+    assert re.search(r"\x1b\[4[0-7]m", background), background  # bg clamps to the dim bank
+    eight_bit = fold_text("\x1b[38;5;201mX\x1b[0m")
+    assert "38;5;" not in eight_bit
+
+
+def test_fold_drops_zero_width_machinery() -> None:
+    set_platform(PICOCALC)
+    assert fold_text("🕸️") == fold_text("🕸")
+    assert "‍" not in fold_text("a‍b")
+
+
+# -- name colouring -------------------------------------------------------------------
+
+
+def test_name_style_by_type_reads_the_registry(monkeypatch) -> None:
+    monkeypatch.setattr(nodetypes, "_TYPES_BY_PREFIX", {"3d": "repeater"})
+    set_platform(PICOCALC)
+    assert name_style("YUL-Cartierville", "3d63c6429436") == "type.repeater"
+    assert name_style("stranger", "beef") == "muted"  # never registered → muted
+    assert name_style("nameless", None) == "muted"
+    set_platform(REGULAR)
+    assert name_style("YUL-Cartierville", "3d63c6429436").startswith("bold #")
+
+
+def test_type_registry_round_trip() -> None:
+    register_node_type("A1B2C3", 2)
+    assert node_type_name("a1") == "repeater"
+    assert node_type_name("a1ffff") == "repeater"  # any prefix of the key agrees
+    register_node_type("a1b2c3", None)  # no type carried → no clobber
+    assert node_type_name("a1") == "repeater"
+    assert node_type_name(None) is None
+    assert node_type_name("f") is None  # too short for a first byte
+
+
+# -- the font build script stays mirrored ---------------------------------------------
+
+
+def test_font_script_marks_and_fontset_move_together() -> None:
+    """Every codepoint the script draws or aliases is in the frozen inventory, and every
+    donor it consumes is out — the two files must change in the same commit."""
+    script = _FONT_SCRIPT.read_text(encoding="utf-8")
+    marks = {int(m, 16) for m in re.findall(r"^    (0x[0-9A-Fa-f]{4}): art\(", script, re.M)}
+    assert marks, "could not parse MARKS out of the font script"
+    for cp in marks:
+        assert cp in FONT_CODEPOINTS, f"script draws U+{cp:04X} but fontset lacks it"
+    aliases = {
+        int(m, 16) for m in re.findall(r"^    (0x[0-9A-Fa-f]{4}): 0x[0-9A-Fa-f]{4},", script, re.M)
+    }
+    for cp in aliases:
+        assert cp in FONT_CODEPOINTS, f"script aliases U+{cp:04X} but fontset lacks it"
+    donors_match = re.search(r"DONORS = \[(.*?)\]", script, re.S)
+    assert donors_match is not None
+    # Donors are consumed front to back, one per mark; everything consumed must be out
+    # of the inventory. The spares at the tail legitimately remain in it.
+    donor_list = re.findall(r"0x[0-9A-Fa-f]{4}", donors_match.group(1))
+    assert len(donor_list) >= len(marks), "fewer donors than marks — the build would fail"
+    for cp_hex in donor_list[: len(marks)]:
+        cp = int(cp_hex, 16)
+        assert cp not in FONT_CODEPOINTS, (
+            f"donor U+{cp:04X} is consumed by a mark but still listed in the fontset"
+        )
+
+
+# -- the specimen card ----------------------------------------------------------------
+
+
+def test_specimen_renders_clean_on_picocalc() -> None:
+    """`meshterm specimen` under picocalc obeys every contract it demonstrates:
+    ≤53 cells per line, 16-slot SGR only, console-font characters only."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from meshterm.ui.specimen import specimen_lines
+
+    set_platform(PICOCALC)
+    console = Console(
+        theme=MESH_THEME_16, width=53, file=StringIO(),
+        force_terminal=True, color_system="standard", highlight=False,
+    )
+    with console.capture() as capture:
+        for line in specimen_lines():
+            console.print(line)
+    for i, line in enumerate(capture.get().splitlines()):
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+        assert cell_len(plain) <= 53, f"specimen line {i} is {cell_len(plain)} cells: {plain!r}"
+        assert "[38;2;" not in line and "[48;2;" not in line, f"truecolor on line {i}: {line!r}"
+        for ch in plain:
+            assert ord(ch) in FONT_CODEPOINTS, f"line {i} char {ch!r} outside the font"
+
+
+# -- relocated marks stay importable from their old homes -----------------------------
+
+
+def test_mark_constants_reexport_from_their_old_hosts() -> None:
+    """The P3 relocation to ``ui.marks`` left the old names bound in the old modules."""
+    from meshterm.ui.map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
+    from meshterm.ui.mapcanvas import RGB, parse_hex
+    from meshterm.ui.marks import NODE_MARK, REPEATER_MARK, SELF_MARK, UNKNOWN_MARK
+    from meshterm.ui.pathgraph import DST_NODE, SRC_NODE, GlyphOf, LabelOf, LabelRgbOf
+
+    assert (_SELF, _REPEATER, _NODE, _UNKNOWN) == (
+        SELF_MARK, REPEATER_MARK, NODE_MARK, UNKNOWN_MARK,
+    )
+    assert parse_hex("#facc15") == (0xFA, 0xCC, 0x15)
+    assert RGB is not None and SRC_NODE and DST_NODE
+    assert GlyphOf is not None and LabelOf is not None and LabelRgbOf is not None
+

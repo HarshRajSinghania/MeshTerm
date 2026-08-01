@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,8 +175,35 @@ def get_platform() -> Platform:
     return PLATFORM
 
 
+#: Callbacks re-run on every :func:`set_platform`, so a module can bind platform-derived
+#: state (a chosen theme, a swapped function implementation) once per *switch* instead of
+#: re-deriving it per call in a render loop. Registered via :func:`on_platform`.
+_BINDINGS: list[Callable[[Platform], None]] = []
+
+
+def on_platform(binding: Callable[[Platform], None]) -> Callable[[Platform], None]:
+    """Register (and immediately run) a platform binding.
+
+    The seam's principle is *bind at construction time, never per frame*: a consumer that
+    must swap behaviour with the platform (the theme's ``name_style`` impl, the
+    rasterizer's console cache) registers a binding here at its own import time. The
+    binding runs once right away — against the platform active *now* — and again on every
+    later :func:`set_platform`, so tests that swap platforms rebind automatically and the
+    consumer's hot path reads a plain module global.
+
+    Args:
+        binding: Called with the active :class:`Platform`; must be idempotent.
+
+    Returns:
+        ``binding`` unchanged, so it can be used as a decorator.
+    """
+    _BINDINGS.append(binding)
+    binding(PLATFORM)
+    return binding
+
+
 def set_platform(platform: Platform) -> None:
-    """Install ``platform`` as the active one.
+    """Install ``platform`` as the active one and re-run every registered binding.
 
     Called exactly once by the CLI callback, before :func:`~meshterm.ui.theme.make_console`
     — every other read of :func:`get_platform` in the same process happens after this.
@@ -189,6 +216,8 @@ def set_platform(platform: Platform) -> None:
     """
     global PLATFORM
     PLATFORM = platform
+    for binding in _BINDINGS:
+        binding(platform)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +324,7 @@ __all__ = [
     "PLATFORM",
     "get_platform",
     "set_platform",
+    "on_platform",
     "Resolution",
     "resolve",
 ]

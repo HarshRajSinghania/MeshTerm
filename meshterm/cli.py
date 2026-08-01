@@ -182,6 +182,22 @@ def platform_command() -> None:
     console.print(f"  /proc/device-tree/model: {r.detected_model or '(unavailable)'}")
 
 
+@app.command(name="specimen")
+def specimen_command() -> None:
+    """Print the visual-language specimen for the active platform.
+
+    Every mark, icon funnel, colour scale and fold on one card, drawn through the same
+    theme and glyph machinery the TUI uses — so on the PicoCalc console it is the
+    font/palette acceptance screen, and with ``--platform picocalc`` on a desktop it
+    previews that flavour. See :mod:`meshterm.ui.specimen`.
+    """
+    from .ui.specimen import specimen_lines
+
+    console = make_console()
+    for line in specimen_lines():
+        console.print(line)
+
+
 def run_tool_command(tool: Tool, params: dict) -> None:
     """Execute a tool from a CLI subcommand and render its result.
 

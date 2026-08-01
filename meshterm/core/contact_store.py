@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import Contact, advert_time
+from .nodetypes import register_node_type
 
 
 def _norm(pubkey: str) -> str:
@@ -284,4 +285,7 @@ def merge_contacts(
         for remembered in store.contacts(device_pubkey)
         if remembered.public_key and remembered.public_key not in present
     ]
-    return list(live) + extra
+    merged = list(live) + extra
+    for contact in merged:  # every contact read passes through here — feed the type registry
+        register_node_type(contact.public_key or contact.key_prefix, contact.node_type)
+    return merged

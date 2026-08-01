@@ -20,7 +20,8 @@ from typing import Optional
 
 from ..core.geo import Viewport
 from ..core.mvt import GEOM_LINE, GEOM_POLYGON, Layer
-from .mapcanvas import RGB, MapCanvas, parse_hex
+from .mapcanvas import MapCanvas
+from .marks import NODE_MARK, REPEATER_MARK, RGB, SELF_MARK, UNKNOWN_MARK, parse_hex
 
 # -- node markers -------------------------------------------------------------
 
@@ -53,15 +54,12 @@ class MapMarker:
         return 2 if self.is_self else (1 if self.is_repeater else 0)
 
 
-# Marker palette, shared across the whole app. The basemap is blue (water), green (parks) and
-# warm amber (roads), so markers use the hues a map never contains — pink/violet — to stand
-# out against it. Ordinary nodes are the loudest (bright pink); repeaters recede a step (a
-# calmer violet); our own node stays the fixed yellow star; a node heard of but never
-# identified is a muted grey ring.
-_SELF = ("★", "#facc15")
-_REPEATER = ("▲", "#a78bfa")
-_NODE = ("●", "#f472b6")
-_UNKNOWN = ("○", "#94a3b8")
+# Marker palette, shared across the whole app — canonical tuples in ui.marks; the old
+# private names stay bound here for this module and its existing importers.
+_SELF = SELF_MARK
+_REPEATER = REPEATER_MARK
+_NODE = NODE_MARK
+_UNKNOWN = UNKNOWN_MARK
 
 
 # -- basemap styling ----------------------------------------------------------

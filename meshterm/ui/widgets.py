@@ -23,6 +23,7 @@ from rich.text import Text
 
 from .. import __version__
 from ..core.channels import is_name_derived, is_public_channel, is_public_name
+from ..platforms import Platform, on_platform
 from ..core.models import (
     LOCAL_DEVICE_LABEL,
     NODE_TYPE_CHAT,
@@ -37,11 +38,21 @@ from ..core.models import (
     TxOptResult,
     utcnow,
 )
-from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
-from .mapcanvas import RGB, parse_hex
-from .pathgraph import DST_NODE, GlyphOf, LabelOf, LabelRgbOf, SRC_NODE
+from .marks import (
+    DST_NODE,
+    NODE_MARK,
+    REPEATER_MARK,
+    RGB,
+    SELF_MARK,
+    SRC_NODE,
+    UNKNOWN_MARK,
+    GlyphOf,
+    LabelOf,
+    LabelRgbOf,
+    parse_hex,
+)
 from .pathline import PathLine, path_line
-from .theme import name_style, node_style, snr_style
+from .theme import glyph, name_style, node_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
@@ -58,9 +69,11 @@ def channel_glyph(name: str, secret: Optional[bytes]) -> str:
     """The one-character openness marker for a channel, shared across channel-facing screens.
 
     ``＃`` marks a name-derived (``#``-style) channel, ``🌐`` a fixed-key well-known public
-    channel (e.g. the firmware default ``Public``), and ``🔒`` a private one. Every glyph is a
-    single double-width cell, so callers can prefix rows with ``"{glyph} "`` without disturbing
-    column alignment. When the secret is unknown, the name alone is used to guess.
+    channel (e.g. the firmware default ``Public``), and ``🔒`` a private one — mapped
+    through :func:`~meshterm.ui.theme.glyph`, so PicoCalc draws the compact ``# @ ⚿``
+    instead. Within a platform every glyph is one width (double on regular, single on
+    PicoCalc), so callers can prefix rows with ``"{glyph} "`` without disturbing column
+    alignment. When the secret is unknown, the name alone is used to guess.
 
     Args:
         name: The channel name.
@@ -70,12 +83,12 @@ def channel_glyph(name: str, secret: Optional[bytes]) -> str:
         A single-character glyph.
     """
     if secret is None:
-        return "＃" if is_public_name(name) else "🔒"
+        return glyph("＃") if is_public_name(name) else glyph("🔒")
     if is_name_derived(name, secret):
-        return "＃"
+        return glyph("＃")
     if is_public_channel(name, secret):
-        return "🌐"
-    return "🔒"
+        return glyph("🌐")
+    return glyph("🔒")
 
 def _identity(label: Optional[str]) -> Optional[str]:
     """Default node resolver: leave labels untouched."""
@@ -558,15 +571,15 @@ def route_graph_style(
     def glyph_of(node: str) -> tuple[str, str]:
         """Us a star, a typed relay its map marker, a named node a dot, else a ring."""
         if node == DST_NODE:
-            return _SELF
+            return SELF_MARK
         if node == SRC_NODE:
-            return _SELF if src_is_self else (_NODE if source else _UNKNOWN)
+            return SELF_MARK if src_is_self else (NODE_MARK if source else UNKNOWN_MARK)
         if type_of is not None:
             node_type = type_of(node)
             if node_type is not None:
                 return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
         named = resolve(node)
-        return _NODE if named and named != node else _UNKNOWN
+        return NODE_MARK if named and named != node else UNKNOWN_MARK
 
     def label_of(node: str) -> Optional[str]:
         """Endpoints by name, relays by their first hash byte."""
@@ -584,7 +597,7 @@ def route_graph_style(
             if src_is_self:
                 return _SELF_RGB
             if not source:
-                return parse_hex(_UNKNOWN[1])
+                return parse_hex(UNKNOWN_MARK[1])
             return _name_rgb(source, key_of(source) if key_of else None)
         named = resolve(node)
         if named and named != node:
@@ -760,12 +773,12 @@ def stats_panel(
 _ROOM_COLOR = "#ffffff"
 _SENSOR_COLOR = "#fb923c"
 _NODE_GLYPHS: dict[int, tuple[str, str]] = {
-    NODE_TYPE_REPEATER: (_REPEATER[0], _REPEATER[1]),
+    NODE_TYPE_REPEATER: (REPEATER_MARK[0], REPEATER_MARK[1]),
     NODE_TYPE_ROOM: ("■", _ROOM_COLOR),
     NODE_TYPE_SENSOR: ("◉", _SENSOR_COLOR),
-    NODE_TYPE_CHAT: (_NODE[0], _NODE[1]),
+    NODE_TYPE_CHAT: (NODE_MARK[0], NODE_MARK[1]),
 }
-_DEFAULT_GLYPH: tuple[str, str] = (_NODE[0], _NODE[1])
+_DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], NODE_MARK[1])
 
 
 def node_marker(node_type: Optional[int]) -> tuple[str, RGB]:
@@ -783,7 +796,7 @@ def node_marker(node_type: Optional[int]) -> tuple[str, RGB]:
 
 def self_marker() -> tuple[str, RGB]:
     """Our own node's map marker — the yellow ``★`` — as a ``(glyph, rgb)`` pair."""
-    return _SELF[0], parse_hex(_SELF[1])
+    return SELF_MARK[0], parse_hex(SELF_MARK[1])
 
 # A heat-map gradient for a node's heard age, hottest (most recently heard) to coldest: white
 # → yellow → orange → red → grey. Each stop pairs an age anchor (log10 of seconds since heard)
@@ -838,8 +851,17 @@ def format_ago(secs: Optional[float]) -> str:
 def _recency_style(secs: Optional[float]) -> str:
     """The heat-map colour for a node's heard age of ``secs`` (hotter = more recent).
 
-    Interpolates the RGB channels between the two :data:`_HEAT_STOPS` bracketing ``secs`` (in
-    log-age space), clamping to white below the first stop and cold slate above the last.
+    Dispatches to the platform-bound implementation: the regular platform's continuous
+    gradient, or PicoCalc's quantized steps (a 16-slot palette has no room to glide).
+    """
+    return _recency_impl(secs)
+
+
+def _recency_gradient(secs: Optional[float]) -> str:
+    """The regular platform's heat: continuous interpolation over :data:`_HEAT_STOPS`.
+
+    Interpolates the RGB channels between the two stops bracketing ``secs`` (in log-age
+    space), clamping to white below the first stop and cold slate above the last.
     """
     if secs is None:
         return _RECENCY_NEVER
@@ -855,6 +877,34 @@ def _recency_style(secs: Optional[float]) -> str:
         f = (x - x0) / (x1 - x0)
         r, g, b = (round(a + (bb - a) * f) for a, bb in zip(c0, c1))
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _recency_quantized(secs: Optional[float]) -> str:
+    """PicoCalc's heat: the gradient collapsed onto the theme's four ``heat.*`` steps.
+
+    White within the hour, amber within six, orange within the day, muted beyond —
+    the gradient's own anchors, minus its red step (on a 16-slot console red is
+    reserved for errors). ``heat.never`` keeps never-heard a shade below ever-heard.
+    """
+    if secs is None:
+        return "heat.never"
+    if secs <= 3600:
+        return "heat.hot"
+    if secs <= 21600:
+        return "heat.warm"
+    if secs <= 86400:
+        return "heat.cool"
+    return "heat.cold"
+
+
+_recency_impl: Callable[[Optional[float]], str] = _recency_gradient
+
+
+@on_platform
+def _bind_heat(platform: Platform) -> None:
+    """Pick the heat implementation for the platform (runs now and on every switch)."""
+    global _recency_impl
+    _recency_impl = _recency_gradient if platform.truecolor else _recency_quantized
 
 
 def _key_id(value: str) -> str:
@@ -977,7 +1027,7 @@ def node_type_legend(indent: str = "") -> Text:
         indent: Leading spaces to sit the legend under a table or graph body.
     """
     legend = Text(indent)
-    legend.append(_SELF[0], style=_SELF[1])
+    legend.append(SELF_MARK[0], style=SELF_MARK[1])
     legend.append(" you", style="muted")
     for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
         glyph, color = _NODE_GLYPHS[node_type]
@@ -1137,7 +1187,7 @@ def contacts_table(
 
     unknown = Text("?", style="muted")
     table.add_row(
-        Text(_SELF[0], style=_SELF[1]),
+        Text(SELF_MARK[0], style=SELF_MARK[1]),
         # Our own name is the app-wide pure-white "you" style, never a palette hue.
         Text.assemble((self_name, "you"), ("  (you)", "muted")),
         Text("—", style="faint"),

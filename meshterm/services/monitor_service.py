@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Optional
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
 from ..core.models import utcnow
+from ..core.nodetypes import register_node_type
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -204,8 +205,6 @@ class MonitorService:
                         "monitor", {"mode": "background"}, self._ctx.profile_name
                     )
                 self._ctx.repo.record_observation(self._run_id, obs)
-                # Register the node's type for PicoCalc name colouring (P3)
-                from meshterm.ui.theme import register_node_type
                 register_node_type(obs.node, obs.node_type)
             except Exception as exc:  # noqa: BLE001 - never let logging break capture
                 self._ctx.log.debug("monitor: failed to record observation: %s", exc)

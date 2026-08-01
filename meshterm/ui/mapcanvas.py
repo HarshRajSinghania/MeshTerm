@@ -17,6 +17,8 @@ from __future__ import annotations
 import unicodedata
 from typing import Optional
 
+from .marks import RGB, parse_hex  # noqa: F401 - canonical home; re-exported for importers
+
 #: Unicode braille pattern base; add a dot bitmask to get the glyph.
 _BRAILLE_BASE = 0x2800
 
@@ -53,13 +55,6 @@ _DOT_BITS = (
     (0x08, 0x10, 0x20, 0x80),  # right column, rows 0..3
 )
 
-RGB = tuple[int, int, int]
-
-
-def parse_hex(color: str) -> RGB:
-    """Convert ``"#rrggbb"`` (or ``"rrggbb"``) to an ``(r, g, b)`` tuple."""
-    c = color.lstrip("#")
-    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
 
 
 class MapCanvas:
@@ -303,7 +298,17 @@ class MapCanvas:
     # -- output -----------------------------------------------------------------
 
     def to_ansi_lines(self) -> list[str]:
-        """Render the canvas to one truecolour ANSI string per row."""
+        """Render the canvas to one truecolour ANSI string per row.
+
+        The canvas is a rasterizer of its own — it emits escape codes directly rather
+        than going through the themed Rich console — so, like
+        :func:`meshterm.ui.tui.render.render_to_ansi`, its output leaves through the
+        platform's render-boundary fold: on PicoCalc the truecolour SGR quantizes to
+        the 16 palette slots (and any stray glyph folds to the console font) right
+        here, wherever the lines end up embedded.
+        """
+        from .theme import fold_text
+
         reset = "\x1b[0m"
         lines: list[str] = []
         for cy in range(self.cell_h):
@@ -332,5 +337,5 @@ class MapCanvas:
                 parts.append(ch)
             if cur is not None:
                 parts.append(reset)
-            lines.append("".join(parts))
+            lines.append(fold_text("".join(parts)))
         return lines

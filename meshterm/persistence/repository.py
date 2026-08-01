@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
+from ..core.nodetypes import register_node_type
 from ..core.models import (
     PATH_TRACE_TARGET,
     ChatMessage,
@@ -1539,6 +1540,8 @@ class Repository:
             grouped.setdefault(row["node"], []).append(obs)
 
         nodes = [HeardNode.from_observations(node, obs) for node, obs in grouped.items()]
+        for heard in nodes:  # backfill the type registry from history (PicoCalc colour)
+            register_node_type(heard.public_key or heard.node, heard.node_type)
         return sorted(nodes, key=lambda n: n.last_seen, reverse=True)
 
     # -- chat messages ----------------------------------------------------------

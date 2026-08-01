@@ -109,6 +109,25 @@ def test_map_default_fraction_is_the_same_constant_from_either_module() -> None:
     assert from_geo == from_screen
 
 
+def test_widgets_does_not_drag_the_spatial_modules() -> None:
+    """``ui.widgets`` reads its mark constants from ``ui.marks``, not the heavy hosts.
+
+    The P2 sweep measured ~60 ms of Lyra import time in ``widgets`` pulling
+    ``map_render``/``mapcanvas``/``pathgraph`` for constants alone; the constants moved
+    to the dependency-free ``ui.marks`` in P3. Same subprocess trick as the startup
+    guard: the claim is about a fresh interpreter's import graph.
+    """
+    heavy = ("meshterm.ui.map_render", "meshterm.ui.mapcanvas", "meshterm.ui.pathgraph")
+    probe = (
+        "import sys, meshterm.ui.widgets;"
+        f"print(','.join(sorted(m for m in sys.modules if m in {heavy!r})))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert out == "", f"widgets should not drag these anymore: {out}"
+
+
 # --- per-frame work the platform can skip -------------------------------------------
 
 

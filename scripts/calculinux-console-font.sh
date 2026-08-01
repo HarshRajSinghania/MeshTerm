@@ -109,18 +109,61 @@ MARKS = {
     0x25B8: art([  # SMALL RIGHT-POINTING TRIANGLE -- grabbed/reorder cursor
         "......", "......", "......", ".#....", ".##...", ".###..",
         ".###..", ".##...", ".#....", "......", "......", "......"]),
+    # --- P3 marks: the compact icon language (see meshterm/ui/theme._GLYPH_MAP and
+    # --- meshterm/ui/fontset.py, which must mirror every codepoint drawn here) --------
+    0x2026: art([  # HORIZONTAL ELLIPSIS -- "opens further prompts", truncation
+        "......", "......", "......", "......", "......", "......",
+        "......", "......", "#.#.#.", "#.#.#.", "......", "......"]),
+    0x26A0: art([  # WARNING SIGN -- the warn status mark
+        "......", "..##..", ".#..#.", ".#..#.", "#....#", "#.##.#",
+        "#.##.#", "#....#", "#.##.#", "######", "......", "......"]),
+    0x232B: art([  # ERASE TO THE LEFT -- the backspace key in footer hints
+        "......", "......", "......", "..####", ".#...#", ".##.##",
+        "#..#.#", ".##.##", ".#...#", "..####", "......", "......"]),
+    0x21E7: art([  # UPWARDS WHITE ARROW -- the shift key in footer hints
+        "......", "......", "..##..", ".#..#.", "#....#", "##..##",
+        ".#..#.", ".#..#.", ".#..#.", ".####.", "......", "......"]),
+    0x2699: art([  # GEAR -- parameter/config
+        "......", "......", "..##..", ".####.", "######", "##..##",
+        "##..##", "######", ".####.", "..##..", "......", "......"]),
+    0x21BB: art([  # CLOCKWISE OPEN CIRCLE ARROW -- re-read/refresh
+        "......", "....#.", ".#####", "#...#.", "#.....", "#.....",
+        "#.....", "#....#", ".####.", "......", "......", "......"]),
+    0x25F7: art([  # WHITE CIRCLE UPPER RIGHT QUADRANT -- the clock face (sync/time)
+        "......", "......", ".####.", "#..#.#", "#..#.#", "#..###",
+        "#....#", "#....#", ".####.", "......", "......", "......"]),
+    0x2316: art([  # POSITION INDICATOR -- the crosshair (trace/map position)
+        "......", "..##..", "..##..", "......", "......", "#.##.#",
+        "#.##.#", "......", "......", "..##..", "..##..", "......"]),
+    0x26BF: art([  # SQUARED KEY (drawn as a padlock) -- private channel
+        "......", "......", ".####.", ".#..#.", "######", "######",
+        "##..##", "##..##", "######", "######", "......", "......"]),
 }
 
-# Donor codepoints whose glyph slots we may repurpose (CP437 junk MeshTerm never uses).
-DONORS = [0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x25D8, 0x25D9,
-          0x266A, 0x266B, 0x263C, 0x203C, 0x00B6, 0x00A7, 0x25AC, 0x21A8]
+# Donor codepoints whose glyph slots we may repurpose (glyphs MeshTerm never draws).
+# Order matters: MARKS consume donors front to back, one each, so the original nine marks
+# keep their original slots and the P3 nine take the next batch. Choosing a donor means
+# knowing its slot's FULL codepoint list: ter-u12n aliases lookalikes onto one glyph, and
+# repointing the slot erases every codepoint it carried -- donating pi (03C0) was tried
+# and took Cyrillic pe (043F) with it, and the beamed notes 266B/266C share one slot (so
+# 266B's donation already erases both; never list 266C as a donor of its own -- it would
+# come up empty and abort the build). After the consumed batch: preferred future donors
+# (the mixed double/single box set nothing draws), then the last-resort tail -- those are
+# MAP TARGETS in meshterm/ui/theme (advert ☼, message ¶, data §, packet ▬, control ↨);
+# consuming one breaks the compact icon language.
+DONORS = [0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x25D8, 0x25D9, 0x266A,
+          0x266B, 0x203C, 0x2640, 0x2642, 0x2320, 0x2321, 0x00F7, 0x2552, 0x2558,
+          0x2559, 0x255B, 0x255E, 0x255F, 0x2561, 0x2567, 0x2568, 0x256A,
+          0x263C, 0x00B6, 0x00A7, 0x25AC, 0x21A8]
 
-# Rounded panel corners aliased onto the existing square corners (no new bitmap).
+# Rounded panel corners aliased onto the existing square corners (no new bitmap), and the
+# midline ellipsis onto the P3 baseline one (pathline's gap marker draws as the same dots).
 ALIASES = {
     0x256D: 0x250C,  # rounded top-left     -> square top-left
     0x256E: 0x2510,  # rounded top-right    -> square top-right
     0x256F: 0x2518,  # rounded bottom-right -> square bottom-right
     0x2570: 0x2514,  # rounded bottom-left  -> square bottom-left
+    0x22EF: 0x2026,  # midline ellipsis     -> ellipsis mark
 }
 
 base = gzip.open(BASE, "rb").read()
@@ -146,13 +189,19 @@ def slot_of(cp):
 
 
 # Draw each mark/cursor into a donor slot: overwrite the bitmap, repoint the codepoint.
+# One donor per mark, and a donor that fails to resolve aborts the build: a miss means
+# the DONORS list's model of the base font is wrong, and silently consuming the *next*
+# donor is how a keeper glyph gets eaten (it cost us ☼ once).
 donors = list(DONORS)
 for cp, bitmap in MARKS.items():
-    slot = None
-    while donors and slot is None:
-        slot = slot_of(donors.pop(0))
-    if slot is None:
+    if not donors:
         raise SystemExit("out of donor slots for U+%04X" % cp)
+    donor = donors.pop(0)
+    slot = slot_of(donor)
+    if slot is None:
+        raise SystemExit(
+            "donor U+%04X (for mark U+%04X) not found in the base font -- "
+            "fix DONORS instead of skipping" % (donor, cp))
     glyphs[slot] = bytearray(bitmap)
     entries[slot] = chr(cp).encode("utf-8")
 
@@ -162,6 +211,18 @@ for new_cp, existing_cp in ALIASES.items():
     if slot is None:
         raise SystemExit("no glyph for U+%04X to alias U+%04X onto" % (existing_cp, new_cp))
     entries[slot] += chr(new_cp).encode("utf-8")
+
+# Verify nothing the app depends on was eaten as donation collateral (a donor slot can
+# carry codepoints beyond the one that earned it a place on the list). The keepers: every
+# mark and alias just placed, the compact icon language's base-font targets, and Cyrillic
+# pe (043F) as the canary for the pi/pe shared slot that bit once.
+KEEP = list(MARKS) + list(ALIASES) + [
+    0x263C, 0x00B6, 0x00A7, 0x25AC, 0x21A8,  # ☼ ¶ § ▬ ↨ -- theme map targets
+    0x043F, 0x03C0,                            # п and π -- shared-slot canaries
+]
+for cp in KEEP:
+    if slot_of(cp) is None:
+        raise SystemExit("build ate U+%04X -- a donor slot carried it; fix DONORS" % cp)
 
 header = struct.pack("<IIIIIIII", PSF2_MAGIC, 0, 32, 1, 512, charsize, h, w)
 out = header + b"".join(bytes(g) for g in glyphs) + b"".join(e + b"\xff" for e in entries)
@@ -183,4 +244,54 @@ else
     echo "FONT=$FONT_NAME" >> "$VCONSOLE"
 fi
 echo "persisted FONT=$FONT_NAME in $VCONSOLE (loads on every boot)"
+
+# --- palette: program the 16 console slots to MeshTerm's colours ------------------------
+# The panel's VT layer is 16 fg / 8 bg palette slots -- no per-cell RGB -- so MeshTerm's
+# 16-slot theme (meshterm/ui/theme.MESH_THEME_16) is designed against the slot meanings
+# below, and this section programs the slots' actual RGB values. The palette file matches
+# theme.vtrgb_lines() exactly (a test keeps them in sync); the boot oneshot re-applies it
+# every start (same pattern as wifi-kick). setvtrgb does the work where kbd ships it; the
+# fallback printf speaks the kernel VT's own OSC palette sequences, so nothing is required.
+VTRGB=/etc/vtrgb
+APPLIER=/usr/local/sbin/meshterm-vtrgb
+UNIT=/etc/systemd/system/meshterm-vtrgb.service
+
+echo "writing $VTRGB ..."
+cat > "$VTRGB" <<'EOF'
+15,239,34,245,99,51,100,203,148,248,74,251,129,165,94,255
+23,68,197,158,102,65,116,213,163,113,222,191,140,180,234,255
+42,68,94,11,241,85,139,225,184,113,128,36,248,252,212,255
+EOF
+
+mkdir -p "$(dirname "$APPLIER")"
+cat > "$APPLIER" <<'EOF'
+#!/bin/sh
+# Apply the MeshTerm console palette (slots documented in meshterm/ui/theme._VT_SLOTS).
+if command -v setvtrgb >/dev/null 2>&1; then
+    exec setvtrgb /etc/vtrgb
+fi
+# No kbd setvtrgb: the kernel VT accepts its own OSC palette sequences (ESC ] P n rrggbb).
+TTY=${1:-/dev/tty1}
+printf '\033]P00f172a\033]P1ef4444\033]P222c55e\033]P3f59e0b\033]P46366f1\033]P5334155\033]P664748b\033]P7cbd5e1\033]P894a3b8\033]P9f87171\033]Pa4ade80\033]Pbfbbf24\033]Pc818cf8\033]Pda5b4fc\033]Pe5eead4\033]Pfffffff' > "$TTY"
+EOF
+chmod +x "$APPLIER"
+
+cat > "$UNIT" <<EOF
+[Unit]
+Description=MeshTerm console palette (16-slot vtrgb)
+After=systemd-vconsole-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=$APPLIER
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable meshterm-vtrgb.service >/dev/null 2>&1 || true
+"$APPLIER" || echo "warning: could not apply the palette live (boot service will)"
+echo "palette installed ($VTRGB + boot oneshot)"
+
 echo "done -- launch 'meshterm' to see braille charts, node glyphs, framed panels, and the > cursor."

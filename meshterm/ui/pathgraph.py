@@ -99,12 +99,16 @@ from itertools import permutations, product
 from math import ceil
 from typing import Callable, Optional, Sequence
 
-from .mapcanvas import RGB, MapCanvas, parse_hex
-
-#: Sentinel node ids for the graph's endpoints (NUL never collides with hex hops).
-#: Callers key their glyph/label callbacks on these for the two ends of every path.
-SRC_NODE = "\x00src"
-DST_NODE = "\x00dst"
+from .mapcanvas import MapCanvas
+from .marks import (  # noqa: F401 - canonical home; re-exported for existing importers
+    DST_NODE,
+    RGB,
+    SRC_NODE,
+    GlyphOf,
+    LabelOf,
+    LabelRgbOf,
+    parse_hex,
+)
 
 #: Joins a hop id to its occurrence index when ``allow_duplicate_nodes`` splits a path's
 #: revisits into their own markers. Leans on the same guarantee the endpoint sentinels do —
@@ -190,17 +194,6 @@ _ARROW_GLYPH = ""
 #: and z-order of the drawn edges follow it (see :func:`_draw_rank`), so re-emphasising a
 #: different path repaints the same picture in new colours rather than relaying it.
 _EMPHASIS_BOOST = 1_000_000
-
-
-#: A node's graph marker: the glyph and its ``#rrggbb`` colour (the shared node-glyph
-#: tuples from :mod:`~meshterm.ui.map_render` / :mod:`~meshterm.ui.widgets` fit as-is).
-GlyphOf = Callable[[str], tuple[str, str]]
-
-#: A node's graph label, or ``None``/``""`` to leave the marker bare.
-LabelOf = Callable[[str], Optional[str]]
-
-#: The colour a node's label is drawn in (usually the node's name hue).
-LabelRgbOf = Callable[[str], RGB]
 
 
 @dataclass(frozen=True)

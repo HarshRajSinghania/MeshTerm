@@ -17,12 +17,29 @@ from rich.cells import cell_len
 from rich.console import Console, RenderableType
 from rich.text import Text
 
-from ..theme import MESH_THEME
+from ...platforms import Platform, on_platform
+from ..theme import active_theme, fold_text
 
 #: Cache one headless render console per width. Consoles are cheap but repaint happens on
 #: every keystroke and on the live-monitor timer, so caching avoids needless churn. Keyed
-#: by width because a console's width is fixed at construction.
+#: by width because a console's width is fixed at construction; emptied whenever the
+#: platform switches, since the theme and colour system are baked in at construction.
 _CONSOLES: dict[int, Console] = {}
+
+#: The colour depth the rasterizer emits at — bound per platform. ``"standard"`` on the
+#: 16-slot console: the theme's ``color(N)`` styles pass through as exact slot indices,
+#: and any stray truecolor (a node hue, a map feature) is downsampled by Rich to the
+#: nearest conventional slot — which the palette deliberately keeps hue-aligned (see
+#: ``theme._VT_SLOTS``), so even strays land in their own colour family.
+_COLOR_SYSTEM = "truecolor"
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Re-bind the rasterizer's colour depth and drop stale consoles on a switch."""
+    global _COLOR_SYSTEM
+    _COLOR_SYSTEM = "truecolor" if platform.truecolor else "standard"
+    _CONSOLES.clear()
 
 
 def _console(width: int) -> Console:
@@ -37,11 +54,11 @@ def _console(width: int) -> Console:
     console = _CONSOLES.get(width)
     if console is None:
         console = Console(
-            theme=MESH_THEME,
+            theme=active_theme(),
             width=width,
             file=StringIO(),
             force_terminal=True,
-            color_system="truecolor",
+            color_system=_COLOR_SYSTEM,
             # This console is a rasterizer, not terminal output: its ANSI is re-parsed
             # by prompt_toolkit, and the TUI's hues are semantics (node identity,
             # recency heat), not decoration. So a NO_COLOR environment must not strip
@@ -74,7 +91,11 @@ def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = Fa
             console.print(renderable, end="", no_wrap=True, overflow="ellipsis", crop=True)
         else:
             console.print(renderable, end="")
-    return capture.get()
+    # THE render boundary: every visible string in the TUI leaves through here, so this
+    # one call is what makes the PicoCalc glyph contract hold app-wide (identity on the
+    # regular platform). Widths were measured on the pre-fold text; the fold preserves
+    # cell counts (wide emoji become glyph + pad), so the layout above survives it.
+    return fold_text(capture.get())
 
 
 def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> list[str]:

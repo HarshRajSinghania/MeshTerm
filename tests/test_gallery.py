@@ -46,6 +46,7 @@ from meshterm.core.models import (
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
 from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
+from meshterm.ui.fontset import FONT_CODEPOINTS
 from meshterm.services.courier import CourierService
 from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
@@ -496,9 +497,28 @@ def test_gallery_screen_fits_its_platform(
         assert lines[-1].strip() == "Back", f"{entry.name}: exit row missing, got {lines[-1]!r}"
         assert lines[-2].strip() == "", f"{entry.name}: no blank separator before Back"
 
-    # P3 assertions: no-truecolor check (glyph-whitelist is handled per-screen as P3 work)
+    # P3 assertions, on the *rendered ANSI* (the theme/fold contracts, not the config):
+    # picocalc output may carry no truecolor or 256-colour SGR (the console has 16 slots,
+    # addressed as plain 30-37/90-97/40-47 codes), and no character outside the 512-glyph
+    # console font. Together these are the parity gate that catches a stray emoji or hex
+    # colour the moment a screen grows one, instead of as tofu found on-device.
     if platform.name == "picocalc":
-        # No truecolor SGR: platform.truecolor must be False on PICOCALC
-        assert not platform.truecolor, (
-            f"{entry.name} on picocalc requires truecolor=False, got {platform.truecolor}"
-        )
+        for where, ansi_lines in (
+            ("render_body", screen.render_body(cols)),
+            ("compose_base", composed.split("\n")),
+        ):
+            for i, line in enumerate(ansi_lines):
+                assert "[38;2;" not in line and "[48;2;" not in line, (
+                    f"{entry.name} {where} line {i} emits truecolor SGR: {line!r}"
+                )
+                assert "[38;5;" not in line and "[48;5;" not in line, (
+                    f"{entry.name} {where} line {i} emits 256-colour SGR: {line!r}"
+                )
+                strays = {
+                    ch for ch in line
+                    if ord(ch) >= 0x20 and ord(ch) not in FONT_CODEPOINTS
+                }
+                assert not strays, (
+                    f"{entry.name} {where} line {i} has characters outside the console "
+                    f"font: {sorted(strays)!r} in {line!r}"
+                )

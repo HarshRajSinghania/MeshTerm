@@ -270,7 +270,7 @@ class ChatTool(Tool):
 
         contact = _resolve_contact(await device.get_contacts(), str(params["to"]))
         message = await ctx.chat.send_direct(contact, text)
-        state = "[ok]✅ delivered[/ok]" if message.acked else "[warn]❌ no ack[/warn]"
+        state = "[ok]✓ delivered[/ok]" if message.acked else "[warn]? no ack[/warn]"
         ctx.ui.note(f"[ok]✓[/ok] sent to [brand]{contact.name}[/brand] — {state}")
         return ToolResult(summary={"to": contact.name, "acked": bool(message.acked)})
 

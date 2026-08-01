@@ -1,13 +1,28 @@
-"""Shared Rich theme and console factory for a consistent, modern look."""
+"""Shared Rich theme and console factory for a consistent, modern look.
+
+Two palettes, one vocabulary: every style *name* here exists in both
+:data:`MESH_THEME` (the regular platform's truecolor look) and :data:`MESH_THEME_16`
+(the PicoCalc console's 16-slot look), so screens never know which one is active — they
+ask for ``"warn"`` or ``"snr.good"`` and the platform decides what that means. The
+active theme, the name-colouring rule, the icon funnel and the render-boundary fold are
+all **bound at platform-switch time** through :func:`meshterm.platforms.on_platform`:
+the hot render paths read module globals and never re-derive platform state per call.
+"""
 
 from __future__ import annotations
 
 import colorsys
+import re as _re
 from functools import lru_cache
-from typing import Optional
+from typing import Callable, Optional
 
+from rich.cells import cell_len
 from rich.console import Console
 from rich.theme import Theme
+
+from ..core.nodetypes import node_type_name
+from ..platforms import Platform, on_platform
+from .fontset import FONT_CODEPOINTS
 
 MESH_THEME = Theme(
     {
@@ -72,57 +87,132 @@ MESH_THEME = Theme(
         "batt.mid": "bold #fb923c",
         "batt.low": "bold #f87171",
         "batt.dim": "#475569",
-        # Type colours (PicoCalc 16-slot palette): keyed by node type when name_colour="type".
-        "type.node": "bold #5eead4",       # client — teal (brand)
-        "type.repeater": "#a5b4fc",        # repeater — indigo
-        "type.room": "bold #4ade80",       # room — green (ok)
-        "type.sensor": "bold #fbbf24",     # sensor — amber (warn)
+        # Node-type colours, used where the platform colours names by *type* instead of by
+        # key (PicoCalc — see name_style). Defined in both themes so the names always
+        # resolve; the regular platform simply never asks for them. Hues follow the map's
+        # marker language where the 16-slot palette can: repeaters the calm violet, sensors
+        # the map's orange; rooms take the brand teal and plain client nodes a quiet light
+        # grey, so infrastructure pops while the crowd stays calm.
+        "type.node": "#cbd5e1",
+        "type.repeater": "#a5b4fc",
+        "type.room": "#5eead4",
+        "type.sensor": "#fb923c",
+        # The heard-age heat scale's quantized steps (hot → cold). The regular platform
+        # interpolates a continuous gradient instead (ui.widgets._recency_style); these
+        # exist in both themes so the quantized impl's names resolve everywhere.
+        "heat.hot": "#ffffff",
+        "heat.warm": "#facc15",
+        "heat.cool": "#fb923c",
+        "heat.cold": "#94a3b8",
+        "heat.never": "#64748b",
     }
 )
 
-#: The 16-slot palette for PicoCalc (truecolor=False). Same style names as MESH_THEME so
-#: the app's internal logic never changes; only the RGB values fit the console's limit.
+#: The PicoCalc console's 16 palette slots and the RGB each is programmed to (via
+#: ``setvtrgb``; see :func:`vtrgb_lines` and the boot oneshot installed by
+#: ``scripts/calculinux-console-font.sh``). This table *is* the palette design:
+#:
+#: * Slots keep their conventional **hue families** (1/9 red, 2/10 green, 3/11
+#:   yellow-orange, 4/12 blue-indigo, 7/15 light/white, 8 grey) so other console
+#:   software — and Rich's own nearest-colour downsampling of any stray truecolor —
+#:   still lands somewhere sane; only the exact RGBs are retuned to MeshTerm's theme.
+#: * Two slots are repurposed outright for the theme's dark slates (5 ``track``,
+#:   6 ``faint``): the app never uses magenta or dim cyan, and three greys don't fit
+#:   in one "bright black" slot.
+#: * The kernel VT renders **bold as brightness**: ``bold`` on a 0–7 foreground jumps
+#:   it to slot N+8. Styles below therefore only combine ``bold`` with a slot whose
+#:   +8 partner is the same hue family — and never with 5/6, whose partners (13/14)
+#:   are unrelated colours.
+#: * Backgrounds can only address slots 0–7 (SGR 40–47).
+_VT_SLOTS: tuple[tuple[int, str, str], ...] = (
+    (0, "background", "#0f172a"),
+    (1, "red (hint.err)", "#ef4444"),
+    (2, "green (hint.ok)", "#22c55e"),
+    (3, "orange (hint.warn, batt.mid, sensors)", "#f59e0b"),
+    (4, "indigo (hint.accent, bluetooth bg)", "#6366f1"),
+    (5, "track slate (was magenta)", "#334155"),
+    (6, "faint slate (was dim cyan)", "#64748b"),
+    (7, "light grey (title.muted, client nodes)", "#cbd5e1"),
+    (8, "muted grey", "#94a3b8"),
+    (9, "err red", "#f87171"),
+    (10, "ok green", "#4ade80"),
+    (11, "warn amber", "#fbbf24"),
+    (12, "accent indigo", "#818cf8"),
+    (13, "lavender (title.accent, repeaters)", "#a5b4fc"),
+    (14, "brand teal", "#5eead4"),
+    (15, "white (you)", "#ffffff"),
+)
+
+
+def vtrgb_lines() -> str:
+    """The ``setvtrgb`` palette file content for :data:`_VT_SLOTS` (three CSV lines).
+
+    ``setvtrgb`` takes one line of 16 decimal values per colour channel. The deploy
+    script carries this same content literally (a test keeps the two in sync), so a
+    fresh SD card gets the palette without running Python.
+    """
+    channels = []
+    for shift in (16, 8, 0):
+        values = [(int(hex_.lstrip("#"), 16) >> shift) & 0xFF for _, _, hex_ in _VT_SLOTS]
+        channels.append(",".join(str(v) for v in values))
+    return "\n".join(channels) + "\n"
+
+
+#: The 16-slot palette theme: the same style names as :data:`MESH_THEME`, expressed as
+#: ``color(N)`` references into :data:`_VT_SLOTS`. Kept literal (rather than derived) so
+#: a slot choice is reviewable next to its meaning; the bold-brightness and background
+#: rules it must obey are documented on :data:`_VT_SLOTS` and pinned by tests.
 MESH_THEME_16 = Theme(
     {
-        "brand": "bold color(201)",        # slot 201: teal
-        "accent": "bold color(63)",        # slot 63: indigo
-        "selected": "reverse bold color(201)",
-        "err.reverse": "reverse bold color(203)",
-        "you": "bold color(15)",           # slot 15: white
+        "brand": "bold color(14)",
+        "accent": "bold color(12)",
+        "selected": "reverse bold color(14)",
+        "err.reverse": "reverse bold color(9)",
+        "you": "bold color(15)",
         "device.known": "bold color(15)",
         "bluetooth": "bold color(15) on color(4)",
         "bluetooth.edge": "color(4)",
-        "ok": "bold color(34)",            # slot 34: green
-        "warn": "bold color(214)",         # slot 214: orange/amber
-        "err": "bold color(203)",          # slot 203: red
-        "muted": "color(8)",               # slot 8: muted grey
-        "title.accent": "bold color(63)",
+        "ok": "bold color(10)",
+        "warn": "bold color(11)",
+        "err": "bold color(9)",
+        "muted": "color(8)",
+        "title.accent": "bold color(13)",
         "title.muted": "bold color(7)",
-        "title.warn": "bold color(214)",
-        "title.err": "bold color(203)",
-        "title.ok": "bold color(34)",
-        "title.brand": "bold color(201)",
-        "hint.accent": "color(63)",
-        "hint.muted": "color(8)",
-        "hint.warn": "color(214)",
-        "hint.err": "color(203)",
-        "hint.ok": "color(34)",
-        "hint.brand": "color(201)",
-        "faint": "color(8)",
-        "track": "color(0)",
-        "snr.good": "bold color(34)",
-        "snr.ok": "bold color(214)",
-        "snr.bad": "bold color(203)",
-        "batt.high": "bold color(34)",
-        "batt.mid": "bold color(214)",
-        "batt.low": "bold color(203)",
-        "batt.dim": "color(0)",
-        "type.node": "bold color(201)",
-        "type.repeater": "color(63)",
-        "type.room": "bold color(34)",
-        "type.sensor": "bold color(214)",
+        "title.warn": "bold color(11)",
+        "title.err": "bold color(9)",
+        "title.ok": "bold color(10)",
+        "title.brand": "bold color(14)",
+        "hint.accent": "color(4)",
+        "hint.muted": "color(6)",
+        "hint.warn": "color(3)",
+        "hint.err": "color(1)",
+        "hint.ok": "color(2)",
+        "hint.brand": "color(14)",
+        "faint": "color(6)",
+        "track": "color(5)",
+        "snr.good": "bold color(10)",
+        "snr.ok": "bold color(11)",
+        "snr.bad": "bold color(9)",
+        "batt.high": "bold color(10)",
+        "batt.mid": "color(3)",
+        "batt.low": "bold color(9)",
+        "batt.dim": "color(5)",
+        "type.node": "color(7)",
+        "type.repeater": "color(13)",
+        "type.room": "color(14)",
+        "type.sensor": "color(3)",
+        "heat.hot": "bold color(15)",
+        "heat.warm": "color(11)",
+        "heat.cool": "color(3)",
+        "heat.cold": "color(8)",
+        "heat.never": "color(6)",
     }
 )
+
+
+def active_theme() -> Theme:
+    """The platform's theme — :data:`MESH_THEME`, or :data:`MESH_THEME_16` on PicoCalc."""
+    return _ACTIVE_THEME
 
 
 def make_console() -> Console:
@@ -133,11 +223,9 @@ def make_console() -> Console:
     them to UTF-8 where the runtime supports it so output never raises ``UnicodeEncodeError``.
 
     Returns:
-        A :class:`rich.console.Console` configured with the MeshTerm theme.
+        A :class:`rich.console.Console` configured with the platform's theme.
     """
     import sys
-
-    from meshterm.platforms import get_platform
 
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -146,8 +234,7 @@ def make_console() -> Console:
                 reconfigure(encoding="utf-8")
             except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
                 pass
-    theme = MESH_THEME if get_platform().truecolor else MESH_THEME_16
-    return Console(theme=theme)
+    return Console(theme=_ACTIVE_THEME)
 
 
 def title_style(border_style: str) -> str:
@@ -226,228 +313,331 @@ def node_style(key: str) -> str:
 def name_style(name: str, key: Optional[str] = None) -> str:
     """The stable colour a node or sender name is drawn in — keyed on the node's key.
 
-    Dispatches to either hash-derived colouring (REGULAR, ``name_colour="key"``) or
-    type-based colouring (PICOCALC, ``name_colour="type"``) based on the active platform.
+    On the regular platform the hue is :func:`node_style`'s hash-derived spectrum, so a
+    rename keeps the colour and every surface that knows the key agrees. On PicoCalc
+    (``name_colour="type"``) the 16-slot palette can't afford a hue spectrum on top of
+    the semantic colours, so the name takes its node's *type* colour instead
+    (``type.node``/``type.repeater``/``type.room``/``type.sensor``), looked up in the
+    :mod:`~meshterm.core.nodetypes` registry the reception layer feeds. The dispatch is
+    bound at platform-switch time — this wrapper stays importable by name everywhere.
 
     Args:
         name: The display name (unused for the hue; kept so every call site reads
             ``name_style(name, key)`` and the pair stays greppable).
-        key: Any known prefix of the node's key/hash; when given, the hue is
-            :func:`node_style`'s (on REGULAR) — hash-derived, so a rename keeps the
-            colour and every surface that knows the key agrees. ``None``/empty marks a
-            sender whose key we couldn't resolve — drawn ``muted``, because colour is
-            reserved for keyed identities (callers with only a name resolve it first via
+        key: Any known prefix of the node's key/hash. ``None``/empty marks a sender whose
+            key we couldn't resolve — drawn ``muted``, because colour is reserved for
+            keyed identities (callers with only a name resolve it first via
             :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
 
     Returns:
-        A spectrum hue (or ``muted`` for the keyless); the same node always maps to the
-        same hue, so it keeps its colour across screens and sessions.
+        A style for the name; the same node always maps to the same style on a given
+        platform, so it keeps its colour across screens and sessions.
     """
-    from meshterm.platforms import get_platform
+    return _name_impl(name, key)
 
-    if get_platform().name_colour == "type":
-        return _name_style_by_type(name, key)
+
+def _name_style_by_key(name: str, key: Optional[str] = None) -> str:
+    """Regular-platform name colouring: the hash-derived spectrum (``muted`` keyless)."""
     if key:
         return node_style(key)
     return "muted"
 
 
 def _name_style_by_type(name: str, key: Optional[str] = None) -> str:
-    """Type-based node colouring (PicoCalc: 16-slot palette can't afford hash spectrum).
+    """PicoCalc name colouring: the node's registered *type* picks a palette colour.
 
-    Looks up the node's first-byte prefix in a type registry and returns its colour;
-    unknown prefixes stay ``muted``. Called by :func:`name_style` when the platform
-    specifies ``name_colour="type"``.
+    An unknown type — never heard with one, or no key at all — stays ``muted``: colour
+    remains reserved for identities we actually know something about. A first-byte
+    prefix collision types by whichever node registered last (colour is a hint).
+    """
+    if not key:
+        return "muted"
+    node_type = node_type_name(key)
+    return f"type.{node_type}" if node_type else "muted"
+
+
+# -- the compact icon language (PicoCalc) ---------------------------------------------
+
+#: Emoji → single console-font character: the PicoCalc icon language. One glyph per
+#: concept, chosen from what the 512-glyph font actually holds (see ui.fontset);
+#: concepts that only ever share a *family* (outbound ↑, route ∟) share deliberately.
+#: The node-type marks (★●▲■◉○) and status marks (✓ ✗ ⚠ ● ○) are already font-native
+#: and never appear here. ``glyph()`` consumes this table at explicit icon call sites
+#: (a 1-cell lane the screen composes); the render-boundary fold consumes it for
+#: everything else, padding to the emoji's measured width so layout survives.
+_GLYPH_MAP: dict[str, str] = {
+    # Packet classes (KIND_ICONS)
+    "📢": "☼",   # advert — a node radiating its presence
+    "📊": "≈",   # telemetry — a waveform of readings
+    "📦": "▬",   # packet — a plain slab of payload
+    "💬": "¶",   # message — text
+    "✅": "✓",   # ack (the ok-family check)
+    "❔": "·",   # unknown class — a neutral dot
+    # Raw payload classes (PAYLOAD_ICONS); raw ADVERT/ACK reuse ☼/✓ above
+    "📥": "↓",   # REQ — inbound ask
+    "📮": "↑",   # RESPONSE — outbound answer
+    "📩": "→",   # TEXT_MSG (overheard direct message) — text in flight
+    "📻": "#",   # GRP_TXT — channel text (the # channel mark)
+    "💽": "§",   # GRP_DATA — a data section on a channel
+    "🎭": "?",   # ANON_REQ — a request from an unproven identity
+    "🧭": "∟",   # PATH — a route with a bend in it
+    "🎯": "⌖",   # TRACE — the crosshair (also the map's position mark)
+    "🧩": "▒",   # MULTIPART — a frame in fragments
+    "🧰": "↨",   # CONTROL — adjustment up-and-down
+    # Channel openness (widgets.channel_glyph)
+    "＃": "#",   # name-derived channel
+    "🌐": "@",   # well-known public channel
+    "🔒": "⚿",   # private channel (the padlock mark)
+    # Concept icons (menu/list rows)
+    "📡": "☼",   # advert tool — same concept as the advert class
+    "🕒": "◷",   # clock/sync (the clock-face mark)
+    "🔄": "°",   # reboot — the power dot
+    "💾": "⌂",   # backup — put it somewhere safe
+    "📂": "^",   # restore — bring it back up
+    "🔑": "*",   # channel/credential key — masked-secret asterisk
+    "🔐": "*",   # identity/auth secret — same secret-material mark
+    "🗑": "✗",   # clear/delete — the destructive mark
+    "✎": "~",   # compose/edit — a scribble
+    "⚡": "!",   # explore/probe
+    "⭐": "+",   # watch — added to the watchlist
+    "📤": "↑",   # send now (outbound family)
+    "📨": "=",   # courier/queue — stacked letters
+    "🔔": "•",   # notify — the badge dot
+    "🔕": "·",   # mute — the hollowed-out dot
+    "📱": "▓",   # QR — a dense block
+    "🔗": "&",   # link — the joining glyph
+    "🏆": "★",   # trophy case — the best/winner star
+    "⌨": "❯",   # command line — the prompt cursor
+    "🚪": "",    # quit — no icon; the word carries it
+    "🌍": "@",   # map/world (globe family)
+    "🕸": "∟",   # mesh walk (route family)
+    "🚨": "⚠",   # watchtower alert
+    "🛣": "∟",   # longest-haul route (route family)
+    "🧳": "→",   # trip/journey
+    "🔆": "°",   # brightest sighting
+    "📶": "≥",   # TX power sweep — the power ramp
+    "🔧": "⚙",   # config (parameter concept)
+    "🔨": "!",   # device actions (probe family)
+    "📋": "i",   # info
+    "📰": "…",   # live feed — a stream of items
+    "🎧": "≈",   # monitor — listening to the waveform
+    "🗼": "▲",   # repeater admin — the repeater mark itself
+    "🔌": "~",   # serial port — the cable
+    "👤": "%",   # a person (two-circle silhouette)
+    "👥": "%",   # contacts — people
+    "👋": "",    # a wave in prose — the words carry it
+    "⏳": "…",   # pending/waiting
+    "＋": "+",   # fullwidth plus (channels' add row)
+}
+
+
+def glyph(icon: str) -> str:
+    """The platform's rendering of an icon: the emoji itself, or its compact glyph.
+
+    On the regular platform this is the identity — emoji icons render as themselves.
+    On PicoCalc every icon funnels to a single console-font character via
+    :data:`_GLYPH_MAP` (an unmapped icon passes through and is caught by the glyph
+    whitelist test / render-boundary fold, not silently invented here). Note the
+    compact form is *one cell* where the emoji was two: call sites compose their lanes
+    from the returned glyph, so the lane simply tightens on PicoCalc.
 
     Args:
-        name: The display name (kept for signature compatibility with :func:`name_style`).
-        key: Any known prefix of the node's key/hash; typed by first-byte prefix lookup.
+        icon: An emoji, a node/status mark, or any literal character.
 
     Returns:
-        A ``type.*`` style name or ``muted``.
+        The character(s) to render for it on the active platform.
     """
-    if not key:
-        return "muted"
-    node_type = _node_type_by_prefix(key)
-    if node_type is None:
-        return "muted"
-    return f"type.{node_type}"
+    return _glyph_impl(icon)
 
 
-#: Process-wide registry: first-byte hex prefix → node type name (e.g., "a1" → "repeater").
-#: Fed by the reception layer as nodes are first heard, so a unique prefix always types
-#: consistently. Unknown prefixes stay out, defaulting to muted.
-_TYPE_REGISTRY: dict[str, str] = {}
+def _glyph_identity(icon: str) -> str:
+    """Regular platform: icons render as themselves."""
+    return icon
 
 
-def register_node_type(key: str, node_type: Optional[int]) -> None:
-    """Register a node's first-byte prefix to its type for colour lookup.
+def _glyph_compact(icon: str) -> str:
+    """PicoCalc: icons collapse to their single-cell console-font glyph."""
+    return _GLYPH_MAP.get(icon, icon)
 
-    Called by the reception layer when a new node is first heard, ensuring every known
-    prefix types consistently. A prefix collision (two nodes with the same first byte but
-    different types) colours by whichever was registered last — acceptable since colour
-    is a hint, not a guarantee. On PicoCalc (16-slot palette), this is how
-    :func:`_name_style_by_type` maps a key to a colour without dedicating spectrum space.
 
-    Args:
-        key: The node's public key or any prefix (extracted to the first byte).
-        node_type: The node's type from the advert (NODE_TYPE_CHAT, NODE_TYPE_REPEATER, etc.),
-            or ``None`` if unknown.
+# -- the render-boundary fold (PicoCalc) ----------------------------------------------
+
+#: What may survive the fold: every font codepoint, plus the C0 controls the rendered
+#: ANSI itself is built from (ESC in its sequences, the newlines between lines).
+_FOLD_ALLOWED: frozenset[int] = FONT_CODEPOINTS.union(range(0x00, 0x20))
+
+#: Width-1 characters outside the font with a natural width-1 stand-in. Applied by the
+#: fold's translation table (storage is never touched). Characters *in* the font —
+#: ``— … ⋯ ⚠ ⌫ ⇧ ⚙ ↻ ◷ ⌖ ⚿ ← ↑ → ↓ ↔ ↕ • ·`` and the Cyrillic block — never appear
+#: here: they pass through untranslated.
+_FOLD_SINGLES: dict[str, str] = {
+    "–": "-", "−": "-", "‒": "-", "―": "—",
+    "‘": "'", "’": "'", "‚": "'", "“": '"', "”": '"', "„": '"',
+    "‹": "<", "›": ">", "«": "<", "»": ">",
+    "×": "x", "÷": "/", "⁄": "/", "∙": "·", "∘": "·",
+    "⇒": "→", "⇐": "←", "⇣": "↓", "⇡": "↑", "↩": "←", "↪": "→",
+    "⇄": "↔", "⟷": "↔", "⟺": "↔", "⟲": "↻", "⟳": "↻",
+    "✕": "✗", "✖": "✗", "✔": "✓",
+    "ᛒ": "B",   # the Bluetooth badge rune
+    "œ": "o", "Œ": "O", "æ": "a", "Æ": "A", "ø": "o", "Ø": "O",
+    "ß": "s", "þ": "p", "Þ": "P", "ð": "d", "Ð": "D", "đ": "d", "Đ": "D",
+    "ł": "l", "Ł": "L", "ı": "i",
+    # Powerline path-pill chrome (private-use): caps become half-blocks, the separator
+    # a plain wedge.
+    "": ">", "": "▌", "": "▐",
+    # Zero-width machinery folds away entirely (width 0 → empty keeps cell math exact):
+    # VS16, ZWJ, ZWSP.
+    "️": "", "‍": "", "​": "",
+}
+
+#: Built lazily on first fold: ``str.translate`` table = accent folds (NFKD, computed
+#: over the Latin ranges once) + :data:`_FOLD_SINGLES` + the emoji map padded to each
+#: emoji's measured cell width.
+_FOLD_TABLE: Optional[dict[int, str]] = None
+
+#: Truecolor / 256-colour SGR sequences embedded in *pre-rendered* ANSI. The rasterizer
+#: console downsamples everything it renders itself, but the braille canvases
+#: (``ui.mapcanvas``) emit their own truecolor escapes which pass through Rich verbatim
+#: — the fold quantizes those to the 16 slots so the contract holds for every byte out.
+_SGR_RGB = _re.compile(r"\x1b\[([34])8;2;(\d+);(\d+);(\d+)m")
+_SGR_256 = _re.compile(r"\x1b\[([34])8;5;(\d+)m")
+
+_SLOT_RGBS: tuple[tuple[int, int, int], ...] = tuple(
+    (int(h.lstrip("#")[0:2], 16), int(h.lstrip("#")[2:4], 16), int(h.lstrip("#")[4:6], 16))
+    for _, _, h in _VT_SLOTS
+)
+
+#: (is_background, r, g, b) → the replacement SGR string. The app uses a few dozen
+#: distinct colours; this stays tiny.
+_SLOT_CACHE: dict[tuple[bool, int, int, int], str] = {}
+
+
+def _nearest_slot_sgr(background: bool, r: int, g: int, b: int) -> str:
+    """The plain 16-colour SGR closest to ``(r, g, b)`` in the :data:`_VT_SLOTS` palette.
+
+    Foregrounds may land on any slot (30–37 / 90–97); backgrounds only on 0–7 (the VT has
+    no bright backgrounds), so a bright colour used as a fill picks its dim-bank cousin.
     """
-    from meshterm.core.models import (
-        NODE_TYPE_CHAT, NODE_TYPE_REPEATER, NODE_TYPE_ROOM, NODE_TYPE_SENSOR,
+    key = (background, r, g, b)
+    cached = _SLOT_CACHE.get(key)
+    if cached is None:
+        candidates = _SLOT_RGBS[:8] if background else _SLOT_RGBS
+        slot = min(
+            range(len(candidates)),
+            key=lambda i: (
+                (candidates[i][0] - r) ** 2
+                + (candidates[i][1] - g) ** 2
+                + (candidates[i][2] - b) ** 2
+            ),
+        )
+        if background:
+            code = 40 + slot
+        else:
+            code = 30 + slot if slot < 8 else 90 + slot - 8
+        cached = _SLOT_CACHE[key] = f"\x1b[{code}m"
+    return cached
+
+
+def _rgb_of_256(index: int) -> tuple[int, int, int]:
+    """The canonical RGB of xterm-256 ``index`` (cube and grayscale ramps)."""
+    if index < 16:
+        return _SLOT_RGBS[index]
+    if index < 232:
+        index -= 16
+        steps = (0, 95, 135, 175, 215, 255)
+        return (steps[index // 36], steps[index // 6 % 6], steps[index % 6])
+    grey = 8 + (index - 232) * 10
+    return (grey, grey, grey)
+
+
+def _quantize_sgr(text: str) -> str:
+    """Fold any embedded truecolor / 256-colour SGR down to the 16 palette slots."""
+    if "[38;2;" not in text and "[48;2;" not in text and "8;5;" not in text:
+        return text
+    text = _SGR_RGB.sub(
+        lambda m: _nearest_slot_sgr(
+            m.group(1) == "4", int(m.group(2)), int(m.group(3)), int(m.group(4))
+        ),
+        text,
+    )
+    return _SGR_256.sub(
+        lambda m: _nearest_slot_sgr(m.group(1) == "4", *_rgb_of_256(int(m.group(2)))),
+        text,
     )
 
-    if not key or node_type is None:
-        return
-    raw = key.lower().removeprefix("0x")
-    try:
-        prefix = raw[:2]
-    except (IndexError, ValueError):
-        return
-    type_name = {
-        NODE_TYPE_CHAT: "node",
-        NODE_TYPE_REPEATER: "repeater",
-        NODE_TYPE_ROOM: "room",
-        NODE_TYPE_SENSOR: "sensor",
-    }.get(node_type)
-    if type_name:
-        _TYPE_REGISTRY[prefix] = type_name
+
+def _build_fold_table() -> dict[int, str]:
+    """Compose the full translation table (see :data:`_FOLD_TABLE`)."""
+    import unicodedata
+
+    table: dict[int, str] = {}
+    # Accented Latin (the font's base table is Cyrillic-coverage Terminus: *no* accented
+    # Latin at all) plus fullwidth forms: NFKD-decompose, drop combining marks, keep a
+    # clean single ASCII survivor. é→e, Å→A, ＃→#, ﬁ→(skipped: two chars).
+    for first, last in ((0x00A1, 0x024F), (0x1E00, 0x1EFF), (0xFF01, 0xFF5E)):
+        for cp in range(first, last + 1):
+            if cp in FONT_CODEPOINTS:
+                continue
+            decomposed = unicodedata.normalize("NFKD", chr(cp))
+            base = "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+            if len(base) == 1 and base.isascii() and base.isprintable():
+                table[cp] = base
+    for char, replacement in _FOLD_SINGLES.items():
+        table[ord(char)] = replacement
+    for emoji, compact in _GLYPH_MAP.items():
+        pad = max(0, cell_len(emoji) - cell_len(compact))
+        table[ord(emoji)] = compact + " " * pad
+    return table
 
 
-def _node_type_by_prefix(key: str) -> Optional[str]:
-    """Look up a node's type by its first-byte prefix."""
-    if not key:
-        return None
-    raw = key.lower().removeprefix("0x")
-    try:
-        prefix = raw[:2]
-    except (IndexError, ValueError):
-        return None
-    return _TYPE_REGISTRY.get(prefix)
+@lru_cache(maxsize=4096)
+def _fold_to_font(text: str) -> str:
+    """Fold ``text`` down to the console font's inventory, cell widths preserved.
+
+    Three stages, cheapest first: the translation table (accents, symbol stand-ins,
+    the emoji map — one C-level pass), then only if something non-ASCII survives, a
+    per-character sweep replacing anything still outside the font with ``?`` at the
+    character's own cell width. The sweep is the safety net that makes the platform's
+    no-wide-glyphs guarantee (see ``session._has_wide_glyph``) true *by construction*:
+    an emoji this module has never heard of still leaves as narrow ``?``s, never as a
+    tofu box that breaks the frame's cell math. Cached — render output repeats heavily
+    frame to frame, and the fold is platform-independent once this impl is bound.
+    """
+    global _FOLD_TABLE
+    if _FOLD_TABLE is None:
+        _FOLD_TABLE = _build_fold_table()
+    folded = _quantize_sgr(text).translate(_FOLD_TABLE)
+    if folded.isascii():
+        return folded
+    if all(ord(ch) in _FOLD_ALLOWED for ch in folded):
+        return folded
+    return "".join(
+        ch if ord(ch) in _FOLD_ALLOWED else "?" * max(0, cell_len(ch)) for ch in folded
+    )
 
 
-@lru_cache(maxsize=1024)
 def fold_text(text: str) -> str:
-    """NFKD-fold accents and replace emoji on PicoCalc (storage untouched).
+    """The render-boundary text filter for the active platform.
 
-    On REGULAR, returns text unchanged (emoji and accents are both drawn).
-    On PICOCALC, strips accents and replaces emoji with single-glyph placeholders so
-    the text fits the 512-glyph font contract. Called at the render boundary for names,
-    message bodies, and any user-facing text that might carry non-ASCII.
+    Identity on the regular platform. On PicoCalc, folds any string that is about to be
+    drawn — names, message bodies, whole rendered ANSI lines — down to characters the
+    console font can shape (see :func:`_fold_to_font`); storage is never touched. ANSI
+    escape sequences pass through untouched (they are pure ASCII, and the fold never
+    rewrites ASCII). Applied once, centrally, in :func:`meshterm.ui.tui.render.render_to_ansi`
+    — individual screens should not need to call it.
 
     Args:
         text: The text to fold (or pass through).
 
     Returns:
-        The folded text, or the input unchanged on REGULAR.
+        The folded text; cell widths are preserved (wide emoji become glyph + pad).
     """
-    from meshterm.platforms import get_platform
+    return _fold_impl(text)
 
-    if get_platform().ascii_fold:
-        import unicodedata
-        # NFKD fold: decompose accents into separate combining marks, then drop them
-        folded = unicodedata.normalize("NFKD", text)
-        # Strip combining marks (category Mn = Mark, nonspacing)
-        folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
-        # Replace common emoji and brackets with ASCII equivalents
-        folded = _EMOJI_FOLD_TABLE.get(folded, folded)
-        return folded
+
+def _no_fold(text: str) -> str:
+    """Regular platform: text renders as stored."""
     return text
-
-
-#: Simple emoji→placeholder table for text that must fit the 512-glyph font.
-_EMOJI_FOLD_TABLE = {
-    "🔐": "[key]",
-    "🔑": "[key]",
-    "📡": "[radio]",
-    "💬": "[msg]",
-    "✅": "[ok]",
-    "✗": "[err]",
-    "⚠": "[warn]",
-    "●": "[node]",
-    "▲": "[rep]",
-    "■": "[room]",
-    "◉": "[sens]",
-}
-
-#: The compact glyph table: emoji → single BMP character for PicoCalc's 512-glyph font.
-#: Every icon used in the UI (KIND_ICONS, PAYLOAD_ICONS, concept glyphs) maps to a single
-#: narrow character. The node-type glyphs (★●▲■◉○) pass through unchanged (they're in
-#: the font). On REGULAR (emoji=True), glyph() is identity; on PICOCALC (emoji=False),
-#: it looks up the emoji and returns the mapped glyph or the original if not mapped.
-_GLYPH_MAP = {
-    "📢": "▶",   # advert / kind icon
-    "📊": "╳",   # telemetry
-    "📦": "□",   # packet
-    "💬": "◇",   # message
-    "✅": "✓",   # ack / ok
-    "❔": "?",   # unknown / fallback
-    "📥": "↓",   # REQ / request
-    "📮": "◈",   # RESPONSE
-    "📩": "◊",   # TEXT_MSG
-    "📻": "~",   # GRP_TXT / channel
-    "💽": "◐",   # GRP_DATA
-    "🎭": "♫",   # ANON_REQ
-    "🧭": "↗",   # PATH
-    "🎯": "✕",   # TRACE
-    "🧩": "◬",   # MULTIPART
-    "🧰": "⚙",   # CONTROL
-    "🕒": "⏰",   # clock / time
-    "🔄": "◉",   # reboot / cycle (but ◉ is sensor, use ○)
-    "💾": "⛐",   # backup / save
-    "📂": "◇",   # restore / open
-    "🔑": "◆",   # key / credential
-    "🔐": "◆",   # auth / secret
-    "🗑": "✕",   # delete / trash
-    "✎": "╳",   # edit / compose
-    "⚙": "⚙",   # parameter / gear
-    "#": "#",    # count (ASCII)
-    "▶": "▶",    # run / play
-    "⚡": "◆",   # explore / probe
-    "★": "★",    # best / winner (kept)
-    "⭐": "★",   # watch / highlight → ★
-    "📤": "↑",   # send now
-    "📨": "◈",   # courier / queue
-    "💬": "◊",   # chat (dup, overwrites above)
-    "🔔": "◐",   # notify
-    "🔕": "◑",   # mute / notifications off
-    "📱": "□",   # QR
-    "🔗": "○",   # link
-    "↻": "⟲",   # re-read / refresh
-    "↕": "⟷",   # reorder
-    "⇄": "⟷",   # reverse (flip path)
-    "🏆": "◆",   # trophy / record
-    "⌨": "↤",   # command line / keyboard
-    "🚪": "╬",   # quit / door
-    # Node type glyphs pass through unchanged (they're in the font)
-    "★": "★",   # "you" marker
-    "●": "●",   # node / client
-    "▲": "▲",   # repeater
-    "■": "■",   # room
-    "◉": "◉",   # sensor
-    "○": "○",   # unknown
-}
-
-
-def glyph(emoji_or_char: str) -> str:
-    """Return a single-cell glyph matching the emoji or character.
-
-    On REGULAR, returns the emoji unchanged (emoji and rich rendering work). On PICOCALC,
-    looks up the emoji in the compact glyph table and returns a single-cell character that
-    fits the 512-glyph PSF font. Node-type glyphs (★●▲■◉○) always pass through unchanged.
-
-    Args:
-        emoji_or_char: An emoji, a node glyph, or a literal character.
-
-    Returns:
-        The input unchanged on REGULAR, or the mapped glyph on PICOCALC.
-    """
-    from meshterm.platforms import get_platform
-
-    if get_platform().emoji:
-        return emoji_or_char
-    return _GLYPH_MAP.get(emoji_or_char, emoji_or_char)
 
 
 def snr_style(snr: float | None) -> str:
@@ -466,3 +656,21 @@ def snr_style(snr: float | None) -> str:
     if snr >= -5:
         return "snr.ok"
     return "snr.bad"
+
+
+# -- platform binding ------------------------------------------------------------------
+
+_ACTIVE_THEME: Theme = MESH_THEME
+_name_impl: Callable[[str, Optional[str]], str] = _name_style_by_key
+_glyph_impl: Callable[[str], str] = _glyph_identity
+_fold_impl: Callable[[str], str] = _no_fold
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Bind the theme's platform-dependent choices (runs now and on every switch)."""
+    global _ACTIVE_THEME, _name_impl, _glyph_impl, _fold_impl
+    _ACTIVE_THEME = MESH_THEME if platform.truecolor else MESH_THEME_16
+    _name_impl = _name_style_by_key if platform.name_colour == "key" else _name_style_by_type
+    _glyph_impl = _glyph_identity if platform.emoji else _glyph_compact
+    _fold_impl = _fold_to_font if platform.ascii_fold else _no_fold

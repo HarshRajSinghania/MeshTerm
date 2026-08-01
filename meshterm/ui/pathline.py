@@ -66,7 +66,7 @@ from rich.text import Text
 
 from ..core.models import LOCAL_DEVICE_LABEL
 from .termfont import powerline_enabled, powerline_full
-from .theme import MESH_THEME, node_style
+from .theme import active_theme, node_style
 
 #: The powerline solid right-pointing triangle (U+E0B0) — the only glyph the widget
 #: draws, seam and closing edge alike, deliberately from the *core* set so every
@@ -168,7 +168,7 @@ def _style_hex(style: str) -> Optional[str]:
     for token in reversed(style.split()):
         if token.startswith("#") and len(token) == 7:
             return token
-    themed = MESH_THEME.styles.get(style)
+    themed = active_theme().styles.get(style)
     if themed is not None and themed.color is not None:
         try:
             return "#" + themed.color.get_truecolor().hex.lstrip("#")
