@@ -1,3 +1,9 @@
 # Shell scripts run on the Calculinux/Linux target -- keep LF so the shebang and
 # heredoc terminators never pick up a CR that breaks them on the device.
 *.sh text eol=lf
+
+# The app itself runs on the same Linux target (see above). Force LF regardless of a
+# contributor's local core.autocrlf, so a file copied straight to the device (bypassing
+# git, e.g. for a quick on-hardware test) never carries CRLF git would otherwise see as
+# a spurious modification blocking the next `git pull` there.
+*.py text eol=lf
