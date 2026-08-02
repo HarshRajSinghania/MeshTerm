@@ -273,62 +273,49 @@ class ChatScreen(Screen):
         view (channels only; direct threads never select).
 
         A repaint is triggered constantly by things that touch nothing here — the idle
-        tick, a keystroke, the ack spinner — so this memoizes per-message output
-        (:attr:`_render_cache`) and only recomputes the rows past the first one that's
-        either still awaiting its ack (the spinner redraws its trailing glyph every tick)
-        or currently picked (its style depends on the pick, not the message). Every
-        earlier row is guaranteed unchanged: messages are only ever appended, replaced in
-        place (a pending bubble resolving), or removed — and identity plus ``acked`` catch
-        all three.
+        tick, a keystroke, the ack spinner — so this memoizes each message's rendered lines
+        in :attr:`_render_cache` and, message by message, splices in the cached slice
+        instead of re-rendering it. A message is only ever re-rendered when it must be:
+        it's still awaiting its ack (the spinner redraws its trailing glyph every tick),
+        it's the currently picked one (styled by the pick, not by the message), or its
+        identity/``acked`` no longer match what's cached (appended, replaced in place by a
+        pending bubble resolving, or removed). Crucially this is per-message, not a cached
+        prefix cut off at the first such row — a message stays cheap to redraw no matter
+        how far back in a long transcript it sits, so paging up through history doesn't
+        regress to a full re-render every keystroke the way a prefix cutoff would.
+        Grouping context (day/sender headers) is cheap to recompute either way, so it's
+        derived fresh every time and never trusted from the cache.
         """
         messages = self._messages
         total = len(messages)
-        volatile_from = total
-        for idx, message in enumerate(messages):
-            if message.acked is None and message.outbound and not message.is_channel:
-                volatile_from = idx
-                break
-        if self._selected is not None:
-            volatile_from = min(volatile_from, self._selected)
-
         cache = self._render_cache
-        prefix_len = 0
         if cache is not None and cache["width"] == width:
-            limit = min(cache["count"], volatile_from)
             cached_ids = cache["ids"]
             cached_acked = cache["acked"]
-            while (
-                prefix_len < limit
-                and cached_ids[prefix_len] == id(messages[prefix_len])
-                and cached_acked[prefix_len] == messages[prefix_len].acked
-            ):
-                prefix_len += 1
-
-        if prefix_len:
-            boundary = cache["boundaries"][prefix_len - 1]
-            lines = list(cache["lines"][:boundary])
-            # Record each day divider as a sticky block of its own one row, so the divider
-            # governing the topmost visible message is re-pinned to the top row once it
-            # scrolls off — the same base Screen.sticky_block the conversation picker uses
-            # for its section headings. A day has nothing to say beyond its date, so the
-            # block is the divider alone; a select list's heading may carry its description
-            # along.
-            self._sticky_headers = [s for s in cache["sticky"] if s[0] < boundary]
-            ids = list(cache["ids"][:prefix_len])
-            ackeds = list(cache["acked"][:prefix_len])
-            boundaries = list(cache["boundaries"][:prefix_len])
-            group_at = list(cache["group_at"][:prefix_len])
-            day_at = list(cache["day_at"][:prefix_len])
-            prev_group: Optional[tuple[bool, str]] = group_at[-1]
-            prev_day = day_at[-1]
+            cached_selected = cache["selected"]
+            cached_boundaries = cache["boundaries"]
+            cached_lines = cache["lines"]
+            cache_count = len(cached_ids)
         else:
-            lines = []
-            self._sticky_headers = []
-            ids, ackeds, boundaries, group_at, day_at = [], [], [], [], []
-            prev_group = None
-            prev_day = None
+            cached_ids = cached_acked = cached_selected = cached_boundaries = ()
+            cached_lines = []
+            cache_count = 0
 
-        for idx in range(prefix_len, total):
+        lines: list[str] = []
+        # Record each day divider as a sticky block of its own one row, so the divider
+        # governing the topmost visible message is re-pinned to the top row once it
+        # scrolls off — the same base Screen.sticky_block the conversation picker uses for
+        # its section headings. A day has nothing to say beyond its date, so the block is
+        # the divider alone; a select list's heading may carry its description along.
+        self._sticky_headers = []
+        ids: list[int] = []
+        ackeds: list[Optional[bool]] = []
+        selecteds: list[bool] = []
+        boundaries: list[int] = []
+        prev_group: Optional[tuple[bool, str]] = None
+        prev_day = None
+
+        for idx in range(total):
             message = messages[idx]
             stamp = message.created_at.astimezone()
             day = stamp.date()
@@ -337,40 +324,52 @@ class ChatScreen(Screen):
             # messages never merge with a remote sender who happens to be named the same.
             group = (message.outbound, sender)
             new_day = day != prev_day
-            if new_day:
-                if lines:
-                    lines += render_lines(Text(""), width)
-                divider = render_lines(
-                    Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
-                )
-                self._sticky_headers.append((len(lines), [divider[0]]))
-                lines += divider
-            if new_day or group != prev_group:
-                if not new_day and lines:
-                    lines += render_lines(Text(""), width)  # gap between sender groups
-                header = self._group_header(sender, is_self=message.outbound)
-                lines += render_lines(header, width)
             selected = idx == self._selected
-            if selected:
-                self._selected_line = len(lines)
-            lines += self._body_lines(body, message, width, selected=selected)
+            pending = message.acked is None and message.outbound and not message.is_channel
+            reusable = (
+                not selected
+                and not pending
+                and idx < cache_count
+                and not cached_selected[idx]
+                and cached_ids[idx] == id(message)
+                and cached_acked[idx] == message.acked
+            )
+            if reusable:
+                start = cached_boundaries[idx - 1] if idx > 0 else 0
+                slice_lines = cached_lines[start : cached_boundaries[idx]]
+                if new_day:
+                    self._sticky_headers.append((len(lines), [slice_lines[0]]))
+                lines += slice_lines
+            else:
+                if new_day:
+                    if lines:
+                        lines += render_lines(Text(""), width)
+                    divider = render_lines(
+                        Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
+                    )
+                    self._sticky_headers.append((len(lines), [divider[0]]))
+                    lines += divider
+                if new_day or group != prev_group:
+                    if not new_day and lines:
+                        lines += render_lines(Text(""), width)  # gap between sender groups
+                    header = self._group_header(sender, is_self=message.outbound)
+                    lines += render_lines(header, width)
+                if selected:
+                    self._selected_line = len(lines)
+                lines += self._body_lines(body, message, width, selected=selected)
             prev_group, prev_day = group, day
             ids.append(id(message))
             ackeds.append(message.acked)
+            selecteds.append(selected)
             boundaries.append(len(lines))
-            group_at.append(prev_group)
-            day_at.append(prev_day)
 
         self._render_cache = {
             "width": width,
-            "count": total,
             "ids": ids,
             "acked": ackeds,
+            "selected": selecteds,
             "lines": lines,
             "boundaries": boundaries,
-            "group_at": group_at,
-            "day_at": day_at,
-            "sticky": list(self._sticky_headers),
         }
         return lines
 
