@@ -21,13 +21,16 @@
 #                      until then, which is fatal for "heard" ordering, TTL, etc. A oneshot
 #                      service waits for a real route, then steps the clock once (NTP client
 #                      if the image has one, else an HTTPS Date-header fallback).
-#   4. deploy user     The `meshterm` login MeshTerm runs under (created if absent; no password is
+#   4. timezone        Eastern (America/Toronto, same rules as America/Montreal) via
+#                      timedatectl if tzdata's opkg feed is reachable, else a POSIX TZ rule
+#                      in /etc/environment -- glibc honours it with no zoneinfo database.
+#   5. deploy user     The `meshterm` login MeshTerm runs under (created if absent; no password is
 #                      set here -- run `passwd meshterm` yourself).
-#   5. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
-#   6. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
+#   6. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
+#   7. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
 #                      is a tiny RAM tmpfs, so TMPDIR is redirected to $HOME/tmp on /data.
-#   7. PATH            Put the venv's `meshterm` on meshterm's login PATH via ~/.profile.
-#   8. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
+#   8. PATH            Put the venv's `meshterm` on meshterm's login PATH via ~/.profile.
+#   9. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
 # Two prerequisites this script cannot safely embed and will check for / guide you through:
@@ -56,7 +59,7 @@ runas() { su - "$DEPLOY_USER" -c "$1"; }
 [ "$(id -u)" = 0 ] || die "run as root (installs packages, writes /etc, creates the user)"
 
 # --- 1. opkg packages ------------------------------------------------------------------
-log "1/7  system packages (opkg)"
+log "1/9  system packages (opkg)"
 if have opkg; then
     opkg update >/dev/null 2>&1 || info "opkg update failed (no network yet?) -- continuing"
     # git and kbd ship in the base image; the python pieces are what the stripped build drops.
@@ -74,7 +77,7 @@ fi
 have python3 || die "python3 still missing after opkg (check the opkg feed / network)"
 
 # --- 2. wi-fi boot-scan kick (rtl8xxxu race workaround) --------------------------------
-log "2/8  wi-fi boot-scan kick"
+log "2/9  wi-fi boot-scan kick"
 
 # Optionally provision the iwd network so the kick has something known to join. Secrets
 # come from the environment only -- nothing is written to disk from this repo.
@@ -154,7 +157,7 @@ systemctl enable wifi-kick.service >/dev/null 2>&1 || info "could not enable wif
 info "installed /etc/wifi-kick.sh + wifi-kick.service (enabled)"
 
 # --- 3. time sync at boot (no battery-backed RTC on this board) ------------------------
-log "3/8  time sync at boot"
+log "3/9  time sync at boot"
 
 cat > /etc/time-sync.sh <<'TIMEEOF'
 #!/bin/sh
@@ -223,8 +226,38 @@ systemctl daemon-reload
 systemctl enable time-sync.service >/dev/null 2>&1 || info "could not enable time-sync.service"
 info "installed /etc/time-sync.sh + time-sync.service (enabled)"
 
-# --- 4. deploy user --------------------------------------------------------------------
-log "4/8  deploy user '$DEPLOY_USER'"
+# --- 4. timezone (America/Toronto -- Eastern, same rules as America/Montreal) ----------
+log "4/9  timezone (Eastern)"
+opkg install tzdata-americas tzdata-core >/dev/null 2>&1 || true
+if [ -f /usr/share/zoneinfo/America/Toronto ]; then
+    if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "America/Toronto" ]; then
+        timedatectl set-timezone America/Toronto && info "set via timedatectl (tzdata present)"
+    else
+        info "already America/Toronto (timedatectl)"
+    fi
+else
+    # opkg.calculinux.org's feed has been observed fully empty (404 at the index, not just
+    # this package) -- no zoneinfo database reaches the device then. glibc still honours a
+    # POSIX TZ rule without one, so fall back to the exact US/Canada Eastern DST rule
+    # (2nd Sun Mar -> 1st Sun Nov) America/Toronto and America/Montreal have shared since 2007.
+    TZ_POSIX='EST5EDT,M3.2.0,M11.1.0/2'
+    if grep -q "^TZ=$TZ_POSIX\$" /etc/environment 2>/dev/null; then
+        info "already set (TZ=$TZ_POSIX in /etc/environment, no tzdata)"
+    else
+        sed -i '/^TZ=/d' /etc/environment 2>/dev/null || true
+        printf 'TZ=%s\n' "$TZ_POSIX" >> /etc/environment
+        info "no tzdata (feed empty or offline) -- set TZ=$TZ_POSIX in /etc/environment"
+    fi
+    if runas "grep -q '^export TZ=' ~/.profile 2>/dev/null"; then
+        info "$DEPLOY_USER's ~/.profile already exports TZ"
+    else
+        runas "printf '\n# Eastern time (America/Toronto == America/Montreal); POSIX rule -- no tzdata feed\nexport TZ=$TZ_POSIX\n' >> ~/.profile"
+        info "added TZ export to $DEPLOY_USER's ~/.profile (belt-and-suspenders for non-PAM logins)"
+    fi
+fi
+
+# --- 5. deploy user --------------------------------------------------------------------
+log "5/9  deploy user '$DEPLOY_USER'"
 if id "$DEPLOY_USER" >/dev/null 2>&1; then
     info "user exists"
 else
@@ -245,7 +278,7 @@ for grp in input dialout video; do
 done
 
 # --- 5. clone MeshTerm (read-only deploy key over SSH) ---------------------------------
-log "5/8  clone MeshTerm"
+log "6/9  clone MeshTerm"
 [ -f "$KEY_PATH" ] || die "deploy key not found at $KEY_PATH
    place the READ-ONLY GitHub deploy key there first, e.g.:
      install -d -m700 -o $DEPLOY_USER -g $DEPLOY_USER /home/$DEPLOY_USER/.ssh
@@ -272,7 +305,7 @@ else
 fi
 
 # --- 6. venv + editable install (TMPDIR off the RAM tmpfs) -----------------------------
-log "6/8  python venv + install"
+log "7/9  python venv + install"
 if runas "test -x ~/MeshTerm/.venv/bin/python"; then
     info "venv exists"
 else
@@ -284,7 +317,7 @@ runas "mkdir -p ~/tmp && cd ~/MeshTerm && TMPDIR=\$HOME/tmp .venv/bin/pip instal
     || die "pip install failed"
 
 # --- 7. PATH (login shells) ------------------------------------------------------------
-log "7/8  login PATH"
+log "8/9  login PATH"
 PROFILE="/home/$DEPLOY_USER/.profile"
 if [ -f "$PROFILE" ] && grep -q 'MeshTerm/.venv/bin' "$PROFILE"; then
     info "already on PATH"
@@ -295,7 +328,7 @@ else
 fi
 
 # --- 8. console font -------------------------------------------------------------------
-log "8/8  console font"
+log "9/9  console font"
 if [ -f "$SCRIPT_DIR/calculinux-console-font.sh" ]; then
     sh "$SCRIPT_DIR/calculinux-console-font.sh"
 else
