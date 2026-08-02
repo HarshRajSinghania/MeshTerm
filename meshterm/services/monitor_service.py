@@ -17,13 +17,14 @@ counters shown live in the menu header.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Optional
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
-from ..core.models import utcnow
+from ..core.models import Observation, utcnow
 from ..core.nodetypes import register_node_type
 
 if TYPE_CHECKING:
@@ -58,6 +59,11 @@ class MonitorService:
         self._run_id: Optional[int] = None
         self._session_count = 0
         self._run_start_count = 0
+        # Observations queue off the event-loop callback onto this worker (see start()),
+        # so a burst of overheard packets writes to disk between repaints instead of
+        # blocking them — the same shape as ChatService's inbound queue.
+        self._queue: Optional["asyncio.Queue[Observation]"] = None
+        self._worker: Optional["asyncio.Future"] = None
         # All-packet activity, bucketed by wall-clock minute (epoch // span → count).
         # Every hub event counts — observations, messages, acks — because the header's
         # indicator answers "is the mesh alive?", not "any mail?". Pruned as it rolls,
@@ -191,14 +197,40 @@ class MonitorService:
         if self.active:
             return
         self._run_start_count = self._session_count
+        self._queue = asyncio.Queue()
+        self._worker = asyncio.ensure_future(self._process_observations())
 
         def on_event(event: MeshEvent) -> None:
-            # Runs on the event loop as packets arrive; keep it cheap and defensive so a
-            # single bad write can never take down the subscription.
+            # Runs on the event loop as packets arrive; keep it cheap and non-blocking. It
+            # only hands the observation to the worker queue — opening the run row and the
+            # database write happen off the worker, so a burst of overheard packets (every
+            # advert/telemetry/RX-log frame the mesh produces) can never stall the render
+            # and input loop the way a synchronous commit per packet would.
             obs = event.observation
             if obs is None:
                 return
             self._session_count += 1
+            queue = self._queue
+            if queue is not None:
+                queue.put_nowait(obs)
+
+        self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
+        # A second, kind-unfiltered subscription feeds the header's activity indicator:
+        # every packet the hub hears lands in a five-minute bucket, in memory only.
+        self._count_unsubscribe = self._ctx.events.subscribe(self._count_packet)
+        self._ctx.log.info("passive monitor recording")
+
+    async def _process_observations(self) -> None:
+        """Serially record queued observations, opening the run row on the first one.
+
+        A single worker drains the queue so recording never races the run-row creation and
+        the database write never runs inline with the hub's synchronous event dispatch (see
+        :meth:`start`) — the same shape as :class:`~meshterm.services.chat_service.ChatService`'s
+        inbound worker.
+        """
+        assert self._queue is not None
+        while True:
+            obs = await self._queue.get()
             try:
                 if self._run_id is None:
                     self._run_id = self._ctx.repo.start_run(
@@ -208,18 +240,14 @@ class MonitorService:
                 register_node_type(obs.node, obs.node_type)
             except Exception as exc:  # noqa: BLE001 - never let logging break capture
                 self._ctx.log.debug("monitor: failed to record observation: %s", exc)
-
-        self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
-        # A second, kind-unfiltered subscription feeds the header's activity indicator:
-        # every packet the hub hears lands in a five-minute bucket, in memory only.
-        self._count_unsubscribe = self._ctx.events.subscribe(self._count_packet)
-        self._ctx.log.info("passive monitor recording")
+            finally:
+                self._queue.task_done()
 
     async def stop(self) -> None:
         """Stop recording to history and close the run record. Idempotent.
 
         A no-op if not recording. The event hub keeps listening; only this service's
-        recording subscription is removed.
+        recording subscription and its recording worker are removed.
         """
         if not self.active:
             return
@@ -231,6 +259,14 @@ class MonitorService:
         if self._count_unsubscribe is not None:
             self._count_unsubscribe()
             self._count_unsubscribe = None
+        if self._worker is not None:
+            self._worker.cancel()
+            try:
+                await self._worker
+            except asyncio.CancelledError:
+                pass
+            self._worker = None
+        self._queue = None
         if self._run_id is not None:
             captured = self._session_count - self._run_start_count
             self._ctx.repo.finish_run(self._run_id, "ok", {"observations": captured})
