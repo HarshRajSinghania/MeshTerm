@@ -19,7 +19,7 @@ machine.
 
 | Script | What it does |
 |---|---|
-| [`calculinux-setup.sh`](calculinux-setup.sh) | Complete one-time bring-up: opkg python packages, the Wi-Fi boot-scan kick, the deploy user, the read-only clone, the venv + `pip install -e .`, the login PATH, and the console font. Idempotent. |
+| [`calculinux-setup.sh`](calculinux-setup.sh) | Complete one-time bring-up: opkg python packages, the Wi-Fi boot-scan kick, a boot-time clock sync (no RTC on this board), the deploy user, the read-only clone, the venv + `pip install -e .`, the login PATH, and the console font. Idempotent. |
 | [`calculinux-console-font.sh`](calculinux-console-font.sh) | Just the console font: builds/installs/persists the 512-glyph **meshterm** PSF (Terminus + braille + node glyphs + rounded frame corners + the list cursor). Called by the setup script; also runnable on its own after a MeshTerm update. |
 
 ### Usage

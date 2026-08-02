@@ -16,13 +16,18 @@
 #                      first scans, so on cold boot wlan0 stays UP/NO-CARRIER and the known
 #                      network is never joined. A oneshot service drives RAW `iw` scans
 #                      until a DHCP lease -- a completed raw scan is what lets iwd associate.
-#   3. deploy user     The `meshterm` login MeshTerm runs under (created if absent; no password is
+#   3. time sync       The Lyra has no battery-backed RTC, so every cold boot starts at the
+#                      kernel's build-time epoch until something sets the clock -- wrong
+#                      until then, which is fatal for "heard" ordering, TTL, etc. A oneshot
+#                      service waits for a real route, then steps the clock once (NTP client
+#                      if the image has one, else an HTTPS Date-header fallback).
+#   4. deploy user     The `meshterm` login MeshTerm runs under (created if absent; no password is
 #                      set here -- run `passwd meshterm` yourself).
-#   4. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
-#   5. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
+#   5. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
+#   6. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
 #                      is a tiny RAM tmpfs, so TMPDIR is redirected to $HOME/tmp on /data.
-#   6. PATH            Put the venv's `meshterm` on meshterm's login PATH via ~/.profile.
-#   7. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
+#   7. PATH            Put the venv's `meshterm` on meshterm's login PATH via ~/.profile.
+#   8. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
 # Two prerequisites this script cannot safely embed and will check for / guide you through:
@@ -69,7 +74,7 @@ fi
 have python3 || die "python3 still missing after opkg (check the opkg feed / network)"
 
 # --- 2. wi-fi boot-scan kick (rtl8xxxu race workaround) --------------------------------
-log "2/7  wi-fi boot-scan kick"
+log "2/8  wi-fi boot-scan kick"
 
 # Optionally provision the iwd network so the kick has something known to join. Secrets
 # come from the environment only -- nothing is written to disk from this repo.
@@ -148,8 +153,78 @@ systemctl daemon-reload
 systemctl enable wifi-kick.service >/dev/null 2>&1 || info "could not enable wifi-kick.service"
 info "installed /etc/wifi-kick.sh + wifi-kick.service (enabled)"
 
-# --- 3. deploy user --------------------------------------------------------------------
-log "3/7  deploy user '$DEPLOY_USER'"
+# --- 3. time sync at boot (no battery-backed RTC on this board) ------------------------
+log "3/8  time sync at boot"
+
+cat > /etc/time-sync.sh <<'TIMEEOF'
+#!/bin/sh
+# No RTC workaround.
+#
+# The Lyra has no battery-backed RTC, so every cold boot starts the clock at
+# the kernel's build-time epoch and stays there until something sets it. That
+# is wrong for anything timestamped early -- heard-node ages, TTL, the SQLite
+# observation log -- so this runs once at boot, after a real route exists, and
+# steps the clock via whichever NTP client the image ships. If none is present
+# it falls back to an HTTPS response's Date header (accurate to ~1s, which is
+# plenty here). hwclock -w is best-effort: if there truly is no RTC it just
+# fails harmlessly and next boot repeats this.
+
+has_route() {
+    ip route get 1.1.1.1 >/dev/null 2>&1
+}
+
+# Wait for a default route (~5 min ceiling). wifi-kick.service already nudges
+# wlan0 up before this unit starts; this loop covers ethernet too.
+n=0
+while [ $n -lt 150 ]; do
+    has_route && break
+    sleep 2
+    n=$((n + 1))
+done
+has_route || exit 0
+
+synced=1
+if command -v chronyd >/dev/null 2>&1; then
+    chronyd -q 'server pool.ntp.org iburst' >/dev/null 2>&1 && synced=0
+elif command -v ntpd >/dev/null 2>&1; then
+    ntpd -n -q -p pool.ntp.org >/dev/null 2>&1 && synced=0
+elif command -v sntp >/dev/null 2>&1; then
+    sntp -sS pool.ntp.org >/dev/null 2>&1 && synced=0
+fi
+
+if [ "$synced" -ne 0 ]; then
+    for url in https://www.cloudflare.com https://www.google.com; do
+        http_date=$(curl -fsSI --max-time 10 "$url" 2>/dev/null | grep -i '^date:' | cut -d' ' -f2- | tr -d '\r')
+        [ -n "$http_date" ] && date -s "$http_date" >/dev/null 2>&1 && { synced=0; break; }
+    done
+fi
+
+[ "$synced" -eq 0 ] && hwclock -w >/dev/null 2>&1
+exit 0
+TIMEEOF
+chmod +x /etc/time-sync.sh
+
+cat > /etc/systemd/system/time-sync.service <<'UNITEOF'
+[Unit]
+Description=Step the system clock once the network is up (no RTC on this board)
+After=network.target wifi-kick.service
+Wants=wifi-kick.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/time-sync.sh
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+systemctl daemon-reload
+systemctl enable time-sync.service >/dev/null 2>&1 || info "could not enable time-sync.service"
+info "installed /etc/time-sync.sh + time-sync.service (enabled)"
+
+# --- 4. deploy user --------------------------------------------------------------------
+log "4/8  deploy user '$DEPLOY_USER'"
 if id "$DEPLOY_USER" >/dev/null 2>&1; then
     info "user exists"
 else
@@ -169,8 +244,8 @@ for grp in input dialout video; do
     (usermod -aG "$grp" "$DEPLOY_USER" 2>/dev/null || adduser "$DEPLOY_USER" "$grp" 2>/dev/null) || true
 done
 
-# --- 4. clone MeshTerm (read-only deploy key over SSH) ---------------------------------
-log "4/7  clone MeshTerm"
+# --- 5. clone MeshTerm (read-only deploy key over SSH) ---------------------------------
+log "5/8  clone MeshTerm"
 [ -f "$KEY_PATH" ] || die "deploy key not found at $KEY_PATH
    place the READ-ONLY GitHub deploy key there first, e.g.:
      install -d -m700 -o $DEPLOY_USER -g $DEPLOY_USER /home/$DEPLOY_USER/.ssh
@@ -196,8 +271,8 @@ else
     runas "git -C ~/MeshTerm config core.sshCommand '$SSH_CMD'"
 fi
 
-# --- 5. venv + editable install (TMPDIR off the RAM tmpfs) -----------------------------
-log "5/7  python venv + install"
+# --- 6. venv + editable install (TMPDIR off the RAM tmpfs) -----------------------------
+log "6/8  python venv + install"
 if runas "test -x ~/MeshTerm/.venv/bin/python"; then
     info "venv exists"
 else
@@ -208,8 +283,8 @@ info "pip install -e . (TMPDIR on /data to dodge the /tmp ENOSPC)"
 runas "mkdir -p ~/tmp && cd ~/MeshTerm && TMPDIR=\$HOME/tmp .venv/bin/pip install -e ." \
     || die "pip install failed"
 
-# --- 6. PATH (login shells) ------------------------------------------------------------
-log "6/7  login PATH"
+# --- 7. PATH (login shells) ------------------------------------------------------------
+log "7/8  login PATH"
 PROFILE="/home/$DEPLOY_USER/.profile"
 if [ -f "$PROFILE" ] && grep -q 'MeshTerm/.venv/bin' "$PROFILE"; then
     info "already on PATH"
@@ -219,8 +294,8 @@ else
     chown "$DEPLOY_USER:$DEPLOY_USER" "$PROFILE"
 fi
 
-# --- 7. console font -------------------------------------------------------------------
-log "7/7  console font"
+# --- 8. console font -------------------------------------------------------------------
+log "8/8  console font"
 if [ -f "$SCRIPT_DIR/calculinux-console-font.sh" ]; then
     sh "$SCRIPT_DIR/calculinux-console-font.sh"
 else
