@@ -2,12 +2,18 @@
 
 The PicoCalc keyboard has five dedicated function keys; its MCU translates Shift+F1..F5
 into plain F6-F10 keycodes (measured in P0), so "Shift+key = the opposite action" is
-literal hardware behaviour and the app simply binds all ten. By JP's spec
-(2026-08-01), the five *plain* keys carry a screen's most-used actions — reachable with
-no Shift at all — and the Shift bank (F6-F10) is overflow, consulted only when a screen
-has more than five things worth a key. F4 and F5 sit closest to the thumbs and take the
-highest-priority pair (e.g. commit/leave); F1/F2 take the next pair; F3 is the one lone,
-unpaired slot a screen reaches for when it has a single extra action.
+literal hardware behaviour and the app simply binds all ten.
+
+By JP's spec (2026-08-01): a lane slot is for functionality that would otherwise be
+*hard to reach* — not a shortcut to a key that is already close at hand. Enter and Esc
+sit right on the keyboard and are already the easiest keys to hit, so they never occupy
+a slot. Paging (PgUp/PgDn) has no physical key at all, so a screen that scrolls earns it
+the prime F4/F5 pair. Ctrl+letter chords (Ctrl+P for message paths, Ctrl+arrows for a
+sort column, …) are fiddly to hold on this keyboard, so a screen promotes its own onto
+the lone F3 slot (a second, if it has one, riding F3's Shift companion). The five
+*plain* keys carry a screen's most-used, otherwise-awkward actions — reachable with no
+Shift at all — and the Shift bank (F6-F10) is overflow for a screen with more than five
+such actions. A lane can, and does, differ from screen to screen.
 
 A screen describes its lane as five :class:`FPair` slots (``None`` = unassigned); the
 session resolves a pressed F-key to the slot's action string and dispatches it through
@@ -55,18 +61,18 @@ class FPair:
 #: A lane is five slots, F1..F5 left to right; ``None`` leaves a slot unassigned.
 Lane = Sequence[Optional[FPair]]
 
-#: The screen-agnostic default lane, per JP's slot-priority spec: F4/F5 (the most
-#: reachable pair) carry commit/leave — the one action every screen needs and needs
-#: without Shift; F1/F2 (the next pair) carry the nav cluster's most common half (jump to
-#: top/end), with the paging half riding their Shift bank since it is reached for less
-#: often; F3 is the lone slot a screen's own :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane`
-#: override reaches for first.
+#: The screen-agnostic default lane. No Enter or Esc slot — both keys sit right on the
+#: keyboard already. F4/F5 (the most reachable pair) carry paging, which has no physical
+#: key at all; F1/F2 carry the nav cluster's jump-to-top/end, Fn-layered on the physical
+#: keyboard and so worth a slot too, just a notch behind paging; F3 is the lone slot a
+#: screen's own :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane` override reaches for
+#: first — typically a Ctrl+letter chord promoted up because chording is a pain here.
 DEFAULT_LANE: tuple[Optional[FPair], ...] = (
-    FPair("Top", "home", "PgUp", "pageup"),
-    FPair("End", "end", "PgDn", "pagedown"),
+    FPair("Top", "home"),
+    FPair("End", "end"),
     None,
-    FPair("OK", "enter"),
-    FPair("Back", "escape"),
+    FPair("PgUp", "pageup"),
+    FPair("PgDn", "pagedown"),
 )
 
 
