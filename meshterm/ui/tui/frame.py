@@ -165,37 +165,26 @@ def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
 
 
 def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) -> Text:
-    """The borderless frame's one-row title bar: title, a bold rule, clip arrows.
+    """The borderless frame's one-row title bar: title, a muted rule, clip arrows.
 
     The Panel border's whole vocabulary — where you are (title) and whether the list
     continues (the ``↑↓ more`` subtitle) — compressed into a single row so the body wins
     back three rows and four columns on the PicoCalc. Shape: ``─ Title ───────── ↑↓``,
     echoing :func:`~meshterm.ui.menus.section_heading`'s heading language.
-
-    The rule itself stands in for the Panel border this frame has none of, so it takes
-    ``border_style`` (``"accent"``) directly — the same bold weight a real border draws
-    in — rather than :func:`~meshterm.ui.theme.hint_style`'s muted variant, which is for
-    auxiliary text riding *alongside* a border (a footer hint, the subtitle's own
-    "more" label below), not the border's own glyphs. The ``↑↓`` clip arrows keep that
-    muted hint style, matching a bordered panel's own subtitle. There is no corner to
-    light the way :func:`~meshterm.ui.tui.glow.apply_corner_glow` lights a real frame's
-    top-left — that pass needs a truecolor blend this platform's 16-slot palette can't
-    render, so the rule is uniformly bold rather than fading from one.
     """
-    border = "accent"
     bar = Text()
-    bar.append("─ ", style=border)
+    bar.append("─ ", style="hint.accent")
     if screen.title:
-        bar.append(screen.title, style=title_style(border))
+        bar.append(screen.title, style=title_style("accent"))
         bar.append(" ", style=None)
     tail = ""
     if more_above or more_below:
         tail = ("↑" if more_above else " ") + ("↓" if more_below else " ")
     fill = cols - bar.cell_len - (len(tail) + 1 if tail else 0)
     if fill > 0:
-        bar.append("─" * fill, style=border)
+        bar.append("─" * fill, style="hint.accent")
     if tail:
-        bar.append(" " + tail, style=hint_style(border))
+        bar.append(" " + tail, style="hint.accent")
     bar.truncate(cols)
     return bar
 
