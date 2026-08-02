@@ -79,10 +79,19 @@ class ChatScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane: message paths and delivery retry on F3/F8."""
+        """The PicoCalc lane: jump-to-ends on F1/F2, message paths/retry on F3/F8.
+
+        The default lane's F1/F2 dispatch the plain ``home``/``end`` actions, but here
+        those are already claimed by the compose line's cursor (see :meth:`handle`) — so
+        without an override, both keys land on the same "clear the pick, stick to the
+        tail" fallthrough and read as if either one scrolls to the bottom. F1/F2 dispatch
+        ``ctrl_home``/``ctrl_end`` instead, the actions that actually walk the transcript.
+        """
         from .tui.fkeys import DEFAULT_LANE, FPair
 
         lane = list(DEFAULT_LANE)
+        lane[0] = FPair("Top", "ctrl_home")
+        lane[1] = FPair("End", "ctrl_end")
         lane[2] = FPair("Paths", "paths", "Retry", "retry")
         return lane
 
