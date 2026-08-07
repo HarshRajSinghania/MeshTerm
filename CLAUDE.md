@@ -173,7 +173,11 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   quantizes to the `heat.*` steps, and footer hints are replaced by the **F-key lane**
   (`ui/tui/fkeys.py`): five `FPair` slots per screen, F1–F5 primary and F6–F10 their
   paired opposites (physical Shift+F1..F5), labels ≤7 cells. Screens override
-  `fkey_lane` for their own verbs; slots 3/4 are the customary free pair.
+  `fkey_lane` for their own verbs; slots 3/4 are the customary free pair. The lane *is*
+  the footer here, so it obeys the hint line's rule — never advertise a key that would
+  do nothing: a slot whose action is out of reach this paint clears `enabled` /
+  `opp_enabled` and draws dimmed (label kept, fill dropped), and a screen that
+  repurposes the nav actions relabels them (`default_lane(nav=…)`, `MapScreen`).
 - `meshterm specimen` prints the whole visual language through the real funnels — the
   acceptance card on-device, a preview under `--platform picocalc` on the desktop.
 - Dev loop: `meshterm --mock --platform picocalc` in a 53×40 window; the gallery and

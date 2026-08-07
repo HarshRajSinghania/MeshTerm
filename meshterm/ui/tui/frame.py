@@ -8,7 +8,7 @@ header and footer so the whole view fits the terminal exactly (never overflowing
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
@@ -221,7 +221,7 @@ def compose_base(
     footer_hint: str,
     cols: int,
     rows: int,
-    footer_lane: RenderableType | None = None,
+    footer_lane: Callable[[], RenderableType] | None = None,
 ) -> str:
     """Compose the full-screen ANSI view: header, the base screen's panel, and a footer.
 
@@ -231,8 +231,10 @@ def compose_base(
         footer_hint: The active screen's key hint, shown at the very bottom.
         cols: Terminal width.
         rows: Terminal height.
-        footer_lane: A pre-built footer row (the PicoCalc F-key lane) that replaces the
-            hint string when the platform runs fixed F-key hints.
+        footer_lane: Builds the footer row (the PicoCalc F-key lane) that replaces the
+            hint string when the platform runs fixed F-key hints. Called *after* the body
+            renders, since a lane dims its slots from the screen's scroll metrics — which
+            this paint has only just recorded (see :func:`~meshterm.ui.tui.fkeys.default_lane`).
 
     Returns:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
@@ -243,9 +245,13 @@ def compose_base(
     # wraps it onto a second line (which would push the panel down and misreport its height).
     header_lines = render_lines(header, cols, no_wrap=True)
     header_h = len(header_lines)
-    footer = footer_lane if footer_lane is not None else Text.from_markup(
-        f"[muted]{footer_hint}[/muted]"
-    )
+
+    def footer_row() -> RenderableType:
+        """The bottom line: the platform's F-key lane, else the muted hint string."""
+        if footer_lane is not None:
+            return footer_lane()
+        return Text.from_markup(f"[muted]{footer_hint}[/muted]")
+
     if platform.frame_border:
         viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
         # Record the viewport *before* the body renders, so a screen that windows a
@@ -265,7 +271,7 @@ def compose_base(
             body = _BASE_BOX_CACHE[1]
         else:
             panel = _panel_box(base.title, visible, more_above, more_below, "accent")
-            body = render_lines(Group(panel, footer), cols)
+            body = render_lines(Group(panel, footer_row()), cols)
             if footer_lane is None:
                 _BASE_BOX_CACHE = (key, body)
     else:
@@ -279,7 +285,7 @@ def compose_base(
         body = (
             render_lines(bar, cols, no_wrap=True)
             + visible
-            + render_lines(footer, cols, no_wrap=True)
+            + render_lines(footer_row(), cols, no_wrap=True)
         )
     # The glow pass lights the outer frame *and* any tool panels nested in the body. It only
     # ever recolours truecolor foregrounds (see glow._advance_fg), so on a platform without

@@ -20,11 +20,23 @@ session resolves a pressed F-key to the slot's action string and dispatches it t
 the normal action funnel, so screens gain F-key support without any key handling of
 their own. An :class:`FPair` need not carry a Shift-bank action at all — a "lone" slot
 (``opp_label=""``) simply renders blank in the shifted bank and F(n+5) does nothing.
+
+**A slot never advertises a key that would do nothing.** The lane is the PicoCalc's whole
+footer — it stands in for the hint line the other platform draws, and that line has always
+dropped an atom whose key is inert (see :attr:`~meshterm.ui.tui.screen.Screen.content_overflows`).
+So a screen rebuilds its lane each paint and clears :attr:`FPair.enabled` /
+:attr:`FPair.opp_enabled` on whatever is out of reach right now: the chat's *Paths* with
+no message picked, its *Retry* with nothing unacknowledged, the shared nav slots on a
+screen with nothing to move (:func:`default_lane`). A dimmed slot keeps its label — muted,
+unfilled, like an unassigned slot — so the key still reads as *what it would do*, it just
+plainly isn't live. The dimming is presentational: the screen's own ``handle`` stays the
+authority on what an action does (it no-ops), so a lane built from one-paint-stale metrics
+can never swallow a key that would have worked.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Sequence
 
 from rich.text import Text
@@ -50,12 +62,18 @@ class FPair:
             companion — the shifted bank then renders that chip blank and the
             corresponding F(n+5) does nothing.
         opp_action: The action the Shift-bank companion dispatches, or ``""``.
+        enabled: Whether the plain key's action is available *right now*. ``False`` draws
+            the chip dimmed — label kept, fill dropped — rather than pretending (see the
+            module docstring).
+        opp_enabled: The same, for the Shift-bank companion.
     """
 
     label: str
     action: str
     opp_label: str = ""
     opp_action: str = ""
+    enabled: bool = True
+    opp_enabled: bool = True
 
 
 #: A lane is five slots, F1..F5 left to right; ``None`` leaves a slot unassigned.
@@ -76,12 +94,37 @@ DEFAULT_LANE: tuple[Optional[FPair], ...] = (
 )
 
 
+def default_lane(*, nav: bool = True) -> tuple[Optional[FPair], ...]:
+    """:data:`DEFAULT_LANE`, with its four nav slots dimmed unless ``nav``.
+
+    The shared slots all *move* something — the jump-to-ends pair and the paging pair —
+    so on a screen with nothing to move (a body that fits its viewport, a transcript with
+    no messages) all four are inert and say so. Screens that repurpose the nav actions
+    for something always live (the map's zoom) build from :data:`DEFAULT_LANE` instead.
+
+    Args:
+        nav: Whether the nav keys would do anything on this paint — typically
+            :attr:`~meshterm.ui.tui.screen.Screen.content_overflows`.
+
+    Returns:
+        The five slots, ready for a screen to overwrite the ones it claims.
+    """
+    if nav:
+        return DEFAULT_LANE
+    return tuple(
+        None if pair is None else replace(pair, enabled=False, opp_enabled=False)
+        for pair in DEFAULT_LANE
+    )
+
+
 def action_for(lane: Lane, number: int) -> Optional[str]:
     """The action F-key ``number`` (1-10) resolves to on this lane, or ``None``.
 
     F1-F5 take the slot's plain-key action, F6-F10 (the physical Shift bank) take its
     companion — or resolve to nothing when the slot has none (a lone slot, or an
-    unassigned one).
+    unassigned one). A *dimmed* slot still resolves: dimming is how the lane draws an
+    action the screen would no-op anyway, and resolving it regardless keeps a lane built
+    from stale metrics from ever swallowing a key that works (see the module docstring).
     """
     index = (number - 1) % 5
     if index >= len(lane) or lane[index] is None:
@@ -124,5 +167,9 @@ def lane_text(lane: Lane, *, shifted: bool = False) -> Text:
             key = f"F{number}" if number < 10 else "10"
             row.append(f"{key}{' ' * (_CHIP_WIDTH - len(key))}", style="muted")
             continue
-        row.append(_chip(number, label), style=fill)
+        live = pair.opp_enabled if shifted else pair.enabled
+        # A dimmed slot drops the fill and keeps the label, landing in the same muted
+        # "nothing to press" class as an unassigned one — while still saying what the
+        # key is for once it becomes available.
+        row.append(_chip(number, label), style=fill if live else "muted")
     return row

@@ -1299,13 +1299,22 @@ class TuiSession:
         if not base.chrome:
             return self._emit(frame.compose_startup(base, cols, rows))
         footer = self.top.footer_hint if self.top else base.footer_hint
-        lane = None
-        if get_platform().footer_fkeys:
-            active = self.top or base
-            lane = fkeys.lane_text(active.fkey_lane, shifted=modifier_watch.shift_down())
+        lane = self._fkey_lane(self.top or base)
         return self._emit(
             frame.compose_base(self._header(cols), base, footer, cols, rows, footer_lane=lane)
         )
+
+    @staticmethod
+    def _fkey_lane(active: Screen) -> Optional[Callable[[], Text]]:
+        """A deferred F-key lane row for ``active``, or ``None`` on a platform without one.
+
+        Deferred because the frame resolves it *after* the body renders: a lane dims the
+        slots whose action would do nothing, and that reading comes from the scroll
+        metrics this paint is about to record (see :func:`~meshterm.ui.tui.fkeys.default_lane`).
+        """
+        if not get_platform().footer_fkeys:
+            return None
+        return lambda: fkeys.lane_text(active.fkey_lane, shifted=modifier_watch.shift_down())
 
     def _render_float_layer(self, index: int) -> ANSI:
         """Render the ``index``-th floating dialog (bottom-to-top) as a centered box."""

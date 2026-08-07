@@ -137,6 +137,18 @@ class DashboardScreen(Screen):
             return "↑↓ PgUp/PgDn scroll · Esc back"
         return "Esc back"
 
+    @property
+    def fkey_lane(self):
+        """The shared lane, dimmed on the same gate the hint above uses.
+
+        The PicoCalc draws no hint line at all — the lane *is* the footer — so the rule
+        the hint follows has to hold there too: an overview that fits whole has nothing
+        for Top/End or the paging pair to move.
+        """
+        from .tui.fkeys import default_lane
+
+        return default_lane(nav=self.content_overflows)
+
     def __init__(
         self,
         *,

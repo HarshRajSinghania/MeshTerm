@@ -70,6 +70,12 @@ class Screen:
         F1/F2, and leaves F3 as the one lone slot — the first a screen reaches for to
         promote its own otherwise-fiddly shortcut (a Ctrl+letter chord, say). A screen
         overrides this property for its own verbs; the lane may differ screen to screen.
+
+        Read fresh every paint, so an override dims the slots whose action would do
+        nothing right now rather than advertising a dead key — the lane's standing rule
+        (see :mod:`~meshterm.ui.tui.fkeys`). Screens whose nav keys only scroll gate the
+        shared slots on :attr:`content_overflows`; this base can't assume that much,
+        since a nav key elsewhere moves a cursor, a pick, or the map's zoom.
         """
         from .fkeys import DEFAULT_LANE
 
@@ -421,6 +427,18 @@ class ScrollScreen(Screen):
     Esc dismisses it. Result windows carry no sections, so Ctrl+PageUp/PageDown just reach the
     top/bottom.
     """
+
+    @property
+    def fkey_lane(self):
+        """The shared lane, its nav slots dimmed when the content already fits.
+
+        Every nav key here scrolls and nothing else, so a result window short enough to
+        read whole has four inert slots — the same gate the footer hint uses on the other
+        platform (:attr:`Screen.content_overflows`).
+        """
+        from .fkeys import default_lane
+
+        return default_lane(nav=self.content_overflows)
 
     def __init__(
         self,

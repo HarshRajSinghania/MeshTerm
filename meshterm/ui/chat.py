@@ -86,13 +86,23 @@ class ChatScreen(Screen):
         without an override, both keys land on the same "clear the pick, stick to the
         tail" fallthrough and read as if either one scrolls to the bottom. F1/F2 dispatch
         ``ctrl_home``/``ctrl_end`` instead, the actions that actually walk the transcript.
-        """
-        from .tui.fkeys import DEFAULT_LANE, FPair
 
-        lane = list(DEFAULT_LANE)
-        lane[0] = FPair("Top", "ctrl_home")
-        lane[1] = FPair("End", "ctrl_end")
-        lane[2] = FPair("Paths", "paths", "Retry", "retry")
+        Every slot dims when it would do nothing (the lane's standing rule): all four nav
+        keys walk the *pick*, so an empty transcript leaves them inert; *Paths* needs a
+        picked message to have paths of; *Retry* needs a direct message that went out and
+        was never acknowledged.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        lane = list(default_lane(nav=bool(self._messages)))
+        live = bool(self._messages)
+        lane[0] = FPair("Top", "ctrl_home", enabled=live)
+        lane[1] = FPair("End", "ctrl_end", enabled=live)
+        lane[2] = FPair(
+            "Paths", "paths", "Retry", "retry",
+            enabled=self._paths is not None,
+            opp_enabled=self._retry_target() is not None,
+        )
         return lane
 
     def __init__(
@@ -165,14 +175,16 @@ class ChatScreen(Screen):
 
     @property
     def footer_hint(self) -> str:
-        """Key hint, reflecting whether a message is picked and what Enter does to it."""
+        """Key hint, reflecting whether a message is picked and what Enter does to it.
+
+        ``^R retry failed`` appears only while there is something to retry (see
+        :meth:`_retry_target`) — the same rule the F-key lane dims its slots by.
+        """
         if self._selected is not None:
             if self._is_channel:
                 return "Enter reply (@mention) · ^P paths · ↑↓ pick · ^End/Esc cancel"
             return "Enter paths · ↑↓ pick · ^End/Esc cancel"
-        if not self._is_channel and any(
-            m.outbound and m.acked is False for m in self._messages
-        ):
+        if self._retry_target() is not None:
             return "Enter send · ↑ pick a message · ^R retry failed · ^P paths · Esc back"
         return "Enter send · ↑ pick a message · ^P paths · Esc back"
 
@@ -817,14 +829,23 @@ class ChatScreen(Screen):
             self._stick = True
             self._session.invalidate()
 
-    def _retry(self) -> None:
-        """Re-attempt delivery of the most recent unacknowledged direct message (Ctrl-R)."""
+    def _retry_target(self) -> Optional[ChatMessage]:
+        """The message ^R would re-send, or ``None`` when there is nothing to retry.
+
+        The newest outbound direct message that went out and was never acknowledged —
+        and only while a retry could actually start: no send already in flight, a resend
+        path wired (channels have none, since a channel message is never acked).
+        """
         if self._sending or self._resend is None:
-            return
-        target = next(
+            return None
+        return next(
             (m for m in reversed(self._messages) if m.outbound and m.acked is False),
             None,
         )
+
+    def _retry(self) -> None:
+        """Re-attempt delivery of the most recent unacknowledged direct message (Ctrl-R)."""
+        target = self._retry_target()
         if target is None:
             return
         self._sending = True

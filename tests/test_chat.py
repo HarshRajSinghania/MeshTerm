@@ -491,14 +491,21 @@ async def test_service_records_channel_messages_in_arrival_order(repo: Repositor
 # -- chat screen --------------------------------------------------------------
 
 
-def _screen(session: _StubSession, send, *, messages=None) -> ChatScreen:
+def _screen(session: _StubSession, send, *, messages=None, resend=None) -> ChatScreen:
     """Build a ChatScreen for a direct conversation with a stub session and send hook."""
     conv = Conversation(
         label="Alice",
         is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
-    return ChatScreen(conv, messages or [], send=send, names={"d4e5f6a7": "Alice"}, session=session)
+    return ChatScreen(
+        conv,
+        messages or [],
+        send=send,
+        names={"d4e5f6a7": "Alice"},
+        session=session,
+        resend=resend,
+    )
 
 
 def test_chat_screen_renders_transcript_and_input() -> None:
@@ -718,12 +725,15 @@ def test_chat_screen_shows_delivery_glyphs() -> None:
     """Outbound direct messages end with delivery marks: a spinner, then ✓ / ✗."""
     from meshterm.ui.tui.spinner import Spinner
 
+    async def resend(message):  # noqa: ANN001, ANN202 - never awaited here
+        return message
+
     messages = [
         ChatMessage(text="delivered", outbound=True, peer="d4e5f6a7", acked=True),
         ChatMessage(text="dropped", outbound=True, peer="d4e5f6a7", acked=False),
         ChatMessage(text="inflight", outbound=True, peer="d4e5f6a7", acked=None),
     ]
-    screen = _screen(_StubSession(), send=None, messages=messages)
+    screen = _screen(_StubSession(), send=None, messages=messages, resend=resend)
 
     joined = "\n".join(screen.render_body(60))
     # A message still awaiting its ack spins (a Braille frame); resolved ones show the
@@ -868,6 +878,27 @@ async def test_chat_screen_retry_resends_failed_message() -> None:
 
     assert screen._messages[-1].acked is True  # same object, now acknowledged
     assert "✓" in "\n".join(screen.render_body(60))
+
+
+async def test_chat_fkey_lane_dims_retry_and_the_nav_slots() -> None:
+    """The lane offers Retry only with something to retry, and nav only with a transcript."""
+
+    async def resend(message: ChatMessage) -> ChatMessage:
+        message.acked = True
+        return message
+
+    empty = _screen(_StubSession(), send=None, resend=resend)
+    assert not any(pair.enabled for pair in empty.fkey_lane if pair)  # nothing to walk
+
+    failed = ChatMessage(text="oops", outbound=True, peer="d4e5f6a7", acked=False)
+    screen = _screen(_StubSession(), send=None, messages=[failed], resend=resend)
+    assert all(pair.enabled for pair in screen.fkey_lane[:2])  # Top/End walk the pick
+    assert screen.fkey_lane[2].opp_enabled is True  # F8 Retry: the message never acked
+
+    screen.handle("retry")
+    await asyncio.sleep(0)
+    assert failed.acked is True
+    assert screen.fkey_lane[2].opp_enabled is False  # acknowledged — nothing left to retry
 
 
 def test_chat_screen_up_picks_and_ctrl_end_returns_to_compose() -> None:

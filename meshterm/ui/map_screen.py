@@ -66,6 +66,25 @@ class MapScreen(Screen):
     #: mysteriously dim the context markers.
     find_enabled = True
 
+    @property
+    def fkey_lane(self):
+        """The PicoCalc lane: reset on F1, zoom on F4/F5 — nothing that doesn't act here.
+
+        The map is the one screen that repurposes the nav actions: PgUp/PgDn zoom and
+        Home refits the view, while ``end`` is bound to nothing at all. The shared lane
+        would label those keys as paging and offer a fifth that does nothing, so the map
+        names its own verbs and leaves F2 unassigned. All three are always live — a map
+        can always zoom or refit — so no slot dims.
+        """
+        from .tui.fkeys import DEFAULT_LANE, FPair
+
+        lane = list(DEFAULT_LANE)
+        lane[0] = FPair("Reset", "home")
+        lane[1] = None  # End does nothing on a map
+        lane[3] = FPair("Zoom +", "pageup")
+        lane[4] = FPair("Zoom -", "pagedown")
+        return lane
+
     def __init__(
         self,
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle

@@ -568,6 +568,25 @@ def test_map_screen_shift_pans_by_a_single_cell() -> None:
     assert screen._viewport.center_lon == pytest.approx(expected_lon)
 
 
+def test_map_fkey_lane_names_zoom_and_drops_the_dead_slot() -> None:
+    """The map repurposes the nav keys, so its lane labels them — and offers no dead key."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+    from meshterm.ui.tui.fkeys import action_for
+
+    screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
+    lane = screen.fkey_lane
+
+    # PgUp/PgDn zoom here and Home refits — the shared "Top/End/PgUp/PgDn" labels would
+    # all be lies, and "end" is bound to nothing at all.
+    assert [pair.label if pair else None for pair in lane] == [
+        "Reset", None, None, "Zoom +", "Zoom -",
+    ]
+    assert action_for(lane, 2) is None  # F2 offers nothing rather than a dead End
+    assert action_for(lane, 1) == "home" and action_for(lane, 4) == "pageup"
+    assert all(pair.enabled for pair in lane if pair)  # a map can always zoom or refit
+
+
 def test_map_screen_find_filters_frames_and_clears() -> None:
     """Typing builds the find query; Enter frames matches; Esc peels filter then map."""
     import asyncio
