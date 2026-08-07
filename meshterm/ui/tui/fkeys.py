@@ -7,13 +7,23 @@ literal hardware behaviour and the app simply binds all ten.
 By JP's spec (2026-08-01): a lane slot is for functionality that would otherwise be
 *hard to reach* — not a shortcut to a key that is already close at hand. Enter and Esc
 sit right on the keyboard and are already the easiest keys to hit, so they never occupy
-a slot. Paging (PgUp/PgDn) has no physical key at all, so a screen that scrolls earns it
-the prime F4/F5 pair. Ctrl+letter chords (Ctrl+P for message paths, Ctrl+arrows for a
-sort column, …) are fiddly to hold on this keyboard, so a screen promotes its own onto
-the lone F3 slot (a second, if it has one, riding F3's Shift companion). The five
-*plain* keys carry a screen's most-used, otherwise-awkward actions — reachable with no
-Shift at all — and the Shift bank (F6-F10) is overflow for a screen with more than five
-such actions. A lane can, and does, differ from screen to screen.
+a slot. Paging has no physical key at all, so a screen that scrolls earns it the prime
+F4/F5 pair. Ctrl+letter chords (Ctrl+P for message paths, Ctrl+arrows for a sort column,
+…) are fiddly to hold on this keyboard, so a screen promotes its own onto the lone F3
+slot (a second, if it has one, riding F3's Shift companion). The five *plain* keys carry
+a screen's most-used, otherwise-awkward actions — reachable with no Shift at all — and
+the Shift bank (F6-F10) is overflow for a screen with more than five such actions. A
+lane can, and does, differ from screen to screen.
+
+**A chip names an action, never a key** (JP, 2026-08-07). ``PgUp``, ``End`` and their
+kin are the names of keys this keyboard doesn't even have; what the slot is for is the
+thing it does *here* — ``Page ↑`` through a body, ``Latest`` on a transcript, ``Reset``
+on the map, whose Home key refits the view and whose paging keys zoom. A screen that
+repurposes a shared action relabels it; a screen the action means nothing on leaves the
+slot **empty** rather than filling the lane out. Empty and dim are different claims:
+empty says *not a thing here* (Retry in a channel, where nothing is ever acknowledged),
+dim says *a thing here, just not right now* (Retry in a direct chat with everything
+delivered).
 
 A screen describes its lane as five :class:`FPair` slots (``None`` = unassigned); the
 session resolves a pressed F-key to the slot's action string and dispatches it through
@@ -79,18 +89,20 @@ class FPair:
 #: A lane is five slots, F1..F5 left to right; ``None`` leaves a slot unassigned.
 Lane = Sequence[Optional[FPair]]
 
-#: The screen-agnostic default lane. No Enter or Esc slot — both keys sit right on the
-#: keyboard already. F4/F5 (the most reachable pair) carry paging, which has no physical
-#: key at all; F1/F2 carry the nav cluster's jump-to-top/end, Fn-layered on the physical
-#: keyboard and so worth a slot too, just a notch behind paging; F3 is the lone slot a
-#: screen's own :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane` override reaches for
-#: first — typically a Ctrl+letter chord promoted up because chording is a pain here.
+#: The default lane, in the vocabulary of a screen that is one scrolling body: move
+#: through it a page at a time, or jump to either end. No Enter or Esc slot — both keys
+#: sit right on the keyboard already. F4/F5 (the most reachable pair) carry paging, which
+#: has no physical key at all; F1/F2 carry the jumps, Fn-layered on the physical keyboard
+#: and so worth a slot too, just a notch behind paging; F3 is the lone slot a screen's own
+#: :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane` override reaches for first — typically
+#: a Ctrl+letter chord promoted up because chording is a pain here. A screen whose body is
+#: not one scrolling column says so in its own words (see :class:`ChatScreen`, ``MapScreen``).
 DEFAULT_LANE: tuple[Optional[FPair], ...] = (
     FPair("Top", "home"),
-    FPair("End", "end"),
+    FPair("Bottom", "end"),
     None,
-    FPair("PgUp", "pageup"),
-    FPair("PgDn", "pagedown"),
+    FPair("Page ↑", "pageup"),
+    FPair("Page ↓", "pagedown"),
 )
 
 
@@ -100,7 +112,8 @@ def default_lane(*, nav: bool = True) -> tuple[Optional[FPair], ...]:
     The shared slots all *move* something — the jump-to-ends pair and the paging pair —
     so on a screen with nothing to move (a body that fits its viewport, a transcript with
     no messages) all four are inert and say so. Screens that repurpose the nav actions
-    for something always live (the map's zoom) build from :data:`DEFAULT_LANE` instead.
+    for something always live (the map's zoom) build from :data:`DEFAULT_LANE` instead,
+    relabelling as they go.
 
     Args:
         nav: Whether the nav keys would do anything on this paint — typically

@@ -99,7 +99,8 @@ def test_fkey_lane_text_fits_and_flips() -> None:
     primary = lane_text(DEFAULT_LANE)
     shifted = lane_text(DEFAULT_LANE, shifted=True)
     assert cell_len(primary.plain) == 53 and cell_len(shifted.plain) == 53
-    assert "F1 Top" in primary.plain and "F4 PgUp" in primary.plain and "F5 PgDn" in primary.plain
+    assert "F1 Top" in primary.plain  # the chips name actions, not the keys they sit on
+    assert "F4 Page ↑" in primary.plain and "F5 Page ↓" in primary.plain
     # No slot has a Shift companion by default: the whole shifted bank renders unfilled.
     for number in (6, 7, 8, 9):
         assert f"F{number}" in shifted.plain
@@ -130,10 +131,10 @@ def test_default_lane_dims_every_nav_slot_when_nothing_moves() -> None:
     assert default_lane() is DEFAULT_LANE  # the live lane is the constant itself
     dim = default_lane(nav=False)
 
-    assert [pair.label for pair in dim if pair] == ["Top", "End", "PgUp", "PgDn"]
+    assert [pair.label for pair in dim if pair] == ["Top", "Bottom", "Page ↑", "Page ↓"]
     assert not any(pair.enabled for pair in dim if pair)
     row = lane_text(dim)
-    assert cell_len(row.plain) == 53 and "F1 Top" in row.plain and "F5 PgDn" in row.plain
+    assert cell_len(row.plain) == 53 and "F1 Top" in row.plain and "F5 Page ↓" in row.plain
     assert {str(span.style) for span in row.spans} == {"muted"}
 
 
@@ -150,7 +151,7 @@ def test_lane_is_built_after_the_body_renders() -> None:
     composed = frame.compose_base(Text("hdr"), screen, "hint", 53, 26, footer_lane=build)
 
     assert seen["nav"] is True  # lit on the very first paint, with no stale frame to lag
-    assert "F4 PgUp" in _plain(composed.split("\n")[-1])
+    assert "F4 Page ↑" in _plain(composed.split("\n")[-1])
 
 
 def test_scroll_screen_lane_tracks_whether_its_body_overflows() -> None:

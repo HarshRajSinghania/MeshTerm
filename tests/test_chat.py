@@ -30,6 +30,7 @@ from meshterm.services.chat_service import ChatService
 from meshterm.services.event_hub import EventHub
 from meshterm.tools.chat import _PREVIEW_WIDTH, _LiveLasts, _preview_text, _title
 from meshterm.ui.chat import ChatScreen
+from meshterm.ui.tui import fkeys
 from meshterm.ui.tui.screen import CANCEL
 
 
@@ -899,6 +900,31 @@ async def test_chat_fkey_lane_dims_retry_and_the_nav_slots() -> None:
     await asyncio.sleep(0)
     assert failed.acked is True
     assert screen.fkey_lane[2].opp_enabled is False  # acknowledged — nothing left to retry
+    assert screen.fkey_lane[2].opp_label == "Retry"  # dim, not gone: it belongs on this screen
+
+
+def test_chat_fkey_lane_speaks_the_transcript_and_drops_channel_retry() -> None:
+    """Chips name what they do here — and a channel has no such thing as a retry."""
+    messages = [ChatMessage(text="hi", peer="d4e5f6a7")]
+    direct = _screen(_StubSession(), send=None, messages=messages)
+
+    # Not "Top"/"End": what these do to a conversation is reach its oldest message, or
+    # come back to the latest one and the compose line.
+    assert [pair.label for pair in direct.fkey_lane[:2]] == ["Oldest", "Latest"]
+    assert [pair.action for pair in direct.fkey_lane[:2]] == ["ctrl_home", "ctrl_end"]
+    assert direct.fkey_lane[2].opp_label == "Retry"
+
+    channel = ChatScreen(
+        Conversation(label="#general", is_channel=True, channel_id="1"),
+        messages,
+        send=None,
+        names={},
+        session=_StubSession(),
+    )
+    # A channel message is never acknowledged, so retrying one isn't a thing here: the
+    # slot is empty rather than dimmed, and its key resolves to nothing.
+    assert channel.fkey_lane[2].opp_label == ""
+    assert fkeys.action_for(channel.fkey_lane, 8) is None
 
 
 def test_chat_screen_up_picks_and_ctrl_end_returns_to_compose() -> None:
