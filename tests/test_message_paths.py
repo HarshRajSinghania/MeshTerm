@@ -113,23 +113,63 @@ def test_channel_arrivals_ignore_frames_outside_the_window(tmp_path: Path) -> No
     repo.close()
 
 
+def _direct_raw(dest: str = "", src: str = "") -> dict:
+    """A direct-message frame's raw payload, spelled as the meshcore library reports it."""
+    raw: dict = {"payload_typename": "TEXT_MSG"}
+    if dest:
+        raw["dest_hash"] = dest
+    if src:
+        raw["src_hash"] = src
+    return raw
+
+
 def test_direct_frames_match_by_time_only(tmp_path: Path) -> None:
-    """Direct frames are encrypted, so the window's TXT_MSG frames are the evidence."""
+    """With neither end named, every direct frame in the tight window is the evidence."""
     repo, run = _repo(tmp_path)
     now = utcnow()
-    _record_frame(
-        repo, run, when=now + timedelta(seconds=3), path="3d63",
-        raw={"payload_typename": "TXT_MSG"},
-    )
+    _record_frame(repo, run, when=now + timedelta(seconds=3), path="3d63", raw=_direct_raw())
     _record_frame(  # a channel frame in the window is not direct-message evidence
         repo, run, when=now + timedelta(seconds=4), path="",
         raw=_grp_txt_raw(SECRET, "Alice: hi"),
     )
     _record_frame(  # a direct frame far outside the tight window doesn't correlate
-        repo, run, when=now + timedelta(minutes=10), path="",
-        raw={"payload_typename": "TXT_MSG"},
+        repo, run, when=now + timedelta(minutes=10), path="", raw=_direct_raw(),
     )
     message = ChatMessage(text="see you at 8", peer="d4e5", created_at=now)
     arrivals = direct_frames_near(repo, message)
     assert len(arrivals) == 1 and arrivals[0].hops == ("3d63",)
+    repo.close()
+
+
+def test_direct_frames_narrow_to_the_conversation_ends(tmp_path: Path) -> None:
+    """Naming both ends keeps only the frames that ran between them, either direction."""
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    # Us (a1…) and the peer (d4…), each way round: both are this conversation's traffic.
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=1), path="3d63",
+        raw=_direct_raw(dest="d4", src="a1"),
+    )
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=2), path="c0",
+        raw=_direct_raw(dest="a1", src="d4"),
+    )
+    # Someone else's direct message, overheard in the same window.
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=3), path="3d63",
+        raw=_direct_raw(dest="7f", src="c0"),
+    )
+    # Addressed to us, but by a third party — not this conversation.
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=4), path="",
+        raw=_direct_raw(dest="a1", src="7f"),
+    )
+    # Its addressing was never recovered, so it can't be shown to belong.
+    _record_frame(repo, run, when=now + timedelta(seconds=5), path="", raw=_direct_raw())
+
+    message = ChatMessage(text="see you at 8", peer="d4e5f6a7", created_at=now)
+    arrivals = direct_frames_near(
+        repo, message, ends=("d4e5f6a7", "a1" + "0" * 62),
+    )
+    assert [a.hops for a in arrivals] == [("3d63",), ("c0",)]
     repo.close()

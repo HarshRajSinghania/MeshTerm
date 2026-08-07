@@ -1054,8 +1054,13 @@ async def _make_paths_presenter(
     key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
     prefix_bytes = await _routing_prefix_bytes(ctx)
     self_name: Optional[str] = None
+    self_key: Optional[str] = None
     try:
-        self_name = str((await ctx.devstate.self_info()).get("name") or "") or None
+        info = await ctx.devstate.self_info()
+        self_name = str(info.get("name") or "") or None
+        # Our own key names one end of every direct frame in this conversation; the
+        # contact's key names the other (see :func:`direct_frames_near`).
+        self_key = str(info.get("public_key") or "") or None
     except Exception:  # noqa: BLE001 - a nameless self just skips the white highlight
         self_name = None
 
@@ -1091,9 +1096,17 @@ async def _make_paths_presenter(
             )
             return
         else:
-            arrivals = direct_frames_near(ctx.repo, message)
+            contact = conversation.contact
+            peer_key = conversation.peer or (
+                (contact.public_key or contact.key_prefix) if contact else None
+            )
+            arrivals = direct_frames_near(ctx.repo, message, ends=(peer_key, self_key))
             matched = False
-            summary = "direct frames are encrypted — matched by time alone (±90 s)"
+            summary = (
+                "direct frames are encrypted — matched by address and time (±90 s)"
+                if peer_key and self_key
+                else "direct frames are encrypted — matched by time alone (±90 s)"
+            )
         # The graph's left endpoint: who the message set out from. Our own sends are
         # us; an inbound channel message names its sender on the wire; a direct chat's
         # origin is the conversation's peer (billed as time-matched by the summary).
