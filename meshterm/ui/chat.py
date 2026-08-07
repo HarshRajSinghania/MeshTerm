@@ -71,8 +71,9 @@ class ChatScreen(Screen):
     and carries the view with it; ^End (or Esc) returns focus to the compose line.
     Enter sends the current line, or acts on a picked message: in a channel it primes
     a reply ``@mention``, in a direct chat it opens the message's delivery paths. ^P
-    opens the paths of the picked (or latest) message in either kind. Esc leaves the
-    chat once nothing is picked.
+    opens the picked message's paths in either kind — a path belongs to one message, so
+    with nothing picked there is nothing to show. Esc leaves the chat once nothing is
+    picked.
     """
 
     floating = False
@@ -100,7 +101,7 @@ class ChatScreen(Screen):
         lane[1] = FPair("End", "ctrl_end", enabled=live)
         lane[2] = FPair(
             "Paths", "paths", "Retry", "retry",
-            enabled=self._paths is not None,
+            enabled=self._selected is not None and self._paths is not None,
             opp_enabled=self._retry_target() is not None,
         )
         return lane
@@ -130,8 +131,8 @@ class ChatScreen(Screen):
                 request repaints when messages arrive or a send completes.
             resend: Async callable that re-attempts delivery of an unacknowledged direct
                 message, updating it in place (direct chats only; ``None`` for channels).
-            paths: Async callable that presents the delivery paths of one message (the
-                ^P view); ``None`` leaves the affordance quietly inert.
+            paths: Async callable that presents the delivery paths of the picked message
+                (the ^P view); ``None`` leaves the affordance quietly inert.
             key_of: Maps a sender's display name back to its node's key (see
                 :func:`~meshterm.services.trace_runner.make_name_key_resolver`), the seed
                 of the sender's hue; ``None`` (or a name it can't place) leaves senders
@@ -177,16 +178,17 @@ class ChatScreen(Screen):
     def footer_hint(self) -> str:
         """Key hint, reflecting whether a message is picked and what Enter does to it.
 
-        ``^R retry failed`` appears only while there is something to retry (see
-        :meth:`_retry_target`) — the same rule the F-key lane dims its slots by.
+        Only keys that would act appear: ``^P paths`` needs a picked message to show the
+        paths *of*, and ``^R retry failed`` needs something to retry (see
+        :meth:`_retry_target`) — the same rules the F-key lane dims its slots by.
         """
         if self._selected is not None:
             if self._is_channel:
                 return "Enter reply (@mention) · ^P paths · ↑↓ pick · ^End/Esc cancel"
             return "Enter paths · ↑↓ pick · ^End/Esc cancel"
         if self._retry_target() is not None:
-            return "Enter send · ↑ pick a message · ^R retry failed · ^P paths · Esc back"
-        return "Enter send · ↑ pick a message · ^P paths · Esc back"
+            return "Enter send · ↑ pick a message · ^R retry failed · Esc back"
+        return "Enter send · ↑ pick a message · Esc back"
 
     # --- live updates --------------------------------------------------------
 
@@ -538,9 +540,9 @@ class ChatScreen(Screen):
         ↑↓, PgUp/PgDn (a screenful), Ctrl+Home (the very first message), and
         Ctrl+PgUp/PgDn (day dividers), carrying the view with it. Enter on a picked
         message primes a reply ``@mention`` in a channel and opens the delivery paths
-        in a direct chat; ^P opens the paths of the picked (or latest) message in
-        either kind. ^End (or moving past the newest) returns to the compose line;
-        Esc peels the pick first, the screen second.
+        in a direct chat; ^P opens the picked message's paths in either kind, and does
+        nothing while nothing is picked. ^End (or moving past the newest) returns to the
+        compose line; Esc peels the pick first, the screen second.
         """
         if action == "enter":
             if self._selected is not None:
@@ -553,8 +555,7 @@ class ChatScreen(Screen):
         elif action == "paste":
             self._begin_paste(data)
         elif action == "paths":
-            target = self._selected if self._selected is not None else len(self._messages) - 1
-            self._open_paths(target)
+            self._open_paths(self._selected)
         elif action == "retry":
             if not self._is_channel:
                 self._retry()
@@ -591,7 +592,12 @@ class ChatScreen(Screen):
                 self._stick = True
 
     def _open_paths(self, index: Optional[int]) -> None:
-        """Float the delivery-paths view for the message at ``index`` (one at a time)."""
+        """Float the delivery-paths view for the picked message (one dialog at a time).
+
+        ``index`` is the pick, so ``None`` — nothing picked — opens nothing: a path is a
+        route one *particular* message walked, and guessing at the latest one showed the
+        paths of whichever message happened to be at the bottom of the transcript.
+        """
         if index is None or not self._messages or self._paths is None or self._paths_open:
             return
         message = self._messages[max(0, min(index, len(self._messages) - 1))]

@@ -1012,8 +1012,8 @@ def test_chat_home_end_and_word_keys_move_the_compose_cursor() -> None:
     assert screen._editor.cursor == 6  # start of "world"
 
 
-async def test_chat_paths_key_opens_the_picked_or_latest_message() -> None:
-    """^P presents the picked message's paths — or the latest, when nothing is picked."""
+async def test_chat_paths_key_needs_a_picked_message() -> None:
+    """^P presents the picked message's paths, and does nothing until one is picked."""
     import asyncio
 
     shown: list[str] = []
@@ -1033,15 +1033,23 @@ async def test_chat_paths_key_opens_the_picked_or_latest_message() -> None:
     screen = ChatScreen(
         conv, messages, send=None, names={}, session=_StubSession(), paths=paths
     )
-    screen.handle("paths")  # nothing picked → the latest message
+    # A path is one message's route, so with no pick there is nothing to show — the key
+    # is inert and the footer and F-key lane both say so rather than guessing at the tail.
+    screen.handle("paths")
     await asyncio.sleep(0)
-    assert shown == ["second"]
+    assert shown == []
+    assert "^P" not in screen.footer_hint
+    assert screen.fkey_lane[2].enabled is False
 
     screen.handle("up")
     screen.handle("up")  # pick the older message
     screen.handle("paths")
     await asyncio.sleep(0)
-    assert shown == ["second", "first"]
+    assert shown == ["first"]
+    # With a pick, paths are on offer — here on Enter, since a direct chat has no reply
+    # to prime (a channel's hint keeps the ^P atom beside its Enter reply).
+    assert "Enter paths" in screen.footer_hint
+    assert screen.fkey_lane[2].enabled is True
 
 
 async def test_chat_direct_enter_on_a_pick_opens_paths() -> None:
