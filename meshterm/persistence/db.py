@@ -164,6 +164,11 @@ CREATE INDEX IF NOT EXISTS idx_neighbour_reports_pair ON neighbour_reports(repea
 CREATE INDEX IF NOT EXISTS idx_discovered_paths_cat ON discovered_paths(category, width_bytes);
 CREATE INDEX IF NOT EXISTS idx_observations_run ON observations(run_id);
 CREATE INDEX IF NOT EXISTS idx_observations_node ON observations(node);
+-- The reception history is queried by time window from every direction — the monitor's
+-- session seed, the dashboard's recent slice, the Time Machine's hour range, every
+-- ``since=`` filter — and observed_at stores UTC ISO-8601, which orders lexically, so a
+-- plain index turns each of those from a full-table scan into a range walk.
+CREATE INDEX IF NOT EXISTS idx_observations_observed_at ON observations(observed_at);
 CREATE INDEX IF NOT EXISTS idx_messages_peer ON messages(peer);
 """
 

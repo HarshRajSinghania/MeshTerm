@@ -171,6 +171,12 @@ class DashboardScreen(Screen):
         #: dynamic rows): ``stats`` from get_stats, ``battery`` from get_battery.
         self.stats: dict = {}
         self.battery: dict = {}
+        # The one-pass window aggregates (see _digest_window), refreshed per repaint.
+        self._win_nodes: set[str] = set()
+        self._win_repeaters: set[str] = set()
+        self._win_counts: Counter = Counter()
+        self._win_snrs: list[float] = []
+        self._win_rssis: list[float] = []
 
     # --- live window -----------------------------------------------------------------
 
@@ -212,6 +218,7 @@ class DashboardScreen(Screen):
     def render_body(self, width: int) -> list[str]:
         """Render the overview sections as one scrolling body."""
         self._prune()
+        self._digest_window()
         body: list[RenderableType] = [
             *self._activity_section(width),
             Text(),
@@ -222,6 +229,37 @@ class DashboardScreen(Screen):
         lines = render_lines(Group(*body), width)
         self._scroll_total = max(1, len(lines))
         return lines
+
+    def _digest_window(self) -> None:
+        """Fold the observation window into the per-frame aggregates, in one pass.
+
+        The pulse line, the busiest-transmitter row, and the RF section each need a
+        different slice of the same window; scanning the (up to 4000-entry) deque once
+        per consumer added up to five full passes on every repaint of a busy mesh.
+        One pass here fills them all; the section builders read the results.
+        """
+        nodes: set[str] = set()
+        repeaters: set[str] = set()
+        counts: Counter = Counter()
+        snrs: list[float] = []
+        rssis: list[float] = []
+        for o in self._window:
+            if o.node and o.node_type == NODE_TYPE_REPEATER:
+                repeaters.add(o.node)
+            if o.kind == "packet":
+                continue
+            if o.node:
+                nodes.add(o.node)
+                counts[o.node] += 1
+            if o.snr is not None:
+                snrs.append(o.snr)
+            if o.rssi is not None:
+                rssis.append(o.rssi)
+        self._win_nodes = nodes
+        self._win_repeaters = repeaters
+        self._win_counts = counts
+        self._win_snrs = snrs
+        self._win_rssis = rssis
 
     # -- activity --
 
@@ -296,12 +334,8 @@ class DashboardScreen(Screen):
         recent = sum(shown[:15]) / max(1, min(15, len(shown)))
         overall = sum(shown) / max(1, len(shown))
         span = _span_label(len(shown))
-        nodes = {o.node for o in self._window if o.node and o.kind != "packet"}
-        repeaters = {
-            o.node
-            for o in self._window
-            if o.node and o.node_type == NODE_TYPE_REPEATER
-        }
+        nodes = self._win_nodes  # the one-pass window digest (see _digest_window)
+        repeaters = self._win_repeaters
 
         def compose(heard: bool) -> Text:
             line = Text()
@@ -335,9 +369,7 @@ class DashboardScreen(Screen):
 
     def _busiest(self) -> Optional[tuple[str, int]]:
         """The window's most-heard attributable node, or ``None`` in silence."""
-        counts = Counter(
-            o.node for o in self._window if o.node and o.kind != "packet"
-        )
+        counts = self._win_counts  # the one-pass window digest (see _digest_window)
         if not counts:
             return None
         node, count = counts.most_common(1)[0]
@@ -387,8 +419,8 @@ class DashboardScreen(Screen):
         heading.append("  ·  reception over 2 h · radio live", style="muted")
         rows: list[tuple[str, Text]] = []
 
-        snrs = [o.snr for o in self._window if o.snr is not None and o.kind != "packet"]
-        rssis = [o.rssi for o in self._window if o.rssi is not None and o.kind != "packet"]
+        snrs = self._win_snrs  # the one-pass window digest (see _digest_window)
+        rssis = self._win_rssis
         if snrs:
             med = median(snrs)
             line = Text(f"{med:+.1f} dB median  ", style=snr_style(med))

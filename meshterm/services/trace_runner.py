@@ -61,18 +61,29 @@ def make_node_resolver(
         if name and ident:
             entries.append((name, "", ident))
 
+    # Memoized per label: the render paths ask for the same few hop hashes on every
+    # repaint (per hop, per row, per frame), and ``entries`` is immutable for this
+    # closure's lifetime, so each distinct label is scanned exactly once.
+    memo: dict[str, Optional[str]] = {}
+
     def resolve(label: Optional[str]) -> Optional[str]:
         if not label:
             return label
+        if label in memo:
+            return memo[label]
         needle = label.lower().removeprefix("0x")
+        result = label
         for name, pub, prefix in entries:
             # The hash is a prefix of the node's key; match either against the full
             # public key or the (possibly shorter) stored prefix, in either direction.
             if pub and pub.startswith(needle):
-                return name
+                result = name
+                break
             if prefix and (prefix.startswith(needle) or needle.startswith(prefix)):
-                return name
-        return label
+                result = name
+                break
+        memo[label] = result
+        return result
 
     return resolve
 
@@ -100,14 +111,21 @@ def make_node_type_resolver(
         if ident and c.node_type is not None:
             entries.append((ident, c.node_type))
 
+    memo: dict[str, Optional[int]] = {}  # per label, as in make_node_resolver
+
     def type_of(label: Optional[str]) -> Optional[int]:
         if not label:
             return None
+        if label in memo:
+            return memo[label]
         needle = label.lower().removeprefix("0x")
+        result = None
         for ident, node_type in entries:
             if ident.startswith(needle) or needle.startswith(ident):
-                return node_type
-        return None
+                result = node_type
+                break
+        memo[label] = result
+        return result
 
     return type_of
 
@@ -134,14 +152,17 @@ def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
         if (pub := (c.public_key or "").lower().removeprefix("0x"))
     ]
 
+    memo: dict[str, str] = {}  # per label, as in make_node_resolver
+
     def resolve(label: Optional[str]) -> Optional[str]:
         if not label:
             return label
+        if label in memo:
+            return memo[label]
         needle = label.lower().removeprefix("0x")
-        for pub in keys:
-            if pub.startswith(needle):
-                return pub
-        return label
+        result = next((pub for pub in keys if pub.startswith(needle)), label)
+        memo[label] = result
+        return result
 
     return resolve
 

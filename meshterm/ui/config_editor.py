@@ -99,6 +99,28 @@ _REBOOT_DROP_TIMEOUT_S = 10.0
 _REBOOT_DROP_POLL_S = 0.25
 
 
+async def cached_snapshot(ctx: "AppContext", device: "Device") -> dict:
+    """A config snapshot for a *screen open*, reusing the devstate session cache.
+
+    The two facts devstate already holds — ``SELF_INFO`` and the path-hash mode — are
+    the slowest part of :func:`~meshterm.core.device_config.build_snapshot` to re-ask
+    the radio for, and every config apply invalidates them (see
+    ``tools/config.py``), so an open can trust the cache. The refresh after a restore,
+    key change, or factory reset keeps calling ``build_snapshot(device)`` raw: the
+    device state genuinely changed under us there.
+    """
+    self_info: Optional[dict] = None
+    path_hash_mode: Optional[int] = None
+    try:
+        self_info = await ctx.devstate.self_info()
+        path_hash_mode = await ctx.devstate.path_hash_mode()
+    except Exception:  # noqa: BLE001 - fall back to the raw reads below
+        pass
+    return await build_snapshot(
+        device, self_info=self_info, path_hash_mode=path_hash_mode
+    )
+
+
 async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
     """Run the interactive editor and return the staged operations to perform.
 
@@ -112,7 +134,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
     from .tui import CANCEL, SelectScreen
 
     device = await ctx.device()
-    snapshot = await build_snapshot(device)
+    snapshot = await cached_snapshot(ctx, device)
     custom = await device.get_custom_vars()
     # The background-advert cadences are app-side settings (MeshTerm sends the adverts,
     # not the firmware), but they're staged and applied exactly like device values so
@@ -652,7 +674,7 @@ async def device_actions(ctx: "AppContext") -> None:
     from .tui import CANCEL, SelectScreen
 
     device = await ctx.device()
-    snapshot = await build_snapshot(device)
+    snapshot = await cached_snapshot(ctx, device)
 
     # Same persistent-backdrop pattern as the editor: the menu stays pushed while each
     # action's prompts float over it as modal popups (see edit_config).
@@ -749,7 +771,7 @@ async def send_advert(ctx: "AppContext") -> None:
         ctx: Shared application context (provides the connected device and UI surface).
     """
     device = await ctx.device()
-    snapshot = dict(await device.get_self_info())
+    snapshot = dict(await ctx.devstate.self_info())  # the session cache; no re-read
     # No emoji in this floating dialog's title: a terminal that paints an emoji a cell
     # narrower than Rich measures it leaves the content-sized popup's title border short,
     # bleeding the backdrop through the frame. The menu row keeps its 📡 icon (drawn in the

@@ -30,6 +30,7 @@ dialog, matching what they do on every other screen; Esc closes it.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional, Sequence
@@ -39,9 +40,12 @@ from rich.table import Table
 from rich.text import Text
 
 from ..core.channels import decrypt_channel_text, identify_channel
-from ..core.models import NODE_TYPE_LABELS, Observation
+from ..core.models import NODE_TYPE_LABELS, Observation, utcnow
 from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
+
+#: Composed packet cards the viewer memoizes (a few pages either side of the view).
+_BODY_CACHE_MAX = 8
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import PathLine, path_line
 from .theme import glyph, name_style, snr_style
@@ -354,6 +358,8 @@ class PacketViewer(Screen):
         super().__init__()
         self._entries = list(entries)
         self._index = max(0, min(index, len(self._entries) - 1))
+        # Composed cards per (entry, width, age-minute) — see render_body.
+        self._body_cache: "OrderedDict[tuple, list[str]]" = OrderedDict()
         self._resolve = resolve
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
@@ -464,6 +470,18 @@ class PacketViewer(Screen):
         # same packet, so the title's ``n/total`` and the reachable range stay current.
         self._sync()
         entry = self._entries[self._index]
+        # An entry is immutable once captured, so its whole card — rows, decrypted
+        # payload, route-graph layout — is a pure function of the entry, the width,
+        # and the minute its "heard" age reads (the one row that rolls with time).
+        # Memoize on exactly that: the repaint tick re-lays the graph only when a
+        # minute boundary actually moves the visible text.
+        age_minute = int(max(0.0, (utcnow() - entry.when).total_seconds()) // 60)
+        key = (id(entry), width, age_minute)
+        cached = self._body_cache.get(key)
+        if cached is not None:
+            self._body_cache.move_to_end(key)
+            self._scroll_total = max(1, len(cached))
+            return cached
         head, tail = self._head_rows(entry), self._tail_rows(entry)
         label_w = self._label_width(head + tail, width)
 
@@ -479,6 +497,9 @@ class PacketViewer(Screen):
                 lines.append("")
         lines.extend(self._grid_lines(tail, width, label_w))
         self._scroll_total = max(1, len(lines))
+        self._body_cache[key] = lines
+        if len(self._body_cache) > _BODY_CACHE_MAX:
+            self._body_cache.popitem(last=False)
         return lines
 
     @staticmethod

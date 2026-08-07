@@ -128,7 +128,7 @@ class TxOptimizeTool(Tool):
         from ..ui.tx_screen import open_tx_optimize
 
         device = await ctx.device()
-        contacts = await device.get_contacts()
+        contacts = await ctx.devstate.contacts()  # the session cache; no re-read
         admin_node = next(
             (c for c in contacts if c.name == str(params["admin"])), None
         )

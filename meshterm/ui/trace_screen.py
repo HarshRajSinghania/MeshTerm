@@ -419,6 +419,14 @@ class TraceScreen(Screen):
         #: Traces aggregated on screen — the current route's run. Adopting a
         #: different path clears it (old numbers describe the old route).
         self._traces: list[TraceResult] = []
+        #: Bumped on every mutation of ``_traces`` — the key the per-frame memos
+        #: below expire on (a bare ``len`` would miss a clear-then-refill).
+        self._traces_rev = 0
+        # The aggregate stats and the windowed results block, each valid for one
+        # traces revision (see render_body / _tail_lines): a repaint that changed
+        # nothing re-reads them instead of re-aggregating every stored trace.
+        self._stats_memo: Optional[tuple[int, TraceStats]] = None
+        self._tail_memo: Optional[tuple[tuple, list[str]]] = None
         #: Every trace this screen ever ran, across path changes — the session
         #: count the owner reports, immune to the per-route clears above.
         self._total_traces = 0
@@ -538,6 +546,7 @@ class TraceScreen(Screen):
                 earlier label on the same board.
         """
         self._traces.append(result)
+        self._traces_rev += 1
         self._total_traces += 1
         for label in placed:
             self._run_placed[label.split(" — ")[0]] = label
@@ -692,6 +701,7 @@ class TraceScreen(Screen):
                     # session restarts as clean as a fresh screen.
                     self._path_spec = spec.strip()
                     self._traces.clear()
+                    self._traces_rev += 1
                     self._status = ""
             finally:
                 self._dialog_open = False
@@ -725,6 +735,7 @@ class TraceScreen(Screen):
             return
         self._path_spec = reversed_spec
         self._traces.clear()
+        self._traces_rev += 1
         self._status = ""
         self._session.invalidate()
 
@@ -737,7 +748,11 @@ class TraceScreen(Screen):
         highlighted row's body line is known exactly — that is what :meth:`cursor_line`
         pins while the user is navigating.
         """
-        stats = TraceStats.from_traces(self._target, self._traces)
+        if self._stats_memo is not None and self._stats_memo[0] == self._traces_rev:
+            stats = self._stats_memo[1]
+        else:
+            stats = TraceStats.from_traces(self._target, self._traces)
+            self._stats_memo = (self._traces_rev, stats)
         current = next((t for t in reversed(self._traces) if t.success), None)
         # Both path lanes break at hop boundaries under their own value column (the
         # app-wide labelled-row rule): a long walk never folds back to column zero,
@@ -781,7 +796,19 @@ class TraceScreen(Screen):
     def _tail_lines(
         self, stats: TraceStats, current: Optional[TraceResult], width: int
     ) -> list[str]:
-        """The windowed results block: per-hop medians, then the trace log."""
+        """The windowed results block: per-hop medians, then the trace log.
+
+        Memoized per traces revision while idle — the block re-renders every stored
+        trace, and between completions nothing in it moves. A *running* trace skips
+        the memo outright: its log row carries the live spinner glyph.
+        """
+        key = (self._traces_rev, self._status, width)
+        if (
+            not self._running
+            and self._tail_memo is not None
+            and self._tail_memo[0] == key
+        ):
+            return self._tail_memo[1]
         tail: list[RenderableType] = []
         if stats.hop_snrs:
             hash_bytes = current.path_hash_bytes if current is not None else None
@@ -790,9 +817,10 @@ class TraceScreen(Screen):
         if self._running or self._status or self._traces:
             tail += [Text(), Text("Traces", style="accent")]
             tail.append(self._trace_log())
-        if not tail:
-            return []
-        return render_lines(Group(*tail), width)
+        lines = render_lines(Group(*tail), width) if tail else []
+        if not self._running:
+            self._tail_memo = (key, lines)
+        return lines
 
     def cursor_line(self) -> Optional[int]:
         """The highlighted action row while ↑/↓ are in use; free scrolling otherwise.
@@ -1429,8 +1457,12 @@ async def _open_session(
     # destination — a direct attempt, honest about being one.
     device_route: Optional[tuple[str, ...]] = None
     if target_contact is not None and target_contact.route_hops is not None:
-        topo0 = fresh_topology()
-        device_route = tuple(topo0.canonical(h) or h for h in target_contact.route_hops)
+        # Canonicalizing hop hashes needs only the contact index, so an *empty*
+        # graph does it — not the full evidence build (stored traces, packet paths,
+        # neighbour tables) fresh_topology() runs, which this branch would then
+        # discard unread.
+        ident = MeshTopology(device_hash or "local", contacts)
+        device_route = tuple(ident.canonical(h) or h for h in target_contact.route_hops)
     auto_hops: Optional[tuple[str, ...]] = None
     auto_source = ""
     if target_hash is not None:

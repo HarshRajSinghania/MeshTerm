@@ -217,6 +217,7 @@ def test_monitor_tallies_live_packets_by_payload_class(tmp_path: Path) -> None:
 
     monitor = MonitorService.__new__(MonitorService)
     monitor._activity = {}
+    monitor._activity_stamp = 0
     monitor._kind_counts = {}
     monitor._count_packet(
         MeshEvent.observation_event(

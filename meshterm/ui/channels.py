@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from rich.console import Group
@@ -408,9 +409,11 @@ class _LiveStats:
     the manager sits open updates that channel's counts, age, and sparkline in place —
     but the repository is re-queried at most once per ``ttl`` seconds rather than once per
     row per repaint, so a full slot table stays cheap at the session's ~1 Hz repaint.
+    The TTL sits *above* that repaint period on purpose: at exactly the tick rate every
+    idle frame would still land one repository query — the throttle would gate nothing.
     """
 
-    def __init__(self, ctx: "AppContext", *, ttl: float = 1.0) -> None:
+    def __init__(self, ctx: "AppContext", *, ttl: float = 3.0) -> None:
         """Bind to a context; the first read populates the cache."""
         self._ctx = ctx
         self._ttl = ttl
@@ -465,6 +468,7 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
+@lru_cache(maxsize=32)
 def _activity_sparkline(histogram: "tuple[int, ...]", peak: float) -> Text:
     """The channel's braille activity sparkline over the trailing two hours, now at the right.
 
@@ -474,6 +478,10 @@ def _activity_sparkline(histogram: "tuple[int, ...]", peak: float) -> Text:
     :meth:`_LiveStats.peak`) — so the whole activity column shares one scale and the
     rows' bars are comparable at a glance. The histogram runs deeper than is drawn; the
     tail past the drawn buckets shapes ``peak`` but isn't charted.
+
+    Memoized on its (hashable) inputs: the row callables rebuild every repaint, but the
+    histogram snapshot only moves once per :class:`_LiveStats` TTL, so between refreshes
+    every slot's sparkline is a cache hit. Callers treat the returned Text as read-only.
     """
     return activity_sparkline(histogram, ACTIVITY_DRAWN_BUCKETS, peak=peak)
 

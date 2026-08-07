@@ -829,10 +829,14 @@ def _mesh_sections(
     # every wider window keeps the calendar-day columns. Both feed the same bar and
     # tick machinery — only the bucket resolution and the axis labels differ.
     hourly = since is not None and window is not None and window <= timedelta(days=1)
+    # The all-days series feeds the ledger at the bottom too — fetched once here (it is
+    # one of the costlier scans), and only on demand in the hourly case.
+    all_days: Optional[list[tuple[str, int, int]]] = None
     if hourly:
         series = _fill_hours(ctx.repo.hourly_series(since), since, now)
     else:
-        series = _fill_days(ctx.repo.daily_activity(), since, now)
+        all_days = ctx.repo.daily_activity()
+        series = _fill_days(all_days, since, now)
     if not series:
         return [
             Text(),
@@ -895,6 +899,9 @@ def _mesh_sections(
     )
 
     arrivals = ctx.repo.first_seen(since=since)
+    # One aggregation serves both the arrivals' key lane and the ledger's node count
+    # below (every heard node *is* a first-seen node, so the counts agree).
+    heard = ctx.repo.heard_nodes()
     out.append(Text())
     out.append(_heading("Arrivals", "nodes heard for the first time ever"))
     if not arrivals:
@@ -909,7 +916,7 @@ def _mesh_sections(
         # and each key expands to its fullest known form the way the picker's lane
         # does: the key captured with an observation (shows offline), else the
         # device's contact list, else the stored 12-hex prefix.
-        stored_keys = {n.node: n.public_key for n in ctx.repo.heard_nodes() if n.node}
+        stored_keys = {n.node: n.public_key for n in heard if n.node}
         listed = [
             (
                 stored_keys.get(node) or resolve_key(node) or node,
@@ -949,8 +956,9 @@ def _mesh_sections(
             line.append(f"  ({format_ago(secs)})", style=_recency_style(secs))
             out.append(line)
 
-    all_days = ctx.repo.daily_activity()
-    total_nodes = len(ctx.repo.first_seen())
+    if all_days is None:
+        all_days = ctx.repo.daily_activity()
+    total_nodes = sum(1 for n in heard if n.node)
     busiest = max(all_days, key=lambda d: d[1])
     out.append(Text())
     out.append(_heading("Ledger", "everything ever recorded"))

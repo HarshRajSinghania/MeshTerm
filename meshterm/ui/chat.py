@@ -1021,9 +1021,10 @@ async def _make_paths_presenter(
 
     session = ctx.ui.session
     contacts = await ctx.devstate.contacts()
-    resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
+    stored_names = ctx.repo.node_names()
+    resolve = trace_runner.make_node_resolver(contacts, stored_names)
     type_of = trace_runner.make_node_type_resolver(contacts)
-    key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
+    key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
     prefix_bytes = await _routing_prefix_bytes(ctx)
     self_name: Optional[str] = None
     try:

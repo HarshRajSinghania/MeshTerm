@@ -7,14 +7,15 @@ header and footer so the whole view fits the terminal exactly (never overflowing
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections import OrderedDict
+from typing import Optional, Sequence
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
-from ...platforms import get_platform
+from ...platforms import Platform, get_platform, on_platform
 from ..theme import hint_style, title_style
 from .glow import apply_corner_glow
 from .render import render_lines
@@ -131,37 +132,42 @@ def _breathing_room(body_len: int, budget: int) -> int:
     return 1 if body_len + 2 <= budget else 0
 
 
-def _panel(screen: Screen, inner_w: int, viewport: int, active: bool) -> Panel:
-    """Render a screen's body into a titled, scroll-aware panel.
+def _panel_box(
+    title: str, visible: list[str], more_above: bool, more_below: bool, border: str
+) -> Panel:
+    """Wrap already-sliced body lines in a titled, scroll-aware panel.
 
     Args:
-        screen: The screen to frame.
-        inner_w: Inner content width in columns.
-        viewport: Visible body height in rows.
-        active: Whether this is the focused (top) screen, brightening its border.
+        title: The screen's heading (empty for none).
+        visible: The viewport's ANSI lines, already sliced and padded to height.
+        more_above: Whether content continues above the slice.
+        more_below: Whether content continues below the slice.
+        border: Border style name (``"accent"`` for the focused screen).
 
     Returns:
-        A Rich :class:`Panel` of exactly ``viewport + 2`` rows.
+        A Rich :class:`Panel` of exactly ``len(visible) + 2`` rows.
     """
-    # Record the viewport *before* the body renders, so a screen that windows a
-    # list inside itself (see :class:`~meshterm.ui.tui.screen.ListWindow`) can size
-    # its chrome to the frame it is about to be sliced into.
-    screen.note_viewport(viewport)
-    body_lines = screen.render_body(inner_w)
-    visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     body = Text.from_ansi("\n".join(visible))
-    border = "accent" if active else "muted"
     subtitle = None
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
         subtitle = f"[{hint_style(border)}]{arrow} more[/]"
     return Panel(
         body,
-        title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
+        title=f"[{title_style(border)}]{title}[/]" if title else None,
         subtitle=subtitle,
         border_style=border,
         padding=(0, 1),
     )
+
+
+#: The last framed base composition: ``(content key, rendered lines)``. Re-parsing the
+#: sliced body (``Text.from_ansi``) and re-rendering it through the Panel is the priciest
+#: part of a repaint (~8 ms on a full frame), and the idle tick recomposes an unchanged
+#: screen every second — only the header above it moves. One slot suffices: there is only
+#: ever one base screen per paint, and any content change (a keystroke, a scroll, new
+#: rows) simply misses and re-renders.
+_BASE_BOX_CACHE: Optional[tuple[tuple, list[str]]] = None
 
 
 def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) -> Text:
@@ -231,6 +237,7 @@ def compose_base(
     Returns:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
     """
+    global _BASE_BOX_CACHE
     platform = get_platform()
     # The header is a single status line: crop it to one row so a narrow terminal never
     # wraps it onto a second line (which would push the panel down and misreport its height).
@@ -241,8 +248,26 @@ def compose_base(
     )
     if platform.frame_border:
         viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
-        panel: RenderableType = _panel(base, cols - 4, viewport, active=True)
-        body = render_lines(Group(panel, footer), cols)
+        # Record the viewport *before* the body renders, so a screen that windows a
+        # list inside itself (see :class:`~meshterm.ui.tui.screen.ListWindow`) can size
+        # its chrome to the frame it is about to be sliced into.
+        base.note_viewport(viewport)
+        body_lines = base.render_body(cols - 4)
+        visible, more_above, more_below = _visible_slice(base, body_lines, viewport)
+        # The panel wrap is a pure function of what's between its borders: memoize it so
+        # the repaints that change nothing below the header (the 1 Hz tick) skip the
+        # ANSI re-parse and Panel re-render. A dynamic footer (the F-key lane, which can
+        # flip with the physical Shift key alone) has no place in the key, so it renders
+        # uncached — that combination doesn't arise: the lane belongs to the borderless
+        # platform below.
+        key = (cols, rows, base.title, footer_hint, more_above, more_below, *visible)
+        if footer_lane is None and _BASE_BOX_CACHE is not None and _BASE_BOX_CACHE[0] == key:
+            body = _BASE_BOX_CACHE[1]
+        else:
+            panel = _panel_box(base.title, visible, more_above, more_below, "accent")
+            body = render_lines(Group(panel, footer), cols)
+            if footer_lane is None:
+                _BASE_BOX_CACHE = (key, body)
     else:
         # Borderless chrome: a one-row title bar instead of the Panel's border and
         # padding — the body wins the full terminal width and one extra row.
@@ -412,6 +437,16 @@ def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int,
     return max_w, vpad, viewport, body_lines
 
 
+#: Memoized dialog compositions, keyed by everything the box is a function of. Dialogs
+#: stack (a confirm over a picker over a menu), and each layer recomposes on every
+#: repaint of the frame beneath it, so a single slot would thrash — a handful covers the
+#: deepest realistic stack, LRU-evicted as dialogs change.
+_DIALOG_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+
+#: Dialog compositions the memo keeps.
+_DIALOG_CACHE_MAX = 12
+
+
 def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     """Compose a centered dialog panel for a floating screen, bounded to the terminal.
 
@@ -425,8 +460,16 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     """
     max_w, vpad, viewport, body_lines = _dialog_layout(screen, cols, rows)
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
-    body = Text.from_ansi("\n".join(visible))
     border = getattr(screen, "border_style", "accent")
+    key = (
+        max_w, vpad, screen.title, screen.footer_hint, border,
+        more_above, more_below, *visible,
+    )
+    cached = _DIALOG_CACHE.get(key)
+    if cached is not None:
+        _DIALOG_CACHE.move_to_end(key)
+        return cached
+    body = Text.from_ansi("\n".join(visible))
     hint = hint_style(border)
     subtitle = f"[{hint}]{screen.footer_hint}[/]"
     if more_above or more_below:
@@ -440,4 +483,20 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=max_w,
     )
-    return "\n".join(apply_corner_glow(render_lines(panel, max_w)))
+    out = "\n".join(apply_corner_glow(render_lines(panel, max_w)))
+    _DIALOG_CACHE[key] = out
+    if len(_DIALOG_CACHE) > _DIALOG_CACHE_MAX:
+        _DIALOG_CACHE.popitem(last=False)
+    return out
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Drop the composition memos on a platform switch — their output bakes the theme in.
+
+    Registered at module bottom so the immediate first run (see
+    :func:`~meshterm.platforms.on_platform`) finds both caches already defined.
+    """
+    global _BASE_BOX_CACHE
+    _BASE_BOX_CACHE = None
+    _DIALOG_CACHE.clear()

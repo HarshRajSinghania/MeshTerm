@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1397,9 +1398,9 @@ class Repository:
     ) -> list[tuple[str, Optional[str], datetime]]:
         """When each node first ever appeared in the history, newest arrivals first.
 
-        The Time Machine's "new arrivals" feed: a single ordered scan folds out each
-        node's earliest observation and its most recent advertised name (``packet``
-        rows excluded — no reliable identity).
+        The Time Machine's "new arrivals" feed: one grouped scan yields each node's
+        earliest observation, labelled by its most recent advertised name (via
+        :meth:`node_names`; ``packet`` rows excluded — no reliable identity).
 
         Args:
             since: Only nodes whose *first* appearance is at or after this time.
@@ -1407,26 +1408,34 @@ class Repository:
         Returns:
             ``(node, latest_name, first_heard)`` triples, most recent arrival first.
         """
-        rows = self._conn.execute(
+        # One streaming pass, unsorted: ``observed_at`` is UTC ISO-8601 and compares
+        # correctly as a string, so each node's earliest stamp and latest name are
+        # tracked by string comparison, and only the ~one winning stamp per node is
+        # parsed — instead of ordering the whole history and walking it row-object by
+        # row-object as this used to.
+        firsts: dict[str, str] = {}
+        names: dict[str, tuple[str, str]] = {}
+        for row in self._conn.execute(
             "SELECT node, name, observed_at FROM observations "
-            "WHERE node IS NOT NULL AND kind != 'packet' ORDER BY observed_at"
-        ).fetchall()
-        firsts: dict[str, datetime] = {}
-        names: dict[str, str] = {}
-        for row in rows:
-            node = row["node"]
-            if node not in firsts:
-                try:
-                    firsts[node] = datetime.fromisoformat(row["observed_at"])
-                except (TypeError, ValueError):
-                    continue
+            "WHERE node IS NOT NULL AND kind != 'packet'"
+        ):
+            node, iso = row["node"], row["observed_at"]
+            earliest = firsts.get(node)
+            if earliest is None or iso < earliest:
+                firsts[node] = iso
             if row["name"]:
-                names[node] = row["name"]
-        arrivals = [
-            (node, names.get(node), first)
-            for node, first in firsts.items()
-            if since is None or first >= since
-        ]
+                named = names.get(node)
+                if named is None or iso >= named[0]:
+                    names[node] = (iso, row["name"])
+        arrivals: list[tuple[str, Optional[str], datetime]] = []
+        for node, iso in firsts.items():
+            try:
+                first = datetime.fromisoformat(iso)
+            except (TypeError, ValueError):
+                continue
+            if since is None or first >= since:
+                named = names.get(node)
+                arrivals.append((node, named[1] if named else None, first))
         arrivals.sort(key=lambda t: t[2], reverse=True)
         return arrivals
 
@@ -1491,10 +1500,15 @@ class Repository:
         Returns:
             Latest non-empty name keyed by stored node id (the 12-hex key prefix).
         """
+        # SQLite's bare-column-with-MAX guarantee: grouped with ``MAX(observed_at)``, the
+        # ungrouped ``name`` is taken from the row that supplied the maximum — the latest
+        # name per node in one aggregate scan, no Python walk over the whole history.
+        # ``NOT INDEXED``, because the planner otherwise walks ``idx_observations_node``
+        # row by row (a random-access fetch per entry — measurably slower than the scan).
         rows = self._conn.execute(
-            "SELECT node, name FROM observations "
+            "SELECT node, name, MAX(observed_at) FROM observations NOT INDEXED "
             "WHERE node IS NOT NULL AND name IS NOT NULL AND name != '' "
-            "AND kind != 'packet' ORDER BY observed_at"
+            "AND kind != 'packet' GROUP BY node"
         ).fetchall()
         return {row["node"]: row["name"] for row in rows}
 
@@ -1522,24 +1536,55 @@ class Repository:
         if since is not None:
             sql += " AND observed_at >= ?"
             params.append(since.isoformat())
-        rows = self._conn.execute(sql, params).fetchall()
 
-        grouped: dict[Optional[str], list[Observation]] = {}
-        for row in rows:
-            obs = Observation(
-                node=row["node"],
-                public_key=row["public_key"],
-                name=row["name"],
-                node_type=row["node_type"],
-                snr=row["snr"],
-                rssi=row["rssi"],
-                lat=row["lat"],
-                lon=row["lon"],
-                observed_at=datetime.fromisoformat(row["observed_at"]),
+        # One streaming pass, aggregating in place. This is a whole-history scan on the
+        # open path of half the screens (Contacts, the map, a trace's target list), so it
+        # never materializes per-row Observation objects or parses per-row timestamps —
+        # ``observed_at`` is UTC ISO-8601, which compares correctly as a *string*, so each
+        # "most recent X" is tracked by string comparison and only the one winning stamp
+        # per node is parsed at the end. ``>=`` on every comparison keeps the old
+        # sort-then-walk-backwards tie behaviour: among equal stamps, the later row wins.
+        stats: dict[Optional[str], list] = {}
+        for row in self._conn.execute(sql, params):
+            iso = row["observed_at"]
+            snr = row["snr"]
+            s = stats.get(row["node"])
+            if s is None:
+                # [count, snrs, last_iso, last_rssi, name, name_iso, type, type_iso,
+                #  key, key_iso, lat, lon, loc_iso]
+                stats[row["node"]] = s = [
+                    0, [], "", None, None, "", None, "", None, "", None, None, ""
+                ]
+            s[0] += 1
+            if snr is not None:
+                s[1].append(snr)
+            if iso >= s[2]:
+                s[2], s[3] = iso, row["rssi"]
+            if row["name"] and iso >= s[5]:
+                s[4], s[5] = row["name"], iso
+            if row["node_type"] is not None and iso >= s[7]:
+                s[6], s[7] = row["node_type"], iso
+            if row["public_key"] and iso >= s[9]:
+                s[8], s[9] = row["public_key"], iso
+            if row["lat"] is not None and row["lon"] is not None and iso >= s[12]:
+                s[10], s[11], s[12] = row["lat"], row["lon"], iso
+
+        nodes = [
+            HeardNode(
+                node=node,
+                name=s[4],
+                count=s[0],
+                median_snr=statistics.median(s[1]) if s[1] else None,
+                best_snr=max(s[1]) if s[1] else None,
+                last_rssi=s[3],
+                last_seen=datetime.fromisoformat(s[2]),
+                lat=s[10],
+                lon=s[11],
+                node_type=s[6],
+                public_key=s[8],
             )
-            grouped.setdefault(row["node"], []).append(obs)
-
-        nodes = [HeardNode.from_observations(node, obs) for node, obs in grouped.items()]
+            for node, s in stats.items()
+        ]
         for heard in nodes:  # backfill the type registry from history (PicoCalc colour)
             register_node_type(heard.public_key or heard.node, heard.node_type)
         return sorted(nodes, key=lambda n: n.last_seen, reverse=True)

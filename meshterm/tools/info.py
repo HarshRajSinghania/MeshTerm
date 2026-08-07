@@ -41,11 +41,10 @@ class InfoTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing the device name.
         """
-        from ..core.device_config import build_snapshot
-        from ..ui.config_editor import config_table
+        from ..ui.config_editor import cached_snapshot, config_table
 
         device = await ctx.device()
-        snapshot = await build_snapshot(device)
+        snapshot = await cached_snapshot(ctx, device)
         custom = await device.get_custom_vars()
 
         # A live status panel (role, firmware, battery, clock, radio/packet statistics)

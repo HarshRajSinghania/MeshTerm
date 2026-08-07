@@ -248,18 +248,29 @@ class WatchStore:
         self.flush(only_if_due=True)
 
     def mark_silent(self, key: str, when: Optional[datetime] = None) -> None:
-        """Latch a node's active silence alarm so it fires once per quiet spell."""
+        """Latch a node's active silence alarm so it fires once per quiet spell.
+
+        Packet/sweep-driven (like :meth:`note_heard`), so the write is throttled — the
+        full-state save is synchronous on the event loop, and the sentinel flushes any
+        pending change on stop.
+        """
         entry = self.state.watched.get(key)
         if entry is not None:
             entry.silent_since = when or utcnow()
-            self._save()
+            self._dirty = True
+            self.flush(only_if_due=True)
 
     def clear_silent(self, key: str) -> None:
-        """Re-arm a node's silence alarm after it has been heard again."""
+        """Re-arm a node's silence alarm after it has been heard again.
+
+        Packet-driven, so throttled like :meth:`mark_silent` — a recovery burst after an
+        outage must not land one full-state disk write per packet.
+        """
         entry = self.state.watched.get(key)
         if entry is not None and entry.silent_since is not None:
             entry.silent_since = None
-            self._save()
+            self._dirty = True
+            self.flush(only_if_due=True)
 
     # --- the new-node baseline ---------------------------------------------------------
 
@@ -289,7 +300,13 @@ class WatchStore:
     def add_alert(
         self, kind: str, label: str, message: str, *, when: Optional[datetime] = None
     ) -> Alert:
-        """Append an alert to the log (capped) and persist immediately.
+        """Append an alert to the log (capped) and persist, throttled.
+
+        Alerts fire from the packet path (a new mesh region can announce a never-seen
+        node per packet for a while), and the save serializes the whole state
+        synchronously on the event loop — so this batches through the same throttled
+        flush as :meth:`note_heard`. The in-memory log (and the header badge it feeds)
+        updates immediately either way; the sentinel flushes any pending write on stop.
 
         Args:
             kind: The rule that tripped (``silence``/``recovered``/``snr``/``new-node``).
@@ -309,7 +326,8 @@ class WatchStore:
         state.alerts.append(alert)
         if len(state.alerts) > ALERT_CAP:
             del state.alerts[: len(state.alerts) - ALERT_CAP]
-        self._save()
+        self._dirty = True
+        self.flush(only_if_due=True)
         return alert
 
     def alerts(self) -> list[Alert]:

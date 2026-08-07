@@ -69,6 +69,13 @@ class MonitorService:
         # indicator answers "is the mesh alive?", not "any mail?". Pruned as it rolls,
         # so it never holds more than the six-hour window plus one closing bucket.
         self._activity: dict[int, int] = {}
+        # The last histogram/flags tuples, keyed by what they derive from — the current
+        # minute bucket and (for the histogram) the packet-arrival stamp below. The header
+        # rebuilds both on every repaint of every screen; between packets and minute
+        # rolls that was 720 dict lookups a frame for identical tuples.
+        self._activity_stamp = 0
+        self._histogram_cache: tuple[int, int, tuple[int, ...]] = (-1, -1, ())
+        self._flags_cache: tuple[int, tuple[bool, ...]] = (-1, ())
         # Tallies by packet class (advert/telemetry/packet/message/ack): seeded from
         # stored history below, then fed live by the kind-unfiltered subscription —
         # the dashboard's traffic panel, persistent across sessions.
@@ -139,7 +146,14 @@ class MonitorService:
             :data:`ACTIVITY_BUCKETS` bucket counts.
         """
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
-        return tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
+        stamp = self._activity_stamp
+        cached_bucket, cached_stamp, histogram = self._histogram_cache
+        if bucket != cached_bucket or stamp != cached_stamp:
+            histogram = tuple(
+                self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS)
+            )
+            self._histogram_cache = (bucket, stamp, histogram)
+        return histogram
 
     def activity_session_flags(self) -> tuple[bool, ...]:
         """Whether each histogram bucket holds this session's own traffic.
@@ -153,7 +167,11 @@ class MonitorService:
             :data:`ACTIVITY_BUCKETS` flags, newest first.
         """
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
-        return tuple(bucket - i >= self._start_bucket for i in range(ACTIVITY_BUCKETS))
+        cached_bucket, flags = self._flags_cache
+        if bucket != cached_bucket:
+            flags = tuple(bucket - i >= self._start_bucket for i in range(ACTIVITY_BUCKETS))
+            self._flags_cache = (bucket, flags)
+        return flags
 
     def kind_counts(self) -> dict[str, int]:
         """Tallies by packet class: advert/telemetry/packet buckets, message, ack.
@@ -172,6 +190,7 @@ class MonitorService:
         """Land one packet in the current activity bucket (and prune scrolled-off ones)."""
         bucket = int(time.time() // ACTIVITY_BUCKET_S)
         self._activity[bucket] = self._activity.get(bucket, 0) + 1
+        self._activity_stamp += 1  # invalidates the memoized histogram tuple
         obs = event.observation
         kind = obs.kind if obs is not None else event.kind.value
         if obs is not None and kind == "packet":

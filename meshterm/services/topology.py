@@ -74,6 +74,9 @@ _CORROBORATION_MARGIN = 3
 
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
+#: Distinguishes "memoized as None" from "not memoized" in the identity caches.
+_MISS = object()
+
 
 def _is_hex(value: str) -> bool:
     """Whether ``value`` is non-empty, even-length hex (a plausible path hash)."""
@@ -292,6 +295,18 @@ class MeshTopology:
             key = (c.public_key or c.key_prefix or "").lower().removeprefix("0x")
             if key:
                 self._known.append((key, key[:12], c.name))
+        # ``_known`` never changes after construction, and a build feeds the same few
+        # dozen distinct hashes through canonical() thousands of times (every hop of
+        # every stored packet path), so both identity lookups memoize per instance.
+        self._canonical_memo: dict[str, Optional[str]] = {}
+        self._name_memo: dict[str, Optional[str]] = {}
+        # Route search results per (target, k), valid for one graph shape: every link
+        # mutation bumps the version, so a memoized Yen's run can never outlive the
+        # evidence it ranked. Callers ask for the same target twice per screen open
+        # (suggested() and scenarios() both run the search), and the search is the
+        # single priciest part of a topology-backed open.
+        self._graph_version = 0
+        self._routes_memo: dict[tuple[str, int, int], list[tuple[str, ...]]] = {}
 
     # --- identity ----------------------------------------------------------------
 
@@ -313,24 +328,32 @@ class MeshTopology:
         """
         if not hop:
             return None
+        cached = self._canonical_memo.get(hop, _MISS)
+        if cached is not _MISS:
+            return cached
         needle = hop.lower().removeprefix("0x")
         if not _is_hex(needle):
-            return None
-        matches = {
-            canonical
-            for key, canonical, _name in self._known
-            if key.startswith(needle) or needle.startswith(key[:12])
-        }
-        if len(matches) == 1:
-            return next(iter(matches))
-        return needle[:12]
+            result: Optional[str] = None
+        else:
+            matches = {
+                canonical
+                for key, canonical, _name in self._known
+                if key.startswith(needle) or needle.startswith(key[:12])
+            }
+            result = next(iter(matches)) if len(matches) == 1 else needle[:12]
+        self._canonical_memo[hop] = result
+        return result
 
     def display_name(self, node: str) -> Optional[str]:
         """The contact name for a canonical id, or ``None`` when unknown."""
-        for key, canonical, name in self._known:
-            if canonical == node:
-                return name
-        return None
+        cached = self._name_memo.get(node, _MISS)
+        if cached is not _MISS:
+            return cached
+        result = next(
+            (name for _key, canonical, name in self._known if canonical == node), None
+        )
+        self._name_memo[node] = result
+        return result
 
     # --- construction ------------------------------------------------------------
 
@@ -357,6 +380,7 @@ class MeshTopology:
             source: Evidence class tag (``trace`` / ``route`` / ``packet`` /
                 ``neighbour``).
         """
+        self._graph_version += 1  # link evidence moved; memoized route searches expire
         for i in range(len(nodes) - 1):
             a, b = nodes[i], nodes[i + 1]
             if not a or not b or a == b:
@@ -543,6 +567,7 @@ class MeshTopology:
 
     def _merge_node(self, src: str, dst: str) -> None:
         """Relabel every link touching ``src`` onto ``dst``, folding shared links together."""
+        self._graph_version += 1  # the graph is being reshaped; memoized searches expire
         for key in list(self._links):
             if src not in key:
                 continue
@@ -759,8 +784,14 @@ class MeshTopology:
 
         Returns:
             The intermediate-hop tuples of the found routes (endpoints stripped),
-            cheapest total-cost first.
+            cheapest total-cost first. Memoized per graph version (see
+            ``_routes_memo``) — callers treat the list as read-only, which they do
+            (both consumers only iterate it).
         """
+        memo_key = (target, k, self._graph_version)
+        memoized = self._routes_memo.get(memo_key)
+        if memoized is not None:
+            return memoized
         neighbors: dict[str, list[tuple[str, float]]] = {}
         for (a, b), link in self._links.items():
             cost = 1.0 / max(link.strength(self._now), 1e-6) + _HOP_PENALTY
@@ -806,6 +837,7 @@ class MeshTopology:
 
         first = shortest(self.self_id, set(), set())
         if first is None or len(first[1]) - 2 > _MAX_SCENARIO_HOPS:
+            self._routes_memo[memo_key] = []
             return []
         accepted: list[list[str]] = [first[1]]
         # Spur candidates, a min-heap by total cost (counter tiebreaker so equal-cost
@@ -843,7 +875,9 @@ class MeshTopology:
                 break
             _, _, best_path = heapq.heappop(candidates)
             accepted.append(best_path)
-        return [tuple(path[1:-1]) for path in accepted]
+        routes = [tuple(path[1:-1]) for path in accepted]
+        self._routes_memo[memo_key] = routes
+        return routes
 
 
 def build_topology(

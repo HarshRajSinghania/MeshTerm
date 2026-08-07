@@ -29,6 +29,7 @@ box-drawing glyphs are recoloured).
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from itertools import accumulate
 
 from rich.cells import cell_len
@@ -291,6 +292,17 @@ class _Glower:
         self.targets.setdefault(row, []).append((idx, weight))
 
 
+#: Memoized glow output per input block. The pass is pure — the highlight is derived from
+#: the lines alone — and the compositors call it with byte-identical input on every idle
+#: repaint (the 1 Hz header tick recomposes an unchanged screen), so remembering a handful
+#: of recent blocks turns the ~3 ms scan-and-splice into a dict hit. A few entries cover
+#: the layers alive in one frame (the base panel and each stacked dialog).
+_GLOW_CACHE: "OrderedDict[tuple[str, ...], list[str]]" = OrderedDict()
+
+#: Blocks the memo keeps: the base frame plus the deepest realistic dialog stack.
+_GLOW_CACHE_MAX = 12
+
+
 def apply_corner_glow(lines: list[str]) -> list[str]:
     """Light every frame in ``lines`` from its top-left corner.
 
@@ -303,6 +315,17 @@ def apply_corner_glow(lines: list[str]) -> list[str]:
         lines: Composed ANSI lines (one per terminal row, no newlines).
 
     Returns:
-        The lines with the corner highlight applied.
+        The lines with the corner highlight applied. The result is memoized per input
+        block (see :data:`_GLOW_CACHE`) — callers treat it as read-only, which they all
+        do (every compositor only joins or concatenates it onward).
     """
-    return _Glower(lines).apply()
+    key = tuple(lines)
+    cached = _GLOW_CACHE.get(key)
+    if cached is not None:
+        _GLOW_CACHE.move_to_end(key)
+        return cached
+    out = _Glower(lines).apply()
+    _GLOW_CACHE[key] = out
+    if len(_GLOW_CACHE) > _GLOW_CACHE_MAX:
+        _GLOW_CACHE.popitem(last=False)
+    return out

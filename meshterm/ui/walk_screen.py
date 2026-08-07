@@ -245,6 +245,15 @@ class WalkScreen(Screen):
         #: The link list's window (the list scrolls, the screen doesn't); its
         #: settled capacity is the stride a PgUp/PgDn moves the highlight by.
         self._list = ListWindow()
+        # Graph-derived memos. The topology is snapshotted once when the screen opens
+        # (fresh evidence means reopening), so everything derived purely from it —
+        # neighbour lists, the node set, BFS depths, onward-link counts — is computed
+        # once per key instead of once per repaint. Nothing ever invalidates these:
+        # they live exactly as long as the frozen graph they describe.
+        self._links_of_memo: dict[str, list[tuple[str, Link]]] = {}
+        self._all_nodes_memo: Optional[set[str]] = None
+        self._hops_out_memo: Optional[dict[str, int]] = None
+        self._onward_memo: dict[str, dict[str, int]] = {}
 
     # --- state -------------------------------------------------------------------
 
@@ -259,7 +268,14 @@ class WalkScreen(Screen):
         return self._trail[-2] if len(self._trail) > 1 else None
 
     def _links_of(self, node: str) -> list[tuple[str, Link]]:
-        """``(other, link)`` for every link off ``node``, strongest evidence first."""
+        """``(other, link)`` for every link off ``node``, strongest evidence first.
+
+        Memoized per node over the frozen graph (the sort order is pinned at first
+        ask — strength decays over hours, far slower than a screen stays open).
+        """
+        memoized = self._links_of_memo.get(node)
+        if memoized is not None:
+            return memoized
         now = utcnow()
         pairs = [
             (link.b if link.a == node else link.a, link)
@@ -267,15 +283,18 @@ class WalkScreen(Screen):
             if node in (link.a, link.b)
         ]
         pairs.sort(key=lambda pair: -pair[1].strength(now))
+        self._links_of_memo[node] = pairs
         return pairs
 
     def _all_nodes(self) -> set[str]:
         """Every node the graph mentions, plus us (walkable even when alone)."""
-        nodes = {self._topo.self_id}
-        for link in self._topo.links():
-            nodes.add(link.a)
-            nodes.add(link.b)
-        return nodes
+        if self._all_nodes_memo is None:
+            nodes = {self._topo.self_id}
+            for link in self._topo.links():
+                nodes.add(link.a)
+                nodes.add(link.b)
+            self._all_nodes_memo = nodes
+        return self._all_nodes_memo
 
     def _hops_out(self) -> dict[str, int]:
         """BFS hop distance from our own node over the evidence links.
@@ -283,6 +302,8 @@ class WalkScreen(Screen):
         Nodes with no path to us are absent — they are the islands, flagged as such
         wherever a distance would otherwise show.
         """
+        if self._hops_out_memo is not None:
+            return self._hops_out_memo
         adjacency: dict[str, set[str]] = {}
         for link in self._topo.links():
             adjacency.setdefault(link.a, set()).add(link.b)
@@ -295,6 +316,7 @@ class WalkScreen(Screen):
                 if neighbour not in depths:
                     depths[neighbour] = depths[node] + 1
                     queue.append(neighbour)
+        self._hops_out_memo = depths
         return depths
 
     def _matches(self) -> list[str]:
@@ -918,14 +940,24 @@ class WalkScreen(Screen):
         return name_w, key_w
 
     def _onward_counts(self, pairs: list[tuple[str, Link]]) -> dict[str, int]:
-        """How many links continue from each neighbour, the one back here excluded."""
+        """How many links continue from each neighbour, the one back here excluded.
+
+        Memoized per focus (the counts depend only on the frozen graph and whose
+        neighbours are being listed) — this was quadratic per repaint: every
+        neighbour re-walked a fresh copy of the whole link table.
+        """
+        focus = self._focus
+        memoized = self._onward_memo.get(focus)
+        if memoized is not None:
+            return memoized
         counts: dict[str, int] = {}
         for other, _link in pairs:
+            # A link off the neighbour "continues onward" unless its far end is here:
+            # one endpoint is the neighbour itself, so only the far endpoint can be us.
             counts[other] = sum(
-                1
-                for link in self._topo.links()
-                if other in (link.a, link.b) and self._focus not in (link.a, link.b)
+                1 for far, _l in self._links_of(other) if far != focus
             )
+        self._onward_memo[focus] = counts
         return counts
 
     def _link_row(

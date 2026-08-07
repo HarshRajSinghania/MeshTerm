@@ -359,6 +359,8 @@ class NodeDetailScreen(Screen):
         #: it moves onto a route row and holds while it rests on an action row, so the graph
         #: keeps showing the last pick.
         self._route_sel = 0
+        #: The composed route fan for one (width, rows, selection) — see _routes_stage.
+        self._stage_memo: Optional[tuple[tuple, list[str]]] = None
         self._cursor: Optional[int] = None
         #: The route list's window state: the first visible row, the rows the last fit
         #: carried (the PgUp/PgDn stride), and whether any rows are hidden (gates the
@@ -712,6 +714,16 @@ class NodeDetailScreen(Screen):
         if not rv.routes or rv.glyph_of is None:
             return render_lines(Text(rv.note or "no route observed yet", style="muted"), width)
         sel = self._route_sel if 0 <= self._route_sel < len(rv.routes) else 0
+        # The routes view is a snapshot (the opener built it once), so the whole fan —
+        # a multi-pass graph layout — is a pure function of the width, the row budget,
+        # and which route is emphasized. One slot suffices: the key only moves on a
+        # selection change or a resize, and then the previous layout is dead anyway.
+        caption_lines = 1 + (1 if rv.legend else 0)
+        list_need = min(sum(len(block) for block in route_blocks), _LIST_MIN_LINES)
+        max_rows = max(_GRAPH_MIN_ROWS, min(_PATH_MAX_ROWS, budget - caption_lines - list_need))
+        stage_key = (width, max_rows, sel)
+        if self._stage_memo is not None and self._stage_memo[0] == stage_key:
+            return self._stage_memo[1]
         # Priority is fixed by evidence order (route 0, the best-evidence route, is always the
         # spine) so the fan's geometry never moves as the selection changes — only emphasis
         # (which route is drawn white and on top) and the label muting below follow the pick.
@@ -738,9 +750,6 @@ class NodeDetailScreen(Screen):
         def label_rgb_of(node: str):
             return base_rgb(node) if node in on_route else _GREY
 
-        caption_lines = 1 + (1 if rv.legend else 0)
-        list_need = min(sum(len(block) for block in route_blocks), _LIST_MIN_LINES)
-        max_rows = max(_GRAPH_MIN_ROWS, min(_PATH_MAX_ROWS, budget - caption_lines - list_need))
         lines = list(
             render_path_graph(
                 layers,
@@ -755,6 +764,7 @@ class NodeDetailScreen(Screen):
         lines.extend(render_lines(caption, width, no_wrap=True))
         if rv.legend:
             lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
+        self._stage_memo = (stage_key, lines)
         return lines
 
     def _route_row_lines(self, route: _Route, selected: bool, width: int) -> list[str]:

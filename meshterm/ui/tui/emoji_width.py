@@ -416,9 +416,14 @@ def _install_terminal_widths(narrow: frozenset[str], wide: frozenset[str]) -> No
     import prompt_toolkit.utils as ptu
     import rich.cells as cells
 
+    from .render import _ANSI_CACHE
+
     cells.cached_cell_len.cache_clear()
     cells._cell_len = _make_cell_len(narrow, wide)
     ptu._CHAR_SIZES_CACHE = _make_pt_cache(narrow, wide)
+    # The measurement just changed under every renderable, so anything rasterized before
+    # calibration (nothing, in the normal boot order — but never trust that) is stale.
+    _ANSI_CACHE.clear()
 
 
 __all__ = ["calibrate"]

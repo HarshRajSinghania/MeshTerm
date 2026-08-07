@@ -210,6 +210,8 @@ class RecordDialog(Screen):
         self._actions = ("trace", "delete", "back")
         self._index = 0
         self._cursor: Optional[int] = None
+        # The composed card above the action rows, per width (see render_body).
+        self._upper_cache: Optional[tuple[int, list[str]]] = None
         # The card opens at the top, reading down; the arrows drive (and follow) the action
         # cursor, while PgUp/PgDn/Home/End scroll the body free of it (see cursor_line).
         self._follow = False
@@ -430,6 +432,43 @@ class RecordDialog(Screen):
 
     def render_body(self, width: int) -> list[str]:
         """Stats lanes, the route graph, the full route, provenance, then the actions."""
+        # Everything above the action rows — the stat lanes, the area drawing, the
+        # route graph and the provenance — is a pure function of the frozen record
+        # and the width, so it is composed once per width; only the cursor-bearing
+        # action rows below re-render per repaint.
+        cached = self._upper_cache
+        if cached is not None and cached[0] == width:
+            lines = list(cached[1])
+        else:
+            lines = self._upper_lines(width)
+            self._upper_cache = (width, list(lines))
+
+        lines.append("")
+        self._cursor = None
+        for i, key in enumerate(self._actions):
+            if key == "back":
+                lines.append("")
+            selected = i == self._index
+            row = Text("❯ " if selected else "  ", style="brand" if selected else "")
+            if key == "trace":
+                row.append("👣 ", style="accent")
+                row.append("Trace this path — reopen in Trace path")
+            elif key == "delete":
+                row.append("🗑 ", style="err")
+                row.append("Delete record…")
+            else:
+                row.append("Back")
+            if selected:
+                row.style = "brand"
+                self._cursor = len(lines)
+            row.no_wrap = True
+            row.truncate(width, overflow="ellipsis")
+            lines.append(render_to_ansi(row, width))
+        self._scroll_total = max(1, len(lines))
+        return lines
+
+    def _upper_lines(self, width: int) -> list[str]:
+        """Compose the record card above the action rows (memoized per width)."""
         record = self._record
         lines: list[str] = []
 
@@ -472,29 +511,6 @@ class RecordDialog(Screen):
         when = Text(stamp)
         when.append(f" · MeshTerm {record.app_version}", style="muted")
         lines.append(render_to_ansi(self._lane("recorded", when), width, no_wrap=True))
-
-        lines.append("")
-        self._cursor = None
-        for i, key in enumerate(self._actions):
-            if key == "back":
-                lines.append("")
-            selected = i == self._index
-            row = Text("❯ " if selected else "  ", style="brand" if selected else "")
-            if key == "trace":
-                row.append("👣 ", style="accent")
-                row.append("Trace this path — reopen in Trace path")
-            elif key == "delete":
-                row.append("🗑 ", style="err")
-                row.append("Delete record…")
-            else:
-                row.append("Back")
-            if selected:
-                row.style = "brand"
-                self._cursor = len(lines)
-            row.no_wrap = True
-            row.truncate(width, overflow="ellipsis")
-            lines.append(render_to_ansi(row, width))
-        self._scroll_total = max(1, len(lines))
         return lines
 
 
@@ -561,8 +577,16 @@ async def open_records(ctx: "AppContext") -> dict:
         ) else None
         node_entries.append((ident, pos, contact.node_type))
 
+    # Memoized: the boards ask for the same route nodes over and over (every hop of
+    # every record, records sharing hops), and the entry list is fixed for this open —
+    # so each distinct id pays the prefix scan once.
+    geo_memo: dict[str, tuple[Optional[tuple[float, float]], Optional[int]]] = {}
+
     def node_geo(node_id: str) -> tuple[Optional[tuple[float, float]], Optional[int]]:
         """A route node's best-known position and type across the heard/contact entries."""
+        cached = geo_memo.get(node_id)
+        if cached is not None:
+            return cached
         needle = node_id.lower().removeprefix("0x")
         pos: Optional[tuple[float, float]] = None
         ntype: Optional[int] = None
@@ -575,6 +599,7 @@ async def open_records(ctx: "AppContext") -> dict:
                 ntype = etype
             if pos is not None and ntype is not None:
                 break
+        geo_memo[node_id] = (pos, ntype)
         return pos, ntype
 
     def walk_drawing(
@@ -743,6 +768,26 @@ async def open_records(ctx: "AppContext") -> dict:
         ):
             ctx.repo.delete_discoveries(category.id)
 
+    def record_row_title(
+        rank: int, category: Category, record: DiscoveredPath,
+        show_width: bool, score_w: int,
+    ):
+        """A width-aware row title, memoized per width — the record is frozen, so the
+        path-widget assembly and middle-elide only ever run once per render width
+        instead of once per record per repaint."""
+        memo: dict[int, Text] = {}
+
+        def title(width: int) -> Text:
+            cached = memo.get(width)
+            if cached is None:
+                cached = memo[width] = browser_row(
+                    rank, category, record,
+                    show_width=show_width, score_w=score_w, width=width,
+                )
+            return cached
+
+        return title
+
     while True:
         items: list = []
         for category in CATEGORIES:
@@ -759,12 +804,9 @@ async def open_records(ctx: "AppContext") -> dict:
                 items.append(Choice(
                     # Width-aware (see Choice.title): the row re-fits its walk to each
                     # render width, middle-eliding rather than dying at the right edge.
-                    title=(
-                        lambda width, rank=rank, category=category, record=record,
-                        show_width=show_width, score_w=score_w: browser_row(
-                            rank, category, record,
-                            show_width=show_width, score_w=score_w, width=width,
-                        )
+                    title=record_row_title(
+                        rank, category, record,
+                        show_width=show_width, score_w=score_w,
                     ),
                     value=("open", category, rank, record),
                 ))

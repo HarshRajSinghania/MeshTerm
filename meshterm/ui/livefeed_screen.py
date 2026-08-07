@@ -232,11 +232,12 @@ class LiveFeedScreen(Screen):
                 when=utcnow(), kind="ack",
                 where=event.ack.code or "delivery confirmed",
             )
-        if entry is not None:
-            self._feed.appendleft(entry)
-            # Keep the highlight on the same packet as new rows push it down.
-            if self._selected is not None:
-                self._selected = min(self._selected + 1, len(self._feed) - 1)
+        if entry is None:
+            return  # nothing new on screen — don't buy a full repaint for it
+        self._feed.appendleft(entry)
+        # Keep the highlight on the same packet as new rows push it down.
+        if self._selected is not None:
+            self._selected = min(self._selected + 1, len(self._feed) - 1)
         self._session.invalidate()
 
     # --- input -----------------------------------------------------------------------
@@ -739,12 +740,17 @@ async def open_livefeed(ctx: "AppContext") -> None:
         contacts = []
     # Contacts first, every name the recorder ever overheard as the fallback — the
     # app-wide rule that a node we can name never renders as a bare hash.
-    resolve = trace_runner.make_node_resolver(contacts, ctx.repo.node_names())
+    stored_names = ctx.repo.node_names()
+    resolve = trace_runner.make_node_resolver(contacts, stored_names)
     type_of = trace_runner.make_node_type_resolver(contacts)
-    key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
+    key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
-    seed = ctx.repo.recent_observations(since=utcnow() - OBSERVATION_WINDOW)
+    # Only the newest screenful is kept (the deque caps at _FEED_CAP), so only that
+    # many are worth hydrating.
+    seed = ctx.repo.recent_observations(
+        since=utcnow() - OBSERVATION_WINDOW, limit=_FEED_CAP
+    )
     screen = LiveFeedScreen(
         session=session,
         resolve=resolve,

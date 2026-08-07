@@ -183,7 +183,12 @@ def format_value(spec: SettingSpec, value: Any) -> str:
 # --- snapshot ----------------------------------------------------------------
 
 
-async def build_snapshot(device: Device) -> dict:
+async def build_snapshot(
+    device: Device,
+    *,
+    self_info: Optional[dict] = None,
+    path_hash_mode: Optional[int] = None,
+) -> dict:
     """Read a device's full current configuration into one dict.
 
     Merges ``SELF_INFO`` with the separately-read tuning parameters and path-hash mode.
@@ -192,20 +197,28 @@ async def build_snapshot(device: Device) -> dict:
 
     Args:
         device: A connected device.
+        self_info: An already-read ``SELF_INFO`` dict to reuse instead of asking the
+            radio again — a menu caller passes the devstate session cache here, saving
+            a round-trip on every screen open. Omit to read live (a refresh after a
+            restore or reset must not trust any cache).
+        path_hash_mode: An already-read path-hash mode to reuse, on the same terms.
 
     Returns:
         A dict keyed like ``SELF_INFO`` plus ``rx_delay``, ``airtime_factor``,
         ``path_hash_mode``, ``autoadd_config`` and ``flood_scope``.
     """
-    snapshot = dict(await device.get_self_info())
+    snapshot = dict(self_info if self_info is not None else await device.get_self_info())
     try:
         snapshot.update(await device.get_tuning())
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
-    try:
-        snapshot["path_hash_mode"] = await device.get_path_hash_mode()
-    except Exception:  # noqa: BLE001 - optional read; absence is acceptable
-        pass
+    if path_hash_mode is not None:
+        snapshot["path_hash_mode"] = path_hash_mode
+    else:
+        try:
+            snapshot["path_hash_mode"] = await device.get_path_hash_mode()
+        except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+            pass
     try:
         snapshot["autoadd_config"] = await device.get_autoadd_config()
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable

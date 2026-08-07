@@ -11,7 +11,9 @@ automatically when the terminal is resized.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from io import StringIO
+from typing import Optional
 
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
@@ -34,12 +36,62 @@ _CONSOLES: dict[int, Console] = {}
 _COLOR_SYSTEM = "truecolor"
 
 
+#: Memoized ANSI per (content, width) for the *describable* renderables — a ``str`` or a
+#: :class:`Text`, whose rendering is a pure function of their plain text, spans, and flags.
+#: The TUI recomposes the whole frame on every keystroke and on the idle tick, and the
+#: list-family screens rasterize row by row through :func:`render_to_ansi`; between two
+#: paints almost every row is byte-identical, so this cache turns the per-row console
+#: render (~0.15 ms each) into a dict hit. Tables, panels and groups have no cheap content
+#: key and skip the cache (their callers memoize at their own level where it matters).
+_ANSI_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+
+#: Entries the ANSI cache holds before evicting least-recently-used ones. Sized for a few
+#: screenfuls of distinct rows (a busy list, its filtered variants, a dialog over it) at
+#: well under ~2 MB; small enough that even the PicoCalc carries it without noticing.
+_ANSI_CACHE_MAX = 4096
+
+#: Generation stamp folded into every cache key. A platform switch swaps the theme and
+#: colour system baked into the render consoles, so it bumps the generation instead of
+#: trusting eviction — a stale entry can then never be *read*, even mid-eviction.
+_CACHE_GEN = 0
+
+
 @on_platform
 def _bind(platform: Platform) -> None:
     """Re-bind the rasterizer's colour depth and drop stale consoles on a switch."""
-    global _COLOR_SYSTEM
+    global _COLOR_SYSTEM, _CACHE_GEN
     _COLOR_SYSTEM = "truecolor" if platform.truecolor else "standard"
     _CONSOLES.clear()
+    _ANSI_CACHE.clear()
+    _CACHE_GEN += 1
+
+
+def _cache_key(renderable: RenderableType, width: int, no_wrap: bool) -> Optional[tuple]:
+    """A content key for a cacheable renderable, or ``None`` when it has no cheap one.
+
+    A ``str`` *is* its own content (markup included). A :class:`Text` renders as a pure
+    function of its plain text, span list, base style, and wrap flags — everything the
+    key captures (span styles via ``str``, which :class:`~rich.style.Style` memoizes).
+    Anything else — a table, a group, a panel — would need a deep walk to describe, so it
+    reports ``None`` and renders uncached.
+    """
+    if isinstance(renderable, str):
+        return ("s", renderable, width, no_wrap, _CACHE_GEN)
+    if isinstance(renderable, Text):
+        return (
+            "t",
+            renderable.plain,
+            tuple((s.start, s.end, str(s.style)) for s in renderable.spans),
+            str(renderable.style),
+            renderable.no_wrap,
+            renderable.overflow,
+            renderable.justify,
+            renderable.tab_size,
+            width,
+            no_wrap,
+            _CACHE_GEN,
+        )
+    return None
 
 
 def _console(width: int) -> Console:
@@ -85,6 +137,12 @@ def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = Fa
         The rendered output as an ANSI-escaped string, without a trailing newline.
     """
     width = max(1, width)
+    key = _cache_key(renderable, width, no_wrap)
+    if key is not None:
+        cached = _ANSI_CACHE.get(key)
+        if cached is not None:
+            _ANSI_CACHE.move_to_end(key)
+            return cached
     console = _console(width)
     with console.capture() as capture:
         if no_wrap:
@@ -95,7 +153,12 @@ def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = Fa
     # one call is what makes the PicoCalc glyph contract hold app-wide (identity on the
     # regular platform). Widths were measured on the pre-fold text; the fold preserves
     # cell counts (wide emoji become glyph + pad), so the layout above survives it.
-    return fold_text(capture.get())
+    out = fold_text(capture.get())
+    if key is not None:
+        _ANSI_CACHE[key] = out
+        if len(_ANSI_CACHE) > _ANSI_CACHE_MAX:
+            _ANSI_CACHE.popitem(last=False)
+    return out
 
 
 def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> list[str]:
