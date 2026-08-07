@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Optional
 from ..core.channels import CHANNEL_SLOT_PROBE_CAP, channel_identity
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
-from ..core.models import ChatMessage, Contact, Message, utcnow
+from ..core.models import (
+    ChatMessage,
+    Contact,
+    Message,
+    is_direct_messageable,
+    utcnow,
+)
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -45,7 +51,9 @@ class ChatService:
     Interact through the async lifecycle methods (:meth:`start`, :meth:`stop`,
     :meth:`aclose`), the send helpers (:meth:`send_direct`, :meth:`send_channel`), and the
     unread accessors. The currently-open conversation is registered via :meth:`set_active`
-    so its inbound messages don't inflate the unread badge.
+    so its inbound messages don't inflate the unread badge, and :meth:`_notifies` decides
+    which messages raise it at all — the badge counts only conversations the Chat picker can
+    list, while history records everything.
     """
 
     def __init__(self, ctx: "AppContext") -> None:
@@ -163,9 +171,42 @@ class ChatService:
             name = str(payload.get("channel_name") or "")
             secret = bytes(payload.get("channel_secret") or b"\x00" * 16)
             cid = channel_identity(name, secret)
-            self._channel_ids[idx] = cid
+            self._note_slot(idx, cid)
             return cid
+        self._note_slot(idx, None)
         return _fallback_channel_id(idx)
+
+    def _note_slot(self, idx: int, cid: Optional[str]) -> None:
+        """Record a slot's freshly-read identity, dropping stale screen caches when it moved.
+
+        This resolution is the one place in the app that reads a channel slot *per message*, so
+        it is also the first to notice the device's channel table changing under a running
+        session — a slot re-keyed, cleared, or reordered on another client (the phone app), which
+        nothing in this app invalidates. The screens read their channel list from the session
+        cache (:meth:`~meshterm.services.device_state.DeviceState.channel_slots`), which is held
+        until an *in-app* channel edit drops it; left alone it would keep listing the channels the
+        device had at connect time while the recorder files new messages under the identity the
+        slot actually carries now. That divergence is invisible except as a symptom: the header's
+        unread badge counts a conversation the picker has no row for. So a changed slot drops the
+        cache here, and the next screen re-reads the device's real table.
+
+        Args:
+            idx: The channel slot just read.
+            cid: The identity now in that slot, or ``None`` if the slot came back empty.
+        """
+        known = self._channel_ids.get(idx)
+        if cid is None:
+            self._channel_ids.pop(idx, None)
+        else:
+            self._channel_ids[idx] = cid
+        if known is None or known == cid:
+            return
+        self._ctx.log.info(
+            "chat: channel slot %s changed identity; re-reading the device's channels", idx
+        )
+        devstate = getattr(self._ctx, "devstate", None)
+        if devstate is not None:
+            devstate.invalidate_channels()
 
     async def start(self) -> None:
         """Begin recording inbound messages to history. Idempotent.
@@ -268,35 +309,119 @@ class ChatService:
                     if message.is_channel
                     else None
                 )
-                self._store_inbound(run_id, message, channel_id)
+                notify = await self._notifies(message, channel_id)
+                self._store_inbound(run_id, message, channel_id, notify=notify)
             except Exception as exc:  # noqa: BLE001 - one bad message must not kill the worker
                 self._ctx.log.debug("chat: failed to record message: %s", exc)
             finally:
                 self._queue.task_done()
 
     def _store_inbound(
-        self, run_id: int, message: Message, channel_id: Optional[str]
+        self,
+        run_id: int,
+        message: Message,
+        channel_id: Optional[str],
+        *,
+        notify: bool = True,
     ) -> None:
         """Persist an inbound message under a resolved identity and bump its unread count.
 
         The transcript is always recorded; the unread bump is skipped for the open
-        conversation (the user is already reading it) and for a *muted* channel (its new
-        messages don't raise the unread badge — see :class:`~meshterm.core.mute_store.MuteStore`).
-        A muted channel is still written to history, so opening it later shows everything.
+        conversation (the user is already reading it) and whenever ``notify`` is ``False``
+        (a muted channel, or a conversation the Chat picker can't list — see
+        :meth:`_notifies`). A message that doesn't notify is still written to history, so
+        opening its conversation later shows everything.
         """
         chat = ChatMessage.from_message(message, channel_id=channel_id)
         self._session_count += 1
-        if chat.key != self._active and not self._is_muted(chat):
+        if notify and chat.key != self._active:
             self._unread[chat.key] = self._unread.get(chat.key, 0) + 1
         try:
             self._ctx.repo.record_chat_message(chat, run_id=run_id)
         except Exception as exc:  # noqa: BLE001 - never let logging break the subscription
             self._ctx.log.debug("chat: failed to record message: %s", exc)
 
-    def _is_muted(self, chat: ChatMessage) -> bool:
-        """Whether this message belongs to a channel the user has muted notifications for."""
-        store = getattr(self._ctx, "mute_store", None)
-        return bool(chat.is_channel and store is not None and store.is_muted(chat.channel_id))
+    async def _notifies(self, message: Message, channel_id: Optional[str]) -> bool:
+        """Whether this message should raise the header's unread badge — THE badge rule.
+
+        The badge is a pointer, not a tally: its whole job is to send you to a conversation
+        you can open. So it counts only what the Chat picker can actually list — the device's
+        configured channels and the contacts you can direct-message. Everything else is
+        recorded to history and left silent, because a count with no row to open is a badge
+        that can never be cleared.
+
+        What that excludes is, in practice, machine traffic rather than correspondence:
+
+        * A direct message from a node that isn't a DM *recipient* — a repeater, room server,
+          or sensor (see :func:`~meshterm.core.models.is_direct_messageable`), which the picker
+          doesn't list. Every remote-CLI reply from a repeater you administer arrives this way.
+        * A direct message from a sender the contact table doesn't hold at all.
+        * A channel message the device has no configured slot for — including one whose slot
+          couldn't be identified, which carries the slot-derived fallback identity.
+        * A muted channel (see :class:`~meshterm.core.mute_store.MuteStore`), the one
+          suppression the user asks for by hand rather than one the device implies.
+
+        The device is consulted through the session cache, so this costs nothing per message
+        beyond the channel read the identity already needed. Anything the cache can't answer
+        gets the benefit of the doubt and notifies — a missing device state should never be
+        the reason a real message goes unseen.
+
+        Args:
+            message: The inbound message.
+            channel_id: Its resolved channel identity, for a channel message.
+
+        Returns:
+            ``True`` to bump the conversation's unread count.
+        """
+        if message.is_channel:
+            store = getattr(self._ctx, "mute_store", None)
+            if store is not None and store.is_muted(channel_id):
+                return False
+            return await self._is_listed_channel(channel_id)
+        return await self._is_listed_contact(message.sender)
+
+    async def _is_listed_channel(self, channel_id: Optional[str]) -> bool:
+        """Whether a channel identity is one of the device's configured channel slots.
+
+        A message whose slot couldn't be identified carries the slot-derived fallback identity
+        (see :func:`_fallback_channel_id`), which names no channel and matches no row.
+        """
+        if not channel_id or channel_id.startswith("slot:"):
+            return False
+        devstate = getattr(self._ctx, "devstate", None)
+        if devstate is None:
+            return True  # no cache to consult: notify rather than swallow
+        try:
+            slots = await devstate.channel_slots()
+        except Exception as exc:  # noqa: BLE001 - a read failure must not silence a message
+            self._ctx.log.debug("chat: channel-slot lookup failed: %s", exc)
+            return True
+        return any(channel_identity(slot.name, slot.secret) == channel_id for slot in slots)
+
+    async def _is_listed_contact(self, sender: Optional[str]) -> bool:
+        """Whether a direct message's sender is a contact the Chat picker lists.
+
+        Matched the way the live chat matches an inbound sender to its thread: either prefix
+        may be the shorter one, since what the wire addresses and what the contact table stores
+        need not be the same width.
+        """
+        if not sender:
+            return False
+        devstate = getattr(self._ctx, "devstate", None)
+        if devstate is None:
+            return True  # no cache to consult: notify rather than swallow
+        try:
+            contacts = await devstate.contacts()
+        except Exception as exc:  # noqa: BLE001 - a read failure must not silence a message
+            self._ctx.log.debug("chat: contact lookup failed: %s", exc)
+            return True
+        peer = sender.lower()
+        for contact in contacts:
+            for ident in (contact.key_prefix, contact.public_key[:12]):
+                ident = (ident or "").lower()
+                if ident and (ident.startswith(peer) or peer.startswith(ident)):
+                    return is_direct_messageable(contact.node_type)
+        return False
 
     async def _deliver_direct(self, contact: Contact, text: str):
         """Transmit a direct message, softly retrying until it is acknowledged.

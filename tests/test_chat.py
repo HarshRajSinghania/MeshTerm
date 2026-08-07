@@ -1589,3 +1589,200 @@ async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
     assert await ChatTool()._pick_conversation(ctx) is None
     assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer=conv.peer)] == ["hi"]
     assert chat.cleared == []
+
+
+# -- the badge rule: what raises the header's unread count --------------------
+
+
+class _GatedContext(_StubContext):
+    """A context with the device-state cache wired, so the badge rule can consult the device.
+
+    The plain :class:`_StubContext` has none, which is the *benefit of the doubt* path — a
+    message notifies when there is no device state to place it against.
+    """
+
+    def __init__(self, device: MockDevice, repo: Repository) -> None:
+        super().__init__(device, repo)
+        from meshterm.services.device_state import DeviceState
+
+        self.devstate = DeviceState(self)
+
+
+async def _record(chat: ChatService, ctx, message: Message) -> None:
+    """Publish one inbound message and wait for the worker to file it."""
+    ctx.events.publish(MeshEvent.message_event(message))
+    await chat._queue.join()
+
+
+async def test_badge_ignores_direct_messages_from_non_recipients(repo: Repository) -> None:
+    """A repeater's direct messages record to history but never raise the badge.
+
+    Repeaters aren't DM recipients, so the picker doesn't list them — but they do send us
+    direct messages: every remote-CLI reply from a repeater you administer is one. Counting
+    those meant a badge pointing at a conversation with no row, which could never be cleared.
+    """
+    device = MockDevice()  # its Yagi-Repeater contact is a NODE_TYPE_REPEATER
+    ctx = _GatedContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="> ok", sender="a1b2c3d4"))
+        assert chat.unread("dm:a1b2c3d4") == 0
+        # Silent, not dropped — the reply is in the transcript.
+        stored = repo.recent_chat_messages(is_channel=False, peer="a1b2c3d4")
+        assert [m.text for m in stored] == ["> ok"]
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_badge_ignores_a_sender_with_no_contact(repo: Repository) -> None:
+    """A sender the contact table has no record of is recorded silently — no row to open."""
+    device = MockDevice()
+    ctx = _GatedContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="hi", sender="ffee11223344"))
+        assert chat.unread("dm:ffee11223344") == 0
+        assert repo.recent_chat_messages(is_channel=False, peer="ffee11223344")
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_badge_ignores_a_channel_the_device_has_no_slot_for(repo: Repository) -> None:
+    """A channel message with no configured slot behind it stays silent.
+
+    Either the slot holds nothing (so the message carries the slot-derived fallback identity,
+    which names no channel) or the device simply is not listing it — both leave the picker
+    without a row.
+    """
+    device = MockDevice()
+    await device.connect()
+    device._channels[0] = {
+        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+    }
+    ctx = _GatedContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="Bob: yo", channel=3, is_channel=True))
+        assert chat.unread("chan:slot:3") == 0
+        assert repo.recent_chat_messages(is_channel=True, channel_id="slot:3")
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_badge_counts_a_configured_channel_and_a_companion(repo: Repository) -> None:
+    """The positive control: what the picker *does* list still raises the badge."""
+    from meshterm.core.channels import channel_identity
+
+    device = MockDevice()
+    await device.connect()
+    device._channels[0] = {
+        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+    }
+    ctx = _GatedContext(device, repo)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="Ann: hey", channel=0, is_channel=True))
+        await _record(chat, ctx, Message(text="hello", sender="d4e5f6a7"))  # Alice, a companion
+        public = channel_identity("Public", DEFAULT_PUBLIC_SECRET)
+        assert chat.unread(f"chan:{public}") == 1
+        assert chat.unread("dm:d4e5f6a7") == 1
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_badge_notifies_when_the_device_state_is_unavailable(repo: Repository) -> None:
+    """With no device state to place a message against, it notifies rather than going unseen.
+
+    A cold or broken cache is a reason to over-notify, never to swallow a real message.
+    """
+    device = MockDevice()
+    ctx = _StubContext(device, repo)  # deliberately no devstate
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="ping", sender="ffee11223344"))
+        assert chat.unread("dm:ffee11223344") == 1
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_badge_still_respects_a_muted_channel(tmp_path: Path, repo: Repository) -> None:
+    """Muting a configured channel keeps it silent — the hand-set suppression still wins."""
+    from meshterm.core.channels import channel_identity
+    from meshterm.core.mute_store import MuteStore
+
+    device = MockDevice()
+    await device.connect()
+    device._channels[0] = {
+        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+    }
+    public = channel_identity("Public", DEFAULT_PUBLIC_SECRET)
+    ctx = _GatedContext(device, repo)
+    ctx.mute_store = MuteStore(tmp_path / "mutes.json")
+    ctx.mute_store.set_muted(public, True)
+    chat = ChatService(ctx)
+    await chat.start()
+    try:
+        await _record(chat, ctx, Message(text="Ann: hey", channel=0, is_channel=True))
+        assert chat.unread(f"chan:{public}") == 0
+        assert repo.recent_chat_messages(is_channel=True, channel_id=public)
+    finally:
+        await chat.stop()
+        await device.disconnect()
+
+
+async def test_channel_slot_change_drops_the_cached_channel_list(repo: Repository) -> None:
+    """Resolving a slot to a new identity invalidates the screens' cached channel list.
+
+    The recorder reads a slot per message, so it sees a channel re-keyed on another client
+    (the phone app) first. The screens — and the badge rule above — read from the session
+    cache, which only an in-app channel edit drops. Left stale it would keep listing the
+    channels the device had at connect time, and a message on the new channel would go
+    unnoticed because the cached list has no row for it.
+    """
+    from meshterm.core.channels import derive_secret
+
+    device = MockDevice()
+    await device.connect()
+    device._channels[0] = {
+        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+    }
+    ctx = _StubContext(device, repo)
+
+    class _Devstate:
+        def __init__(self) -> None:
+            self.invalidations = 0
+
+        def invalidate_channels(self) -> None:
+            self.invalidations += 1
+
+    ctx.devstate = _Devstate()
+    chat = ChatService(ctx)
+
+    first = await chat.channel_id_for(0)
+    assert ctx.devstate.invalidations == 0  # first sight of a slot is not a change
+    assert await chat.channel_id_for(0) == first
+    assert ctx.devstate.invalidations == 0  # an unchanged slot leaves the cache alone
+
+    # Another client re-keys slot 0 under us.
+    device._channels[0] = {
+        "channel_idx": 0, "channel_name": "#montreal",
+        "channel_secret": derive_secret("#montreal"),
+    }
+    assert await chat.channel_id_for(0) != first
+    assert ctx.devstate.invalidations == 1
+
+    # Clearing the slot is a change too — and yields the slot-derived fallback identity.
+    device._channels.pop(0)
+    assert await chat.channel_id_for(0) == "slot:0"
+    assert ctx.devstate.invalidations == 2
+    await device.disconnect()
