@@ -16,8 +16,6 @@ from pathlib import Path
 from rich.cells import cell_len
 from rich.default_styles import DEFAULT_STYLES
 
-from meshterm.core import nodetypes
-from meshterm.core.nodetypes import node_type_name, register_node_type
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui import theme
 from meshterm.ui.fontset import FONT_CODEPOINTS
@@ -58,7 +56,7 @@ def test_theme16_bold_never_jumps_a_dim_slot_to_an_unrelated_bright_one() -> Non
     """The VT draws bold as brightness: bold on slots 0-7 lands on N+8.
 
     Slots 5 and 6 carry semantics whose bright partners mean something *else* here
-    (5 purple = repeater names vs 13 pink = client names; 6 cyan = rooms/hint.brand vs
+    (5 purple = the repeater mark vs 13 pink = the node mark; 6 cyan = hint.brand vs
     14 = brand), so no style may combine bold with them.
     """
     for name, style in _our_styles(MESH_THEME_16).items():
@@ -174,24 +172,40 @@ def test_fold_drops_zero_width_machinery() -> None:
 # -- name colouring -------------------------------------------------------------------
 
 
-def test_name_style_by_type_reads_the_registry(monkeypatch) -> None:
-    monkeypatch.setattr(nodetypes, "_TYPES_BY_PREFIX", {"3d": "repeater"})
+def test_names_colour_by_key_on_both_platforms() -> None:
+    """One rule everywhere: the key picks the hue, and only its first byte does."""
+    for platform in (REGULAR, PICOCALC):
+        set_platform(platform)
+        hue = name_style("YUL-Cartierville", "3d63c6429436")
+        assert hue.startswith("bold #"), platform.name
+        # Any prefix of the key agrees, a rename does not move the colour, and a sender
+        # we could not place stays muted — colour is reserved for keyed identities.
+        assert name_style("YUL-Cartierville", "3d") == hue
+        assert name_style("renamed", "3d63c6429436") == hue
+        assert name_style("nameless", None) == "muted"
+
+
+def test_picocalc_node_hues_land_on_their_own_palette_slots() -> None:
+    """The quantized wheel spends only the six chromatic bright slots, evenly.
+
+    Each returned hex is a slot's own RGB, so every downsample on the way out — Rich's,
+    and the fold's — lands on that exact slot instead of guessing a neighbour.
+    """
     set_platform(PICOCALC)
-    assert name_style("YUL-Cartierville", "3d63c6429436") == "type.repeater"
-    assert name_style("stranger", "beef") == "muted"  # never registered → muted
-    assert name_style("nameless", None) == "muted"
-    set_platform(REGULAR)
-    assert name_style("YUL-Cartierville", "3d63c6429436").startswith("bold #")
+    slots = {hex_: slot for slot, _, hex_ in theme._VT_SLOTS}
+    landed = [name_style("n", f"{byte:02x}").removeprefix("bold ") for byte in range(256)]
+    assert set(landed) == set(theme._NODE_SLOT_HEXES)
+    assert {slots[hex_] for hex_ in landed} == {9, 10, 11, 12, 13, 14}
+    assert min(landed.count(h) for h in set(landed)) >= 256 // 8  # no starved sector
 
 
-def test_type_registry_round_trip() -> None:
-    register_node_type("A1B2C3", 2)
-    assert node_type_name("a1") == "repeater"
-    assert node_type_name("a1ffff") == "repeater"  # any prefix of the key agrees
-    register_node_type("a1b2c3", None)  # no type carried → no clobber
-    assert node_type_name("a1") == "repeater"
-    assert node_type_name(None) is None
-    assert node_type_name("f") is None  # too short for a first byte
+def test_node_type_marks_stay_distinct_on_the_console() -> None:
+    """Each type mark owns a slot — a naive downsample would grey the repeater's violet."""
+    set_platform(PICOCALC)
+    marks = ("type.node", "type.repeater", "type.room", "type.sensor")
+    rgbs = [theme.mark_rgb(name) for name in marks]
+    assert len(set(rgbs)) == len(marks)
+    assert theme.mark_rgb("type.repeater") != theme.mark_rgb("muted")
 
 
 # -- the font build script stays mirrored ---------------------------------------------

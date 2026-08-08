@@ -109,6 +109,7 @@ from .marks import (  # noqa: F401 - canonical home; re-exported for existing im
     LabelRgbOf,
     parse_hex,
 )
+from .theme import mark_rgb
 
 #: Joins a hop id to its occurrence index when ``allow_duplicate_nodes`` splits a path's
 #: revisits into their own markers. Leans on the same guarantee the endpoint sentinels do —
@@ -438,7 +439,9 @@ def render_path_graph(
             hop sequences collapse to one drawn path owned by the highest priority among them.
         width: Canvas width in character cells.
         glyph_of: Marker glyph + colour per node id (endpoints keyed by
-            :data:`SRC_NODE` / :data:`DST_NODE`).
+            :data:`SRC_NODE` / :data:`DST_NODE`). The colour is whatever
+            :func:`~meshterm.ui.theme.mark_rgb` takes — a literal ``#rrggbb`` or a theme
+            style name.
         label_of: Label text per node id (``None``/``""`` = bare marker). A label is
             kept whole unless it is wider than the canvas, when it is ellipsized to fit.
         label_rgb_of: Label colour per node id.
@@ -620,8 +623,8 @@ def render_path_graph(
 
     # -- Markers for every node (endpoints and relays alike each draw once).
     for node in ordered_nodes:
-        glyph, color_hex = glyph_of(node)
-        canvas.marker(*pos[node], glyph, parse_hex(color_hex))
+        glyph, colour = glyph_of(node)
+        canvas.marker(*pos[node], glyph, mark_rgb(colour))
 
     _place_labels(canvas, ordered_nodes, pos, node_lane, width, rows * 2, label_of, label_rgb_of)
     return canvas.to_ansi_lines()

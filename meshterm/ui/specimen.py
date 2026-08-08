@@ -19,9 +19,10 @@ from .packet_viewer import KIND_ICONS, PAYLOAD_ICONS
 from .theme import _VT_SLOTS, fold_text, glyph, name_style, snr_style
 from .widgets import _recency_style, channel_glyph
 
-#: Demo identities for the name-colour row: (name, key, node type registered for it).
-#: Keys are synthetic and only ever registered inside the one-shot specimen process.
-_DEMO_NAMES = (("Alice", "a1b2", 1), ("YUL-Poly", "3d63", 2), ("Lounge", "cc10", 3))
+#: Demo identities for the name-colour row: ``(name, key)``. The keys are synthetic, and
+#: chosen so their first bytes land in three different sectors of the hue wheel — on the
+#: console that means three different palette slots (see ``theme._NODE_SLOT_HEXES``).
+_DEMO_NAMES = (("Alice", "a1b2"), ("YUL-Poly", "3d63"), ("Lounge", "cc10"))
 
 
 def _palette_row() -> Text:
@@ -50,14 +51,12 @@ def _ages_row() -> Text:
 
 def specimen_lines() -> list[RenderableType]:
     """The specimen card, one renderable per line (print through the themed console)."""
-    from meshterm.core.nodetypes import register_node_type
-
     platform = get_platform()
     lines: list[RenderableType] = []
     lines.append(Text.assemble(("Specimen", "accent"), ("  ·  ", "muted"), platform.name))
     lines.append(Text())
     lines.append(_palette_row())
-    legend = Text("stock palette · 8 muted · 13 clients · 15 you", style="muted")
+    legend = Text("stock palette · 8 muted · 9-14 node hues · 15 you", style="muted")
     lines.append(legend)
     lines.append(Text())
 
@@ -66,10 +65,11 @@ def specimen_lines() -> list[RenderableType]:
         status.append(mark + " ", style=style)
     lines.append(status)
 
-    # The node marks wear the *type* styles (not the map's raw hex colours): on the
-    # console they resolve to exact palette slots, and the row then agrees with the
-    # names row below it. Raw hex here would also trip Rich's per-Style ANSI memo —
-    # a style first rendered by a truecolor console replays truecolor everywhere.
+    # The node-type marks in the theme's own ``type.*`` entries — the same styles every
+    # typed node in the app is drawn in (ui.widgets._NODE_GLYPHS), so this row *is* the
+    # marker language rather than a restatement of it. The star and the unknown ring have
+    # no type of their own: they take the ``you`` white and ``muted`` grey they carry
+    # everywhere else.
     nodes = Text("nodes   ")
     nodes.append("★ ", style="you")
     for mark, style in (
@@ -105,10 +105,8 @@ def specimen_lines() -> list[RenderableType]:
     lines.append(Text("keys    ⌫ ⇧ … ↕ ↔ ↻ ⌖ ❯ ▸"))
     lines.append(Text())
 
-    for name, key, node_type in _DEMO_NAMES:
-        register_node_type(key, node_type)
     names = Text("names   ")
-    for name, key, _ in _DEMO_NAMES:
+    for name, key in _DEMO_NAMES:
         names.append(name + "  ", style=name_style(name, key))
     names.append("me", style="you")
     lines.append(names)

@@ -62,12 +62,10 @@ class Platform:
         ascii_fold: Whether names and message bodies are NFKD-folded (accents stripped) at
             the render boundary before display. Storage is never touched. Wired in P3.
         truecolor: Whether the theme may use arbitrary 24-bit SGR colour. ``False`` selects
-            a 16-slot palette theme instead (the console's real ceiling — no per-cell RGB).
-            Wired in P3.
-        name_colour: ``"key"`` (today's per-node hash-derived hue spectrum) or ``"type"``
-            (colour by node type — client/repeater/room/sensor — because PicoCalc's 16
-            colour slots can't also afford a hash spectrum without collisions). Wired into
-            :func:`~meshterm.ui.theme.name_style` in P3.
+            a 16-slot palette theme instead (the console's real ceiling — no per-cell RGB),
+            and quantizes the two scales that would otherwise spend a gradient — the
+            per-node key hue (:func:`~meshterm.ui.theme.node_style`) and the heard-age heat
+            (:func:`~meshterm.ui.widgets._recency_style`). Wired in P3.
         effects: Whether animated/decorative rendering runs at all: corner glow, the
             header battery blink, the braille spinner. ``False`` drops to static chrome
             and a ``LINE`` spinner fallback — cheaper, and the glow already no-ops on a
@@ -106,7 +104,6 @@ class Platform:
     emoji: bool
     ascii_fold: bool
     truecolor: bool
-    name_colour: str
     effects: bool
     tick_s: float
     spinner_tick_s: float
@@ -126,7 +123,6 @@ REGULAR = Platform(
     emoji=True,
     ascii_fold=False,
     truecolor=True,
-    name_colour="key",
     effects=True,
     tick_s=1.0,
     spinner_tick_s=0.12,
@@ -135,7 +131,7 @@ REGULAR = Platform(
 )
 
 #: The PicoCalc/Lyra/Calculinux framebuffer console. Field values not yet consumed by a
-#: binding point (header_atoms, ascii_fold, truecolor, name_colour, effects beyond the
+#: binding point (header_atoms, ascii_fold, truecolor, effects beyond the
 #: two P1 bindings, tick_s, battery, modifier_watch) are P2–P5's targets, recorded here
 #: now so the seam exists before the flavour work lands — see .claude/plans/picocalc-platform.md.
 PICOCALC = Platform(
@@ -152,7 +148,6 @@ PICOCALC = Platform(
     emoji=False,
     ascii_fold=True,
     truecolor=False,
-    name_colour="type",
     effects=False,
     tick_s=2.0,
     spinner_tick_s=0.5,

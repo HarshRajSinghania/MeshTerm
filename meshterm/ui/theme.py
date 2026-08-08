@@ -20,7 +20,6 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.theme import Theme
 
-from ..core.nodetypes import node_type_name
 from ..platforms import Platform, on_platform
 from .fontset import FONT_CODEPOINTS
 
@@ -87,15 +86,15 @@ MESH_THEME = Theme(
         "batt.mid": "bold #fb923c",
         "batt.low": "bold #f87171",
         "batt.dim": "#475569",
-        # Node-type colours, used where the platform colours names by *type* instead of by
-        # key (PicoCalc — see name_style). Defined in both themes so the names always
-        # resolve; the regular platform simply never asks for them. Hues follow the map's
-        # marker language: clients the map's pink, repeaters its violet, sensors its
-        # orange; rooms take a teal of their own (the map's white square is reserved for
-        # "you" in name contexts).
+        # The node-type *marks* — THE colours behind ● ▲ ■ ◉ wherever a typed node is
+        # drawn (see ui.widgets._NODE_GLYPHS), and the map's own marker language: clients
+        # the loud pink, repeaters the calmer violet, rooms a white square, sensors an
+        # orange ringed dot. Named styles rather than raw hex so the 16-slot console picks
+        # its slot *deliberately* — a naive downsample of the violet lands on grey, which
+        # would make a repeater read as an unknown node.
         "type.node": "#f472b6",
         "type.repeater": "#a78bfa",
-        "type.room": "#5eead4",
+        "type.room": "#ffffff",
         "type.sensor": "#fb923c",
         # The heard-age heat scale's quantized steps (hot → cold). The regular platform
         # interpolates a continuous gradient instead (ui.widgets._recency_style); these
@@ -123,26 +122,28 @@ MESH_THEME = Theme(
 #: * The kernel VT renders **bold as brightness**: ``bold`` on a 0–7 foreground jumps it
 #:   to slot N+8. A style may only combine ``bold`` with a dim slot when the bright
 #:   partner keeps its meaning — and never with 5/6, whose partners are claimed by
-#:   *different* semantics here (5 purple = repeater names, 13 pink = client names;
-#:   6 cyan = room names/hint.brand, 14 bright cyan = brand).
+#:   *different* semantics here (5 purple = the repeater mark, 13 pink = the node mark;
+#:   6 cyan = hint.brand, 14 bright cyan = brand).
 #: * Backgrounds can only address slots 0–7 (SGR 40–47).
+#: * The six *chromatic bright* slots (9-14) are the node-name spectrum's landing zone —
+#:   the console's rendering of the key-derived hue wheel (see :data:`_NODE_SLOT_HEXES`).
 _VT_SLOTS: tuple[tuple[int, str, str], ...] = (
     (0, "background (black)", "#000000"),
     (1, "red (hint.err)", "#aa0000"),
     (2, "green (hint.ok)", "#00aa00"),
-    (3, "brown/orange (hint.warn, batt.mid, heat.cool, sensors)", "#aa5500"),
+    (3, "brown/orange (hint.warn, batt.mid, heat.cool, the sensor mark)", "#aa5500"),
     (4, "blue (hint.accent, bluetooth bg)", "#0000aa"),
-    (5, "purple (repeater names)", "#aa00aa"),
-    (6, "cyan (room names, hint.brand)", "#00aaaa"),
+    (5, "purple (the repeater mark)", "#aa00aa"),
+    (6, "cyan (hint.brand)", "#00aaaa"),
     (7, "light grey (default text, heat.cold)", "#aaaaaa"),
     (8, "dark grey (muted, faint, track)", "#555555"),
-    (9, "bright red (err)", "#ff5555"),
-    (10, "bright green (ok)", "#55ff55"),
-    (11, "bright yellow (warn, heat.warm)", "#ffff55"),
-    (12, "bright blue (accent)", "#5555ff"),
-    (13, "bright pink (client names — the map's pink, for free)", "#ff55ff"),
-    (14, "bright cyan (brand)", "#55ffff"),
-    (15, "white (you, heat.hot)", "#ffffff"),
+    (9, "bright red (err; node hue 0°)", "#ff5555"),
+    (10, "bright green (ok; node hue 120°)", "#55ff55"),
+    (11, "bright yellow (warn, heat.warm; node hue 60°)", "#ffff55"),
+    (12, "bright blue (accent; node hue 240°)", "#5555ff"),
+    (13, "bright pink (the node mark — the map's pink, for free; node hue 300°)", "#ff55ff"),
+    (14, "bright cyan (brand; node hue 180°)", "#55ffff"),
+    (15, "white (you, heat.hot, the room mark)", "#ffffff"),
 )
 
 #: The custom 16-slot remap P3 originally shipped (tailwind-family RGBs programmed via
@@ -232,7 +233,7 @@ MESH_THEME_16 = Theme(
         "batt.dim": "color(8)",
         "type.node": "color(13)",
         "type.repeater": "color(5)",
-        "type.room": "color(6)",
+        "type.room": "color(15)",
         "type.sensor": "color(3)",
         "heat.hot": "bold color(15)",
         "heat.warm": "color(11)",
@@ -251,6 +252,43 @@ MESH_THEME_16 = Theme(
 def active_theme() -> Theme:
     """The platform's theme — :data:`MESH_THEME`, or :data:`MESH_THEME_16` on PicoCalc."""
     return _ACTIVE_THEME
+
+
+def mark_rgb(colour: str) -> tuple[int, int, int]:
+    """A marker colour as an RGB triple — for the braille rasters.
+
+    A canvas paints in RGB, not in styles (see :mod:`~meshterm.ui.mapcanvas`), so a marker
+    that wants to agree with its Rich-drawn twin resolves the *same colour* through here.
+    Takes either encoding the marker language uses: a literal ``#rrggbb`` (the fixed map
+    marks in :mod:`~meshterm.ui.marks`) or a theme style name (the node-type marks, which
+    are named so each platform picks its own — see the theme's ``type.*``).
+
+    On the 16-slot theme a ``color(N)`` entry resolves to that slot's own :data:`_VT_SLOTS`
+    RGB rather than Rich's stock triple: Rich's palette is a shade off ours and the fold's
+    quantizer matches against ours, so the round trip would otherwise land the marker on a
+    neighbouring slot. Memoized (cleared on a platform switch); a raster asks per node.
+
+    Args:
+        colour: ``#rrggbb``, or a style name defined in both themes.
+
+    Returns:
+        The ``(r, g, b)`` triple; mid-grey for a style with no colour of its own.
+    """
+    cached = _STYLE_RGB.get(colour)
+    if cached is None:
+        if colour.startswith("#"):
+            cached = (int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16))
+        else:
+            color = _ACTIVE_THEME.styles[colour].color
+            if color is None:
+                cached = (0xAA, 0xAA, 0xAA)
+            elif color.number is not None and color.number < len(_SLOT_RGBS):
+                cached = _SLOT_RGBS[color.number]
+            else:
+                triplet = color.get_truecolor()
+                cached = (triplet.red, triplet.green, triplet.blue)
+        _STYLE_RGB[colour] = cached
+    return cached
 
 
 def make_console() -> Console:
@@ -312,26 +350,47 @@ def hint_style(border_style: str) -> str:
 #: The per-node hue *spectrum*: a node's first key byte maps straight onto the HSV colour
 #: wheel — ``0x00`` is red, sweeping the full spectrum round to ``0xff`` — at a fixed
 #: saturation and value tuned to stay vivid and readable on the dark theme across every hue.
-#: So all 256 first-byte values give 256 distinct hues, rather than folding onto a handful
-#: of palette entries. The app-wide rule is unchanged: a node's *name* is always coloured —
-#: by this spectrum, keyed on the node's key (see :func:`node_style`) so the colour is the
-#: node's identity, surviving renames and colouring every surface that knows any prefix of
-#: the key identically — and our own node is always the pure-white ``you`` style instead,
-#: so "us" never blends into the crowd. Shared by the node lists, the chat transcript, the
-#: dashboard feed, and the packet viewer, so one node reads as one colour everywhere.
+#: So all 256 first-byte values give 256 distinct hues on a truecolor terminal. The app-wide
+#: rule holds on every platform: a node's *name* is always coloured — by this wheel, keyed
+#: on the node's key (see :func:`node_style`) so the colour is the node's identity, surviving
+#: renames and colouring every surface that knows any prefix of the key identically — and our
+#: own node is always the pure-white ``you`` style instead, so "us" never blends into the
+#: crowd. Shared by the node lists, the chat transcript, the dashboard feed, and the packet
+#: viewer, so one node reads as one colour everywhere.
 _NODE_HUE_SAT = 0.65
 _NODE_HUE_VAL = 0.95
+
+#: The same wheel at the PicoCalc console's resolution: the six *chromatic bright* palette
+#: slots, listed in hue order from red so index ``round(byte / 256 * 6) % 6`` is the sector
+#: the byte's hue falls in — 60° apart, an even sixth of the wheel each. Written as the
+#: slots' own :data:`_VT_SLOTS` RGBs rather than as ``color(N)`` so the value is still a
+#: hex a caller can parse into an RGB (the map canvas and the mesh walk read the hue back
+#: out of the style string), and so every downsample on the way out — Rich's, and the
+#: fold's :func:`_quantize_sgr` — lands on that exact slot rather than guessing.
+_NODE_SLOT_HEXES: tuple[str, ...] = (
+    "#ff5555",   # 9  red      —   0°
+    "#ffff55",   # 11 yellow   —  60°
+    "#55ff55",   # 10 green    — 120°
+    "#55ffff",   # 14 cyan     — 180°
+    "#5555ff",   # 12 blue     — 240°
+    "#ff55ff",   # 13 magenta  — 300°
+)
 
 
 def node_style(key: str) -> str:
     """The stable spectrum hue a node's *key* selects — the hash-derived node colour.
 
     The node's first key byte is mapped straight onto the HSV colour wheel (``0x00`` red,
-    sweeping round to ``0xff``) at a fixed saturation/value (:data:`_NODE_HUE_SAT`,
-    :data:`_NODE_HUE_VAL`), so all 256 first-byte values give 256 distinct hues. Only the
-    first byte picks the colour, so any prefix of the key a surface happens to hold — a
+    sweeping round to ``0xff``), so the colour is the node's identity: it survives a
+    rename, and only the first byte picks it, so any prefix a surface happens to hold — a
     2-hex path hop, the stored 12-hex id, the full 64-hex public key — lands on the same
-    hue: one node, one colour, however it was learned.
+    hue. One node, one colour, however it was learned.
+
+    The *rule* is the platform's only constant here; its resolution is not. The regular
+    platform spends the full spectrum (:func:`_node_style_spectrum`, 256 distinct hues at
+    a fixed saturation/value); PicoCalc snaps the same hue to the nearest of the console's
+    six chromatic slots (:func:`_node_style_quantized`), exactly as the heard-age heat
+    scale quantizes its gradient there. Bound at platform-switch time.
 
     Args:
         key: The node's key/hash as hex (any length ≥ 1 byte, ``0x``/mixed-case tolerated).
@@ -339,25 +398,42 @@ def node_style(key: str) -> str:
     Returns:
         A ``"bold #rrggbb"`` style string.
     """
+    return _node_impl(key)
+
+
+def _key_byte(key: str) -> int:
+    """The node's first key byte — the only slice any hue derives from."""
     raw = key.lower().removeprefix("0x")
     try:
-        byte = int(raw[:2], 16)
+        return int(raw[:2], 16)
     except ValueError:  # not hex — fall back to the character sum so *something* stable shows
-        byte = sum(map(ord, raw)) % 256
-    r, g, b = colorsys.hsv_to_rgb(byte / 256, _NODE_HUE_SAT, _NODE_HUE_VAL)
+        return sum(map(ord, raw)) % 256
+
+
+def _node_style_spectrum(key: str) -> str:
+    """Regular platform: the full 256-hue wheel at :data:`_NODE_HUE_SAT`/``_VAL``."""
+    r, g, b = colorsys.hsv_to_rgb(_key_byte(key) / 256, _NODE_HUE_SAT, _NODE_HUE_VAL)
     return f"bold #{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+
+
+def _node_style_quantized(key: str) -> str:
+    """PicoCalc: the same hue, snapped to its sixth of the wheel (:data:`_NODE_SLOT_HEXES`).
+
+    Deliberate rather than left to a nearest-RGB downsample: the spectrum's pastels sit
+    close enough to white that a naive match would drain the loudest hues toward grey,
+    and grey is ``muted``'s — an unkeyed sender. Snapping by hue keeps all six families
+    saturated and evenly populated (~43 of the 256 first bytes each).
+    """
+    sector = round(_key_byte(key) / 256 * len(_NODE_SLOT_HEXES)) % len(_NODE_SLOT_HEXES)
+    return f"bold {_NODE_SLOT_HEXES[sector]}"
 
 
 def name_style(name: str, key: Optional[str] = None) -> str:
     """The stable colour a node or sender name is drawn in — keyed on the node's key.
 
-    On the regular platform the hue is :func:`node_style`'s hash-derived spectrum, so a
-    rename keeps the colour and every surface that knows the key agrees. On PicoCalc
-    (``name_colour="type"``) the 16-slot palette can't afford a hue spectrum on top of
-    the semantic colours, so the name takes its node's *type* colour instead
-    (``type.node``/``type.repeater``/``type.room``/``type.sensor``), looked up in the
-    :mod:`~meshterm.core.nodetypes` registry the reception layer feeds. The dispatch is
-    bound at platform-switch time — this wrapper stays importable by name everywhere.
+    One rule on every platform: the hue is :func:`node_style`'s key-derived spectrum, so a
+    rename keeps the colour and every surface that knows any prefix of the key agrees.
+    Only the *resolution* changes with the platform (see :func:`node_style`).
 
     Args:
         name: The display name (unused for the hue; kept so every call site reads
@@ -371,27 +447,7 @@ def name_style(name: str, key: Optional[str] = None) -> str:
         A style for the name; the same node always maps to the same style on a given
         platform, so it keeps its colour across screens and sessions.
     """
-    return _name_impl(name, key)
-
-
-def _name_style_by_key(name: str, key: Optional[str] = None) -> str:
-    """Regular-platform name colouring: the hash-derived spectrum (``muted`` keyless)."""
-    if key:
-        return node_style(key)
-    return "muted"
-
-
-def _name_style_by_type(name: str, key: Optional[str] = None) -> str:
-    """PicoCalc name colouring: the node's registered *type* picks a palette colour.
-
-    An unknown type — never heard with one, or no key at all — stays ``muted``: colour
-    remains reserved for identities we actually know something about. A first-byte
-    prefix collision types by whichever node registered last (colour is a hint).
-    """
-    if not key:
-        return "muted"
-    node_type = node_type_name(key)
-    return f"type.{node_type}" if node_type else "muted"
+    return node_style(key) if key else "muted"
 
 
 # -- the compact icon language (PicoCalc) ---------------------------------------------
@@ -699,19 +755,24 @@ def snr_style(snr: float | None) -> str:
 # -- platform binding ------------------------------------------------------------------
 
 _ACTIVE_THEME: Theme = MESH_THEME
-_name_impl: Callable[[str, Optional[str]], str] = _name_style_by_key
+_node_impl: Callable[[str], str] = _node_style_spectrum
 _glyph_impl: Callable[[str], str] = _glyph_identity
 _fold_impl: Callable[[str], str] = _no_fold
+
+#: Marker colour → RGB, filled by :func:`mark_rgb` and dropped on a platform switch (the
+#: answer is the *active* theme's).
+_STYLE_RGB: dict[str, tuple[int, int, int]] = {}
 
 
 @on_platform
 def _bind(platform: Platform) -> None:
     """Bind the theme's platform-dependent choices (runs now and on every switch)."""
-    global _ACTIVE_THEME, _name_impl, _glyph_impl, _fold_impl, _FOLD_TABLE
+    global _ACTIVE_THEME, _node_impl, _glyph_impl, _fold_impl, _FOLD_TABLE
     _ACTIVE_THEME = MESH_THEME if platform.truecolor else MESH_THEME_16
-    _name_impl = _name_style_by_key if platform.name_colour == "key" else _name_style_by_type
+    _node_impl = _node_style_spectrum if platform.truecolor else _node_style_quantized
     _glyph_impl = _glyph_identity if platform.emoji else _glyph_compact
     _fold_impl = _fold_to_font if platform.ascii_fold else _no_fold
+    _STYLE_RGB.clear()
     # The fold table's emoji pads are computed with cell_len at build time. Cell widths
     # can be re-measured/patched (the emoji-width calibration on the regular platform),
     # so a platform switch drops the table and cache rather than trusting stale pads.

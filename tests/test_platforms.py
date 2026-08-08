@@ -29,7 +29,6 @@ def test_picocalc_is_the_narrower_plainer_flavour() -> None:
     assert PICOCALC.width_reclaim is False  # a phantom column would tear the exact-width frame
     assert PICOCALC.emoji is False
     assert PICOCALC.truecolor is False
-    assert PICOCALC.name_colour == "type"
 
 
 def test_get_platform_defaults_to_regular() -> None:

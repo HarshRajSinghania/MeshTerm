@@ -132,6 +132,7 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 
 - Node names are always coloured: `name_style(name, key)` palette hue, derived from the
   node's key (its first byte — any known prefix agrees) so a rename keeps the colour.
+  One rule on **every** platform; only the resolution changes (see **Platforms**).
   A surface holding only a name resolves it first (`make_name_key_resolver`); a name
   no known node carries stays muted — colour is reserved for keyed identities, never
   seeded from a name's characters. Our own node
@@ -169,8 +170,13 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
 - The 16-slot palette is `theme._VT_SLOTS` (programmed via `/etc/vtrgb`; same script).
   `MESH_THEME_16` speaks `color(0..15)` only; bold is brightness on the VT (never bold
   slots 5/6); backgrounds stop at slot 7. Both themes define identical style names.
-- On picocalc, names colour by node **type** (`core/nodetypes` registry), heat
-  quantizes to the `heat.*` steps, and footer hints are replaced by the **F-key lane**
+- On picocalc, the node hue and the heat gradient **quantize** — same rule, coarser
+  resolution: `node_style` snaps the key's hue to its sixth of the wheel
+  (`theme._NODE_SLOT_HEXES`, the six chromatic bright slots) and heat to the `heat.*`
+  steps. Nothing loses its colour for being on the console. Marks whose hue is *fixed*
+  rather than derived go through a theme name so the slot is chosen deliberately (the
+  node types' `type.*`; a raster resolves the same entry via `theme.mark_rgb`) — a naive
+  downsample greys the repeater's violet. Footer hints are replaced by the **F-key lane**
   (`ui/tui/fkeys.py`): five `FPair` slots per screen, F1–F5 primary and F6–F10 their
   paired opposites (physical Shift+F1..F5), labels ≤7 cells. Screens override
   `fkey_lane` for their own verbs; slots 3/4 are the customary free pair. **A chip names

@@ -70,7 +70,7 @@ from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
-from .mapcanvas import RGB, parse_hex
+from .mapcanvas import RGB
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -83,7 +83,7 @@ from .pathgraph import (
     bidir_clusters,
     render_path_graph,
 )
-from .theme import name_style, snr_style
+from .theme import mark_rgb, name_style, snr_style
 from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
 from .pathline import PathHop, PathLine, path_line
 from .tui.screen import CANCEL, ListWindow, Screen
@@ -1253,7 +1253,7 @@ def _cluster_presentation(members: tuple[str, ...], type_of) -> _Cluster:  # noq
     else:
         glyph, color = _DEFAULT_GLYPH
         kind = "node"
-    return _Cluster(glyph=glyph, color=color, label=f"{len(members)} {kind}s", rgb=parse_hex(color))
+    return _Cluster(glyph=glyph, color=color, label=f"{len(members)} {kind}s", rgb=mark_rgb(color))
 
 
 def _contract_bidir_clusters(

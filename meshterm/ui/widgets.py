@@ -52,7 +52,7 @@ from .marks import (
     parse_hex,
 )
 from .pathline import PathLine, path_line
-from .theme import glyph, name_style, node_style, snr_style
+from .theme import glyph, mark_rgb, name_style, node_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
@@ -770,28 +770,31 @@ def stats_panel(
 # ``●`` and repeaters the calmer violet ``▲``. The remaining types take map-safe hues that
 # stay distinct from those — a white square for rooms (the house glyph read poorly) and an
 # orange ringed dot for sensors. All are single-width BMP glyphs so columns stay aligned.
-_ROOM_COLOR = "#ffffff"
-_SENSOR_COLOR = "#fb923c"
+# The colours are the theme's ``type.*`` entries rather than raw hex, so the 16-slot console
+# picks its slot deliberately (the violet would otherwise downsample to grey, and a repeater
+# would read as an unknown node); on the regular platform they *are* the map's hues.
 _NODE_GLYPHS: dict[int, tuple[str, str]] = {
-    NODE_TYPE_REPEATER: (REPEATER_MARK[0], REPEATER_MARK[1]),
-    NODE_TYPE_ROOM: ("■", _ROOM_COLOR),
-    NODE_TYPE_SENSOR: ("◉", _SENSOR_COLOR),
-    NODE_TYPE_CHAT: (NODE_MARK[0], NODE_MARK[1]),
+    NODE_TYPE_REPEATER: (REPEATER_MARK[0], "type.repeater"),
+    NODE_TYPE_ROOM: ("■", "type.room"),
+    NODE_TYPE_SENSOR: ("◉", "type.sensor"),
+    NODE_TYPE_CHAT: (NODE_MARK[0], "type.node"),
 }
-_DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], NODE_MARK[1])
+_DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], "type.node")
 
 
 def node_marker(node_type: Optional[int]) -> tuple[str, RGB]:
-    """The map-palette glyph and truecolour for a node type, as a ``(glyph, rgb)`` pair.
+    """The map-palette glyph and colour for a node type, as a ``(glyph, rgb)`` pair.
 
     The shared node-type marks (``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` plain
     node) in the map's own colours, minted here for a braille raster the way
     :data:`_NODE_GLYPHS` mints them for a Rich row — so a spatial drawing pins its nodes
-    in the exact glyphs and hues the map and the nodes list use. An unknown type falls
-    back to the plain node mark.
+    in the exact glyphs and hues the map and the nodes list use. Both read the same
+    ``type.*`` theme entry (through :func:`~meshterm.ui.theme.mark_rgb` here), so the
+    raster and the row agree on whatever the platform's palette can afford. An unknown
+    type falls back to the plain node mark.
     """
-    glyph, color = _NODE_GLYPHS.get(node_type or -1, _DEFAULT_GLYPH)
-    return glyph, parse_hex(color)
+    glyph, style = _NODE_GLYPHS.get(node_type or -1, _DEFAULT_GLYPH)
+    return glyph, mark_rgb(style)
 
 
 def self_marker() -> tuple[str, RGB]:
