@@ -14,6 +14,7 @@ projected to the screen by :class:`meshterm.core.geo.Viewport`.
 from __future__ import annotations
 
 import gzip
+import marshal
 from dataclasses import dataclass, field
 from typing import Any, Container, Optional
 
@@ -328,3 +329,74 @@ def decode_tile(data: bytes, *, layers: Optional[Container[str]] = None) -> list
         else:
             r.skip(wire)
     return out
+
+
+# -- the decoded form, for callers that would rather not decode twice ------------------
+
+#: Bumped whenever :func:`dumps_layers` changes the shape it writes.
+_WIRE_VERSION = 1
+
+
+def dumps_layers(layers: list[Layer], *, stamp: str = "") -> bytes:
+    """Serialise decoded layers to bytes that :func:`loads_layers` can restore.
+
+    Decoding a vector tile is by far the most expensive thing this app does (a 153 KB
+    tile costs ~365 ms on the PicoCalc's Cortex-A7 even after the layer narrowing), and
+    the result is a pure function of the bytes and the layer set. Writing it down means a
+    later session pays a ``marshal`` load and some object construction — measured ~14x
+    cheaper — instead of parsing the protobuf again.
+
+    ``marshal`` is the format because it is stdlib, C-speed, and understands the plain
+    tuples/lists/dicts/scalars a decoded tile reduces to. It is deliberately *not*
+    ``pickle``: this reads a file off disk, and marshal cannot be made to import a module
+    or call a constructor. It is still only safe against data we wrote ourselves, which
+    is why the cache lives under the app's own directory and why every load is guarded —
+    see :func:`loads_layers`.
+
+    Args:
+        layers: The decoded layers to write down.
+        stamp: An opaque caller token describing *how* these were decoded (the layer set,
+            typically). :func:`loads_layers` refuses a blob whose stamp differs, which is
+            what stops a narrowed decode from being served to a caller that wants more.
+
+    Returns:
+        The encoded bytes.
+    """
+    payload = [
+        (layer.name, layer.extent,
+         [(f.geom_type, f.rings, f.tags) for f in layer.features])
+        for layer in layers
+    ]
+    return marshal.dumps((_WIRE_VERSION, marshal.version, stamp, payload))
+
+
+def loads_layers(blob: bytes, *, stamp: str = "") -> Optional[list[Layer]]:
+    """Restore layers written by :func:`dumps_layers`, or ``None`` if they can't be used.
+
+    Every way the blob can fail to be what this build expects — a bumped wire version, a
+    Python whose ``marshal`` writes a different format, a different layer set, a file
+    truncated by a power cut — resolves to ``None``, meaning "decode the tile again".
+    Nothing here raises into the map: a derived cache that can't be read is not an error,
+    it is just a cache miss.
+
+    Args:
+        blob: Bytes previously produced by :func:`dumps_layers`.
+        stamp: The token the caller expects; a blob written under any other is rejected.
+
+    Returns:
+        The layers, or ``None`` to mean "re-decode".
+    """
+    try:
+        version, marshal_version, written_stamp, payload = marshal.loads(blob)
+        if (version, marshal_version, written_stamp) != (_WIRE_VERSION, marshal.version, stamp):
+            return None
+        return [
+            Layer(
+                name=name,
+                extent=extent,
+                features=[Feature(geom_type=g, rings=r, tags=t) for g, r, t in feats],
+            )
+            for name, extent, feats in payload
+        ]
+    except Exception:  # noqa: BLE001 - any malformed blob is simply a cache miss
+        return None

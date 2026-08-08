@@ -9,6 +9,7 @@ against the :class:`MockDevice` simulator with the basemap disabled (no network 
 from __future__ import annotations
 
 import io
+import os
 import re
 from pathlib import Path
 
@@ -469,6 +470,103 @@ def test_basemap_source_keeps_a_tile_whose_layers_are_all_undrawn(tmp_path: Path
     assert layers, "a real tile must still read as real"
     assert not any(layer.features for layer in layers)  # nothing was decoded
     assert tile.exists(), "the cache entry must survive"
+
+
+def test_decoded_layers_survive_a_round_trip() -> None:
+    """The sidecar encoding restores exactly what the decoder produced."""
+    from meshterm.core.mvt import dumps_layers, loads_layers
+    from meshterm.ui.map_render import DRAWN_LAYERS
+
+    original = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
+    restored = loads_layers(dumps_layers(original, stamp="x"), stamp="x")
+
+    assert restored is not None
+    assert [(l.name, l.extent) for l in restored] == [(l.name, l.extent) for l in original]
+    for before, after in zip(original, restored):
+        assert after.features == before.features
+
+
+def test_decoded_layers_refuse_a_blob_from_another_layer_set() -> None:
+    """A narrowed blob must never be served to a caller that wants more of the tile."""
+    from meshterm.core.mvt import dumps_layers, loads_layers
+
+    blob = dumps_layers(decode_tile(_FIXTURE.read_bytes(), layers={"water"}), stamp="water")
+    assert loads_layers(blob, stamp="water") is not None
+    assert loads_layers(blob, stamp="water,place") is None
+
+
+def test_decoded_layers_treat_damage_as_a_miss() -> None:
+    """A truncated or foreign sidecar is a cache miss, never an exception."""
+    from meshterm.core.mvt import dumps_layers, loads_layers
+
+    blob = dumps_layers(decode_tile(_FIXTURE.read_bytes(), layers={"water"}), stamp="s")
+    assert loads_layers(blob[: len(blob) // 2], stamp="s") is None
+    assert loads_layers(b"", stamp="s") is None
+    assert loads_layers(b"not marshal at all", stamp="s") is None
+
+
+def test_basemap_source_writes_and_reuses_a_decoded_sidecar(tmp_path: Path) -> None:
+    """The second load parses nothing: it comes back from the sidecar."""
+    cache = tmp_path / "cache"
+    tile = cache / "tiles" / "14" / "4843" / "5861.pbf"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(_FIXTURE.read_bytes())
+
+    src = _offline_source(cache)
+    first = src.load_tile(14, 4843, 5861)
+    sidecar = cache / "decoded" / "14" / "4843" / "5861.bin"
+    assert first is not None
+    assert sidecar.exists(), "decoding should have been written down"
+
+    # Break the raw tile: a second load that still works can only have used the sidecar.
+    tile.write_bytes(b"junk that cannot decode")
+    second = src.load_tile(14, 4843, 5861)
+    assert second is not None
+    assert [(l.name, len(l.features)) for l in second] == [
+        (l.name, len(l.features)) for l in first
+    ]
+
+
+def test_basemap_source_ignores_a_sidecar_from_another_layer_set(tmp_path: Path) -> None:
+    """Widening what the map draws re-decodes rather than serving the narrower blob."""
+    from meshterm.services.basemap import BasemapSource
+
+    cache = tmp_path / "cache"
+    tile = cache / "tiles" / "14" / "4843" / "5861.pbf"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(_FIXTURE.read_bytes())
+
+    def source(layers):
+        return BasemapSource(
+            cache, tilejson_url="http://127.0.0.1:1/none", timeout=0.2, layers=layers
+        )
+
+    narrow = source(frozenset({"water"}))
+    assert narrow.load_tile(14, 4843, 5861) is not None
+
+    wider = source(frozenset({"water", "place"}))
+    layers = {layer.name: layer for layer in wider.load_tile(14, 4843, 5861) or []}
+    assert layers["place"].features, "the wider set must have been decoded afresh"
+
+
+def test_basemap_source_prunes_the_decoded_cache_to_its_budget(tmp_path: Path) -> None:
+    """The sidecar half of the cache is bounded; the raw tiles it derives from are not."""
+    from meshterm.services.basemap import BasemapSource
+
+    cache = tmp_path / "cache"
+    decoded = cache / "decoded" / "14" / "1"
+    decoded.mkdir(parents=True)
+    for i in range(6):
+        blob = decoded / f"{i}.bin"
+        blob.write_bytes(b"x" * 1000)
+        os.utime(blob, (i, i))  # oldest first
+
+    # 6 KB present, 3 KB allowed: the three oldest go, the three newest stay.
+    src = BasemapSource(cache, tilejson_url="http://127.0.0.1:1/none", max_decoded_bytes=3000)
+    src._prune_decoded()
+
+    left = sorted(p.stem for p in decoded.glob("*.bin"))
+    assert left == ["3", "4", "5"], "the oldest sidecars go first"
 
 
 def test_basemap_source_remembers_a_blank_tile_for_the_session(tmp_path: Path) -> None:

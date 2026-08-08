@@ -9,6 +9,14 @@ terminal map has no pixels for, and they are the bulk of its decode cost. Only t
 narrows: whole tiles are still cached, so drawing more later costs a re-decode, never a
 re-download.
 
+Decoding is also written down. Beside the raw tiles sits a ``decoded/`` sidecar holding
+the parsed layers (see :func:`~meshterm.core.mvt.dumps_layers`), so a tile is parsed once
+ever rather than once per session — measured ~14x cheaper to reload on the PicoCalc. That
+half of the cache is pure derived data: it is never what makes a tile "known", it carries
+a stamp of the layer set it was decoded under so a narrowed blob is never served to a
+caller wanting more, and it is the half that gets a size budget, because anything evicted
+costs only the decode it was saving.
+
 The default source is **OpenFreeMap** (openfreemap.org) — full-planet OpenStreetMap vector
 tiles, free and requiring no API key. Everything here is best-effort: with no network and no
 cached tiles the loader simply returns ``None`` and the map falls back to plotting nodes on a
@@ -38,7 +46,7 @@ import urllib.request
 from pathlib import Path
 from typing import Container, NamedTuple, Optional
 
-from ..core.mvt import Layer, decode_tile
+from ..core.mvt import Layer, decode_tile, dumps_layers, loads_layers
 
 #: OpenFreeMap planet TileJSON — its ``tiles`` array holds the current versioned template.
 DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
@@ -52,6 +60,15 @@ _DEFAULT_MAX_ZOOM = 14
 #: HTTP statuses that are the source *answering* "there is no such resource". Everything
 #: else — 429, 5xx, and every transport error — is the absence of an answer.
 _ABSENT_STATUSES = frozenset({404, 410})
+
+#: Ceiling on the decoded sidecar cache. Decoded tiles run ~2.4x the size of the bytes
+#: they came from, and unlike those bytes they can be rebuilt from what's already on disk,
+#: so this half of the cache is the half that gets a budget.
+_DEFAULT_MAX_DECODED_BYTES = 64 * 1024 * 1024
+
+#: How much must be written before the sidecar budget is checked again. The check walks
+#: the directory, which is slow on the SD card the PicoCalc runs from.
+_PRUNE_AFTER_BYTES = 8 * 1024 * 1024
 
 _log = logging.getLogger(__name__)
 
@@ -88,6 +105,7 @@ class BasemapSource:
         tilejson_url: str = DEFAULT_TILEJSON_URL,
         timeout: float = 12.0,
         layers: Optional[Container[str]] = None,
+        max_decoded_bytes: int = _DEFAULT_MAX_DECODED_BYTES,
     ) -> None:
         """Open a tile source backed by an on-disk cache.
 
@@ -99,11 +117,18 @@ class BasemapSource:
                 :data:`meshterm.ui.map_render.DRAWN_LAYERS`). Only the *decode* narrows —
                 the cache still stores whole tiles — so this is a pure CPU saving that a
                 later renderer can widen without re-fetching anything.
+            max_decoded_bytes: Ceiling on the decoded sidecar cache, which is derived data
+                and so is the one part of the cache that can be thrown away freely.
         """
         self.cache_dir = cache_dir
         self._tilejson_url = tilejson_url
         self._timeout = timeout
         self._layers = layers
+        self._max_decoded_bytes = max_decoded_bytes
+        self._decoded_written = 0
+        # What a sidecar was decoded *under*. A blob written for one layer set must never
+        # be served to a caller expecting another, so the set travels with the bytes.
+        self._stamp = "all" if layers is None else ",".join(sorted(layers))  # type: ignore[arg-type]
         self._template: Optional[str] = None
         self._max_zoom: Optional[int] = None
         self._resolved = False  # whether we've tried (success or offline) this session
@@ -166,13 +191,21 @@ class BasemapSource:
     def _tile_path(self, z: int, x: int, y: int) -> Path:
         return self.cache_dir / "tiles" / str(z) / str(x) / f"{y}.pbf"
 
+    def _decoded_path(self, z: int, x: int, y: int) -> Path:
+        return self.cache_dir / "decoded" / str(z) / str(x) / f"{y}.bin"
+
     def load_tile(self, z: int, x: int, y: int) -> Optional[list[Layer]]:
         """Return the decoded layers for a tile, from cache or the network.
 
-        The cache only ever holds tiles that decoded to real geometry. A tile the source
-        never answered for is left uncached, so the next pan over it asks again instead of
-        drawing a permanent blank; a cached file that no longer decodes is pruned for the
-        same reason.
+        Three places are tried in cost order: the decoded sidecar (a ``marshal`` load),
+        the raw ``.pbf`` (a full protobuf decode), then the network. The sidecar is pure
+        derived data — it is never the reason a tile is considered known, and losing it
+        costs only the decode it was there to save.
+
+        The raw cache only ever holds tiles that decoded to real geometry. A tile the
+        source never answered for is left uncached, so the next pan over it asks again
+        instead of drawing a permanent blank; a cached file that no longer decodes is
+        pruned for the same reason.
 
         Args:
             z: Tile zoom.
@@ -186,11 +219,15 @@ class BasemapSource:
         key = (z, x, y)
         if key in self._blank:
             return None
+        ready = self._read_decoded(z, x, y)
+        if ready is not None:
+            return ready
         path = self._tile_path(z, x, y)
         cached = self._read_cached(path)
         if cached is not None:
             layers = self._decode(cached, key)
             if layers is not None:
+                self._write_decoded(z, x, y, layers)
                 return layers
             # Nothing drawable came out: a zero-byte marker from a build that cached
             # network failures, or bytes truncated by a link (or a power cut) mid-write.
@@ -205,7 +242,51 @@ class BasemapSource:
             self._blank.add(key)  # the source answered: there is genuinely nothing here
             return None
         self._write_cached(path, raw)
+        self._write_decoded(z, x, y, layers)
         return layers
+
+    # -- the decoded sidecar ----------------------------------------------------
+
+    def _read_decoded(self, z: int, x: int, y: int) -> Optional[list[Layer]]:
+        """Return a tile's already-decoded layers, or ``None`` to decode it properly."""
+        blob = self._read_cached(self._decoded_path(z, x, y))
+        return None if blob is None else loads_layers(blob, stamp=self._stamp)
+
+    def _write_decoded(self, z: int, x: int, y: int, layers: list[Layer]) -> None:
+        """Write a tile's decoded layers beside the raw bytes, and keep the dir bounded."""
+        try:
+            blob = dumps_layers(layers, stamp=self._stamp)
+        except ValueError:  # pragma: no cover - a tag type marshal can't represent
+            return
+        self._write_cached(self._decoded_path(z, x, y), blob)
+        # Sweeping the tree costs a directory walk on an SD card, so amortise it over a
+        # good many writes rather than checking the budget on every tile.
+        self._decoded_written += len(blob)
+        if self._decoded_written >= _PRUNE_AFTER_BYTES:
+            self._decoded_written = 0
+            self._prune_decoded()
+
+    def _prune_decoded(self) -> None:
+        """Drop the least recently written sidecars until the budget is met.
+
+        Decoded tiles run ~2.4x the size of the bytes they came from, and the raw cache is
+        already unbounded, so this side of it gets a ceiling. Eviction is by modification
+        time, which on a write-once file is also the order it was first needed in.
+        """
+        root = self.cache_dir / "decoded"
+        try:
+            files = [(p.stat().st_mtime, p.stat().st_size, p) for p in root.rglob("*.bin")]
+        except OSError:  # pragma: no cover - a cache we can't walk is still readable
+            return
+        total = sum(size for _, size, _ in files)
+        if total <= self._max_decoded_bytes:
+            return
+        for _, size, p in sorted(files):
+            if total <= self._max_decoded_bytes:
+                break
+            self._discard_cached(p)
+            total -= size
+        _log.debug("pruned decoded tile cache to %.1f MB", total / 1024 / 1024)
 
     def _decode(self, raw: bytes, key: tuple[int, int, int]) -> Optional[list[Layer]]:
         """Decode a tile's bytes, or ``None`` if they aren't a tile at all.
