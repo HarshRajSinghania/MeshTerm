@@ -103,6 +103,18 @@ MESH_THEME = Theme(
         "type.repeater": "#a78bfa",
         "type.room": "#ffffff",
         "type.sensor": "#fb923c",
+        # The basemap features whose *hue* is the information — water is blue, parks are
+        # green, a highway is the warm one — and which a naive downsample therefore ruins
+        # (the dark blue lands on grey, the dark green on black, the amber on bright red).
+        # Named for the same reason as ``type.*``: the console picks the slot itself. The
+        # rest of the basemap is grey by design and quantizes honestly, so minor roads,
+        # rail, boundaries and labels stay literal hex in ui.map_render.
+        "map.water": "#153b56",
+        "map.river": "#49b0ec",
+        "map.stream": "#3f8fbf",
+        "map.ditch": "#3a7ba6",
+        "map.park": "#173a29",
+        "map.highway": "#f2a13d",
         # The heard-age heat scale's steps, named for how old the node they colour is:
         # a node heard eight minutes ago is ``heat.minutes``, one heard eight days ago is
         # ``heat.days``. Seven steps from white-hot to cold ash (JP's spec) — a cooling
@@ -259,6 +271,17 @@ MESH_THEME_16 = Theme(
         "type.repeater": "not bold color(5)",
         "type.room": "color(15)",
         "type.sensor": "not bold color(3)",
+        # The basemap on the console: a water body is the dim blue, every watercourse
+        # crossing it the bright blue one rung up (the palette has exactly one of each —
+        # a river's depth of shade is a truecolour luxury, and all three waterway shades
+        # land on the same rung here), parks the dim green, highways brown. Backgrounds
+        # never come into it: the canvas paints these as braille dots in the foreground.
+        "map.water": "not bold color(4)",
+        "map.river": "color(12)",
+        "map.stream": "color(12)",
+        "map.ditch": "color(12)",
+        "map.park": "not bold color(2)",
+        "map.highway": "not bold color(3)",
         # JP's ladder, slot by slot: white-hot, yellow, the ember's light red, brown as it
         # chars, dark red as it dies, then ash — light grey, and cold grey for what may as
         # well never have been heard. Six of the sixteen slots do the whole scale; the

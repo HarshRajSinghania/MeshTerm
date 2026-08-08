@@ -9,6 +9,9 @@ the one-shot CLI render call the same code.
 Colours target a dark terminal (the app theme): warm roads, grey minor streets, blue water
 and rivers, faint green parks. Because a cell shows one colour, draw priorities keep the
 important feature visible where things overlap (rivers over water, major roads over minor).
+The features whose hue *is* the information — water, its watercourses, parks, highways —
+name a ``map.*`` theme style instead of a hex so the 16-slot console chooses its own shade
+(see :data:`~meshterm.ui.theme.MESH_THEME_16`); everything else is grey either way.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from ..core.geo import Viewport
 from ..core.mvt import GEOM_LINE, GEOM_POLYGON, Layer
 from .mapcanvas import MapCanvas
 from .marks import NODE_MARK, REPEATER_MARK, RGB, SELF_MARK, UNKNOWN_MARK, parse_hex
+from .theme import mark_rgb
 
 # -- node markers -------------------------------------------------------------
 
@@ -64,10 +68,15 @@ _UNKNOWN = UNKNOWN_MARK
 
 # -- basemap styling ----------------------------------------------------------
 
+# Every colour here is whatever :func:`~meshterm.ui.theme.mark_rgb` takes: a literal
+# ``#rrggbb``, or a theme style name where the hue carries meaning and the platform must
+# pick its own shade (the ``map.*`` entries — see the theme, which explains why water,
+# parks and highways cannot survive a naive downsample to 16 slots).
+
 # Road class -> (colour, priority). Higher priority wins a shared cell.
 _ROAD_STYLE: dict[str, tuple[str, int]] = {
-    "motorway": ("#f2a13d", 27),
-    "trunk": ("#f2a13d", 26),
+    "motorway": ("map.highway", 27),
+    "trunk": ("map.highway", 26),
     "primary": ("#e8b24a", 25),
     "secondary": ("#d7c257", 24),
     "tertiary": ("#a7adb8", 23),
@@ -87,14 +96,14 @@ _RAIL = ("#8a8f98", 22)
 
 # Waterway class -> (colour, priority).
 _WATERWAY_STYLE: dict[str, tuple[str, int]] = {
-    "river": ("#49b0ec", 30),
-    "canal": ("#49b0ec", 30),
-    "stream": ("#3f8fbf", 29),
-    "ditch": ("#3a7ba6", 28),
-    "drain": ("#3a7ba6", 28),
+    "river": ("map.river", 30),
+    "canal": ("map.river", 30),
+    "stream": ("map.stream", 29),
+    "ditch": ("map.ditch", 28),
+    "drain": ("map.ditch", 28),
 }
-_WATER_FILL = ("#153b56", 6)
-_GREEN_FILL = ("#173a29", 4)
+_WATER_FILL = ("map.water", 6)
+_GREEN_FILL = ("map.park", 4)
 _GREEN_CLASSES = {"wood", "forest", "grass", "park", "meadow", "scrub", "wetland", "cemetery"}
 
 # Label styling per place class: (colour, bold, rank, min_display_zoom). Lower rank places
@@ -204,7 +213,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             else:
                 continue
             vp.fill_polygon(
-                [project(r, layer.extent) for r in feat.rings], parse_hex(color), prio
+                [project(r, layer.extent) for r in feat.rings], mark_rgb(color), prio
             )
 
     # Waterways (rivers/streams) as lines.
@@ -217,7 +226,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             color, prio = style
             for ring in feat.rings:
                 if len(ring) >= 2:
-                    vp.draw_line(project(ring, waterway.extent), parse_hex(color), prio)
+                    vp.draw_line(project(ring, waterway.extent), mark_rgb(color), prio)
             if feat.name:
                 _add_line_label(frame, feat.rings, waterway.extent, z, x, y, feat.name, _WATER_LABEL)
 
@@ -232,7 +241,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
                 color, prio = _RAIL
             else:
                 color, prio = _ROAD_STYLE.get(cls, _ROAD_DEFAULT)
-            rgb = parse_hex(color)
+            rgb = mark_rgb(color)
             for ring in feat.rings:
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, transportation.extent), rgb, prio)
@@ -250,7 +259,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
                 continue
             for ring in feat.rings:
                 if len(ring) >= 2:
-                    vp.draw_line(project(ring, boundary.extent), parse_hex("#6d5f88"), 14)
+                    vp.draw_line(project(ring, boundary.extent), mark_rgb("#6d5f88"), 14)
 
     # Street-name labels (only kick in at high zoom via the label's min_zoom gate).
     tname = by_name.get("transportation_name")
@@ -276,7 +285,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             lx, ly = feat.rings[0][0]
             dx, dy = frame.viewport.feature_to_dot(x, y, z, place.extent, lx, ly)
             frame.labels.append(
-                _Label(rank, dx, dy, feat.name, parse_hex(color), bold, min_zoom)
+                _Label(rank, dx, dy, feat.name, mark_rgb(color), bold, min_zoom)
             )
 
     # Water-body names.
@@ -287,7 +296,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             if feat.name and feat.rings and feat.rings[0]:
                 lx, ly = feat.rings[0][0]
                 dx, dy = frame.viewport.feature_to_dot(x, y, z, water_name.extent, lx, ly)
-                frame.labels.append(_Label(rank, dx, dy, feat.name, parse_hex(color), bold, 8))
+                frame.labels.append(_Label(rank, dx, dy, feat.name, mark_rgb(color), bold, 8))
 
 
 def _add_line_label(
@@ -307,7 +316,7 @@ def _add_line_label(
     lx, ly = longest[len(longest) // 2]
     dx, dy = frame.viewport.feature_to_dot(x, y, z, extent, lx, ly)
     color, bold, rank = style
-    frame.labels.append(_Label(rank, dx, dy, text, parse_hex(color), bold, min_zoom))
+    frame.labels.append(_Label(rank, dx, dy, text, mark_rgb(color), bold, min_zoom))
 
 
 def _marker_style(marker: MapMarker) -> tuple[str, str]:
