@@ -22,7 +22,7 @@ from meshterm.core.models import (
     Observation,
     utcnow,
 )
-from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, decode_tile
+from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, Layer, decode_tile
 from meshterm.tools.map import MapTool
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
@@ -788,6 +788,79 @@ class _StubSource:
 
     def load_tile(self, z: int, x: int, y: int):
         return None
+
+
+def _loaded_tile() -> list[Layer]:
+    """A stand-in for a decoded tile: truthy, which is all the budget cares about."""
+    return [Layer(name="water", extent=4096)]
+
+
+def _map_screen_with_tiles(count: int) -> "MapScreen":
+    """A rendered map screen carrying ``count`` tiles' worth of pan history."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
+    screen.render_body(80)
+    for i in range(count):
+        screen._tiles[(14, 9000 + i, 9000 + i)] = _loaded_tile()
+    return screen
+
+
+def _budget(screen) -> int:  # noqa: ANN001 - the screen's own arithmetic, mirrored
+    from meshterm.ui.map_screen import _MIN_TILE_CACHE, _TILE_CACHE_SCREENS
+
+    in_view = len(screen._viewport.tiles(14))
+    return max(_MIN_TILE_CACHE, in_view * _TILE_CACHE_SCREENS)
+
+
+def test_map_tile_cache_stays_bounded_while_panning() -> None:
+    """Panning far doesn't accumulate decoded tiles without limit.
+
+    One decoded tile is ~0.9 MB on the PicoCalc, which has ~100 MB in total, so an
+    unbounded cache turns a long pan into an out-of-memory kill.
+    """
+    screen = _map_screen_with_tiles(200)
+    for _ in range(12):
+        screen.handle("right")
+        screen.render_body(80)
+
+    held = sum(1 for layers in screen._tiles.values() if layers)
+    assert held <= _budget(screen), f"{held} decoded tiles held, over budget"
+
+
+def test_map_tile_cache_never_drops_what_is_on_screen() -> None:
+    """Whatever the view needs survives the trim — eviction starts at the far end."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
+    screen.render_body(80)
+    visible = list(screen._viewport.tiles(14))
+    for t in visible:
+        screen._tiles[t] = _loaded_tile()
+    for i in range(200):  # a long pan's worth of history arriving after them
+        screen._tiles[(14, 9000 + i, 9000 + i)] = _loaded_tile()
+
+    screen.render_body(80)
+
+    for t in visible:
+        assert screen._tiles.get(t), f"{t} is on screen and must not have been evicted"
+
+
+def test_map_tile_cache_keeps_the_absent_tile_markers() -> None:
+    """A ``None`` is the memory of having asked; it costs a slot, so it is never evicted.
+
+    Dropping one would buy nothing back and cost a re-request on the very next repaint.
+    """
+    screen = _map_screen_with_tiles(200)
+    for i in range(30):
+        screen._tiles[(14, 100 + i, 100)] = None
+
+    screen.render_body(80)
+
+    absent = [k for k, v in screen._tiles.items() if v is None]
+    assert len(absent) == 30, "absent-tile markers were evicted along with the geometry"
 
 
 class _CapturingSession(_StubSession):

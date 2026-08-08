@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Callable, Optional
 
 from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
@@ -48,6 +49,18 @@ _PAN_DIRS: dict[str, tuple[int, int]] = {
 
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
+
+#: How many screens' worth of decoded tiles to keep resident, as a multiple of what the
+#: current view needs. A decoded tile costs ~0.9 MB on the PicoCalc (62 bytes a point,
+#: measured) against a device that has ~100 MB in total, so a map panned far enough would
+#: otherwise fill memory with ground the user has left behind. Keeping the screen plus one
+#: screen of history costs almost nothing to get wrong: an evicted tile comes back from
+#: the decoded cache in ~25-50 ms, having already been parsed once.
+_TILE_CACHE_SCREENS = 2
+
+#: Floor on that budget, so a zoomed-out view needing one or two tiles still keeps enough
+#: history for a pan away and back to be instant.
+_MIN_TILE_CACHE = 8
 
 #: The zoom an Enter-to-frame homes in at when the matches set no extent of their own — a
 #: single node (or several at one spot) has nothing to frame, so Enter zooms to this
@@ -138,7 +151,8 @@ class MapScreen(Screen):
         # cleaned even before the first pan.
         self._needs_scrub = True
         # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
-        self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
+        # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`.
+        self._tiles: OrderedDict[tuple[int, int, int], Optional[list[Layer]]] = OrderedDict()
         self._pending: set[tuple[int, int, int]] = set()
 
     # --- rendering -----------------------------------------------------------
@@ -251,9 +265,14 @@ class MapScreen(Screen):
 
     def _ensure_tiles(self, vp: Viewport) -> None:
         """Schedule background fetches for any visible tiles not yet loaded or pending."""
+        wanted = vp.tiles(self._max_tile_zoom)
+        for t in wanted:
+            if t in self._tiles:
+                self._tiles.move_to_end(t)  # on screen now, so last in line to be dropped
+        self._trim_tiles(len(wanted))
         if not self._source.available:  # offline (resolved at open time) — nodes only
             return
-        for t in vp.tiles(self._max_tile_zoom):
+        for t in wanted:
             if t in self._tiles or t in self._pending:
                 continue
             self._pending.add(t)
@@ -261,6 +280,29 @@ class MapScreen(Screen):
                 asyncio.ensure_future(self._load(t))
             except RuntimeError:  # pragma: no cover - no running loop (non-interactive)
                 self._pending.discard(t)
+
+    def _trim_tiles(self, in_view: int) -> None:
+        """Release the least recently shown tiles once the view's budget is exceeded.
+
+        Only tiles holding geometry are counted or dropped. An entry whose value is
+        ``None`` is the memory of having *asked* — the tile was absent, or the source
+        never answered — and it costs a dict slot rather than a megabyte, so it stays;
+        dropping it would only buy a pointless re-request on the next repaint.
+
+        Args:
+            in_view: How many tiles the current viewport needs, which sets the budget.
+        """
+        budget = max(_MIN_TILE_CACHE, in_view * _TILE_CACHE_SCREENS)
+        loaded = sum(1 for layers in self._tiles.values() if layers)
+        if loaded <= budget:
+            return
+        # Oldest first; everything on screen was just moved to the end, so it is safe.
+        for key in list(self._tiles):
+            if loaded <= budget:
+                break
+            if self._tiles[key]:
+                del self._tiles[key]
+                loaded -= 1
 
     async def _load(self, t: tuple[int, int, int]) -> None:
         """Fetch+decode one tile off the event loop, then repaint."""
