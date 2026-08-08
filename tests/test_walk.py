@@ -315,6 +315,39 @@ def test_walk_home_refocuses_us() -> None:
     assert screen._trail == [topo.self_id]
 
 
+def test_walk_echoes_the_find_query_above_the_matches_it_narrows() -> None:
+    """The PicoCalc draws no hint line, so the query it carries moves into the body."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    try:
+        set_platform(REGULAR)
+        desktop = _screen(_topo())
+        desktop.render_body(80)
+        for ch in "al":
+            desktop.handle("text", ch)
+        body = _plain(desktop.render_body(80))
+        assert "/al" not in body and "find: al" in desktop.footer_hint
+
+        set_platform(PICOCALC)
+        device = _screen(_topo())
+        device.render_body(53)
+        for ch in "al":
+            device.handle("text", ch)
+        lines = [_plain(line) for line in device.render_body(53)]
+        assert len(lines) <= 24  # still inside the viewport it was handed
+        # The echo sits directly above the heading of the list it narrows — the list, not
+        # the canvas, is what cedes the row for it.
+        echo = next(i for i, line in enumerate(lines) if line.strip() == "/al")
+        assert lines[echo + 1].startswith("Matches")
+        # Clearing the find takes the row back with it.
+        for _ in "al":
+            device.handle("backspace")
+        assert not any(line.strip().startswith("/") for line in
+                       (_plain(l) for l in device.render_body(53)))
+    finally:
+        set_platform(REGULAR)
+
+
 def test_walk_fkey_lane_says_you_where_the_shared_lane_would_say_top() -> None:
     """Home drops the trail rather than scrolling, and End is bound to nothing at all."""
     from meshterm.ui.tui.fkeys import action_for

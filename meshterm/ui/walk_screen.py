@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Optional
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..platforms import get_platform
 from ..core.models import (
     NODE_TYPE_REPEATER,
     Contact,
@@ -69,7 +70,7 @@ from .menus import fit_cells
 from .pathline import ELIDE_HEAD, PathHop, PathLine
 from .theme import mark_rgb, name_style, node_style, snr_style
 from .trace_screen import snr_bar
-from .tui.render import render_to_ansi
+from .tui.render import query_line, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .widgets import _format_age, highlighted_hash
 
@@ -458,7 +459,7 @@ class WalkScreen(Screen):
         viewport = self._scroll_viewport  # recorded by the frame before this render
 
         header = self._header_lines(width, depths)
-        chrome = len(header) + 3  # legend, blank, list heading
+        chrome = len(header) + 3 + self._query_row()  # legend, blank, list heading (+find echo)
         canvas_h = self._canvas_height(viewport, chrome)
         list_win = max(1, viewport - chrome - canvas_h)
 
@@ -469,6 +470,17 @@ class WalkScreen(Screen):
         lines.extend(self._list_lines(width, rows, depths, list_win))
         self._scroll_total = max(1, len(lines))
         return lines
+
+    def _query_row(self) -> int:
+        """Whether this paint spends a list row echoing the find query (1) or not (0).
+
+        Only where the footer isn't drawn (:attr:`~meshterm.platforms.Platform.footer_fkeys`):
+        there the hint line carrying the query never reaches the screen, so without this row
+        the list would narrow to matches with no sign of what was typed to narrow it. The row
+        sits directly above the ``Matches`` heading — above what it narrows, as on every other
+        find-as-you-type screen — and the list, not the canvas, cedes the line for it.
+        """
+        return 1 if self._filter and get_platform().footer_fkeys else 0
 
     def _canvas_height(self, viewport: int, chrome: int) -> int:
         """Rows the canvas takes: the majority of the screen, ceded where pointless.
@@ -890,6 +902,8 @@ class WalkScreen(Screen):
         window's row count becomes the PgUp/PgDn stride.
         """
         out: list[str] = []
+        if self._query_row():
+            out.append(query_line(self._filter, width))
         if self._filter:
             heading = Text("Matches", style="accent")
             heading.append("  ·  nearest first · Enter focuses", style="muted")

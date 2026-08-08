@@ -71,7 +71,7 @@ from ..services.topology import (
     HopSuggestion, Link, MeshTopology, _is_hex, render_custom_spec, render_forced_spec,
 )
 from .theme import snr_style
-from .tui.render import render_lines, render_to_ansi
+from .tui.render import query_line, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .pathline import PathLine, path_line
 from .widgets import NodeResolver, _age_seconds, _format_age, _identity, path_text
@@ -593,7 +593,7 @@ class PathComposerScreen(Screen):
             lines.extend(render_lines(Text(_NOT_A_TRAIL, style="warn"), width))
         lines.append("")
         if self._entry:
-            lines.append(render_to_ansi(Text(f"/{self._entry}", style="warn"), width))
+            lines.append(query_line(self._entry, width))
         else:
             heading = Text("Next hop from ", style="muted")
             heading.append_text(self._node_text(self._anchor()))

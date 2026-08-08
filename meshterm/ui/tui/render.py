@@ -184,6 +184,31 @@ def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = Fals
     return lines
 
 
+def query_line(query: str, width: int) -> str:
+    """The live find/filter query echoed as one body line: ``/yul``, warn-styled.
+
+    THE way a find-as-you-type screen shows what has been typed. Every such screen draws
+    this same line above whatever the query narrows — the select list above its rows, the
+    path composer above its suggestions, the map above its canvas, the walk above its link
+    list — so the text you are typing is always in the same shape, in the same place, in
+    the one colour nothing else in a body uses.
+
+    The map and the walk *also* echo the query in their footer hint, with its editing keys
+    beside it. That line is not drawn on a platform whose footer is the F-key lane (see
+    :attr:`~meshterm.platforms.Platform.footer_fkeys`), which is exactly why those two
+    call this: without it, the query would be invisible on the device while you typed it.
+    They gate the call on that flag rather than drawing the line twice on the desktop.
+
+    Args:
+        query: The current query (callers only call this when it is non-empty).
+        width: Inner content width in columns.
+
+    Returns:
+        One rendered ANSI line.
+    """
+    return render_to_ansi(Text(f"/{query}", style="warn"), width, no_wrap=True)
+
+
 def right_aligned_tail(body: Text, tail: Text, width: int) -> Text:
     """Lay ``body`` out with ``tail`` pinned to the right edge of its last line.
 

@@ -73,6 +73,12 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 - A row that opens further prompts ends with `…`; a row that acts immediately doesn't.
 - Empty states are lowercase muted, optionally `— explanation`, never parenthesized.
 - Body section headings inside screens: accent title, optional muted `  ·  note`.
+- A find-as-you-type screen echoes its live query as `/query` in `warn`, on its own body
+  line **directly above whatever the query narrows** — `render.query_line` is the one
+  definition (select list, path composer, map, mesh walk). A screen that *also* carries
+  the query in its footer hint draws the body line only where the footer isn't drawn
+  (`Platform.footer_fkeys`), never both: the query must be visible on every platform, and
+  twice on none.
 
 ### Titles
 

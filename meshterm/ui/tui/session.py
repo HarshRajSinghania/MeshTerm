@@ -1167,7 +1167,10 @@ class TuiSession:
 
         Mirrors the layout math in :func:`~meshterm.ui.tui.frame.compose_base` so a
         full-screen screen (e.g. the map) can size its own content to fill the frame exactly,
-        without waiting a repaint to learn its height.
+        without waiting a repaint to learn its height. *Both* of that function's branches:
+        a borderless platform swaps the panel's two border rows and four padding columns for
+        a single title-bar row, so a screen sizing itself against the bordered math there
+        would leave a row of the frame it was handed permanently blank.
 
         Returns:
             The inner content width and the body viewport height, both in character cells.
@@ -1176,8 +1179,10 @@ class TuiSession:
 
         cols, rows = self._size()
         header_h = len(render_lines(self._header(cols), cols, no_wrap=True))
-        viewport = max(1, rows - header_h - 1 - 2)  # minus footer(1) and panel border(2)
-        return cols - 4, viewport
+        if get_platform().frame_border:
+            # minus footer(1) and panel border(2); the border eats 4 columns too
+            return cols - 4, max(1, rows - header_h - 1 - 2)
+        return cols, max(1, rows - header_h - 1 - 1)  # minus footer(1) and title bar(1)
 
     def _base_index(self) -> int:
         """Stack index of the full-frame background screen.

@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional, Union
 from rich.cells import cell_len
 from rich.text import Text
 
-from .render import crop_cells, render_lines, render_to_ansi
+from .render import crop_cells, query_line, render_lines, render_to_ansi
 from .screen import Screen
 
 
@@ -521,7 +521,7 @@ class SelectScreen(Screen):
         self._pinned_header = None
         block: Optional[list[str]] = None  # the heading block still taking rows, if any
         if self._filter:
-            lines.append(render_to_ansi(Text(f"/{self._filter}", style="warn"), width))
+            lines.append(query_line(self._filter, width))
         # A row's detail line (see Choice.detail) can make it two lines tall, so the cursor
         # is tracked inline as rows are drawn rather than derived from the row index.
         cursor_at: Optional[int] = None

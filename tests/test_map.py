@@ -1179,6 +1179,44 @@ def test_map_locate_recenters_on_our_own_node_at_the_current_zoom() -> None:
     assert away.fkey_lane[1].enabled is False and away._viewport is before
 
 
+def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -> None:
+    """The PicoCalc draws no hint line, so the query it carries moves into the body."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    markers = [MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True)]
+
+    try:
+        set_platform(REGULAR)
+        desktop = MapScreen(_StubSession(72, 20), markers, _StubSource(), 14)
+        assert len(desktop.render_body(72)) == 20
+        for ch in "yul":
+            desktop.handle("text", ch)
+        # Unchanged: the footer already shows it, so the canvas keeps the whole body.
+        assert "/yul" not in _plain(desktop.render_body(72))
+        assert len(desktop.render_body(72)) == 20
+        assert "find: yul" in desktop.footer_hint
+
+        set_platform(PICOCALC)
+        device = MapScreen(_StubSession(53, 23), markers, _StubSource(), 14)
+        assert len(device.render_body(53)) == 23
+        for ch in "yul":
+            device.handle("text", ch)
+        lines = device.render_body(53)
+        # The echo takes the first row and the canvas gives up exactly one, so the body
+        # still fills the frame it was handed rather than overflowing it.
+        assert _plain(lines[0]).strip() == "/yul"
+        assert len(lines) == 23
+        # Clearing the find hands the row back.
+        for _ in "yul":
+            device.handle("backspace")
+        assert len(device.render_body(53)) == 23
+        assert "/" not in _plain(device.render_body(53))
+    finally:
+        set_platform(REGULAR)
+
+
 def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
     """``Frame`` is the find's Enter under another name — dim, and inert, without a query."""
     from meshterm.ui.map_render import MapMarker

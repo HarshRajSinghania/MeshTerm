@@ -30,8 +30,10 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
 from ..core.mvt import Layer
+from ..platforms import get_platform
 from ..services.basemap import BasemapSource
 from .map_render import MapMarker, render_map
+from .tui.render import query_line
 from .tui.screen import Screen
 
 if TYPE_CHECKING:
@@ -205,11 +207,29 @@ class MapScreen(Screen):
         self._needs_scrub = False
         return 2  # the panel's right padding cell and its right border cell
 
+    def _query_row(self) -> bool:
+        """Whether this paint spends a body row echoing the find query above the canvas.
+
+        Only where the footer isn't drawn (:attr:`~meshterm.platforms.Platform.footer_fkeys`):
+        there the hint line carrying the query never reaches the screen, so without this row
+        the map would silently filter itself while the reader has no idea what they typed.
+        On the desktop the footer already shows it and the canvas keeps the whole body.
+        """
+        return bool(self._filter) and get_platform().footer_fkeys
+
     def render_body(self, width: int) -> list[str]:
-        """Build (or resize) the viewport, ensure its tiles, and render the frame."""
+        """Build (or resize) the viewport, ensure its tiles, and render the frame.
+
+        The canvas is sized to whatever the body has left after the find echo (see
+        :meth:`_query_row`), so beginning a find costs the map one row of ground rather
+        than pushing its last row out of the viewport. The viewport is rebuilt at the new
+        height by the ordinary resize path below — centre and zoom are preserved, so the
+        view doesn't jump, it just loses (and later regains) a strip along the bottom.
+        """
         _, cell_h = self._session.base_body_size()
+        head = [query_line(self._filter, width)] if self._query_row() else []
         cell_w = width
-        dot_w, dot_h = cell_w * 2, cell_h * 4
+        dot_w, dot_h = cell_w * 2, max(1, cell_h - len(head)) * 4
 
         if self._viewport is None:
             self._viewport = self._initial_viewport(dot_w, dot_h)
@@ -222,7 +242,7 @@ class MapScreen(Screen):
         self.title = self._title(self._viewport)
         self._persist()
         tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
-        return render_map(self._viewport, tiles, self._markers, find=self._filter)
+        return head + render_map(self._viewport, tiles, self._markers, find=self._filter)
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
