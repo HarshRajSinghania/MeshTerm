@@ -270,6 +270,34 @@ def test_node_type_marks_stay_distinct_on_the_console() -> None:
     assert theme.mark_rgb("type.repeater") != theme.mark_rgb("muted")
 
 
+def test_heat_ladder_walks_jps_seven_slots_in_order() -> None:
+    """The heard-age scale, pinned to its spec: seven steps on plain human boundaries.
+
+    White under 5 minutes, then yellow, light red, brown, red, light grey, and one cold
+    grey shared by "over a year" and "never heard".
+    """
+    from meshterm.ui.widgets import _recency_style
+
+    set_platform(PICOCALC)
+    slots = {hex_: slot for slot, _, hex_ in theme._VT_SLOTS}
+    expected = [
+        (60, 15), (299, 15),          # under 5 minutes  — white
+        (300, 11), (3599, 11),        # 5 minutes        — yellow
+        (3600, 9), (86399, 9),        # 1 hour           — light red
+        (86400, 3), (604799, 3),      # 1 day            — brown
+        (604800, 1), (2591999, 1),    # 1 week           — red
+        (2592000, 7), (31535999, 7),  # 1 month          — light grey
+        (31536000, 8), (None, 8),     # 1 year, and never — dark grey
+    ]
+    for secs, slot in expected:
+        style = MESH_THEME_16.styles[_recency_style(secs)]
+        assert style.color is not None and style.color.number == slot, (secs, style)
+        assert not style.bold or slot >= 8, f"bold on dim slot {slot} would jump a rung"
+    # The regular platform answers the same question with a continuous hue instead.
+    set_platform(REGULAR)
+    assert _recency_style(1200).startswith("#")
+
+
 def test_canvas_drops_emphasis_where_bold_means_brightness() -> None:
     """A braille canvas may not embolden on the console: the VT would recolour the run.
 

@@ -887,24 +887,32 @@ def _recency_gradient(secs: Optional[float]) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _recency_quantized(secs: Optional[float]) -> str:
-    """PicoCalc's heat: the gradient collapsed onto the theme's four ``heat.*`` steps.
+#: The heat ladder as ``(younger than, style)``, hottest first — JP's spec. Every boundary
+#: is a plain human unit, so a colour change always lands on a number you can say out loud
+#: ("under five minutes", "over a week"). Past a year nothing is worth distinguishing from
+#: never heard, so the two share the coldest step.
+_HEAT_STEPS: tuple[tuple[float, str], ...] = (
+    (300, "heat.now"),           # under 5 minutes — white
+    (3600, "heat.minutes"),      # 5 minutes       — yellow
+    (86400, "heat.hours"),       # 1 hour          — light red
+    (604800, "heat.days"),       # 1 day           — brown
+    (2592000, "heat.weeks"),     # 1 week          — red
+    (31536000, "heat.months"),   # 1 month         — light grey
+)                                # 1 year / never  — dark grey (heat.never)
 
-    The boundaries are the plain human units (JP's spec: useful, easily understood):
-    white within the **quarter hour** (fresh — inside a typical advert interval),
-    yellow within the **hour**, orange within the **day**, default-grey beyond. No red
-    step — on the console red is reserved for errors. ``heat.never`` keeps never-heard
-    a shade below ever-heard.
+
+def _recency_quantized(secs: Optional[float]) -> str:
+    """PicoCalc's heat: the gradient stepped onto the theme's ``heat.*`` rungs.
+
+    Same scale as the regular platform's gradient and the same anchors — a console that
+    can't spend a hue per second spends one per unit instead (see :data:`_HEAT_STEPS`).
     """
     if secs is None:
         return "heat.never"
-    if secs <= 900:
-        return "heat.hot"
-    if secs <= 3600:
-        return "heat.warm"
-    if secs <= 86400:
-        return "heat.cool"
-    return "heat.cold"
+    for limit, style in _HEAT_STEPS:
+        if secs < limit:
+            return style
+    return "heat.never"
 
 
 _recency_impl: Callable[[Optional[float]], str] = _recency_gradient

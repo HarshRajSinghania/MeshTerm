@@ -103,14 +103,21 @@ MESH_THEME = Theme(
         "type.repeater": "#a78bfa",
         "type.room": "#ffffff",
         "type.sensor": "#fb923c",
-        # The heard-age heat scale's quantized steps (hot → cold). The regular platform
-        # interpolates a continuous gradient instead (ui.widgets._recency_style); these
-        # exist in both themes so the quantized impl's names resolve everywhere.
-        "heat.hot": "#ffffff",
-        "heat.warm": "#facc15",
-        "heat.cool": "#fb923c",
-        "heat.cold": "#94a3b8",
-        "heat.never": "#64748b",
+        # The heard-age heat scale's steps, named for how old the node they colour is:
+        # a node heard eight minutes ago is ``heat.minutes``, one heard eight days ago is
+        # ``heat.days``. Seven steps from white-hot to cold ash (JP's spec) — a cooling
+        # ember, then what's left of it. ``heat.never`` is both "over a year" and "never
+        # heard": past a year the distinction stops being worth a colour.
+        # The regular platform interpolates a continuous gradient over the same anchors
+        # rather than stepping (see ui.widgets._recency_style), so these are its ladder
+        # spelled out — every style name resolves on both platforms either way.
+        "heat.now": "#ffffff",      # under 5 minutes
+        "heat.minutes": "#facc15",  # 5 minutes
+        "heat.hours": "#f87171",    # 1 hour
+        "heat.days": "#b45309",     # 1 day
+        "heat.weeks": "#dc2626",    # 1 week
+        "heat.months": "#94a3b8",   # 1 month
+        "heat.never": "#64748b",    # 1 year, and never heard
         # The PicoCalc F-key lane's chip fills (see ui.tui.fkeys): gray for the plain
         # F1-F5 bank, green while the Shift watcher reports F6-F10. White text on both —
         # defined here too so the style names resolve on every platform, even though
@@ -252,10 +259,16 @@ MESH_THEME_16 = Theme(
         "type.repeater": "not bold color(5)",
         "type.room": "color(15)",
         "type.sensor": "not bold color(3)",
-        "heat.hot": "bold color(15)",
-        "heat.warm": "color(11)",
-        "heat.cool": "not bold color(3)",
-        "heat.cold": "not bold color(7)",
+        # JP's ladder, slot by slot: white-hot, yellow, the ember's light red, brown as it
+        # chars, dark red as it dies, then ash — light grey, and cold grey for what may as
+        # well never have been heard. Six of the sixteen slots do the whole scale; the
+        # three in the dim bank say ``not bold`` or a selected row would jump them a rung.
+        "heat.now": "bold color(15)",
+        "heat.minutes": "color(11)",
+        "heat.hours": "color(9)",
+        "heat.days": "not bold color(3)",
+        "heat.weeks": "not bold color(1)",
+        "heat.months": "not bold color(7)",
         "heat.never": "color(8)",
         # The F-key lane's chip fills: light-grey background (the palette's only "gray"
         # addressable as a background — see _VT_SLOTS) for the plain bank, green for the

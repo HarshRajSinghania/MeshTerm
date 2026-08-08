@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from ...platforms import Platform, get_platform, on_platform
-from ..theme import hint_style, title_style
+from ..theme import fold_text, hint_style, title_style
 from .glow import apply_corner_glow
 from .render import render_lines
 from .screen import Screen
@@ -321,12 +321,17 @@ def _banner_lines(banner: Sequence[str], cols: int) -> list[str]:
 
     Each row is padded to the block's widest display width first, so the shared left margin
     keeps the art internally aligned rather than centering every row on its own axis.
+
+    The rows are art, not renderables, so they never pass through
+    :func:`~meshterm.ui.tui.render.render_to_ansi` — the fold is applied here instead, and
+    the wordmark's truecolour lands on the palette slots the art was drawn against rather
+    than on whatever the console's own downsample picks.
     """
     if not banner:
         return []
     widths = [cell_len(Text.from_ansi(row).plain) for row in banner]
     width = max(widths)
-    padded = [row + " " * (width - w) for row, w in zip(banner, widths)]
+    padded = [fold_text(row) + " " * (width - w) for row, w in zip(banner, widths)]
     return _center(padded, cols)
 
 

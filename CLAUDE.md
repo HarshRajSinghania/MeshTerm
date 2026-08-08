@@ -140,7 +140,10 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   characters. `node.unknown` is deliberately not `muted`: muted is chrome and may sit a
   step darker, while an unidentified node is content you can still act on. Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
-  Recency heat colours heard/first-heard ages, never names. A key lane (via
+  Recency heat colours heard/first-heard ages, never names — seven steps on plain human
+  boundaries (`widgets._HEAT_STEPS`), each `heat.*` style named for how old the node it
+  colours is: white under 5 minutes, then yellow, light red, brown, red, light grey, and
+  one cold grey shared by "over a year" and "never heard". A key lane (via
   `highlighted_hash`) lights its hash in the same key-derived hue; the rest of the key,
   and any key standing in as a name, stays muted. UX text says "key" for the lane and
   "hash" only for the short derived id — never "hash" for a truncated key.

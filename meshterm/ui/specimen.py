@@ -40,11 +40,15 @@ def _palette_row() -> Text:
 
 
 def _ages_row() -> Text:
-    """The heat scale over its own anchors, each age drawn in its heat colour."""
+    """The heat scale over its own anchors — one age just inside each of the seven steps."""
     row = Text()
-    for label, secs in (("now", 0), ("5m", 300), ("3h", 10800), ("2d", 172800), ("never", None)):
+    anchors = (
+        ("now", 0), ("20m", 1200), ("3h", 10800), ("2d", 172800),
+        ("2w", 1209600), ("3mo", 7776000), ("never", None),
+    )
+    for label, secs in anchors:
         if row.plain:
-            row.append("  ")
+            row.append(" ")
         row.append(label, style=_recency_style(secs))
     return row
 
