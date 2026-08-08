@@ -139,7 +139,13 @@ DRAWN_LAYERS: frozenset[str] = frozenset(
 
 @dataclass(slots=True)
 class _Label:
-    """A pending label placement candidate."""
+    """A pending label placement candidate.
+
+    Attributes:
+        alts: Further anchors to try, in order, when the preferred one is already taken.
+            A line feature offers these along the stretch of itself that is on screen, so
+            a street whose middle is under a node marker still gets named further along.
+    """
 
     rank: int
     x: float
@@ -148,6 +154,7 @@ class _Label:
     color: RGB
     bold: bool
     min_zoom: int = 0
+    alts: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(slots=True)
@@ -192,14 +199,21 @@ def render_map(
     _draw_nodes(canvas, viewport, markers, find=find)
 
     # Then place basemap labels by importance, honouring the zoom gate and collisions.
+    # OpenStreetMap splits a long street into several named features, so one name can
+    # arrive many times over; on a terminal's worth of columns the second copy is only
+    # ever taking space from a street that has none, so a name is drawn once per frame.
     placed = 0
+    named: set[str] = set()
     for label in sorted(frame.labels, key=lambda l: l.rank):
         if placed >= max_labels:
             break
-        if viewport.zoom < label.min_zoom:
+        if viewport.zoom < label.min_zoom or label.text in named:
             continue
-        if canvas.place_label(label.x, label.y, label.text, label.color, bold=label.bold):
-            placed += 1
+        for ax, ay in ((label.x, label.y), *label.alts):
+            if canvas.place_label(ax, ay, label.text, label.color, bold=label.bold):
+                placed += 1
+                named.add(label.text)
+                break
 
     return canvas.to_ansi_lines()
 
@@ -315,6 +329,36 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
                 frame.labels.append(_Label(rank, dx, dy, feat.name, mark_rgb(color), bold, 8))
 
 
+def _clip_to_canvas(
+    x0: float, y0: float, x1: float, y1: float, w: float, h: float
+) -> Optional[tuple[float, float, float, float]]:
+    """Trim a segment to the ``0..w`` by ``0..h`` canvas (Liang-Barsky).
+
+    Returns:
+        The part of the segment inside the canvas, or ``None`` if none of it is. A street
+        that crosses the view with both of its endpoints beyond the edges still yields the
+        stretch you can see, which is the whole point of clipping rather than testing the
+        endpoints.
+    """
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0), (dx, w - x0), (-dy, y0), (dy, h - y0)):
+        if p == 0:
+            if q < 0:
+                return None  # parallel to this edge and wholly outside it
+            continue
+        t = q / p
+        if p < 0:
+            if t > t1:
+                return None
+            t0 = max(t0, t)
+        else:
+            if t < t0:
+                return None
+            t1 = min(t1, t)
+    return (x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy)
+
+
 def _add_line_label(
     frame: _Frame,
     rings: list[list[tuple[int, int]]],
@@ -327,12 +371,43 @@ def _add_line_label(
     *,
     min_zoom: int = 0,
 ) -> None:
-    """Queue a label at the midpoint of a line feature's longest part."""
-    longest = max(rings, key=len)
-    lx, ly = longest[len(longest) // 2]
-    dx, dy = frame.viewport.feature_to_dot(x, y, z, extent, lx, ly)
+    """Queue a label on the longest stretch of a line feature that is actually on screen.
+
+    Anchoring to the feature's own midpoint — the middle of the street as the *tile* drew
+    it — pins the label to a fixed geographic point rather than to your view, and the
+    tighter you zoom the less likely that point is to still be on screen. It made street
+    names get rarer the further in you went: of 265 named streets in a central Montréal
+    tile, 37 anchors landed on a 53x26 canvas at zoom 14 and only 6 at zoom 16.
+
+    So the line is clipped to the canvas first and the label goes on the longest piece
+    that survives, with the next-longest pieces kept as alternates for when that spot is
+    already spoken for. Nothing is queued for a feature that is wholly off screen.
+    """
+    vp = frame.viewport
+    w, h = float(vp.dot_w), float(vp.dot_h)
+    pieces: list[tuple[float, float, float]] = []  # (length, mid x, mid y)
+    for ring in rings:
+        if len(ring) < 2:
+            continue
+        prev = vp.feature_to_dot(x, y, z, extent, *ring[0])
+        for point in ring[1:]:
+            cur = vp.feature_to_dot(x, y, z, extent, *point)
+            visible = _clip_to_canvas(prev[0], prev[1], cur[0], cur[1], w, h)
+            prev = cur
+            if visible is None:
+                continue
+            ax, ay, bx, by = visible
+            pieces.append((math.hypot(bx - ax, by - ay), (ax + bx) / 2, (ay + by) / 2))
+    if not pieces:
+        return
+    pieces.sort(key=lambda p: -p[0])
     color, bold, rank = style
-    frame.labels.append(_Label(rank, dx, dy, text, mark_rgb(color), bold, min_zoom))
+    frame.labels.append(
+        _Label(
+            rank, pieces[0][1], pieces[0][2], text, mark_rgb(color), bold, min_zoom,
+            alts=tuple((px, py) for _, px, py in pieces[1:4]),
+        )
+    )
 
 
 def _marker_style(marker: MapMarker) -> tuple[str, str]:

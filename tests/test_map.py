@@ -287,6 +287,113 @@ def test_render_map_prioritises_repeater_glyph() -> None:
     assert "▲" in out and "●" not in out
 
 
+def _street_labels_placed(cols: int, rows: int, zoom: int) -> int:
+    """How many street names actually reach the canvas at this size and zoom."""
+    from meshterm.ui.map_render import DRAWN_LAYERS, _draw_tile, _Frame
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
+    vp = Viewport(45.5019, -73.5674, zoom, cols * 2, (rows - 4) * 4)
+    canvas = MapCanvas(vp.dot_w // 2, vp.dot_h // 4)
+    frame = _Frame(canvas=canvas, viewport=vp)
+    _draw_tile(frame, layers, 14, 4843, 5861)
+
+    placed = 0
+    for label in sorted(frame.labels, key=lambda l: l.rank):
+        if vp.zoom < label.min_zoom:
+            continue
+        for ax, ay in ((label.x, label.y), *label.alts):
+            if canvas.place_label(ax, ay, label.text, label.color, bold=label.bold):
+                placed += label.min_zoom == 15  # the street-label gate identifies them
+                break
+    return placed
+
+
+def test_street_labels_get_denser_as_you_zoom_in() -> None:
+    """Zooming toward a street must not make its name less likely to appear.
+
+    Anchoring a label to the feature's own midpoint pinned it to a fixed geographic
+    point, so the tighter the view the less often that point was still on screen — the
+    fixture's 265 named streets yielded 2 labels at zoom 16 and 10 at zoom 15.
+    """
+    assert _street_labels_placed(53, 26, 16) >= 5
+    assert _street_labels_placed(53, 26, 15) >= 10
+    # A wider terminal sees more of the same ground, so it may name more -- never fewer.
+    assert _street_labels_placed(72, 24, 16) >= _street_labels_placed(53, 26, 16)
+
+
+def _tile_local_of_view_centre(vp: Viewport, tz: int, tx: int, ty: int, extent: int = 4096):
+    """The tile-local point that lands in the middle of this viewport (inverts feature_to_dot)."""
+    from meshterm.core.geo import TILE_PX
+
+    ox, oy = vp.origin_world
+    scale = 2.0 ** (vp.zoom - tz)
+    lx = extent * ((vp.dot_w / 2 + ox) / (TILE_PX * scale) - tx)
+    ly = extent * ((vp.dot_h / 2 + oy) / (TILE_PX * scale) - ty)
+    return lx, ly
+
+
+def test_street_name_is_drawn_only_once() -> None:
+    """OSM splits a long street into several features; the map names it once."""
+    from meshterm.ui.map_render import DRAWN_LAYERS, MapMarker, render_map
+
+    layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
+    vp = Viewport(45.5019, -73.5674, 16, 53 * 2, 22 * 4)
+    out = _plain(render_map(vp, {(14, 4843, 5861): layers},
+                            [MapMarker("YUL", 45.5040, -73.5700, is_repeater=True)]))
+
+    # René-Lévesque arrives as several segments and used to be drawn twice on one screen.
+    assert out.count("René-Lévesque") <= 1, "a street was named more than once"
+
+
+def test_line_label_anchors_on_the_visible_stretch() -> None:
+    """A street crossing the view is named even with both its endpoints off screen."""
+    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    vp = Viewport(45.5019, -73.5674, 14, 120, 80)
+    frame = _Frame(canvas=MapCanvas(60, 20), viewport=vp)
+    _, cy = _tile_local_of_view_centre(vp, 14, 4843, 5861)
+    # A line spanning the whole tile at the view's latitude: its own midpoint is far away,
+    # but it crosses the canvas, so the clip must find it.
+    _add_line_label(frame, [[(0, cy), (4096, cy)]], 4096, 14, 4843, 5861, "Rue Long",
+                    ("#9aa0aa", False, 7))
+
+    assert len(frame.labels) == 1
+    label = frame.labels[0]
+    assert 0 <= label.x <= vp.dot_w and 0 <= label.y <= vp.dot_h
+
+
+def test_line_label_off_screen_is_not_queued() -> None:
+    """A feature with nothing on screen costs no label slot at all."""
+    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    vp = Viewport(45.5019, -73.5674, 16, 120, 80)
+    frame = _Frame(canvas=MapCanvas(60, 20), viewport=vp)
+    # A short line in the far corner of the tile, well outside a zoom-16 window.
+    _add_line_label(frame, [[(0, 0), (8, 8)]], 4096, 14, 4843, 5861, "Nowhere",
+                    ("#9aa0aa", False, 7))
+
+    assert frame.labels == []
+
+
+def test_line_label_offers_alternates_along_the_visible_run() -> None:
+    """A crowded first choice falls back further along the street rather than vanishing."""
+    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    vp = Viewport(45.5019, -73.5674, 14, 120, 80)
+    frame = _Frame(canvas=MapCanvas(60, 20), viewport=vp)
+    cx, cy = _tile_local_of_view_centre(vp, 14, 4843, 5861)
+    # A zig-zag across the view gives several visible pieces to choose between.
+    ring = [(cx - 120 + i * 40, cy - 40 + (i % 2) * 80) for i in range(8)]
+    _add_line_label(frame, [ring], 4096, 14, 4843, 5861, "Rue Zig", ("#9aa0aa", False, 7))
+
+    assert frame.labels and frame.labels[0].alts, "no fallback anchors offered"
+    assert all(a != (frame.labels[0].x, frame.labels[0].y) for a in frame.labels[0].alts)
+
+
 def test_render_map_drops_crowded_labels_favouring_repeaters() -> None:
     """When labels can't all fit, the repeater's wins and a crowded node's is dropped."""
     from meshterm.ui.map_render import MapMarker, render_map
