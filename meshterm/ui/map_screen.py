@@ -6,11 +6,13 @@ the UI never blocks on the network), and redraws via :func:`~meshterm.ui.map_ren
 render_map`. Keys:
 
 * the **arrow keys** pan; holding **Shift** pans by a single character cell for fine
-  positioning,
+  positioning (on the PicoCalc too — the Shift watcher covers a console that strips the
+  modifier off an arrow),
 * ``PgUp`` / ``PgDn`` zoom in / out,
 * ``Home`` recenters and refits to the dense core of the nodes — the *region* the mesh
   covers, and the same default view the map opens on,
-* ``Ctrl+L`` recenters on **your own node**, keeping the zoom you chose,
+* ``Ctrl+L`` recenters on **your own node**, keeping the zoom you chose and clearing any
+  find (the lane's ``You`` chip; its Shift half also zooms in close),
 * **typing finds nodes**: every letter key feeds a live name filter — matching nodes keep
   bright labels while the rest dim to context, ``Enter`` frames the matches, ``Backspace``
   edits, and ``Esc`` clears the filter (a second ``Esc`` leaves the map). This is why no
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
 from ..core.mvt import Layer
 from ..platforms import get_platform
+from ..services import modifier_watch
 from ..services.basemap import BasemapSource
 from .map_render import MapMarker, render_map
 from .tui.render import query_line
@@ -99,16 +102,28 @@ class MapScreen(Screen):
         node to be on the map at all; Frame needs a query with matches to frame, so on an
         unfiltered map it dims (and no-ops) rather than standing in for Region.
 
+        Two slots carry a Shift half along their own axis (JP, 2026-08-08). Behind You
+        sits **You +**: the same jump home, but zoomed in close — the ``+`` borrowed from
+        the zoom rocker's vocabulary, so the pair reads as "you / you, closer". Behind
+        Frame sits **Clear**: the find axis's other end, dropping the query the way Frame
+        commits it — lit exactly while there is a query to drop, which Esc also does but
+        no chip could otherwise teach.
+
         The zoom pair keeps the lane's handedness (see
         :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`): out on the left, in on the right, so
         F4/F5 read as the ``−``/``+`` rocker they are.
         """
         from .tui.fkeys import FPair
 
+        me = self._self_marker() is not None
         return [
             FPair("Region", "home"),
-            FPair("You", "locate", enabled=self._self_marker() is not None),
-            FPair("Frame", "frame", enabled=bool(self._filter) and bool(self._matches())),
+            FPair("You", "locate", "You +", "locate_zoom", enabled=me, opp_enabled=me),
+            FPair(
+                "Frame", "frame", "Clear", "clear_find",
+                enabled=bool(self._filter) and bool(self._matches()),
+                opp_enabled=bool(self._filter),
+            ),
             FPair("Zoom -", "pagedown"),
             FPair("Zoom +", "pageup"),
         ]
@@ -207,8 +222,8 @@ class MapScreen(Screen):
         self._needs_scrub = False
         return 2  # the panel's right padding cell and its right border cell
 
-    def _query_row(self) -> bool:
-        """Whether this paint spends a body row echoing the find query above the canvas.
+    def _query_echo(self) -> bool:
+        """Whether this paint echoes the find query over the canvas's bottom row.
 
         Only where the footer isn't drawn (:attr:`~meshterm.platforms.Platform.footer_fkeys`):
         there the hint line carrying the query never reaches the screen, so without this row
@@ -220,16 +235,16 @@ class MapScreen(Screen):
     def render_body(self, width: int) -> list[str]:
         """Build (or resize) the viewport, ensure its tiles, and render the frame.
 
-        The canvas is sized to whatever the body has left after the find echo (see
-        :meth:`_query_row`), so beginning a find costs the map one row of ground rather
-        than pushing its last row out of the viewport. The viewport is rebuilt at the new
-        height by the ordinary resize path below — centre and zoom are preserved, so the
-        view doesn't jump, it just loses (and later regains) a strip along the bottom.
+        Where the platform needs a body-line query echo (see :meth:`_query_echo`), it is
+        drawn *over* the canvas's last row — directly above the F-key lane — rather than
+        stacked above the map: an extra head line used to shift the whole ground down a
+        row the moment a find began (JP, 2026-08-08). Overlaying costs a strip of ground
+        behind the echo while a query is live, but the viewport itself never resizes, so
+        nothing jumps and the pan/zoom geometry holds steady.
         """
         _, cell_h = self._session.base_body_size()
-        head = [query_line(self._filter, width)] if self._query_row() else []
         cell_w = width
-        dot_w, dot_h = cell_w * 2, max(1, cell_h - len(head)) * 4
+        dot_w, dot_h = cell_w * 2, max(1, cell_h) * 4
 
         if self._viewport is None:
             self._viewport = self._initial_viewport(dot_w, dot_h)
@@ -242,7 +257,10 @@ class MapScreen(Screen):
         self.title = self._title(self._viewport)
         self._persist()
         tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
-        return head + render_map(self._viewport, tiles, self._markers, find=self._filter)
+        lines = render_map(self._viewport, tiles, self._markers, find=self._filter)
+        if lines and self._query_echo():
+            lines[-1] = query_line(self._filter, width)
+        return lines
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
@@ -370,9 +388,11 @@ class MapScreen(Screen):
         active filter first, the map itself only once the filter is clear.
 
         Three actions reframe the view, and each has both a key and an F-key chip:
-        ``home`` the whole region, ``locate`` (Ctrl+L) our own node, ``frame`` the find
-        matches — which is what Enter already does while a query is being typed, kept as
-        a separate action so the lane can name it on a platform that draws no hint line.
+        ``home`` the whole region, ``locate`` (Ctrl+L) our own node — ``locate_zoom``
+        the Shift-bank variant that also homes in — and ``frame`` the find matches,
+        which is what Enter already does while a query is being typed, kept as a
+        separate action so the lane can name it on a platform that draws no hint line.
+        ``clear_find`` drops the query without leaving (Esc's first peel, as a chip).
         """
         vp = self._viewport
         if action == "escape":
@@ -384,7 +404,11 @@ class MapScreen(Screen):
         if vp is None:
             return
         if action in _PAN_DIRS:
-            self._pan(vp, action, fine=False)
+            # A shifted arrow the console reports as the bare arrow (the PicoCalc's VT
+            # strips the modifier) still fine-pans: the watcher knows whether Shift is
+            # physically held, and it stays False wherever it isn't watching — desktop
+            # terminals report shift_up/... themselves, on the branch below.
+            self._pan(vp, action, fine=modifier_watch.shift_down())
         elif action.startswith("shift_") and action[len("shift_"):] in _PAN_DIRS:
             self._pan(vp, action[len("shift_"):], fine=True)
         elif action == "pageup":
@@ -395,6 +419,10 @@ class MapScreen(Screen):
             self._reset_view(vp)
         elif action == "locate":
             self._locate(vp)
+        elif action == "locate_zoom":
+            self._locate(vp, zoom_in=True)
+        elif action == "clear_find":
+            self._filter = ""
         elif action == "frame" and self._filter:
             self._frame_matches(vp)
         elif action == "text" and self.find_enabled:
@@ -418,18 +446,22 @@ class MapScreen(Screen):
         """
         return next((m for m in self._markers if m.is_self), None)
 
-    def _locate(self, vp: Viewport) -> None:
-        """Recentre on our own node, keeping the current zoom (``Ctrl+L`` / the ``You`` chip).
+    def _locate(self, vp: Viewport, *, zoom_in: bool = False) -> None:
+        """Recentre on our own node (``Ctrl+L`` / the ``You`` chip), clearing any find.
 
-        Deliberately *only* a recentre: the zoom is the one the user chose, so pressing
-        this twice does the same thing twice and pairing it with one Zoom + is a single
-        extra press. Refitting instead would make "where am I" silently also mean "and
-        forget how close I was looking".
+        Plain ``You`` keeps the zoom the user chose — pressing it twice does the same
+        thing twice, and pairing it with one Zoom + is a single extra press. Its Shift
+        half (``You +``) is the one that also homes in, at the same street-level
+        closeness a single-match Frame lands on (:data:`_FIND_ZOOM`). Both clear the
+        find query (JP, 2026-08-08): jumping home while a filter dims the rest — or
+        matches nothing, us included — reads as starting over, and the map should agree.
         """
         me = self._self_marker()
         if me is None:
             return
-        self._viewport = Viewport(clamp_lat(me.lat), me.lon, vp.zoom, vp.dot_w, vp.dot_h)
+        self._filter = ""
+        zoom = min(_FIND_ZOOM, self._max_tile_zoom) if zoom_in else vp.zoom
+        self._viewport = Viewport(clamp_lat(me.lat), me.lon, zoom, vp.dot_w, vp.dot_h)
 
     def _reset_view(self, vp: Viewport) -> None:
         """Refit the view to the nodes' dense core (the map's opening frame)."""

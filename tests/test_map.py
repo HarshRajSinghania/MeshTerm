@@ -1138,16 +1138,21 @@ def test_map_fkey_lane_names_its_three_destinations_and_the_zoom() -> None:
     lane = screen.fkey_lane
 
     # PgUp/PgDn zoom here and Home reframes — the shared paging labels would all be lies,
-    # and "end" is bound to nothing at all, so no jump rides the Shift bank.
-    # The zoom pair rises to the right, like every directional pair on the lane.
+    # and "end" is bound to nothing at all, so no jump rides the zoom rocker's Shift bank.
+    # The zoom pair rises to the right, like every right-hand directional pair.
     assert [pair.label if pair else None for pair in lane] == [
         "Region", "You", "Frame", "Zoom -", "Zoom +",
     ]
-    assert all(action_for(lane, n) is None for n in range(6, 11))
     assert action_for(lane, 1) == "home" and action_for(lane, 5) == "pageup"
     assert action_for(lane, 2) == "locate" and action_for(lane, 3) == "frame"
-    # Region and the zoom always act; the other two only where they'd land somewhere.
+    # Two slots carry a Shift half along their own axis: You + homes in on us zoomed,
+    # Clear drops the find query. The other three Shift keys stay unbound.
+    assert action_for(lane, 7) == "locate_zoom" and action_for(lane, 8) == "clear_find"
+    assert all(action_for(lane, n) is None for n in (6, 9, 10))
+    # Region and the zoom always act; the other two only where they'd land somewhere —
+    # and each Shift half gates with its own axis (no self marker, no query typed).
     assert [pair.enabled for pair in lane] == [True, False, False, True, True]
+    assert lane[1].opp_enabled is False and lane[2].opp_enabled is False
 
 
 def test_map_locate_recenters_on_our_own_node_at_the_current_zoom() -> None:
@@ -1204,11 +1209,12 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
         for ch in "yul":
             device.handle("text", ch)
         lines = device.render_body(53)
-        # The echo takes the first row and the canvas gives up exactly one, so the body
-        # still fills the frame it was handed rather than overflowing it.
-        assert _plain(lines[0]).strip() == "/yul"
+        # The echo overlays the canvas's *last* row — directly above the F-key lane —
+        # so the ground never shifts: same body height, same viewport, top anchor held.
+        assert _plain(lines[-1]).strip() == "/yul"
+        assert "/yul" not in _plain(lines[0])
         assert len(lines) == 23
-        # Clearing the find hands the row back.
+        # Clearing the find hands the row back to the canvas, still without a reflow.
         for _ in "yul":
             device.handle("backspace")
         assert len(device.render_body(53)) == 23
