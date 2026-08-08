@@ -10,6 +10,15 @@ tiles, free and requiring no API key. Everything here is best-effort: with no ne
 cached tiles the loader simply returns ``None`` and the map falls back to plotting nodes on a
 blank grid, never raising into the UI.
 
+**Only tiles that decode to real geometry are ever written to disk.** A cache is a memory,
+and the one thing it must not remember is a lie: on a flaky link (the PicoCalc's Wi-Fi, most
+of all) a timeout, a reset, or a body cut short is *silence*, not an empty tile, and storing
+it leaves a blank square on the map for every future session. So a fetch is only cached once
+its bytes have decoded to at least one feature; anything else is either dropped on the floor
+(no answer — try again next pan) or remembered in memory for this session alone (the source
+answered, and there is genuinely nothing there). Cache entries written by earlier builds that
+can't decode are pruned on read, which heals a cache already poisoned this way.
+
 Fetches are blocking (stdlib ``urllib``); callers on an event loop should run
 :meth:`BasemapSource.load_tile` via ``asyncio.to_thread`` so the UI stays responsive.
 """
@@ -18,9 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from ..core.mvt import Layer, decode_tile
 
@@ -33,7 +45,29 @@ _USER_AGENT = "MeshTerm/0.1 (+https://github.com/; mesh node map)"
 #: Fallback max tile zoom if the TileJSON doesn't declare one (OpenFreeMap serves 14).
 _DEFAULT_MAX_ZOOM = 14
 
+#: HTTP statuses that are the source *answering* "there is no such resource". Everything
+#: else — 429, 5xx, and every transport error — is the absence of an answer.
+_ABSENT_STATUSES = frozenset({404, 410})
+
 _log = logging.getLogger(__name__)
+
+
+class _Response(NamedTuple):
+    """One HTTP GET's outcome: whether the server answered, and what it said.
+
+    The distinction is the whole point. A definitive answer can be acted on — bytes to
+    decode, or a 404 meaning there is no tile at those coordinates. Offline, DNS failure,
+    timeout, connection reset, throttling, a server fault, a body short of its declared
+    length: none of those tell us anything about the tile, and must never be mistaken for
+    the source saying it is empty.
+
+    Attributes:
+        answered: Whether the server gave a definitive answer.
+        body: The body it gave; empty when the answer was "no such resource".
+    """
+
+    answered: bool
+    body: bytes
 
 
 class BasemapSource:
@@ -63,6 +97,10 @@ class BasemapSource:
         self._template: Optional[str] = None
         self._max_zoom: Optional[int] = None
         self._resolved = False  # whether we've tried (success or offline) this session
+        # Tiles the source answered "nothing here" for this session. Held in memory rather
+        # than on disk so the claim expires with the process: a blank tile is cheap to
+        # re-ask about, and a stale one on disk is a permanent hole in the map.
+        self._blank: set[tuple[int, int, int]] = set()
 
     # -- metadata ---------------------------------------------------------------
 
@@ -77,7 +115,8 @@ class BasemapSource:
         # Prefer a freshly fetched TileJSON (the template is versioned and rotates), but fall
         # back to a previously cached copy so a session started offline can still use disk
         # tiles and even re-fetch if the template is still valid.
-        data = self._http_get(self._tilejson_url)
+        resp = self._http_get(self._tilejson_url)
+        data = resp.body if resp.answered and resp.body else None
         if data is not None:
             try:
                 self._tilejson_path().parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +159,11 @@ class BasemapSource:
     def load_tile(self, z: int, x: int, y: int) -> Optional[list[Layer]]:
         """Return the decoded layers for a tile, from cache or the network.
 
+        The cache only ever holds tiles that decoded to real geometry. A tile the source
+        never answered for is left uncached, so the next pan over it asks again instead of
+        drawing a permanent blank; a cached file that no longer decodes is pruned for the
+        same reason.
+
         Args:
             z: Tile zoom.
             x: Tile x index.
@@ -129,32 +173,70 @@ class BasemapSource:
             The decoded layers, or ``None`` if the tile is unavailable (offline and
             uncached, or a genuinely empty/missing tile).
         """
+        key = (z, x, y)
+        if key in self._blank:
+            return None
         path = self._tile_path(z, x, y)
-        raw = self._read_cached(path)
+        cached = self._read_cached(path)
+        if cached is not None:
+            layers = self._decode(cached, key)
+            if layers is not None:
+                return layers
+            # Nothing drawable came out: a zero-byte marker from a build that cached
+            # network failures, or bytes truncated by a link (or a power cut) mid-write.
+            # Either way it is a blank square for ever unless we drop it and re-ask.
+            _log.debug("dropping unusable cached tile %s/%s/%s", z, x, y)
+            self._discard_cached(path)
+        raw = self._fetch_tile(z, x, y)
         if raw is None:
-            raw = self._fetch_tile(z, x, y)
-            if raw is not None:
-                self._write_cached(path, raw)
-        if not raw:
+            return None  # no answer — nothing learned, so nothing is written down
+        layers = self._decode(raw, key)
+        if layers is None:
+            self._blank.add(key)  # the source answered: there is genuinely nothing here
             return None
+        self._write_cached(path, raw)
+        return layers
+
+    @staticmethod
+    def _decode(raw: bytes, key: tuple[int, int, int]) -> Optional[list[Layer]]:
+        """Decode a tile's bytes, or ``None`` if they hold nothing worth drawing.
+
+        Args:
+            raw: The tile's raw ``.pbf`` bytes.
+            key: The ``(z, x, y)`` the bytes claim to be, for the log line.
+
+        Returns:
+            The decoded layers when at least one carries a feature; ``None`` for empty,
+            featureless, or corrupt bytes — the three ways a tile ends up blank.
+        """
         try:
-            return decode_tile(raw)
+            layers = decode_tile(raw)
         except Exception as exc:  # noqa: BLE001 - a corrupt tile must not crash the map
-            _log.debug("failed to decode tile %s/%s/%s: %s", z, x, y, exc)
+            _log.debug("failed to decode tile %s/%s/%s: %s", *key, exc)
             return None
+        return layers if any(layer.features for layer in layers) else None
 
     def _fetch_tile(self, z: int, x: int, y: int) -> Optional[bytes]:
-        """Fetch a tile's raw bytes from the network, or ``None`` if unavailable."""
+        """Fetch a tile's raw bytes from the network.
+
+        Args:
+            z: Tile zoom.
+            x: Tile x index.
+            y: Tile y index.
+
+        Returns:
+            The body the source gave — possibly empty, meaning "no tile at those
+            coordinates" — or ``None`` if it never answered (offline, timed out,
+            throttled, faulted, or cut short).
+        """
         self._resolve()
         if self._template is None:
             return None
         url = (
             self._template.replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
         )
-        data = self._http_get(url)
-        # A 404/empty response is a legitimately empty tile; cache an empty marker so we
-        # don't re-request it every repaint.
-        return data if data is not None else b""
+        resp = self._http_get(url)
+        return resp.body if resp.answered else None
 
     @staticmethod
     def _read_cached(path: Path) -> Optional[bytes]:
@@ -165,18 +247,53 @@ class BasemapSource:
 
     @staticmethod
     def _write_cached(path: Path, raw: bytes) -> None:
+        """Write a tile to the cache atomically, so a half-written one is never read back."""
+        # Unique per writer: the map screen and a mini-map share one source, and both may
+        # be fetching the same tile in their own worker threads.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.part")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(raw)
+            tmp.write_bytes(raw)
+            os.replace(tmp, path)
         except OSError:  # pragma: no cover - cache write failure is non-fatal
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _discard_cached(path: Path) -> None:
+        """Drop a cache entry that proved unusable, so the tile can be fetched afresh."""
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - a cache we can't prune is still readable
             pass
 
-    def _http_get(self, url: str) -> Optional[bytes]:
-        """GET a URL, returning the body, or ``None`` on any network/HTTP failure."""
+    def _http_get(self, url: str) -> _Response:
+        """GET a URL, telling a definitive answer apart from no answer at all.
+
+        Args:
+            url: The absolute URL to fetch.
+
+        Returns:
+            The outcome — see :class:`_Response`.
+        """
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                return resp.read()
-        except Exception as exc:  # noqa: BLE001 - offline / 404 / timeout are all "no tile"
-            _log.debug("tile fetch failed for %s: %s", url, exc)
-            return None
+                body = resp.read()
+                declared = (resp.headers.get("Content-Length") or "").strip()
+                # A flaky link can end a read early without raising. A body short of its
+                # declared length is a truncation, not a tile — and not an empty one.
+                if declared.isdigit() and len(body) != int(declared):
+                    _log.debug("short read for %s: %d of %s bytes", url, len(body), declared)
+                    return _Response(False, b"")
+                return _Response(True, body)
+        except urllib.error.HTTPError as exc:
+            answered = exc.code in _ABSENT_STATUSES
+            if not answered:
+                _log.debug("fetch failed for %s: HTTP %s", url, exc.code)
+            return _Response(answered, b"")
+        except Exception as exc:  # noqa: BLE001 - offline / timeout / reset are "no answer"
+            _log.debug("fetch failed for %s: %s", url, exc)
+            return _Response(False, b"")

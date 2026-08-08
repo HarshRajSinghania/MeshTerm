@@ -325,6 +325,149 @@ def test_basemap_source_reads_cached_tile(tmp_path: Path) -> None:
     assert any(layer.name == "transportation" for layer in layers)
 
 
+def _offline_source(cache: Path):
+    """A source that can't reach anything — every fetch is silence, not an empty tile."""
+    from meshterm.services.basemap import BasemapSource
+
+    return BasemapSource(cache, tilejson_url="http://127.0.0.1:1/none", timeout=0.2)
+
+
+def test_basemap_source_never_caches_an_unanswered_fetch(tmp_path: Path) -> None:
+    """A timeout writes nothing: a blank square now must not become a blank square for ever."""
+    from meshterm.services import basemap as basemap_mod
+
+    cache = tmp_path / "cache"
+    assert _offline_source(cache).load_tile(14, 4843, 5861) is None
+    assert list(cache.rglob("*.pbf")) == []
+
+    # The same, with the source resolved and the *fetch* the thing that fails — the flaky
+    # link the PicoCalc lives on. The tile stays unknown, so the next pan asks again.
+    src = _offline_source(cache)
+    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"
+    src._resolved = True
+    calls: list[str] = []
+
+    def _get(url: str):
+        calls.append(url)
+        return basemap_mod._Response(False, b"")
+
+    src._http_get = _get  # type: ignore[method-assign]
+    assert src.load_tile(14, 4843, 5861) is None
+    assert src.load_tile(14, 4843, 5861) is None
+    assert len(calls) == 2  # retried, not written off as empty
+    assert list(cache.rglob("*.pbf")) == []
+
+
+def test_basemap_source_prunes_a_blank_cached_tile(tmp_path: Path) -> None:
+    """A zero-byte entry (an older build's failure marker) is dropped rather than drawn."""
+    cache = tmp_path / "cache"
+    tile = cache / "tiles" / "14" / "4843" / "5861.pbf"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(b"")
+    assert _offline_source(cache).load_tile(14, 4843, 5861) is None
+    assert not tile.exists()  # pruned, so a session with network re-fetches it
+
+
+def test_basemap_source_prunes_a_corrupt_cached_tile(tmp_path: Path) -> None:
+    """Bytes cut short mid-write don't decode, so they're pruned instead of kept blank."""
+    cache = tmp_path / "cache"
+    tile = cache / "tiles" / "14" / "4843" / "5861.pbf"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(_FIXTURE.read_bytes()[:200])
+    assert _offline_source(cache).load_tile(14, 4843, 5861) is None
+    assert not tile.exists()
+
+
+def test_basemap_source_caches_only_tiles_with_content(tmp_path: Path) -> None:
+    """The disk cache holds decodable geometry — never an empty or unparseable answer."""
+    from meshterm.services import basemap as basemap_mod
+
+    cache = tmp_path / "cache"
+    src = _offline_source(cache)
+    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"  # skip TileJSON resolution
+    src._resolved = True
+
+    bodies = iter([b"", b"not a vector tile at all", _FIXTURE.read_bytes()])
+    src._http_get = lambda url: basemap_mod._Response(True, next(bodies))  # type: ignore[method-assign]
+
+    assert src.load_tile(14, 1, 1) is None  # answered "empty"
+    assert src.load_tile(14, 2, 2) is None  # answered with junk
+    assert list(cache.rglob("*.pbf")) == []
+    layers = src.load_tile(14, 4843, 5861)  # answered with a real tile
+    assert layers is not None
+    assert (cache / "tiles" / "14" / "4843" / "5861.pbf").exists()
+
+
+def test_basemap_source_remembers_a_blank_tile_for_the_session(tmp_path: Path) -> None:
+    """An answered-empty tile isn't re-requested this session (but isn't written down)."""
+    from meshterm.services import basemap as basemap_mod
+
+    src = _offline_source(tmp_path / "cache")
+    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"
+    src._resolved = True
+    calls: list[str] = []
+
+    def _get(url: str):
+        calls.append(url)
+        return basemap_mod._Response(True, b"")
+
+    src._http_get = _get  # type: ignore[method-assign]
+    assert src.load_tile(14, 1, 1) is None
+    assert src.load_tile(14, 1, 1) is None
+    assert len(calls) == 1
+
+
+def test_basemap_http_get_separates_an_answer_from_silence(tmp_path: Path) -> None:
+    """404 is an answer; a 500, and a body short of Content-Length, are not."""
+    import urllib.error
+
+    from meshterm.services.basemap import BasemapSource
+
+    src = BasemapSource(tmp_path / "cache")
+
+    class _Resp:
+        """The slice of an ``http.client.HTTPResponse`` the fetcher touches."""
+
+        def __init__(self, body: bytes, declared: str | None) -> None:
+            self._body, self.headers = body, {"Content-Length": declared}
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc) -> bool:
+            return False
+
+    def _fake(result):
+        def _urlopen(_req, timeout=None):  # noqa: ANN001
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return _urlopen
+
+    def _get(result) -> tuple[bool, bytes]:
+        import urllib.request
+
+        saved = urllib.request.urlopen
+        urllib.request.urlopen = _fake(result)  # type: ignore[assignment]
+        try:
+            return tuple(src._http_get("http://tiles.invalid/t"))
+        finally:
+            urllib.request.urlopen = saved  # type: ignore[assignment]
+
+    err = lambda code: urllib.error.HTTPError("u", code, "", {}, None)  # noqa: E731
+    assert _get(_Resp(b"tile-bytes", "10")) == (True, b"tile-bytes")
+    assert _get(_Resp(b"tile-b", "10")) == (False, b"")  # truncated read
+    assert _get(_Resp(b"anything", None)) == (True, b"anything")  # no declared length
+    assert _get(err(404)) == (True, b"")  # "no tile here" — an answer
+    assert _get(err(500)) == (False, b"")  # server fault — no answer
+    assert _get(err(429)) == (False, b"")  # throttled — no answer
+    assert _get(TimeoutError("timed out")) == (False, b"")
+
+
 # -- the tool -----------------------------------------------------------------
 
 
