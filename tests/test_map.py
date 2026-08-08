@@ -63,6 +63,52 @@ def test_decode_tile_handles_empty_input() -> None:
     assert decode_tile(b"") == []
 
 
+def test_decode_tile_filter_keeps_the_whole_tile_visible() -> None:
+    """A narrowed decode still names every layer — it only skips their features.
+
+    The tile source decides whether a cache entry is real by whether it parsed into
+    layers, so narrowing must never make a tile look like it holds nothing.
+    """
+    raw = _FIXTURE.read_bytes()
+    full = decode_tile(raw)
+    narrow = decode_tile(raw, layers={"water"})
+
+    assert [layer.name for layer in narrow] == [layer.name for layer in full]
+    assert all(layer.extent == 4096 for layer in narrow)
+    picked = {layer.name: layer for layer in narrow}
+    assert picked["water"].features  # the one we asked for was decoded
+    assert not picked["building"].features  # the rest were skipped, not dropped
+
+
+def test_decode_tile_filter_is_invisible_to_the_renderer() -> None:
+    """Narrowing to ``DRAWN_LAYERS`` draws exactly the map a full decode draws.
+
+    This is the anti-drift guard: if ``_draw_tile`` grows a lookup for a layer that
+    isn't in ``DRAWN_LAYERS``, that layer arrives featureless and the rendered output
+    diverges here.
+    """
+    from meshterm.ui.map_render import DRAWN_LAYERS, MapMarker, render_map
+
+    raw = _FIXTURE.read_bytes()
+    vp = Viewport(45.5019, -73.5674, 14, 180, 120)
+    markers = [MapMarker("Yagi", 45.5019, -73.5674, is_repeater=True)]
+
+    def drawn(layers):
+        return render_map(vp, {(14, 4843, 5861): layers}, markers)
+
+    assert drawn(decode_tile(raw, layers=DRAWN_LAYERS)) == drawn(decode_tile(raw))
+
+
+def test_decode_tile_filter_skips_the_layers_the_map_never_draws() -> None:
+    """The layers left undecoded are the ones that made a tile expensive."""
+    from meshterm.ui.map_render import DRAWN_LAYERS
+
+    narrow = {layer.name: layer for layer in decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)}
+    for skipped in ("building", "housenumber", "poi"):
+        assert skipped in narrow, f"{skipped} should still be named"
+        assert not narrow[skipped].features, f"{skipped} should not have been decoded"
+
+
 # -- projection / viewport ----------------------------------------------------
 
 
@@ -396,6 +442,33 @@ def test_basemap_source_caches_only_tiles_with_content(tmp_path: Path) -> None:
     layers = src.load_tile(14, 4843, 5861)  # answered with a real tile
     assert layers is not None
     assert (cache / "tiles" / "14" / "4843" / "5861.pbf").exists()
+
+
+def test_basemap_source_keeps_a_tile_whose_layers_are_all_undrawn(tmp_path: Path) -> None:
+    """Narrowing the decode must not make a good cached tile look blank and get pruned.
+
+    A source told to decode a layer the tile doesn't carry sees no features at all. If
+    that were read as "nothing here", the entry would be deleted and re-downloaded on
+    every session — the cache paying for a rendering decision.
+    """
+    from meshterm.services.basemap import BasemapSource
+
+    cache = tmp_path / "cache"
+    tile = cache / "tiles" / "14" / "4843" / "5861.pbf"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(_FIXTURE.read_bytes())
+
+    src = BasemapSource(
+        cache,
+        tilejson_url="http://127.0.0.1:1/none",
+        timeout=0.2,
+        layers=frozenset({"a_layer_this_tile_does_not_have"}),
+    )
+    layers = src.load_tile(14, 4843, 5861)
+
+    assert layers, "a real tile must still read as real"
+    assert not any(layer.features for layer in layers)  # nothing was decoded
+    assert tile.exists(), "the cache entry must survive"
 
 
 def test_basemap_source_remembers_a_blank_tile_for_the_session(tmp_path: Path) -> None:

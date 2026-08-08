@@ -120,6 +120,22 @@ _PLACE_STYLE: dict[str, tuple[str, bool, int, int]] = {
 _WATER_LABEL = ("#7dd3fc", False, 2)
 _STREET_LABEL = ("#9aa0aa", False, 7)
 
+#: Polygon layers drawn as fills, in painting order (later wins the shared cell).
+_FILL_LAYERS = ("water", "landcover", "landuse", "park")
+
+#: Every basemap layer :func:`_draw_tile` looks at — and so the only geometry the map
+#: has any use for. A planet tile also ships ``building``, ``housenumber``, ``poi`` and
+#: ``mountain_peak``, which together are a large share of its features and none of its
+#: pixels: decoding them cost ~40% of every tile until this set was handed to
+#: :func:`~meshterm.core.mvt.decode_tile` (measured on the Lyra — a 153 KB tile went
+#: 1236 ms → 281 ms). Passed to the tile source at construction
+#: (:attr:`meshterm.context.AppContext.basemap_source`); the on-disk cache still holds
+#: whole tiles, so widening this set costs a re-decode, never a re-download.
+DRAWN_LAYERS: frozenset[str] = frozenset(
+    _FILL_LAYERS
+    + ("waterway", "transportation", "boundary", "transportation_name", "place", "water_name")
+)
+
 
 @dataclass(slots=True)
 class _Label:
@@ -199,7 +215,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
         ]
 
     # Fills first (water, green space) so lines and labels sit on top.
-    for name in ("water", "landcover", "landuse", "park"):
+    for name in _FILL_LAYERS:
         layer = by_name.get(name)
         if layer is None:
             continue

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import gzip
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Container, Optional
 
 # MVT geometry types (Feature.type).
 GEOM_POINT = 1
@@ -68,7 +68,13 @@ class _Reader:
         if wire_type == 0:
             self.varint()
         elif wire_type == 2:
-            self.blob()
+            # Step over the bytes rather than slicing them out: skipping is how the
+            # decoder walks past everything it doesn't want, and a discarded copy of
+            # every feature in an undrawn layer is the bulk of that cost. The length
+            # must land in a temporary first — ``self.i += self.varint()`` would add to
+            # the offset as it was *before* the varint moved it.
+            n = self.varint()
+            self.i += n
         elif wire_type == 5:
             self.i += 4
         elif wire_type == 1:
@@ -262,24 +268,63 @@ def _decode_layer(buf: bytes) -> Layer:
     return layer
 
 
-def decode_tile(data: bytes) -> list[Layer]:
+def _layer_head(buf: bytes) -> tuple[str, int]:
+    """Read a Layer message's identity — ``(name, extent)`` — without decoding features.
+
+    Walks the layer's top-level fields, stepping over the features and the string pools
+    instead of building them. Protobuf fields may appear in any order, so this reads to
+    the end rather than stopping at the first name; every field it passes is a varint or
+    a length-skip, so the walk stays cheap even on a layer holding thousands of features.
+
+    Args:
+        buf: The Layer message's bytes.
+
+    Returns:
+        The layer's name (empty if it declares none) and its coordinate extent.
+    """
+    r = _Reader(buf)
+    name = ""
+    extent = 4096
+    while not r.eof():
+        field_no, wire = r.tag()
+        if field_no == 1 and wire == 2:
+            name = r.blob().decode("utf-8", "ignore")
+        elif field_no == 5 and wire == 0:
+            extent = r.varint()
+        else:
+            r.skip(wire)
+    return name, extent
+
+
+def decode_tile(data: bytes, *, layers: Optional[Container[str]] = None) -> list[Layer]:
     """Decode a vector tile (optionally gzip-compressed) into its layers.
 
     Args:
         data: Raw ``.pbf`` bytes, gzip-compressed or not.
+        layers: When given, only layers whose name is in it are decoded. The others are
+            still returned — named, with their extent, and no features — so the result
+            still describes the whole tile and a caller can tell a real tile from junk
+            without paying for geometry it will never draw. ``None`` decodes everything.
 
     Returns:
-        The decoded layers, in the order they appear in the tile. An empty or unparseable
-        tile yields an empty list rather than raising.
+        The tile's layers, in the order they appear in it. An empty tile yields an empty
+        list rather than raising; truncated or junk bytes raise, which is what lets
+        :class:`~meshterm.services.basemap.BasemapSource` tell a corrupt cache entry from
+        a tile that simply holds nothing it draws.
     """
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
     r = _Reader(data)
-    layers: list[Layer] = []
+    out: list[Layer] = []
     while not r.eof():
         field_no, wire = r.tag()
         if field_no == 3 and wire == 2:  # Tile.layers
-            layers.append(_decode_layer(r.blob()))
+            blob = r.blob()
+            if layers is None:
+                out.append(_decode_layer(blob))
+                continue
+            name, extent = _layer_head(blob)
+            out.append(_decode_layer(blob) if name in layers else Layer(name=name, extent=extent))
         else:
             r.skip(wire)
-    return layers
+    return out

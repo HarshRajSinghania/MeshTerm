@@ -382,8 +382,11 @@ class AppContext:
         """
         if self._basemap_source is None:
             from .services.basemap import BasemapSource
+            from .ui.map_render import DRAWN_LAYERS
 
-            self._basemap_source = BasemapSource(self.settings.config_dir / "tilecache")
+            self._basemap_source = BasemapSource(
+                self.settings.config_dir / "tilecache", layers=DRAWN_LAYERS
+            )
         return self._basemap_source
 
     @property

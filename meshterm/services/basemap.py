@@ -3,7 +3,11 @@
 This is the only networked part of the map. It resolves a tile source's (versioned) tile-URL
 template from its TileJSON, fetches ``.pbf`` vector tiles over HTTPS, and caches them on disk
 so panning back over ground you've seen is instant and later sessions work offline. Decoding
-is delegated to the pure :mod:`meshterm.core.mvt`.
+is delegated to the pure :mod:`meshterm.core.mvt`, and narrowed to the layers the renderer
+actually draws (``layers``) — a planet tile carries buildings, house numbers and POIs the
+terminal map has no pixels for, and they are the bulk of its decode cost. Only the decode
+narrows: whole tiles are still cached, so drawing more later costs a re-decode, never a
+re-download.
 
 The default source is **OpenFreeMap** (openfreemap.org) — full-planet OpenStreetMap vector
 tiles, free and requiring no API key. Everything here is best-effort: with no network and no
@@ -32,7 +36,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Container, NamedTuple, Optional
 
 from ..core.mvt import Layer, decode_tile
 
@@ -83,6 +87,7 @@ class BasemapSource:
         *,
         tilejson_url: str = DEFAULT_TILEJSON_URL,
         timeout: float = 12.0,
+        layers: Optional[Container[str]] = None,
     ) -> None:
         """Open a tile source backed by an on-disk cache.
 
@@ -90,10 +95,15 @@ class BasemapSource:
             cache_dir: Where fetched tiles and TileJSON metadata are stored.
             tilejson_url: URL of the source's TileJSON document.
             timeout: Per-request network timeout in seconds.
+            layers: Restrict decoding to these layer names (the renderer passes
+                :data:`meshterm.ui.map_render.DRAWN_LAYERS`). Only the *decode* narrows —
+                the cache still stores whole tiles — so this is a pure CPU saving that a
+                later renderer can widen without re-fetching anything.
         """
         self.cache_dir = cache_dir
         self._tilejson_url = tilejson_url
         self._timeout = timeout
+        self._layers = layers
         self._template: Optional[str] = None
         self._max_zoom: Optional[int] = None
         self._resolved = False  # whether we've tried (success or offline) this session
@@ -197,24 +207,34 @@ class BasemapSource:
         self._write_cached(path, raw)
         return layers
 
-    @staticmethod
-    def _decode(raw: bytes, key: tuple[int, int, int]) -> Optional[list[Layer]]:
-        """Decode a tile's bytes, or ``None`` if they hold nothing worth drawing.
+    def _decode(self, raw: bytes, key: tuple[int, int, int]) -> Optional[list[Layer]]:
+        """Decode a tile's bytes, or ``None`` if they aren't a tile at all.
+
+        The question this answers is "are these real tile bytes?", and the answer decides
+        whether a cache entry is kept or pruned — so it must not be confused with "is
+        there anything here I feel like drawing". Under ``layers`` most of a tile's
+        content is deliberately left undecoded, and a tile whose every layer we skip
+        would otherwise read as blank and get its (perfectly good) cache entry deleted
+        and re-downloaded every session.
+
+        So the test is whether the bytes parsed into any layer at all. That is sound
+        because the three ways a tile is *not* real are all distinguishable without
+        looking at features: empty bytes decode to no layers, and truncated or junk bytes
+        raise out of the parser rather than yielding a well-formed featureless layer.
 
         Args:
             raw: The tile's raw ``.pbf`` bytes.
             key: The ``(z, x, y)`` the bytes claim to be, for the log line.
 
         Returns:
-            The decoded layers when at least one carries a feature; ``None`` for empty,
-            featureless, or corrupt bytes — the three ways a tile ends up blank.
+            The decoded layers, or ``None`` for empty or corrupt bytes.
         """
         try:
-            layers = decode_tile(raw)
+            layers = decode_tile(raw, layers=self._layers)
         except Exception as exc:  # noqa: BLE001 - a corrupt tile must not crash the map
             _log.debug("failed to decode tile %s/%s/%s: %s", *key, exc)
             return None
-        return layers if any(layer.features for layer in layers) else None
+        return layers or None
 
     def _fetch_tile(self, z: int, x: int, y: int) -> Optional[bytes]:
         """Fetch a tile's raw bytes from the network.
