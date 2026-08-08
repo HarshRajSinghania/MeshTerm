@@ -52,6 +52,13 @@ MESH_THEME = Theme(
         "warn": "bold #fbbf24",
         "err": "bold #f87171",
         "muted": "#94a3b8",
+        # A node we can't identify — its ``○`` ring, and its label wherever a bare key or
+        # hash stands in for a name (see name_style's keyless return). Its own name rather
+        # than plain ``muted`` because the two must not track each other: ``muted`` is
+        # chrome and may sit a step down from body text, while an unidentified node is
+        # *content* you can still act on. On the console that difference is the whole
+        # ladder — chrome takes the dark grey slot, this one the light grey.
+        "node.unknown": "#94a3b8",
         # Panel/dialog titles: the same hue as the border they sit in, one shade brighter,
         # so the title reads as part of its frame while still standing out from it. One
         # entry per border style the frame compositor is given (see theme.title_style).
@@ -120,10 +127,15 @@ MESH_THEME = Theme(
 #: bind:
 #:
 #: * The kernel VT renders **bold as brightness**: ``bold`` on a 0–7 foreground jumps it
-#:   to slot N+8. A style may only combine ``bold`` with a dim slot when the bright
-#:   partner keeps its meaning — and never with 5/6, whose partners are claimed by
-#:   *different* semantics here (5 purple = the repeater mark, 13 pink = the node mark;
-#:   6 cyan = hint.brand, 14 bright cyan = brand).
+#:   to slot N+8. So a dim-slot style must say what it means about bold — it cannot leave
+#:   the question open, because Rich merges a *base* style into every span it wraps and a
+#:   selected row's ``bold`` would then recolour the span outright (a light-grey unknown
+#:   hash arriving as white "you", a purple repeater as pink). Every dim-slot style is
+#:   therefore either explicitly ``not bold`` (the colour is load-bearing; keep it) or
+#:   explicitly ``bold`` (the promotion *is* the intent — only ``title.muted``). Never
+#:   silent, and never bold on 5/6, whose partners are claimed by *different* semantics
+#:   here (5 purple = the repeater mark, 13 pink = the node mark; 6 cyan = hint.brand,
+#:   14 bright cyan = brand).
 #: * Backgrounds can only address slots 0–7 (SGR 40–47).
 #: * The six *chromatic bright* slots (9-14) are the node-name spectrum's landing zone —
 #:   the console's rendering of the key-derived hue wheel (see :data:`_NODE_SLOT_HEXES`).
@@ -205,40 +217,45 @@ MESH_THEME_16 = Theme(
         "you": "bold color(15)",
         "device.known": "bold color(15)",
         "bluetooth": "bold color(15) on color(4)",
-        "bluetooth.edge": "color(4)",
+        "bluetooth.edge": "not bold color(4)",
         "ok": "bold color(10)",
         "warn": "bold color(11)",
         "err": "bold color(9)",
         "muted": "color(8)",
+        # Light grey, a step *above* muted's dark grey: the console has exactly two greys,
+        # and an unidentified node's hash is content, not chrome.
+        "node.unknown": "not bold color(7)",
         "title.accent": "bold color(12)",
+        # The one deliberate promotion: bold takes slot 7 to 15, and near-white is exactly
+        # what this title wants (the regular theme spells it #cbd5e1).
         "title.muted": "bold color(7)",
         "title.warn": "bold color(11)",
         "title.err": "bold color(9)",
         "title.ok": "bold color(10)",
         "title.brand": "bold color(14)",
-        "hint.accent": "color(4)",
+        "hint.accent": "not bold color(4)",
         "hint.muted": "color(8)",
-        "hint.warn": "color(3)",
-        "hint.err": "color(1)",
-        "hint.ok": "color(2)",
-        "hint.brand": "color(6)",
+        "hint.warn": "not bold color(3)",
+        "hint.err": "not bold color(1)",
+        "hint.ok": "not bold color(2)",
+        "hint.brand": "not bold color(6)",
         "faint": "color(8)",
         "track": "color(8)",
         "snr.good": "bold color(10)",
         "snr.ok": "bold color(11)",
         "snr.bad": "bold color(9)",
         "batt.high": "bold color(10)",
-        "batt.mid": "color(3)",
+        "batt.mid": "not bold color(3)",
         "batt.low": "bold color(9)",
         "batt.dim": "color(8)",
         "type.node": "color(13)",
-        "type.repeater": "color(5)",
+        "type.repeater": "not bold color(5)",
         "type.room": "color(15)",
-        "type.sensor": "color(3)",
+        "type.sensor": "not bold color(3)",
         "heat.hot": "bold color(15)",
         "heat.warm": "color(11)",
-        "heat.cool": "color(3)",
-        "heat.cold": "color(7)",
+        "heat.cool": "not bold color(3)",
+        "heat.cold": "not bold color(7)",
         "heat.never": "color(8)",
         # The F-key lane's chip fills: light-grey background (the palette's only "gray"
         # addressable as a background — see _VT_SLOTS) for the plain bank, green for the
@@ -439,15 +456,15 @@ def name_style(name: str, key: Optional[str] = None) -> str:
         name: The display name (unused for the hue; kept so every call site reads
             ``name_style(name, key)`` and the pair stays greppable).
         key: Any known prefix of the node's key/hash. ``None``/empty marks a sender whose
-            key we couldn't resolve — drawn ``muted``, because colour is reserved for
-            keyed identities (callers with only a name resolve it first via
+            key we couldn't resolve — drawn ``node.unknown``, because colour is reserved
+            for keyed identities (callers with only a name resolve it first via
             :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
 
     Returns:
         A style for the name; the same node always maps to the same style on a given
         platform, so it keeps its colour across screens and sessions.
     """
-    return node_style(key) if key else "muted"
+    return node_style(key) if key else "node.unknown"
 
 
 # -- the compact icon language (PicoCalc) ---------------------------------------------

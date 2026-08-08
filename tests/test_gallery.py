@@ -33,6 +33,7 @@ from rich.text import Text
 
 from meshterm.core.courier_store import CourierStore
 from meshterm.core.models import (
+    NODE_TYPE_REPEATER,
     ChatMessage,
     Contact,
     Conversation,
@@ -72,7 +73,8 @@ from meshterm.ui.trace_screen import TraceScreen
 from meshterm.ui.tui import Screen, frame
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
-from meshterm.ui.widgets import ContactsSort, highlighted_hash
+from meshterm.ui.theme import name_style
+from meshterm.ui.widgets import _NODE_GLYPHS, ContactsSort, highlighted_hash
 
 from tests.conftest import plain as _plain
 
@@ -150,8 +152,11 @@ def _contacts(cols: int, rows: int) -> Screen:
 
 
 def _node_detail_header() -> Text:
-    header = Text("▲ ", style="#a78bfa")
-    header.append("YUL-Cartierville", style="accent")
+    # Through the app's own marker and name styles, not a hand-spelled hex: the gallery is
+    # a specimen of what the platform draws, so a stub colour would hide a palette bug.
+    glyph, glyph_style = _NODE_GLYPHS[NODE_TYPE_REPEATER]
+    header = Text(f"{glyph} ", style=glyph_style)
+    header.append("YUL-Cartierville", style=name_style("YUL-Cartierville", _HUB_KEY))
     header.append("   repeater", style="muted")
     return header
 

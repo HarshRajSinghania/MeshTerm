@@ -265,10 +265,10 @@ def test_preview_colours_channel_sender_and_mentions() -> None:
     assert preview.plain == "Bob: hi @Alice @Zed"  # brackets dropped for display
     styles = {span.style for span in preview.spans}
     assert node_style("d4") in styles and node_style("60") in styles
-    # The unresolvable @Zed stays muted like the body around it.
+    # The unresolvable @Zed takes the unknown-node grey, like any name we can't place.
     zed = preview.plain.index("@Zed")
     assert any(
-        s.style == "muted" and s.start <= zed < s.end for s in preview.spans
+        s.style == "node.unknown" and s.start <= zed < s.end for s in preview.spans
     )
 
 
@@ -802,8 +802,8 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
         s for s in text.spans if s.style == hue and s.start <= at and at + len("@Alice") <= s.end
     ]
     assert hue_spans
-    # The unknown @Zed stays muted — no key, no colour.
-    assert screen._sender_style("Zed") == "muted"
+    # The unknown @Zed falls to the unknown-node grey — no key, no hue.
+    assert screen._sender_style("Zed") == "node.unknown"
 
 
 def test_direct_chat_unknown_mention_stays_muted() -> None:
@@ -828,8 +828,8 @@ def test_direct_chat_unknown_mention_stays_muted() -> None:
 
     # A resolvable mention still lights in its own key-derived hue…
     assert screen._sender_style("Alice", mention=True) == node_style("60")
-    # …but an unknown mention is muted, not painted with the peer's (d4…) hue.
-    assert screen._sender_style("Zed", mention=True) == "muted"
+    # …but an unknown mention is grey, not painted with the peer's (d4…) hue.
+    assert screen._sender_style("Zed", mention=True) == "node.unknown"
     assert screen._sender_style("Zed", mention=True) != node_style("d4")
     # The sender label keeps the peer-key fallback (unchanged behaviour).
     assert screen._sender_style("Zed") == node_style("d4")
@@ -1176,7 +1176,7 @@ def test_channel_self_style_keyed_on_concept_not_label() -> None:
 
     screen = _channel_screen([])
     assert screen._sender_style("you", is_self=True) == "you"  # us → white
-    assert screen._sender_style("you", is_self=False) == "muted"  # no key → muted
+    assert screen._sender_style("you", is_self=False) == "node.unknown"  # no key → grey
     keyed = _channel_screen([], key_of=_keys_of({"you": "d4" + "0" * 62}))
     remote = keyed._sender_style("you", is_self=False)
     assert remote == node_style("d4")  # the key's spectrum hue

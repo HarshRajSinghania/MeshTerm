@@ -17,10 +17,23 @@ from __future__ import annotations
 import unicodedata
 from typing import Optional
 
+from ..platforms import Platform, on_platform
 from .marks import RGB, parse_hex  # noqa: F401 - canonical home; re-exported for importers
 
 #: Unicode braille pattern base; add a dot bitmask to get the glyph.
 _BRAILLE_BASE = 0x2800
+
+#: What an emboldened run emits — nothing on a 16-slot console, where the kernel VT draws
+#: bold as brightness and would recolour the run rather than weight it (see
+#: :meth:`MapCanvas.to_ansi_lines`). Bound at platform-switch time.
+_BOLD = "\x1b[1m"
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Bind the canvas's emphasis to what the platform can express (now and on switches)."""
+    global _BOLD
+    _BOLD = "\x1b[1m" if platform.truecolor else ""
 
 
 def single_cell(text: str) -> str:
@@ -306,6 +319,12 @@ class MapCanvas:
         platform's render-boundary fold: on PicoCalc the truecolour SGR quantizes to
         the 16 palette slots (and any stray glyph folds to the console font) right
         here, wherever the lines end up embedded.
+
+        Emphasis is dropped on a platform that has no truecolour (see :data:`_BOLD`): the
+        kernel VT draws ``bold`` as *brightness*, so a bold run whose colour just quantized
+        into the dim bank would be promoted to that slot's bright partner — a light-grey
+        unknown label arriving as white "you", a purple repeater as pink. The colour a
+        marker was given is the load-bearing part; the emboldening is not.
         """
         from .theme import fold_text
 
@@ -332,7 +351,7 @@ class MapCanvas:
                 style = (color, bold)
                 if style != cur:
                     r, g, b = color
-                    parts.append(f"\x1b[0m\x1b[38;2;{r};{g};{b}m" + ("\x1b[1m" if bold else ""))
+                    parts.append(f"\x1b[0m\x1b[38;2;{r};{g};{b}m" + (_BOLD if bold else ""))
                     cur = style
                 parts.append(ch)
             if cur is not None:

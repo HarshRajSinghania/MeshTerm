@@ -67,7 +67,7 @@ from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
 from .pathline import ELIDE_HEAD, PathHop, PathLine
-from .theme import name_style, node_style, snr_style
+from .theme import mark_rgb, name_style, node_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -523,7 +523,7 @@ class WalkScreen(Screen):
         style = self._list_name_style(node)
         return PathHop(
             self._label(node),
-            key=None if style in ("you", "muted") else node,
+            key=None if style in ("you", "node.unknown") else node,
             you=style == "you",
         )
 
@@ -681,7 +681,7 @@ class WalkScreen(Screen):
         white = (255, 255, 255)
         for other, (x, y) in placed.items():
             if other == _MORE:
-                rgb = white if selected in hidden else parse_hex(_UNKNOWN[1])
+                rgb = white if selected in hidden else mark_rgb(_UNKNOWN[1])
                 canvas.marker(x, y, "…", rgb)
                 continue
             glyph, _type_color = self._glyph(other)
@@ -699,7 +699,7 @@ class WalkScreen(Screen):
             if selected in hidden:
                 self._label_right(canvas, x, y, self._label(selected), white)
             else:
-                self._label_right(canvas, x, y, f"+{len(hidden)} weaker", parse_hex(_UNKNOWN[1]))
+                self._label_right(canvas, x, y, f"+{len(hidden)} weaker", mark_rgb(_UNKNOWN[1]))
 
         return canvas.to_ansi_lines()
 
@@ -1028,7 +1028,7 @@ class WalkScreen(Screen):
             return "you"
         label = self._label(node)
         if label == node[:8]:  # a bare hash is not a name — colour is the name signal
-            return "muted"
+            return "node.unknown"
         return name_style(label, node)
 
     def _marker_rgb(self, node: str) -> RGB:
@@ -1045,22 +1045,22 @@ class WalkScreen(Screen):
             return (255, 255, 255)
         raw = node.lower()
         if not raw or any(c not in "0123456789abcdef" for c in raw):
-            return parse_hex(_UNKNOWN[1])
+            return mark_rgb(_UNKNOWN[1])
         return parse_hex(node_style(node).rsplit("#", 1)[-1])
 
     def _label_rgb(self, node: str) -> RGB:
-        """The label colour for a node on the canvas: its name hue, ours white, a bare hash muted.
+        """The label colour for a node on the canvas: its name hue, ours white, a bare hash grey.
 
         The RGB counterpart of :meth:`_list_name_style`: a named node's key hue, our own
-        node white, and a node known only by a bare hash muted (a key standing in as a name
-        is never itself coloured, so the marker carries the identity and the hash-label
-        stays grey).
+        node white, and a node known only by a bare hash the unknown-node grey (a key
+        standing in as a name is never itself coloured, so the marker carries the identity
+        and the hash-label stays grey).
         """
         style = self._list_name_style(node)
         if style == "you":
             return (255, 255, 255)
-        if style == "muted":
-            return parse_hex("#94a3b8")
+        if "#" not in style:  # a theme name (node.unknown) — the platform picks the shade
+            return mark_rgb(style)
         return parse_hex(style.rsplit("#", 1)[-1])
 
     def _glyph_style(self, node: str) -> str:
@@ -1068,13 +1068,13 @@ class WalkScreen(Screen):
 
         The text-side companion of :meth:`_marker_rgb`, so the focus line's leading glyph
         matches its canvas marker — key-hued for a real node, the white ``you`` for us, and
-        muted for a keyless placeholder id.
+        the unknown-node grey for a keyless placeholder id.
         """
         if node == self._topo.self_id:
             return "you"
         raw = node.lower()
         if not raw or any(c not in "0123456789abcdef" for c in raw):
-            return "muted"
+            return "node.unknown"
         return node_style(node)
 
     def _empty_state(self, width: int) -> list[str]:

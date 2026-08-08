@@ -75,7 +75,7 @@ def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
     )
     assert text.plain == "e839f2 (e8)"  # mode width identity, then the addressed byte
     styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
-    assert styles.get("e839f2") == "muted"  # greyed — colour is the "this is a name" cue
+    assert styles.get("e839f2") == "node.unknown"  # grey — colour is the "this is a name" cue
     from meshterm.ui.theme import node_style
 
     assert not any(str(s.style) == node_style("e839f2ab") for s in text.spans)  # no prefix lit
@@ -129,11 +129,11 @@ def test_make_name_key_resolver_contacts_win_over_stored_names() -> None:
     assert key_of("Zed") is None               # nobody carries the name
 
 
-def test_name_style_without_a_key_is_muted() -> None:
+def test_name_style_without_a_key_is_the_unknown_grey() -> None:
     """A keyless name has no hue — colour is reserved for keyed identities."""
     from meshterm.ui.theme import name_style, node_style
 
-    assert name_style("Stranger") == "muted"
+    assert name_style("Stranger") == "node.unknown"
     keyed = name_style("Alice", "d4" + "0" * 62)
     assert keyed == node_style("d4" + "0" * 62) and keyed.startswith("bold #")
 

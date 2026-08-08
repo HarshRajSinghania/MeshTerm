@@ -133,9 +133,12 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 - Node names are always coloured: `name_style(name, key)` palette hue, derived from the
   node's key (its first byte — any known prefix agrees) so a rename keeps the colour.
   One rule on **every** platform; only the resolution changes (see **Platforms**).
-  A surface holding only a name resolves it first (`make_name_key_resolver`); a name
-  no known node carries stays muted — colour is reserved for keyed identities, never
-  seeded from a name's characters. Our own node
+  A surface holding only a name resolves it first (`make_name_key_resolver`); a node no
+  key can place — an unresolved sender, a bare hash standing in as a name, an `○` ring —
+  takes `node.unknown`, THE light grey for an unidentified node, everywhere and on both
+  platforms. Colour is reserved for keyed identities, never seeded from a name's
+  characters. `node.unknown` is deliberately not `muted`: muted is chrome and may sit a
+  step darker, while an unidentified node is content you can still act on. Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
   Recency heat colours heard/first-heard ages, never names. A key lane (via
   `highlighted_hash`) lights its hash in the same key-derived hue; the rest of the key,
@@ -168,8 +171,14 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   found on-device. The font itself is built by `scripts/calculinux-console-font.sh`;
   the two files move in the same commit.
 - The 16-slot palette is `theme._VT_SLOTS` (programmed via `/etc/vtrgb`; same script).
-  `MESH_THEME_16` speaks `color(0..15)` only; bold is brightness on the VT (never bold
-  slots 5/6); backgrounds stop at slot 7. Both themes define identical style names.
+  `MESH_THEME_16` speaks `color(0..15)` only; backgrounds stop at slot 7. Both themes
+  define identical style names.
+- **Bold is brightness on the VT**: `bold` on a 0–7 foreground *is* slot N+8, so a
+  dim-slot style must state its intent — `not bold` (keep the declared colour) or `bold`
+  (the promotion is the point, only `title.muted`), never silent. Rich merges a row's
+  base style into every span, so a silent one changes colour inside a selected row. Same
+  trap outside the theme: `MapCanvas` drops emphasis entirely where bold is brightness,
+  since its colours arrive quantized and it can't know which bank they landed in.
 - On picocalc, the node hue and the heat gradient **quantize** — same rule, coarser
   resolution: `node_style` snaps the key's hue to its sixth of the wheel
   (`theme._NODE_SLOT_HEXES`, the six chromatic bright slots) and heat to the `heat.*`

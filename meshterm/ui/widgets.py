@@ -442,6 +442,10 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
     shorter than the key ellipsizes it (the ``…`` takes the colour of the digit it
     replaces, so a highlight wider than the budget still reads as one).
 
+    With ``prefix_bytes=0`` nothing is lit and the key is standing in *as* a name — a node
+    we can't identify — so the whole run takes ``node.unknown`` rather than ``muted``: it
+    is the row's content, not the dim tail of a hash whose head already carries the hue.
+
     Args:
         value: The key as hex, optionally ``0x``-prefixed and mixed-case.
         prefix_bytes: Number of leading bytes the current path-hash mode addresses; ``0``
@@ -469,11 +473,12 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
     elif width is not None:
         pad = width - len(raw)
     hue = node_style(value)  # from the untruncated key, though any prefix agrees
+    rest = "muted" if split else "node.unknown"
     text = Text()
     text.append(raw[:split], style=hue)
-    text.append(raw[split:], style="muted")
+    text.append(raw[split:], style=rest)
     if ellipsis:
-        text.append("…", style=hue if len(raw) < split else "muted")
+        text.append("…", style=hue if len(raw) < split else rest)
     text.append(" " * pad)
     return text
 
@@ -497,19 +502,14 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
 _SELF_RGB: RGB = (255, 255, 255)
 
 
-#: The truecolour of the ``muted`` grey — what a keyless name's hue collapses to on a
-#: raster (mirrors ``theme``'s muted ``#94a3b8``).
-_MUTED_RGB: RGB = (148, 163, 184)
-
-
 def _name_rgb(name: str, key: Optional[str] = None) -> RGB:
     """The RGB of a node's stable palette hue (``theme.name_style`` minus its bold).
 
-    A name with no resolvable key styles ``muted`` (no hex to parse), so it lands on
-    the muted grey here — the raster twin of the app-wide keyless-stays-muted rule.
+    A name with no resolvable key styles ``node.unknown`` (a theme name, not a hex), so
+    it lands on that grey here — the raster twin of the app-wide keyless-stays-grey rule.
     """
     hexpart = name_style(name, key).split()[-1]
-    return parse_hex(hexpart) if hexpart.startswith("#") else _MUTED_RGB
+    return parse_hex(hexpart) if hexpart.startswith("#") else mark_rgb(hexpart)
 
 
 def name_rgb(name: str, key: Optional[str] = None) -> RGB:
@@ -590,19 +590,24 @@ def route_graph_style(
         return node[:2]
 
     def label_rgb_of(node: str) -> RGB:
-        """A label's colour: its node's name hue, us pure white, an unknown its ring."""
+        """A label's colour: its node's name hue, us pure white, an unknown its ring.
+
+        A relay we can't name keeps its *marker's* colour, so the hash under a repeater's
+        ``▲`` reads as that repeater rather than as a stray grey byte — which means this
+        resolves whatever ``glyph_of`` hands back, style name or hex alike.
+        """
         if node == DST_NODE:
             return _SELF_RGB
         if node == SRC_NODE:
             if src_is_self:
                 return _SELF_RGB
             if not source:
-                return parse_hex(UNKNOWN_MARK[1])
+                return mark_rgb(UNKNOWN_MARK[1])
             return _name_rgb(source, key_of(source) if key_of else None)
         named = resolve(node)
         if named and named != node:
             return _name_rgb(named, node)
-        return parse_hex(glyph_of(node)[1])
+        return mark_rgb(glyph_of(node)[1])
 
     return glyph_of, label_of, label_rgb_of
 

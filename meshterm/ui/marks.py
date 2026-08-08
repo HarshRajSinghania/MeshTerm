@@ -28,11 +28,15 @@ def parse_hex(color: str) -> RGB:
 # and warm amber (roads), so markers use the hues a map never contains — pink/violet — to
 # stand out against it. Ordinary nodes are the loudest (bright pink); repeaters recede a
 # step (a calmer violet); our own node stays the fixed yellow star; a node heard of but
-# never identified is a muted grey ring. Every glyph is in the PicoCalc console font.
+# never identified is a light grey ring. Every glyph is in the PicoCalc console font.
+#
+# A mark's colour is whatever :func:`~meshterm.ui.theme.mark_rgb` takes — a literal hex, or
+# a theme style name where the platform must pick the shade itself. The unknown ring is
+# named (``node.unknown``) so the ring and the grey label beside it can never disagree.
 SELF_MARK = ("★", "#facc15")
 REPEATER_MARK = ("▲", "#a78bfa")
 NODE_MARK = ("●", "#f472b6")
-UNKNOWN_MARK = ("○", "#94a3b8")
+UNKNOWN_MARK = ("○", "node.unknown")
 
 #: Sentinels naming a path's endpoints on the route graph. ``\x00`` never appears in a
 #: node hash, so they can share the node-id namespace without colliding with one.

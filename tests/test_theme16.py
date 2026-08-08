@@ -67,6 +67,51 @@ def test_theme16_bold_never_jumps_a_dim_slot_to_an_unrelated_bright_one() -> Non
             )
 
 
+def test_theme16_dim_slot_styles_all_answer_the_bold_question() -> None:
+    """A dim-slot style must state its intent about bold — it cannot stay silent.
+
+    Rich merges a base style into every span it wraps, so a span left at ``bold=None``
+    inside a selected (bold) row inherits it, and the VT then draws slot N as N+8: the
+    style silently changes colour depending on what it lands in. Each one is therefore
+    pinned ``not bold`` (keep the declared colour) or ``bold`` (the promotion is intended).
+    """
+    silent = [
+        name
+        for name, style in _our_styles(MESH_THEME_16).items()
+        if style.color is not None and style.color.number is not None
+        and style.color.number <= 7 and style.bold is None
+    ]
+    assert not silent, (
+        f"dim-slot styles that would inherit a row's bold and change colour: {silent}"
+    )
+
+
+def test_unknown_node_grey_survives_a_selected_row() -> None:
+    """THE reported bug: an unnamed hop's hash inside a selected row read as white "you".
+
+    ``node.unknown`` is a dim slot, so an inherited bold would promote it to 15 — the
+    ``you`` white. It must render as plain light grey (37) either way, on both platforms.
+    """
+    from io import StringIO
+
+    from rich.console import Console
+    from rich.text import Text
+
+    set_platform(PICOCALC)
+    console = Console(
+        theme=MESH_THEME_16, width=20, file=StringIO(),
+        force_terminal=True, color_system="standard", highlight=False,
+    )
+    for base in (None, "brand"):  # unselected row, then the bold cursor row
+        row = Text("  ")
+        row.append("3d", style="node.unknown")
+        if base:
+            row.style = base
+        with console.capture() as capture:
+            console.print(row, end="")
+        assert "\x1b[37m3d" in capture.get(), (base, capture.get())
+
+
 def test_theme16_backgrounds_stay_in_the_dim_bank() -> None:
     """The VT has no bright backgrounds — SGR 40-47 only."""
     for name, style in _our_styles(MESH_THEME_16).items():
@@ -179,10 +224,11 @@ def test_names_colour_by_key_on_both_platforms() -> None:
         hue = name_style("YUL-Cartierville", "3d63c6429436")
         assert hue.startswith("bold #"), platform.name
         # Any prefix of the key agrees, a rename does not move the colour, and a sender
-        # we could not place stays muted — colour is reserved for keyed identities.
+        # we could not place falls to the unknown-node grey — colour is reserved for
+        # keyed identities.
         assert name_style("YUL-Cartierville", "3d") == hue
         assert name_style("renamed", "3d63c6429436") == hue
-        assert name_style("nameless", None) == "muted"
+        assert name_style("nameless", None) == "node.unknown"
 
 
 def test_picocalc_node_hues_land_on_their_own_palette_slots() -> None:
@@ -199,6 +245,22 @@ def test_picocalc_node_hues_land_on_their_own_palette_slots() -> None:
     assert min(landed.count(h) for h in set(landed)) >= 256 // 8  # no starved sector
 
 
+def test_route_graph_resolves_a_named_marker_colour_to_rgb() -> None:
+    """A relay we can't name keeps its marker's colour — including a *typed* marker.
+
+    The type marks carry theme style names, so the graph's label colour has to resolve
+    them rather than assume a literal hex (it raised ValueError when it did).
+    """
+    from meshterm.ui.widgets import route_graph_style
+
+    for platform in (REGULAR, PICOCALC):
+        set_platform(platform)
+        _glyph_of, _label_of, label_rgb_of = route_graph_style(
+            resolve=lambda hop: None, self_name="Me", source="Alice", type_of=lambda hop: 2,
+        )
+        assert label_rgb_of("3d63") == theme.mark_rgb("type.repeater"), platform.name
+
+
 def test_node_type_marks_stay_distinct_on_the_console() -> None:
     """Each type mark owns a slot — a naive downsample would grey the repeater's violet."""
     set_platform(PICOCALC)
@@ -206,6 +268,23 @@ def test_node_type_marks_stay_distinct_on_the_console() -> None:
     rgbs = [theme.mark_rgb(name) for name in marks]
     assert len(set(rgbs)) == len(marks)
     assert theme.mark_rgb("type.repeater") != theme.mark_rgb("muted")
+
+
+def test_canvas_drops_emphasis_where_bold_means_brightness() -> None:
+    """A braille canvas may not embolden on the console: the VT would recolour the run.
+
+    The canvas quantizes its own truecolour at the fold, so a bold run has no way to know
+    which bank it landed in — an unknown label (slot 7) would arrive as white (15).
+    """
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    for platform, expect_bold in ((REGULAR, True), (PICOCALC, False)):
+        set_platform(platform)
+        canvas = MapCanvas(6, 1)
+        canvas.marker(0, 0, "x", (148, 163, 184))  # markers always draw emboldened
+        rendered = "".join(canvas.to_ansi_lines())
+        assert ("\x1b[1m" in rendered) is expect_bold, (platform.name, repr(rendered))
+    assert "\x1b[37m" in rendered  # and the colour it was given survives intact
 
 
 # -- the font build script stays mirrored ---------------------------------------------

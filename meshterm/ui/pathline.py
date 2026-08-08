@@ -578,7 +578,10 @@ class PathLine:
         elif hop.key:
             text.append(hop.label, style=node_style(hop.key))
         else:
-            text.append(hop.label, style="muted")
+            # No key to derive a hue from: the hop is a bare hash standing in for a node
+            # we can't identify, so it takes the app-wide unknown-node grey — not `muted`,
+            # which is chrome and sits a step darker on a console with only two greys.
+            text.append(hop.label, style="node.unknown")
         if hop.annotation:
             text.append(f" ({hop.annotation})", style=note_style)
         return text
