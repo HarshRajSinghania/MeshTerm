@@ -564,6 +564,9 @@ class NodeDetailScreen(Screen):
             if n:
                 self._row_index = 0
                 self._sync_route_sel(focus)
+            # On a terminal too short for the pinned layout the frame follows the cursor;
+            # jumping home should surface the very top of the page, header included.
+            self.scroll_to_top()
         elif action in ("end", "ctrl_end"):
             if n:
                 self._row_index = n - 1

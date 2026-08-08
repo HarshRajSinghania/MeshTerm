@@ -627,7 +627,11 @@ class SelectScreen(Screen):
         elif action == "pagedown":
             self._index = min(len(choices) - 1, self._index + self._page_step) if choices else 0
         elif action in ("home", "ctrl_home"):
+            # The jump goes to the very top of the *page*, not just the first choice: the
+            # rows above it (a heading, its preamble, a lead-in note) scroll back into
+            # view too, rather than staying folded behind their pinned stand-ins.
             self._index = 0
+            self.scroll_to_top()
         elif action in ("end", "ctrl_end"):
             self._index = max(0, len(choices) - 1)
         elif action == "ctrl_pagedown":
