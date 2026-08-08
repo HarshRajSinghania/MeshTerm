@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -53,6 +54,18 @@ if TYPE_CHECKING:
 #: nothing, while re-reading the (slow) table on every screen open cost seconds. A read past
 #: this age still returns instantly from cache; the refresh happens behind it.
 _CONTACTS_TTL_S = 90.0
+
+
+def _aware(when: "Optional[datetime]") -> "Optional[datetime]":
+    """Read a stored timestamp as UTC, so two of them can be compared.
+
+    Timestamps are stored as UTC (rendered local only at the very edge), but a row written
+    by an older build may come back without a tzinfo — and comparing one of those against an
+    aware one raises. Since the storage contract says UTC, a naive stamp simply *is* UTC.
+    """
+    if when is None or when.tzinfo is not None:
+        return when
+    return when.replace(tzinfo=timezone.utc)
 
 
 class DeviceState:
@@ -132,7 +145,7 @@ class DeviceState:
                 return self._contacts
             device = await self._ctx.device()
             merged = await self._remember_and_merge(await device.get_contacts())
-            self._contacts = self._fill_heard(merged)
+            self._contacts = self._merge_heard(merged)
             self._contacts_at = time.monotonic()
             return self._contacts
 
@@ -160,37 +173,55 @@ class DeviceState:
         store.remember_all(pubkey, fetched)
         return merge_contacts(store, pubkey, fetched)
 
-    def _fill_heard(self, contacts: list["Contact"]) -> list["Contact"]:
-        """Fill each contact's missing last-heard time from our own recorded receptions.
+    def _merge_heard(self, contacts: list["Contact"]) -> list["Contact"]:
+        """Give each contact the *later* of the device's advert time and our own receptions.
 
-        A contact arrives with no ``last_seen`` when the firmware never caught an advert —
-        or when it reported one stamped implausibly far in the future by the *sender's*
-        clock, which :func:`~meshterm.core.models.advert_time` refuses rather than letting
-        the contact read "heard now" forever. Either way our observation history may still
-        hold first-hand evidence (stamped by *our* clock at reception), so it fills the gap
-        here — once, at the one point every screen fetches contacts through — and the heard
-        lanes, sorts, and the purge ladder all see the same honest value. A contact we have
-        truly never heard stays ``None`` and reads ``never``. Best-effort: a history read
-        failure just returns the list unfilled, never blocking the fetch.
+        A contact's ``last_seen`` arrives as the firmware's ``last_advert``, which the
+        advertising node stamped with its own clock — hearsay
+        (:func:`~meshterm.core.models.advert_time` can only refuse a *future* stamp; a node
+        whose clock runs days behind reports a plausible-looking time that never catches
+        up). Our own history holds first-hand evidence instead, stamped when we received
+        something: overheard adverts and telemetry
+        (:meth:`~meshterm.persistence.repository.Repository.last_heard_by_node`) and direct
+        messages the node sent us
+        (:meth:`~meshterm.persistence.repository.Repository.last_message_by_peer`) — which
+        count, because in this app's lexicon "heard" means received from, and a message is
+        received from its sender.
+
+        So the three are merged by taking the latest, here — once, at the one point every
+        screen fetches contacts through, so heard lanes, recency sorts, silence alerts and
+        the purge ladder all see the same honest value. Taking the *latest* rather than
+        preferring either side means a device time still stands whenever the firmware caught
+        an advert we did not record (monitoring off, app not running); we only override it
+        with proof of a later reception. A contact we have truly never heard stays ``None``
+        and reads ``never``. Best-effort: a history read failure just returns the list
+        unmerged, never blocking the fetch.
         """
-        if all(c.last_seen is not None for c in contacts):
-            return contacts
         try:
-            heard = {
-                n.node: n.last_seen for n in self._ctx.repo.heard_nodes() if n.node
-            }
+            heard = self._ctx.repo.last_heard_by_node()
+            messaged = self._ctx.repo.last_message_by_peer()
         except Exception as exc:  # noqa: BLE001 - never block a contacts read on history
-            self._ctx.log.debug("devstate: last-heard fill skipped: %s", exc)
+            self._ctx.log.debug("devstate: last-heard merge skipped: %s", exc)
             return contacts
-        filled: list["Contact"] = []
+        merged: list["Contact"] = []
         for contact in contacts:
-            if contact.last_seen is None:
-                ident = (contact.public_key or contact.key_prefix or "").lower()
-                when = heard.get(ident.removeprefix("0x")[:12])
-                if when is not None:
-                    contact = replace(contact, last_seen=when)
-            filled.append(contact)
-        return filled
+            ident = (contact.public_key or contact.key_prefix or "").lower()
+            ident = ident.removeprefix("0x")
+            stamps = [contact.last_seen, heard.get(ident[:12])]
+            # A message's peer is whatever width the wire addressed, which need not match
+            # the contact table's — so either may be the shorter, exactly as the live chat
+            # matches an inbound sender to its thread.
+            stamps += [
+                when
+                for peer, when in messaged.items()
+                if ident and peer and (ident.startswith(peer) or peer.startswith(ident))
+            ]
+            known = [a for a in (_aware(s) for s in stamps) if a is not None]
+            latest = max(known) if known else None
+            if latest is not None and latest != contact.last_seen:
+                contact = replace(contact, last_seen=latest)
+            merged.append(contact)
+        return merged
 
     async def _refresh_contacts_quietly(self) -> None:
         """Background contacts refresh: update the cache, swallow a failure (keep the old list)."""

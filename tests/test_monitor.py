@@ -20,7 +20,7 @@ from meshterm.core.connection import (
     message_from_event,
     observation_from_event,
 )
-from meshterm.core.models import HeardNode, Observation, utcnow
+from meshterm.core.models import ChatMessage, HeardNode, Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.services.monitor_service import MonitorService
 
@@ -295,6 +295,44 @@ def test_observation_full_key_round_trips_into_heard_nodes(tmp_path: Path) -> No
     assert node.node == full[:12]  # the id stays the 12-hex prefix
     assert node.public_key == full  # the full key is surfaced from the row that had it
     assert node.count == 2
+    repo.close()
+
+
+def test_last_heard_by_node_is_the_latest_non_packet_reception(tmp_path: Path) -> None:
+    """The heard-time evidence: one stamp per node, packet rows excluded.
+
+    Backs the contacts merge, which weighs it against the device's sender-stamped advert
+    time. ``packet`` rows are excluded exactly as ``heard_nodes`` excludes them — hearing a
+    relayed frame means hearing its last relay, not its originator.
+    """
+    repo = Repository(tmp_path / "heard.db")
+    run_id = repo.start_run("monitor", {})
+    early = utcnow() - timedelta(days=4)
+    late = utcnow() - timedelta(minutes=5)
+    repo.record_observation(run_id, Observation(node="aa" * 6, observed_at=early))
+    repo.record_observation(run_id, Observation(node="aa" * 6, observed_at=late))
+    repo.record_observation(
+        run_id, Observation(node="bb" * 6, kind="packet", path="c1", observed_at=late)
+    )
+    heard = repo.last_heard_by_node()
+    assert heard == {"aa" * 6: late}  # latest wins; the relayed packet credits nobody
+    repo.close()
+
+
+def test_last_message_by_peer_credits_only_inbound_direct_messages(tmp_path: Path) -> None:
+    """Receiving a DM is hearing its sender; sending one, and channel traffic, are not."""
+    repo = Repository(tmp_path / "msgs.db")
+    early = utcnow() - timedelta(days=4)
+    late = utcnow() - timedelta(minutes=5)
+    repo.record_chat_message(ChatMessage(text="hi", peer="AbAbAb", created_at=early))
+    repo.record_chat_message(ChatMessage(text="again", peer="ababab", created_at=late))
+    repo.record_chat_message(
+        ChatMessage(text="mine", peer="cdcdcd", outbound=True, created_at=late)
+    )
+    repo.record_chat_message(
+        ChatMessage(text="all", is_channel=True, channel_id="pub", created_at=late)
+    )
+    assert repo.last_message_by_peer() == {"ababab": late}  # peers store lowercased
     repo.close()
 
 

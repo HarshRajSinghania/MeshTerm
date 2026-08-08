@@ -1511,6 +1511,35 @@ class Repository:
         ).fetchall()
         return {row["node"]: row["name"] for row in rows}
 
+    def last_heard_by_node(self) -> dict[str, datetime]:
+        """The most recent reception per node, stamped by *our* clock.
+
+        The evidence half of a contact's heard time. The device's contact table reports
+        ``last_advert``, which the advertising node stamped with its own clock — hearsay a
+        wrong RTC can hold days in the past forever — whereas every row here was written
+        when *we* received something (see
+        :meth:`~meshterm.services.device_state.DeviceState.contacts`, which takes the later
+        of the two). ``packet`` rows are excluded for the same reason
+        :meth:`heard_nodes` excludes them: a relayed frame tells us we heard its last
+        *relay*, not its originator.
+
+        This is :meth:`heard_nodes` reduced to the one column that answers "when last?" —
+        the aggregate happens in SQLite and yields one row per node, rather than streaming
+        the whole history into Python to build per-node stat objects. That matters because
+        every contacts fetch calls this, and the row-building is the expensive half.
+
+        Returns:
+            Latest reception time keyed by stored node id (the 12-hex key prefix), aware UTC.
+        """
+        # ``NOT INDEXED`` for the same reason as :meth:`node_names`: the planner otherwise
+        # walks ``idx_observations_node`` with a random-access fetch per row, slower than
+        # the plain scan this aggregate wants.
+        rows = self._conn.execute(
+            "SELECT node, MAX(observed_at) AS last FROM observations NOT INDEXED "
+            "WHERE node IS NOT NULL AND kind != 'packet' GROUP BY node"
+        ).fetchall()
+        return {row["node"]: datetime.fromisoformat(row["last"]) for row in rows}
+
     def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 
@@ -1702,6 +1731,30 @@ class Repository:
             "       ELSE 'dm:' || peer END)"
         ).fetchall()
         return {msg.key: msg for msg in (self._row_to_chat(r) for r in rows)}
+
+    def last_message_by_peer(self) -> dict[str, datetime]:
+        """The most recent *inbound* direct message per peer, stamped by our clock.
+
+        The other half of the heard-time evidence (see :meth:`last_heard_by_node`). A direct
+        message received from a node is, in the app's own lexicon, hearing that node — but
+        it arrives as a ``CONTACT_MSG_RECV`` event and is stored here, never as an
+        observation, so nothing in the reception history knows about it. It is deliberately
+        *not* recorded as an observation instead: a routed message's SNR describes the link
+        to its last relay, which is exactly why :meth:`heard_nodes` excludes ``packet``
+        rows, and counting it would inflate a lane that means overheard traffic.
+
+        Outbound messages are excluded — sending to a node is not hearing from it.
+
+        Returns:
+            Latest inbound-message time keyed by stored peer prefix (lowercased, as
+            :meth:`record_chat_message` writes it), aware UTC. The prefix width is whatever
+            the wire addressed, so callers match it as a prefix, not by equality.
+        """
+        rows = self._conn.execute(
+            "SELECT peer, MAX(created_at) AS last FROM messages "
+            "WHERE is_channel = 0 AND outbound = 0 AND peer IS NOT NULL GROUP BY peer"
+        ).fetchall()
+        return {row["peer"]: datetime.fromisoformat(row["last"]) for row in rows}
 
     def channel_stats(self) -> dict[str, ChannelStats]:
         """Aggregate stored channel messages into per-channel statistics.

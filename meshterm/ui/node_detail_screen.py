@@ -1030,7 +1030,13 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
     else:
         info_rows.append(("key", Text("?", style="muted")))
     if not you:
-        secs = _age_seconds(hn.last_seen if hn else (contact.last_seen if contact else None))
+        # A contact's heard time already arrives merged with our reception history (see
+        # ``DeviceState._merge_heard``), so it is the later of the two and is what the
+        # contact list's lane shows — take it, and the two surfaces can never disagree about
+        # one node. Only a node that is no contact, or one whose merge could not read our
+        # history, falls back to the raw reception stat.
+        heard_at = contact.last_seen if contact else None
+        secs = _age_seconds(heard_at or (hn.last_seen if hn else None))
         heard_val = Text(format_ago(secs), style=_recency_style(secs))
         if first_heard is not None:
             heard_val.append(

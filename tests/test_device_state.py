@@ -56,8 +56,17 @@ class FakeDevice:
         return 8
 
 
-def _devstate(device: FakeDevice, heard: tuple = ()) -> DeviceState:
-    """A DeviceState over a fake ctx: device(), a silent logger, and a heard-node history."""
+def _devstate(
+    device: FakeDevice,
+    heard: "dict | None" = None,
+    messaged: "dict | None" = None,
+) -> DeviceState:
+    """A DeviceState over a fake ctx: device(), a silent logger, and our reception history.
+
+    ``heard`` is node-id → when we last overheard it; ``messaged`` is peer prefix → when it
+    last sent us a direct message. Together they are the first-hand evidence the contacts
+    merge weighs against the device's advert times.
+    """
 
     async def device_getter():
         return device
@@ -65,7 +74,10 @@ def _devstate(device: FakeDevice, heard: tuple = ()) -> DeviceState:
     ctx = SimpleNamespace(
         device=device_getter,
         log=SimpleNamespace(debug=lambda *a, **k: None),
-        repo=SimpleNamespace(heard_nodes=lambda: list(heard)),
+        repo=SimpleNamespace(
+            last_heard_by_node=lambda: dict(heard or {}),
+            last_message_by_peer=lambda: dict(messaged or {}),
+        ),
     )
     return DeviceState(ctx)  # type: ignore[arg-type]
 
@@ -123,29 +135,97 @@ def test_contacts_refresh_in_background_past_ttl() -> None:
     asyncio.run(run())
 
 
-def test_missing_heard_times_fill_from_recorded_receptions() -> None:
-    """A contact with no plausible advert time gets the time *we* last heard it, if any.
+def test_heard_time_takes_the_later_of_the_device_and_our_own_receptions() -> None:
+    """A contact's heard time is the latest of the device's advert time and our evidence.
 
-    The device's ``last_advert`` is stamped by the sender's clock and refused upstream when
-    implausible (see ``models.advert_time``), so a contact can arrive with no heard time
-    even though our own observation history holds first-hand receptions. The cache fills
-    that gap once, at the fetch — and never overrides a plausible device-reported time.
+    The device's ``last_advert`` is stamped by the *sender's* clock, so it is hearsay: it can
+    be absent (refused upstream by ``models.advert_time``), or plausible-looking yet days
+    stale because the node's RTC runs behind. Our own history is first-hand — stamped when we
+    received something — so the merge takes whichever is later. A device time still wins
+    whenever the firmware caught an advert we never recorded.
     """
     dev = FakeDevice()
-    device_says = datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc)
-    we_heard = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    stale = datetime(2026, 7, 25, 9, 0, tzinfo=timezone.utc)
+    fresh = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
     dev.contact_rows = [
         Contact(name="Bogus-Clock", public_key="aa" * 32, key_prefix="aa" * 6),
-        Contact(name="Honest", public_key="bb" * 32, key_prefix="bb" * 6, last_seen=device_says),
-        Contact(name="Quiet", public_key="cc" * 32, key_prefix="cc" * 6),
+        Contact(name="Behind-Clock", public_key="bb" * 32, key_prefix="bb" * 6, last_seen=stale),
+        Contact(name="Ahead", public_key="cc" * 32, key_prefix="cc" * 6, last_seen=fresh),
+        Contact(name="Quiet", public_key="dd" * 32, key_prefix="dd" * 6),
     ]
-    ds = _devstate(dev, heard=(SimpleNamespace(node="aa" * 6, last_seen=we_heard),))
+    ds = _devstate(dev, heard={"aa" * 6: fresh, "bb" * 6: fresh, "cc" * 6: stale})
 
     async def run() -> None:
         by_name = {c.name: c for c in await ds.contacts()}
-        assert by_name["Bogus-Clock"].last_seen == we_heard  # filled from our own history
-        assert by_name["Honest"].last_seen == device_says  # a plausible device time stands
+        assert by_name["Bogus-Clock"].last_seen == fresh  # filled from our own history
+        assert by_name["Behind-Clock"].last_seen == fresh  # our proof beats a stale stamp
+        assert by_name["Ahead"].last_seen == fresh  # a newer device time still stands
         assert by_name["Quiet"].last_seen is None  # truly never heard stays never
+
+    asyncio.run(run())
+
+
+def test_a_direct_message_counts_as_hearing_its_sender() -> None:
+    """An inbound DM updates the heard time — "heard" means received from.
+
+    A direct message never touches the firmware's ``last_advert`` and is stored as a message
+    rather than an observation, so a node we actively chat with could read days stale (and be
+    swept by the purge ladder's quiet rungs) while talking to us. The peer prefix the wire
+    addressed need not match the contact table's width, so either may be the shorter.
+    """
+    dev = FakeDevice()
+    stale = datetime(2026, 7, 25, 9, 0, tzinfo=timezone.utc)
+    messaged_at = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    dev.contact_rows = [
+        Contact(name="Chatty", public_key="ab" * 32, key_prefix="ab" * 6, last_seen=stale),
+        Contact(name="Silent", public_key="cd" * 32, key_prefix="cd" * 6, last_seen=stale),
+    ]
+    # A six-hex peer against a twelve-hex contact id: the shorter one is the wire's.
+    ds = _devstate(dev, messaged={"ababab": messaged_at})
+
+    async def run() -> None:
+        by_name = {c.name: c for c in await ds.contacts()}
+        assert by_name["Chatty"].last_seen == messaged_at
+        assert by_name["Silent"].last_seen == stale  # nobody else is credited
+
+    asyncio.run(run())
+
+
+def test_a_naive_stored_stamp_still_compares() -> None:
+    """A tz-less row from an older build reads as the UTC the storage contract says it is.
+
+    Comparing a naive datetime against an aware one raises, which would take the whole
+    contacts fetch down rather than one lane.
+    """
+    dev = FakeDevice()
+    stale = datetime(2026, 7, 25, 9, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 7, 29, 12, 0)  # written before timestamps carried a zone
+    dev.contact_rows = [
+        Contact(name="Legacy", public_key="aa" * 32, key_prefix="aa" * 6, last_seen=stale)
+    ]
+    ds = _devstate(dev, heard={"aa" * 6: naive})
+
+    async def run() -> None:
+        assert (await ds.contacts())[0].last_seen == naive.replace(tzinfo=timezone.utc)
+
+    asyncio.run(run())
+
+
+def test_a_history_read_failure_leaves_the_contacts_untouched() -> None:
+    """The merge is best-effort: a broken history read never blocks a contacts fetch."""
+    dev = FakeDevice()
+    device_says = datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc)
+    dev.contact_rows = [Contact(name="Solo", public_key="ee" * 32, key_prefix="ee" * 6,
+                                last_seen=device_says)]
+    ds = _devstate(dev)
+
+    def boom() -> dict:
+        raise RuntimeError("history unavailable")
+
+    ds._ctx.repo.last_heard_by_node = boom  # type: ignore[attr-defined]
+
+    async def run() -> None:
+        assert (await ds.contacts())[0].last_seen == device_says
 
     asyncio.run(run())
 
