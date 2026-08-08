@@ -88,7 +88,7 @@ from .pathgraph import (
 )
 from .theme import mark_rgb, name_style, snr_style
 from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
-from .pathline import PathHop, PathLine, path_line
+from .pathline import PathHop, PathLine
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -1166,7 +1166,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
     # -- the info block (identity + how-heard + where; the routes fold into the Routes tab).
     info_rows: list[tuple[str, Text]] = []
     if key:
-        info_rows.append(("key", highlighted_hash(key, prefix_bytes)))
+        info_rows.append(("key", highlighted_hash(key, prefix_bytes, known=bool(name))))
     else:
         info_rows.append(("key", Text("?", style="muted")))
     if not you:
@@ -1225,6 +1225,7 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             self_key=self_key,
             node_label=label,
             name_key=key,
+            node_known=name is not None,
             hash_bytes=prefix_bytes,
         )
 
@@ -1338,6 +1339,8 @@ def _route_line(
     weakest: Optional[float],
     samples: int,
     *,
+    resolve,  # noqa: ANN001 - NodeResolver, kept loose like the graph callbacks
+    node_known: bool,
     self_name: Optional[str],
     self_key: Optional[str],
     hash_bytes: int,
@@ -1347,21 +1350,29 @@ def _route_line(
     The whole route reads left to right in the graph's own direction (contact on the left, us
     on the right), so the row and the drawn line cross-read. ``path`` is one
     :class:`~meshterm.ui.pathline.PathLine` — every hop, endpoints included, shown as its hash
-    at our own node's path-hash-mode width rather than a resolved name, so the line reads as
-    the same key-derived identity the graph's chips and column colours already use, and at the
-    width the device itself carries per hop, as powerline chips where the terminal can draw
-    them. ``context`` is the bottleneck SNR, sample count, and a ``★ best`` / ``device route``
-    tag marking the winner and the firmware's learned route — kept off the pathline itself so
-    a long hash chain never crowds it out, and empty when a route earns none of them.
+    at our own node's path-hash-mode width rather than a resolved name, at the width the
+    device itself carries per hop, as powerline chips where the terminal can draw them. A hop
+    the resolver can name keeps the key-derived hue the graph's chips and column colours
+    already use; a hop nobody can name — and the page's own node, when it has no name — reads
+    in the app-wide unknown-node grey, exactly as it does in the graph above. ``context`` is
+    the bottleneck SNR, sample count, and a ``★ best`` / ``device route`` tag marking the
+    winner and the firmware's learned route — kept off the pathline itself so a long hash
+    chain never crowds it out, and empty when a route earns none of them.
     """
     hash_bytes = max(hash_bytes, 1)  # an unknown mode still needs a real width to slice
-    relays = path_line(
-        list(reversed(hops_out)), lambda _hop: None, prefix_bytes=hash_bytes,
-        self_name=self_name, hash_bytes=hash_bytes,
-    )
+
+    def hop_of(hop: str) -> PathHop:
+        shown = _hop_hash(hop, hop, hash_bytes)
+        named = resolve(hop)
+        if named and named != hop:
+            return PathHop(shown, key=hop, lit_bytes=hash_bytes)
+        return PathHop(shown)  # unknown node: grey whole, no key-derived hue
+
+    head = _hop_hash(name_key, node_label, hash_bytes)
     path = PathLine([
-        PathHop(_hop_hash(name_key, node_label, hash_bytes), key=name_key, lit_bytes=hash_bytes),
-        *relays.hops,
+        PathHop(head, key=name_key, lit_bytes=hash_bytes) if node_known and name_key
+        else PathHop(head),
+        *(hop_of(hop) for hop in reversed(hops_out)),
         PathHop(_hop_hash(self_key, self_name or "us", hash_bytes), you=True),
     ]).text()
 
@@ -1458,6 +1469,7 @@ def _routes_view(
     self_key,
     node_label,
     name_key,
+    node_known,
     hash_bytes,
 ) -> _RoutesView:
     """Build the Routes tab's selectable routes (node → us) + graph callbacks, or a muted note.
@@ -1532,6 +1544,7 @@ def _routes_view(
         spec = render_forced_spec(hops_out, target_hash, width_bytes) if target_hash else ""
         path, context = _route_line(
             node_label, name_key, hops_out, tag, weakest, samples,
+            resolve=resolve, node_known=node_known,
             self_name=self_name, self_key=self_key, hash_bytes=hash_bytes,
         )
         routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, path=path, context=context))

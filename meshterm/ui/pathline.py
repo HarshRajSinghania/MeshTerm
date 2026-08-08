@@ -739,9 +739,9 @@ def path_line(
     The migration bridge: every parameter means exactly what it means to
     :func:`~meshterm.ui.widgets.path_text` (see there for the full rendering rules),
     so a call site swaps builders without changing what it says — a named hop reads
-    ``Name`` (annotated ``Name (3d)`` under ``show_hash``), an unnamed hop its
-    prefix-lit hash (or its muted identity hash under ``hash_as_name``), ``None`` is
-    our own device in white — or, under ``bare_self``, the lone ``★`` — and
+    ``Name`` (annotated ``Name (3d)`` under ``show_hash``), an unnamed hop its hash in
+    the unknown-node grey (colour marks an identified node, as in the path graph),
+    ``None`` is our own device in white — or, under ``bare_self``, the lone ``★`` — and
     ``dim_from`` fades a resolved tail. The plain rendering
     is character- and style-identical to ``path_text``; what the swap buys is the
     :class:`PathLine` shapes (ellipsized / wrapped) and the powerline mode.
@@ -750,7 +750,8 @@ def path_line(
         hops: The hops in propagation order — hex hashes, ``None`` marking our own
             device (empty strings are skipped; ``dim_from`` counts rendered hops).
         resolve: Maps a hop hash to a friendly name when known.
-        prefix_bytes: Path-hash width to light in unnamed hops' hashes (0 = none).
+        prefix_bytes: Path-hash width an unnamed hop's identity hash presents at under
+            ``hash_as_name`` (unnamed hops are otherwise shown grey whole, no prefix lit).
         self_name: Our own node's name — white when a resolved name matches it, and
             naming any ``None`` device hop.
         empty: The muted text shown when there are no hops (e.g. ``"direct"``).
@@ -815,13 +816,16 @@ def path_line(
             continue
         compact = _shorten(hop, hash_bytes)
         if dim:  # a faded unnamed hop shows its compact hash, exactly as path_text does
-            built.append(PathHop(compact, key=hop, dim=True))
+            built.append(PathHop(compact, dim=True))
         elif hash_as_name:
             identity = _shorten(hop, prefix_bytes or None)
             note = compact if (show_hash and compact and compact != identity) else None
             built.append(PathHop(identity, annotation=note))
         else:
-            built.append(PathHop(compact, key=hop, lit_bytes=prefix_bytes))
+            # No name resolved: the node is unknown, so its hash carries no key — the hop
+            # takes the app-wide unknown-node grey (arrow and chip alike), never a hue its
+            # bytes would derive. Colour marks an identified node, as in the path graph.
+            built.append(PathHop(compact))
     if cursor is not None:
         built.insert(max(0, min(cursor, len(built))), PathHop(CURSOR_GLYPH, cursor=True))
     return PathLine(built, mode=mode, empty=empty)

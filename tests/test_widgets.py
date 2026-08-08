@@ -53,18 +53,15 @@ def test_path_text_empty_reads_as_direct() -> None:
     assert path_text([], _resolve, empty="direct — no relays").plain == "direct — no relays"
 
 
-def test_path_text_lights_the_hash_prefix() -> None:
-    """An unnamed hop renders through the shared hash widget, its prefix lit in the
-    node's hash-derived hue."""
+def test_path_text_greys_an_unnamed_hop_whole() -> None:
+    """An unresolvable hop is an unknown node: its hash reads ``node.unknown`` whole,
+    the prefix never lit — colour marks an identified node, as in the path graph."""
     from meshterm.ui.theme import node_style
 
     text = path_text(["77bb"], _resolve, prefix_bytes=1)
-    lit = [
-        text.plain[s.start : s.end]
-        for s in text.spans
-        if str(s.style) == node_style("77bb")
-    ]
-    assert "77" in lit  # the addressed prefix stands out within the hash
+    styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
+    assert styles.get("77bb") == "node.unknown"
+    assert not any(str(s.style) == node_style("77bb") for s in text.spans)
 
 
 def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:

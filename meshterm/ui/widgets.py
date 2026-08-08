@@ -273,9 +273,10 @@ def path_text(
     The one way MeshTerm shows a walked, relayed, or planned hop sequence, wherever one
     appears: a packet's ``via`` row, a message's delivery paths, a feed note, a trace's
     walked route or planned spec. Each hop renders as its resolved name — coloured in
-    the app-wide per-name hue, our own node pure white — or, unnamed, as its hash
-    through :func:`highlighted_hash` (the addressed prefix lit, the rest muted; colour
-    stays the "this is a name" signal). Hops are joined by muted ``→`` arrows and, by
+    the app-wide per-name hue, our own node pure white — or, unnamed, as its hash in
+    the ``node.unknown`` grey (colour marks an identified node, exactly as in the path
+    graph; an unresolvable hop never wears a hue its bytes would derive). Hops are
+    joined by muted ``→`` arrows and, by
     default, no hash is repeated after a name, so the compact form survives a 72-column
     row. The trace-flavoured options: ``show_hash`` annotates each named hop with the
     hash it is addressed by (``Alice (3d63)``), a ``None`` hop is our own device at a
@@ -291,7 +292,8 @@ def path_text(
         hops: The hops in propagation order — hex hashes, with ``None`` marking our
             own device (empty strings are skipped; ``dim_from`` counts rendered hops).
         resolve: Maps a hop hash to a friendly name when known.
-        prefix_bytes: Path-hash width to light in unnamed hops' hashes (0 = none).
+        prefix_bytes: Path-hash width an unnamed hop's identity hash presents at under
+            ``hash_as_name`` (unnamed hops are otherwise shown grey whole, no prefix lit).
         self_name: Our own node's name — drawn in the white ``you`` style when a
             resolved name matches it, and naming any ``None`` device hop.
         empty: The muted text shown when there are no hops (e.g. ``"direct"``).
@@ -423,28 +425,34 @@ def _path_node(
         # the whole shown hash. So a 3-byte mode reads ``e839f2 (e8)`` and still
         # cross-references a byte-labelled route graph.
         identity = _shorten_hash(hop, prefix_bytes or None)
-        text = highlighted_hash(identity, 0)
+        text = highlighted_hash(identity, 0, known=False)
         if show_hash and shown and shown != identity:
             text.append(f" ({shown})", style=note_style)
         return text
-    return highlighted_hash(shown, prefix_bytes)
+    # No name resolved: the node is unknown, and an unknown node's hash is grey whole —
+    # the prefix never lights (colour marks an identified node; see highlighted_hash).
+    return highlighted_hash(shown, prefix_bytes, known=False)
 
 
-def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None) -> Text:
+def highlighted_hash(
+    value: str, prefix_bytes: int, width: Optional[int] = None, *, known: bool = True
+) -> Text:
     """Render a hex key with its leading path-hash prefix highlighted — THE hash widget.
 
     The one way MeshTerm displays a hash, wherever one appears: the first
     ``prefix_bytes`` bytes are the slice other nodes address in a forced trace path
     (the path-hash), lit in the node's hash-derived palette hue — the same hue its
     name wears (see :func:`~meshterm.ui.theme.node_style`) — with the remainder muted,
-    so the addressable prefix stands out within the otherwise full key and carries the
-    node's identity colour even where no name is known. A ``width`` budget
-    shorter than the key ellipsizes it (the ``…`` takes the colour of the digit it
-    replaces, so a highlight wider than the budget still reads as one).
+    so the addressable prefix stands out within the otherwise full key. A ``width``
+    budget shorter than the key ellipsizes it (the ``…`` takes the colour of the digit
+    it replaces, so a highlight wider than the budget still reads as one).
 
-    With ``prefix_bytes=0`` nothing is lit and the key is standing in *as* a name — a node
-    we can't identify — so the whole run takes ``node.unknown`` rather than ``muted``: it
-    is the row's content, not the dim tail of a hash whose head already carries the hue.
+    Colour marks an *identified* node (JP, 2026-08-08): a hash whose node nobody can
+    name passes ``known=False`` and reads whole in the app-wide ``node.unknown`` grey —
+    exactly as an unknown node draws in the path graph — never in a hue its bytes would
+    derive. ``prefix_bytes=0`` on a known node likewise lights nothing and the key,
+    standing in *as* a name, takes ``node.unknown`` rather than ``muted``: it is the
+    row's content, not the dim tail of a hash whose head already carries the hue.
 
     Args:
         value: The key as hex, optionally ``0x``-prefixed and mixed-case.
@@ -454,12 +462,14 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
             bytes that fit in ``width - 1`` cells (an even digit count — a hash reads in
             bytes, two hex digits each) plus an ellipsis, a shorter one is right-padded to
             the budget so lanes stay aligned. ``None`` shows the key whole, unpadded.
+        known: Whether the hash belongs to a node the caller can identify (name it, or
+            place it as a real contact). ``False`` greys the whole run, prefix included.
 
     Returns:
         A styled :class:`Text` of the key (exactly ``width`` cells when given).
     """
     raw = value.lower().removeprefix("0x")
-    split = max(0, prefix_bytes) * 2
+    split = max(0, prefix_bytes) * 2 if known else 0
     pad = 0
     ellipsis = False
     if width is not None and len(raw) > width:
@@ -472,7 +482,9 @@ def highlighted_hash(value: str, prefix_bytes: int, width: Optional[int] = None)
         pad = width - kept - 1
     elif width is not None:
         pad = width - len(raw)
-    hue = node_style(value)  # from the untruncated key, though any prefix agrees
+    # The hue derives from the untruncated key (any prefix agrees) — but only an
+    # identified node earns one at all; an unknown node's hash is grey throughout.
+    hue = node_style(value) if known else "node.unknown"
     rest = "muted" if split else "node.unknown"
     text = Text()
     text.append(raw[:split], style=hue)

@@ -621,15 +621,17 @@ def test_picker_row_lanes_align_under_the_header() -> None:
         span.style == "muted" and span.start <= unknown_at < span.end
         for span in row.spans
     )
-    # The key's 2-byte hash is lit in the key's hue, the tail muted.
+    # A nameless node is unidentified, so its key lane greys whole — the prefix never
+    # lights (colour marks an identified node, exactly as in the path graph).
     from meshterm.ui.theme import node_style
 
     hash_at = plain.index("3d" * 6)
     assert any(
-        span.style == node_style("3d" * 6)
-        and span.start == hash_at and span.end == hash_at + 4
+        span.style == "node.unknown"
+        and span.start == hash_at and span.end == hash_at + 12
         for span in row.spans
     )
+    assert not any(span.style == node_style("3d" * 6) for span in row.spans)
     # Header labels land over their lanes (+2 covers the select pointer column); the lanes
     # now read NAME · HEARD · PKTS · KEY, with the key closing the row.
     header = _header(10, ContactsSort.from_name("heard")).plain

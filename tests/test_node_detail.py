@@ -194,6 +194,7 @@ def test_route_line_shows_hashes_not_names() -> None:
     """The pathline runs contact → relays → us, every hop by its hash; the tag trails on context."""
     path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "device", None, 0,
+        resolve=make_node_resolver([HUB]), node_known=True,
         self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
     )
     line = path.plain
@@ -204,10 +205,29 @@ def test_route_line_shows_hashes_not_names() -> None:
     assert context.plain == "device route"  # the firmware-route tag, off the pathline itself
 
 
+def test_route_line_greys_hops_nobody_can_name() -> None:
+    """A hop the resolver can name keeps its key-derived hue on the hash; a hop nobody can
+    name — and a page node with no name — reads in the unknown-node grey, like the graph."""
+    from meshterm.ui.theme import node_style
+
+    path, _context = _route_line(
+        "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
+        resolve=make_node_resolver([HUB]), node_known=False,
+        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+    )
+    styles = {path.plain[s.start : s.end]: str(s.style) for s in path.spans}
+    assert styles.get("ab") == "node.unknown"  # no contact names it → grey, no key hue
+    assert styles.get("f2") == "node.unknown"  # the nameless page node greys its own hash
+    hued = {path.plain[s.start : s.end] for s in path.spans
+            if str(s.style) == node_style("3d63c6429436")}
+    assert "3d" in hued  # the Hub is a named contact, so its hash keeps the hue
+
+
 def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
     """A device carrying 3-byte routing hashes shows 3-byte hops, not the 1-byte default."""
     path, _context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "", None, 0,
+        resolve=make_node_resolver([HUB]), node_known=True,
         self_name="Us", self_key=US + "0" * 52, hash_bytes=3,
     )
     line = path.plain
@@ -220,6 +240,7 @@ def test_route_line_marks_the_best_route_and_its_context() -> None:
     """The winner wears ★ best and trails its bottleneck SNR and sample count, on the context line."""
     _path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "best", 6.5, 4,
+        resolve=make_node_resolver([HUB]), node_known=True,
         self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
     )
     line = context.plain
@@ -230,6 +251,7 @@ def test_route_line_direct_route_has_no_relay() -> None:
     """A zero-hop route reads contact → us with nothing between them."""
     path, _context = _route_line(
         "Far", FAR.public_key, (), "best", None, 0,
+        resolve=make_node_resolver([HUB]), node_known=True,
         self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
     )
     line = path.plain
@@ -264,6 +286,7 @@ def _view(topo, suggested, device_route, target, node_label, contacts, name_key=
         style=route_graph_style, self_name="Us", self_key=US + "0" * 52,
         node_label=node_label,
         name_key=name_key or (target + "0" * 52),
+        node_known=True,
         hash_bytes=1,
     )
 
@@ -284,6 +307,7 @@ def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
         key_of=make_name_key_resolver([FAR]), style=route_graph_style, self_name="Us",
         self_key=US + "0" * 52,
         node_label="Far", name_key=FAR.public_key,
+        node_known=True,
         hash_bytes=1,
     )
     assert not note.routes and "no route observed" in note.note

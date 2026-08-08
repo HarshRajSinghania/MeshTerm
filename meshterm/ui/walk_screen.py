@@ -585,7 +585,8 @@ class WalkScreen(Screen):
         short = self._short_hash(node)
         if short:
             line.append(" (", style="muted")
-            line.append_text(highlighted_hash(short, self._prefix_bytes))
+            line.append_text(highlighted_hash(short, self._prefix_bytes,
+                                              known=self._known(node)))
             line.append(")", style="muted")
         if node == self._topo.self_id:
             line.append("  ·  this device", style="muted")
@@ -1004,7 +1005,8 @@ class WalkScreen(Screen):
         name_style_ = self._list_name_style(other)
         row.append(fit_cells(self._label(other), name_w), style=name_style_)
         row.append(" ")
-        row.append_text(highlighted_hash(other, self._prefix_bytes, width=key_w))
+        row.append_text(highlighted_hash(other, self._prefix_bytes, width=key_w,
+                                         known=self._known(other)))
         row.append("  ")
         snr = link.median_snr
         if snr is not None:
@@ -1041,7 +1043,8 @@ class WalkScreen(Screen):
         row.append(" ")
         row.append(fit_cells(self._label(node), name_w), style=self._list_name_style(node))
         row.append(" ")
-        row.append_text(highlighted_hash(node, self._prefix_bytes, width=key_w))
+        row.append_text(highlighted_hash(node, self._prefix_bytes, width=key_w,
+                                         known=self._known(node)))
         row.append("  ")
         if node == self._topo.self_id:
             row.append("this device", style="muted")
@@ -1062,6 +1065,15 @@ class WalkScreen(Screen):
         if label == node[:8]:  # a bare hash is not a name — colour is the name signal
             return "node.unknown"
         return name_style(label, node)
+
+    def _known(self, node: str) -> bool:
+        """Whether the node is identified — named, or us — so its hash may carry a hue.
+
+        The gate every hash lane here passes to :func:`~meshterm.ui.widgets.highlighted_hash`:
+        an unknown node's hash reads grey whole, matching its ``node.unknown`` name lane
+        and its ``○`` ring on the canvas.
+        """
+        return self._list_name_style(node) != "node.unknown"
 
     def _marker_rgb(self, node: str) -> RGB:
         """The marker colour for a node: its key-derived hue, ours white, a keyless id grey.

@@ -273,7 +273,12 @@ def _lane(
         text.append(f"{min(row.count, 99999):>5}", style="muted")
     text.append(_GAP_S)  # the lane gap the header's KEY lane keeps (see _header)
     if row.key:
-        text.append_text(highlighted_hash(row.key, prefix_bytes, width=hash_w))
+        # A nameless row is an unidentified node: its key lane greys whole (prefix
+        # unlit) like every unknown-node hash in the app, the name lane's muted
+        # ``unknown`` beside it making the same claim.
+        text.append_text(
+            highlighted_hash(row.key, prefix_bytes, width=hash_w, known=bool(row.name))
+        )
     else:
         text.append("?", style="muted")
     return text

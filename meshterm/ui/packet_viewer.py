@@ -787,18 +787,18 @@ class PacketViewer(Screen):
 
         The ``from`` row's own presentation, minus the node-type glyph — a one-byte hash
         is too thin an identity to plant a type mark on. A node we can't name shows the
-        hash alone, lit by :func:`~meshterm.ui.widgets.highlighted_hash` like every other
-        hash on the card.
+        hash alone, grey whole (``known=False``) like every unknown-node hash in the app.
         """
         text = Text()
         named = self._resolve(value)
-        if named and named != value:
+        known = bool(named and named != value)
+        if known:
             style = "you" if self._self_name and named == self._self_name else name_style(
                 named, value
             )
             text.append(named, style=style)
             text.append("  ")
-        text.append_text(highlighted_hash(value, self._prefix_bytes or 1))
+        text.append_text(highlighted_hash(value, self._prefix_bytes or 1, known=known))
         return text
 
     def _decrypt_rows(self, raw: dict) -> list[tuple[str, RenderableType]]:
