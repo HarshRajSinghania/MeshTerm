@@ -361,7 +361,7 @@ class ContactListScreen(SelectScreen):
         lane = list(DEFAULT_LANE)
         descend = self._sort.ascending  # ascending now, so the flip lands descending
         lane[2] = FPair(
-            "Sort→",
+            "Sort →",
             "ctrl_right",
             "Sort ▼" if descend else "Sort ▲",
             "ctrl_down" if descend else "ctrl_up",
