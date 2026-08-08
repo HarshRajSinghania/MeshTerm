@@ -660,6 +660,67 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     assert "←→ scroll" in screen.footer_hint  # route 0 overflows again
 
 
+#: A 64-digit key whose every byte is distinct (``000102…1e1f``), so a window's first digits
+#: say exactly where the lane was cut — an off-by-one shift reads ``0001…`` as ``00102…``.
+_LONG_KEY = "".join(f"{i:02x}" for i in range(32))
+
+
+def _key_row(screen: NodeDetailScreen, width: int) -> str:
+    """Render the Info tab and read back its key lane, as one plain line."""
+    screen.note_viewport(30)
+    rows = [_plain([line]) for line in screen.render_body(width)]
+    return next(row for row in rows if row.startswith("key"))
+
+
+def test_node_detail_key_lane_hscrolls_instead_of_wrapping() -> None:
+    """The key holds one line and slides under ←/→: byte-aligned windows, faint ``…`` marks
+    at whichever edge it continues past, clamped at both ends."""
+    screen = _screen(info_rows=[("key", highlighted_hash(_LONG_KEY, 1)), ("heard", Text("5m ago"))])
+
+    row = _key_row(screen, 53)
+    assert row.startswith("key      0001") and row.endswith("…")  # the head, more to the right
+    assert "1e1f" not in row and len(row) <= 53  # the tail is off-lane, not wrapped below it
+    assert "←→ scroll key" in screen.footer_hint  # …and the overflow earns its footer atom
+
+    screen.handle("right")
+    row = _key_row(screen, 53)
+    # Shifted a whole four bytes: the window opens on byte 4 (``04``), marked at both edges.
+    assert row.startswith("key      …0405") and row.endswith("…")
+
+    for _ in range(6):
+        screen.handle("right")  # run at the end — the shift clamps where the tail lands
+    row = _key_row(screen, 53)
+    assert row.endswith("1e1f")  # the key's last byte, no trailing mark: this is the end
+    assert row.startswith("key      …")  # …with the head now off to the left
+
+    for _ in range(6):
+        screen.handle("left")  # and back the other way, clamping at the head
+    assert _key_row(screen, 53).startswith("key      0001")
+
+
+def test_node_detail_key_lane_scroll_survives_the_cursor_and_resets_on_tab() -> None:
+    """The key is pinned chrome, not a cursor row: walking the action rows leaves its scroll
+    alone, while leaving the tab drops it — and a key that fits earns no ←→ at all."""
+    screen = _screen(info_rows=[("key", highlighted_hash(_LONG_KEY, 1)), ("heard", Text("5m ago"))])
+    _key_row(screen, 53)
+    screen.handle("right")
+    screen.handle("down")  # onto Back — the reader's window holds where they left it
+    assert _key_row(screen, 53).startswith("key      …0405")
+
+    screen.handle("tab")  # over to Routes…
+    screen.render_body(53)
+    assert "←→" not in screen.footer_hint  # nothing over-wide there to scroll
+    screen.handle("tab")  # …and back: the lane opens at the head again
+    assert _key_row(screen, 53).startswith("key      0001")
+
+    # A lane wide enough for the whole key draws it whole, with neither mark nor hint.
+    row = _key_row(screen, 100)
+    assert row.startswith(f"key      {_LONG_KEY}") and "…" not in row
+    assert "←→" not in screen.footer_hint
+    screen.handle("right")  # inert where there is nothing to read past the edge
+    assert _key_row(screen, 100).startswith(f"key      {_LONG_KEY}")
+
+
 def test_node_detail_enter_on_a_route_row_opens_its_trace() -> None:
     """Enter on any route row arms a trace on that route — no separate Trace row needed."""
     screen = _screen(routes=_two_routes(), tabs=[_Tab("Routes", "routes")])

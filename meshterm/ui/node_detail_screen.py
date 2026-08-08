@@ -14,7 +14,10 @@ the node itself, in full:
 
   * **Info** — the node's vitals as labelled rows (its key with the routing hash lit, when
     it was first and last heard, how many packets we've overheard, its reception SNR and
-    last RSSI, and where it sits), then — when the node has advertised a location — a
+    last RSSI, and where it sits). The key is a single lane, never wrapped: a full public
+    key outruns the row on any terminal we target, so ``←→`` scroll it a whole four bytes
+    at a time under faint ``…`` edge marks, exactly as a long pathline scrolls on the
+    Routes tab. Then — when the node has advertised a location — a
     static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred on the node,
     grown to whatever rows the viewport spares. Its actions: ``Open full map`` (the full
     map opens centred here with its find filter seeded to this node, so it lights among
@@ -169,10 +172,20 @@ _ROUTE_INDENT = 2
 #: measuring/cropping the raw hash chain for horizontal scroll never has to account for it.
 _OPENS_MARKER = " …"
 
-#: Cells one ←/→ press horizontally scrolls the highlighted route's pathline (see
-#: :meth:`NodeDetailScreen.handle`) — the same step the app-wide select list's ``hscroll``
-#: uses.
+#: Cells one ←/→ press horizontally scrolls the highlighted route's pathline, or the Info
+#: tab's key lane (see :meth:`NodeDetailScreen.handle`) — the same step the app-wide select
+#: list's ``hscroll`` uses. On a key it happens to be exactly four bytes, so every window the
+#: lane can settle on starts on a byte boundary, the way a hash reads.
 _HSCROLL_STEP = 8
+
+#: The info row whose value is a key: the one lane that scrolls (``←→``) rather than wraps.
+#: A public key is 64 hex digits — wider than the value lane on either platform, and a run
+#: with no word to break on — so wrapping it just buys a second line that says nothing,
+#: while every other vital here is prose short enough to hang under itself.
+_KEY_LABEL = "key"
+
+#: The faint mark drawn at whichever edge of the key lane the key continues past.
+_MORE_MARK = "…"
 
 #: Cursor moves that abandon a route's in-progress horizontal scroll — each row scrolls on
 #: its own, so leaving it resets the shift rather than carrying it to whatever row is next.
@@ -302,6 +315,10 @@ class NodeDetailScreen(Screen):
     itself never scrolls: the identity header, tab strip, and stage are pinned, the stage
     is sized to the viewport, and the route list windows itself into the leftover rows —
     ``PgUp/PgDn`` page the cursor through it, ``Home/End`` jump it to the ends.
+
+    ``←→`` read whatever the active tab holds that is wider than its lane, one lane per tab:
+    the highlighted route's pathline on Routes, the key on Info. Both are gated on actually
+    overflowing, so the keys stay inert — and unadvertised — where they would do nothing.
     """
 
     floating = False
@@ -371,6 +388,11 @@ class NodeDetailScreen(Screen):
         #: The highlighted route's pathline horizontal scroll (cells shifted in, ``←/→``);
         #: resets whenever the cursor leaves that row (see :data:`_HSHIFT_RESET_ACTIONS`).
         self._hshift = 0
+        #: The Info tab's key lane horizontal scroll (cells shifted in, ``←/→``). Unlike the
+        #: route pathline's, it is not the cursor's — the key is pinned chrome in the stage,
+        #: no row you can land on — so moving through the action rows leaves it where the
+        #: reader put it; only leaving the tab resets it.
+        self._key_shift = 0
         #: The last render width, so the footer hint can tell whether the highlighted
         #: route's pathline actually overflows (nothing does before the first paint).
         self._last_width = 0
@@ -379,11 +401,15 @@ class NodeDetailScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Tab switch (when there are tabs to switch), move, open, list/pathline scroll, Esc last.
+        """Tab switch (when there are tabs to switch), move, open, whatever ``←→`` reads here,
+        Esc last.
 
         The scroll atom folds ``PgUp/PgDn`` and ``←→`` into one when both apply (a busy node's
         list is windowed *and* its highlighted route overflows) rather than stacking two atoms
-        and risking the 72-column hint budget.
+        and risking the 72-column hint budget. On the Info tab the ``←→`` atom names its
+        subject — the key is the one thing there that scrolls, and the cursor is elsewhere.
+        Each atom is gated on there actually being something to scroll, so the line never
+        advertises a key that would do nothing.
         """
         parts: list[str] = []
         if len(self._tabs) >= 2:
@@ -396,6 +422,8 @@ class NodeDetailScreen(Screen):
             parts.append("PgUp/PgDn scroll")
         elif hscroll:
             parts.append("←→ scroll")
+        elif self._key_overflows():
+            parts.append("←→ scroll key")
         parts.append("Esc back")
         return " · ".join(parts)
 
@@ -418,6 +446,37 @@ class NodeDetailScreen(Screen):
         total = cell_len(routes[self._row_index].path.plain) + cell_len(_OPENS_MARKER)
         return total > avail
 
+    def _on_info_tab(self) -> bool:
+        """Whether the Info tab is the one filling the stage (so its key lane is on screen)."""
+        tab = self._tabs[self._tab_index] if self._tabs else None
+        return tab is not None and tab.kind == "info"
+
+    def _key_value(self) -> Optional[Text]:
+        """The Info tab's key value — the one vital rendered as a scrolling lane, or ``None``.
+
+        Found by its label rather than its position: the block is assembled elsewhere
+        (:func:`open_node_detail`) and the rows around it come and go with what is known
+        about the node, but the row *labelled* :data:`_KEY_LABEL` is always the key.
+        """
+        for label, value in self._info_rows:
+            if label == _KEY_LABEL:
+                return value
+        return None
+
+    def _key_overflows(self) -> bool:
+        """Whether the key is wider than its lane — gating both ``←→`` and the footer atom.
+
+        Measured against the last render width (``0`` before the first paint, so nothing
+        reads as overflowing until a real width is known), exactly as the route pathline's
+        sibling probe is.
+        """
+        if self._last_width <= 0 or not self._on_info_tab():
+            return False
+        value = self._key_value()
+        if value is None:
+            return False
+        return cell_len(value.plain) > max(1, self._last_width - _LABEL_LANE)
+
     def selected_spec(self) -> str:
         """The forced-path spec of the currently-highlighted route (``""`` = auto).
 
@@ -437,7 +496,9 @@ class NodeDetailScreen(Screen):
         return 2 if self._tabs[self._tab_index].kind == "info" else 0
 
     def handle(self, action: str, data: str = "") -> None:
-        """Switch tab, move the cursor within a tab, commit a row, page the list, or leave."""
+        """Switch tab, move the cursor within a tab, commit a row, page the list, scroll
+        whichever over-wide lane the active tab owns (the highlighted route's pathline, the
+        Info tab's key), or leave."""
         focus = self._focusables()
         n = len(focus)
         if action in _HSHIFT_RESET_ACTIONS:
@@ -486,9 +547,13 @@ class NodeDetailScreen(Screen):
         elif action == "left":
             if self._on_route_row(focus):
                 self._hshift = max(0, self._hshift - _HSCROLL_STEP)
+            elif self._key_overflows():
+                self._key_shift = max(0, self._key_shift - _HSCROLL_STEP)
         elif action == "right":
             if self._on_route_row(focus):
                 self._hshift += _HSCROLL_STEP  # clamped to the pathline's tail at render
+            elif self._key_overflows():
+                self._key_shift += _HSCROLL_STEP  # clamped to the key's tail at render
         elif action == "escape":
             self.resolve(CANCEL)
 
@@ -510,6 +575,7 @@ class NodeDetailScreen(Screen):
         self._route_sel = 0
         self._list_top = 0
         self._hshift = 0
+        self._key_shift = 0
         self.scroll_to_top()
         self._sync_route_sel(self._focusables())
 
@@ -675,10 +741,16 @@ class NodeDetailScreen(Screen):
 
         ``budget`` is the viewport lines left for the whole stage; the vitals rows never
         truncate — it is the preview that flexes, taking whatever they and its caption
-        leave, clamped to ``[_MAP_MIN_ROWS, _MAP_MAX_ROWS]``.
+        leave, clamped to ``[_MAP_MIN_ROWS, _MAP_MAX_ROWS]``. Every row but the key hangs
+        under itself when it wraps; the key holds its one line and scrolls (see
+        :meth:`_key_line`), so a row count the preview sizes against can't move as a reader
+        walks a long key.
         """
         lines: list[str] = [""]  # the stage's one line of air under the strip
         for label, value in self._info_rows:
+            if label == _KEY_LABEL:
+                lines.append(self._key_line(label, value, width))
+                continue
             lines.extend(
                 render_hanging(
                     Text(f"{label:<{_LABEL_LANE}}", style="muted"),
@@ -695,6 +767,47 @@ class NodeDetailScreen(Screen):
             if self._map_caption is not None:
                 lines.extend(render_lines(self._map_caption, width, no_wrap=True))
         return lines
+
+    def _key_line(self, label: str, value: Text, width: int) -> str:
+        """The key vital as one scrolling lane: the label, then the window ``←→`` settled on.
+
+        A full public key is 64 hex digits and the lane is whatever the terminal leaves after
+        the label — 63 cells at the 72-column standard, fewer on the PicoCalc — so the key
+        never fits, and wrapping it would spend a whole second line on the handful of digits
+        that fell off. Instead the lane shows a window of it and :attr:`_key_shift` slides
+        that window (``←→``, :data:`_HSCROLL_STEP` cells a press), with a faint
+        :data:`_MORE_MARK` at whichever edge the key continues past — the affordance that says
+        the row is a viewport, not the whole value.
+
+        The marks sit *beside* the window rather than over its first cell, so the digits keep
+        their byte alignment at every shift (the step is four whole bytes): a key always reads
+        in byte pairs, and a window starting mid-byte would spell it wrong. The shift is
+        clamped here, against the width actually being drawn, to the first step that brings
+        the key's tail into the lane — so scrolling can never run off into empty lane, and a
+        resize only ever pulls an out-of-range shift back in.
+        """
+        lane = Text(no_wrap=True)
+        lane.append(f"{label:<{_LABEL_LANE}}", style="muted")
+        avail = max(1, width - _LABEL_LANE)
+        total = cell_len(value.plain)
+        if total <= avail:
+            self._key_shift = 0
+            lane.append_text(value)
+            return render_to_ansi(lane, width, no_wrap=True)
+        # The lane gives up a cell to the left mark the moment it scrolls, so its last window
+        # spans ``avail - 1`` cells; the ceiling is the first whole step that reaches the end.
+        steps = -(-(total - (avail - 1)) // _HSCROLL_STEP)
+        self._key_shift = max(0, min(self._key_shift, steps * _HSCROLL_STEP))
+        shift = self._key_shift
+        left = 1 if shift else 0
+        inner = avail - left
+        right = 1 if shift + inner < total else 0
+        if left:
+            lane.append(_MORE_MARK, style="muted")
+        lane.append_text(crop_cells(value, shift, inner - right))
+        if right:
+            lane.append(_MORE_MARK, style="muted")
+        return render_to_ansi(lane, width, no_wrap=True)
 
     def _routes_stage(
         self, width: int, budget: int, route_blocks: list[list[str]]
