@@ -340,16 +340,15 @@ class NodeDetailScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The shared pager over the route list, plus the tab switch on F3.
+        """The shared pager over the route list, plus one chip per tab on F1/F2.
 
         The strip shows *that* there are two views; nothing on screen says the key that
-        moves between them, and on a platform with no hint line the chip is the only place
-        to learn it. It names the tab it would take you *to*, never the one you are on —
-        the strip already marks that, and a chip repeating it would say nothing about what
-        pressing it does. Unlike the Time Machine's window chip, this one carries no ``▸``
-        lead-in: ``Routes`` is exactly six cells on its own, and the strip beside it makes
-        the direction plain anyway. A page with one tab has nothing to switch, so the slot
-        stays empty.
+        moves between them, and on a platform with no hint line the chips are the only
+        place to learn it. Each tab takes its own slot in strip order — F1 ``Info``, F2
+        ``Routes`` (JP, 2026-08-08) — so a view is one press away rather than a toggle to
+        cycle. The chip you are already on dims: the view is a thing here, pressing its
+        key just changes nothing this paint. A page with one tab has nothing to switch,
+        so the slots stay empty.
 
         The pager gates on the route list actually being windowed: on the Info tab, and on
         a node whose routes all fit, the keys move nothing.
@@ -358,8 +357,8 @@ class NodeDetailScreen(Screen):
 
         lane = list(default_lane(nav=self._list_hidden))
         if len(self._tabs) >= 2:
-            nxt = self._tabs[(self._tab_index + 1) % len(self._tabs)]
-            lane[2] = FPair(nxt.name, "tab")
+            for i, tab in enumerate(self._tabs[:3]):
+                lane[i] = FPair(tab.name, f"tab_{i}", enabled=i != self._tab_index)
         return lane
 
     def __init__(
@@ -559,6 +558,9 @@ class NodeDetailScreen(Screen):
             self._switch_tab(1)
         elif action == "shift_tab":
             self._switch_tab(-1)
+        elif action.startswith("tab_") and action[4:].isdigit():
+            # The lane's per-tab chips (F1 Info, F2 Routes) land on a view directly.
+            self._select_tab(int(action[4:]))
         elif action == "up":
             if n:
                 self._row_index = (self._row_index - 1) % n
@@ -609,10 +611,20 @@ class NodeDetailScreen(Screen):
         return self._cursor
 
     def _switch_tab(self, delta: int) -> None:
-        """Move the active tab, resetting the cursor and list window to that tab's top."""
+        """Cycle the active tab (``Tab``/``Shift+Tab``); a lone tab has nowhere to go."""
         if len(self._tabs) < 2:
             return
-        self._tab_index = (self._tab_index + delta) % len(self._tabs)
+        self._select_tab((self._tab_index + delta) % len(self._tabs))
+
+    def _select_tab(self, index: int) -> None:
+        """Land the stage on tab ``index``, resetting the cursor and list window to its top.
+
+        A no-op off the strip or on the tab already showing, so the lane's dimmed
+        current-tab chip stays presentational — ``handle`` remains the authority.
+        """
+        if not (0 <= index < len(self._tabs)) or index == self._tab_index:
+            return
+        self._tab_index = index
         self._row_index = 0
         self._route_sel = 0
         self._list_top = 0

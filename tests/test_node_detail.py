@@ -844,13 +844,17 @@ def test_node_detail_screen_tabs_switch_the_stage() -> None:
     assert "│  Info  │" in body and "centred here" in body
     assert screen.consume_edge_scrub() == 2
 
-    # The F-key chip names where the switch would take you, so it flips with the stage.
-    assert screen.fkey_lane[2].label == "Routes"
-    screen.handle("tab")  # switch to the Routes tab
+    # One F-key chip per tab, in strip order; the tab on screen dims (its key would
+    # change nothing), and pressing the other's chip lands on that view directly.
+    assert [pair.label for pair in screen.fkey_lane[:2]] == ["Info", "Routes"]
+    assert screen.fkey_lane[0].enabled is False and screen.fkey_lane[1].enabled is True
+    screen.handle("tab_1")  # the F2 chip: land on the Routes tab
     body = _plain(screen.render_body(72))
     assert "│  Routes  │" in body and "no route observed yet" in body
     assert screen.consume_edge_scrub() == 0  # the braille preview isn't showing now
-    assert screen.fkey_lane[2].label == "Info"
+    assert screen.fkey_lane[0].enabled is True and screen.fkey_lane[1].enabled is False
+    screen.handle("tab")  # Tab still cycles, wrapping back to Info
+    assert screen.fkey_lane[0].enabled is False
 
 
 def test_node_detail_single_tab_hides_the_switch_hint() -> None:
