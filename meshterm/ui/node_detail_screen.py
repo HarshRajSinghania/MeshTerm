@@ -73,6 +73,7 @@ from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
+from ..platforms import Platform, on_platform
 from .mapcanvas import RGB
 from .minimap import MiniMap
 from .pathgraph import (
@@ -106,6 +107,20 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 #: Our own node's marker glyph and hue, matching the map/mesh-walk star.
 _SELF_GLYPH = ("★", "#facc15")
+
+#: Blank rows of air around the tab strip — one above and one under on the desktop; none
+#: on the PicoCalc (JP, 2026-08-08), where rows are the scarce resource and both lines go
+#: to the stage instead (the route graph's ceiling, the location preview's growth room).
+#: Rides the same frugality signal as the borderless frame, and is bound at
+#: platform-switch time like every platform-derived constant — never branched per paint.
+_TAB_AIR = 1
+
+
+@on_platform
+def _bind_tab_air(platform: Platform) -> None:
+    """Bind the strip's air to the platform (runs now and on every switch)."""
+    global _TAB_AIR
+    _TAB_AIR = 1 if platform.frame_border else 0
 
 #: The inline location preview's row bounds: it grows into whatever the Info tab's
 #: viewport spares (the vitals and action rows are short), floored so a cramped terminal
@@ -659,7 +674,7 @@ class NodeDetailScreen(Screen):
         lines: list[str] = []
         lines.extend(render_lines(self._header, width))
         if self._tabs:
-            lines.append("")
+            lines.extend([""] * _TAB_AIR)
             lines.extend(
                 render_lines(
                     tab_strip([t.name for t in self._tabs], self._tab_index, width),
@@ -692,7 +707,9 @@ class NodeDetailScreen(Screen):
                     for i, route in enumerate(self._routes.routes if self._routes else [])
                 ]
                 if not route_blocks:
-                    lines.append("")  # the bare note pays for its own air under the strip
+                    # The bare note pays for its own air under the strip — where the
+                    # platform affords the strip any air at all.
+                    lines.extend([""] * _TAB_AIR)
                 budget = viewport - len(lines) - action_lines - 1  # the rule's line
                 lines.extend(self._routes_stage(width, budget, route_blocks))
             # The rule closes the stage, so the drawn view and the rows below it read as
@@ -773,7 +790,7 @@ class NodeDetailScreen(Screen):
         :meth:`_key_line`), so a row count the preview sizes against can't move as a reader
         walks a long key.
         """
-        lines: list[str] = [""]  # the stage's one line of air under the strip
+        lines: list[str] = [""] * _TAB_AIR  # the stage's air under the strip, where afforded
         for label, value in self._info_rows:
             if label == _KEY_LABEL:
                 lines.append(self._key_line(label, value, width))
