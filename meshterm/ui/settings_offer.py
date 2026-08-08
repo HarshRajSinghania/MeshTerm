@@ -8,6 +8,11 @@ value, so restoring a stale one could clobber a change made elsewhere. This surf
 MeshTerm saved for it, it offers to restore the saved values, adopt the device's current ones, or
 stop remembering the device (see :mod:`meshterm.core.settings_store`).
 
+One drift is the channel case in disguise and acts silently (JP, 2026-08-08): a manually set
+position on a device with no GPS. After a restart such a device reports no usable fix at all —
+an *empty slot*, not a competing value — so the saved position is written straight back instead
+of asking the operator whether to override a position with an undefined one.
+
 It runs once at startup, on the splash, only when a device is connected and something is actually
 remembered for it — so a firmware radio you don't manage through MeshTerm is never interrupted.
 """
@@ -18,6 +23,7 @@ from rich.text import Text
 
 from ..context import AppContext
 from ..core.device_config import build_snapshot, get_spec
+from ..core.geo import usable_fix
 from ..core.settings_store import SettingDrift, adopt, restore, settings_drift
 from .menus import menu_rows
 from .tui import Separator
@@ -26,6 +32,25 @@ from .tui import Separator
 _RESTORE = "restore"
 _ADOPT = "adopt"
 _FORGET = "forget"
+
+#: The advertised-position pair — the settings whose drift is judged as one fix, not two
+#: scalars, against :func:`_position_undefined`.
+_POSITION_KEYS = frozenset({"adv_lat", "adv_lon"})
+
+
+def _position_undefined(snapshot: dict) -> bool:
+    """Whether the device currently advertises no usable fix at all.
+
+    The same :func:`~meshterm.core.geo.usable_fix` judgment the map surfaces make: the
+    0/0 null island a GPS-less (or freshly restarted) device reports is no position, and
+    out-of-range junk is no position either.
+    """
+    try:
+        lat = float(snapshot.get("adv_lat") or 0.0)
+        lon = float(snapshot.get("adv_lon") or 0.0)
+    except (TypeError, ValueError):
+        return True
+    return not usable_fix(lat, lon)
 
 
 async def offer_remembered_settings(ctx: AppContext) -> None:
@@ -55,6 +80,28 @@ async def offer_remembered_settings(ctx: AppContext) -> None:
         return
     if not drifted:
         return
+
+    # A drifted position on a device that reports none is the empty-slot case: restoring
+    # it overwrites nothing, and the alternative on offer — "keep the device's settings"
+    # — would mean trading a deliberately set position for an undefined one. So those
+    # keys restore silently, and only real value-against-value conflicts reach the
+    # operator.
+    if _position_undefined(snapshot):
+        silent = [d for d in drifted if d.key in _POSITION_KEYS]
+        if silent:
+            try:
+                restored = await restore(store, device, snapshot, [d.key for d in silent])
+                ctx.devstate.invalidate_config()
+                ctx.log.info(
+                    "settings: restored the saved position (%d value(s)) — the device "
+                    "reported no fix to weigh it against",
+                    restored,
+                )
+            except Exception as exc:  # noqa: BLE001 - best-effort, like the rest of the offer
+                ctx.log.debug("settings: silent position restore failed: %s", exc)
+            drifted = [d for d in drifted if d.key not in _POSITION_KEYS]
+            if not drifted:
+                return
 
     choice = await _prompt(ctx, drifted)
     keys = [d.key for d in drifted]
