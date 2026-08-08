@@ -105,9 +105,70 @@ def test_decode_tile_filter_skips_the_layers_the_map_never_draws() -> None:
     from meshterm.ui.map_render import DRAWN_LAYERS
 
     narrow = {layer.name: layer for layer in decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)}
-    for skipped in ("building", "housenumber", "poi"):
+    for skipped in ("housenumber", "poi", "mountain_peak"):
         assert skipped in narrow, f"{skipped} should still be named"
         assert not narrow[skipped].features, f"{skipped} should not have been decoded"
+
+
+# -- buildings ----------------------------------------------------------------
+
+
+def _building_dots(zoom: int) -> int:
+    """Lit cells in a render of the fixture's buildings alone, at ``zoom``."""
+    from meshterm.ui.map_render import render_map
+
+    layers = decode_tile(_FIXTURE.read_bytes(), layers={"building"})
+    vp = Viewport(45.4995, -73.5690, zoom, 53 * 2, 26 * 4)
+    out = _plain(render_map(vp, {(14, 4843, 5861): layers}, []))
+    return sum(1 for ch in out if ch not in " \n")
+
+
+def test_buildings_wait_for_the_zoom_that_can_hold_them() -> None:
+    """Below the gate a footprint is about two dots across, so the layer is a haze."""
+    from meshterm.ui.map_render import _BUILDING_MIN_ZOOM
+
+    assert _building_dots(_BUILDING_MIN_ZOOM) > 100
+    assert _building_dots(_BUILDING_MIN_ZOOM - 1) == 0
+
+
+def test_building_fill_is_stippled_so_the_streets_survive_it() -> None:
+    """A braille dot is one bit: a *solid* fill would erase the street grid it covers.
+
+    The stipple is what keeps a building a shade rather than an eraser — every cell it
+    touches keeps free dots for a road to be drawn through.
+    """
+    from meshterm.ui.map_render import _BUILDING_MIN_ZOOM, render_map
+
+    layers = decode_tile(_FIXTURE.read_bytes(), layers={"building"})
+    vp = Viewport(45.4995, -73.5690, _BUILDING_MIN_ZOOM, 53 * 2, 26 * 4)
+    out = _plain(render_map(vp, {(14, 4843, 5861): layers}, []))
+
+    assert "⣿" not in out, "a fully lit cell means the fill left a road nowhere to go"
+
+
+def test_offscreen_buildings_do_not_change_the_frame() -> None:
+    """The bbox reject is an optimisation, so it must be invisible in the output.
+
+    A downtown tile carries thousands of footprints and a zoomed-in view holds a few
+    dozen; each one is rejected on its own tile-local bounds before a single point of it
+    is projected. Adding a footprint the view cannot reach must render byte-identically.
+    """
+    from meshterm.core.mvt import Feature
+    from meshterm.ui.map_render import _BUILDING_MIN_ZOOM, render_map
+
+    vp = Viewport(45.4995, -73.5690, _BUILDING_MIN_ZOOM, 53 * 2, 26 * 4)
+    cx, cy = _tile_local_of_view_centre(vp, 14, 4843, 5861)
+    here = [(cx - 40, cy - 40), (cx + 40, cy - 40), (cx + 40, cy + 40),
+            (cx - 40, cy + 40), (cx - 40, cy - 40)]
+    far = [(10, 10), (90, 10), (90, 90), (10, 90), (10, 10)]
+
+    def frame(rings):
+        layer = Layer(name="building", extent=4096,
+                      features=[Feature(geom_type=GEOM_POLYGON, rings=rings, tags={})])
+        return render_map(vp, {(14, 4843, 5861): [layer]}, [])
+
+    assert _plain(frame([here])).strip(), "the in-view footprint should draw something"
+    assert frame([here]) == frame([here, far])
 
 
 # -- projection / viewport ----------------------------------------------------

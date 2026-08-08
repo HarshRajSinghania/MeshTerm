@@ -143,9 +143,28 @@ class MapCanvas:
                 ya += sy
 
     def fill_polygon(
-        self, rings: list[list[tuple[float, float]]], color: RGB, priority: int
+        self,
+        rings: list[list[tuple[float, float]]],
+        color: RGB,
+        priority: int,
+        *,
+        stipple: int = 1,
     ) -> None:
-        """Even-odd scanline fill of a polygon (with holes) in dot space."""
+        """Even-odd scanline fill of a polygon (with holes) in dot space.
+
+        Args:
+            rings: The polygon's rings in dot coordinates — one outer ring, then any
+                holes; a multipolygon may pass all its parts at once, since even-odd
+                gives the same answer for footprints that don't overlap.
+            color: Fill colour.
+            priority: Cell-colour priority; a higher one drawn later wins the cell.
+            stipple: Draw every *n*-th dot on both axes instead of every one, so the
+                fill reads as a texture rather than a solid. A braille dot is one bit,
+                so a solid fill doesn't shade a region — it *erases* what shares those
+                cells. ``2`` lights a quarter of the dots, enough to read as tone while
+                leaving room for a road to stay a legible line through it. ``1``, the
+                default, is the ordinary solid fill.
+        """
         edges: list[tuple[float, float, float, float]] = []
         ys: list[float] = []
         for ring in rings:
@@ -157,7 +176,9 @@ class MapCanvas:
             return
         y_start = max(0, int(min(ys)))
         y_end = min(self.dot_h - 1, int(max(ys)))
-        for y in range(y_start, y_end + 1):
+        if stipple > 1:
+            y_start += -y_start % stipple
+        for y in range(y_start, y_end + 1, stipple):
             yc = y + 0.5
             xs: list[float] = []
             for x0, y0, x1, y1 in edges:
@@ -167,7 +188,9 @@ class MapCanvas:
             for i in range(0, len(xs) - 1, 2):
                 x_from = max(0, int(round(xs[i])))
                 x_to = min(self.dot_w - 1, int(round(xs[i + 1])))
-                for x in range(x_from, x_to + 1):
+                if stipple > 1:
+                    x_from += -x_from % stipple
+                for x in range(x_from, x_to + 1, stipple):
                     self.plot(x, y, color, priority)
 
     # -- overlay (markers + labels) --------------------------------------------

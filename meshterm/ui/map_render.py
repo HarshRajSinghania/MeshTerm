@@ -123,9 +123,20 @@ _STREET_LABEL = ("#9aa0aa", False, 7)
 #: Polygon layers drawn as fills, in painting order (later wins the shared cell).
 _FILL_LAYERS = ("water", "landcover", "landuse", "park")
 
+#: Buildings: colour, cell priority, stipple density, and the zoom they appear at.
+#: They sit above the ground fills and below every road, and they are *stippled* rather
+#: than solid because a braille dot is one bit: a solid fill does not shade a region, it
+#: fills every cell it touches and takes the street grid down with it. Below the gate a
+#: typical footprint is about two dots across — under half a cell — so the whole layer
+#: collapses to a haze that costs the streets their legibility and says nothing the
+#: street pattern didn't already say.
+_BUILDING_FILL = ("#4a4f5a", 8)
+_BUILDING_STIPPLE = 2
+_BUILDING_MIN_ZOOM = 15
+
 #: Every basemap layer :func:`_draw_tile` looks at — and so the only geometry the map
-#: has any use for. A planet tile also ships ``building``, ``housenumber``, ``poi`` and
-#: ``mountain_peak``, which together are a large share of its features and none of its
+#: has any use for. A planet tile also ships ``housenumber``, ``poi``, ``mountain_peak``
+#: and the aero layers, which together are a large share of its features and none of its
 #: pixels: decoding them cost ~40% of every tile until this set was handed to
 #: :func:`~meshterm.core.mvt.decode_tile` (measured on the Lyra — a 153 KB tile went
 #: 1236 ms → 281 ms). Passed to the tile source at construction
@@ -133,7 +144,8 @@ _FILL_LAYERS = ("water", "landcover", "landuse", "park")
 #: whole tiles, so widening this set costs a re-decode, never a re-download.
 DRAWN_LAYERS: frozenset[str] = frozenset(
     _FILL_LAYERS
-    + ("waterway", "transportation", "boundary", "transportation_name", "place", "water_name")
+    + ("building", "waterway", "transportation", "boundary", "transportation_name",
+       "place", "water_name")
 )
 
 
@@ -245,6 +257,43 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             vp.fill_polygon(
                 [project(r, layer.extent) for r in feat.rings], mark_rgb(color), prio
             )
+
+    # Buildings, as a stippled texture under the streets.
+    building = by_name.get("building")
+    if building is not None and frame.viewport.zoom >= _BUILDING_MIN_ZOOM:
+        rgb = mark_rgb(_BUILDING_FILL[0])
+        # One tile-local unit is a fixed number of dots, so the visible slab of the tile
+        # is a rectangle in tile coordinates: work out its bounds once and reject each
+        # footprint on its own bounds before projecting a single point. A downtown tile
+        # holds thousands of footprints and a zoomed-in view shows a few dozen of them.
+        ext = building.extent
+        x0, y0 = frame.viewport.feature_to_dot(x, y, z, ext, 0, 0)
+        x1, y1 = frame.viewport.feature_to_dot(x, y, z, ext, ext, ext)
+        if x1 != x0 and y1 != y0:
+            lo_x, hi_x = sorted((-x0 * ext / (x1 - x0), (vp.dot_w - x0) * ext / (x1 - x0)))
+            lo_y, hi_y = sorted((-y0 * ext / (y1 - y0), (vp.dot_h - y0) * ext / (y1 - y0)))
+        else:  # a degenerate projection can't be culled against; draw it all.
+            lo_x = lo_y = -math.inf
+            hi_x = hi_y = math.inf
+        for feat in building.features:
+            if feat.geom_type != GEOM_POLYGON:
+                continue
+            keep = []
+            for ring in feat.rings:
+                if len(ring) < 4:
+                    continue
+                rxs = [p[0] for p in ring]
+                rys = [p[1] for p in ring]
+                if max(rxs) < lo_x or min(rxs) > hi_x or max(rys) < lo_y or min(rys) > hi_y:
+                    continue
+                keep.append(ring)
+            if keep:
+                vp.fill_polygon(
+                    [project(r, ext) for r in keep],
+                    rgb,
+                    _BUILDING_FILL[1],
+                    stipple=_BUILDING_STIPPLE,
+                )
 
     # Waterways (rivers/streams) as lines.
     waterway = by_name.get("waterway")
