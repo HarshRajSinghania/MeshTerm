@@ -80,16 +80,19 @@ class ChatScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane in the transcript's own words: Oldest/Latest, Paths, Retry.
+        """The PicoCalc lane in the transcript's own words: Latest/Oldest, Paths, Retry.
 
-        The default lane's F1/F2 dispatch the plain ``home``/``end`` actions, but here
+        The default lane's F1/F2 dispatch the plain ``end``/``home`` actions, but here
         those are already claimed by the compose line's cursor (see :meth:`handle`) — so
         without an override, both keys land on the same "clear the pick, stick to the
         tail" fallthrough and read as if either one scrolls to the bottom. F1/F2 dispatch
-        ``ctrl_home``/``ctrl_end`` instead, and say what those do to a conversation:
-        reach back to the *oldest* message, or return to the *latest* and the compose
-        line. F4/F5 keep the shared paging pair, which is what a screenful of transcript
-        looks like from the outside even though it is the pick that moves.
+        ``ctrl_end``/``ctrl_home`` instead, and say what those do to a conversation:
+        return to the *latest* message and the compose line, or reach back to the
+        *oldest*. That is the shared pair relabelled, so it keeps the shared handedness —
+        the far end of the scroll-up axis on the right (see
+        :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`). F4/F5 keep the shared paging pair,
+        which is what a screenful of transcript looks like from the outside even though it
+        is the pick that moves.
 
         The F3 pair follows the lane's two claims. *Retry* is absent in a channel — a
         channel message is never acknowledged, so there is no such thing to retry there —
@@ -100,8 +103,8 @@ class ChatScreen(Screen):
 
         lane = list(default_lane(nav=bool(self._messages)))
         live = bool(self._messages)
-        lane[0] = FPair("Oldest", "ctrl_home", enabled=live)
-        lane[1] = FPair("Latest", "ctrl_end", enabled=live)
+        lane[0] = FPair("Latest", "ctrl_end", enabled=live)
+        lane[1] = FPair("Oldest", "ctrl_home", enabled=live)
         retry = ("Retry", "retry") if not self._is_channel else ("", "")
         lane[2] = FPair(
             "Paths", "paths", *retry,

@@ -193,7 +193,10 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   paired opposites (physical Shift+F1..F5), labels ≤7 cells. Screens override
   `fkey_lane` for their own verbs; slots 3/4 are the customary free pair. **A chip names
   an action, never a key** — `Page ↑`, not `PgUp`; `Latest` on a transcript; `Reset` on
-  the map, whose Home refits and whose paging zooms. The lane *is* the footer here, so it
+  the map, whose Home refits and whose paging zooms. **A directional pair rises to the
+  right**: where two adjacent chips are opposite ends of one axis (F1/F2's jumps, F4/F5's
+  paging, the map's zoom, a chat's latest/oldest), the *up · in · more* end takes the
+  right slot — `Zoom -` then `Zoom +`, a rocker. The lane *is* the footer here, so it
   obeys the hint line's rule — never advertise a key that would do nothing. Empty and dim
   are different claims: leave the slot **empty** when the action isn't a thing on this
   screen (Retry in a channel), and clear `enabled`/`opp_enabled` to draw it **dim** (label

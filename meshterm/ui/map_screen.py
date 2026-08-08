@@ -88,14 +88,17 @@ class MapScreen(Screen):
         would label those keys as paging and offer a fifth that does nothing, so the map
         names its own verbs and leaves F2 unassigned. All three are always live — a map
         can always zoom or refit — so no slot dims.
+
+        The zoom pair keeps the lane's handedness (see :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`):
+        out on the left, in on the right, so F4/F5 read as the ``−``/``+`` rocker they are.
         """
         from .tui.fkeys import DEFAULT_LANE, FPair
 
         lane = list(DEFAULT_LANE)
         lane[0] = FPair("Reset", "home")
         lane[1] = None  # End does nothing on a map
-        lane[3] = FPair("Zoom +", "pageup")
-        lane[4] = FPair("Zoom -", "pagedown")
+        lane[3] = FPair("Zoom -", "pagedown")
+        lane[4] = FPair("Zoom +", "pageup")
         return lane
 
     def __init__(

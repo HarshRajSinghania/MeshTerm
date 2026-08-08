@@ -908,10 +908,11 @@ def test_chat_fkey_lane_speaks_the_transcript_and_drops_channel_retry() -> None:
     messages = [ChatMessage(text="hi", peer="d4e5f6a7")]
     direct = _screen(_StubSession(), send=None, messages=messages)
 
-    # Not "Top"/"End": what these do to a conversation is reach its oldest message, or
-    # come back to the latest one and the compose line.
-    assert [pair.label for pair in direct.fkey_lane[:2]] == ["Oldest", "Latest"]
-    assert [pair.action for pair in direct.fkey_lane[:2]] == ["ctrl_home", "ctrl_end"]
+    # Not "Bottom"/"Top": what these do to a conversation is come back to the latest
+    # message and the compose line, or reach back to its oldest one. Same handedness as
+    # the shared pair they relabel — the far end of the scroll-up axis on the right.
+    assert [pair.label for pair in direct.fkey_lane[:2]] == ["Latest", "Oldest"]
+    assert [pair.action for pair in direct.fkey_lane[:2]] == ["ctrl_end", "ctrl_home"]
     assert direct.fkey_lane[2].opp_label == "Retry"
 
     channel = ChatScreen(

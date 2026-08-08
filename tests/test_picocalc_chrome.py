@@ -83,11 +83,11 @@ def test_picocalc_header_brands_the_app_not_the_device() -> None:
 def test_fkey_lane_resolution_and_banks() -> None:
     lane = DEFAULT_LANE
     # F4/F5 (paging — no physical key at all) are plain-key only, no Shift companion.
-    assert action_for(lane, 4) == "pageup" and action_for(lane, 9) is None
-    assert action_for(lane, 5) == "pagedown" and action_for(lane, 10) is None
-    # F1/F2 carry the Fn-layered jump-to-top/end pair, also with no Shift companion.
-    assert action_for(lane, 1) == "home" and action_for(lane, 6) is None
-    assert action_for(lane, 2) == "end" and action_for(lane, 7) is None
+    assert action_for(lane, 4) == "pagedown" and action_for(lane, 9) is None
+    assert action_for(lane, 5) == "pageup" and action_for(lane, 10) is None
+    # F1/F2 carry the Fn-layered jump-to-end/top pair, also with no Shift companion.
+    assert action_for(lane, 1) == "end" and action_for(lane, 6) is None
+    assert action_for(lane, 2) == "home" and action_for(lane, 7) is None
     # F3 is the lone, unassigned slot a screen's own lane fills in.
     assert action_for(lane, 3) is None and action_for(lane, 8) is None
     # Enter/Esc never occupy a slot — both keys are already close at hand.
@@ -99,8 +99,9 @@ def test_fkey_lane_text_fits_and_flips() -> None:
     primary = lane_text(DEFAULT_LANE)
     shifted = lane_text(DEFAULT_LANE, shifted=True)
     assert cell_len(primary.plain) == 53 and cell_len(shifted.plain) == 53
-    assert "F1 Top" in primary.plain  # the chips name actions, not the keys they sit on
-    assert "F4 Page ↑" in primary.plain and "F5 Page ↓" in primary.plain
+    assert "F1 Bottom" in primary.plain  # the chips name actions, not the keys they sit on
+    # A directional pair rises to the right: down/out left, up/in right.
+    assert "F4 Page ↓" in primary.plain and "F5 Page ↑" in primary.plain
     # No slot has a Shift companion by default: the whole shifted bank renders unfilled.
     for number in (6, 7, 8, 9):
         assert f"F{number}" in shifted.plain
@@ -131,10 +132,10 @@ def test_default_lane_dims_every_nav_slot_when_nothing_moves() -> None:
     assert default_lane() is DEFAULT_LANE  # the live lane is the constant itself
     dim = default_lane(nav=False)
 
-    assert [pair.label for pair in dim if pair] == ["Top", "Bottom", "Page ↑", "Page ↓"]
+    assert [pair.label for pair in dim if pair] == ["Bottom", "Top", "Page ↓", "Page ↑"]
     assert not any(pair.enabled for pair in dim if pair)
     row = lane_text(dim)
-    assert cell_len(row.plain) == 53 and "F1 Top" in row.plain and "F5 Page ↓" in row.plain
+    assert cell_len(row.plain) == 53 and "F1 Bottom" in row.plain and "F5 Page ↑" in row.plain
     assert {str(span.style) for span in row.spans} == {"muted"}
 
 
@@ -151,7 +152,7 @@ def test_lane_is_built_after_the_body_renders() -> None:
     composed = frame.compose_base(Text("hdr"), screen, "hint", 53, 26, footer_lane=build)
 
     assert seen["nav"] is True  # lit on the very first paint, with no stale frame to lag
-    assert "F4 Page ↑" in _plain(composed.split("\n")[-1])
+    assert "F4 Page ↓" in _plain(composed.split("\n")[-1])
 
 
 def test_scroll_screen_lane_tracks_whether_its_body_overflows() -> None:

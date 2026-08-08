@@ -97,12 +97,18 @@ Lane = Sequence[Optional[FPair]]
 #: :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane` override reaches for first — typically
 #: a Ctrl+letter chord promoted up because chording is a pain here. A screen whose body is
 #: not one scrolling column says so in its own words (see :class:`ChatScreen`, ``MapScreen``).
+#:
+#: **A directional pair rises to the right** (JP, 2026-08-08): wherever two adjacent chips
+#: are opposite ends of one axis — the F1/F2 jumps and the F4/F5 pager here, the map's zoom,
+#: a chat's oldest/latest — the *up · in · more* end takes the right slot and its opposite
+#: the left, so every such pair reads like a rocker (``−`` then ``+``) and one handedness
+#: carries across screens. A screen relabelling a pair keeps that order.
 DEFAULT_LANE: tuple[Optional[FPair], ...] = (
-    FPair("Top", "home"),
     FPair("Bottom", "end"),
+    FPair("Top", "home"),
     None,
-    FPair("Page ↑", "pageup"),
     FPair("Page ↓", "pagedown"),
+    FPair("Page ↑", "pageup"),
 )
 
 

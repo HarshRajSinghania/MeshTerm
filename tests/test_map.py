@@ -1134,11 +1134,12 @@ def test_map_fkey_lane_names_zoom_and_drops_the_dead_slot() -> None:
 
     # PgUp/PgDn zoom here and Home refits — the shared "Top/End/PgUp/PgDn" labels would
     # all be lies, and "end" is bound to nothing at all.
+    # The zoom pair rises to the right, like every directional pair on the lane.
     assert [pair.label if pair else None for pair in lane] == [
-        "Reset", None, None, "Zoom +", "Zoom -",
+        "Reset", None, None, "Zoom -", "Zoom +",
     ]
     assert action_for(lane, 2) is None  # F2 offers nothing rather than a dead End
-    assert action_for(lane, 1) == "home" and action_for(lane, 4) == "pageup"
+    assert action_for(lane, 1) == "home" and action_for(lane, 5) == "pageup"
     assert all(pair.enabled for pair in lane if pair)  # a map can always zoom or refit
 
 
