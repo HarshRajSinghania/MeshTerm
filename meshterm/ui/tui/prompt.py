@@ -223,7 +223,27 @@ class _LineEditor:
         return text
 
 
-class TextScreen(Screen):
+class _KeylessDialog(Screen):
+    """A dialog with no F-key lane, because it has nothing a lane could carry.
+
+    Every prompt in this module is answered with Enter, Esc, the arrows, and typing —
+    keys that sit right under the reader's hands on both platforms. None of them scroll,
+    so the shared pager (which the base :class:`~meshterm.ui.tui.screen.Screen` hands out)
+    would name two keys that do nothing here. The lane's standing rule is to leave a slot
+    **empty** rather than dim when the action is not a thing on this screen *at all* —
+    dim is for a thing that just isn't available this paint — so these dialogs draw the
+    bare key numbers (see :mod:`~meshterm.ui.tui.fkeys`).
+    """
+
+    @property
+    def fkey_lane(self):
+        """No slots: nothing on a prompt pages, jumps, or needs promoting off a chord."""
+        from .fkeys import EMPTY_LANE
+
+        return EMPTY_LANE
+
+
+class TextScreen(_KeylessDialog):
     """A validated single-line text prompt. Resolves with the string, or CANCEL on Esc."""
 
     def __init__(
@@ -334,7 +354,7 @@ class TextScreen(Screen):
                 self._error = ""
 
 
-class PinDialog(Screen):
+class PinDialog(_KeylessDialog):
     """A startup popup that collects a Bluetooth pairing PIN, re-asking on a rejected code.
 
     Shown by the device picker when a chosen companion answers the scan but refuses the GATT
@@ -398,7 +418,7 @@ class PinDialog(Screen):
             self._error = ""
 
 
-class ConfirmScreen(Screen):
+class ConfirmScreen(_KeylessDialog):
     """A yes/no prompt. Resolves with a bool, or CANCEL on Esc."""
 
     def __init__(
@@ -450,7 +470,7 @@ class ConfirmScreen(Screen):
             super().handle("escape")
 
 
-class ButtonDialog(Screen):
+class ButtonDialog(_KeylessDialog):
     """A centered dialog: a prompt above a row of side-by-side buttons.
 
     A reusable choose-one prompt. The buttons sit in a row; ←/→ (or Tab) move the highlight,
@@ -565,7 +585,7 @@ class ButtonDialog(Screen):
             super().handle("escape")
 
 
-class TypedConfirmDialog(Screen):
+class TypedConfirmDialog(_KeylessDialog):
     """A destructive-action gate: the user must type a confirmation word to proceed.
 
     A centered, error-themed dialog for the actions a stray Enter must never be able to
@@ -638,7 +658,7 @@ class TypedConfirmDialog(Screen):
             self._error = ""
 
 
-class ReconnectDialog(Screen):
+class ReconnectDialog(_KeylessDialog):
     """A centered dialog shown when the companion link drops mid-session.
 
     An animated spinner and message sit above a single ``Abort`` button. Unlike the other
@@ -712,7 +732,7 @@ class ReconnectDialog(Screen):
             self.resolve("quit")
 
 
-class AutocompleteScreen(Screen):
+class AutocompleteScreen(_KeylessDialog):
     """A free-text field with a live suggestion list (``questionary.autocomplete``).
 
     The user may type any value; matching suggestions appear below and can be highlighted

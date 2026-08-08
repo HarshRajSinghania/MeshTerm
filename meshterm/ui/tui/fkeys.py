@@ -9,11 +9,19 @@ By JP's spec (2026-08-01): a lane slot is for functionality that would otherwise
 sit right on the keyboard and are already the easiest keys to hit, so they never occupy
 a slot. Paging has no physical key at all, so a screen that scrolls earns it the prime
 F4/F5 pair. Ctrl+letter chords (Ctrl+P for message paths, Ctrl+arrows for a sort column,
-…) are fiddly to hold on this keyboard, so a screen promotes its own onto the lone F3
-slot (a second, if it has one, riding F3's Shift companion). The five *plain* keys carry
-a screen's most-used, otherwise-awkward actions — reachable with no Shift at all — and
-the Shift bank (F6-F10) is overflow for a screen with more than five such actions. A
-lane can, and does, differ from screen to screen.
+…) are fiddly to hold on this keyboard, so a screen promotes its own onto the free
+F1-F3 bank. The five *plain* keys carry a screen's most-used, otherwise-awkward actions
+— reachable with no Shift at all — and the Shift bank (F6-F10) holds each slot's
+*opposite number*, not unrelated overflow. A lane can, and does, differ from screen to
+screen.
+
+**Second-grade keys ride their own pair's Shift half** (JP, 2026-08-08). Home and End
+*are* on this keyboard, so jumping to either end of a body was never the unreachable
+thing paging is — it only ever wanted a chip for consistency with the pager it belongs
+to. So it rides that pager: Shift+F5 (``F10``) is Top because F5 is Page ↑, Shift+F4
+(``F9``) is Bottom because F4 is Page ↓. One axis, one pair of slots, the jump sitting
+behind the page on the very same key. That leaves **F1-F3 free on every screen** for the
+verbs a screen actually has to offer, which is where the interesting work goes.
 
 **A chip names an action, never a key** (JP, 2026-08-07). ``PgUp``, ``End`` and their
 kin are the names of keys this keyboard doesn't even have; what the slot is for is the
@@ -90,36 +98,42 @@ class FPair:
 Lane = Sequence[Optional[FPair]]
 
 #: The default lane, in the vocabulary of a screen that is one scrolling body: move
-#: through it a page at a time, or jump to either end. No Enter or Esc slot — both keys
-#: sit right on the keyboard already. F4/F5 (the most reachable pair) carry paging, which
-#: has no physical key at all; F1/F2 carry the jumps, Fn-layered on the physical keyboard
-#: and so worth a slot too, just a notch behind paging; F3 is the lone slot a screen's own
-#: :attr:`~meshterm.ui.tui.screen.Screen.fkey_lane` override reaches for first — typically
-#: a Ctrl+letter chord promoted up because chording is a pain here. A screen whose body is
-#: not one scrolling column says so in its own words (see :class:`ChatScreen`, ``MapScreen``).
+#: through it a page at a time (F4/F5), or — behind Shift, on those same two keys — jump
+#: to the end each pager heads for (F9/F10). No Enter or Esc slot: both keys sit right on
+#: the keyboard already. F1-F3 stay free for the screen's own verbs; a screen that has
+#: none leaves them blank rather than filling the lane out. A screen whose body is not one
+#: scrolling column says so in its own words (see :class:`ChatScreen`, ``MapScreen``).
 #:
 #: **A directional pair rises to the right** (JP, 2026-08-08): wherever two adjacent chips
-#: are opposite ends of one axis — the F1/F2 jumps and the F4/F5 pager here, the map's zoom,
-#: a chat's oldest/latest — the *up · in · more* end takes the right slot and its opposite
-#: the left, so every such pair reads like a rocker (``−`` then ``+``) and one handedness
-#: carries across screens. A screen relabelling a pair keeps that order.
+#: are opposite ends of one axis — the F4/F5 pager here, the map's zoom, a select list's
+#: section jumps — the *up · in · more* end takes the right slot and its opposite the left,
+#: so every such pair reads like a rocker (``−`` then ``+``) and one handedness carries
+#: across screens. A slot's own Shift companion follows the same rule *along its slot*: the
+#: jump behind ``Page ↑`` is the one Page ↑ is heading for, so F10 is Top and F9 Bottom. A
+#: screen relabelling a pair keeps that order (a chat's ``Latest``/``Oldest``).
 DEFAULT_LANE: tuple[Optional[FPair], ...] = (
-    FPair("Bottom", "end"),
-    FPair("Top", "home"),
     None,
-    FPair("Page ↓", "pagedown"),
-    FPair("Page ↑", "pageup"),
+    None,
+    None,
+    FPair("Page ↓", "pagedown", "Bottom", "end"),
+    FPair("Page ↑", "pageup", "Top", "home"),
 )
+
+#: The lane of a screen with no lane at all: a confirm dialog, a busy spinner, a text
+#: prompt. Nothing there pages or jumps, so the shared pager is not dim-but-real, it is
+#: simply *not a thing here* — the distinction the module docstring draws — and every slot
+#: renders as a bare, unfilled key number.
+EMPTY_LANE: tuple[Optional[FPair], ...] = (None, None, None, None, None)
 
 
 def default_lane(*, nav: bool = True) -> tuple[Optional[FPair], ...]:
-    """:data:`DEFAULT_LANE`, with its four nav slots dimmed unless ``nav``.
+    """:data:`DEFAULT_LANE`, with its pager slots dimmed unless ``nav``.
 
-    The shared slots all *move* something — the jump-to-ends pair and the paging pair —
-    so on a screen with nothing to move (a body that fits its viewport, a transcript with
-    no messages) all four are inert and say so. Screens that repurpose the nav actions
-    for something always live (the map's zoom) build from :data:`DEFAULT_LANE` instead,
-    relabelling as they go.
+    Both shared slots *move* something — the page, and the jump behind it — so on a screen
+    with nothing to move (a body that fits its viewport, a transcript with no messages)
+    both banks are inert and say so. Screens that repurpose the nav actions for something
+    always live (the map's zoom) build from :data:`DEFAULT_LANE` instead, relabelling as
+    they go.
 
     Args:
         nav: Whether the nav keys would do anything on this paint — typically

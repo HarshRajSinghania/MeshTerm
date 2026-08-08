@@ -907,6 +907,14 @@ def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
     screen.render_body(80)
     assert len(calls) == 2
 
+    # The F-key chip is the same behaviour under another name — the only way a platform
+    # that draws no hint line can learn that `w` exists at all. It names the span it takes
+    # you *to*, since the title already says where you are.
+    assert screen.fkey_lane[2].label == "▸ all"
+    screen.handle("window")
+    assert "all time" in screen.title
+    assert screen.fkey_lane[2].label == "▸ 24 h"  # the ring wraps back around
+
 
 # --- the own-node page ------------------------------------------------------------------
 

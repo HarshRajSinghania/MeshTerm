@@ -17,6 +17,7 @@ from rich.text import Text
 from ..platforms import get_platform
 from .packet_viewer import KIND_ICONS, PAYLOAD_ICONS
 from .theme import _VT_SLOTS, fold_text, glyph, name_style, snr_style
+from .tui.fkeys import FPair, lane_text
 from .widgets import _recency_style, channel_glyph
 
 #: Demo identities for the name-colour row: ``(name, key)``. The keys are synthetic, and
@@ -135,4 +136,19 @@ def specimen_lines() -> list[RenderableType]:
     chart.append("⡀⠄⠂", style="snr.bad")
     chart.append("  braille", style="muted")
     lines.append(chart)
+
+    # The F-key lane, on the one platform that draws it: both fills, plus a dim slot and
+    # an unassigned one, so the card shows every state a chip can be in. Built through
+    # lane_text itself — this is the acceptance screen, so it must be the real renderer.
+    if platform.footer_fkeys:
+        lane = (
+            FPair("Region", "home"),
+            FPair("You", "locate", enabled=False),
+            None,
+            FPair("Page ↓", "pagedown", "Bottom", "end"),
+            FPair("Page ↑", "pageup", "Top", "home"),
+        )
+        lines.append(Text())
+        lines.append(lane_text(lane))
+        lines.append(lane_text(lane, shifted=True))
     return lines

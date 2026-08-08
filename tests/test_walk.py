@@ -315,6 +315,22 @@ def test_walk_home_refocuses_us() -> None:
     assert screen._trail == [topo.self_id]
 
 
+def test_walk_fkey_lane_says_you_where_the_shared_lane_would_say_top() -> None:
+    """Home drops the trail rather than scrolling, and End is bound to nothing at all."""
+    from meshterm.ui.tui.fkeys import action_for
+
+    screen = _screen(_topo())
+    screen.render_body(80)
+    lane = screen.fkey_lane
+
+    assert [pair.label if pair else None for pair in lane] == [
+        None, None, None, "Page ↓", "Page ↑",
+    ]
+    # The jump behind Page ↑ goes back to us; the one behind Page ↓ doesn't exist here.
+    assert lane[4].opp_label == "You" and action_for(lane, 10) == "home"
+    assert lane[3].opp_label == "" and action_for(lane, 9) is None
+
+
 def test_walk_came_from_anchors_west_and_the_fan_stays_east() -> None:
     """The trail-back node sits at the far west; every fan node east of the focus."""
     topo = _topo()

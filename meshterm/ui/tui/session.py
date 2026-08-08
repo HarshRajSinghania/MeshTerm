@@ -60,6 +60,7 @@ from .select import Choice, ReorderScreen, SelectScreen, Separator
 #: ``Keys.ControlM``/``ControlI``/``ControlH``, so claiming them here would rebind those keys.
 _CTRL_LETTER_CHORDS: dict[str, str] = {
     "c": "quit",
+    "l": "locate",
     "p": "paths",
     "r": "retry",
     "v": "paste_clipboard",

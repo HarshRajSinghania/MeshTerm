@@ -82,29 +82,29 @@ class ChatScreen(Screen):
     def fkey_lane(self):
         """The PicoCalc lane in the transcript's own words: Latest/Oldest, Paths, Retry.
 
-        The default lane's F1/F2 dispatch the plain ``end``/``home`` actions, but here
-        those are already claimed by the compose line's cursor (see :meth:`handle`) — so
-        without an override, both keys land on the same "clear the pick, stick to the
-        tail" fallthrough and read as if either one scrolls to the bottom. F1/F2 dispatch
-        ``ctrl_end``/``ctrl_home`` instead, and say what those do to a conversation:
-        return to the *latest* message and the compose line, or reach back to the
-        *oldest*. That is the shared pair relabelled, so it keeps the shared handedness —
-        the far end of the scroll-up axis on the right (see
-        :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`). F4/F5 keep the shared paging pair,
-        which is what a screenful of transcript looks like from the outside even though it
-        is the pick that moves.
+        The shared lane's Shift bank dispatches the plain ``end``/``home`` actions, but
+        here those are already claimed by the compose line's cursor (see :meth:`handle`) —
+        so left alone, both keys land on the same "clear the pick, stick to the tail"
+        fallthrough and read as if either one scrolls to the bottom. The two companions
+        dispatch ``ctrl_end``/``ctrl_home`` instead, and say what those do to a
+        conversation: return to the *latest* message and the compose line, or reach back
+        to the *oldest*. That is the shared pair relabelled in place, so it keeps the
+        shared handedness — each jump still sitting behind the page heading the same way
+        (see :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`). F4/F5 keep the shared paging
+        pair, which is what a screenful of transcript looks like from the outside even
+        though it is the pick that moves.
 
         The F3 pair follows the lane's two claims. *Retry* is absent in a channel — a
         channel message is never acknowledged, so there is no such thing to retry there —
         and merely dim in a direct chat with nothing outstanding. *Paths* needs a picked
-        message to have paths of, and all four nav slots need a transcript to walk.
+        message to have paths of, and both nav slots need a transcript to walk.
         """
         from .tui.fkeys import FPair, default_lane
 
         lane = list(default_lane(nav=bool(self._messages)))
         live = bool(self._messages)
-        lane[0] = FPair("Latest", "ctrl_end", enabled=live)
-        lane[1] = FPair("Oldest", "ctrl_home", enabled=live)
+        lane[3] = FPair("Page ↓", "pagedown", "Latest", "ctrl_end", enabled=live, opp_enabled=live)
+        lane[4] = FPair("Page ↑", "pageup", "Oldest", "ctrl_home", enabled=live, opp_enabled=live)
         retry = ("Retry", "retry") if not self._is_channel else ("", "")
         lane[2] = FPair(
             "Paths", "paths", *retry,

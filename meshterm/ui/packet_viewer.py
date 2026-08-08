@@ -315,6 +315,29 @@ class PacketViewer(Screen):
 
     grow_only = True
 
+    @property
+    def fkey_lane(self):
+        """The shared pager over the body, with the jumps renamed for what they land on.
+
+        Home and End here don't reach the ends of a *body* — they reach the ends of the
+        *list*, the newest and oldest packet — so the Shift companions say ``Newest`` and
+        ``Oldest``. The handedness is unchanged: newest is the top of a newest-first list,
+        so it keeps the right-hand slot behind Page ↑.
+
+        The two banks gate on different things, because they move different things. The
+        pager needs a body taller than the box; the jumps need a second packet to jump to.
+        Opened over a single packet, all four chips go dim at once.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        lane = list(default_lane(nav=self.content_overflows))
+        many = len(self._entries) > 1
+        lane[3] = FPair("Page ↓", "pagedown", "Oldest", "end",
+                        enabled=self.content_overflows, opp_enabled=many)
+        lane[4] = FPair("Page ↑", "pageup", "Newest", "home",
+                        enabled=self.content_overflows, opp_enabled=many)
+        return lane
+
     def __init__(
         self,
         entries: list[PacketEntry],

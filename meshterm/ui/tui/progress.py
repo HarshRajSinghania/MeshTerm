@@ -40,6 +40,13 @@ class ProgressScreen(Screen):
     footer_hint = "working…"
     floating = True
 
+    @property
+    def fkey_lane(self):
+        """No lane: the dialog is non-interactive, so no key does anything to it."""
+        from .fkeys import EMPTY_LANE
+
+        return EMPTY_LANE
+
     def __init__(self, title: str = "Working") -> None:
         """Start an empty progress dialog with the given heading."""
         super().__init__()

@@ -344,7 +344,7 @@ class ContactListScreen(SelectScreen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane: the whole sort on F3/F8 beside the shared defaults.
+        """The select list's lane, with the whole sort added on F3/F8.
 
         Four columns is a short ring — walking it backwards saves at most two presses, so
         it never earns the Shift companion. That slot takes the sort's *other* half
@@ -355,10 +355,14 @@ class ContactListScreen(SelectScreen):
         force — ``Sort ▼`` while the list reads ascending — in the same triangle the header
         lights over the active column, so the chip and the column cue can never read as
         the same claim.
-        """
-        from .tui.fkeys import DEFAULT_LANE, FPair
 
-        lane = list(DEFAULT_LANE)
+        Built on ``super()``'s lane rather than the bare default, so a contact list that
+        carries section headings (the Time Machine's whole-mesh lead, the Contacts screen's
+        purge tail) keeps the section jumps the select list promotes onto F1/F2.
+        """
+        from .tui.fkeys import FPair
+
+        lane = list(super().fkey_lane)
         descend = self._sort.ascending  # ascending now, so the flip lands descending
         lane[2] = FPair(
             "Sort →",

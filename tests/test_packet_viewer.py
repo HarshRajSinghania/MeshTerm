@@ -121,6 +121,25 @@ def test_packet_viewer_heard_row_says_now_not_now_ago() -> None:
     assert "now ago" not in body
 
 
+def test_packet_viewer_lane_names_the_ends_of_the_list_not_the_body() -> None:
+    """Home/End reach the newest and oldest packet here, so the Shift bank says so."""
+    old = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    newer = PacketEntry(when=utcnow(), kind="message", node="bb", text="new!")
+
+    lone = PacketViewer([old], 0, resolve=lambda h: "")
+    lone.note_metrics(4, 20)  # a short body in a roomy box: nothing to page either
+    assert [pair.opp_label for pair in lone.fkey_lane[3:]] == ["Oldest", "Newest"]
+    assert not any(pair.enabled or pair.opp_enabled for pair in lone.fkey_lane[3:])
+
+    # A second packet lights the jumps on their own — the pager still needs a tall body.
+    pair_view = PacketViewer([newer, old], 0, resolve=lambda h: "")
+    pair_view.note_metrics(4, 20)
+    assert [pair.opp_enabled for pair in pair_view.fkey_lane[3:]] == [True, True]
+    assert [pair.enabled for pair in pair_view.fkey_lane[3:]] == [False, False]
+    pair_view.note_metrics(80, 20)
+    assert [pair.enabled for pair in pair_view.fkey_lane[3:]] == [True, True]
+
+
 def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
     """With no live source the viewer is frozen on its opening list (unchanged behaviour)."""
     entry = PacketEntry(when=utcnow(), kind="advert", node="aa")

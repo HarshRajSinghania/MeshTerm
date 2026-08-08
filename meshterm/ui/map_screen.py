@@ -8,12 +8,13 @@ render_map`. Keys:
 * the **arrow keys** pan; holding **Shift** pans by a single character cell for fine
   positioning,
 * ``PgUp`` / ``PgDn`` zoom in / out,
-* ``Home`` recenters and refits to the dense core of the nodes (the same default view the
-  map opens on),
+* ``Home`` recenters and refits to the dense core of the nodes — the *region* the mesh
+  covers, and the same default view the map opens on,
+* ``Ctrl+L`` recenters on **your own node**, keeping the zoom you chose,
 * **typing finds nodes**: every letter key feeds a live name filter — matching nodes keep
   bright labels while the rest dim to context, ``Enter`` frames the matches, ``Backspace``
   edits, and ``Esc`` clears the filter (a second ``Esc`` leaves the map). This is why no
-  letters are bound to actions here,
+  plain letters are bound to actions here,
 * ``Esc`` leaves the map.
 
 With no network (and no cached tiles) the basemap is simply absent and nodes are plotted on a
@@ -81,25 +82,34 @@ class MapScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane: reset on F1, zoom on F4/F5 — nothing that doesn't act here.
+        """The PicoCalc lane: three ways to frame the view, then the zoom rocker.
 
-        The map is the one screen that repurposes the nav actions: PgUp/PgDn zoom and
-        Home refits the view, while ``end`` is bound to nothing at all. The shared lane
-        would label those keys as paging and offer a fifth that does nothing, so the map
-        names its own verbs and leaves F2 unassigned. All three are always live — a map
-        can always zoom or refit — so no slot dims.
+        The map is the one screen that repurposes the nav actions wholesale: PgUp/PgDn
+        zoom, Home reframes, and ``end`` is bound to nothing at all — so the shared lane's
+        Shift-bank jumps have nothing to jump to here and F4/F5 are lone slots. That is
+        also the one exception to the rule that a Home/End verb rides the Shift half of
+        its pager (JP, 2026-08-08): ``Region`` is not a vertical move through a body, it
+        is a *destination*, and it keeps the prime F1 slot next to the other two.
 
-        The zoom pair keeps the lane's handedness (see :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`):
-        out on the left, in on the right, so F4/F5 read as the ``−``/``+`` rocker they are.
+        All three destinations answer "where should I be looking?", in widening order of
+        specificity: the whole **Region** the mesh covers, **You** at the centre of it, or
+        just the nodes a find query **Frame**\\ s. Region always acts; You needs our own
+        node to be on the map at all; Frame needs a query with matches to frame, so on an
+        unfiltered map it dims (and no-ops) rather than standing in for Region.
+
+        The zoom pair keeps the lane's handedness (see
+        :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`): out on the left, in on the right, so
+        F4/F5 read as the ``−``/``+`` rocker they are.
         """
-        from .tui.fkeys import DEFAULT_LANE, FPair
+        from .tui.fkeys import FPair
 
-        lane = list(DEFAULT_LANE)
-        lane[0] = FPair("Reset", "home")
-        lane[1] = None  # End does nothing on a map
-        lane[3] = FPair("Zoom -", "pagedown")
-        lane[4] = FPair("Zoom +", "pageup")
-        return lane
+        return [
+            FPair("Region", "home"),
+            FPair("You", "locate", enabled=self._self_marker() is not None),
+            FPair("Frame", "frame", enabled=bool(self._filter) and bool(self._matches())),
+            FPair("Zoom -", "pagedown"),
+            FPair("Zoom +", "pageup"),
+        ]
 
     def __init__(
         self,
@@ -162,20 +172,22 @@ class MapScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Key hints — or the live find query — plus a tile-loading indicator.
+        """Key hints — or the live find query.
 
         While a find filter is active the hints give way to the query itself with its
         editing keys, so the typed text is always visible somewhere fixed.
+
+        The line spends its whole 72-cell budget, so the two view-jump keys share one atom
+        (``Home/^L region/you``) and ``⇧ fine`` — a refinement of a key the line already
+        names, and the only atom here that documents a *modifier* rather than a binding —
+        is the one that gives way to make room for them. The basemap's state used to hang
+        off the end of this line as a suffix; it is a status atom, not a key, so it moved
+        to the title where the standards chain those (see :meth:`_title`), which is what
+        finally brought the line inside the budget.
         """
         if self._filter:
-            base = f"find: {self._filter}▏ · Enter frame · ⌫ erase · Esc clear"
-        else:
-            base = "↑↓←→ pan · ⇧ fine · PgUp/PgDn zoom · Home reset · type to find · Esc back"
-        if self._pending:
-            return f"{base} · [muted]loading {len(self._pending)} tiles…[/muted]"
-        if not self._source.available:
-            return f"{base} · [warn]offline — no basemap[/warn]"
-        return base
+            return f"find: {self._filter}▏ · Enter frame · ⌫ erase · Esc clear"
+        return "↑↓←→ pan · PgUp/PgDn zoom · Home/^L region/you · type to find · Esc back"
 
     def consume_edge_scrub(self) -> int:
         """Right-edge columns the session should force-repaint on the next paint (0 = none).
@@ -249,7 +261,14 @@ class MapScreen(Screen):
         return [m for m in self._markers if needle in m.label.casefold()]
 
     def _title(self, vp: Viewport) -> str:
-        """A compact status title: zoom, node count (find matches), and ground scale."""
+        """A compact status title: zoom, node count (find matches), and ground scale.
+
+        The basemap's own state — tiles still in flight, or no source at all — is the last
+        atom when there is one to report, standing in for the scale rather than joining it.
+        Both are answers to "how much ground am I looking at", the status is the more urgent
+        of the two while it lasts, and swapping (rather than appending) keeps the title from
+        outgrowing a 53-column title bar, which clips rather than wraps.
+        """
         # Ground metres per braille dot at the view centre, for a rough sense of scale.
         m_per_dot = (
             2 * math.pi * EARTH_RADIUS_KM * 1000
@@ -258,6 +277,10 @@ class MapScreen(Screen):
         )
         scale = f"{m_per_dot * vp.dot_w:.0f} m across" if m_per_dot * vp.dot_w < 1000 else \
             f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
+        if self._pending:
+            scale = f"{len(self._pending)} tiles…"
+        elif not self._source.available:
+            scale = "offline"
         if self._filter:
             nodes = f"{len(self._matches())} of {len(self._markers)} match"
         else:
@@ -320,11 +343,16 @@ class MapScreen(Screen):
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
-        """Pan, zoom, reset, edit the find filter, or exit.
+        """Pan, zoom, reframe, edit the find filter, or exit.
 
         Every printable key feeds the find filter — nothing pans or zooms by letter, so
         typing a node name can never fling the view around. Esc peels one layer: an
         active filter first, the map itself only once the filter is clear.
+
+        Three actions reframe the view, and each has both a key and an F-key chip:
+        ``home`` the whole region, ``locate`` (Ctrl+L) our own node, ``frame`` the find
+        matches — which is what Enter already does while a query is being typed, kept as
+        a separate action so the lane can name it on a platform that draws no hint line.
         """
         vp = self._viewport
         if action == "escape":
@@ -345,6 +373,10 @@ class MapScreen(Screen):
             self._viewport = vp.zoomed(-1)
         elif action in ("home", "ctrl_home"):
             self._reset_view(vp)
+        elif action == "locate":
+            self._locate(vp)
+        elif action == "frame" and self._filter:
+            self._frame_matches(vp)
         elif action == "text" and self.find_enabled:
             if not data.isspace() or self._filter:  # never begin the filter with a space
                 self._filter += data
@@ -357,6 +389,27 @@ class MapScreen(Screen):
         # Any handled key may have redrawn the body, so clean the right edge next paint.
         self._needs_scrub = True
         self._persist()
+
+    def _self_marker(self) -> Optional[MapMarker]:
+        """Our own node among the markers, or ``None`` when the map can't place us.
+
+        A device with no location fix of its own is simply absent from the marker list, so
+        ``You`` has nowhere to go and its chip dims (see :attr:`fkey_lane`).
+        """
+        return next((m for m in self._markers if m.is_self), None)
+
+    def _locate(self, vp: Viewport) -> None:
+        """Recentre on our own node, keeping the current zoom (``Ctrl+L`` / the ``You`` chip).
+
+        Deliberately *only* a recentre: the zoom is the one the user chose, so pressing
+        this twice does the same thing twice and pairing it with one Zoom + is a single
+        extra press. Refitting instead would make "where am I" silently also mean "and
+        forget how close I was looking".
+        """
+        me = self._self_marker()
+        if me is None:
+            return
+        self._viewport = Viewport(clamp_lat(me.lat), me.lon, vp.zoom, vp.dot_w, vp.dot_h)
 
     def _reset_view(self, vp: Viewport) -> None:
         """Refit the view to the nodes' dense core (the map's opening frame)."""
@@ -417,6 +470,22 @@ class LocationPickScreen(MapScreen):
     """
 
     find_enabled = False
+
+    @property
+    def fkey_lane(self):  # type: ignore[override]
+        """The map's lane minus the two verbs a picker has no use for.
+
+        ``Frame`` goes because find is off here — nothing can ever be typed to frame, so
+        the slot is *empty*, not dim. ``You`` goes because the whole screen is about
+        choosing where "you" will be: the crosshair at the centre already is that answer,
+        and a chip that jumped to wherever the node currently claims to be would compete
+        with the pick rather than help it. ``Home`` keeps F1, but reframed: here it returns
+        to the view the picker **opened** on, so a pan that went wrong is one key to undo.
+        """
+        from .tui.fkeys import FPair
+
+        return [FPair("Start", "home"), None, None, FPair("Zoom -", "pagedown"),
+                FPair("Zoom +", "pageup")]
 
     def __init__(
         self,

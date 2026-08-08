@@ -323,6 +323,30 @@ class NodeDetailScreen(Screen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The shared pager over the route list, plus the tab switch on F3.
+
+        The strip shows *that* there are two views; nothing on screen says the key that
+        moves between them, and on a platform with no hint line the chip is the only place
+        to learn it. It names the tab it would take you *to*, never the one you are on —
+        the strip already marks that, and a chip repeating it would say nothing about what
+        pressing it does. Unlike the Time Machine's window chip, this one carries no ``▸``
+        lead-in: ``Routes`` is exactly six cells on its own, and the strip beside it makes
+        the direction plain anyway. A page with one tab has nothing to switch, so the slot
+        stays empty.
+
+        The pager gates on the route list actually being windowed: on the Info tab, and on
+        a node whose routes all fit, the keys move nothing.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        lane = list(default_lane(nav=self._list_hidden))
+        if len(self._tabs) >= 2:
+            nxt = self._tabs[(self._tab_index + 1) % len(self._tabs)]
+            lane[2] = FPair(nxt.name, "tab")
+        return lane
+
     def __init__(
         self,
         *,

@@ -210,6 +210,24 @@ class WalkScreen(Screen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The shared pager over the link list, with ``You`` behind Page ↑ and nothing behind ↓.
+
+        The walk's Home does not scroll to a top — it drops the whole trail and puts the
+        focus back on our own node — so the Shift companion that would say *Top* says
+        ``You`` instead. ``End`` is bound to nothing here, so its companion stays blank:
+        a trail has a beginning (us) but no far end to jump to. Both nav slots need rows
+        to move through, which a leaf node in a sparse graph may not have.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        paging = len(self._rows()) > 1
+        lane = list(default_lane(nav=paging))
+        lane[3] = FPair("Page ↓", "pagedown", enabled=paging)
+        lane[4] = FPair("Page ↑", "pageup", "You", "home", enabled=paging)
+        return lane
+
     def __init__(
         self,
         *,

@@ -893,7 +893,7 @@ async def test_chat_fkey_lane_dims_retry_and_the_nav_slots() -> None:
 
     failed = ChatMessage(text="oops", outbound=True, peer="d4e5f6a7", acked=False)
     screen = _screen(_StubSession(), send=None, messages=[failed], resend=resend)
-    assert all(pair.enabled for pair in screen.fkey_lane[:2])  # Top/End walk the pick
+    assert all(pair.enabled for pair in screen.fkey_lane[3:])  # the pager walks the pick
     assert screen.fkey_lane[2].opp_enabled is True  # F8 Retry: the message never acked
 
     screen.handle("retry")
@@ -908,11 +908,12 @@ def test_chat_fkey_lane_speaks_the_transcript_and_drops_channel_retry() -> None:
     messages = [ChatMessage(text="hi", peer="d4e5f6a7")]
     direct = _screen(_StubSession(), send=None, messages=messages)
 
-    # Not "Bottom"/"Top": what these do to a conversation is come back to the latest
-    # message and the compose line, or reach back to its oldest one. Same handedness as
-    # the shared pair they relabel — the far end of the scroll-up axis on the right.
-    assert [pair.label for pair in direct.fkey_lane[:2]] == ["Latest", "Oldest"]
-    assert [pair.action for pair in direct.fkey_lane[:2]] == ["ctrl_end", "ctrl_home"]
+    # Not "Bottom"/"Top": what the Shift bank does to a conversation is come back to the
+    # latest message and the compose line, or reach back to its oldest one. Relabelled in
+    # place, so each jump still rides the pager heading for it.
+    assert [pair.opp_label for pair in direct.fkey_lane[3:]] == ["Latest", "Oldest"]
+    assert [pair.opp_action for pair in direct.fkey_lane[3:]] == ["ctrl_end", "ctrl_home"]
+    assert [pair.label for pair in direct.fkey_lane[3:]] == ["Page ↓", "Page ↑"]
     assert direct.fkey_lane[2].opp_label == "Retry"
 
     channel = ChatScreen(

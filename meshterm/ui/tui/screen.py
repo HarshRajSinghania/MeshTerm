@@ -66,9 +66,10 @@ class Screen:
         Five slots, F1–F5, each with an optional F6–F10 Shift-bank companion. A slot is
         for functionality that is otherwise hard to reach — Enter/Esc never appear, since
         both keys are already close at hand. The default puts paging (no physical key at
-        all) on the prime F4/F5 pair, the nav cluster's jump-to-top/end (Fn-layered) on
-        F1/F2, and leaves F3 as the one lone slot — the first a screen reaches for to
-        promote its own otherwise-fiddly shortcut (a Ctrl+letter chord, say). A screen
+        all) on the prime F4/F5 pair and the jump-to-top/end pair behind Shift on those
+        same two keys, since Home and End *are* on this keyboard and only ever wanted a
+        chip for consistency with the pager they belong to. F1–F3 are left free: they are
+        where a screen's own verbs go, and a screen with none leaves them blank. A screen
         overrides this property for its own verbs; the lane may differ screen to screen.
 
         Read fresh every paint, so an override dims the slots whose action would do
@@ -503,6 +504,13 @@ class BusyScreen(Screen):
 
     footer_hint = "working…"
     floating = False
+
+    @property
+    def fkey_lane(self):
+        """No lane at all: this screen swallows every key, so none of them do anything."""
+        from .fkeys import EMPTY_LANE
+
+        return EMPTY_LANE
 
     def __init__(self, message: str, *, title: str = "") -> None:
         """Start a busy splash showing ``message`` under an optional ``title``."""

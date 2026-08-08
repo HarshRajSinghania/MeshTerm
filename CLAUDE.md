@@ -189,19 +189,27 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   rather than derived go through a theme name so the slot is chosen deliberately (the
   node types' `type.*`; a raster resolves the same entry via `theme.mark_rgb`) — a naive
   downsample greys the repeater's violet. Footer hints are replaced by the **F-key lane**
-  (`ui/tui/fkeys.py`): five `FPair` slots per screen, F1–F5 primary and F6–F10 their
-  paired opposites (physical Shift+F1..F5), labels ≤7 cells. Screens override
-  `fkey_lane` for their own verbs; slots 3/4 are the customary free pair. **A chip names
-  an action, never a key** — `Page ↑`, not `PgUp`; `Latest` on a transcript; `Reset` on
-  the map, whose Home refits and whose paging zooms. **A directional pair rises to the
-  right**: where two adjacent chips are opposite ends of one axis (F1/F2's jumps, F4/F5's
-  paging, the map's zoom, a chat's latest/oldest), the *up · in · more* end takes the
-  right slot — `Zoom -` then `Zoom +`, a rocker. The lane *is* the footer here, so it
-  obeys the hint line's rule — never advertise a key that would do nothing. Empty and dim
-  are different claims: leave the slot **empty** when the action isn't a thing on this
-  screen (Retry in a channel), and clear `enabled`/`opp_enabled` to draw it **dim** (label
-  kept, fill dropped) when it's a thing that just isn't available this paint. Dimming is
-  presentational — `handle` stays the authority and no-ops.
+  (`ui/tui/fkeys.py`): five `FPair` slots per screen, F1–F5 primary and F6–F10 each
+  slot's *opposite number* (physical Shift+F1..F5), labels ≤6 cells. `DEFAULT_LANE` claims
+  only **F4/F5 — the pager**, which has no physical key at all; **the jump to either end
+  rides the Shift half of the very pager heading for it** (F10 Top behind F5 Page ↑, F9
+  Bottom behind F4 Page ↓), because Home and End *are* on this keyboard and only ever
+  wanted a chip for consistency. That leaves **F1–F3 free on every screen** for its own
+  verbs, and `EMPTY_LANE` for a screen with none at all (every dialog). **A chip names an
+  action, never a key** — `Page ↑`, not `PgUp`; `Latest` on a transcript; `Region` on the
+  map, whose Home reframes and whose paging zooms. **A directional pair rises to the
+  right**: where two adjacent chips are opposite ends of one axis (F4/F5's paging, the
+  map's zoom, a select list's section jumps), the *up · in · more* end takes the right
+  slot — `Zoom -` then `Zoom +`, a rocker — and a slot's Shift companion follows the same
+  rule along its own slot. The lane *is* the footer here, so it obeys the hint line's rule
+  — never advertise a key that would do nothing. Empty and dim are different claims: leave
+  the slot **empty** when the action isn't a thing on this screen (Retry in a channel), and
+  clear `enabled`/`opp_enabled` to draw it **dim** (label kept, fill dropped) when it's a
+  thing that just isn't available this paint. Dimming is presentational — `handle` stays
+  the authority and no-ops. The lane is also the *only* affordance advertisement here, so
+  anything the desktop reaches by a chord or a bare letter (a list's `^PgUp/^PgDn` section
+  jumps, the Time Machine's `w`, the map's `^L`, a row's `Del`) earns a slot — otherwise
+  it is undiscoverable on the device.
 - `meshterm specimen` prints the whole visual language through the real funnels — the
   acceptance card on-device, a preview under `--platform picocalc` on the desktop.
 - Dev loop: `meshterm --mock --platform picocalc` in a 53×40 window; the gallery and

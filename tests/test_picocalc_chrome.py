@@ -82,14 +82,13 @@ def test_picocalc_header_brands_the_app_not_the_device() -> None:
 
 def test_fkey_lane_resolution_and_banks() -> None:
     lane = DEFAULT_LANE
-    # F4/F5 (paging — no physical key at all) are plain-key only, no Shift companion.
-    assert action_for(lane, 4) == "pagedown" and action_for(lane, 9) is None
-    assert action_for(lane, 5) == "pageup" and action_for(lane, 10) is None
-    # F1/F2 carry the Fn-layered jump-to-end/top pair, also with no Shift companion.
-    assert action_for(lane, 1) == "end" and action_for(lane, 6) is None
-    assert action_for(lane, 2) == "home" and action_for(lane, 7) is None
-    # F3 is the lone, unassigned slot a screen's own lane fills in.
-    assert action_for(lane, 3) is None and action_for(lane, 8) is None
+    # F4/F5 (paging — no physical key at all) carry the pager, and each jump rides the
+    # Shift half of the very pager heading for it: Home behind Page ↑, End behind Page ↓.
+    assert action_for(lane, 4) == "pagedown" and action_for(lane, 9) == "end"
+    assert action_for(lane, 5) == "pageup" and action_for(lane, 10) == "home"
+    # F1-F3 are free on every screen — the shared lane claims none of them.
+    for number in (1, 2, 3, 6, 7, 8):
+        assert action_for(lane, number) is None
     # Enter/Esc never occupy a slot — both keys are already close at hand.
     assert "enter" not in {action_for(lane, n) for n in range(1, 11)}
     assert "escape" not in {action_for(lane, n) for n in range(1, 11)}
@@ -99,13 +98,14 @@ def test_fkey_lane_text_fits_and_flips() -> None:
     primary = lane_text(DEFAULT_LANE)
     shifted = lane_text(DEFAULT_LANE, shifted=True)
     assert cell_len(primary.plain) == 53 and cell_len(shifted.plain) == 53
-    assert "F1 Bottom" in primary.plain  # the chips name actions, not the keys they sit on
-    # A directional pair rises to the right: down/out left, up/in right.
+    # A directional pair rises to the right: down/out left, up/in right — and each
+    # companion keeps its slot's end of that axis.
     assert "F4 Page ↓" in primary.plain and "F5 Page ↑" in primary.plain
-    # No slot has a Shift companion by default: the whole shifted bank renders unfilled.
-    for number in (6, 7, 8, 9):
-        assert f"F{number}" in shifted.plain
-    assert "10" in shifted.plain
+    assert "F9 Bottom" in shifted.plain and "10 Top" in shifted.plain
+    # The free bank renders as bare, unfilled key numbers in both banks.
+    for number in (1, 2, 3):
+        assert f"F{number}    " in primary.plain
+        assert f"F{number + 5}    " in shifted.plain
     wide = [FPair("Muchtoolonglabel", "a", "Muchtoolonglabel", "b")] * 5
     assert cell_len(lane_text(wide).plain) == 53  # clipped to the slot budget
     assert cell_len(lane_text(wide, shifted=True).plain) == 53
@@ -132,11 +132,13 @@ def test_default_lane_dims_every_nav_slot_when_nothing_moves() -> None:
     assert default_lane() is DEFAULT_LANE  # the live lane is the constant itself
     dim = default_lane(nav=False)
 
-    assert [pair.label for pair in dim if pair] == ["Bottom", "Top", "Page ↓", "Page ↑"]
-    assert not any(pair.enabled for pair in dim if pair)
+    assert [pair.label for pair in dim if pair] == ["Page ↓", "Page ↑"]
+    assert not any(pair.enabled or pair.opp_enabled for pair in dim if pair)
     row = lane_text(dim)
-    assert cell_len(row.plain) == 53 and "F1 Bottom" in row.plain and "F5 Page ↑" in row.plain
+    assert cell_len(row.plain) == 53 and "F4 Page ↓" in row.plain and "F5 Page ↑" in row.plain
     assert {str(span.style) for span in row.spans} == {"muted"}
+    # Both banks dim together: the jump behind a dead pager is just as dead.
+    assert {str(span.style) for span in lane_text(dim, shifted=True).spans} == {"muted"}
 
 
 def test_lane_is_built_after_the_body_renders() -> None:
@@ -162,6 +164,61 @@ def test_scroll_screen_lane_tracks_whether_its_body_overflows() -> None:
     assert not any(pair.enabled for pair in screen.fkey_lane if pair)
     screen.note_metrics(80, 20)  # taller than the viewport
     assert all(pair.enabled for pair in screen.fkey_lane if pair)
+
+
+def test_select_lane_promotes_the_section_jumps_only_where_there_are_sections() -> None:
+    """Ctrl+PgUp/PgDn is unreachable on a keyboard with no PgUp, so a grouped list lanes it."""
+    from meshterm.ui.tui.select import Choice, Separator, SelectScreen
+
+    flat = SelectScreen("Flat", [Choice("one", 1), Choice("two", 2)])
+    # No headings anywhere: sections are not a thing on this list, so the slots are empty
+    # rather than dim — and F1/F2 resolve to nothing at all.
+    assert flat.fkey_lane[0] is None and flat.fkey_lane[1] is None
+    assert action_for(flat.fkey_lane, 1) is None
+
+    grouped = SelectScreen("Grouped", [
+        Separator("── Near ──"), Choice("alpha", 1), Choice("beta", 2),
+        Separator("── Far ──"), Choice("gamma", 3),
+    ])
+    lane = grouped.fkey_lane
+    assert [pair.label for pair in lane[:2]] == ["Sect ↓", "Sect ↑"]
+    # Down left, up right — the same handedness the pager below them reads with.
+    assert action_for(lane, 1) == "ctrl_pagedown" and action_for(lane, 2) == "ctrl_pageup"
+    assert all(pair.enabled for pair in lane[:2])
+
+    # A filter that collapses the list onto one section keeps the labels and dims them:
+    # the sections are still a thing here, they just have nowhere to jump right now.
+    for ch in "gam":
+        grouped.handle("text", ch)
+    dim = grouped.fkey_lane
+    assert [pair.label for pair in dim[:2]] == ["Sect ↓", "Sect ↑"]
+    assert not any(pair.enabled for pair in dim[:2])
+
+
+def test_dialogs_draw_no_lane_at_all() -> None:
+    """A prompt has nothing to page, so it shows bare key numbers, not a dim pager."""
+    from meshterm.ui.tui.fkeys import EMPTY_LANE
+    from meshterm.ui.tui.prompt import ButtonDialog, ConfirmScreen, TextScreen
+
+    for screen in (
+        TextScreen("Name", prompt="Call it what?"),
+        ConfirmScreen("Sure?"),
+        ButtonDialog("Reboot the node?", ["Cancel", "Reboot"]),
+    ):
+        assert list(screen.fkey_lane) == list(EMPTY_LANE)
+        row = lane_text(screen.fkey_lane)
+        assert cell_len(row.plain) == 53
+        assert {str(span.style) for span in row.spans} == {"muted"}
+
+
+def test_map_locate_is_reachable_from_both_control_keys() -> None:
+    """``locate`` is bound as a chord app-wide, so both Ctrl keys and F2 reach the same action."""
+    from prompt_toolkit.keys import Keys
+
+    from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS
+
+    assert _CTRL_LETTER_CHORDS["l"] == "locate"  # the right-Ctrl rescue's half
+    assert _KEY_ACTIONS[Keys.ControlL] == "locate"  # the ordinary binding, generated from it
 
 
 def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:

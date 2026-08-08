@@ -142,6 +142,27 @@ class TimeMachineScreen(Screen):
     floating = False
     footer_hint = "↑↓ PgUp/PgDn scroll · w window · Esc back"
 
+    @property
+    def fkey_lane(self):
+        """The shared pager, plus the window cycle on F3.
+
+        ``w`` is the whole point of this screen — the same history at five spans — and it
+        is exactly the kind of affordance that vanishes on a platform with no hint line to
+        read it off. The chip is the only place the PicoCalc can learn the key exists, so
+        it earns the free F3 slot even though the letter itself is easy to press.
+
+        The chip names the span it would *take you to*, not the one on screen: the title
+        already says where you are, so a chip repeating it would be the same claim twice
+        and would never tell you what pressing it does. ``all time`` shortens to ``all``
+        to stay inside the 6-cell chip — the only span whose name doesn't already fit.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        lane = list(default_lane(nav=self.content_overflows))
+        nxt, _delta = _WINDOWS[(self._window_index + 1) % len(_WINDOWS)]
+        lane[2] = FPair(f"▸ {'all' if nxt == 'all time' else nxt}", "window")
+        return lane
+
     def __init__(
         self,
         *,
@@ -171,7 +192,12 @@ class TimeMachineScreen(Screen):
         self.title = f"{self._label} · {name}"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Scroll, cycle the window, or dismiss."""
+        """Scroll, cycle the window, or dismiss.
+
+        The window cycles on either the ``w`` key or the ``window`` action the F-key lane
+        dispatches — one behaviour, two ways in, so the chip is not a second implementation
+        of the letter.
+        """
         if action == "up":
             self.scroll_lines(-1)
         elif action == "down":
@@ -184,7 +210,7 @@ class TimeMachineScreen(Screen):
             self.scroll_to_top()
         elif action in ("end", "ctrl_end"):
             self.scroll_to_bottom()
-        elif action == "text" and data.lower() == "w":
+        elif action == "window" or (action == "text" and data.lower() == "w"):
             self._window_index = (self._window_index + 1) % len(_WINDOWS)
             self._set_title()
             self.scroll_to_top()

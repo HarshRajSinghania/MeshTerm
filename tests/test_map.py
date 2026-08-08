@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 
 from meshterm.core.geo import BBox, Viewport, haversine_km, lonlat_to_world, world_to_lonlat
@@ -1094,7 +1095,11 @@ def test_map_screen_renders_pans_zooms_and_resets() -> None:
 
     # Offline source: nodes still render and both markers are present.
     assert "▲" in _plain(screen.render_body(80)) and "●" in _plain(screen.render_body(80))
-    assert "offline" in screen.footer_hint
+    # The basemap's state is a status atom, so it rides the title's `·` chain (standing in
+    # for the scale) and leaves the footer a pure key line inside its 72-cell budget.
+    assert screen.title.endswith("· offline")
+    assert "offline" not in screen.footer_hint
+    assert cell_len(screen.footer_hint) <= 72
 
 
 def test_map_screen_shift_pans_by_a_single_cell() -> None:
@@ -1123,7 +1128,7 @@ def test_map_screen_shift_pans_by_a_single_cell() -> None:
     assert screen._viewport.center_lon == pytest.approx(expected_lon)
 
 
-def test_map_fkey_lane_names_zoom_and_drops_the_dead_slot() -> None:
+def test_map_fkey_lane_names_its_three_destinations_and_the_zoom() -> None:
     """The map repurposes the nav keys, so its lane labels them — and offers no dead key."""
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -1132,15 +1137,73 @@ def test_map_fkey_lane_names_zoom_and_drops_the_dead_slot() -> None:
     screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
     lane = screen.fkey_lane
 
-    # PgUp/PgDn zoom here and Home refits — the shared "Top/End/PgUp/PgDn" labels would
-    # all be lies, and "end" is bound to nothing at all.
+    # PgUp/PgDn zoom here and Home reframes — the shared paging labels would all be lies,
+    # and "end" is bound to nothing at all, so no jump rides the Shift bank.
     # The zoom pair rises to the right, like every directional pair on the lane.
     assert [pair.label if pair else None for pair in lane] == [
-        "Reset", None, None, "Zoom -", "Zoom +",
+        "Region", "You", "Frame", "Zoom -", "Zoom +",
     ]
-    assert action_for(lane, 2) is None  # F2 offers nothing rather than a dead End
+    assert all(action_for(lane, n) is None for n in range(6, 11))
     assert action_for(lane, 1) == "home" and action_for(lane, 5) == "pageup"
-    assert all(pair.enabled for pair in lane if pair)  # a map can always zoom or refit
+    assert action_for(lane, 2) == "locate" and action_for(lane, 3) == "frame"
+    # Region and the zoom always act; the other two only where they'd land somewhere.
+    assert [pair.enabled for pair in lane] == [True, False, False, True, True]
+
+
+def test_map_locate_recenters_on_our_own_node_at_the_current_zoom() -> None:
+    """``You`` moves the view to us and changes nothing else — not even the zoom."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    markers = [
+        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Homestead", 45.40, -73.50, is_self=True),
+    ]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
+    screen.render_body(80)
+    screen.handle("pageup")  # zoom in one step, so the recentre has a zoom to preserve
+    zoom = screen._viewport.zoom
+    screen.handle("left")  # and pan away from wherever we are
+
+    assert screen.fkey_lane[1].enabled is True  # we're on the map, so You can act
+    screen.handle("locate")
+    assert screen._viewport.center_lat == pytest.approx(45.40)
+    assert screen._viewport.center_lon == pytest.approx(-73.50)
+    assert screen._viewport.zoom == zoom
+
+    # A mesh we aren't located in has nowhere to go: the chip dims and the key no-ops.
+    away = MapScreen(_StubSession(80, 24), markers[:1], _StubSource(), 14)
+    away.render_body(80)
+    before = away._viewport
+    away.handle("locate")
+    assert away.fkey_lane[1].enabled is False and away._viewport is before
+
+
+def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
+    """``Frame`` is the find's Enter under another name — dim, and inert, without a query."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    markers = [
+        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Alice", 45.40, -73.50),
+    ]
+    screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
+    screen.render_body(80)
+    before = screen._viewport
+    screen.handle("frame")  # no query typed: nothing to frame, so nothing moves
+    assert screen.fkey_lane[2].enabled is False and screen._viewport is before
+
+    for ch in "ali":
+        screen.handle("text", ch)
+    assert screen.fkey_lane[2].enabled is True
+    screen.handle("frame")
+    assert screen._viewport.center_lat == pytest.approx(45.40)
+
+    # A query nothing matches has no extent either — the chip goes back to dim.
+    for ch in "zzz":
+        screen.handle("text", ch)
+    assert screen._matches() == [] and screen.fkey_lane[2].enabled is False
 
 
 def test_map_screen_find_filters_frames_and_clears() -> None:

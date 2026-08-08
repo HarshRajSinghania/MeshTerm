@@ -145,6 +145,23 @@ class LiveFeedScreen(Screen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The shared lane, gated on there being packets to walk.
+
+        Every nav key here moves the *cursor* over the feed rather than a scroll offset,
+        but the vocabulary is the same either way — the window follows the highlight — so
+        the shared labels stand. ``Top`` and ``Bottom`` stay literal on purpose: the top of
+        this list is the newest packet, and its bottom is the ``Back`` row one past the
+        oldest, which is where End actually lands.
+
+        A feed with nothing in it still has that ``Back`` row, and nowhere to move to, so
+        all four chips go dim until the first packet arrives.
+        """
+        from .tui.fkeys import default_lane
+
+        return default_lane(nav=bool(self._feed))
+
     def __init__(
         self,
         *,

@@ -206,6 +206,46 @@ class SelectScreen(Screen):
     #: Cells one ←/→ press shifts an h-scrolling list by (see the ``hscroll`` flag).
     _HSCROLL_STEP = 8
 
+    @property
+    def fkey_lane(self):
+        """The shared pager, the section jumps on F1/F2, and row deletion on F3.
+
+        Ctrl+PageUp/PageDown step the highlight heading by heading — and on the PicoCalc
+        they are the one binding in the app that is *physically unreachable*: paging has
+        no key there to hold Ctrl over. So a grouped list promotes them onto the lane,
+        keeping the shared handedness (down left, up right — see
+        :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`).
+
+        Their two gates say different things, per the lane's empty-versus-dim rule. A list
+        that has no headings *at all* leaves both slots blank: sections aren't a thing
+        here. A grouped list whose live filter has narrowed the rows down to a single
+        surviving section keeps its labels and dims them — the sections are still a thing,
+        they just have nowhere to jump right now.
+
+        ``Delete`` is the same claim as the footer's per-row delete atom, on a platform
+        that draws no footer: only a list that hands out :attr:`Choice.deletable` rows at
+        all shows the slot, and it lights exactly on the rows the key would act on. The
+        chip says ``Delete`` on every such list rather than echoing each one's own hint
+        phrasing, because six cells hold the key's verb and not the object it removes —
+        which the highlighted row is already naming.
+        """
+        from .fkeys import FPair, default_lane
+
+        # One pass over the displayed rows for the whole lane: this runs every paint on
+        # the platform that draws it, and `_rows()` re-filters the item list each call.
+        rows = self._rows()
+        lane = list(default_lane(nav=len(self._choices(rows)) > 1))
+        if len(self._all_section_starts()) >= 2:
+            live = len(self._section_starts(rows)) > 1
+            lane[0] = FPair("Sect ↓", "ctrl_pagedown", enabled=live)
+            lane[1] = FPair("Sect ↑", "ctrl_pageup", enabled=live)
+        if self._delete_hint:
+            choices = self._choices(rows)
+            current = choices[max(0, min(self._index, len(choices) - 1))] if choices else None
+            lane[2] = FPair("Delete", "delete",
+                            enabled=current is not None and current.deletable)
+        return lane
+
     def __init__(
         self,
         title: str,
@@ -302,17 +342,22 @@ class SelectScreen(Screen):
         rows = self._rows() if rows is None else rows
         return [it for it in rows if isinstance(it, Choice)]
 
-    def _section_starts(self) -> list[int]:
+    def _section_starts(self, rows: Optional[list] = None) -> list[int]:
         """Choice indices that begin a section — the first choice after each run of separators.
 
-        Drives Ctrl+PageUp/PageDown section jumps. Computed over the *displayed* rows, so
-        the jumps keep working while a filter narrows the list (the headings stay — see
-        :meth:`_rows` — and empty sections simply yield no stop).
+        Drives Ctrl+PageUp/PageDown section jumps. Computed over the *displayed* rows by
+        default, so the jumps keep working while a filter narrows the list (the headings
+        stay — see :meth:`_rows` — and empty sections simply yield no stop).
+
+        Args:
+            rows: The rows to read the sections off, or ``None`` for the displayed ones.
+                :meth:`_all_section_starts` passes the unfiltered items instead, to ask
+                the structural question rather than the live one.
         """
         starts: list[int] = []
         idx = 0
         fresh = True  # the next choice opens a section (top of the list, or just past a heading)
-        for item in self._rows():
+        for item in self._rows() if rows is None else rows:
             if isinstance(item, Separator):
                 fresh = True
             elif isinstance(item, Choice):
@@ -321,6 +366,15 @@ class SelectScreen(Screen):
                     fresh = False
                 idx += 1
         return starts
+
+    def _all_section_starts(self) -> list[int]:
+        """The section starts of the *unfiltered* list — whether this list has sections at all.
+
+        The F-key lane needs both questions answered separately (see :attr:`fkey_lane`):
+        a flat list never offers a section jump, while a grouped one whose filter has
+        collapsed it to one section offers it again the moment the filter is edited.
+        """
+        return self._section_starts(self._items)
 
     def _jump_section(self, direction: int) -> None:
         """Move the highlight to the next section (``+1``) or the current/previous one (``-1``).
@@ -629,6 +683,13 @@ class ReorderScreen(Screen):
     #: box never resizes when a grab starts.
     _HINT_IDLE = "↑↓ move · Enter grab / select · Esc cancel"
     _HINT_GRABBED = "↑↓ move row · Enter drop · Esc cancel"
+
+    @property
+    def fkey_lane(self):
+        """No lane: the whole screen is ↑↓ and Enter, three keys already on the keyboard."""
+        from .fkeys import EMPTY_LANE
+
+        return EMPTY_LANE
 
     def __init__(self, title: str, labels: list[str]) -> None:
         """Build a reorder screen.

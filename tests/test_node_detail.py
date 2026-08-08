@@ -820,10 +820,13 @@ def test_node_detail_screen_tabs_switch_the_stage() -> None:
     assert "│  Info  │" in body and "centred here" in body
     assert screen.consume_edge_scrub() == 2
 
+    # The F-key chip names where the switch would take you, so it flips with the stage.
+    assert screen.fkey_lane[2].label == "Routes"
     screen.handle("tab")  # switch to the Routes tab
     body = _plain(screen.render_body(72))
     assert "│  Routes  │" in body and "no route observed yet" in body
     assert screen.consume_edge_scrub() == 0  # the braille preview isn't showing now
+    assert screen.fkey_lane[2].label == "Info"
 
 
 def test_node_detail_single_tab_hides_the_switch_hint() -> None:
@@ -831,3 +834,5 @@ def test_node_detail_single_tab_hides_the_switch_hint() -> None:
     screen = _screen(tabs=[_Tab("Info", "info")])  # our own node: no Routes tab
     assert "←→ tab" not in screen.footer_hint
     assert "↑↓ move" in screen.footer_hint and screen.footer_hint.endswith("Esc back")
+    # Nothing to switch to, so the lane leaves the slot empty rather than dimming it.
+    assert screen.fkey_lane[2] is None

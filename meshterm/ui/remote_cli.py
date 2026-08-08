@@ -44,6 +44,24 @@ class RemoteCliScreen(Screen):
 
     floating = False
 
+    @property
+    def fkey_lane(self):
+        """The pager over the transcript, with no jumps behind it.
+
+        Home and End never reach the transcript here: they fall through to the compose
+        line's editor, where they move the text cursor to either end of what is being
+        typed (see :meth:`handle`). That is the ordinary behaviour of a command line and
+        both keys are on the keyboard, so the Shift companions stay blank rather than
+        promising a jump the transcript would not make.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        overflows = self.content_overflows
+        lane = list(default_lane(nav=overflows))
+        lane[3] = FPair("Page ↓", "pagedown", enabled=overflows)
+        lane[4] = FPair("Page ↑", "pageup", enabled=overflows)
+        return lane
+
     def __init__(
         self,
         *,

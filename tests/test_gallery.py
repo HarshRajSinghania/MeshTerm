@@ -436,9 +436,10 @@ _KNOWN_WIDE: set[str] = set()
 #: Entries whose footer_hint already overflowed the *existing* 72-column standard before
 #: this platform seam existed. Not this phase's to fix: CLAUDE.md's 72-col rule predates
 #: the seam, and per standing guidance old chrome that already broke it is left for a
-#: dedicated pass rather than retrofitted as a drive-by here (map's footer grows an
-#: "offline — no basemap" suffix that was already too long without it).
-_PREEXISTING_REGULAR_OVERFLOW: set[str] = {"map"}
+#: dedicated pass rather than retrofitted as a drive-by here. Empty since the F-lane pass
+#: of 2026-08-08 rebuilt the map's hint around its new view-jump keys and brought it back
+#: inside the budget on the way through.
+_PREEXISTING_REGULAR_OVERFLOW: set[str] = set()
 
 
 def _cases():
