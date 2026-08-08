@@ -85,8 +85,8 @@ def test_dashboard_renders_all_three_sections() -> None:
     assert "advert" in body and "Alice" in body  # traffic class + the busiest node
 
 
-def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> None:
-    """'now' anchors the right edge and the scale marks mirror on both gutters.
+def test_dashboard_activity_chart_reads_newest_right_with_left_scale() -> None:
+    """'now' anchors the right edge; the scale marks the left gutter, the right closes bare.
 
     Peak 9 over 3 rows (12 dots): the top gutter's ┤ tick crosses its row's third
     dot (an 11-dot bar → 9·11/12 ≈ 8), so the mark reads 8, not the peak itself.
@@ -95,14 +95,14 @@ def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> No
     lines = _stripped(screen.render_body(80))
     top = next(line for line in lines if "┤" in line)
     assert top.strip().startswith("8 ┤")
-    assert top.rstrip().endswith("├ 8")
+    assert top.rstrip().endswith("│")  # no mirrored mark — the cells went to the chart
     caption = next(line for line in lines if "now" in line)
     assert caption.index("−") < caption.index("now")  # oldest left, newest right
-    # The lone newest-minute burst draws against the chart's right gutter, and the
+    # The lone newest-minute burst draws against the chart's right border, and the
     # left half of the chart is bare flatline.
     chart = [line for line in lines if "┤" in line or "│" in line]
     bottom = chart[-1]
-    left_half = bottom[3 : 3 + (len(bottom) - 6) // 2]
+    left_half = bottom[3 : 3 + (len(bottom) - 4) // 2]
     assert all(ch in (chr(0x2800), chr(0x2800 | 0x40 | 0x80), " ") for ch in left_half)
     assert any(0x2800 <= ord(ch) <= 0x28FF and ord(ch) & 0x3F for ch in chart[0])
 

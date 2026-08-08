@@ -257,14 +257,33 @@ def test_y_axis_labels_blanks_a_repeated_mark() -> None:
     assert y_axis_labels(1, 3) == ["1", "", ""]
 
 
-def test_axis_chart_mirrors_marks_on_both_gutters() -> None:
-    """Each row's mark is framed by tick glyphs and repeated on both edges."""
+def test_axis_chart_marks_the_left_gutter_only() -> None:
+    """Marks tick the left gutter; the right edge closes with a bare border (no mirror)."""
     rows = timeline_rows([9] * 8, rows=2)
     out = axis_chart(rows, 9, 4, lambda f: "now" if f >= 1.0 else "old")
     assert len(out) == 4  # 2 chart rows + bottom border + caption
-    assert out[0].plain == "8 ┤⣿⣿⣿⣿├ 8"  # ticked-dot values (peak 9 sizes the gutter)
-    assert out[1].plain == "3 ┤⣿⣿⣿⣿├ 3"
+    assert out[0].plain == "8 ┤⣿⣿⣿⣿│"  # ticked-dot value (the widest mark sizes the gutter)
+    assert out[1].plain == "3 ┤⣿⣿⣿⣿│"
     assert out[2].plain.startswith("  └") and out[2].plain.endswith("┘")
+
+
+def test_axis_chart_compacts_deep_tallies_into_the_gutter() -> None:
+    """Counts above 999 read as k/M marks, and the gutter sizes to the widest printed mark.
+
+    A 1.5k peak prints ``1k`` while a lower tick still lands three digits wide (``563``),
+    so the gutter takes three cells — sized from the marks, never from the bare peak.
+    """
+    from meshterm.ui.braillechart import axis_label_w, compact_label
+
+    assert compact_label(999) == "999" and compact_label(1500) == "2k"
+    assert compact_label(12_345) == "12k" and compact_label(2_000_000) == "2M"
+    assert compact_label(-1200) == "-1k"
+
+    rows = timeline_rows([1500] * 8, rows=2)
+    out = axis_chart(rows, 1500, 4, lambda f: "x")
+    assert axis_label_w(1500, 2) == 3
+    assert out[0].plain == " 1k ┤⣿⣿⣿⣿│"  # round(1500 · 7/8) → 1312 → 1k
+    assert out[1].plain == "562 ┤⣿⣿⣿⣿│"  # round(1500 · 3/8) → the three-digit tick
 
 
 def test_y_axis_labels_signed_span_quotes_both_extremes() -> None:

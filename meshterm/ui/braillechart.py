@@ -33,10 +33,12 @@ Beyond timelines, the module owns the app's two other braille conventions:
   ``width``-cell meter resolves ``2 × width`` levels.
 * :func:`axis_caption` — the ``oldest → now`` line under a timeline, which
   fills in intermediate marks whenever the chart is wide enough to fit them.
-* :func:`axis_chart` — frames :func:`timeline_rows` output in a mirrored
-  numeric y-axis (the dashboard's activity chart, the Time Machine's per-day
-  and rhythm charts), so a chart quotes its scale on the gutters instead of
-  just naming the peak in its heading.
+* :func:`axis_chart` — frames :func:`timeline_rows` output in a numeric y-axis
+  (the dashboard's activity chart, the Time Machine's per-day and rhythm
+  charts): marks on the left gutter only — the right edge closes with a bare
+  border, its mirror dropped as redundant (JP, 2026-08-08) — each mark
+  compacted through :func:`compact_label` so the gutter never outgrows three
+  cells however deep the tallies run.
 """
 
 from __future__ import annotations
@@ -423,6 +425,34 @@ def axis_caption(
     return Text(label.ljust(chars), style=style), [0]
 
 
+def compact_label(value: float) -> str:
+    """A y-axis mark that stays gutter-sized however deep the tally: ``999``, ``12k``, ``2M``.
+
+    Counts above 999 compact to a rounded ``k``/``M`` (JP, 2026-08-08) so a gutter mark
+    always fits three cells for any tally a mesh realistically produces, instead of a
+    five-digit day widening every chart's gutter. A signed value keeps its minus (the SNR
+    band's depths). Rounding suits the gutter's job — a tick quotes roughly what a bar
+    peaking at its dot means, not an exact ledger; the headings still carry exact counts.
+    """
+    if abs(value) < 1000:
+        return str(round(value))
+    thousands = round(value / 1000)
+    if abs(thousands) < 1000:
+        return f"{thousands}k"
+    return f"{round(value / 1_000_000)}M"
+
+
+def axis_label_w(peak: float, rows: int, *, lo: float = 0.0) -> int:
+    """The gutter width a chart of this scale actually needs: its widest printed mark.
+
+    Sizing from the compacted *peak* alone under-measures: a ``1.5k`` peak prints as the
+    two-cell ``1k`` while a lower tick can still land at ``563`` — three cells. Callers
+    sharing one gutter across stacked charts take the max of this over each chart's
+    scale (and the default :func:`axis_chart` gutter is computed the same way).
+    """
+    return max([1, *(len(mark) for mark in y_axis_labels(peak, rows, lo=lo))])
+
+
 def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
     """Each chart row's ticked-dot value, top row first, dupes and zeros blanked.
 
@@ -430,17 +460,19 @@ def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
     row's bottom, so each mark quotes the value of a bar peaking *at that dot* —
     the reading the tick visibly points at, not the row's top edge — using the
     same zero-folded scaling :func:`timeline_rows` draws bars with (baseline row
-    and all). A mark that would repeat the one above (a low peak makes
-    neighbouring dots round to the same value) or read zero is left blank, so the
-    scale never shows the same number twice. A signed chart passes its floor as
-    ``lo`` (``< 0``): marks above the grey zero line quote rise heights, marks
-    below it hang depths, so the gutter shows both signs of a zero-crossing
-    series (an SNR band's ``+5 … −10 dB``) instead of only the positive peak.
+    and all), compacted through :func:`compact_label` so it never outgrows the
+    gutter. A mark that would repeat the one above (a low peak makes
+    neighbouring dots round to the same value — or to the same ``1k``) or read
+    zero is left blank, so the scale never shows the same number twice. A signed
+    chart passes its floor as ``lo`` (``< 0``): marks above the grey zero line
+    quote rise heights, marks below it hang depths, so the gutter shows both
+    signs of a zero-crossing series (an SNR band's ``+5 … −10 dB``) instead of
+    only the positive peak.
     """
     total = rows * 4
     base = _baseline_row(lo, peak, total)
     labels: list[str] = []
-    seen: set[int] = set()
+    seen: set[str] = set()
     for i in range(rows):
         dot = (rows - 1 - i) * 4 + 2  # the dot row this row's ┤ tick crosses
         if dot > base:
@@ -449,9 +481,10 @@ def y_axis_labels(peak: float, rows: int, *, lo: float = 0.0) -> list[str]:
             value = round(lo * (base - dot + 1) / (base + 1))
         else:
             value = 0  # the tick sits on the zero baseline itself
-        if peak != lo and value and value not in seen:
-            labels.append(str(value))
-            seen.add(value)
+        mark = compact_label(value)
+        if peak != lo and value and mark not in seen:
+            labels.append(mark)
+            seen.add(mark)
         else:
             labels.append("")
     return labels
@@ -519,11 +552,13 @@ def axis_chart(
     floor: float = 0.0,
     ticks: Optional[Sequence[tuple[int, str]]] = None,
 ) -> list[Text]:
-    """Frame :func:`timeline_rows` output with a mirrored y-axis and x-axis caption.
+    """Frame :func:`timeline_rows` output with a left y-axis and an x-axis caption.
 
-    Each row's top-edge value is mirrored on both gutters (blank where it would
-    repeat the mark above or read zero), closed with a boxed bottom border, and
-    followed by an x-axis caption indented to clear the gutter.
+    Each row's ticked-dot value marks the left gutter (blank where it would repeat
+    the mark above or read zero), compacted through :func:`compact_label`; the right
+    edge closes with a bare border — the mirrored gutter it used to carry was
+    redundant, and its cells go to the chart (JP, 2026-08-08). A boxed bottom border
+    and an x-axis caption indented to clear the gutter close the frame.
 
     The caption comes one of two ways. A *continuous* chart passes ``label_at`` and
     the ends-plus-quarters marks of :func:`axis_caption` fill in whatever fits. A
@@ -556,15 +591,13 @@ def axis_chart(
         ``len(chart_rows) + 2`` :class:`Text` lines: the decorated rows, the
         bottom border, and the caption.
     """
-    label_w = label_w or max(1, len(str(round(peak))), len(str(round(floor))))
     marks = y_axis_labels(peak, len(chart_rows), lo=floor)
+    label_w = label_w or max([1, *(len(mark) for mark in marks)])
     out: list[Text] = []
     for mark, row in zip(marks, chart_rows):
         line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style=style)
         line.append_text(row)
-        line.append("├" if mark else "│", style=style)
-        if mark:
-            line.append(f" {mark}", style=style)
+        line.append("│", style=style)
         out.append(line)
     if ticks is not None:
         border, caption_text = _tick_axis(chars, label_w, ticks, style)
