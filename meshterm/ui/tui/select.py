@@ -213,8 +213,8 @@ class SelectScreen(Screen):
         Ctrl+PageUp/PageDown step the highlight heading by heading — and on the PicoCalc
         they are the one binding in the app that is *physically unreachable*: paging has
         no key there to hold Ctrl over. So a grouped list promotes them onto the lane,
-        keeping the shared handedness (down left, up right — see
-        :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`).
+        keeping the shared handedness — a pair rises toward its outer key, so on this
+        left-edge pair *up* takes F1 (see :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`).
 
         Their two gates say different things, per the lane's empty-versus-dim rule. A list
         that has no headings *at all* leaves both slots blank: sections aren't a thing
@@ -237,8 +237,8 @@ class SelectScreen(Screen):
         lane = list(default_lane(nav=len(self._choices(rows)) > 1))
         if len(self._all_section_starts()) >= 2:
             live = len(self._section_starts(rows)) > 1
-            lane[0] = FPair("Sect ↓", "ctrl_pagedown", enabled=live)
-            lane[1] = FPair("Sect ↑", "ctrl_pageup", enabled=live)
+            lane[0] = FPair("Sect ↑", "ctrl_pageup", enabled=live)
+            lane[1] = FPair("Sect ↓", "ctrl_pagedown", enabled=live)
         if self._delete_hint:
             choices = self._choices(rows)
             current = choices[max(0, min(self._index, len(choices) - 1))] if choices else None

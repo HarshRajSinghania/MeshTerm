@@ -104,13 +104,15 @@ Lane = Sequence[Optional[FPair]]
 #: none leaves them blank rather than filling the lane out. A screen whose body is not one
 #: scrolling column says so in its own words (see :class:`ChatScreen`, ``MapScreen``).
 #:
-#: **A directional pair rises to the right** (JP, 2026-08-08): wherever two adjacent chips
-#: are opposite ends of one axis — the F4/F5 pager here, the map's zoom, a select list's
-#: section jumps — the *up · in · more* end takes the right slot and its opposite the left,
-#: so every such pair reads like a rocker (``−`` then ``+``) and one handedness carries
-#: across screens. A slot's own Shift companion follows the same rule *along its slot*: the
-#: jump behind ``Page ↑`` is the one Page ↑ is heading for, so F10 is Top and F9 Bottom. A
-#: screen relabelling a pair keeps that order (a chat's ``Latest``/``Oldest``).
+#: **A directional pair rises toward its outer key** (JP, 2026-08-08): wherever two
+#: adjacent chips are opposite ends of one axis, the *up · in · more* end takes the slot
+#: nearer the lane's own edge. On the right-hand F4/F5 pair that is F5 — the pager here,
+#: the map's zoom, ``Zoom -`` then ``Zoom +``, a rocker — and on a left-hand F1/F2 pair it
+#: is F1, so a select list reads ``Sect ↑`` then ``Sect ↓``: ergonomically the hand
+#: anchors on the lane's edge and rocks inward, whichever side the pair lives on. A slot's
+#: own Shift companion follows the same rule *along its slot*: the jump behind ``Page ↑``
+#: is the one Page ↑ is heading for, so F10 is Top and F9 Bottom. A screen relabelling a
+#: pair keeps its order (a chat's ``Latest``/``Oldest``).
 DEFAULT_LANE: tuple[Optional[FPair], ...] = (
     None,
     None,

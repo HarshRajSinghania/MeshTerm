@@ -181,9 +181,9 @@ def test_select_lane_promotes_the_section_jumps_only_where_there_are_sections() 
         Separator("── Far ──"), Choice("gamma", 3),
     ])
     lane = grouped.fkey_lane
-    assert [pair.label for pair in lane[:2]] == ["Sect ↓", "Sect ↑"]
-    # Down left, up right — the same handedness the pager below them reads with.
-    assert action_for(lane, 1) == "ctrl_pagedown" and action_for(lane, 2) == "ctrl_pageup"
+    assert [pair.label for pair in lane[:2]] == ["Sect ↑", "Sect ↓"]
+    # A pair rises toward its outer key: on this left-edge pair, up takes F1.
+    assert action_for(lane, 1) == "ctrl_pageup" and action_for(lane, 2) == "ctrl_pagedown"
     assert all(pair.enabled for pair in lane[:2])
 
     # A filter that collapses the list onto one section keeps the labels and dims them:
@@ -191,7 +191,7 @@ def test_select_lane_promotes_the_section_jumps_only_where_there_are_sections() 
     for ch in "gam":
         grouped.handle("text", ch)
     dim = grouped.fkey_lane
-    assert [pair.label for pair in dim[:2]] == ["Sect ↓", "Sect ↑"]
+    assert [pair.label for pair in dim[:2]] == ["Sect ↑", "Sect ↓"]
     assert not any(pair.enabled for pair in dim[:2])
 
 

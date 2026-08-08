@@ -203,11 +203,12 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   wanted a chip for consistency. That leaves **F1–F3 free on every screen** for its own
   verbs, and `EMPTY_LANE` for a screen with none at all (every dialog). **A chip names an
   action, never a key** — `Page ↑`, not `PgUp`; `Latest` on a transcript; `Region` on the
-  map, whose Home reframes and whose paging zooms. **A directional pair rises to the
-  right**: where two adjacent chips are opposite ends of one axis (F4/F5's paging, the
-  map's zoom, a select list's section jumps), the *up · in · more* end takes the right
-  slot — `Zoom -` then `Zoom +`, a rocker — and a slot's Shift companion follows the same
-  rule along its own slot. The lane *is* the footer here, so it obeys the hint line's rule
+  map, whose Home reframes and whose paging zooms. **A directional pair rises toward its
+  outer key**: where two adjacent chips are opposite ends of one axis, the *up · in ·
+  more* end takes the slot nearer the lane's edge — F5 on the right-hand pair (F4/F5's
+  paging, the map's zoom: `Zoom -` then `Zoom +`, a rocker), F1 on a left-hand pair (a
+  select list's `Sect ↑` then `Sect ↓`) — and a slot's Shift companion follows its own
+  slot's direction. The lane *is* the footer here, so it obeys the hint line's rule
   — never advertise a key that would do nothing. Empty and dim are different claims: leave
   the slot **empty** when the action isn't a thing on this screen (Retry in a channel), and
   clear `enabled`/`opp_enabled` to draw it **dim** (label kept, fill dropped) when it's a
