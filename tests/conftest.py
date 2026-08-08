@@ -9,6 +9,11 @@ Terminal (both chip-capable) or a bare CI shell (not) — and screen assertions 
 not change with the developer's glass. ``MESHTERM_POWERLINE=0`` is the supported pin;
 the cached verdict is cleared around each test so no ordering leaks it. Powerline-
 specific tests pass explicit modes or monkeypatch the widget's own switch.
+
+``NO_COLOR`` is environmental the same way: Rich honours it by stripping colour while
+keeping attributes, which silently voids every colour assertion in the suite (a shell
+run by an agent harness sets it). The autouse fixture below deletes it, so the tests
+always see the colours the app really emits.
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ def plain(rendered: Union[str, Iterable[str]]) -> str:
 @pytest.fixture(autouse=True)
 def _plain_path_rendering(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("MESHTERM_POWERLINE", "0")
+    # An inherited NO_COLOR makes Rich strip colour (attributes kept) and every colour
+    # assertion silently reads bare text — see the module docstring.
+    monkeypatch.delenv("NO_COLOR", raising=False)
     powerline_support.cache_clear()
     yield
     powerline_support.cache_clear()
