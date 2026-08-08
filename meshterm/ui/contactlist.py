@@ -344,11 +344,28 @@ class ContactListScreen(SelectScreen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane: sort column cycling on F3/F8 beside the shared defaults."""
+        """The PicoCalc lane: the whole sort on F3/F8 beside the shared defaults.
+
+        Four columns is a short ring — walking it backwards saves at most two presses, so
+        it never earns the Shift companion. That slot takes the sort's *other* half
+        instead: the direction. F3 steps the column forward (each column opening in its
+        natural direction) and F8 flips the one in force.
+
+        The flip chip names the direction it would *give* you, not the one already in
+        force — ``Sort ▼`` while the list reads ascending — in the same triangle the header
+        lights over the active column, so the chip and the column cue can never read as
+        the same claim.
+        """
         from .tui.fkeys import DEFAULT_LANE, FPair
 
         lane = list(DEFAULT_LANE)
-        lane[2] = FPair("Sort→", "ctrl_right", "←Sort", "ctrl_left")
+        descend = self._sort.ascending  # ascending now, so the flip lands descending
+        lane[2] = FPair(
+            "Sort→",
+            "ctrl_right",
+            "Sort ▼" if descend else "Sort ▲",
+            "ctrl_down" if descend else "ctrl_up",
+        )
         return lane
 
     def __init__(
