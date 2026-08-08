@@ -302,12 +302,13 @@ def test_recent_observations_rehydrate_the_packet_payload_class(tmp_path: Path) 
     repo.close()
 
 
-def test_quarter_hour_activity_buckets_by_15_minute_slice(tmp_path: Path) -> None:
-    """Observations fall into 96 quarter-hour-of-day slots (``HH * 4 + MM // 15``).
+def test_rhythm_activity_buckets_by_10_minute_slice(tmp_path: Path) -> None:
+    """Observations fall into 144 ten-minute-of-day slots (``(HH * 60 + MM) // 10``).
 
     The slots are local time-of-day, so the observations are stamped at local
     wall-clock instants (naive → ``.astimezone()``) — the slice index then matches
-    each ``HH:MM`` directly, in any runner zone.
+    each ``HH:MM`` directly, in any runner zone. Ten minutes is the base grid every
+    rhythm slice width (20/30/60 min) folds from without re-querying.
     """
     repo = Repository(tmp_path / "q.db")
     run = repo.start_run("monitor", {}, None)
@@ -320,10 +321,10 @@ def test_quarter_hour_activity_buckets_by_15_minute_slice(tmp_path: Path) -> Non
 
     for hh, mm in [(0, 0), (0, 44), (17, 55), (17, 59)]:
         repo.record_observation(run, at(hh, mm))
-    slots = repo.quarter_hour_activity()
-    assert len(slots) == 96
+    slots = repo.rhythm_activity()
+    assert len(slots) == 144
     assert slots[0] == 1        # 00:00 → slot 0
-    assert slots[2] == 1        # 00:44 → slot 2 (44 // 15)
-    assert slots[71] == 2       # 17:55 and 17:59 → slot 17*4 + 3
+    assert slots[4] == 1        # 00:44 → slot 4 (44 // 10)
+    assert slots[107] == 2      # 17:55 and 17:59 → slot (17*60 + 55) // 10
     assert sum(slots) == 4
     repo.close()

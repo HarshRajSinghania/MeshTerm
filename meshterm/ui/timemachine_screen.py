@@ -4,7 +4,8 @@ The interactive face of the ``timemachine`` tool. The database has been recordin
 overheard packet since the first session, but nothing surfaced that history beyond the
 dashboard's two-hour window — this screen is the archaeology dig. A picker offers the
 whole mesh or any node ever heard; each subject renders as a scrollable page of braille
-charts and stats over a switchable window (``w`` cycles 24 h → 7 d → 30 d → all time):
+charts and stats over a switchable window (``w`` cycles 24 h → 7 d → 30 d → all time —
+the PicoCalc stops at 30 d, its F1–F3 chips carrying the three spans directly):
 
 * a **node** shows its reception volume over the window, its median-SNR band (coloured
   by quality), its hour-of-day rhythm (when does this node talk?), and the roll-up
@@ -30,7 +31,15 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.models import utcnow
-from .braillechart import _TICK_GAP, GAP, axis_chart, chart_span, timeline_rows
+from ..platforms import Platform, on_platform
+from .braillechart import (
+    _TICK_GAP,
+    GAP,
+    axis_chart,
+    axis_label_w,
+    chart_span,
+    timeline_rows,
+)
 from .menus import fit_cells, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import name_style, snr_style
@@ -50,13 +59,26 @@ if TYPE_CHECKING:
     from ..core.models import HeardNode
     from ..services.trace_runner import NodeResolver
 
-#: The switchable history windows (``None`` = everything ever recorded).
-_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
+#: Every history window the screen knows (``None`` = everything ever recorded). What a
+#: session actually offers is the platform-bound :data:`_WINDOWS` below.
+_ALL_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
     ("24 h", timedelta(days=1)),
     ("7 d", timedelta(days=7)),
     ("30 d", timedelta(days=30)),
     ("all time", None),
 )
+
+#: The offered windows. The PicoCalc stops at 30 d (JP, 2026-08-08): its three window
+#: chips on F1–F3 *are* the offer there, and all-time — the one span whose scan grows
+#: with the whole history — stays a desktop affordance. Bound at platform-switch time.
+_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = _ALL_WINDOWS
+
+
+@on_platform
+def _bind_windows(platform: Platform) -> None:
+    """Bind the offered window ring to the platform (runs now and on every switch)."""
+    global _WINDOWS
+    _WINDOWS = _ALL_WINDOWS[:3] if platform.footer_fkeys else _ALL_WINDOWS
 
 #: Picker sentinel for the whole-mesh overview page.
 MESH = ("mesh",)
@@ -81,6 +103,61 @@ def bucketize(stamps: list[datetime], start: datetime, end: datetime, buckets: i
         index = int((stamp - start).total_seconds() / span * buckets)
         counts[min(buckets - 1, max(0, index))] += 1
     return counts
+
+
+#: The Rhythm chart's candidate slice widths in minutes, finest first. The old 15-minute
+#: slices are gone (JP, 2026-08-08): their 48 chart cells plus a gutter outran the
+#: PicoCalc's 53 columns, so the chart now takes the finest of these whose full day fits
+#: the width — 20-minute slices (72 slots, 36 cells) on both standard terminals, stepping
+#: down to 30 minutes and then a full hour only where the width forces it. If even the
+#: hour chart is too wide, it draws anyway — tough shit, per the spec.
+_RHYTHM_SLICES: tuple[int, ...] = (20, 30, 60)
+
+
+def _slice_note(minutes: int) -> str:
+    """The heading atom naming the rhythm's slice width: ``20-min slices``, ``1 h slices``."""
+    return "1 h slices" if minutes >= 60 else f"{minutes}-min slices"
+
+
+def _rhythm_slots(stamps: list[datetime], minutes: int) -> list[int]:
+    """Fold timestamps into their local time-of-day slice at ``minutes`` per slot."""
+    slots = [0] * (24 * 60 // minutes)
+    for stamp in stamps:
+        local = stamp.astimezone()
+        slots[(local.hour * 60 + local.minute) // minutes] += 1
+    return slots
+
+
+def _fold_slots(tens: list[int], minutes: int) -> list[int]:
+    """Fold the repository's ten-minute base grid into ``minutes``-wide slices.
+
+    Ten divides every rung of :data:`_RHYTHM_SLICES`, so the mesh page re-slices the one
+    :meth:`~meshterm.persistence.repository.Repository.rhythm_activity` scan client-side
+    instead of re-querying per candidate width.
+    """
+    per = max(1, minutes // 10)
+    return [sum(tens[i : i + per]) for i in range(0, len(tens), per)]
+
+
+def _fit_rhythm(
+    slots_at: Callable[[int], list[int]], width: int, base_w: int
+) -> tuple[list[int], int, int]:
+    """Pick the finest rhythm slice whose chart fits ``width``: ``(slots, minutes, label_w)``.
+
+    ``base_w`` is the gutter width the section's other charts already need; the rhythm's
+    own scale joins it (a slice's tally can top a single volume bucket's), and the fit is
+    judged against the row a chart actually draws — the gutter, its tick, the cells, and
+    the bare closing border. The coarsest slice comes back even when it doesn't fit: the
+    ladder has nowhere further to step, and a clipped hour chart beats no rhythm at all.
+    """
+    slots: list[int] = [0]
+    label_w = base_w
+    for minutes in _RHYTHM_SLICES:
+        slots = slots_at(minutes)
+        label_w = max(base_w, axis_label_w(max(slots), _CHART_ROWS))
+        if label_w + 3 + len(slots) // 2 <= width:
+            return slots, minutes, label_w
+    return slots, _RHYTHM_SLICES[-1], label_w
 
 
 def bucket_medians(
@@ -120,11 +197,11 @@ def _time_axis(start: datetime, end: datetime) -> Callable[[float], str]:
 
 
 def _quarter_axis(frac: float) -> str:
-    """The mesh rhythm's labeller: the local hour at ``frac`` of a full-day quarter-hour sweep.
+    """The rhythm charts' labeller: the local hour at ``frac`` of a full-day sweep.
 
-    The 96 fifteen-minute slices span midnight to midnight, so the fraction maps onto the
-    whole ``0 → 24 h`` day (the right edge closing on ``24 h``), landing the intermediate
-    marks on clean six-hour boundaries.
+    Whatever slice width the ladder settled on, the slices span midnight to midnight, so
+    the fraction maps onto the whole ``0 → 24 h`` day (the right edge closing on
+    ``24 h``), landing the intermediate marks on clean six-hour boundaries.
     """
     return f"{round(frac * 24)} h"
 
@@ -144,23 +221,21 @@ class TimeMachineScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The shared pager, plus the window cycle on F3.
+        """The shared pager, plus one chip per span on F1–F3.
 
-        ``w`` is the whole point of this screen — the same history at five spans — and it
-        is exactly the kind of affordance that vanishes on a platform with no hint line to
-        read it off. The chip is the only place the PicoCalc can learn the key exists, so
-        it earns the free F3 slot even though the letter itself is easy to press.
-
-        The chip names the span it would *take you to*, not the one on screen: the title
-        already says where you are, so a chip repeating it would be the same claim twice
-        and would never tell you what pressing it does. ``all time`` shortens to ``all``
-        to stay inside the 6-cell chip — the only span whose name doesn't already fit.
+        The window is the whole point of this screen — the same history at several spans
+        — and on a platform with no hint line the chips are the only place to learn the
+        spans exist. Each takes its own slot in ring order — F1 ``24 h``, F2 ``7 d``, F3
+        ``30 d`` (JP, 2026-08-08) — so any span is one press away rather than a cycle to
+        chase with ``w`` (which still cycles). The span on screen dims: it is a thing
+        here, its key just changes nothing this paint. All time is not in this platform's
+        ring at all (see :func:`_bind_windows`) — three chips, three spans.
         """
         from .tui.fkeys import FPair, default_lane
 
         lane = list(default_lane(nav=self.content_overflows))
-        nxt, _delta = _WINDOWS[(self._window_index + 1) % len(_WINDOWS)]
-        lane[2] = FPair(f"▸ {'all' if nxt == 'all time' else nxt}", "window")
+        for i, (name, _delta) in enumerate(_WINDOWS[:3]):
+            lane[i] = FPair(name, f"window_{i}", enabled=i != self._window_index)
         return lane
 
     def __init__(
@@ -192,11 +267,12 @@ class TimeMachineScreen(Screen):
         self.title = f"{self._label} · {name}"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Scroll, cycle the window, or dismiss.
+        """Scroll, switch the window, or dismiss.
 
-        The window cycles on either the ``w`` key or the ``window`` action the F-key lane
-        dispatches — one behaviour, two ways in, so the chip is not a second implementation
-        of the letter.
+        Two ways onto a span, one behaviour: ``w`` (and the legacy ``window`` action)
+        cycles the platform's ring, while the lane's per-span chips land on a window
+        directly (``window_0`` … ``window_2``) — so a chip is never a second
+        implementation of the letter.
         """
         if action == "up":
             self.scroll_lines(-1)
@@ -211,12 +287,20 @@ class TimeMachineScreen(Screen):
         elif action in ("end", "ctrl_end"):
             self.scroll_to_bottom()
         elif action == "window" or (action == "text" and data.lower() == "w"):
-            self._window_index = (self._window_index + 1) % len(_WINDOWS)
-            self._set_title()
-            self.scroll_to_top()
-            self._session.invalidate()
+            self._set_window((self._window_index + 1) % len(_WINDOWS))
+        elif action.startswith("window_") and action[7:].isdigit():
+            self._set_window(int(action[7:]))
         elif action == "escape":
             self.resolve(None)
+
+    def _set_window(self, index: int) -> None:
+        """Land the page on window ``index`` (a no-op off the ring or already there)."""
+        if not (0 <= index < len(_WINDOWS)) or index == self._window_index:
+            return
+        self._window_index = index
+        self._set_title()
+        self.scroll_to_top()
+        self._session.invalidate()
 
     def render_body(self, width: int) -> list[str]:
         """Render (or reuse) the current window's sections."""
@@ -259,23 +343,23 @@ def _node_sections(
 
     # Volume, SNR, and the rhythm share one y-axis gutter width (like the mesh page's
     # charts) so their left edges line up. A provisional width finds the peaks that size
-    # the gutter, then the real width re-buckets Volume/SNR flush with it. The rhythm folds
-    # every reception into 96 fifteen-minute local-time slices — a slice's tally can top a
-    # single volume bucket's — so its peak joins the sizing too.
-    slots = [0] * 96
-    for stamp in stamps:
-        local = stamp.astimezone()
-        slots[local.hour * 4 + local.minute // 15] += 1
-
+    # the gutter, then the real width re-buckets Volume/SNR flush with it. The rhythm
+    # folds every reception into local time-of-day slices at the finest width the ladder
+    # fits (see :data:`_RHYTHM_SLICES`) — a slice's tally can top a single volume
+    # bucket's, so its peak joins the sizing too.
     def _layout(label_w: int) -> tuple[int, int]:
-        chars = max(20, width - 2 * (label_w + 2))
+        # A chart row spends label_w + 2 on the gutter and 1 on the bare closing border.
+        chars = max(20, width - (label_w + 3))
         return chars, chars * 2
 
     chars, buckets = _layout(1)
     volume = bucketize(stamps, start, now, buckets)
     lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
-    label_w = max(
-        1, len(str(max(volume))), len(str(round(hi))), len(str(round(lo))), len(str(max(slots)))
+    base_w = max(
+        axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo)
+    )
+    slots, slice_minutes, label_w = _fit_rhythm(
+        lambda minutes: _rhythm_slots(stamps, minutes), width, base_w
     )
     chars, buckets = _layout(label_w)
     volume = bucketize(stamps, start, now, buckets)
@@ -302,10 +386,10 @@ def _node_sections(
         )
 
     out.append(Text())
-    out.append(_heading("Rhythm", "receptions by local time of day · 15-min slices"))
+    out.append(_heading("Rhythm", f"receptions by local time of day · {_slice_note(slice_minutes)}"))
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48,
+            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
             _quarter_axis, label_w=label_w,
         )
     )
@@ -371,23 +455,23 @@ def _self_sections(
     start = since or stamps[0]
     snr_pairs = [(when, float(snr)) for when, ok, snr, _hops in reach if ok and snr is not None]
 
-    # The rhythm folds every transmission into 96 fifteen-minute local slices; a busy slice
-    # can top a single volume bucket, so its peak joins the shared-gutter sizing (see
-    # _node_sections for the same provisional-then-real width dance).
-    slots = [0] * 96
-    for stamp in stamps:
-        local = stamp.astimezone()
-        slots[local.hour * 4 + local.minute // 15] += 1
-
+    # The rhythm folds every transmission into local time-of-day slices at the finest
+    # width the ladder fits (see :data:`_RHYTHM_SLICES`); a busy slice can top a single
+    # volume bucket, so its peak joins the shared-gutter sizing (see _node_sections for
+    # the same provisional-then-real width dance).
     def _layout(label_w: int) -> tuple[int, int]:
-        chars = max(20, width - 2 * (label_w + 2))
+        # A chart row spends label_w + 2 on the gutter and 1 on the bare closing border.
+        chars = max(20, width - (label_w + 3))
         return chars, chars * 2
 
     chars, buckets = _layout(1)
     volume = bucketize(stamps, start, now, buckets)
     lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
-    label_w = max(
-        1, len(str(max(volume))), len(str(round(hi))), len(str(round(lo))), len(str(max(slots)))
+    base_w = max(
+        axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo)
+    )
+    slots, slice_minutes, label_w = _fit_rhythm(
+        lambda minutes: _rhythm_slots(stamps, minutes), width, base_w
     )
     chars, buckets = _layout(label_w)
     volume = bucketize(stamps, start, now, buckets)
@@ -414,10 +498,12 @@ def _self_sections(
         )
 
     out.append(Text())
-    out.append(_heading("Rhythm", "transmissions by local time of day · 15-min slices"))
+    out.append(
+        _heading("Rhythm", f"transmissions by local time of day · {_slice_note(slice_minutes)}")
+    )
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48,
+            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
             _quarter_axis, label_w=label_w,
         )
     )
@@ -870,21 +956,25 @@ def _mesh_sections(
             Text("Press w to widen it.", style="muted"),
         ]
 
-    # The mesh-wide rhythm (charted below) folds the whole window into 96 fifteen-minute
-    # slices, so a busy slice's tally can top any single day's — compute it up front so its
-    # peak joins the day peaks in sizing one shared y-axis gutter. The slices come back
-    # already in local time (rotated per-instant in SQL), so no offset shuffle here.
-    slots = ctx.repo.quarter_hour_activity(since=since)
+    # The mesh-wide rhythm (charted below) folds the whole window into local time-of-day
+    # slices at the finest width the ladder fits (see :data:`_RHYTHM_SLICES`), re-sliced
+    # client-side from one ten-minute base scan. A busy slice's tally can top any single
+    # day's, so its peak joins the day peaks in sizing one shared y-axis gutter. The
+    # slices come back already in local time (rotated per-instant in SQL), no offset
+    # shuffle here.
+    tens = ctx.repo.rhythm_activity(since=since)
 
     # The y-axis gutter is sized from the whole window's peaks (not just the visible
     # slice) and shared by every chart, so all their gutters — and thus their left edges —
     # line up. The rhythm keeps its own finer width; only the gutter is common.
-    label_w = max(
-        len(str(max(d[1] for d in series))),
-        len(str(max(d[2] for d in series))),
-        len(str(max(slots))),
+    base_w = max(
+        axis_label_w(max(d[1] for d in series), _CHART_ROWS),
+        axis_label_w(max(d[2] for d in series), _CHART_ROWS),
     )
-    chars = max(20, width - 2 * (label_w + 2))
+    slots, slice_minutes, label_w = _fit_rhythm(
+        lambda minutes: _fold_slots(tens, minutes), width, base_w
+    )
+    chars = max(20, width - (label_w + 3))
     shown = series[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]
@@ -911,15 +1001,14 @@ def _mesh_sections(
         )
     )
 
-    # The node page's rhythm chart, mesh-wide and four times finer: when does this *mesh*
-    # talk? The 96 fifteen-minute slices (grouped in local time by SQL) keep their own
-    # 48-cell width but share the day charts' gutter, so this chart's left edge lines up
-    # with the two above it.
+    # The node page's rhythm chart, mesh-wide: when does this *mesh* talk? The slices
+    # keep their own finer width but share the day charts' gutter, so this chart's left
+    # edge lines up with the two above it.
     out.append(Text())
-    out.append(_heading("Rhythm", "packets by local time of day · 15-min slices"))
+    out.append(_heading("Rhythm", f"packets by local time of day · {_slice_note(slice_minutes)}"))
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), 48,
+            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
             _quarter_axis, label_w=label_w,
         )
     )
@@ -976,7 +1065,9 @@ def _mesh_sections(
                 style=name_style(name, key) if name else "muted",
             )
             line.append("  ")
-            line.append_text(highlighted_hash(key, prefix_bytes, width=key_w))
+            line.append_text(
+                highlighted_hash(key, prefix_bytes, width=key_w, known=bool(name))
+            )
             line.append("  ")
             line.append(_when_label(first))
             line.append(f"  ({format_ago(secs)})", style=_recency_style(secs))

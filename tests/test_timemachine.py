@@ -416,14 +416,14 @@ def test_node_page_renders_all_sections(tmp_path: Path) -> None:
     body = _plain(_node_sections(ctx, NODE, "YUL", None, 90))
     assert "Volume" in body and "24 receptions" in body
     assert "SNR" in body and "-2.0" in body and "+8.0" in body
-    assert "Rhythm" in body and "15-min" in body  # 15-minute slices, like the mesh page
+    assert "Rhythm" in body and "20-min" in body  # the ladder's finest slice fits here
     assert "Record" in body and "median" in body
     assert "advert 24" in body  # kinds breakdown, packet rows absent
     repo.close()
 
 
-def test_node_page_rhythm_is_fifteen_minute_and_shares_the_volume_gutter(tmp_path: Path) -> None:
-    """The node rhythm matches the mesh's: a full-day 15-min sweep, gutter-aligned to Volume."""
+def test_node_page_rhythm_spans_the_day_and_shares_the_volume_gutter(tmp_path: Path) -> None:
+    """The node rhythm matches the mesh's: a full-day sweep, gutter-aligned to Volume."""
     repo = _seeded_repo(tmp_path)
     ctx = SimpleNamespace(repo=repo)
     lines = _plain(_node_sections(ctx, NODE, "YUL", None, 90), width=90).split("\n")
@@ -468,7 +468,7 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
     ctx = SimpleNamespace(repo=repo)
     body = _plain(_mesh_sections(ctx, None, 90, prefix_bytes=2))
     assert "Packets per day" in body and "Nodes per day" in body
-    assert "Rhythm" in body and "15-min" in body  # 15-minute slices, four per hour
+    assert "Rhythm" in body and "20-min" in body  # the ladder's finest slice fits here
     assert "Arrivals" in body and "Newcomer" in body
     # Arrivals are aligned lanes: the key sits in its own column (labelled KEY,
     # per the lexicon) and the old per-row "first heard" prefix now lives once,
@@ -909,13 +909,17 @@ def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
     screen.render_body(80)
     assert len(calls) == 2
 
-    # The F-key chip is the same behaviour under another name — the only way a platform
-    # that draws no hint line can learn that `w` exists at all. It names the span it takes
-    # you *to*, since the title already says where you are.
-    assert screen.fkey_lane[2].label == "▸ all"
+    # One chip per span on F1–F3 — the only way a platform that draws no hint line can
+    # learn the spans exist. The span on screen dims; the direct chips land on their
+    # window without cycling; `w` (and the legacy "window" action) still cycles the ring.
+    assert [pair.label for pair in screen.fkey_lane[:3]] == ["24 h", "7 d", "30 d"]
+    assert screen.fkey_lane[2].enabled is False  # 30 d is what's on screen
     screen.handle("window")
-    assert "all time" in screen.title
-    assert screen.fkey_lane[2].label == "▸ 24 h"  # the ring wraps back around
+    assert "all time" in screen.title  # the desktop ring still carries all time
+    assert all(pair.enabled for pair in screen.fkey_lane[:3])
+    screen.handle("window_0")
+    assert "24 h" in screen.title
+    assert screen.fkey_lane[0].enabled is False
 
 
 # --- the own-node page ------------------------------------------------------------------
