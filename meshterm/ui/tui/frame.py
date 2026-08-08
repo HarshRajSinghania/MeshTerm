@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from ...platforms import Platform, get_platform, on_platform
+from ..logo import load_logo, logo_width
 from ..theme import fold_text, hint_style, title_style
 from .glow import apply_corner_glow
 from .render import render_lines
@@ -350,14 +351,18 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     Returns:
         An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
     """
-    banner = _banner_lines(screen.banner or [], cols)
+    # A screen names its wordmark; the width to draw it at is only known here, so this is
+    # where the size is chosen — a narrow terminal gets a narrow mark rather than a torn one.
+    raw_banner = screen.banner or []
+    if raw_banner and logo_width(raw_banner) > cols:
+        raw_banner = load_logo(cols)
+    banner = _banner_lines(raw_banner, cols)
     banner_h = len(banner)
     gap = 1 if banner else 0  # the blank line under the banner
 
     # The logo's own left margin and width, so the footnote below can hang off its right edge
     # (the wordmark is centered as one block, so every row shares this margin).
-    raw_banner = screen.banner or []
-    logo_w = max((cell_len(Text.from_ansi(row).plain) for row in raw_banner), default=0)
+    logo_w = logo_width(raw_banner)
     logo_right = max(0, (cols - logo_w) // 2) + logo_w
 
     # Size the box to its widest real row (probe at a generous width, then measure), never

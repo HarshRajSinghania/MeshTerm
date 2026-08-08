@@ -741,6 +741,45 @@ def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
 
 
+def test_startup_splash_fits_every_platform_width() -> None:
+    """The real wordmark, drawn at each platform's own width, never overruns it.
+
+    The full-size mark is 71 cells; a PicoCalc console is 53. The splash is the one screen
+    the gallery doesn't cover, and it shipped torn there until the narrow mark landed —
+    so this is the gate.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.logo import load_logo
+
+    try:
+        for platform in (REGULAR, PICOCALC):
+            set_platform(platform)
+            cols = platform.readable_cols
+            screen = SelectScreen("Choose a device", [Choice("alpha", 1)])
+            screen.chrome = False
+            screen.banner = load_logo()  # what a real caller sets: the full-size mark
+            screen.footnote = copyright_notice()
+            out = frame.compose_startup(screen, cols, platform.readable_rows)
+            for i, line in enumerate(Text.from_ansi(out).plain.split("\n")):
+                assert cell_len(line) <= cols, (
+                    f"{platform.name} splash line {i} is {cell_len(line)} cells, over {cols}"
+                )
+    finally:
+        set_platform(REGULAR)
+
+
+def test_logo_takes_the_widest_mark_that_fits_the_columns() -> None:
+    """The screen picks the size, not the platform — a narrow desktop gets the small mark."""
+    from meshterm.ui.logo import load_logo, logo_width
+
+    wide = logo_width(load_logo())
+    narrow = logo_width(load_logo(53))
+    assert 0 < narrow <= 53 < wide
+    assert logo_width(load_logo(wide)) == wide  # room for the big one → the big one
+    assert logo_width(load_logo(wide - 1)) == narrow  # a column short → step down
+    assert load_logo(narrow - 1) == []  # nothing fits: no banner beats a torn one
+
+
 def test_compose_startup_shows_footnote_under_logo() -> None:
     """A footnote (e.g. a copyright) is drawn muted, immediately under the logo and
     right-aligned to the logo's right edge, so the two read as one signed block."""
