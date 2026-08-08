@@ -239,62 +239,55 @@ def _decode_feature(buf: bytes, keys: list[str], values: list[Any]) -> Optional[
     return Feature(geom_type=geom_type, rings=_decode_geometry(geom_ints), tags=tags)
 
 
-def _decode_layer(buf: bytes) -> Layer:
-    """Decode a single Layer message and all of its features."""
+def _decode_layer(buf: bytes, wanted: Optional[Container[str]] = None) -> Layer:
+    """Decode a single Layer message, and its features unless the caller doesn't want them.
+
+    The name arrives in field 1, which in practice is the first thing written, so once it
+    has been read the walk already knows whether any of the rest is worth keeping — from
+    there an unwanted layer is stepped over rather than copied out. Protobuf permits any
+    field order though, so ``skipping`` is only ever an optimisation: the decision is the
+    check after the loop, which is correct however the fields arrived (and covers a layer
+    that declares no name at all).
+
+    Args:
+        buf: The Layer message's bytes.
+        wanted: Layer names worth decoding features for; ``None`` decodes every layer.
+
+    Returns:
+        The layer. One the caller didn't ask for comes back named and empty.
+    """
     r = _Reader(buf)
     name = ""
     extent = 4096
     keys: list[str] = []
     values: list[Any] = []
     feature_blobs: list[bytes] = []
+    skipping = False
     while not r.eof():
         field_no, wire = r.tag()
         if field_no == 1 and wire == 2:
             name = r.blob().decode("utf-8", "ignore")
+            skipping = wanted is not None and name not in wanted
+        elif field_no == 5 and wire == 0:
+            extent = r.varint()
+        elif skipping:
+            r.skip(wire)
         elif field_no == 2 and wire == 2:
             feature_blobs.append(r.blob())
         elif field_no == 3 and wire == 2:
             keys.append(r.blob().decode("utf-8", "ignore"))
         elif field_no == 4 and wire == 2:
             values.append(_decode_value(r.blob()))
-        elif field_no == 5 and wire == 0:
-            extent = r.varint()
         else:
             r.skip(wire)
     layer = Layer(name=name, extent=extent)
+    if wanted is not None and name not in wanted:
+        return layer
     for blob in feature_blobs:
         feat = _decode_feature(blob, keys, values)
         if feat is not None:
             layer.features.append(feat)
     return layer
-
-
-def _layer_head(buf: bytes) -> tuple[str, int]:
-    """Read a Layer message's identity — ``(name, extent)`` — without decoding features.
-
-    Walks the layer's top-level fields, stepping over the features and the string pools
-    instead of building them. Protobuf fields may appear in any order, so this reads to
-    the end rather than stopping at the first name; every field it passes is a varint or
-    a length-skip, so the walk stays cheap even on a layer holding thousands of features.
-
-    Args:
-        buf: The Layer message's bytes.
-
-    Returns:
-        The layer's name (empty if it declares none) and its coordinate extent.
-    """
-    r = _Reader(buf)
-    name = ""
-    extent = 4096
-    while not r.eof():
-        field_no, wire = r.tag()
-        if field_no == 1 and wire == 2:
-            name = r.blob().decode("utf-8", "ignore")
-        elif field_no == 5 and wire == 0:
-            extent = r.varint()
-        else:
-            r.skip(wire)
-    return name, extent
 
 
 def decode_tile(data: bytes, *, layers: Optional[Container[str]] = None) -> list[Layer]:
@@ -320,12 +313,7 @@ def decode_tile(data: bytes, *, layers: Optional[Container[str]] = None) -> list
     while not r.eof():
         field_no, wire = r.tag()
         if field_no == 3 and wire == 2:  # Tile.layers
-            blob = r.blob()
-            if layers is None:
-                out.append(_decode_layer(blob))
-                continue
-            name, extent = _layer_head(blob)
-            out.append(_decode_layer(blob) if name in layers else Layer(name=name, extent=extent))
+            out.append(_decode_layer(r.blob(), layers))
         else:
             r.skip(wire)
     return out
