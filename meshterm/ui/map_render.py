@@ -235,10 +235,19 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
     vp = frame.canvas
     by_name = {layer.name: layer for layer in layers}
 
+    # The tile-local -> dot projection is affine, and every layer in a tile shares the
+    # same extent in practice, so its three coefficients are resolved once per extent and
+    # the per-vertex work is spelled out inline below (see Viewport.tile_transform): a
+    # downtown frame projects ~50k vertices, and at that count even the function call per
+    # vertex is worth removing.
+    transforms: dict[int, tuple[float, float, float]] = {}
+
     def project(ring: list[tuple[int, int]], extent: int) -> list[tuple[float, float]]:
-        return [
-            frame.viewport.feature_to_dot(x, y, z, extent, lx, ly) for lx, ly in ring
-        ]
+        t = transforms.get(extent)
+        if t is None:
+            t = transforms[extent] = frame.viewport.tile_transform(x, y, z, extent)
+        bx, by, step = t
+        return [(bx + lx * step, by + ly * step) for lx, ly in ring]
 
     # Fills first (water, green space) so lines and labels sit on top.
     for name in _FILL_LAYERS:

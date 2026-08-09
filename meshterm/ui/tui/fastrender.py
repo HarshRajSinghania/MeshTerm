@@ -43,10 +43,12 @@ from prompt_toolkit.renderer import Renderer
 def enabled() -> bool:
     """Whether the direct row writer is active.
 
-    Off by default while it earns its keep on the device; set ``MESHTERM_FASTRENDER=1``
-    to turn it on, ``=0`` to force the stock renderer.
+    On by default — it is 2-3x on every navigation keystroke and its output is verified
+    byte-identical against the stock renderer by reading the console back. Set
+    ``MESHTERM_FASTRENDER=0`` to fall back to prompt_toolkit's renderer, which is the
+    escape hatch if a terminal ever disagrees.
     """
-    return os.environ.get("MESHTERM_FASTRENDER", "") == "1"
+    return os.environ.get("MESHTERM_FASTRENDER", "1") != "0"
 
 
 class FastRenderer(Renderer):

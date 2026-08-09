@@ -252,6 +252,41 @@ class Viewport:
                 out.append((tz, tx % n, ty))  # wrap x around the antimeridian
         return out
 
+    def tile_transform(
+        self, tile_x: int, tile_y: int, tile_zoom: int, extent: int
+    ) -> tuple[float, float, float]:
+        """Return ``(base_x, base_y, step)`` mapping this tile's local coords to dots.
+
+        :meth:`feature_to_dot` is the readable form of the same projection, but it is a
+        *per-vertex* call, and a single map frame projects tens of thousands of vertices —
+        107k of them on a downtown view, each one redoing :attr:`origin_world` (a
+        ``sin``/``log`` pair) and a ``2**`` for a value that is constant across the whole
+        frame. That was over half the cost of drawing the map.
+
+        The projection is affine in the tile's local coordinates, so all of that folds into
+        three numbers the caller can hoist out of its loop::
+
+            dot_x = base_x + lx * step
+            dot_y = base_y + ly * step
+
+        leaving two multiplies and two adds per vertex, inline, with no call at all. The
+        caller is expected to spell that arithmetic out in its own comprehension rather
+        than take a closure back — a function call per vertex is itself most of what is
+        left once the trigonometry is gone.
+
+        Args:
+            tile_x: The tile's x index at ``tile_zoom``.
+            tile_y: The tile's y index at ``tile_zoom``.
+            tile_zoom: The zoom the tile was fetched at.
+            extent: The tile's internal coordinate extent (e.g. 4096).
+
+        Returns:
+            The ``(base_x, base_y, step)`` coefficients described above.
+        """
+        span = TILE_PX * (2.0 ** (self.zoom - tile_zoom))
+        ox, oy = self.origin_world
+        return tile_x * span - ox, tile_y * span - oy, span / extent
+
     def feature_to_dot(
         self, tile_x: int, tile_y: int, tile_zoom: int, extent: int, lx: float, ly: float
     ) -> tuple[float, float]:

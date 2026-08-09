@@ -1506,3 +1506,90 @@ def test_render_map_find_matches_still_label_white() -> None:
     markers = [MapMarker("TARGET", 45.5, -73.6, key="d4" * 32)]
     lines = render_map(vp, {}, markers, find="targ")
     assert _glyph_color(lines, "TARGET") == (255, 255, 255)
+
+
+# --- the ground raster runs off the paint path ---------------------------------------
+
+
+def _async_map(monkeypatch, drawn: list):
+    """A map screen whose rasters are captured instead of run, with a live event loop."""
+    from meshterm.ui import map_screen as ms
+    from meshterm.ui.map_render import MapMarker
+
+    monkeypatch.setattr(ms, "_loop_running", lambda: True)
+    started: list[tuple] = []
+    monkeypatch.setattr(
+        ms.asyncio, "ensure_future", lambda coro: (coro.close(), started.append(coro))[0]
+    )
+    screen = ms.MapScreen(
+        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14
+    )
+    drawn.append(started)
+    return screen
+
+
+def test_map_paints_without_waiting_for_the_ground(monkeypatch) -> None:  # noqa: ANN001
+    """A pan must answer the keystroke now — rasterizing takes ~1 s on the PicoCalc."""
+    from meshterm.ui import map_screen as ms
+
+    calls: list[tuple] = []
+    real = ms.render_map
+    monkeypatch.setattr(ms, "render_map", lambda vp, tiles, m, **k: calls.append(tiles) or real(vp, tiles, m, **k))
+    started: list = []
+    screen = _async_map(monkeypatch, started)
+
+    screen.render_body(80)
+    # Whatever ran on the paint path drew no tiles: the ground is somebody else's job.
+    assert calls, "the paint drew nothing at all"
+    assert all(tiles == {} for tiles in calls), calls
+    assert screen._drawing is not None, "no background raster was scheduled"
+
+
+def test_map_keeps_one_raster_in_flight_while_panning(monkeypatch) -> None:  # noqa: ANN001
+    """A held arrow key must not queue a second of thread work per keypress."""
+    started: list = []
+    screen = _async_map(monkeypatch, started)
+    screen.render_body(80)
+    scheduled = len(started[0])
+
+    for _ in range(8):
+        screen.handle("right")
+        screen.render_body(80)
+
+    assert len(started[0]) == scheduled, "a second raster started before the first finished"
+    assert screen._wanted is not None, "the newest view was not remembered for next"
+
+
+def test_map_holds_an_aligned_frame_while_a_tile_lands(monkeypatch) -> None:  # noqa: ANN001
+    """A tile arriving must not blank streets that are still in the right place.
+
+    The view has not moved, so the finished raster is still correctly aligned — it is only
+    missing the newcomer's detail. Redrawing from nothing would flash the ground away for
+    the second it takes to draw the same picture again.
+    """
+    started: list = []
+    screen = _async_map(monkeypatch, started)
+    screen.render_body(80)
+    # Pretend the scheduled raster finished.
+    screen._frame = ["ground"] * 20
+    screen._frame_key = screen._ground_key(screen._viewport)
+    screen._drawing = None
+    assert screen.render_body(80) == ["ground"] * 20
+
+    in_view = screen._viewport.tiles(14)[0]
+    screen._tiles[in_view] = _loaded_tile()  # a tile lands, view unmoved
+    assert screen.render_body(80) == ["ground"] * 20, "dropped an aligned frame"
+    assert screen._drawing is not None, "did not redraw for the new tile"
+
+
+def test_map_drops_a_stale_frame_once_the_view_moves(monkeypatch) -> None:  # noqa: ANN001
+    """Streets drawn for somewhere else are a lie about where you are looking."""
+    started: list = []
+    screen = _async_map(monkeypatch, started)
+    screen.render_body(80)
+    screen._frame = ["ground"] * 20
+    screen._frame_key = screen._ground_key(screen._viewport)
+    screen._drawing = None
+
+    screen.handle("right")
+    assert screen.render_body(80) != ["ground"] * 20, "kept a misaligned frame"

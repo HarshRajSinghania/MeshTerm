@@ -283,14 +283,14 @@ def _fast_renderer(frames: list[str]) -> tuple["FastRenderer", _CapturingOutput]
     return renderer, out
 
 
-def test_fastrender_is_off_unless_asked_for(monkeypatch) -> None:  # noqa: ANN001
-    """The bypass is opt-in: an unset environment leaves prompt_toolkit in charge."""
+def test_fastrender_is_on_with_an_escape_hatch(monkeypatch) -> None:  # noqa: ANN001
+    """The row writer is the default paint; only an explicit 0 hands it back to pt."""
     from meshterm.ui.tui import fastrender
 
     monkeypatch.delenv("MESHTERM_FASTRENDER", raising=False)
-    assert not fastrender.enabled()
-    monkeypatch.setenv("MESHTERM_FASTRENDER", "1")
     assert fastrender.enabled()
+    monkeypatch.setenv("MESHTERM_FASTRENDER", "0")
+    assert not fastrender.enabled()
 
 
 def test_fastrender_rewrites_only_the_rows_that_changed() -> None:

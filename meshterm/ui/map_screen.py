@@ -59,6 +59,21 @@ _PAN_DIRS: dict[str, tuple[int, int]] = {
 #: How far past the tile source's max zoom the display may go (lower tiles are magnified).
 _OVERZOOM = 2
 
+
+def _loop_running() -> bool:
+    """Whether there is an event loop to hand background work to.
+
+    Asked *before* building a coroutine, not after: ``ensure_future`` without a loop
+    raises, but by then the coroutine exists and never gets awaited, which Python reports
+    as a resource warning on a path that is otherwise perfectly correct (a CLI export or a
+    test rendering a map with no loop at all).
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
 #: How many screens' worth of decoded tiles to keep resident, as a multiple of what the
 #: current view needs. A decoded tile costs ~0.9 MB on the PicoCalc (62 bytes a point,
 #: measured) against a device that has ~100 MB in total, so a map panned far enough would
@@ -187,6 +202,14 @@ class MapScreen(Screen):
         # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`.
         self._tiles: OrderedDict[tuple[int, int, int], Optional[list[Layer]]] = OrderedDict()
         self._pending: set[tuple[int, int, int]] = set()
+        # The last finished ground frame and what it was drawn for — see :meth:`render_body`.
+        # Rasterizing a downtown view is ~0.5-1 s of pure Python (tens of thousands of
+        # vector features), far too slow to sit on a keystroke, so it happens off the paint
+        # path and the paint serves whatever is ready.
+        self._frame: Optional[list[str]] = None
+        self._frame_key: Optional[tuple] = None
+        self._drawing: Optional[tuple] = None  # the key currently being rasterized
+        self._wanted: Optional[tuple[tuple, Viewport]] = None  # the next one to draw
 
     # --- rendering -----------------------------------------------------------
 
@@ -257,13 +280,106 @@ class MapScreen(Screen):
             self._size = (dot_w, dot_h)
 
         self._ensure_tiles(self._viewport)
-        self.title = self._title(self._viewport)
         self._persist()
-        tiles = {t: self._tiles.get(t) for t in self._viewport.tiles(self._max_tile_zoom)}
-        lines = render_map(self._viewport, tiles, self._markers, find=self._filter)
+        lines = self._ground(self._viewport)
+        self.title = self._title(self._viewport)
         if lines and self._query_echo():
             lines[-1] = query_line(self._filter, width)
         return lines
+
+    def _ground_key(self, vp: Viewport) -> tuple:
+        """Everything the rasterized ground is a function of.
+
+        The tile *identities* go in the key rather than their contents: a tile's decoded
+        layers never change once loaded, so a tile arriving is the only way the picture can
+        gain detail, and that shows up here as a new key.
+        """
+        loaded = tuple(t for t in vp.tiles(self._max_tile_zoom) if self._tiles.get(t))
+        return (vp, loaded, self._filter, len(self._markers))
+
+    def _ground(self, vp: Viewport) -> list[str]:
+        """The map picture for ``vp`` — from the last raster if it still applies, else soon.
+
+        Rasterizing a view is 0.5-1 s of pure Python on the PicoCalc (a downtown frame
+        projects tens of thousands of vector features), so it cannot happen between a
+        keypress and the paint that answers it. Instead the paint always returns
+        immediately, with the best picture available *right now*, and a background task
+        draws the real one and asks for a repaint when it lands:
+
+        * **Nothing has changed** — the finished raster is exactly this view: serve it.
+        * **Only the tiles changed** (a fetch landed, the view did not move) — the previous
+          raster is still correctly aligned, just missing some streets. Keep showing it
+          rather than blanking a good picture to redraw the same ground.
+        * **The view moved** — the old raster is now in the wrong place, and showing it
+          would be a lie about where you are looking. Draw the nodes alone on the *new*
+          viewport, which costs a few milliseconds, so panning tracks the keys exactly and
+          the streets catch up.
+        """
+        key = self._ground_key(vp)
+        if self._frame_key == key and self._frame is not None:
+            return list(self._frame)
+
+        self._schedule_ground(key, vp)
+        if self._frame is not None and self._frame_key is not None:
+            if self._frame_key[0] == vp and self._frame_key[2] == key[2]:
+                return list(self._frame)  # same view, only tiles differ — still aligned
+        # The view moved (or nothing has ever been drawn): markers only, no tiles.
+        return render_map(vp, {}, self._markers, find=self._filter)
+
+    def _schedule_ground(self, key: tuple, vp: Viewport) -> None:
+        """Note that ``key`` wants drawing, and start on it if nothing else is in flight.
+
+        Exactly **one** raster runs at a time, and it is always the newest one asked for.
+        A held arrow key hands us a new viewport on every repaint, and a render is most of
+        a second: starting one per keypress would pile up a queue of thread-bound work,
+        each frame of it already stale on arrival, and the contention would slow the very
+        keystrokes this is meant to keep quick. So a request that arrives mid-draw only
+        replaces the pending one, and the draw that finishes picks it up.
+        """
+        if key == self._drawing or key == self._frame_key:
+            return
+        self._wanted = (key, vp)
+        if self._drawing is None:
+            self._start_ground()
+
+    def _start_ground(self) -> None:
+        """Begin the pending raster, or draw it inline where there is no event loop."""
+        if self._wanted is None:
+            return
+        key, vp = self._wanted
+        self._wanted = None
+        tiles = {t: self._tiles.get(t) for t in vp.tiles(self._max_tile_zoom)}
+        if not _loop_running():
+            # A static render (the CLI's map export, a test): there is nothing to be
+            # responsive *to*, so draw it here and now rather than never.
+            self._drawing = None
+            self._frame = render_map(vp, tiles, self._markers, find=self._filter)
+            self._frame_key = key
+            return
+        self._drawing = key
+        asyncio.ensure_future(self._draw_ground(key, vp, tiles))
+
+    async def _draw_ground(self, key: tuple, vp: Viewport, tiles: dict) -> None:
+        """Rasterize one view off the event loop, then repaint and take the next request.
+
+        The work is pure Python, so a thread does not truly run it in parallel — but the
+        interpreter still switches between threads every few milliseconds, which is the
+        whole point: keystrokes keep being serviced throughout instead of waiting for the
+        frame (measured worst-case delay ~50 ms, against the ~1 s of a blocking draw).
+        """
+        try:
+            lines = await asyncio.to_thread(
+                render_map, vp, tiles, self._markers, find=self._filter
+            )
+        except Exception:  # noqa: BLE001 - a frame we couldn't draw is one we draw again
+            lines = None
+        self._drawing = None
+        if lines is not None:
+            self._frame, self._frame_key = lines, key
+            self._needs_scrub = True
+            self._session.invalidate()
+        if self._wanted is not None:
+            self._start_ground()
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
@@ -320,6 +436,11 @@ class MapScreen(Screen):
             f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
         if self._pending:
             scale = f"{len(self._pending)} tiles…"
+        elif self._drawing is not None or self._wanted is not None:
+            # The ground for this view is still being rasterized off the paint path (see
+            # :meth:`_ground`), so what is on screen is the nodes alone, or the last view's
+            # streets. Say so, in the same slot the tile fetch reports from.
+            scale = "drawing…"
         elif not self._source.available:
             scale = "offline"
         if self._filter:
@@ -339,14 +460,13 @@ class MapScreen(Screen):
         self._trim_tiles(len(wanted))
         if not self._source.available:  # offline (resolved at open time) — nodes only
             return
+        if not _loop_running():  # nothing to fetch onto — a static render draws what it has
+            return
         for t in wanted:
             if t in self._tiles or t in self._pending:
                 continue
             self._pending.add(t)
-            try:
-                asyncio.ensure_future(self._load(t))
-            except RuntimeError:  # pragma: no cover - no running loop (non-interactive)
-                self._pending.discard(t)
+            asyncio.ensure_future(self._load(t))
 
     def _trim_tiles(self, in_view: int) -> None:
         """Release the least recently shown tiles once the view's budget is exceeded.
