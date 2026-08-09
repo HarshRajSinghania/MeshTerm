@@ -85,8 +85,8 @@ def test_dashboard_renders_all_three_sections() -> None:
     assert "advert" in body and "Alice" in body  # traffic class + the busiest node
 
 
-def test_dashboard_activity_chart_reads_newest_right_with_left_scale() -> None:
-    """'now' anchors the right edge; the scale marks the left gutter, the right closes bare.
+def test_dashboard_activity_chart_reads_newest_right_with_mirrored_scale() -> None:
+    """'now' anchors the right edge and the scale marks mirror on both gutters.
 
     Peak 9 over 3 rows (12 dots): the top gutter's ┤ tick crosses its row's third
     dot (an 11-dot bar → 9·11/12 ≈ 8), so the mark reads 8, not the peak itself.
@@ -95,14 +95,14 @@ def test_dashboard_activity_chart_reads_newest_right_with_left_scale() -> None:
     lines = _stripped(screen.render_body(80))
     top = next(line for line in lines if "┤" in line)
     assert top.strip().startswith("8 ┤")
-    assert top.rstrip().endswith("│")  # no mirrored mark — the cells went to the chart
+    assert top.rstrip().endswith("├ 8")
     caption = next(line for line in lines if "now" in line)
     assert caption.index("−") < caption.index("now")  # oldest left, newest right
-    # The lone newest-minute burst draws against the chart's right border, and the
+    # The lone newest-minute burst draws against the chart's right gutter, and the
     # left half of the chart is bare flatline.
     chart = [line for line in lines if "┤" in line or "│" in line]
     bottom = chart[-1]
-    left_half = bottom[3 : 3 + (len(bottom) - 4) // 2]
+    left_half = bottom[3 : 3 + (len(bottom) - 6) // 2]
     assert all(ch in (chr(0x2800), chr(0x2800 | 0x40 | 0x80), " ") for ch in left_half)
     assert any(0x2800 <= ord(ch) <= 0x28FF and ord(ch) & 0x3F for ch in chart[0])
 
@@ -302,13 +302,13 @@ def test_recent_observations_rehydrate_the_packet_payload_class(tmp_path: Path) 
     repo.close()
 
 
-def test_rhythm_activity_buckets_by_10_minute_slice(tmp_path: Path) -> None:
-    """Observations fall into 144 ten-minute-of-day slots (``(HH * 60 + MM) // 10``).
+def test_rhythm_activity_buckets_by_minute_of_day(tmp_path: Path) -> None:
+    """Observations fall into 1440 minute-of-day slots (``HH * 60 + MM``).
 
     The slots are local time-of-day, so the observations are stamped at local
-    wall-clock instants (naive → ``.astimezone()``) — the slice index then matches
-    each ``HH:MM`` directly, in any runner zone. Ten minutes is the base grid every
-    rhythm slice width (20/30/60 min) folds from without re-querying.
+    wall-clock instants (naive → ``.astimezone()``) — the slot index then matches
+    each ``HH:MM`` directly, in any runner zone. A minute is the base grid every
+    rhythm slice width (1/5/10/15/20/30/60 min) folds from without re-querying.
     """
     repo = Repository(tmp_path / "q.db")
     run = repo.start_run("monitor", {}, None)
@@ -319,12 +319,12 @@ def test_rhythm_activity_buckets_by_10_minute_slice(tmp_path: Path) -> None:
             observed_at=datetime(2026, 7, 8, hh, mm).astimezone(),
         )
 
-    for hh, mm in [(0, 0), (0, 44), (17, 55), (17, 59)]:
+    for hh, mm in [(0, 0), (0, 44), (17, 55), (17, 55)]:
         repo.record_observation(run, at(hh, mm))
     slots = repo.rhythm_activity()
-    assert len(slots) == 144
-    assert slots[0] == 1        # 00:00 → slot 0
-    assert slots[4] == 1        # 00:44 → slot 4 (44 // 10)
-    assert slots[107] == 2      # 17:55 and 17:59 → slot (17*60 + 55) // 10
+    assert len(slots) == 1440
+    assert slots[0] == 1         # 00:00 → slot 0
+    assert slots[44] == 1        # 00:44 → slot 44
+    assert slots[17 * 60 + 55] == 2  # both 17:55 stamps share one minute slot
     assert sum(slots) == 4
     repo.close()

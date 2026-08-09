@@ -43,7 +43,7 @@ from rich.text import Text
 from ..core.events import MeshEvent
 from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import OBSERVATION_WINDOW
-from .braillechart import axis_chart, axis_label_w, meter, timeline_rows
+from .braillechart import axis_chart, axis_chrome, axis_label_w, meter, timeline_rows
 from .packet_viewer import (
     DEFAULT_ICON,
     KIND_ICONS,
@@ -279,16 +279,17 @@ class DashboardScreen(Screen):
         """The all-packet chart — newest minute at the right — plus the pulse line.
 
         One dot column per minute, two per character cell, stretched across every
-        cell the terminal offers past the left scale gutter (the right edge closes
-        with a bare border — see :func:`~meshterm.ui.braillechart.axis_chart`); a
-        wider terminal simply shows more history. Time runs oldest→now left to
-        right, every MeshTerm timeline's direction.
+        cell the terminal offers between the scale gutters (drawn as the platform
+        draws them — the desktop mirrors its marks on the right, the console keeps
+        the tick alone; see :func:`~meshterm.ui.braillechart.axis_chrome`); a wider
+        terminal simply shows more history. Time runs oldest→now left to right,
+        every MeshTerm timeline's direction.
         """
         histogram = list(self._activity())  # newest first, one count per minute
         # Size the label lane from the whole histogram's peak (not just the visible
-        # slice) so the gutter never shifts as a burst scrolls out of view.
+        # slice) so the gutters never shift as a burst scrolls out of view.
         label_w = axis_label_w(max(histogram, default=0), _CHART_ROWS)
-        chars = max(10, width - (label_w + 3))
+        chars = max(10, width - axis_chrome(label_w))
         minutes = chars * 2
         shown = (histogram + [0] * minutes)[:minutes]
         peak = max(shown)

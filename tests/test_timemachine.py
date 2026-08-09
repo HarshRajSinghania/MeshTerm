@@ -416,7 +416,7 @@ def test_node_page_renders_all_sections(tmp_path: Path) -> None:
     body = _plain(_node_sections(ctx, NODE, "YUL", None, 90))
     assert "Volume" in body and "24 receptions" in body
     assert "SNR" in body and "-2.0" in body and "+8.0" in body
-    assert "Rhythm" in body and "20-min" in body  # the ladder's finest slice fits here
+    assert "Rhythm" in body and "10-min" in body  # the finest slice 90 cols affords
     assert "Record" in body and "median" in body
     assert "advert 24" in body  # kinds breakdown, packet rows absent
     repo.close()
@@ -468,7 +468,7 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
     ctx = SimpleNamespace(repo=repo)
     body = _plain(_mesh_sections(ctx, None, 90, prefix_bytes=2))
     assert "Packets per day" in body and "Nodes per day" in body
-    assert "Rhythm" in body and "20-min" in body  # the ladder's finest slice fits here
+    assert "Rhythm" in body and "10-min" in body  # the finest slice 90 cols affords
     assert "Arrivals" in body and "Newcomer" in body
     # Arrivals are aligned lanes: the key sits in its own column (labelled KEY,
     # per the lexicon) and the old per-row "first heard" prefix now lives once,

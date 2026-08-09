@@ -35,10 +35,11 @@ Beyond timelines, the module owns the app's two other braille conventions:
   fills in intermediate marks whenever the chart is wide enough to fit them.
 * :func:`axis_chart` — frames :func:`timeline_rows` output in a numeric y-axis
   (the dashboard's activity chart, the Time Machine's per-day and rhythm
-  charts): marks on the left gutter only — the right edge closes with a bare
-  border, its mirror dropped as redundant (JP, 2026-08-08) — each mark
-  compacted through :func:`compact_label` so the gutter never outgrows three
-  cells however deep the tallies run.
+  charts). Marks tick both edges; whether the right edge also *prints* its
+  mark follows the platform (see :func:`axis_chrome`) — the desktop mirrors
+  it, the 53-column console keeps the tick alone and gives the cells to the
+  chart. Each mark compacts through :func:`compact_label` so the gutter never
+  outgrows three cells however deep the tallies run.
 """
 
 from __future__ import annotations
@@ -46,6 +47,35 @@ from __future__ import annotations
 from typing import Callable, Optional, Sequence, Union
 
 from rich.text import Text
+
+from ..platforms import Platform, on_platform
+
+#: Whether :func:`axis_chart` mirrors each mark on the right gutter too. The marks are
+#: redundant but nice (JP, 2026-08-09: keep them where space allows), so the roomy
+#: desktop frame mirrors them and the 53-column console spends those cells on the chart
+#: instead. The right-edge ``├`` tick stays on *both* platforms — dropping the label
+#: never drops the tick. Bound at platform-switch time, like every platform-derived
+#: constant; :func:`axis_chrome` is how callers size their chart to whichever shape is
+#: bound.
+_MIRROR_LABELS = True
+
+
+@on_platform
+def _bind_axis_chrome(platform: Platform) -> None:
+    """Bind the right-gutter mirror to the platform (runs now and on every switch)."""
+    global _MIRROR_LABELS
+    _MIRROR_LABELS = platform.frame_border
+
+
+def axis_chrome(label_w: int) -> int:
+    """Cells one framed chart row spends beside its chart cells, on this platform.
+
+    The left gutter (``label_w`` + the space + the ``┤`` tick), the right ``├`` tick,
+    and — where the platform mirrors its marks — the right gutter's space + label. THE
+    number a caller subtracts from its render width to size ``chars``, so the layout
+    can never disagree with what :func:`axis_chart` actually draws.
+    """
+    return label_w + 3 + (label_w + 1 if _MIRROR_LABELS else 0)
 
 #: Braille dot bit for each dot row counted from the *bottom* of a cell (row 0 is
 #: the cell's lowest dot), left and right columns. The Unicode braille block
@@ -552,13 +582,14 @@ def axis_chart(
     floor: float = 0.0,
     ticks: Optional[Sequence[tuple[int, str]]] = None,
 ) -> list[Text]:
-    """Frame :func:`timeline_rows` output with a left y-axis and an x-axis caption.
+    """Frame :func:`timeline_rows` output with a mirrored y-axis and an x-axis caption.
 
     Each row's ticked-dot value marks the left gutter (blank where it would repeat
-    the mark above or read zero), compacted through :func:`compact_label`; the right
-    edge closes with a bare border — the mirrored gutter it used to carry was
-    redundant, and its cells go to the chart (JP, 2026-08-08). A boxed bottom border
-    and an x-axis caption indented to clear the gutter close the frame.
+    the mark above or read zero), compacted through :func:`compact_label`. The right
+    edge always carries the matching ``├`` tick; whether the mark itself is printed
+    after it follows the platform (see :func:`axis_chrome`) — the desktop mirrors it,
+    the console keeps the tick alone. A boxed bottom border and an x-axis caption
+    indented to clear the gutter close the frame.
 
     The caption comes one of two ways. A *continuous* chart passes ``label_at`` and
     the ends-plus-quarters marks of :func:`axis_caption` fill in whatever fits. A
@@ -597,7 +628,9 @@ def axis_chart(
     for mark, row in zip(marks, chart_rows):
         line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style=style)
         line.append_text(row)
-        line.append("│", style=style)
+        line.append("├" if mark else "│", style=style)
+        if mark and _MIRROR_LABELS:
+            line.append(f" {mark}", style=style)
         out.append(line)
     if ticks is not None:
         border, caption_text = _tick_axis(chars, label_w, ticks, style)

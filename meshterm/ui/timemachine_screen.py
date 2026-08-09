@@ -36,6 +36,7 @@ from .braillechart import (
     _TICK_GAP,
     GAP,
     axis_chart,
+    axis_chrome,
     axis_label_w,
     chart_span,
     timeline_rows,
@@ -107,13 +108,13 @@ def bucketize(stamps: list[datetime], start: datetime, end: datetime, buckets: i
     return counts
 
 
-#: The Rhythm chart's candidate slice widths in minutes, finest first. The old 15-minute
-#: slices are gone (JP, 2026-08-08): their 48 chart cells plus a gutter outran the
-#: PicoCalc's 53 columns, so the chart now takes the finest of these whose full day fits
-#: the width — 20-minute slices (72 slots, 36 cells) on both standard terminals, stepping
-#: down to 30 minutes and then a full hour only where the width forces it. If even the
-#: hour chart is too wide, it draws anyway — tough shit, per the spec.
-_RHYTHM_SLICES: tuple[int, ...] = (20, 30, 60)
+#: The Rhythm chart's candidate slice widths in minutes, finest first: the chart takes
+#: the finest whose full day fits the width (JP, 2026-08-09). A fixed 15-minute slicing
+#: used to outrun the PicoCalc's 53 columns; now the standard desktop keeps its 15-minute
+#: sweep (48 cells + both gutters), the console steps down only as far as its width
+#: forces, and a terminal wide enough earns the finer sweeps. If even the hour chart is
+#: too wide, it draws anyway — tough shit, per the spec.
+_RHYTHM_SLICES: tuple[int, ...] = (1, 5, 10, 15, 20, 30, 60)
 
 
 def _slice_note(minutes: int) -> str:
@@ -130,15 +131,15 @@ def _rhythm_slots(stamps: list[datetime], minutes: int) -> list[int]:
     return slots
 
 
-def _fold_slots(tens: list[int], minutes: int) -> list[int]:
-    """Fold the repository's ten-minute base grid into ``minutes``-wide slices.
+def _fold_slots(minute_grid: list[int], minutes: int) -> list[int]:
+    """Fold the repository's minute-of-day base grid into ``minutes``-wide slices.
 
-    Ten divides every rung of :data:`_RHYTHM_SLICES`, so the mesh page re-slices the one
-    :meth:`~meshterm.persistence.repository.Repository.rhythm_activity` scan client-side
-    instead of re-querying per candidate width.
+    A minute divides every rung of :data:`_RHYTHM_SLICES`, so the mesh page re-slices the
+    one :meth:`~meshterm.persistence.repository.Repository.rhythm_activity` scan
+    client-side instead of re-querying per candidate width.
     """
-    per = max(1, minutes // 10)
-    return [sum(tens[i : i + per]) for i in range(0, len(tens), per)]
+    per = max(1, minutes)
+    return [sum(minute_grid[i : i + per]) for i in range(0, len(minute_grid), per)]
 
 
 def _fit_rhythm(
@@ -148,16 +149,17 @@ def _fit_rhythm(
 
     ``base_w`` is the gutter width the section's other charts already need; the rhythm's
     own scale joins it (a slice's tally can top a single volume bucket's), and the fit is
-    judged against the row a chart actually draws — the gutter, its tick, the cells, and
-    the bare closing border. The coarsest slice comes back even when it doesn't fit: the
-    ladder has nowhere further to step, and a clipped hour chart beats no rhythm at all.
+    judged against the row a chart actually draws — both gutters as the platform draws
+    them (:func:`~meshterm.ui.braillechart.axis_chrome`) plus the cells. The coarsest
+    slice comes back even when it doesn't fit: the ladder has nowhere further to step,
+    and a clipped hour chart beats no rhythm at all.
     """
     slots: list[int] = [0]
     label_w = base_w
     for minutes in _RHYTHM_SLICES:
         slots = slots_at(minutes)
         label_w = max(base_w, axis_label_w(max(slots), _CHART_ROWS))
-        if label_w + 3 + len(slots) // 2 <= width:
+        if axis_chrome(label_w) + len(slots) // 2 <= width:
             return slots, minutes, label_w
     return slots, _RHYTHM_SLICES[-1], label_w
 
@@ -346,8 +348,9 @@ def _node_sections(
     # fits (see :data:`_RHYTHM_SLICES`) — a slice's tally can top a single volume
     # bucket's, so its peak joins the sizing too.
     def _layout(label_w: int) -> tuple[int, int]:
-        # A chart row spends label_w + 2 on the gutter and 1 on the bare closing border.
-        chars = max(20, width - (label_w + 3))
+        # A chart row spends axis_chrome(label_w) beside its cells -- both gutters, as
+        # the platform draws them (the desktop mirrors its marks, the console doesn't).
+        chars = max(20, width - axis_chrome(label_w))
         return chars, chars * 2
 
     chars, buckets = _layout(1)
@@ -458,8 +461,9 @@ def _self_sections(
     # volume bucket, so its peak joins the shared-gutter sizing (see _node_sections for
     # the same provisional-then-real width dance).
     def _layout(label_w: int) -> tuple[int, int]:
-        # A chart row spends label_w + 2 on the gutter and 1 on the bare closing border.
-        chars = max(20, width - (label_w + 3))
+        # A chart row spends axis_chrome(label_w) beside its cells -- both gutters, as
+        # the platform draws them (the desktop mirrors its marks, the console doesn't).
+        chars = max(20, width - axis_chrome(label_w))
         return chars, chars * 2
 
     chars, buckets = _layout(1)
@@ -956,11 +960,11 @@ def _mesh_sections(
 
     # The mesh-wide rhythm (charted below) folds the whole window into local time-of-day
     # slices at the finest width the ladder fits (see :data:`_RHYTHM_SLICES`), re-sliced
-    # client-side from one ten-minute base scan. A busy slice's tally can top any single
+    # client-side from one minute-grid base scan. A busy slice's tally can top any single
     # day's, so its peak joins the day peaks in sizing one shared y-axis gutter. The
     # slices come back already in local time (rotated per-instant in SQL), no offset
     # shuffle here.
-    tens = ctx.repo.rhythm_activity(since=since)
+    minute_grid = ctx.repo.rhythm_activity(since=since)
 
     # The y-axis gutter is sized from the whole window's peaks (not just the visible
     # slice) and shared by every chart, so all their gutters — and thus their left edges —
@@ -970,9 +974,9 @@ def _mesh_sections(
         axis_label_w(max(d[2] for d in series), _CHART_ROWS),
     )
     slots, slice_minutes, label_w = _fit_rhythm(
-        lambda minutes: _fold_slots(tens, minutes), width, base_w
+        lambda minutes: _fold_slots(minute_grid, minutes), width, base_w
     )
-    chars = max(20, width - (label_w + 3))
+    chars = max(20, width - axis_chrome(label_w))
     shown = series[-chars * 2 :]
     out: list[RenderableType] = []
     packets = [d[1] for d in shown]

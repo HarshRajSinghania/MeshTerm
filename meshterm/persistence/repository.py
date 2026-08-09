@@ -1237,34 +1237,34 @@ class Repository:
         return counts
 
     def rhythm_activity(self, *, since: Optional[datetime] = None) -> list[int]:
-        """Observation counts by local ten-minute slice of day (0–143) across the history.
+        """Observation counts by local minute of day (0–1439) across the history.
 
-        The fine-grained base grid behind the whole-mesh Rhythm chart: ten minutes is the
-        common divisor of every slice width the chart may settle on (20/30/60 minutes —
-        see the Time Machine's slice ladder), so one scan here folds client-side into any
-        of them without re-querying. The slice index is ``(HH * 60 + MM) // 10``, computed
-        in SQL off the ``HH``/``MM`` substrings of ``datetime(…, 'localtime')``
-        (``observed_at`` is stored as UTC, rotated per-instant into the machine's zone
-        before slicing, so DST-correct), so the histogram lands in local time with no
-        caller rotation. The cost stays 144 rows however deep the history grows.
+        The base grid behind the whole-mesh Rhythm chart: a minute divides every slice
+        width the chart may settle on (1/5/10/15/20/30/60 minutes — see the Time
+        Machine's slice ladder), so one scan here folds client-side into any of them
+        without re-querying. The slot index is ``HH * 60 + MM``, computed in SQL off the
+        ``HH``/``MM`` substrings of ``datetime(…, 'localtime')`` (``observed_at`` is
+        stored as UTC, rotated per-instant into the machine's zone before slicing, so
+        DST-correct), so the histogram lands in local time with no caller rotation. The
+        cost stays at most 1440 rows however deep the history grows.
 
         Args:
             since: Only observations at or after this time, if given.
 
         Returns:
-            144 counts, index = local ten-minute slice of the day.
+            1440 counts, index = local minute of the day.
         """
         sql = (
-            "SELECT (CAST(substr(datetime(observed_at, 'localtime'), 12, 2) AS INTEGER) "
-            "* 60 + CAST(substr(datetime(observed_at, 'localtime'), 15, 2) AS INTEGER)) "
-            "/ 10 AS slot, COUNT(*) AS n FROM observations"
+            "SELECT CAST(substr(datetime(observed_at, 'localtime'), 12, 2) AS INTEGER) "
+            "* 60 + CAST(substr(datetime(observed_at, 'localtime'), 15, 2) AS INTEGER) "
+            "AS slot, COUNT(*) AS n FROM observations"
         )
         params: list[Any] = []
         if since is not None:
             sql += " WHERE observed_at >= ?"
             params.append(since.isoformat())
         sql += " GROUP BY slot"
-        counts = [0] * 144
+        counts = [0] * 1440
         for row in self._conn.execute(sql, params).fetchall():
             try:
                 counts[int(row["slot"])] += int(row["n"])
