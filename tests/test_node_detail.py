@@ -602,6 +602,51 @@ def test_node_detail_screen_route_selection_arms_the_trace() -> None:
     assert "Trace" not in body  # the auto-route stand-in only shows with no routes to list
 
 
+def test_node_detail_routes_stage_spends_the_caption_and_top_air_on_the_fan() -> None:
+    """On the PicoCalc the fan opens directly under the tab strip and runs uncaptioned, and
+    both reclaimed rows go back into the graph — never into a taller gap (JP, 2026-08-09).
+
+    The graph's own end padding leaves a whole empty canvas row above its topmost label; the
+    stage draws one row over its ceiling and peels that row off, so the peel pays for itself.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    # A fan busy enough that the row ceiling — not its own ideal height — is what sizes it,
+    # so the reclaimed rows show up as lanes rather than as slack.
+    busy = _RoutesView(
+        routes=[
+            _Route(draw=(h * 12,), spec=f"{h}{h},f2", path=Text(f"via {h}{h}"), context=Text(""))
+            for h in "123456"
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+
+    def _stage(viewport: int) -> list[str]:
+        screen = _screen(routes=busy, tabs=[_Tab("Info", "info"), _Tab("Routes", "routes")])
+        screen.handle("tab")  # onto Routes
+        screen.note_viewport(viewport)
+        lines = screen.render_body(49)
+        strip_idx = next(i for i, l in enumerate(lines) if "Routes" in _plain([l]) and "│" in _plain([l]))
+        rule_idx = next(i for i, l in enumerate(lines) if set(_plain([l])) == {"─"} and i > strip_idx)
+        return [_plain([l]) for l in lines[strip_idx + 2 : rule_idx]]  # past the strip's own rule
+
+    set_platform(PICOCALC)
+    pico = _stage(22)
+    assert pico[0].strip(), "no blank row between the tab strip and the fan"
+    assert not any("selected route" in line for line in pico), "the caption is dropped"
+
+    set_platform(REGULAR)
+    desktop = _stage(22)
+    assert not desktop[0].strip()  # the desktop keeps its air…
+    assert any("node → you, as heard" in line for line in desktop)  # …and its caption
+    # Both rows land in the drawing, not in the chrome: from the same viewport the console
+    # grants this ceiling-bound fan two more canvas rows than the captioned desktop stage.
+    drawn = [l for l in desktop if "node → you" not in l]
+    assert len(pico) == len(drawn) + 2
+
+
 def test_node_detail_screen_context_hangs_under_the_pathline() -> None:
     """The weakest/samples/tag context draws on its own line, indented under the pathline."""
     routes = _RoutesView(

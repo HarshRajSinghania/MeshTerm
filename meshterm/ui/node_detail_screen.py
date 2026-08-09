@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -121,6 +122,27 @@ def _bind_tab_air(platform: Platform) -> None:
     """Bind the strip's air to the platform (runs now and on every switch)."""
     global _TAB_AIR
     _TAB_AIR = 1 if platform.frame_border else 0
+
+
+#: Whether the route fan is captioned ("node → you, as heard  ·  white = selected route")
+#: and allowed to keep the empty canvas row its top air leaves. Both go on the PicoCalc
+#: (JP, 2026-08-09) and both rows go to the graph instead: the caption explains a picture
+#: the white line and the ``you`` star already make, and the renderer's end padding
+#: (:data:`~meshterm.ui.pathgraph._GRAPH_END_DOTS`, two cells) reserves a whole cell of air
+#: above the topmost lane's label that nothing ever draws into. Rides the same frugality
+#: signal as :data:`_TAB_AIR`, bound at platform-switch time like every platform constant.
+_GRAPH_CAPTION = True
+
+
+@on_platform
+def _bind_graph_caption(platform: Platform) -> None:
+    """Bind the fan's caption/air to the platform (runs now and on every switch)."""
+    global _GRAPH_CAPTION
+    _GRAPH_CAPTION = platform.frame_border
+
+
+#: An SGR escape, so a rendered canvas row can be tested for holding nothing but air.
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 #: The inline location preview's row bounds: it grows into whatever the Info tab's
 #: viewport spares (the vitals and action rows are short), floored so a cramped terminal
@@ -866,6 +888,12 @@ class NodeDetailScreen(Screen):
         before the list would lose its window, and a busy node's fan only spreads out on a
         terminal tall enough to afford it. The selected route draws white with its off-route
         labels faded, as ever.
+
+        Where the caption is dropped (:data:`_GRAPH_CAPTION` — the PicoCalc), the fan is
+        drawn one row *over* its ceiling and its leading blank canvas row is peeled off
+        after: the renderer always centres the lane band inside two cells of end padding
+        while its topmost label wants only one, so that row is reliably empty and the peel
+        pays for the row it was granted. Both rows land back in the ceiling itself.
         """
         rv = self._routes
         assert rv is not None
@@ -876,7 +904,7 @@ class NodeDetailScreen(Screen):
         # a multi-pass graph layout — is a pure function of the width, the row budget,
         # and which route is emphasized. One slot suffices: the key only moves on a
         # selection change or a resize, and then the previous layout is dead anyway.
-        caption_lines = 1 + (1 if rv.legend else 0)
+        caption_lines = (1 if _GRAPH_CAPTION else 0) + (1 if rv.legend else 0)
         list_need = min(sum(len(block) for block in route_blocks), _LIST_MIN_LINES)
         max_rows = max(_GRAPH_MIN_ROWS, min(_PATH_MAX_ROWS, budget - caption_lines - list_need))
         stage_key = (width, max_rows, sel)
@@ -915,11 +943,15 @@ class NodeDetailScreen(Screen):
                 glyph_of=rv.glyph_of,
                 label_of=rv.label_of,  # type: ignore[arg-type]
                 label_rgb_of=label_rgb_of,
-                max_rows=max_rows,
+                max_rows=max_rows if _GRAPH_CAPTION else max_rows + 1,
             )
         )
-        caption = Text("node → you, as heard  ·  white = selected route", style="faint")
-        lines.extend(render_lines(caption, width, no_wrap=True))
+        if _GRAPH_CAPTION:
+            caption = Text("node → you, as heard  ·  white = selected route", style="faint")
+            lines.extend(render_lines(caption, width, no_wrap=True))
+        else:
+            while lines and not _SGR.sub("", lines[0]).strip():
+                lines.pop(0)
         if rv.legend:
             lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
         self._stage_memo = (stage_key, lines)
