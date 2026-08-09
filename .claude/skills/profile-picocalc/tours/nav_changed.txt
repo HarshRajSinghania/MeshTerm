@@ -1,0 +1,99 @@
+# The A/B tour: one pass over every screen whose paint has ever been optimised, plus a real
+# dialog. Run it, revert `meshterm/` on the device, run it again — same panel, same database,
+# same radio, minutes apart. That is the only honest before/after this app has.
+#
+# The dialog group is the quit confirm over the main menu: the easiest real dialog to reach
+# from anywhere, and safe to drive because only the arrows and Esc are sent (Enter would
+# commit the right-hand button, which is Quit).
+#
+# Read `dialog-keys`, not `dialog-open`/`dialog-close` — an Esc reading is console-quiescence
+# overshoot, and a paint that lands outside the window reports a false-fast 7-byte result.
+
+label: splash
+down 1
+up 1
+label: connect
+enter
+sleep 25
+
+label: main-menu
+down 6
+up 4
+
+# --- Contacts (row 5) ---
+label: nav
+pgup 2
+down 5
+label: open-contacts
+enter
+expect  known
+sleep 2
+label: contacts-move
+down 6
+up 4
+label: contacts-page
+pgdn 2
+label: contacts-type
+text:y
+text:u
+sleep 1
+backspace 2
+esc
+sleep 3
+
+# --- Dashboard (row 3) ---
+label: nav
+pgup 2
+down 3
+label: open-dashboard
+enter
+expect mesh overview
+sleep 2
+label: dashboard
+down 4
+up 3
+esc
+sleep 3
+
+# --- Mesh walk (row 7) ---
+label: nav
+pgup 2
+down 7
+label: open-walk
+enter
+expect  links
+sleep 2
+label: walk
+down 3
+up 2
+esc
+sleep 3
+
+# --- A real dialog over the menu: the quit confirm. Arrows only; Esc backs out. ---
+label: nav
+pgup 2
+label: dialog-open
+esc
+sleep 2
+label: dialog-keys
+left 4
+right 4
+label: dialog-close
+esc
+sleep 2
+
+# --- Map (row 6), last: the heaviest screen ---
+label: nav
+pgup 2
+down 6
+label: open-map
+enter
+sleep 10
+label: map-pan
+right 2
+down 2
+label: map-zoom
+pgdn 1
+pgup 1
+esc
+sleep 3

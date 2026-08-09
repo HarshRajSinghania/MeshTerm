@@ -45,8 +45,22 @@ along live), injects the scripted keys, and prints p50/p90/max per key group.
 
 Tour scripts are one step per line: `down 8`, `enter`, `text:y`, `sleep 3`,
 `label: contacts` to start a new measurement group, `shot NAME` to grab the screen.
-`tours/` has `nav_all.txt` (every page), `nav_ab.txt` (short, for A/B runs) and
-`nav_map.txt`.
+`tours/` has `nav_all.txt` (every page), `nav_ab.txt` (short, for A/B runs),
+`nav_opens.txt` (screen opens, timed with `expect`), `nav_map.txt`, and
+`nav_changed.txt` (every optimised paint plus a real dialog — the A/B tour).
+
+## A/B'ing a change: revert the device, don't rebuild it
+
+The device tree is a git checkout, so the cleanest before/after is to `scp` the changed
+modules in, run the tour, then `git checkout -- meshterm/` and run it again. Same panel,
+same database, same radio, minutes apart — nothing else gets that close. Drop the
+`__pycache__` between runs (`find meshterm -name __pycache__ -type d -exec rm -rf {} +`)
+and remember to push the files back afterwards.
+
+Then diff the shots (`cmp -s before/NN_x.txt after/NN_x.txt`). Screens carrying live data
+(the header's counters, a heard-sorted contact list) legitimately differ; a screen whose
+content is fixed for the run — a dialog over the menu, the mesh walk's settled graph — must
+come back **identical**, and that is what proves a rendering change only changed the time.
 
 ## Timing a screen *open* — use `expect`, not silence
 
