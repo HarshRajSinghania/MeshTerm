@@ -844,32 +844,93 @@ def _long_name_screen(names: list[str]) -> WalkScreen:
     return screen
 
 
-def test_walk_fan_gives_up_reach_so_a_long_name_spells_in_full() -> None:
-    """The east margin is whatever the names need — not a constant sized for twenty cells."""
-    long_name = "Sensor-Rooftop-Longueuil-East"  # 29 cells: past the old fixed margin
-    screen = _long_name_screen([long_name, "YUL-Cartierville", "Bob"])
+def test_walk_only_the_long_named_marker_gives_up_reach_for_its_name() -> None:
+    """A long name costs *its own* row some easting, and leaves the rest of the fan put."""
+    long_name = "Sensor-Rooftop-Longueuil-East"  # 29 cells: past any fixed margin
+    screen = _long_name_screen([long_name, "Bob", "Carol"])
     body = _plain(screen._canvas_lines(80, 11, None))
     assert long_name in body  # spelled whole, no trailing …
 
-    # The fan paid for it in reach: the same fan of short names pushes further east.
-    short = _long_name_screen(["Ann", "Bob", "Cid"])
-    tip = max(x for x, _y in screen._place_neighbours(
-        80, 11, screen._fan_nodes(), False,
-        labels=[screen._label(n) for n in screen._fan_nodes()],
-    ).values())
-    short_tip = max(x for x, _y in short._place_neighbours(
-        80, 11, short._fan_nodes(), False,
-    ).values())
-    assert short_tip > tip
+    nodes = screen._fan_nodes()
+    placed = screen._place_neighbours(80, 11, nodes, False)
+    # The same fan with a short name in that slot: only the long-named marker moved.
+    short = _long_name_screen(["Ann", "Bob", "Carol"])
+    baseline = short._place_neighbours(80, 11, short._fan_nodes(), False)
+    assert placed[nodes[0]][0] < baseline[short._fan_nodes()[0]][0]
+    assert [placed[n][0] for n in nodes[1:]] == [
+        baseline[n][0] for n in short._fan_nodes()[1:]
+    ]
 
 
 def test_walk_fan_keeps_its_reach_when_a_name_would_swallow_the_canvas() -> None:
     """Past a point the labels clip instead: a fan pulled onto the focus draws nothing."""
     screen = _long_name_screen(["X" * 60, "Bob", "Carol"])
     ax, _ay, _n = screen._focus_anchor(53, 11, 3)
-    placed = screen._place_neighbours(
-        53, 11, screen._fan_nodes(), False,
-        labels=[screen._label(n) for n in screen._fan_nodes()],
-    )
+    placed = screen._place_neighbours(53, 11, screen._fan_nodes(), False)
     assert min(x for x, _y in placed.values()) > ax  # still a fan, not a pile on the anchor
     assert "…" in _plain(screen._canvas_lines(53, 11, None))  # the label gave way instead
+
+
+def test_walk_collapsed_slot_is_laid_out_for_its_resting_label_not_the_selection() -> None:
+    """Walking the collapsed nodes must not shuffle the fan, so the … slot ignores them.
+
+    Its geometry comes from the ``+n weaker`` it wears at rest; a stand-in's name is fitted
+    into whatever room that leaves and truncates if it must.
+    """
+    screen = _long_name_screen(
+        ["Ann", "Bob", "Carol", "Dee", "Eve", "Fay", "Gil", "Hal", "Sensor-Rooftop-Longueuil"]
+    )
+    screen.render_body(80)
+    rows = screen._rows()
+    hidden = rows[screen._fan_capacity(11) - 1:]
+    assert len(hidden) > 1
+
+    at_rest = screen._canvas_lines(80, 11, rows[0])
+    marks = [_plain([line]).index("…") for line in at_rest if "…" in _plain([line])]
+    for node in hidden:
+        moved = screen._canvas_lines(80, 11, node)
+        glyph, _c = screen._glyph(node)
+        row = next(line for line in moved if screen._label(node)[:8] in _plain([line]))
+        assert _plain([row]).index(glyph) == marks[0]  # the marker never budged
+
+
+def test_walk_the_highlighted_row_is_the_node_the_canvas_lights() -> None:
+    """The list and the picture read the same index off the same list — at every position.
+
+    The list used to render straight out of the link table while the cursor indexed the
+    *rows*. The table still carried the node the walk came from, so from that node's
+    position on every row named one link and drew another, and the highlight sat one link
+    away from the one the canvas was lighting.
+    """
+    topo = _hub_topo(6)
+    screen = _screen(topo)
+    screen.render_body(80)
+    screen._index = 1
+    screen.handle("enter")  # walk out, so there *is* a came-from to leave out
+    screen.render_body(80)
+
+    rows = screen._rows()
+    assert topo.self_id not in rows  # …and it is not among the rows
+    for index in range(len(rows)):
+        screen._index = index
+        body = _plain(screen.render_body(80))
+        picked = next(line for line in body.split("\n") if line.startswith("❯"))
+        assert screen._label(rows[index]) in picked
+        # And the canvas lights that same node, not its neighbour in the table.
+        canvas = _plain(screen._canvas_lines(80, 12, rows[index]))
+        assert screen._label(rows[index]) in canvas
+
+
+def test_walk_collapsed_stand_in_wears_the_selection_white() -> None:
+    """A collapsed node is only ever drawn while selected, so white is simply what it is."""
+    # Named contacts, so the name's own hue is something white can be told apart from.
+    screen = _long_name_screen([f"Node-{i:02d}" for i in range(12)])
+    screen.render_body(80)
+    rows = screen._rows()
+    target = rows[screen._fan_capacity(14) - 1 + 1]
+    assert screen._label_rgb(target) != (255, 255, 255)
+
+    canvas = screen._canvas_lines(80, 14, target)
+    row = next(line for line in canvas if screen._label(target) in _plain([line]))
+    assert _code((255, 255, 255)) in row  # the same white a drawn marker's selection takes
+    assert _code(screen._label_rgb(target)) not in row
