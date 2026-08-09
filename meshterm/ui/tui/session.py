@@ -31,7 +31,7 @@ from rich.text import Text
 
 from ...platforms import get_platform
 from ...services import modifier_watch
-from . import fkeys, frame
+from . import fastrender, fkeys, frame
 from .overlay import BusyOverlay
 from .progress import TuiProgress
 from .prompt import (
@@ -1129,7 +1129,7 @@ class TuiSession:
                 ),
             ],
         )
-        return Application(
+        app = Application(
             layout=Layout(root, focused_element=base_window),
             key_bindings=self._key_bindings(),
             full_screen=True,
@@ -1137,9 +1137,29 @@ class TuiSession:
             # Keeps the live monitor counter in the header ticking. Per-platform, so a host
             # where an idle repaint is expensive can breathe more slowly between frames.
             refresh_interval=get_platform().tick_s,
+            # Repaint as soon as the loop is free, rather than spinning the event loop for
+            # up to 10 ms first. prompt_toolkit's default postpone is there to protect a
+            # UI whose *own* output floods it with invalidations (its motivating case was
+            # a terminal multiplexer); here an invalidation is a keystroke or the 2 s
+            # header tick, so the delay buys nothing and was measured as a flat 3 ms on
+            # the PicoCalc and 10 ms on desktop, paid on every single key.
+            max_render_postpone_time=None,
             input=self._input,
             output=self._resolve_output(),
         )
+        if fastrender.enabled():
+            # Swap in the row-diff renderer for plain full-screen frames. Built with the
+            # same arguments Application gave the stock one, so everything except the
+            # paint itself — CPR, alternate screen, mouse, cursor shape — is unchanged.
+            app.renderer = fastrender.FastRenderer(
+                app._merged_style,
+                app.output,
+                full_screen=True,
+                mouse_support=False,
+                cpr_not_supported_callback=app.cpr_not_supported_callback,
+                frame_source=self._plain_frame,
+            )
+        return app
 
     def _resolve_output(self) -> Any:
         """The output the app renders to — optionally widened to reclaim the last column.
@@ -1309,6 +1329,20 @@ class TuiSession:
         return self._emit(
             frame.compose_base(self._header(cols), base, footer, cols, rows, footer_lane=lane)
         )
+
+    def _plain_frame(self) -> Optional[str]:
+        """The composed full-screen frame, when this paint is one the fast path may take.
+
+        Answers ``None`` — meaning "let prompt_toolkit lay this one out" — whenever the
+        frame is more than a single background screen: a floating dialog or the busy
+        overlay is placed by pt's float containers, not by us (see
+        :mod:`~meshterm.ui.tui.fastrender`). Composing the base is not wasted in that
+        case: the float layers draw *over* it, so pt asks for it a moment later and gets
+        the memoized composition.
+        """
+        if self._has_float() or self._overlay_visible() or not self._stack:
+            return None
+        return self._render_base().value
 
     @staticmethod
     def _fkey_lane(active: Screen) -> Optional[Callable[[], Text]]:

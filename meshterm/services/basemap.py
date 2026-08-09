@@ -43,6 +43,7 @@ import os
 import threading
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 from typing import Container, NamedTuple, Optional
 
@@ -69,6 +70,11 @@ _DEFAULT_MAX_DECODED_BYTES = 64 * 1024 * 1024
 #: How much must be written before the sidecar budget is checked again. The check walks
 #: the directory, which is slow on the SD card the PicoCalc runs from.
 _PRUNE_AFTER_BYTES = 8 * 1024 * 1024
+
+#: Decoded tiles held in RAM. A viewport spans at most a handful of tiles, so this covers
+#: the view plus the ring a pan or a zoom step reaches into, and little more — the PicoCalc
+#: has 100 MB of RAM in total and decoded layers are not small.
+_MEMO_TILES = 24
 
 _log = logging.getLogger(__name__)
 
@@ -136,6 +142,12 @@ class BasemapSource:
         # than on disk so the claim expires with the process: a blank tile is cheap to
         # re-ask about, and a stale one on disk is a permanent hole in the map.
         self._blank: set[tuple[int, int, int]] = set()
+        # Decoded layers kept in RAM, most-recently-used last. The sidecar already spares
+        # the protobuf decode, but a marshal load off the SD card is still ~96 ms on the
+        # PicoCalc — and a map paints its whole viewport's worth of tiles on *every*
+        # frame, so panning one dot re-read every tile that had not moved. Bounded because
+        # decoded layers are the fattest thing this class holds.
+        self._memo: "OrderedDict[tuple[int, int, int], list[Layer]]" = OrderedDict()
 
     # -- metadata ---------------------------------------------------------------
 
@@ -219,8 +231,13 @@ class BasemapSource:
         key = (z, x, y)
         if key in self._blank:
             return None
+        hot = self._memo.get(key)
+        if hot is not None:
+            self._memo.move_to_end(key)
+            return hot
         ready = self._read_decoded(z, x, y)
         if ready is not None:
+            self._remember(key, ready)
             return ready
         path = self._tile_path(z, x, y)
         cached = self._read_cached(path)
@@ -228,6 +245,7 @@ class BasemapSource:
             layers = self._decode(cached, key)
             if layers is not None:
                 self._write_decoded(z, x, y, layers)
+                self._remember(key, layers)
                 return layers
             # Nothing drawable came out: a zero-byte marker from a build that cached
             # network failures, or bytes truncated by a link (or a power cut) mid-write.
@@ -243,7 +261,15 @@ class BasemapSource:
             return None
         self._write_cached(path, raw)
         self._write_decoded(z, x, y, layers)
+        self._remember(key, layers)
         return layers
+
+    def _remember(self, key: tuple[int, int, int], layers: list[Layer]) -> None:
+        """Hold a decoded tile in RAM, evicting the least recently used past the budget."""
+        self._memo[key] = layers
+        self._memo.move_to_end(key)
+        while len(self._memo) > _MEMO_TILES:
+            self._memo.popitem(last=False)
 
     # -- the decoded sidecar ----------------------------------------------------
 

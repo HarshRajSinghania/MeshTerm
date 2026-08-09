@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.output import DummyOutput
 from rich.text import Text
 
 from meshterm.persistence import db
@@ -237,3 +239,110 @@ def test_spinner_interval_reads_the_active_platform() -> None:
     assert spinner_interval() == REGULAR.spinner_tick_s
     set_platform(PICOCALC)
     assert spinner_interval() == PICOCALC.spinner_tick_s
+
+
+# --- the direct row-diff renderer ---------------------------------------------------
+
+
+class _CapturingOutput(DummyOutput):
+    """A DummyOutput that records what the renderer wrote, at a fixed console size."""
+
+    def __init__(self, rows: int = 26, columns: int = 53) -> None:
+        super().__init__()
+        self.written: list[str] = []
+        self._size = Size(rows=rows, columns=columns)
+
+    def get_size(self) -> Size:
+        return self._size
+
+    def write_raw(self, data: str) -> None:
+        self.written.append(data)
+
+    def cursor_goto(self, row: int = 0, column: int = 0) -> None:
+        self.written.append(f"<goto {row},{column}>")
+
+    def erase_screen(self) -> None:
+        self.written.append("<erase-screen>")
+
+    @property
+    def stream(self) -> str:
+        return "".join(self.written)
+
+
+def _fast_renderer(frames: list[str]) -> tuple["FastRenderer", _CapturingOutput]:
+    """A FastRenderer fed a scripted sequence of composed frames."""
+    from prompt_toolkit.styles import Style
+
+    from meshterm.ui.tui.fastrender import FastRenderer
+
+    out = _CapturingOutput()
+    pending = list(frames)
+    renderer = FastRenderer(
+        Style([]), out, full_screen=True, frame_source=lambda: pending.pop(0)
+    )
+    return renderer, out
+
+
+def test_fastrender_is_off_unless_asked_for(monkeypatch) -> None:  # noqa: ANN001
+    """The bypass is opt-in: an unset environment leaves prompt_toolkit in charge."""
+    from meshterm.ui.tui import fastrender
+
+    monkeypatch.delenv("MESHTERM_FASTRENDER", raising=False)
+    assert not fastrender.enabled()
+    monkeypatch.setenv("MESHTERM_FASTRENDER", "1")
+    assert fastrender.enabled()
+
+
+def test_fastrender_rewrites_only_the_rows_that_changed() -> None:
+    """The whole point: a keystroke that moves one row must not repaint the screen."""
+    rows_a = [f"row {i:02d}" for i in range(26)]
+    rows_b = list(rows_a)
+    rows_b[7] = "row 07 SELECTED"
+    renderer, out = _fast_renderer(["\n".join(rows_a), "\n".join(rows_b)])
+
+    renderer.render(None, None)  # first paint: everything
+    out.written.clear()
+    renderer.render(None, None)  # second: one row moved
+
+    stream = out.stream
+    assert "row 07 SELECTED" in stream
+    # Every *other* row's text stayed off the wire.
+    assert "row 06" not in stream
+    assert "row 08" not in stream
+    assert "\x1b[8;1H" in stream  # addressed row 8 (1-based) directly
+
+
+def test_fastrender_erases_before_it_draws_so_a_full_row_keeps_its_last_cell() -> None:
+    """Erase-to-end *after* a full-width row wipes the character just written.
+
+    A row that exactly fills the console leaves the cursor in the last column with wrap
+    pending; an erase there clears that cell, and the row's final glyph goes missing (it
+    did, on the PicoCalc's 53 columns). So the erase has to lead, never follow.
+    """
+    full = "x" * 53
+    renderer, out = _fast_renderer(["\n".join([full] * 26), "\n".join([full] * 26)])
+    renderer.render(None, None)
+    stream = out.stream
+    assert "\x1b[K" in stream
+    # In every row the clear precedes that row's text, and no clear trails it.
+    for chunk in stream.split("\x1b[0m")[1:]:
+        assert chunk.startswith("\x1b[K"), chunk[:40]
+        assert not chunk.rstrip().endswith("\x1b[K"), chunk[-40:]
+
+
+def test_fastrender_hands_dialogs_back_to_prompt_toolkit(monkeypatch) -> None:  # noqa: ANN001
+    """A ``None`` frame means a float is up, which pt lays out — it must own that paint."""
+    from prompt_toolkit.renderer import Renderer
+    from prompt_toolkit.styles import Style
+
+    from meshterm.ui.tui.fastrender import FastRenderer
+
+    calls: list[bool] = []
+    monkeypatch.setattr(Renderer, "render", lambda *a, **k: calls.append(True))
+    renderer = FastRenderer(
+        Style([]), _CapturingOutput(), full_screen=True, frame_source=lambda: None
+    )
+    renderer.render(None, None)
+    assert calls == [True]
+    assert renderer.slow_paints == 1
+    assert renderer.fast_paints == 0

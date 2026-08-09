@@ -368,7 +368,8 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # Size the box to its widest real row (probe at a generous width, then measure), never
     # wider than the terminal and never narrower than the title/hint it must show.
     probe = max(10, min(cols - 6, 100))
-    measured = max((_ansi_width(line) for line in screen.render_body(probe)), default=10)
+    probe_lines = screen.render_body(probe)
+    measured = max((_ansi_width(line) for line in probe_lines), default=10)
     # Size to the fullest the footer can get, not this frame's — a screen whose hint grows
     # as the highlight moves (a select's per-row "Del remove") reports that width here, so
     # the box is reserved for it up front and never widens mid-navigation.
@@ -387,7 +388,11 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     footnote_h = 1 if screen.footnote else 0  # the note sits directly under the logo
     # Rows left for the box below the fixed banner block: the panel border is 2 rows.
     below = rows - top - banner_h - footnote_h - gap
-    body_lines = screen.render_body(inner_w)
+    # The probe render is the answer whenever it was already made at the width we settled
+    # on — the common case, since a body narrower than the probe *is* what set inner_w.
+    # The splash repaints on every tick while the device list sits there, and rendering
+    # the same body twice was a measured third of that paint on the PicoCalc.
+    body_lines = probe_lines if inner_w == probe else screen.render_body(inner_w)
     budget = below - 2
     vpad = _breathing_room(len(body_lines), budget)
     viewport = max(1, min(len(body_lines), budget - 2 * vpad))
@@ -407,8 +412,14 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=inner_w + 4,
     )
-    # Glow before centering, while the box still starts at column 0 of its own lines.
-    panel_lines = _center(apply_corner_glow(render_lines(panel, inner_w + 4)), cols)
+    # Glow before centering, while the box still starts at column 0 of its own lines. Gated
+    # on the platform exactly as compose_base gates it: the pass only ever recolours
+    # truecolor foregrounds, so on the 16-slot console it walked every line of the splash
+    # to hand back the identical list, on every tick.
+    panel_lines = render_lines(panel, inner_w + 4)
+    if get_platform().effects:
+        panel_lines = apply_corner_glow(panel_lines)
+    panel_lines = _center(panel_lines, cols)
 
     # A small muted line (e.g. a copyright notice) sits immediately under the logo, its right
     # edge hung off the logo's right edge so the two read as one signed block.
@@ -499,7 +510,10 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=max_w,
     )
-    out = "\n".join(apply_corner_glow(render_lines(panel, max_w)))
+    dialog_lines = render_lines(panel, max_w)
+    if get_platform().effects:
+        dialog_lines = apply_corner_glow(dialog_lines)
+    out = "\n".join(dialog_lines)
     _DIALOG_CACHE[key] = out
     if len(_DIALOG_CACHE) > _DIALOG_CACHE_MAX:
         _DIALOG_CACHE.popitem(last=False)
