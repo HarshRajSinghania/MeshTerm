@@ -34,6 +34,7 @@ import heapq
 import math
 import statistics
 from dataclasses import dataclass, field
+from itertools import chain
 from datetime import datetime
 from typing import Optional
 
@@ -72,6 +73,12 @@ _MAX_SCENARIO_HOPS = 5
 #: coincidence, and a close second means the hash is probably pooling two nodes' traffic.
 _MIN_CORROBORATION = 2
 _CORROBORATION_MARGIN = 3
+
+#: The full canonical node-id width in hex digits (6 bytes of key). An id this wide is never
+#: under-specified, so it can neither be folded onto another nor extend one — which is what
+#: lets the prefix settle walk only the ids *below* this width (see
+#: :meth:`MeshTopology.coalesce_prefixes`).
+_CANONICAL_WIDTH = 12
 
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
@@ -440,33 +447,64 @@ class MeshTopology:
 
         Called once at the end of :func:`build_topology`, so every consumer sees each node
         once. Safe for our own node (its 12-hex id is never a short prefix candidate).
+
+        **One neighbour table is built and then carried across the merges**, rather than the
+        whole graph being walked afresh on every turn. Three separate passes over every link
+        used to run per merge — deriving the node set, building the neighbour table the
+        corroboration vote reads, and hunting down the links that name the id being folded —
+        and on the device's mesh that is ~1150 links walked three times over, some eighty
+        times: the largest remaining cost of opening the mesh walk. All three questions are
+        answered by the same table, and a merge's effect on it is knowable exactly where it
+        happens (see :meth:`_merge_node`), so the table is the graph's live node set and
+        adjacency for the whole settle. Its keys *are* the node ids: a node exists here
+        precisely while it holds a link.
         """
+        adjacency = self._adjacency()
         while True:
-            nodes = self._node_ids()
-            merge = self._next_prefix_merge(nodes) or self._next_corroborated_merge(nodes)
+            # Only an under-specified id can fold, and a full-width one extends nothing —
+            # so both passes walk just the short ids, shortest first (a 65 → 6532 → 6532eb
+            # chain collapses from the tail end inward over successive turns), and a graph
+            # of fully named nodes settles without either of them looking at a single link.
+            #
+            # Ties break lexicographically, which is what makes a settle *repeatable*.
+            # Ordering by length alone leaves ids of equal width in whatever order the node
+            # set happened to iterate, and CPython randomizes string hashing per process —
+            # so two runs over the same evidence could take the merges in different orders
+            # and, where a fold changes what a later one sees, arrive at graphs that differ.
+            shorts = sorted(
+                (node for node in adjacency if len(node) < _CANONICAL_WIDTH),
+                key=lambda node: (len(node), node),
+            )
+            if not shorts:
+                return
+            ordered = sorted(adjacency)
+            merge = (
+                self._next_prefix_merge(shorts, ordered)
+                or self._next_corroborated_merge(shorts, ordered, adjacency)
+            )
             if merge is None:
                 return
-            self._merge_node(*merge)
+            self._merge_node(*merge, adjacency=adjacency)
 
     def _node_ids(self) -> set[str]:
         """Every node id that currently appears as a link endpoint."""
-        ids: set[str] = set()
-        for a, b in self._links:
-            ids.add(a)
-            ids.add(b)
-        return ids
+        return set(chain.from_iterable(self._links))
 
-    def _next_prefix_merge(self, nodes: set[str]) -> Optional[tuple[str, str]]:
+    def _next_prefix_merge(
+        self, shorts: list[str], ordered: list[str]
+    ) -> Optional[tuple[str, str]]:
         """The next ``(short, long)`` pair to fold, or ``None`` when none remains.
 
         A short id (under a full 6-byte canonical width) folds when the graph's longer
         ids that extend it all lie on one prefix chain — i.e. the longest of them starts
-        with every other — so the short can only mean that one node. Shortest ids are
-        offered first, so a ``65`` → ``6532`` → ``6532eb`` chain collapses from the tail
-        end inward over successive calls.
+        with every other — so the short can only mean that one node.
+
+        Args:
+            shorts: The under-specified node ids, shortest first — so a ``65`` → ``6532``
+                → ``6532eb`` chain collapses from the tail end inward over successive calls.
+            ordered: Every node id, sorted lexicographically (see :meth:`_extensions`).
         """
-        ordered = sorted(nodes)
-        for short in sorted(nodes, key=len):
+        for short in shorts:
             exts = self._extensions(short, ordered)
             if not exts:
                 continue
@@ -490,7 +528,7 @@ class MeshTopology:
         of hundred merges to settle turned a linear scan here into ~24 million ``len``
         calls and sixteen seconds of opening the mesh walk.
         """
-        if len(short) >= 12:
+        if len(short) >= _CANONICAL_WIDTH:
             return []
         out: list[str] = []
         width = len(short)
@@ -502,7 +540,9 @@ class MeshTopology:
                 out.append(other)
         return out
 
-    def _next_corroborated_merge(self, nodes: set[str]) -> Optional[tuple[str, str]]:
+    def _next_corroborated_merge(
+        self, shorts: list[str], ordered: list[str], adjacency: dict[str, set[str]]
+    ) -> Optional[tuple[str, str]]:
         """The next ambiguous stub the *neighbourhood evidence* resolves, or ``None``.
 
         Where :meth:`_next_prefix_merge` folds only what the hash alone settles, this
@@ -524,10 +564,14 @@ class MeshTopology:
         Shortest ids are offered first, matching :meth:`_next_prefix_merge`, and only the
         *maximal* candidates run — a chain's inner links (``f0`` → ``f062eb`` →
         ``f062eb…``) are the same node, so they never split their own vote.
+
+        Args:
+            shorts: The under-specified node ids, shortest first.
+            ordered: Every node id, sorted lexicographically (see :meth:`_extensions`).
+            adjacency: The graph's live neighbour table, carried by the settle loop that
+                calls this (see :meth:`coalesce_prefixes`).
         """
-        adjacency = self._adjacency()
-        ordered = sorted(nodes)
-        for short in sorted(nodes, key=len):
+        for short in shorts:
             exts = self._extensions(short, ordered)
             candidates = [
                 ext for ext in exts
@@ -580,19 +624,38 @@ class MeshTopology:
             return None
         return winner
 
-    def _merge_node(self, src: str, dst: str) -> None:
-        """Relabel every link touching ``src`` onto ``dst``, folding shared links together."""
+    def _merge_node(
+        self, src: str, dst: str, *, adjacency: Optional[dict[str, set[str]]] = None
+    ) -> None:
+        """Relabel every link touching ``src`` onto ``dst``, folding shared links together.
+
+        Reached through the neighbour table rather than by scanning the graph: a link is
+        addressed by its two endpoints, so ``src``'s neighbours name its links directly —
+        a handful of dict lookups instead of a walk over every link in the mesh, on every
+        one of a settle's many merges.
+
+        Args:
+            src: The under-specified id being folded away.
+            dst: The node id it can only have meant.
+            adjacency: The caller's live neighbour table, **updated in place** to match the
+                reshaped graph: ``src`` leaves it, ``dst`` inherits ``src``'s neighbours,
+                and ``dst`` itself leaves in the one corner where every link ``src`` had ran
+                to ``dst`` — each collapses to a self-loop and is discarded, so unless
+                ``dst`` held a link of its own it goes with them. No other node can lose its
+                last link here: a relabelled link keeps its far end. Omit it for a one-off
+                merge and the table is built (and thrown away) here.
+        """
+        if adjacency is None:
+            adjacency = self._adjacency()
         self._graph_version += 1  # the graph is being reshaped; memoized searches expire
-        for key in list(self._links):
-            if src not in key:
+        for far in adjacency.pop(src, ()):
+            link = self._links.pop((src, far) if src < far else (far, src), None)
+            if link is None:
                 continue
-            link = self._links.pop(key)
-            a, b = key
-            na = dst if a == src else a
-            nb = dst if b == src else b
-            if na == nb:  # a src→dst link (src prefixes dst) collapses to a self-loop
+            adjacency[far].discard(src)
+            if far == dst:  # a src→dst link (src prefixes dst) collapses to a self-loop
                 continue
-            new_key = (na, nb) if na < nb else (nb, na)
+            new_key = (dst, far) if dst < far else (far, dst)
             existing = self._links.get(new_key)
             if existing is None:
                 self._links[new_key] = Link(
@@ -608,6 +671,10 @@ class MeshTopology:
                     existing.last_seen is None or link.last_seen > existing.last_seen
                 ):
                     existing.last_seen = link.last_seen
+            adjacency.setdefault(dst, set()).add(far)
+            adjacency[far].add(dst)
+        if not adjacency.get(dst, ()):
+            adjacency.pop(dst, None)  # every link it had ran to the stub now folded away
 
     # --- queries -----------------------------------------------------------------
 

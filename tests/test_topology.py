@@ -860,3 +860,92 @@ def test_prefix_settle_folds_a_chain_but_not_a_fork() -> None:
     assert "6532eb00aa11" in fork and "653300ff2211" in fork
     assert "6532" not in fork, "an unambiguous link in the chain should still fold"
     assert "65" in fork, "a stub opening two real nodes must not be guessed onto one"
+
+
+def test_prefix_settle_is_repeatable_whatever_order_the_nodes_arrived_in() -> None:
+    """The same evidence must always settle to the same graph.
+
+    The passes offer the under-specified ids shortest first, and for a while the ids of
+    equal width came out in whatever order the node *set* happened to iterate. CPython
+    randomizes string hashing per process, so two runs over identical evidence could take
+    their merges in different orders — and where one fold changes what a later one can see,
+    end up with different graphs. Feeding the same walks in reversed order reproduces that
+    (a set built by a different insertion sequence iterates differently); the settled
+    endpoints must not care.
+    """
+    from meshterm.core.models import utcnow
+    from meshterm.services.topology import MeshTopology
+
+    walks = [
+        ["local", "a1", "b2c3"], ["local", "a1b2", "b2c3d4"],
+        ["local", "a1b2c3d4e5f6"], ["local", "b2c3d4e5f601"],
+        ["local", "a1b2c3", "c4"], ["local", "c4d5e6f70011"],
+        ["local", "b2", "a1b2c3d4e5f6"],
+    ]
+
+    def settle(order):
+        topo = MeshTopology(self_id="local", contacts=[])
+        now = utcnow()
+        for walk in order:
+            topo.add_walk(list(walk), when=now, source="trace")
+        topo.coalesce_prefixes()
+        return sorted(topo._links)
+
+    assert settle(walks) == settle(list(reversed(walks)))
+
+
+def test_a_merge_leaves_the_neighbour_table_exactly_as_a_fresh_one() -> None:
+    """The settle carries one table across every merge instead of rebuilding it.
+
+    That is only sound while the incremental update is *exact* — a stale neighbour or a
+    node left behind after its last link folded away would feed the corroboration vote bad
+    evidence, or offer a merge candidate that no longer exists. So after each merge the
+    carried table has to equal one derived from the reshaped graph.
+    """
+    from meshterm.core.models import utcnow
+    from meshterm.services.topology import MeshTopology
+
+    topo = MeshTopology(self_id="local", contacts=[])
+    now = utcnow()
+    for walk in (
+        ["local", "a1", "b2c3d4e5f601"], ["local", "a1b2c3d4e5f6"],
+        ["a1", "c4d5e6f70011"], ["a1b2", "a1b2c3d4e5f6"],
+        ["b2c3d4e5f601", "c4d5e6f70011"], ["local", "d7"], ["d7e8f9001122", "local"],
+    ):
+        topo.add_walk(list(walk), when=now, source="trace")
+
+    adjacency = topo._adjacency()
+    merges = 0
+    while True:
+        shorts = sorted(
+            (n for n in adjacency if len(n) < 12), key=lambda n: (len(n), n)
+        )
+        ordered = sorted(adjacency)
+        merge = topo._next_prefix_merge(shorts, ordered) or topo._next_corroborated_merge(
+            shorts, ordered, adjacency
+        )
+        if merge is None:
+            break
+        topo._merge_node(*merge, adjacency=adjacency)
+        merges += 1
+        assert adjacency == topo._adjacency(), f"table drifted after merging {merge}"
+    assert merges, "the fixture should exercise at least one merge"
+
+
+def test_a_stub_whose_only_link_was_its_owner_takes_the_owner_out_with_it() -> None:
+    """The corner the incremental table has to get right: both ends can leave at once.
+
+    ``a1`` is heard only in company with ``a1b2c3d4e5f6`` — one link, between the two names
+    of one node. Folding the stub collapses that link to a self-loop and discards it, so the
+    owner is left holding nothing and leaves the graph too. Neither may linger in the node
+    set the next pass reads.
+    """
+    from meshterm.core.models import utcnow
+    from meshterm.services.topology import MeshTopology
+
+    topo = MeshTopology(self_id="local", contacts=[])
+    topo.add_walk(["a1", "a1b2c3d4e5f6"], when=utcnow(), source="trace")
+    adjacency = topo._adjacency()
+    topo._merge_node("a1", "a1b2c3d4e5f6", adjacency=adjacency)
+    assert topo._links == {}
+    assert adjacency == {}
