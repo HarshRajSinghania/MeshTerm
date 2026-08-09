@@ -313,6 +313,38 @@ def test_canvas_labels_keep_a_vertical_gap() -> None:
     assert canvas.place_label(2, 4, "Far", (200, 200, 200))
 
 
+def _dot_colors(lines: list[str]) -> set[tuple[int, int, int]]:
+    """Every truecolour a braille run was drawn in (the ground's colours, not the text's)."""
+    return {
+        (int(r), int(g), int(b))
+        for r, g, b in re.findall(
+            r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?[⠀-⣿]", "".join(lines)
+        )
+    }
+
+
+def test_canvas_paste_raster_offsets_fades_and_yields_the_cell() -> None:
+    """A pasted raster lands where the caller's index tables put it, dimmed, underneath.
+
+    ``-1`` is a cell with no source — the ground a pan has just moved onto — and the
+    pasted cell keeps the empty-cell priority so anything drawn afterwards wins it.
+    """
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    src = MapCanvas(3, 1)
+    src.plot(0, 0, (200, 100, 50), 5)  # cell 0
+    src.plot(4, 0, (60, 120, 240), 5)  # cell 2
+
+    canvas = MapCanvas(3, 1)
+    canvas.paste_raster(src.raster(), [-1, 0, 2], [0], fade=0.5)
+    out = "".join(canvas.to_ansi_lines())
+    assert _plain([out]) == " ⠁⠁"  # shifted one cell right; the gap has no source
+    assert _dot_colors([out]) == {(100, 50, 25), (30, 60, 120)}
+
+    canvas.plot(2, 0, (10, 20, 30), 0)  # a real feature, drawn after, takes the cell
+    assert _dot_colors(["".join(canvas.to_ansi_lines())]) >= {(10, 20, 30)}
+
+
 def test_parse_hex() -> None:
     """Hex colours parse to RGB triples, with or without the leading hash."""
     assert parse_hex("#38bdf8") == (0x38, 0xBD, 0xF8)
@@ -512,6 +544,96 @@ def test_render_map_works_without_basemap() -> None:
     ]
     out = _plain(render_map(vp, {}, markers))
     assert "★" in out and "▲" in out
+
+
+# -- the ghost ground ---------------------------------------------------------
+
+
+def _dot_rows(lines: list[str]) -> list[str]:
+    """Each rendered row reduced to its braille dots (labels and markers blanked out)."""
+    return [
+        "".join(ch if 0x2800 <= ord(ch) <= 0x28FF else " " for ch in row)
+        for row in _plain(lines).split("\n")
+    ]
+
+
+def _ghosted(zoom: int = 14, *, dlon: float = 0.0, dlat: float = 0.0, dz: int = 0):
+    """Draw the fixture, then paint a moved view standing on that frame's ground."""
+    from meshterm.ui.map_render import MapMarker, render_ground, render_map
+
+    vp = Viewport(45.5019, -73.5674, zoom, 106, 104)
+    tiles = {(14, 4843, 5861): decode_tile(_FIXTURE.read_bytes())}
+    markers = [MapMarker("Yagi", 45.5019, -73.5674, is_repeater=True)]
+    lines, ghost = render_ground(vp, tiles, markers)
+    moved = Viewport(vp.center_lat + dlat, vp.center_lon + dlon, zoom + dz, 106, 104)
+    return lines, render_map(moved, {}, markers, ghost=ghost)
+
+
+def test_a_panned_view_stands_on_the_ground_it_just_had() -> None:
+    """Panning slides the last frame's streets across rather than blanking to black.
+
+    Rasterizing takes far too long to sit on a keypress, so the paint that answers a pan
+    has no ground of its own. Without the ghost it drew the markers on an empty canvas —
+    the map going black between every step and flashing back when the frame landed.
+    """
+    from meshterm.ui.map_render import MapMarker, render_map
+
+    vp = Viewport(45.5019, -73.5674, 14, 106, 104)
+    markers = [MapMarker("Yagi", 45.5019, -73.5674, is_repeater=True)]
+    bare = sum(1 for ch in _plain(render_map(vp, {}, markers)) if ch.strip())
+
+    drawn, moved = _ghosted(dlon=0.004)
+    lit = sum(1 for ch in _plain(moved) if ch.strip())
+    assert lit > bare * 10, "the panned paint is as empty as one with no ghost at all"
+    assert lit < sum(1 for ch in _plain(drawn) if ch.strip()), "nothing was left behind"
+
+
+def test_the_ghost_ground_lands_where_the_pan_put_it() -> None:
+    """The reused dots move by exactly the cells the view moved, to within one cell."""
+    drawn, moved = _ghosted(dlon=0.004)
+    # 0.004° of longitude at zoom 14: dots per degree = 256 * 2^14 / 360.
+    shift = round(0.004 * 256 * (2**14) / 360 / 2)  # → cells (2 dots wide)
+
+    before, after = _dot_rows(drawn), _dot_rows(moved)
+    assert len(before) == len(after)
+    matched = sum(
+        1
+        for old, new in zip(before, after)
+        if old[shift:].rstrip() and new.rstrip() == old[shift:].rstrip()
+    )
+    assert matched > len(before) // 2, "the ground did not slide with the view"
+
+
+def test_the_ghost_ground_carries_no_stale_text() -> None:
+    """Only the dots come along: a label pinned to old ground would name the wrong place."""
+    drawn, moved = _ghosted(dlon=0.004)
+    assert "Montréal" in _plain(drawn)
+    assert "Montréal" not in _plain(moved)
+    assert "Yagi" in _plain(moved)  # the markers are redrawn where they really are
+
+
+def test_the_ghost_ground_dims_while_its_replacement_is_drawn() -> None:
+    """Reused ground reads as provisional — it is stale, and short of the leading edge."""
+    from meshterm.ui.map_render import _GHOST_FADE
+
+    assert 0 < _GHOST_FADE < 1  # the desktop default; the 16-slot console binds it to 1.0
+    drawn, moved = _ghosted(dlon=0.004)
+    faded = {
+        tuple(round(c * _GHOST_FADE) for c in rgb) for rgb in _dot_colors(drawn)
+    }
+    ghost = _dot_colors(moved)
+    assert ghost and ghost <= faded, "the reused ground is not the ground we drew"
+    assert not ghost & _dot_colors(drawn), "it came through at full strength"
+
+
+def test_the_ghost_ground_is_dropped_once_it_says_nothing() -> None:
+    """A view that has left the old frame behind gets the honest empty canvas."""
+    _, far = _ghosted(dlon=4.0)  # panned clean off the ground we had
+    assert not any(row.strip() for row in _dot_rows(far))
+    _, deep = _ghosted(dz=3)  # zoomed past what a cell-coarse stand-in can say
+    assert not any(row.strip() for row in _dot_rows(deep))
+    _, near = _ghosted(dz=1)  # one step is still a readable preview
+    assert any(row.strip() for row in _dot_rows(near))
 
 
 # -- basemap source (offline behaviour) ---------------------------------------
@@ -1593,3 +1715,30 @@ def test_map_drops_a_stale_frame_once_the_view_moves(monkeypatch) -> None:  # no
 
     screen.handle("right")
     assert screen.render_body(80) != ["ground"] * 20, "kept a misaligned frame"
+
+
+async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:  # noqa: ANN001
+    """A misaligned frame is dropped, but the ground it drew is kept and reprojected.
+
+    It is the only ground anyone has until the next raster lands, and a pan that answers
+    with an empty canvas blanks the map to black between every keypress.
+    """
+    from meshterm.ui import map_screen as ms
+
+    started: list = []
+    screen = _async_map(monkeypatch, started)
+    screen.render_body(80)
+
+    await screen._draw_ground(screen._ground_key(screen._viewport), screen._viewport, {})
+    assert screen._ghost is not None, "the finished raster left no ground behind"
+    assert screen._ghost.viewport == screen._viewport
+
+    handed: list = []
+    real = ms.render_map
+    monkeypatch.setattr(
+        ms, "render_map",
+        lambda vp, tiles, m, **k: handed.append(k.get("ghost")) or real(vp, tiles, m, **k),
+    )
+    screen.handle("right")
+    screen.render_body(80)
+    assert handed and handed[-1] is screen._ghost, "the pan painted on an empty canvas"

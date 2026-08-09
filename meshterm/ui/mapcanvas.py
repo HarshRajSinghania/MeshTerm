@@ -15,6 +15,7 @@ truecolour ANSI lines, which is exactly what the TUI frame consumes.
 from __future__ import annotations
 
 import unicodedata
+from dataclasses import dataclass
 from typing import Optional
 
 from ..platforms import Platform, on_platform
@@ -68,6 +69,21 @@ _DOT_BITS = (
     (0x08, 0x10, 0x20, 0x80),  # right column, rows 0..3
 )
 
+
+@dataclass(frozen=True, slots=True)
+class Raster:
+    """A finished canvas's braille layer alone — its dots and their cell colours.
+
+    The text overlay is deliberately *not* here: the labels and markers a frame carries are
+    tied to where things were when it was drawn, so a caller reusing an old raster over a
+    moved view (:meth:`MapCanvas.paste_raster`) wants the ground and draws its own overlay
+    on top. Taken with :meth:`MapCanvas.raster`, kept with :meth:`MapCanvas.paste_raster`.
+    """
+
+    cell_w: int
+    cell_h: int
+    bits: list[list[int]]
+    color: list[list[Optional[RGB]]]
 
 
 class MapCanvas:
@@ -192,6 +208,71 @@ class MapCanvas:
                     x_from += -x_from % stipple
                 for x in range(x_from, x_to + 1, stipple):
                     self.plot(x, y, color, priority)
+
+    # -- reuse ------------------------------------------------------------------
+
+    def raster(self) -> Raster:
+        """Take a copy of the braille layer, for a later frame to paste back in.
+
+        Copied rather than shared: the caller keeps this for as long as it is the newest
+        ground it has, and a canvas that is still being drawn on must not be able to
+        change it underneath them.
+        """
+        return Raster(
+            self.cell_w,
+            self.cell_h,
+            [row[:] for row in self._bits],
+            [row[:] for row in self._color],
+        )
+
+    def paste_raster(
+        self, src: Raster, cols: list[int], rows: list[int], *, fade: float = 1.0
+    ) -> None:
+        """Fill this canvas's braille layer from ``src``, one cell at a time.
+
+        Cell ``(cx, cy)`` here takes cell ``(cols[cx], rows[cy])`` of ``src``; a ``-1`` in
+        either list is a cell with no source (the ground the view has moved onto, which
+        nothing has ever drawn) and is left blank. The caller owns the projection — it is
+        the one that knows what the two rasters *mean* geographically — and this end is a
+        copy loop, deliberately: it runs on the paint path, between a pan keystroke and the
+        frame that answers it.
+
+        Cell granularity is the whole point of the shape: a dot-exact reprojection would be
+        eight times the work for a picture that is about to be replaced anyway, so a paste
+        lands within half a cell of true and the real raster corrects it a moment later.
+
+        Args:
+            src: The raster to sample.
+            cols: Source cell x per canvas column (``-1`` = none), length ``cell_w``.
+            rows: Source cell y per canvas row (``-1`` = none), length ``cell_h``.
+            fade: Multiplier on every pasted colour, for a caller marking the ground as
+                provisional. ``1.0`` pastes the colours untouched.
+        """
+        faded: dict[RGB, RGB] = {}
+        for cy, sy in enumerate(rows):
+            if sy < 0 or cy >= self.cell_h:
+                continue
+            src_bits, src_color = src.bits[sy], src.color[sy]
+            bits, color, prio = self._bits[cy], self._color[cy], self._prio[cy]
+            for cx, sx in enumerate(cols):
+                if sx < 0 or cx >= self.cell_w:
+                    continue
+                dots = src_bits[sx]
+                if not dots:
+                    continue
+                bits[cx] = dots
+                rgb = src_color[sx]
+                if rgb is not None and fade != 1.0:
+                    dim = faded.get(rgb)
+                    if dim is None:
+                        dim = faded[rgb] = (
+                            round(rgb[0] * fade), round(rgb[1] * fade), round(rgb[2] * fade)
+                        )
+                    rgb = dim
+                color[cx] = rgb
+                # Left at the empty-cell priority so anything drawn afterwards wins the
+                # cell outright: pasted ground is a stand-in, never evidence.
+                prio[cx] = -1
 
     # -- overlay (markers + labels) --------------------------------------------
 

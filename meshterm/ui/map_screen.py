@@ -38,7 +38,7 @@ from ..core.mvt import Layer
 from ..platforms import get_platform
 from ..services import modifier_watch
 from ..services.basemap import BasemapSource
-from .map_render import MapMarker, render_map
+from .map_render import Ghost, MapMarker, render_ground, render_map
 from .tui.render import query_line
 from .tui.screen import Screen
 
@@ -208,6 +208,9 @@ class MapScreen(Screen):
         # path and the paint serves whatever is ready.
         self._frame: Optional[list[str]] = None
         self._frame_key: Optional[tuple] = None
+        # That frame's ground, kept so a view that has moved on can stand on it until its
+        # own is drawn (see :meth:`_ground`).
+        self._ghost: Optional[Ghost] = None
         self._drawing: Optional[tuple] = None  # the key currently being rasterized
         self._wanted: Optional[tuple[tuple, Viewport]] = None  # the next one to draw
 
@@ -310,10 +313,13 @@ class MapScreen(Screen):
         * **Only the tiles changed** (a fetch landed, the view did not move) — the previous
           raster is still correctly aligned, just missing some streets. Keep showing it
           rather than blanking a good picture to redraw the same ground.
-        * **The view moved** — the old raster is now in the wrong place, and showing it
-          would be a lie about where you are looking. Draw the nodes alone on the *new*
-          viewport, which costs a few milliseconds, so panning tracks the keys exactly and
-          the streets catch up.
+        * **The view moved** — the old raster is in the wrong place *as a picture*, but the
+          ground it drew is still the only ground anyone has: reproject it onto the new
+          viewport (:class:`~meshterm.ui.map_render.Ghost`) and draw the nodes over it at
+          their real positions. That costs a few milliseconds, so panning still tracks the
+          keys exactly, and the streets slide with the view — dimmed, and short of the
+          edge you are panning onto — instead of the map blanking to black between every
+          keypress and flashing back when the frame lands (JP, 2026-08-09).
         """
         key = self._ground_key(vp)
         if self._frame_key == key and self._frame is not None:
@@ -323,8 +329,8 @@ class MapScreen(Screen):
         if self._frame is not None and self._frame_key is not None:
             if self._frame_key[0] == vp and self._frame_key[2] == key[2]:
                 return list(self._frame)  # same view, only tiles differ — still aligned
-        # The view moved (or nothing has ever been drawn): markers only, no tiles.
-        return render_map(vp, {}, self._markers, find=self._filter)
+        # The view moved (or nothing has ever been drawn): markers over the last ground.
+        return render_map(vp, {}, self._markers, find=self._filter, ghost=self._ghost)
 
     def _schedule_ground(self, key: tuple, vp: Viewport) -> None:
         """Note that ``key`` wants drawing, and start on it if nothing else is in flight.
@@ -353,7 +359,9 @@ class MapScreen(Screen):
             # A static render (the CLI's map export, a test): there is nothing to be
             # responsive *to*, so draw it here and now rather than never.
             self._drawing = None
-            self._frame = render_map(vp, tiles, self._markers, find=self._filter)
+            self._frame, self._ghost = render_ground(
+                vp, tiles, self._markers, find=self._filter
+            )
             self._frame_key = key
             return
         self._drawing = key
@@ -368,13 +376,14 @@ class MapScreen(Screen):
         frame (measured worst-case delay ~50 ms, against the ~1 s of a blocking draw).
         """
         try:
-            lines = await asyncio.to_thread(
-                render_map, vp, tiles, self._markers, find=self._filter
+            drawn = await asyncio.to_thread(
+                render_ground, vp, tiles, self._markers, find=self._filter
             )
         except Exception:  # noqa: BLE001 - a frame we couldn't draw is one we draw again
-            lines = None
+            drawn = None
         self._drawing = None
-        if lines is not None:
+        if drawn is not None:
+            lines, self._ghost = drawn
             self._frame, self._frame_key = lines, key
             self._needs_scrub = True
             self._session.invalidate()

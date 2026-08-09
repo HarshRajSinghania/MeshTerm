@@ -6,6 +6,11 @@ overlays the mesh nodes with their names on top. It is pure and synchronous — 
 happens elsewhere (:mod:`meshterm.services.basemap`) — so both the interactive screen and
 the one-shot CLI render call the same code.
 
+Composing a frame is most of a second of pure Python, far more than a pan keystroke can
+wait for, so a frame can also be drawn on the ground of the *last* one, reprojected onto
+the view that has since moved (:class:`Ghost`) — which is what the interactive map paints
+while the real raster is being drawn behind it.
+
 Colours target a dark terminal (the app theme): warm roads, grey minor streets, blue water
 and rivers, faint green parks. Because a cell shows one colour, draw priorities keep the
 important feature visible where things overlap (rivers over water, major roads over minor).
@@ -23,7 +28,8 @@ from typing import Optional
 
 from ..core.geo import Viewport
 from ..core.mvt import GEOM_LINE, GEOM_POLYGON, Layer
-from .mapcanvas import MapCanvas
+from ..platforms import Platform, on_platform
+from .mapcanvas import MapCanvas, Raster
 from .marks import NODE_MARK, REPEATER_MARK, RGB, SELF_MARK, UNKNOWN_MARK, parse_hex
 from .theme import mark_rgb
 
@@ -178,6 +184,104 @@ class _Frame:
     labels: list[_Label] = field(default_factory=list)
 
 
+# -- the stale ground ---------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Ghost:
+    """A finished frame's ground, and the view it was drawn for.
+
+    Rasterizing a view is most of a second of pure Python, so a pan moves the view long
+    before its picture can exist. Rather than answer the keystroke with an empty canvas —
+    the map blanking to black on every step and flashing back when the frame lands — the
+    paint reprojects *this*: the streets as they were, shifted to where they now belong,
+    under fresh markers. It is the ground alone (see :class:`~meshterm.ui.mapcanvas.
+    Raster`); labels and node markers are redrawn at their real places on top.
+
+    Attributes:
+        raster: The braille layer of the frame it came from.
+        viewport: The view that frame was drawn for, which is what says where its dots
+            have since moved to.
+    """
+
+    raster: Raster
+    viewport: Viewport
+
+
+#: How far the reused ground dims while its replacement is being drawn — enough to read as
+#: provisional (and to keep the not-yet-drawn edge the view is panning onto from looking
+#: like real empty ground) without losing the shape of the streets.
+#:
+#: Bound at platform-switch time, and *off* where there is no truecolour: on the 16-slot
+#: console a colour does not dim, it lands in a different slot, so a fade there is a
+#: recolouring — the faint road classes drop to black and the rest muddle together. The
+#: title's ``drawing…`` carries the same news on both platforms.
+_GHOST_FADE = 0.6
+
+#: Zoom steps of difference beyond which the ghost is dropped rather than scaled. One step
+#: reads as the coarse preview it is; past two it is a smear of blocks that says nothing
+#: true about the ground.
+_GHOST_MAX_STEPS = 2
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Bind the ghost's fade to what the platform's palette can actually express."""
+    global _GHOST_FADE
+    _GHOST_FADE = 0.6 if platform.truecolor else 1.0
+
+
+def _ghost_axis(
+    cells: int, dots: int, origin: float, src_origin: float, scale: float, src_cells: int
+) -> list[int]:
+    """Source cell index per canvas cell along one axis (``-1`` where there is none).
+
+    Both viewports are windows in Web Mercator, so one maps onto the other by an affine
+    scale-and-shift on each axis independently — a dot at world position ``d + origin``
+    sits at ``(d + origin) * scale - src_origin`` in the older view — and the whole
+    reprojection collapses to two little index tables the paste then reads off.
+
+    Args:
+        cells: Canvas size along this axis, in cells.
+        dots: Dots per cell on this axis (2 across, 4 down).
+        origin: The canvas viewport's world-pixel origin on this axis.
+        src_origin: The ghost viewport's world-pixel origin, at *its* zoom.
+        scale: World pixels of the ghost's zoom per world pixel of ours.
+        src_cells: The ghost raster's size along this axis, for the bounds test.
+    """
+    out: list[int] = []
+    for c in range(cells):
+        centre = c * dots + dots / 2  # sample each cell at its middle dot
+        src = math.floor((centre + origin) * scale - src_origin) // dots
+        out.append(src if 0 <= src < src_cells else -1)
+    return out
+
+
+def _paste_ghost(canvas: MapCanvas, viewport: Viewport, ghost: Ghost) -> None:
+    """Lay ``ghost``'s ground onto ``canvas``, reprojected to ``viewport``.
+
+    A no-op when the two views have drifted too far apart in zoom, or when the pan has
+    carried the view clear off the old frame's ground — in both cases there is nothing
+    left to stand in, and the markers alone are the honest picture.
+    """
+    src = ghost.viewport
+    if abs(src.zoom - viewport.zoom) > _GHOST_MAX_STEPS:
+        return
+    scale = 2.0 ** (src.zoom - viewport.zoom)
+    ox, oy = viewport.origin_world
+    sx, sy = src.origin_world
+    cols = _ghost_axis(canvas.cell_w, 2, ox, sx, scale, ghost.raster.cell_w)
+    if not any(c >= 0 for c in cols):
+        return
+    rows = _ghost_axis(canvas.cell_h, 4, oy, sy, scale, ghost.raster.cell_h)
+    if not any(r >= 0 for r in rows):
+        return
+    canvas.paste_raster(ghost.raster, cols, rows, fade=_GHOST_FADE)
+
+
+# -- composing a frame --------------------------------------------------------
+
+
 def render_map(
     viewport: Viewport,
     tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
@@ -185,6 +289,7 @@ def render_map(
     *,
     max_labels: int = 80,
     find: str = "",
+    ghost: Optional[Ghost] = None,
 ) -> list[str]:
     """Render a full map frame to truecolour ANSI lines.
 
@@ -196,12 +301,52 @@ def render_map(
         find: A live node-name filter: markers whose label contains it
             (case-insensitively) draw with bright white labels while the rest dim to
             unlabelled context. Empty draws every node normally.
+        ghost: Ground from an earlier frame to lay down first, reprojected onto this view
+            (see :class:`Ghost`). It is a stand-in for ground that isn't drawn yet, so it
+            goes with the frames that have no ``tiles`` of their own; a frame drawing the
+            real thing has no use for one.
 
     Returns:
         One ANSI string per row, ready for the TUI frame or the console.
     """
+    return _compose(
+        viewport, tiles, markers, max_labels=max_labels, find=find, ghost=ghost
+    ).to_ansi_lines()
+
+
+def render_ground(
+    viewport: Viewport,
+    tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
+    markers: list[MapMarker],
+    *,
+    max_labels: int = 80,
+    find: str = "",
+) -> tuple[list[str], Ghost]:
+    """Render a frame and keep its ground, for the next moved view to stand on.
+
+    The same work as :func:`render_map`, plus the :class:`Ghost` the frame leaves behind —
+    which is why the interactive map calls this one for the real (background) raster and
+    :func:`render_map` for the immediate paints in between.
+    """
+    canvas = _compose(viewport, tiles, markers, max_labels=max_labels, find=find)
+    return canvas.to_ansi_lines(), Ghost(canvas.raster(), viewport)
+
+
+def _compose(
+    viewport: Viewport,
+    tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
+    markers: list[MapMarker],
+    *,
+    max_labels: int = 80,
+    find: str = "",
+    ghost: Optional[Ghost] = None,
+) -> MapCanvas:
+    """Draw one frame onto a fresh canvas — see :func:`render_map` for the arguments."""
     canvas = MapCanvas(viewport.dot_w // 2, viewport.dot_h // 4)
     frame = _Frame(canvas=canvas, viewport=viewport)
+
+    if ghost is not None:
+        _paste_ghost(canvas, viewport, ghost)
 
     for (z, x, y), layers in tiles.items():
         if layers:
@@ -227,7 +372,7 @@ def render_map(
                 named.add(label.text)
                 break
 
-    return canvas.to_ansi_lines()
+    return canvas
 
 
 def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> None:
