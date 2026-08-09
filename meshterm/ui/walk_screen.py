@@ -55,7 +55,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -76,14 +76,11 @@ from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _format_age, highlighted_hash
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: The dot-space margin the neighbour fan keeps clear of the canvas's *east* edge (the
-#: vertical margins are rows, not dots — see :meth:`WalkScreen._fan_rows`). It holds a
-#: fan node's rightward label (see
-#: :meth:`WalkScreen._label_right`); it is deliberately roomy — pulling the whole fan a
-#: little west of the edge — so even the tightest (due-east) marker has cells to name
-#: itself in full rather than clipping a long contact name, which the labels' room-to-edge
-#: clamp then spends wherever the fan leaves it.
-_PAD_X_DOTS = 44
+#: The share of the width east of the focus's name that the fan keeps for its own reach,
+#: however long the names it must make room for. Below this the graph stops reading as a
+#: fan at all — the markers pile onto the focus — so past it the labels clip instead (see
+#: :meth:`WalkScreen._place_neighbours`).
+_MIN_FAN_REACH = 1 / 3
 
 #: The canvas's floor in character rows: below this the fan's shape stops reading.
 _CANVAS_MIN_H = 6
@@ -100,9 +97,13 @@ _LIST_MIN_ROWS = 3
 #: markers far more room than the old flat cap allowed.
 _LABEL_W = 22
 
-#: Kept as the *fan* label cap for symmetry with the focus/selection one; both now defer to
-#: the per-marker room-to-edge clamp, so the two need no longer differ.
-_FAN_LABEL_W = _LABEL_W
+#: The fan's own label cap — higher than the focus's, and the number the east margin is
+#: sized to hold (JP, 2026-08-09). The fan is *where the names are read*, so it gets the
+#: room; the focus keeps the tighter :data:`_LABEL_W` because every cell it spends pushes
+#: the whole fan east, and its name is spelled out in full on the line below the canvas
+#: anyway. 32 is the protocol's own limit on a node name, so a name that fits the mesh
+#: fits here.
+_FAN_LABEL_W = 32
 
 #: The fan's angular reach on each side of due east, in radians. This sets the fan's
 #: *vertical* spread (the marker rows the leaves fan across); the *horizontal* reach is
@@ -769,7 +770,18 @@ class WalkScreen(Screen):
         slots = len(shown) + (1 if hidden else 0)
         fx, fy = self._focus_pos(width, canvas_h, slots)
         ax, ay, focus_name = self._focus_anchor(width, canvas_h, slots)
-        placed = self._place_neighbours(width, canvas_h, shown, bool(hidden))
+        # What the fan is about to be asked to spell, so the placer can leave room for it
+        # rather than let the widest name arrive pre-ellipsized. The … slot's own label is
+        # whichever of its two forms this paint will draw.
+        stand_in = selected if selected in hidden else None
+        labels = [self._label(node) for node in shown]
+        if hidden:
+            labels.append(
+                self._label(stand_in) if stand_in is not None else f"+{len(hidden)} weaker"
+            )
+        placed = self._place_neighbours(
+            width, canvas_h, shown, bool(hidden), labels=labels
+        )
 
         # Edges first (markers and labels overprint them), coloured by SNR and faded by
         # evidence age. Every edge leaves the focus's name-end anchor and lands on its
@@ -809,7 +821,6 @@ class WalkScreen(Screen):
         # selection, then the strongest links) so the collision check drops the least
         # important where two would overprint.
         white = (255, 255, 255)
-        stand_in = selected if selected in hidden else None
         for other, (x, y) in placed.items():
             node = stand_in if other == _MORE else other
             if node is None:
@@ -828,18 +839,26 @@ class WalkScreen(Screen):
             x, y = placed[_MORE]
             grey = mark_rgb(_UNKNOWN[1])
             if stand_in is not None:
-                # The marker is that node now, so it reads as that node: its own name in its
-                # own hue, with the counter saying which of the collapsed links it is. The
-                # count is what keeps it honest — a lone name here would claim the fan has
-                # one more member than it drew.
+                # The marker is that node now, so it reads as that node: mark and name
+                # exactly like its drawn siblings, with the rank among the collapsed set
+                # *west* of the mark (JP, 2026-08-09) rather than trailing the name — so
+                # the name still ends where every other name on the fan ends, and the count
+                # reads as an annotation on the marker instead of part of what it is called.
+                # The count is what keeps the stand-in honest: a lone name here would claim
+                # the fan has one more member than it drew.
+                self._label_left(canvas, x, y, self._more_rank(stand_in, hidden), grey)
                 self._label_right(
-                    canvas, x, y, self._label(stand_in), self._label_rgb(stand_in),
-                    suffix=f" ({hidden.index(stand_in) + 1}/{len(hidden)})", suffix_rgb=grey,
+                    canvas, x, y, self._label(stand_in), self._label_rgb(stand_in)
                 )
             else:
                 self._label_right(canvas, x, y, f"+{len(hidden)} weaker", grey)
 
         return canvas.to_ansi_lines()
+
+    @staticmethod
+    def _more_rank(node: str, hidden: list[str]) -> str:
+        """``(2/17)`` — where ``node`` sits among the collapsed links, and how many there are."""
+        return f"({hidden.index(node) + 1}/{len(hidden)})"
 
     def _fan_nodes(self) -> list[str]:
         """The focus's ways *onward*: every neighbour but the one the walk came from.
@@ -923,7 +942,13 @@ class WalkScreen(Screen):
         return anchor_cx * 2, fy, name
 
     def _place_neighbours(
-        self, width: int, canvas_h: int, shown: list[str], more: bool
+        self,
+        width: int,
+        canvas_h: int,
+        shown: list[str],
+        more: bool,
+        *,
+        labels: Optional[Sequence[str]] = None,
     ) -> dict[str, tuple[int, int]]:
         """Dot-space positions for the drawn fan: a row grid east of the focus's name.
 
@@ -933,13 +958,31 @@ class WalkScreen(Screen):
         (keyed :data:`_MORE`) taking the fan's last slot. The rows come from
         :meth:`_fan_rows`: evenly spaced, one blank row between each, the block centred.
 
-        Only the *easting* is an arc. A leaf's row sets an angle, and the marker eases
-        back from due-east by :data:`_FAN_X_FLATTEN` of it — so the fan bows gently rather
-        than standing as a flat column, while the rim leaves still reach well east instead
-        of curling back toward the focus on a true circle. A small fan uses proportionally
-        less of the arc, so two neighbours sit near due east rather than at opposite rims.
+        How far east the fan reaches is **whatever the names leave** (JP, 2026-08-09). The
+        east margin used to be a constant, sized for a name of twenty cells, so anything
+        longer arrived at the tightest (due-east) marker already ellipsized. Now the widest
+        label the caller is about to draw sets the margin, and the fan pulls west by exactly
+        that much: a fan of short names spreads to the edge, one carrying a long name gives
+        up reach to spell it. The floor is :data:`_MIN_FAN_REACH` of the width — past it the
+        markers would pile onto the focus and the graph stop reading as a fan at all, so a
+        canvas too narrow for both goes back to clipping the labels.
+
+        Only the *easting* is an arc. A leaf's row sets an angle, and the marker eases back
+        from due-east by :data:`_FAN_X_FLATTEN` of it — so the fan bows gently rather than
+        standing as a flat column, while the rim leaves still reach well east instead of
+        curling back toward the focus on a true circle. A small fan uses proportionally less
+        of the arc, so two neighbours sit near due east rather than at opposite rims.
         Anchoring at the name-end (rather than at the icon) hands the fan the whole width
         east of the focus label to breathe in.
+
+        Args:
+            width: The canvas width in cells.
+            canvas_h: The canvas height in cells.
+            shown: The neighbours drawn with markers of their own, strongest first.
+            more: Whether a collapsed ``…`` marker takes the last slot.
+            labels: The label text each slot will be given, in slot order — what the east
+                margin is sized to hold. Defaults to the shown nodes' own names, which is
+                right whenever the caller has no ``…`` label to account for.
         """
         placed: dict[str, tuple[int, int]] = {}
         keys = list(shown) + ([_MORE] if more else [])
@@ -948,7 +991,12 @@ class WalkScreen(Screen):
         dot_w = width * 2
         ax, _ay, _name = self._focus_anchor(width, canvas_h, len(keys))
         rows = self._fan_rows(canvas_h, len(keys))
-        rx = max(10.0, dot_w - _PAD_X_DOTS - ax)
+        if labels is None:
+            labels = [self._label(node) for node in shown]
+        # The marker's own cell, a blank, then the label: that is what must sit east of the
+        # tip, in cells, doubled into dot space.
+        reserve = 2 * (2 + min(_FAN_LABEL_W, max((cell_len(t) for t in labels), default=0)))
+        rx = max((dot_w - ax) * _MIN_FAN_REACH, dot_w - reserve - ax)
         phi = _FAN_HALF_ANGLE * min(1.0, (len(keys) - 1) / 5.0)
         for i, (node, row) in enumerate(zip(keys, rows)):
             angle = 0.0 if len(keys) == 1 else -phi + (2 * phi) * i / (len(keys) - 1)
@@ -957,11 +1005,11 @@ class WalkScreen(Screen):
         return placed
 
     @staticmethod
-    def _clip(label: str, room: int) -> str:
+    def _clip(label: str, room: int, cap: int = _LABEL_W) -> str:
         """``label`` fit to ``room`` cells: whole if it fits, else ellipsized (``…`` alone
         at one cell, nothing at zero). The cap and the room-to-edge both flow through here,
         so a name is only ever shortened as far as it truly must be."""
-        room = min(room, _LABEL_W)
+        room = min(room, cap)
         if room <= 0:
             return ""
         if len(label) <= room:
@@ -987,15 +1035,7 @@ class WalkScreen(Screen):
                 return
 
     def _label_right(
-        self,
-        canvas: MapCanvas,
-        x: int,
-        y: int,
-        label: str,
-        rgb: RGB,
-        *,
-        suffix: str = "",
-        suffix_rgb: Optional[RGB] = None,
+        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
     ) -> None:
         """Place a node's label to the *right* of its marker, dodging by row.
 
@@ -1005,26 +1045,38 @@ class WalkScreen(Screen):
         row below and above to slip past a crowded neighbour; if every checked row
         is blocked it is stamped to the right regardless, so a node is never left a
         bare glyph. The name is clamped to the cells actually free between the marker
-        and the canvas edge, so it keeps its full length wherever the fan leaves room
-        and only clips on the tightest (due-east) markers.
+        and the canvas edge — which :meth:`_place_neighbours` has already sized the fan
+        to keep, so on any canvas wide enough the clamp never bites.
         """
         cx, cy = x >> 1, y >> 2
         start = cx + 2
-        label = self._clip(label, canvas.cell_w - start - cell_len(suffix))
+        label = self._clip(label, canvas.cell_w - start, cap=_FAN_LABEL_W)
         if not label:
             return
-        run = label + suffix
         for dy in (0, 1, -1, 2, -2):
-            if canvas._place_run(start, cy + dy, run, rgb, bold=True, checked=True):
-                cy = cy + dy
-                break
-        else:
-            canvas._place_run(start, cy, run, rgb, bold=True)
-        if suffix:
-            # Re-lay the tail in its own colour over the run just placed: the collision
-            # check has to weigh the whole label at once, so it goes down as one piece and
-            # the two-tone is painted back on.
-            canvas._place_run(start + cell_len(label), cy, suffix, suffix_rgb or rgb, bold=True)
+            if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):
+                return
+        canvas._place_run(start, cy, label, rgb, bold=True)
+
+    def _label_left(
+        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
+    ) -> None:
+        """Place a short annotation to the *left* of a marker, on the marker's own row.
+
+        The one thing drawn on that side (the collapsed marker's rank — see
+        :meth:`_canvas_lines`), and it stays on the row it annotates rather than dodging:
+        a counter that slipped a row would read as belonging to the neighbour above. West
+        of a fan marker is the marker's own incoming edge and little else, so it is placed
+        unconditionally and simply overprints the braille it lands on — the same fallback
+        :meth:`_label_right` ends on. It carries its own trailing blank into the run so the
+        gap before the mark is a real gap: left unwritten, the incoming edge's braille
+        threads straight through it and glues the counter to the glyph.
+        """
+        cx, cy = x >> 1, y >> 2
+        label = self._clip(label, cx - 1, cap=_FAN_LABEL_W)
+        if not label:
+            return
+        canvas._place_run(cx - 1 - cell_len(label), cy, label + " ", rgb, bold=True)
 
     def _legend(self) -> Text:
         """The one-line glyph legend and edge key under the canvas.

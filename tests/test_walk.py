@@ -806,11 +806,12 @@ def test_walk_collapsed_marker_stands_in_for_the_selected_weak_link() -> None:
     target = hidden[1]
     canvas = screen._canvas_lines(80, 14, target)
     body = _plain(canvas)
-    assert f"{screen._label(target)} (2/{len(hidden)})" in body
-    assert "weaker" not in body
+    # The rank sits *west* of the mark, so the name still ends where every other name on
+    # the fan ends and the count reads as an annotation on the marker.
     glyph, _colour = screen._glyph(target)
-    assert f"{glyph} {screen._label(target)}" in body
-    # The name keeps its own hue and the counter is grey — two colours, one label.
+    assert f"(2/{len(hidden)}) {glyph} {screen._label(target)}" in body
+    assert "weaker" not in body
+    # The name keeps its own hue and the counter is grey — two runs, one row.
     from meshterm.ui.theme import mark_rgb
 
     row = next(line for line in canvas if screen._label(target) in _plain([line]))
@@ -820,3 +821,55 @@ def test_walk_collapsed_marker_stands_in_for_the_selected_weak_link() -> None:
 
 def _code(rgb: tuple[int, int, int]) -> str:
     return f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}m"
+
+
+def _long_name_screen(names: list[str]) -> WalkScreen:
+    """Us at the centre of a fan of `names`, strongest first."""
+    contacts = [
+        Contact(name=n, public_key=f"{i + 0x20:02x}" * 32, node_type=2)
+        for i, n in enumerate(names)
+    ]
+    topo = MeshTopology(US, contacts=contacts)
+    when = utcnow()
+    for i, c in enumerate(contacts):
+        node = topo.canonical(c.public_key)
+        for _ in range(len(contacts) - i):
+            topo.add_walk([topo.self_id, node], snrs=[8.0 - i], when=when, source="trace")
+    screen = WalkScreen(
+        session=_FakeSession(), topo=topo,
+        contacts={topo.canonical(c.public_key): c for c in contacts},
+        self_label="Homestead",
+    )
+    screen.note_viewport(24)
+    return screen
+
+
+def test_walk_fan_gives_up_reach_so_a_long_name_spells_in_full() -> None:
+    """The east margin is whatever the names need — not a constant sized for twenty cells."""
+    long_name = "Sensor-Rooftop-Longueuil-East"  # 29 cells: past the old fixed margin
+    screen = _long_name_screen([long_name, "YUL-Cartierville", "Bob"])
+    body = _plain(screen._canvas_lines(80, 11, None))
+    assert long_name in body  # spelled whole, no trailing …
+
+    # The fan paid for it in reach: the same fan of short names pushes further east.
+    short = _long_name_screen(["Ann", "Bob", "Cid"])
+    tip = max(x for x, _y in screen._place_neighbours(
+        80, 11, screen._fan_nodes(), False,
+        labels=[screen._label(n) for n in screen._fan_nodes()],
+    ).values())
+    short_tip = max(x for x, _y in short._place_neighbours(
+        80, 11, short._fan_nodes(), False,
+    ).values())
+    assert short_tip > tip
+
+
+def test_walk_fan_keeps_its_reach_when_a_name_would_swallow_the_canvas() -> None:
+    """Past a point the labels clip instead: a fan pulled onto the focus draws nothing."""
+    screen = _long_name_screen(["X" * 60, "Bob", "Carol"])
+    ax, _ay, _n = screen._focus_anchor(53, 11, 3)
+    placed = screen._place_neighbours(
+        53, 11, screen._fan_nodes(), False,
+        labels=[screen._label(n) for n in screen._fan_nodes()],
+    )
+    assert min(x for x, _y in placed.values()) > ax  # still a fan, not a pile on the anchor
+    assert "…" in _plain(screen._canvas_lines(53, 11, None))  # the label gave way instead
