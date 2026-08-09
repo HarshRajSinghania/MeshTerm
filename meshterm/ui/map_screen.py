@@ -6,8 +6,11 @@ the UI never blocks on the network), and redraws via :func:`~meshterm.ui.map_ren
 render_map`. Keys:
 
 * the **arrow keys** pan; holding **Shift** pans by a single character cell for fine
-  positioning (on the PicoCalc too — the Shift watcher covers a console that strips the
-  modifier off an arrow),
+  positioning. On the PicoCalc the Shift watcher supplies the modifier the console
+  strips: its keymap turns Shift+↑/↓ into PgUp/PgDn (rescued back into fine pans here —
+  no physical PgUp exists there, so the code can't mean anything else) and eats
+  Shift+←/→ outright — those never reach the app at all until the console keymap maps
+  them back to plain arrows,
 * ``PgUp`` / ``PgDn`` zoom in / out,
 * ``Home`` recenters and refits to the dense core of the nodes — the *region* the mesh
   covers, and the same default view the map opens on,
@@ -404,7 +407,7 @@ class MapScreen(Screen):
         if vp is None:
             return
         if action in _PAN_DIRS:
-            # A shifted arrow the console reports as the bare arrow (the PicoCalc's VT
+            # A shifted arrow the console reports as the bare arrow (a keymap that
             # strips the modifier) still fine-pans: the watcher knows whether Shift is
             # physically held, and it stays False wherever it isn't watching — desktop
             # terminals report shift_up/... themselves, on the branch below.
@@ -412,9 +415,19 @@ class MapScreen(Screen):
         elif action.startswith("shift_") and action[len("shift_"):] in _PAN_DIRS:
             self._pan(vp, action[len("shift_"):], fine=True)
         elif action == "pageup":
-            self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
+            if modifier_watch.shift_down():
+                # The PicoCalc console's keymap translates Shift+↑ into PgUp (measured
+                # on-device, JP 2026-08-09: shifted vertical arrows were zooming). No
+                # physical PgUp exists on that keyboard — the pager rides the F-lane —
+                # so a raw PgUp with Shift held can only *be* a shifted arrow: fine-pan.
+                self._pan(vp, "up", fine=True)
+            else:
+                self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
         elif action == "pagedown":
-            self._viewport = vp.zoomed(-1)
+            if modifier_watch.shift_down():
+                self._pan(vp, "down", fine=True)  # Shift+↓ arrives as PgDn — see above
+            else:
+                self._viewport = vp.zoomed(-1)
         elif action in ("home", "ctrl_home"):
             self._reset_view(vp)
         elif action == "locate":

@@ -1223,6 +1223,30 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
         set_platform(REGULAR)
 
 
+def test_map_shifted_vertical_arrows_survive_the_console_keymap(monkeypatch) -> None:
+    """Shift+↑ arrives as PgUp on the PicoCalc console; with Shift physically down it
+    must fine-pan, not zoom — and plain PgUp (the F-lane's zoom) stays a zoom."""
+    from meshterm.services import modifier_watch
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    screen = MapScreen(
+        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14
+    )
+    screen.render_body(80)
+    zoom = screen._viewport.zoom
+    lat = screen._viewport.center_lat
+
+    monkeypatch.setattr(modifier_watch, "_shift_down", True)
+    screen.handle("pageup")  # the keymap's Shift+↑, rescued by the watcher
+    assert screen._viewport.zoom == zoom  # no zoom happened
+    assert screen._viewport.center_lat > lat  # …the view nudged north instead
+
+    monkeypatch.setattr(modifier_watch, "_shift_down", False)
+    screen.handle("pageup")  # a real zoom press (the F5 chip's action)
+    assert screen._viewport.zoom == zoom + 1
+
+
 def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
     """``Frame`` is the find's Enter under another name — dim, and inert, without a query."""
     from meshterm.ui.map_render import MapMarker
