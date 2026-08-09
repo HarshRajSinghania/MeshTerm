@@ -190,50 +190,52 @@ def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
 # --- the folded-in route line ---------------------------------------------------
 
 
-def test_route_line_shows_hashes_not_names() -> None:
-    """The pathline runs contact → relays → us, every hop by its hash; the tag trails on context."""
+def test_route_line_names_its_hops() -> None:
+    """The pathline runs contact → relays → us, every hop it can place by *name* — the
+    Message paths reading; the tag trails on the context line."""
     path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "device", None, 0,
         resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+        self_name="Us", hash_bytes=1,
     )
     line = path.plain
-    assert line.startswith("f2")  # the contact anchors the left, by hash
-    assert "3d" in line  # the relay's first-byte hash
-    assert "Far" not in line and "Hub" not in line  # names are not resolved into the line
-    assert "aa" in line  # our own node anchors the right, by hash
+    assert line.startswith("Far")  # the contact anchors the left, by name
+    assert "Hub" in line  # the relay reads as the contact it is, not as ``3d``
+    assert "3d" not in line and "f2" not in line  # no hop repeats its hash after its name
+    assert line.rstrip().endswith("Us")  # our own node anchors the right
     assert context.plain == "device route"  # the firmware-route tag, off the pathline itself
 
 
 def test_route_line_greys_hops_nobody_can_name() -> None:
-    """A hop the resolver can name keeps its key-derived hue on the hash; a hop nobody can
-    name — and a page node with no name — reads in the unknown-node grey, like the graph."""
+    """A named hop takes its key-derived hue; a hop nobody can name — and a page node with no
+    name — stands in its hash in the unknown-node grey, like the graph."""
     from meshterm.ui.theme import node_style
 
     path, _context = _route_line(
         "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
         resolve=make_node_resolver([HUB]), node_known=False,
-        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+        self_name="Us", hash_bytes=1,
     )
     styles = {path.plain[s.start : s.end]: str(s.style) for s in path.spans}
-    assert styles.get("ab") == "node.unknown"  # no contact names it → grey, no key hue
+    assert styles.get("ab") == "node.unknown"  # no contact names it → its hash, grey
     assert styles.get("f2") == "node.unknown"  # the nameless page node greys its own hash
     hued = {path.plain[s.start : s.end] for s in path.spans
             if str(s.style) == node_style("3d63c6429436")}
-    assert "3d" in hued  # the Hub is a named contact, so its hash keeps the hue
+    assert "Hub" in hued  # the Hub is a named contact: its name, in its own hue
 
 
 def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
-    """A device carrying 3-byte routing hashes shows 3-byte hops, not the 1-byte default."""
+    """Only the hops with no name to show spend hash cells — and those at the device's own
+    path-hash width, three bytes here rather than the 1-byte default."""
     path, _context = _route_line(
-        "Far", FAR.public_key, ("3d63c6429436",), "", None, 0,
-        resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", self_key=US + "0" * 52, hash_bytes=3,
+        "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
+        resolve=make_node_resolver([HUB]), node_known=False,
+        self_name="Us", hash_bytes=3,
     )
     line = path.plain
-    assert "f2c24f" in line  # the contact's hash at 3 bytes
-    assert "3d63c6" in line  # the relay's hash at 3 bytes
-    assert "aaaaaa" in line  # our own node's hash at 3 bytes
+    assert "f2c24f" in line  # the nameless page node, at 3 bytes
+    assert "abcd12" in line  # the unnamed relay, at 3 bytes
+    assert "Hub" in line and "3d63c6" not in line  # the named one never spends them
 
 
 def test_route_line_marks_the_best_route_and_its_context() -> None:
@@ -241,7 +243,7 @@ def test_route_line_marks_the_best_route_and_its_context() -> None:
     _path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "best", 6.5, 4,
         resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+        self_name="Us", hash_bytes=1,
     )
     line = context.plain
     assert "★ best" in line and "weakest" in line and "6.5" in line and "4×" in line
@@ -252,10 +254,10 @@ def test_route_line_direct_route_has_no_relay() -> None:
     path, _context = _route_line(
         "Far", FAR.public_key, (), "best", None, 0,
         resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", self_key=US + "0" * 52, hash_bytes=1,
+        self_name="Us", hash_bytes=1,
     )
     line = path.plain
-    assert "f2" in line and "aa" in line and "→" in line
+    assert "Far" in line and "Us" in line and "→" in line
 
 
 # --- the routes view (list + graph callbacks) -----------------------------------
@@ -283,7 +285,7 @@ def _view(topo, suggested, device_route, target, node_label, contacts, name_key=
         resolve=make_node_resolver(contacts),
         type_of=make_node_type_resolver(contacts),
         key_of=make_name_key_resolver(contacts),
-        style=route_graph_style, self_name="Us", self_key=US + "0" * 52,
+        style=route_graph_style, self_name="Us",
         node_label=node_label,
         name_key=name_key or (target + "0" * 52),
         node_known=True,
@@ -305,7 +307,6 @@ def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
         empty, empty.scenarios("f2c24f54551e"), None, None, "f2c24f54551e", "f2c24f54551e", 1,
         resolve=make_node_resolver([FAR]), type_of=make_node_type_resolver([FAR]),
         key_of=make_name_key_resolver([FAR]), style=route_graph_style, self_name="Us",
-        self_key=US + "0" * 52,
         node_label="Far", name_key=FAR.public_key,
         node_known=True,
         hash_bytes=1,
@@ -321,15 +322,19 @@ def test_routes_view_puts_the_contact_on_the_left_and_us_on_the_right() -> None:
     assert view.label_of(SRC_NODE) == "Far"   # the left endpoint is the target contact
     assert view.glyph_of(DST_NODE)[0] == "★"  # the right endpoint is our own star
     assert view.label_of(DST_NODE) == "Us"    # …labelled as us
-    # This page names every node: a known relay reads by its contact name, not its hash byte.
-    assert view.label_of("3d63c6429436") == "Hub"
 
 
-def test_routes_view_relay_falls_back_to_the_hash_byte_when_unnamed() -> None:
-    """A relay no contact can name keeps the honest first-byte tag rather than a blank."""
+def test_routes_view_tags_every_relay_with_its_hash_byte_alone() -> None:
+    """Only the two endpoints are named in the graph — a relay wears its first hash byte
+    whether or not a contact can name it, so a label never outgrows two cells and spills
+    across the lanes it sits between (the Message paths graph's rule exactly)."""
     topo = _topo_with_route()
-    view = _view(topo, None, ("abcd1234ef56",), "f2c24f54551e", "Far", [FAR])
-    assert view.label_of("abcd1234ef56") == "ab"  # unnamed → its first hash byte
+    view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
+                 "f2c24f54551e", "Far", [HUB, FAR])
+    assert view.label_of("3d63c6429436") == "3d"  # the Hub is a known contact — still ``3d``
+
+    unnamed = _view(topo, None, ("abcd1234ef56",), "f2c24f54551e", "Far", [FAR])
+    assert unnamed.label_of("abcd1234ef56") == "ab"  # and one nobody can name reads the same
 
 
 def test_routes_view_target_wears_its_node_type_glyph() -> None:
@@ -710,14 +715,31 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     assert "f2 00 01 02" in body  # unscrolled, the chain's start shows
     assert "←→ scroll" in screen.footer_hint  # the overflow earns the footer atom
 
+    row = next(l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯"))
+    assert row.rstrip().endswith("…")  # the right edge marks the remainder, before any scroll
+
     screen.handle("right")
     screen.handle("right")
     body = _plain(screen.render_body(72))
     assert "f2 00 01 02" not in body  # the view has shifted away from the start
+    row = next(l for l in body.splitlines() if l.startswith("❯"))
+    assert row.startswith("❯ …")  # …and now a mark says the line continues behind us, too
 
     screen.handle("left")
     body = _plain(screen.render_body(72))
     assert "f2 00 01 02" not in body  # one step back, still short of the start
+
+    for _ in range(20):  # run the scroll to its stop
+        screen.handle("right")
+    row = next(l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯"))
+    # The clamp lands where the tail is actually readable: the line's own end — the last hop
+    # and the opens-marker — is on screen rather than cropped behind a right-hand edge mark
+    # promising a remainder the keys can no longer reach. Only the left mark is left drawn.
+    assert row.rstrip().endswith("aa …") and row.count("…") == 2
+    screen.handle("right")  # …and the stop holds: nothing moves past it
+    assert next(
+        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+    ) == row
 
     screen.handle("down")  # onto route 1 — abandons route 0's scroll, short row can't scroll
     screen.render_body(72)

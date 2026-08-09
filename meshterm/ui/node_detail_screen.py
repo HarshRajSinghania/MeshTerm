@@ -26,15 +26,20 @@ the node itself, in full:
     offered whenever the node's full key is known.
   * **Routes** — the routes we've actually heard the node arrive over, drawn on the shared
     route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
-    travelled, contact on the left, us on the right). Beneath the graph sits the *route
-    list*: one selectable row per distinct route (the firmware's learned route and the
-    observed alternatives, the strongest marked ``★ best``), each spelled out through THE
-    path widget as a single hash-chain line, its bottleneck SNR / sample count / tag hanging
-    on the line below. ``↑↓`` moves the selection; the picked route lights white in the graph
+    travelled, contact on the left, us on the right), each relay tagged by its first hash
+    byte alone — two cells, so the fan reads however many lanes it carries. Beneath the
+    graph sits the *route list*, where the names live: one selectable row per distinct route
+    (the firmware's learned route and the observed alternatives, the strongest marked
+    ``★ best``), each spelled out through THE path widget as a single **named** line — a hop
+    nobody can name standing in its hash — with its bottleneck SNR / sample count / tag
+    hanging on the line below. The two bands cross-reference by node hue rather than by
+    spelling the same hex twice; it is the Message paths dialog's split exactly.
+    ``↑↓`` moves the selection; the picked route lights white in the graph
     while the rest go grey and every node not on it fades its label to grey, so the graph
     reads as *this* route through the fan. A pathline too wide for the lane never wraps —
-    the highlighted row instead scrolls horizontally (``←→``) to read it to the end; an
-    unselected long row just ellipsizes. Only *good* routes are drawn — stale evidence and
+    the highlighted row instead scrolls horizontally (``←→``) under faint ``…`` edge marks
+    to read it to the end; an unselected long row just ellipsizes. Only *good* routes are
+    drawn — stale evidence and
     far-weaker outliers are dropped, so the list is the routes worth trusting rather than
     every chain ever heard. Enter on a route arms a trace on it (nothing transmits here — it
     opens the trace screen loaded with that path); when there is no route evidence to list, a
@@ -73,7 +78,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
-from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
+from ..core.models import LOCAL_DEVICE_LABEL, NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
 from .mapcanvas import RGB
 from .minimap import MiniMap
@@ -965,10 +970,16 @@ class NodeDetailScreen(Screen):
         go fully brand, since here the colour *is* the content. The trailing ``…`` is the
         app-wide opens-further-prompts mark: Enter on the row arms a trace on it. The
         pathline never hop-wraps — it is one line, cropped: the highlighted row rides
-        :attr:`_hshift` (``←→``, see :meth:`handle`) so a hash chain wider than the lane can
-        still be read to its end, while every other row (and the context line under any row)
-        just ellipsizes. The context — bottleneck SNR, sample count, the ``★ best`` /
-        ``device route`` tag — is dropped entirely when a route earns none of it.
+        :attr:`_hshift` (``←→``, see :meth:`handle`) so a named chain wider than the lane can
+        still be read to its end, under a faint :data:`_MORE_MARK` at whichever edge the line
+        continues past — the same window the Info tab's key lane scrolls in, and the same one
+        the Message paths rows do. That scroll is what buys the row its *names*
+        (:func:`_route_line`): a hop chain spelled out in places outruns a lane far sooner
+        than one spelled in hash bytes, and the answer is to read it, not to shorten it. Every
+        other row (and the context line under any row) just ellipsizes — only the row you are
+        on can scroll, and it is the only one whose end you are asking to see. The context —
+        bottleneck SNR, sample count, the ``★ best`` / ``device route`` tag — is dropped
+        entirely when a route earns none of it.
         """
         indent = _ROUTE_INDENT
         avail = max(1, width - indent)
@@ -977,8 +988,25 @@ class NodeDetailScreen(Screen):
         marked.append(_OPENS_MARKER, style="muted")
         if selected and self._hshift:
             total = cell_len(marked.plain)
-            self._hshift = max(0, min(self._hshift, max(0, total - avail)))
-            path = crop_cells(marked, self._hshift, avail)
+            # A scrolled row has given up a cell to its left mark, so its last window spans
+            # ``avail - 1``; clamp to the first whole step that brings the tail inside it —
+            # short of that the right mark would still be drawn at the far end, promising a
+            # remainder the keys can no longer reach. (The key lane clamps the same way.)
+            steps = -(-max(0, total - (avail - 1)) // _HSCROLL_STEP)
+            self._hshift = max(0, min(self._hshift, steps * _HSCROLL_STEP))
+            shift = self._hshift
+            # The marks are chrome inside the window, not extra width: each costs the lane a
+            # cell, so the crop is measured after they are known — else the line drawn under a
+            # right-hand ``…`` would run a cell past the row.
+            left = 1 if shift else 0
+            inner = avail - left
+            right = 1 if shift + inner < total else 0
+            path = Text()
+            if left:
+                path.append(_MORE_MARK, style="muted")
+            path.append_text(crop_cells(marked, shift, max(1, inner - right)))
+            if right:
+                path.append(_MORE_MARK, style="muted")
         else:
             path = marked
             path.no_wrap = True
@@ -1272,7 +1300,6 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
             key_of=make_name_key_resolver(contacts, stored_names),
             style=route_graph_style,
             self_name=self_name,
-            self_key=self_key,
             node_label=label,
             name_key=key,
             node_known=name is not None,
@@ -1392,38 +1419,42 @@ def _route_line(
     resolve,  # noqa: ANN001 - NodeResolver, kept loose like the graph callbacks
     node_known: bool,
     self_name: Optional[str],
-    self_key: Optional[str],
     hash_bytes: int,
 ) -> tuple[Text, Text]:
     """One route as ``(path, context)`` — the pathline, and the line it hangs its context under.
 
     The whole route reads left to right in the graph's own direction (contact on the left, us
     on the right), so the row and the drawn line cross-read. ``path`` is one
-    :class:`~meshterm.ui.pathline.PathLine` — every hop, endpoints included, shown as its hash
-    at our own node's path-hash-mode width rather than a resolved name, at the width the
-    device itself carries per hop, as powerline chips where the terminal can draw them. A hop
-    the resolver can name keeps the key-derived hue the graph's chips and column colours
-    already use; a hop nobody can name — and the page's own node, when it has no name — reads
-    in the app-wide unknown-node grey, exactly as it does in the graph above. ``context`` is
-    the bottleneck SNR, sample count, and a ``★ best`` / ``device route`` tag marking the
-    winner and the firmware's learned route — kept off the pathline itself so a long hash
-    chain never crowds it out, and empty when a route earns none of them.
+    :class:`~meshterm.ui.pathline.PathLine` drawn exactly as the Message paths dialog draws
+    its arrivals (JP, 2026-08-09): **hops read as names** — every hop the resolver can place
+    wears its contact name in that node's key-derived hue, as powerline chips where the
+    terminal can draw them, and our own end takes the ``you`` white. A hop nobody can name has
+    no name to show, so it stands in its own hash at the device's path-hash-mode width (the
+    width the radio itself carries per hop) in the app-wide unknown-node grey — colour being
+    the "this is a name" signal, exactly as in the graph above. No hop repeats its hash after
+    its name: the hash bytes are the *graph's* job one band up, and what ties a row to the fan
+    is the shared node hue rather than a second spelling of the hex.
+
+    Names cost cells that hashes don't, which is what the row's horizontal scroll is for (see
+    :meth:`NodeDetailScreen._route_row_lines`) — the same trade the Message paths rows make,
+    and the reason a name is worth it: a route reads as places, and the reader pays only for
+    the one row they are on. ``context`` is the bottleneck SNR, sample count, and a ``★ best``
+    / ``device route`` tag marking the winner and the firmware's learned route — kept off the
+    pathline itself so a long chain never crowds it out, and empty when a route earns none.
     """
     hash_bytes = max(hash_bytes, 1)  # an unknown mode still needs a real width to slice
 
     def hop_of(hop: str) -> PathHop:
-        shown = _hop_hash(hop, hop, hash_bytes)
         named = resolve(hop)
         if named and named != hop:
-            return PathHop(shown, key=hop, lit_bytes=hash_bytes)
-        return PathHop(shown)  # unknown node: grey whole, no key-derived hue
+            return PathHop(named, key=hop)
+        return PathHop(_hop_hash(hop, hop, hash_bytes))  # unknown: its hash, keyless grey
 
-    head = _hop_hash(name_key, node_label, hash_bytes)
     path = PathLine([
-        PathHop(head, key=name_key, lit_bytes=hash_bytes) if node_known and name_key
-        else PathHop(head),
+        PathHop(node_label, key=name_key) if node_known and name_key
+        else PathHop(_hop_hash(name_key, node_label, hash_bytes)),
         *(hop_of(hop) for hop in reversed(hops_out)),
-        PathHop(_hop_hash(self_key, self_name or "us", hash_bytes), you=True),
+        PathHop(self_name or LOCAL_DEVICE_LABEL, you=True),
     ]).text()
 
     atoms: list[Text] = []
@@ -1516,7 +1547,6 @@ def _routes_view(
     key_of,
     style,
     self_name,
-    self_key,
     node_label,
     name_key,
     node_known,
@@ -1595,7 +1625,7 @@ def _routes_view(
         path, context = _route_line(
             node_label, name_key, hops_out, tag, weakest, samples,
             resolve=resolve, node_known=node_known,
-            self_name=self_name, self_key=self_key, hash_bytes=hash_bytes,
+            self_name=self_name, hash_bytes=hash_bytes,
         )
         routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, path=path, context=context))
 
@@ -1611,20 +1641,17 @@ def _routes_view(
         resolve=resolve, self_name=self_name, source=node_label, type_of=type_of, key_of=key_of
     )
 
-    # This tab names every node in the graph, not just the two ends. Where the Message paths
-    # graph tags a relay with only its first hash byte, here each relay wears its resolved
-    # contact name (its colour is already the name's hue), so the whole route reads as places
-    # rather than hex; an unidentified relay keeps the byte, the honest most it can be called.
-    # A contracted cluster wears its own count-and-type label. The two endpoints keep
-    # route_graph_style's names (target on the left, us on the right).
+    # The graph labels exactly as the Message paths graph does (JP, 2026-08-09): the two
+    # endpoints by name, every relay by its first hash byte alone. Names in here were the
+    # obvious read — until a busy fan drew them: each label is set above or below its own
+    # marker, and a long name spills across the lanes either side of it. Two cells never can,
+    # so the fan stays legible however many routes it carries. The row list under it is where
+    # the names live now, and a relay's byte and its row chip cross-reference by hue rather
+    # than by spelling the same node twice. A contracted cluster keeps its own count-and-type
+    # label — it stands for no single hash.
     def label_of(node: str) -> Optional[str]:
         cluster = clusters.get(node)
-        if cluster is not None:
-            return cluster.label
-        if node in (SRC_NODE, DST_NODE):
-            return byte_label_of(node)
-        named = resolve(node)
-        return named if named and named != node else node[:2]
+        return cluster.label if cluster is not None else byte_label_of(node)
 
     base_rgb_of = label_rgb_of
 
