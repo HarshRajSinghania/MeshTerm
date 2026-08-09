@@ -154,6 +154,10 @@ DRAWN_LAYERS: frozenset[str] = frozenset(
        "place", "water_name")
 )
 
+#: Marks "this feature class has not been styled yet" in :func:`_draw_tile`'s per-tile style
+#: memos, where ``None`` is a real answer meaning "a class we deliberately don't draw".
+_UNRESOLVED = object()
+
 
 @dataclass(slots=True)
 class _Label:
@@ -394,23 +398,33 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
         bx, by, step = t
         return [(bx + lx * step, by + ly * step) for lx, ly in ring]
 
+    # A tile's palette is a handful of colours shared by tens of thousands of features, so
+    # every one of them is resolved once here rather than per feature. mark_rgb memoizes,
+    # but at ~30 000 calls a frame even a dict hit behind a function call is real time on
+    # the device — and the styles below are constants, so the answer never varies within a
+    # tile. Per-class styles (roads, waterways, places) memoize into the dicts alongside.
+    water_rgb, water_prio = mark_rgb(_WATER_FILL[0]), _WATER_FILL[1]
+    green_rgb, green_prio = mark_rgb(_GREEN_FILL[0]), _GREEN_FILL[1]
+    boundary_rgb = mark_rgb("#6d5f88")
+    road_styles: dict[Optional[str], tuple[tuple[int, int, int], int]] = {}
+    water_styles: dict[Optional[str], Optional[tuple[tuple[int, int, int], int]]] = {}
+
     # Fills first (water, green space) so lines and labels sit on top.
     for name in _FILL_LAYERS:
         layer = by_name.get(name)
         if layer is None:
             continue
+        is_water = name == "water"
         for feat in layer.features:
             if feat.geom_type != GEOM_POLYGON:
                 continue
-            if name == "water":
-                color, prio = _WATER_FILL
-            elif str(feat.get("class") or feat.get("subclass")) in _GREEN_CLASSES:
-                color, prio = _GREEN_FILL
+            if is_water:
+                rgb, prio = water_rgb, water_prio
+            elif str(feat.tags.get("class") or feat.tags.get("subclass")) in _GREEN_CLASSES:
+                rgb, prio = green_rgb, green_prio
             else:
                 continue
-            vp.fill_polygon(
-                [project(r, layer.extent) for r in feat.rings], mark_rgb(color), prio
-            )
+            vp.fill_polygon([project(r, layer.extent) for r in feat.rings], rgb, prio)
 
     # Buildings, as a stippled texture under the streets.
     building = by_name.get("building")
@@ -453,13 +467,18 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
     waterway = by_name.get("waterway")
     if waterway is not None:
         for feat in waterway.features:
-            style = _WATERWAY_STYLE.get(str(feat.get("class")))
+            cls = feat.tags.get("class")
+            style = water_styles.get(cls, _UNRESOLVED)
+            if style is _UNRESOLVED:
+                named = _WATERWAY_STYLE.get(str(cls))
+                style = None if named is None else (mark_rgb(named[0]), named[1])
+                water_styles[cls] = style
             if style is None or feat.geom_type != GEOM_LINE:
                 continue
-            color, prio = style
+            rgb, prio = style
             for ring in feat.rings:
                 if len(ring) >= 2:
-                    vp.draw_line(project(ring, waterway.extent), mark_rgb(color), prio)
+                    vp.draw_line(project(ring, waterway.extent), rgb, prio)
             if feat.name:
                 _add_line_label(frame, feat.rings, waterway.extent, z, x, y, feat.name, _WATER_LABEL)
 
@@ -469,12 +488,15 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
         for feat in transportation.features:
             if feat.geom_type != GEOM_LINE:
                 continue
-            cls = str(feat.get("class") or "")
-            if cls in ("rail", "transit"):
-                color, prio = _RAIL
-            else:
-                color, prio = _ROAD_STYLE.get(cls, _ROAD_DEFAULT)
-            rgb = mark_rgb(color)
+            cls = feat.tags.get("class")
+            style = road_styles.get(cls)
+            if style is None:
+                name = str(cls or "")
+                named = _RAIL if name in ("rail", "transit") else _ROAD_STYLE.get(
+                    name, _ROAD_DEFAULT
+                )
+                style = road_styles[cls] = (mark_rgb(named[0]), named[1])
+            rgb, prio = style
             for ring in feat.rings:
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, transportation.extent), rgb, prio)
@@ -486,13 +508,13 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             if feat.geom_type != GEOM_LINE:
                 continue
             try:
-                if int(feat.get("admin_level", 99)) > 6:
+                if int(feat.tags.get("admin_level", 99)) > 6:
                     continue
             except (TypeError, ValueError):
                 continue
             for ring in feat.rings:
                 if len(ring) >= 2:
-                    vp.draw_line(project(ring, boundary.extent), mark_rgb("#6d5f88"), 14)
+                    vp.draw_line(project(ring, boundary.extent), boundary_rgb, 14)
 
     # Street-name labels (only kick in at high zoom via the label's min_zoom gate).
     tname = by_name.get("transportation_name")
@@ -511,7 +533,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
         for feat in place.features:
             if not feat.name or not feat.rings or not feat.rings[0]:
                 continue
-            style = _PLACE_STYLE.get(str(feat.get("class")))
+            style = _PLACE_STYLE.get(str(feat.tags.get("class")))
             if style is None:
                 continue
             color, bold, rank, min_zoom = style
@@ -525,11 +547,12 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
     water_name = by_name.get("water_name")
     if water_name is not None:
         color, bold, rank = _WATER_LABEL
+        label_rgb = mark_rgb(color)
         for feat in water_name.features:
             if feat.name and feat.rings and feat.rings[0]:
                 lx, ly = feat.rings[0][0]
                 dx, dy = frame.viewport.feature_to_dot(x, y, z, water_name.extent, lx, ly)
-                frame.labels.append(_Label(rank, dx, dy, feat.name, mark_rgb(color), bold, 8))
+                frame.labels.append(_Label(rank, dx, dy, feat.name, label_rgb, bold, 8))
 
 
 def _clip_to_canvas(

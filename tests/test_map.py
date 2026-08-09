@@ -1742,3 +1742,50 @@ async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:
     screen.handle("right")
     screen.render_body(80)
     assert handed and handed[-1] is screen._ghost, "the pan painted on an empty canvas"
+
+
+def test_each_road_class_keeps_its_own_colour_through_the_per_tile_style_memo() -> None:
+    """The tile's palette is resolved once per class, not once per feature.
+
+    ``mark_rgb`` was reached ~30 000 times a frame and ``Feature.get`` ~32 000 — both
+    answering the same handful of questions. Hoisting them behind a per-tile memo is only
+    sound while every class still resolves to exactly the colour it did: a motorway must
+    not inherit the footway's grey because it drew second.
+    """
+    from meshterm.core.mvt import GEOM_LINE, Feature, Layer
+    from meshterm.ui.map_render import (
+        _RAIL,
+        _ROAD_DEFAULT,
+        _ROAD_STYLE,
+        _draw_tile,
+        _Frame,
+    )
+    from meshterm.ui.mapcanvas import MapCanvas
+    from meshterm.ui.theme import mark_rgb
+
+    classes = ["motorway", "footway", "residential", "rail", "no_such_class", None]
+    features = [
+        Feature(
+            geom_type=GEOM_LINE,
+            # One short horizontal run per class, each on its own row of the tile.
+            rings=[[(200, 500 + i * 500), (3900, 500 + i * 500)]],
+            tags={} if cls is None else {"class": cls},
+        )
+        for i, cls in enumerate(classes)
+    ]
+    # Wide enough that the whole tile lands on the canvas, so every class gets drawn.
+    vp = Viewport(45.5019, -73.5674, 14, 512, 512)
+    canvas = MapCanvas(vp.dot_w // 2, vp.dot_h // 4)
+    frame = _Frame(canvas=canvas, viewport=vp)
+    _draw_tile(
+        frame, [Layer(name="transportation", extent=4096, features=features)],
+        14, 4843, 5861,
+    )
+
+    painted = {colour for row in canvas._color for colour in row if colour}
+    for cls in classes:
+        if cls == "rail":
+            expected = _RAIL
+        else:
+            expected = _ROAD_STYLE.get(cls or "", _ROAD_DEFAULT)
+        assert mark_rgb(expected[0]) in painted, f"{cls} lost its own colour"
