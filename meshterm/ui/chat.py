@@ -98,11 +98,28 @@ class ChatScreen(Screen):
         channel message is never acknowledged, so there is no such thing to retry there —
         and merely dim in a direct chat with nothing outstanding. *Paths* needs a picked
         message to have paths of, and both nav slots need a transcript to walk.
+
+        F1/F2 carry the **day** jump, the transcript's own section step (its dividers are
+        days) — the same claim a grouped select list makes with ``Sect ↑``/``Sect ↓``, on
+        the same keys, dispatching the same ``ctrl_pageup``/``ctrl_pagedown``. Naming it
+        for what the sections *are* here is the lane's rule that a chip names an action.
+        A left-hand pair rises toward F1, so ``Day ↑`` (back through the transcript) sits
+        outside ``Day ↓``, matching both the pager on the right and the list it echoes.
+        Lit only with more than one day to step between: a conversation held in an
+        afternoon has sections the way a one-section list does — none.
         """
         from .tui.fkeys import FPair, default_lane
 
         lane = list(default_lane(nav=bool(self._messages)))
         live = bool(self._messages)
+        # Messages are chronological, so two days exist exactly when the ends disagree —
+        # O(1), where walking the dividers would re-date the whole transcript every paint.
+        days = live and (
+            self._messages[0].created_at.astimezone().date()
+            != self._messages[-1].created_at.astimezone().date()
+        )
+        lane[0] = FPair("Day ↑", "ctrl_pageup", enabled=days)
+        lane[1] = FPair("Day ↓", "ctrl_pagedown", enabled=days)
         lane[3] = FPair("Page ↓", "pagedown", "Latest", "ctrl_end", enabled=live, opp_enabled=live)
         lane[4] = FPair("Page ↑", "pageup", "Oldest", "ctrl_home", enabled=live, opp_enabled=live)
         retry = ("Retry", "retry") if not self._is_channel else ("", "")

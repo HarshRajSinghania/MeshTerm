@@ -17,9 +17,10 @@ render_map`. Keys:
 * ``^U`` (for *you*) recenters on **your own node**, keeping the zoom you chose and
   clearing any find (the lane's ``You`` chip; its Shift half also zooms in close),
 * **typing finds nodes**: every letter key feeds a live name filter — matching nodes keep
-  bright labels while the rest dim to context, ``Enter`` frames the matches, ``Backspace``
-  edits, and ``Esc`` clears the filter (a second ``Esc`` leaves the map). This is why no
-  plain letters are bound to actions here,
+  bright labels while the rest dim to context, ``Backspace`` edits, ``^Enter`` frames the
+  matches (keeping the query), and ``Enter`` or ``Esc`` drops the query where it is
+  without moving the view (a second ``Esc`` leaves the map). This is why no plain letters
+  are bound to actions here,
 * ``Esc`` leaves the map.
 
 With no network (and no cached tiles) the basemap is simply absent and nodes are plotted on a
@@ -86,8 +87,8 @@ _TILE_CACHE_SCREENS = 2
 #: history for a pan away and back to be instant.
 _MIN_TILE_CACHE = 8
 
-#: The zoom an Enter-to-frame homes in at when the matches set no extent of their own — a
-#: single node (or several at one spot) has nothing to frame, so Enter zooms to this
+#: The zoom a frame homes in at when the matches set no extent of their own — a
+#: single node (or several at one spot) has nothing to frame, so ^Enter zooms to this
 #: street-level closeness rather than the fit's neutral default. Capped at the tile
 #: source's max so it never over-zooms onto blank tiles.
 _FIND_ZOOM = 16
@@ -124,8 +125,8 @@ class MapScreen(Screen):
         sits **You +**: the same jump home, but zoomed in close — the ``+`` borrowed from
         the zoom rocker's vocabulary, so the pair reads as "you / you, closer". Behind
         Frame sits **Clear**: the find axis's other end, dropping the query the way Frame
-        commits it — lit exactly while there is a query to drop, which Esc also does but
-        no chip could otherwise teach.
+        commits it — lit exactly while there is a query to drop. Enter and Esc both do
+        that on a keyboard; the chip is how the pair teaches it where there is no hint line.
 
         The zoom pair keeps the lane's handedness (see
         :data:`~meshterm.ui.tui.fkeys.DEFAULT_LANE`): out on the left, in on the right, so
@@ -232,7 +233,7 @@ class MapScreen(Screen):
         finally brought the line inside the budget.
         """
         if self._filter:
-            return f"find: {self._filter}▏ · Enter frame · ⌫ erase · Esc clear"
+            return f"find: {self._filter}▏ · ^Enter frame · ⌫ erase · Enter/Esc clear"
         return "↑↓←→ pan · PgUp/PgDn zoom · Home/^U region/you · type to find · Esc back"
 
     def consume_edge_scrub(self) -> int:
@@ -521,10 +522,17 @@ class MapScreen(Screen):
 
         Three actions reframe the view, and each has both a key and an F-key chip:
         ``home`` the whole region, ``locate`` (^U, for *you*) our own node — ``locate_zoom``
-        the Shift-bank variant that also homes in — and ``frame`` the find matches,
-        which is what Enter already does while a query is being typed, kept as a
-        separate action so the lane can name it on a platform that draws no hint line.
-        ``clear_find`` drops the query without leaving (Esc's first peel, as a chip).
+        the Shift-bank variant that also homes in — and ``frame`` (^Enter) the find
+        matches. ``clear_find`` drops the query without moving the view, which is also
+        what plain **Enter** does.
+
+        Enter and ^Enter are the find's two ways out, and they split along whether the
+        *view* moves (JP, 2026-08-09). Typing a query dims everything that doesn't match,
+        and the common finish is "yes, that one — now let me look around it": the query
+        has done its job and only the dimming is in the way, so Enter drops the query and
+        leaves the view exactly where the reader put it. ^Enter is the other finish —
+        *take* me to them — and it keeps the query, because a frame is a place to arrive
+        and framing tighter from there is one more press, not a re-type.
         """
         vp = self._viewport
         if action == "escape":
@@ -563,9 +571,9 @@ class MapScreen(Screen):
             self._locate(vp)
         elif action == "locate_zoom":
             self._locate(vp, zoom_in=True)
-        elif action == "clear_find":
+        elif action in ("clear_find", "enter"):
             self._filter = ""
-        elif action == "frame" and self._filter:
+        elif action in ("frame", "ctrl_enter") and self._filter:
             self._frame_matches(vp)
         elif action == "text" and self.find_enabled:
             if not data.isspace() or self._filter:  # never begin the filter with a space
@@ -574,8 +582,6 @@ class MapScreen(Screen):
             self._filter += " "  # node names carry spaces; only meaningful mid-query
         elif action == "backspace":
             self._filter = self._filter[:-1]
-        elif action == "enter" and self._filter:
-            self._frame_matches(vp)
         # Any handled key may have redrawn the body, so clean the right edge next paint.
         self._needs_scrub = True
         self._persist()
@@ -616,7 +622,7 @@ class MapScreen(Screen):
         )
 
     def _frame_matches(self, vp: Viewport) -> None:
-        """Refit the view around the find filter's matches (Enter on an active find).
+        """Refit the view around the find filter's matches (^Enter on an active find).
 
         All matches are framed (``fraction=1.0`` — the user asked for exactly these
         nodes, so no dense-core trimming). A single match — or several at one spot — has

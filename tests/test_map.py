@@ -1397,7 +1397,7 @@ def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
 
 
 def test_map_screen_find_filters_frames_and_clears() -> None:
-    """Typing builds the find query; Enter frames matches; Esc peels filter then map."""
+    """Typing builds the query; ^Enter frames matches; Enter/Esc drop it; Esc then leaves."""
     import asyncio
 
     from meshterm.ui.map_render import MapMarker
@@ -1424,12 +1424,22 @@ def test_map_screen_find_filters_frames_and_clears() -> None:
     assert "YUL-Cartierville" in body
     assert "Alice" not in body and "Yagi-North" not in body
 
-    # Enter frames the matches: the view centres on YUL.
-    screen.handle("enter")
+    # ^Enter frames the matches: the view centres on YUL, and the query survives it.
+    screen.handle("ctrl_enter")
     assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.05)
     assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.05)
+    assert screen._filter == "yu"
+
+    # Plain Enter is the other way out: the query goes, the view stays exactly where the
+    # frame left it.
+    centre = (screen._viewport.center_lat, screen._viewport.center_lon)
+    screen.handle("enter")
+    assert screen._filter == ""
+    assert (screen._viewport.center_lat, screen._viewport.center_lon) == centre
 
     # Backspace edits; Esc clears the filter first and only then dismisses.
+    for ch in "yu":
+        screen.handle("text", ch)
     screen.handle("backspace")
     assert screen._filter == "y"
 
@@ -1443,8 +1453,8 @@ def test_map_screen_find_filters_frames_and_clears() -> None:
     assert asyncio.run(drive()) is None
 
 
-def test_map_screen_enter_zooms_in_on_a_single_match() -> None:
-    """Enter on a lone filtered node homes in close on it, not the fit's neutral default."""
+def test_map_screen_frame_zooms_in_on_a_single_match() -> None:
+    """^Enter on a lone filtered node homes in close on it, not the fit's neutral default."""
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import _FIND_ZOOM, MapScreen
 
@@ -1457,7 +1467,7 @@ def test_map_screen_enter_zooms_in_on_a_single_match() -> None:
     for ch in "yul":
         screen.handle("text", ch)
     assert [m.label for m in screen._matches()] == ["YUL-Cartierville"]
-    screen.handle("enter")
+    screen.handle("ctrl_enter")
     assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.01)
     assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.01)
     assert screen._viewport.zoom == _FIND_ZOOM  # zoomed in, not the fit's default 14

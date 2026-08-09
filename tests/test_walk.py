@@ -11,6 +11,7 @@ from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
+from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import WalkScreen
 
 US = "aa" * 6
@@ -573,3 +574,131 @@ def test_walk_esc_peels_find_then_dismisses() -> None:
         return await screen.future
 
     assert asyncio.run(drive()) is None
+
+
+def _chain(length: int) -> MeshTopology:
+    """us — hop-01 — hop-02 — … , every name long enough to overflow a narrow trail."""
+    contacts = [
+        Contact(name=f"Repeater-{i:02d}", public_key=f"{i:02x}" * 32) for i in range(1, length + 1)
+    ]
+    topo = MeshTopology(US, contacts=contacts)
+    when = utcnow()
+    previous = topo.self_id
+    for contact in contacts:
+        node = topo.canonical(contact.public_key)
+        topo.add_walk([previous, node], snrs=[4.0], when=when, source="trace")
+        previous = node
+    return topo
+
+
+def _walked_chain(length: int, *, width: int = 46):
+    """A screen walked to the end of a `length`-hop chain, rendered at `width`."""
+    topo = _chain(length)
+    contacts = {topo.canonical(f"{i:02x}" * 32): Contact(
+        name=f"Repeater-{i:02d}", public_key=f"{i:02x}" * 32
+    ) for i in range(1, length + 1)}
+    screen = WalkScreen(
+        session=_FakeSession(), topo=topo, contacts=contacts, self_label="Homestead"
+    )
+    screen.note_viewport(24)
+    for _ in range(length):
+        screen.render_body(width)
+        rows = screen._rows()
+        # Always step *onward*, never back through the node we came from.
+        screen._index = next(
+            i for i, node in enumerate(rows) if node not in screen._trail
+        )
+        screen.handle("enter")
+    screen.render_body(width)
+    return screen, width
+
+
+def test_walk_trail_scrolls_a_hop_at_a_time_off_its_tail() -> None:
+    """← reads back over a long walk; → returns; the focus is what the marks are about."""
+    screen, width = _walked_chain(8)
+    trail = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+
+    # At rest the walk is flush right: the focus shows, the head is behind a leading ⋯.
+    assert "Repeater-08" in trail and "Homestead" not in trail
+    assert trail.lstrip().startswith("⋯")
+    assert screen._trail_scroll == 0
+
+    screen.handle("left")
+    scrolled = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+    assert screen._trail_scroll == 1
+    # One hop of walk moved out of view on the right, and says so with the same mark.
+    assert "Repeater-08" not in scrolled and "Repeater-07" in scrolled
+    assert scrolled.rstrip().endswith("⋯")
+
+    screen.handle("right")
+    assert screen._trail_scroll == 0
+    assert _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)]) == trail
+
+
+def test_walk_trail_scroll_stops_at_the_head_and_resets_with_the_trail() -> None:
+    """← parks where the walk's start comes into view; any change to the trail rewinds it."""
+    screen, width = _walked_chain(8)
+    limit = screen._trail_max_scroll(width)
+    assert limit > 0
+
+    for _ in range(limit + 5):  # holding ← banks nothing to undo
+        screen.handle("left")
+    assert screen._trail_scroll == limit
+    head = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+    assert "Homestead" in head  # scrolled far enough to read where the walk set out from
+
+    screen.handle("backspace")  # stepping back is a change to the trail
+    assert screen._trail_scroll == 0
+    screen.render_body(width)
+    screen.handle("left")
+    screen.handle("locate")  # and so is going home
+    assert screen._trail_scroll == 0
+
+
+def test_walk_trail_scroll_is_inert_on_a_walk_that_fits() -> None:
+    """A trail with nothing hidden has nothing to scroll — and the hint doesn't offer it."""
+    screen = _screen(_topo())
+    screen.render_body(80)
+    assert screen._trail_max_scroll(80) == 0
+    assert "←→ trail" not in screen.footer_hint
+    assert "type to find" in screen.footer_hint
+
+    screen.handle("left")
+    assert screen._trail_scroll == 0
+
+    walked, width = _walked_chain(8)
+    assert "←→ trail" in walked.footer_hint  # advertised exactly where it does something
+    assert len(walked.footer_hint) <= 72
+
+
+def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
+    """Typing thins the ways onward; the focus and the node walked from hold their place."""
+    bob = Contact(name="Bob-Tower", public_key="c7" * 32)
+    topo = MeshTopology(US, contacts=[YUL, ALICE, bob])
+    yul, alice = topo.canonical(YUL.public_key), topo.canonical(ALICE.public_key)
+    bob_id = topo.canonical(bob.public_key)
+    when = utcnow()
+    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([yul, alice], snrs=[-2.0], when=when, source="packet")
+    topo.add_walk([yul, bob_id], snrs=[1.0], when=when, source="packet")
+
+    screen = WalkScreen(
+        session=_FakeSession(), topo=topo,
+        contacts={yul: YUL, alice: ALICE, bob_id: bob},
+        self_label="Homestead",
+    )
+    screen.note_viewport(24)
+    screen.render_body(80)
+    screen._index = screen._rows().index(yul)
+    screen.handle("enter")  # focus YUL, came from us
+
+    canvas = _plain(screen._canvas_lines(80, 12, None))
+    assert "Alice" in canvas and "Bob-Tower" in canvas  # the whole fan, unfiltered
+
+    for ch in "ali":
+        screen.handle("text", ch)
+    canvas = _plain(screen._canvas_lines(80, 12, None))
+    assert "Alice" in canvas          # the way onward the query is about
+    assert "Bob-Tower" not in canvas  # and the one it isn't
+    # The walk itself is not a candidate: both ends of it hold through any query.
+    assert "YUL-Cartierville" in canvas and "Homestead" in canvas

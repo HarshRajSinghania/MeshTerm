@@ -38,13 +38,15 @@ across the top grows (a :mod:`~meshterm.ui.pathline` path line — powerline chi
 terminal draws them, ``you › YUL-Cartierville › …`` where it doesn't, each name in its
 node's own hue), and **⌫ steps back** along it. Walking to a node already on the trail
 truncates the stack to its first appearance — the loop you walked to get back there is
-dropped rather than recorded — and when the trail outgrows the line it neither wraps nor
-scrolls: its *head* goes behind a leading ``⋯`` and the rest snaps flush right, so the
-focus and the steps just taken stay in view. **Home** refocuses our own node. **Typing finds** — a
-global filter over every node in
-the graph, islands included; Enter teleports the focus to the highlighted match (the
-trail restarts there, since the walk didn't cross the gap). Esc peels find first, the
-screen second.
+dropped rather than recorded. The trail never wraps: at rest its *head* goes behind a
+leading ``⋯`` and the rest snaps flush right, so the focus and the steps just taken stay
+in view, and **←→ scroll it** a hop at a time to read back over a long walk (a trailing
+``⋯`` then marks the focus as the part out of view). **^U** refocuses our own node.
+**Typing finds** — a global filter over every node in the graph, islands included — and
+narrows the canvas's fan to matching neighbours as it goes, the focus and the came-from
+node holding through it; Enter teleports the focus to the highlighted match (the trail
+restarts there, since the walk didn't cross the gap). Esc peels find first, the screen
+second.
 """
 
 from __future__ import annotations
@@ -132,6 +134,13 @@ _FAN_SLOT_DOTS = 12
 #: Sentinel key for the collapsed weaker-links marker in the placed-node map. NUL can
 #: never collide with a canonical id (those are hex).
 _MORE = "\x00more"
+
+#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``) and the mark it
+#: shows on whichever side holds walk that is out of view (see :meth:`WalkScreen._trail_text`).
+#: The mark is the one :mod:`~meshterm.ui.pathline` elides with, so a head the widget hid
+#: and a tail the scroll hid read as the same thing.
+_TRAIL_SEP = " › "
+_ELISION = "⋯"
 
 #: How many find matches the list shows at most (the filter narrows it fast).
 _MAX_MATCHES = 10
@@ -258,8 +267,17 @@ class WalkScreen(Screen):
         self._self_label = self_label
         self._prefix_bytes = prefix_bytes
         #: The walked trail of canonical ids; the focus is its last entry. Walking
-        #: appends, ⌫ pops, Home resets to us, a find teleport restarts it.
+        #: appends, ⌫ pops, ^U resets to us, a find teleport restarts it.
         self._trail: list[str] = [topo.self_id]
+        #: Hops the breadcrumb line is scrolled off its *tail* end (see
+        #: :meth:`_trail_text`). 0 is the resting state — the focus flush right — and
+        #: every change to the trail returns it there.
+        self._trail_scroll = 0
+        #: ``((width, trail) → the furthest that can scroll)``, settled at render (see
+        #: :meth:`_trail_max_scroll`) so a keypress can clamp itself without a width.
+        self._trail_fit: Optional[tuple[tuple, int]] = None
+        #: The width the trail last rendered at, for that same clamp.
+        self._trail_width = 0
         #: Index of the highlighted row in the current list (neighbours or matches).
         self._index = 0
         #: The live find-as-you-type filter ("" = off; matches every node known).
@@ -342,16 +360,25 @@ class WalkScreen(Screen):
         self._hops_out_memo = depths
         return depths
 
-    def _matches(self) -> list[str]:
-        """Nodes the find filter matches: nearest first, then by display name."""
+    def _is_match(self, node: str) -> bool:
+        """Whether the live find query matches this node (by display name or by id).
+
+        The one predicate behind both things the query narrows: the list of teleport
+        candidates (:meth:`_matches`, over the whole graph) and the canvas's fan
+        (:meth:`_canvas_lines`, over the focus's own neighbours). No filter matches
+        everything, so a caller need not check for one first.
+        """
         needle = self._filter.strip().casefold()
         if not needle:
+            return True
+        return needle in self._label(node).casefold() or needle in node.casefold()
+
+    def _matches(self) -> list[str]:
+        """Nodes the find filter matches: nearest first, then by display name."""
+        if not self._filter.strip():
             return []
         depths = self._hops_out()
-        candidates = [
-            node for node in self._all_nodes()
-            if needle in self._label(node).casefold() or needle in node.casefold()
-        ]
+        candidates = [node for node in self._all_nodes() if self._is_match(node)]
         candidates.sort(key=lambda n: (depths.get(n, 999), self._label(n).casefold()))
         return candidates[:_MAX_MATCHES]
 
@@ -365,10 +392,27 @@ class WalkScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Walking keys — or the live find query while one is being typed."""
+        """Walking keys — or the live find query while one is being typed.
+
+        Every atom fits the 72-cell budget only because two of them take turns. ``←→
+        trail`` appears exactly while the breadcrumb has more walk than width (an inert
+        key is never advertised — the hint line's own long-standing rule, and the F-lane's
+        after it), and it takes the place of ``type to find``: a walk deep enough to
+        overflow the trail is one where the scroll is the unknown key, while typing
+        announces itself the instant a letter lands, replacing this whole line with the
+        query. The find is self-teaching; the scroll had no way to be.
+        """
         if self._filter:
             return f"find: {self._filter}▏ · ↑↓ move · Enter focus · ⌫ erase · Esc clear"
-        return "↑↓ move · Enter focus · ⌫ back · ^U you · type to find · Esc back"
+        scrolls = self._trail_width > 0 and bool(self._trail_max_scroll(self._trail_width))
+        atoms = ["↑↓ move"]
+        if scrolls:
+            atoms.append("←→ trail")
+        atoms += ["Enter focus", "⌫ back", "^U you"]
+        if not scrolls:
+            atoms.append("type to find")
+        atoms.append("Esc back")
+        return " · ".join(atoms)
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, walk, back up, find, or dismiss.
@@ -404,16 +448,28 @@ class WalkScreen(Screen):
             elif len(self._trail) > 1:
                 self._trail.pop()
                 self._index = 0
+                self._trail_scroll = 0
         elif action in ("home", "ctrl_home") and rows:
             self._index = 0
         elif action in ("end", "ctrl_end") and rows:
             self._index = len(rows) - 1
+        elif action == "left":
+            # The breadcrumb scrolls, the list doesn't — it is the one line here with more
+            # content than width. Clamped against the width the last paint settled, so
+            # holding ← parks at the head instead of banking presses to undo (0 until the
+            # trail actually overflows, which makes the key inert on a short walk).
+            self._trail_scroll = min(
+                self._trail_scroll + 1, self._trail_max_scroll(self._trail_width)
+            )
+        elif action == "right":
+            self._trail_scroll = max(0, self._trail_scroll - 1)
         elif action == "locate":
             # ^U (and F3): abandon the walk rather than move within it — the trail goes
             # back to just us and any find narrowing the list is dropped with it.
             self._trail = [self._topo.self_id]
             self._filter = ""
             self._index = 0
+            self._trail_scroll = 0
         elif action == "text":
             if not data.isspace() or self._filter:  # never begin the filter with a space
                 self._filter += data
@@ -442,6 +498,7 @@ class WalkScreen(Screen):
         else:
             self._trail.append(target)
         self._index = 0
+        self._trail_scroll = 0  # the new focus is the news; put it back in view
 
     # --- smear scrub (same fallback-glyph problem as the map) ---------------------
 
@@ -536,7 +593,7 @@ class WalkScreen(Screen):
         ]
 
     def _trail_text(self, width: int) -> Text:
-        """The breadcrumb trail as a path line: one line, tail-anchored, never wrapped.
+        """The breadcrumb trail as a path line: one line, ← → scrollable, never wrapped.
 
         The walk *is* a path — us, then every node stepped through, ending on the focus —
         so it renders through :class:`~meshterm.ui.pathline.PathLine` like every other hop
@@ -546,22 +603,62 @@ class WalkScreen(Screen):
         reserved for keyed identities), so the trail and the rows below it agree on who is
         who.
 
-        The line neither wraps nor scrolls. When the walk outgrows the width the fit eats
-        into its *head* (:data:`~meshterm.ui.pathline.ELIDE_HEAD`) rather than a route's
-        usual tail: the oldest steps disappear behind a leading ``⋯`` and what survives
-        snaps flush against the **right** edge, so the focus and the steps that just led
-        to it are the ones always in view. A long walk therefore reads as a line that
-        grows rightward until it meets the margin and then starts shedding its oldest
-        steps, rather than one that pushes the focus off the end.
+        The line never wraps. At rest, a walk that outgrows the width eats into its
+        *head* (:data:`~meshterm.ui.pathline.ELIDE_HEAD`) rather than a route's usual
+        tail: the oldest steps go behind a leading ``⋯`` and what survives snaps flush
+        against the **right** edge, so the focus and the steps that just led to it are
+        what a glance lands on.
+
+        ← and → then **scroll it** (JP, 2026-08-09), a hop at a time, off the tail end:
+        the elided head is a real part of the walk and a long one had no way to be read
+        at all. A scrolled line grows its own trailing ``⋯`` — the focus is now the part
+        out of view — so the mark on each side always means the same thing, more walk
+        that way. Scrolling stops where the head comes into view rather than running the
+        line off the edge, and any change to the trail itself resets it: a walk, a step
+        back, a teleport and ^U all end with the focus in view, which is where the next
+        move is read from.
         """
-        line = PathLine([self._trail_hop(node) for node in self._trail], separator=" › ")
-        full = line.text()
-        if full.cell_len <= width:
-            return full
-        fitted = line.ellipsized(width, elide=ELIDE_HEAD)
+        hops = [self._trail_hop(node) for node in self._trail]
+        self._trail_width = width
+        limit = self._trail_max_scroll(width)
+        self._trail_scroll = max(0, min(self._trail_scroll, limit))
+        if not limit and not self._trail_scroll:
+            full = PathLine(hops, separator=_TRAIL_SEP).text()
+            if full.cell_len <= width:
+                return full
+        kept = hops[: len(hops) - self._trail_scroll]
+        if self._trail_scroll:
+            kept.append(PathHop(_ELISION, dim=True))  # the focus is off to the right
+        fitted = PathLine(kept, separator=_TRAIL_SEP).ellipsized(width, elide=ELIDE_HEAD)
         snapped = Text(" " * max(0, width - fitted.cell_len))  # snap the tail to the edge
         snapped.append_text(fitted)
         return snapped
+
+    def _trail_max_scroll(self, width: int) -> int:
+        """How far ← may scroll the trail: the step that first brings its head into view.
+
+        Scrolling past that only shortens a line that already shows every hop it has, so
+        the walk stops there — the same claim the F-lane makes when it dims a key that
+        would do nothing. ``0`` for a trail that fits, which is what makes ← inert on a
+        short walk without the handler needing to know the width.
+
+        Memoized on ``(width, trail)``: it costs a rendering per candidate step and the
+        answer only moves when the walk or the terminal does.
+        """
+        key = (width, tuple(self._trail))
+        if self._trail_fit is not None and self._trail_fit[0] == key:
+            return self._trail_fit[1]
+        hops = [self._trail_hop(node) for node in self._trail]
+        limit = 0
+        if PathLine(hops, separator=_TRAIL_SEP).text().cell_len > width:
+            mark = PathHop(_ELISION, dim=True)
+            for dropped in range(1, len(hops)):
+                limit = dropped
+                head = PathLine(hops[: len(hops) - dropped] + [mark], separator=_TRAIL_SEP)
+                if head.text().cell_len <= width:
+                    break
+        self._trail_fit = (key, limit)
+        return limit
 
     def _trail_hop(self, node: str) -> PathHop:
         """One walked step as a path hop: its display name in its own identity colour."""
@@ -643,6 +740,11 @@ class WalkScreen(Screen):
         is shown by its *label* going white and by the lit route, so the icons stay
         colourful throughout.
 
+        While a find query is being typed the fan is narrowed to the neighbours it matches
+        — the east is *the ways onward*, which is what the query is asking about — and the
+        focus and the came-from node stay put through it: those two are the walk so far,
+        not candidates, so the picture keeps its bearings while the choices thin out.
+
         Only as many neighbours as the area can carry get their own marker (see
         :meth:`_fan_capacity`); the weaker rest collapse into one ``…`` marker at the fan's
         foot. Highlighting a collapsed row from the list lights that marker white and swaps
@@ -660,7 +762,11 @@ class WalkScreen(Screen):
         pairs = self._links_of(self._focus)
         by_other = dict(pairs)
         back = self._came_from if self._came_from in by_other else None
-        fan = [other for other, _link in pairs if other != back]
+        # A find narrows the fan too (JP, 2026-08-09) — the *east* of the picture, which is
+        # the part the query is about: which of the ways onward from here am I looking for?
+        # The focus and the node we came from are the walk itself, not candidates, so they
+        # hold whatever is typed; the graph keeps its shape while the query thins the choices.
+        fan = [other for other, _link in pairs if other != back and self._is_match(other)]
         capacity = self._fan_capacity(canvas_h)
         if len(fan) > capacity + 1:  # collapsing exactly one node would save nothing
             shown, hidden = fan[:capacity], fan[capacity:]

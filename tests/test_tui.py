@@ -1920,10 +1920,12 @@ def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> 
     monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: True)
     session._dispatch("left")
     session._dispatch("home")
-    session._dispatch("enter")  # no ctrl sibling: untouched even while held
+    # Enter has a sibling too — it is the one key a terminal can't spell chorded itself.
+    session._dispatch("enter")
+    session._dispatch("escape")  # no ctrl sibling: untouched even while held
     monkeypatch.setattr(session_mod, "_right_ctrl_down", lambda: False)
     session._dispatch("left")
-    assert seen == ["ctrl_left", "ctrl_home", "enter", "left"]
+    assert seen == ["ctrl_left", "ctrl_home", "ctrl_enter", "escape", "left"]
 
 
 def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -> None:

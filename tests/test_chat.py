@@ -1853,3 +1853,36 @@ async def test_channel_slot_change_drops_the_cached_channel_list(repo: Repositor
     assert await chat.channel_id_for(0) == "slot:0"
     assert ctx.devstate.invalidations == 2
     await device.disconnect()
+
+
+def test_chat_fkey_lane_steps_by_day_on_the_free_left_pair() -> None:
+    """The transcript's sections are days, so F1/F2 name the section step ``Day``.
+
+    Same keys and same actions as a grouped select list's ``Sect ↑``/``Sect ↓`` — the lane
+    names what the sections *are* here — and lit only with more than one day to step
+    between, the way a one-section list has no section jump.
+    """
+    from datetime import timedelta
+
+    from meshterm.core.models import utcnow
+
+    now = utcnow()
+    one_day = [ChatMessage(text="hi", peer="d4e5f6a7", created_at=now)]
+    single = _screen(_StubSession(), send=None, messages=one_day)
+    assert [pair.label for pair in single.fkey_lane[:2]] == ["Day ↑", "Day ↓"]
+    assert [pair.action for pair in single.fkey_lane[:2]] == ["ctrl_pageup", "ctrl_pagedown"]
+    assert not any(pair.enabled for pair in single.fkey_lane[:2])  # one day: nowhere to step
+
+    spread = _screen(
+        _StubSession(), send=None,
+        messages=[
+            ChatMessage(text="then", peer="d4e5f6a7", created_at=now - timedelta(days=2)),
+            ChatMessage(text="now", peer="d4e5f6a7", created_at=now),
+        ],
+    )
+    assert all(pair.enabled for pair in spread.fkey_lane[:2])
+    # A left-hand pair rises toward F1, so stepping *back* through the transcript is the
+    # outer key — the same handedness as the pager's on the right.
+    assert fkeys.action_for(spread.fkey_lane, 1) == "ctrl_pageup"
+    spread.handle(fkeys.action_for(spread.fkey_lane, 1))
+    assert spread._selected == 0  # jumped to the first message of the older day

@@ -92,6 +92,14 @@ _KEY_ACTIONS: dict[Any, str] = {
     Keys.ControlUp: "ctrl_up",
     Keys.ControlDown: "ctrl_down",
     Keys.Enter: "enter",
+    # Ctrl+Enter, as far as a terminal can spell it. There is no such keycode: Enter *is*
+    # ^M, so a console that doesn't do modifyOtherKeys has nothing left to modify and
+    # sends plain CR. What most do send is LF — prompt_toolkit's ``ControlJ`` — which is
+    # otherwise unbound here (an unprintable char, dropped by ``_typed``), so claiming it
+    # costs nothing and wins on the terminals that offer it. The right-Ctrl rescue below
+    # covers the rest through _CTRL_CHORDS, and on a console that spells neither, the
+    # F-lane chip is the affordance (which is the platform where that is already true).
+    Keys.ControlJ: "ctrl_enter",
     Keys.Escape: "escape",
     Keys.Backspace: "backspace",
     Keys.Delete: "delete",
@@ -111,8 +119,10 @@ _KEY_ACTIONS: dict[Any, str] = {
     },
 }
 
-#: The plain navigation actions that have a Ctrl-chord sibling, for the right-Ctrl rescue
-#: in :meth:`TuiSession._dispatch` (see :func:`_right_ctrl_down`).
+#: The plain actions that have a Ctrl-chord sibling, for the right-Ctrl rescue in
+#: :meth:`TuiSession._dispatch` (see :func:`_right_ctrl_down`). Navigation keys, plus
+#: ``enter`` — the one key a terminal cannot reliably spell chorded (see ``Keys.ControlJ``
+#: above), so the rescue is not a fallback there but the surer of the two paths.
 _CTRL_CHORDS: dict[str, str] = {
     "up": "ctrl_up",
     "down": "ctrl_down",
@@ -122,6 +132,7 @@ _CTRL_CHORDS: dict[str, str] = {
     "end": "ctrl_end",
     "pageup": "ctrl_pageup",
     "pagedown": "ctrl_pagedown",
+    "enter": "ctrl_enter",
 }
 
 
