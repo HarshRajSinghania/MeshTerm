@@ -183,12 +183,21 @@ class DashboardScreen(Screen):
         #: dynamic rows): ``stats`` from get_stats, ``battery`` from get_battery.
         self.stats: dict = {}
         self.battery: dict = {}
-        # The one-pass window aggregates (see _digest_window), refreshed per repaint.
+        # The one-pass window aggregates (see _digest_window), refreshed whenever the
+        # window itself moves — which is what ``_window_rev`` counts and ``_digest_rev``
+        # remembers. The screen repaints once a second to keep its clocks honest, and on a
+        # quiet mesh every one of those frames would otherwise re-walk the same 4000
+        # observations to reach the identical numbers.
+        self._window_rev = 0
+        self._digest_rev = -1
         self._win_nodes: set[str] = set()
         self._win_repeaters: set[str] = set()
         self._win_counts: Counter = Counter()
         self._win_snrs: list[float] = []
         self._win_rssis: list[float] = []
+        #: The last activity chart and the inputs it was drawn from — see
+        #: :meth:`_activity_section`.
+        self._chart_memo: Optional[tuple[tuple, list[RenderableType]]] = None
 
     # --- live window -----------------------------------------------------------------
 
@@ -197,6 +206,7 @@ class DashboardScreen(Screen):
         obs = event.observation
         if obs is not None:
             self._window.append(obs)
+            self._window_rev += 1
             self._prune()
             self._session.invalidate()
 
@@ -205,6 +215,7 @@ class DashboardScreen(Screen):
         cutoff = utcnow() - OBSERVATION_WINDOW
         while self._window and self._window[0].observed_at < cutoff:
             self._window.popleft()
+            self._window_rev += 1
 
     # --- input -----------------------------------------------------------------------
 
@@ -249,7 +260,17 @@ class DashboardScreen(Screen):
         different slice of the same window; scanning the (up to 4000-entry) deque once
         per consumer added up to five full passes on every repaint of a busy mesh.
         One pass here fills them all; the section builders read the results.
+
+        And that pass runs only when the window has actually moved. The screen repaints
+        every second so its rates, ages and clock stay honest, but the aggregates are a
+        pure function of the deque — on a mesh quiet for a beat, every one of those frames
+        was re-walking four thousand observations to arrive at the numbers it already had.
+        The window changes in exactly two places (an arriving observation, an expiring one),
+        both of which bump the revision this compares against.
         """
+        if self._digest_rev == self._window_rev:
+            return
+        self._digest_rev = self._window_rev
         nodes: set[str] = set()
         repeaters: set[str] = set()
         counts: Counter = Counter()
@@ -301,19 +322,29 @@ class DashboardScreen(Screen):
         # what this session heard itself pulses green.
         flags = (tuple(self._activity_flags()) + (True,) * minutes)[:minutes]
         styles = ["ok" if live else "muted" for live in reversed(flags)]
-        chart_rows = timeline_rows(
-            list(reversed(shown)), rows=_CHART_ROWS, column_styles=styles
-        )
 
-        def caption_at(frac: float) -> str:
-            if frac >= 1.0:
-                return "now"
-            return "−" + _span_label(round(minutes * (1 - frac)))
+        # The chart is a pure function of these numbers, and on the idle second-tick they
+        # are the same numbers: the histogram only moves when a packet lands or the minute
+        # rolls over. Rasterizing the braille rows and their axis chrome is the priciest
+        # part of this screen's paint, so it is done once per distinct picture rather than
+        # once per repaint. One slot — the chart that just changed is the one to keep.
+        key = (chars, label_w, peak, minutes, tuple(shown), tuple(styles))
+        if self._chart_memo is not None and self._chart_memo[0] == key:
+            chart = self._chart_memo[1]
+        else:
 
-        out: list[RenderableType] = [
-            heading,
-            *axis_chart(chart_rows, peak, chars, caption_at, label_w=label_w),
-        ]
+            def caption_at(frac: float) -> str:
+                if frac >= 1.0:
+                    return "now"
+                return "−" + _span_label(round(minutes * (1 - frac)))
+
+            chart_rows = timeline_rows(
+                list(reversed(shown)), rows=_CHART_ROWS, column_styles=styles
+            )
+            chart = list(axis_chart(chart_rows, peak, chars, caption_at, label_w=label_w))
+            self._chart_memo = (key, chart)
+
+        out: list[RenderableType] = [heading, *chart]
         out.append(Text())
         out.append(self._pulse_grid(shown, width))
         return out

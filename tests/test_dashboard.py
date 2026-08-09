@@ -328,3 +328,74 @@ def test_rhythm_activity_buckets_by_minute_of_day(tmp_path: Path) -> None:
     assert slots[17 * 60 + 55] == 2  # both 17:55 stamps share one minute slot
     assert sum(slots) == 4
     repo.close()
+
+
+# --- what the once-a-second repaint is allowed to redo --------------------------------
+
+
+def test_the_window_digest_only_runs_when_the_window_moved() -> None:
+    """The screen repaints every second; the aggregates are a pure function of the deque.
+
+    On a mesh quiet for a beat, every one of those frames re-walked up to four thousand
+    observations to arrive at the numbers it already had. The window changes in exactly two
+    places — an arriving observation and an expiring one — and only those may cost a pass.
+    """
+    screen = _screen(window=[_obs(node=f"n{i:03d}", age_s=i) for i in range(200)])
+    passes = [0]
+    inner = type(screen)._digest_window
+
+    def counted(self) -> None:
+        before = self._digest_rev
+        inner(self)
+        if before != self._digest_rev:
+            passes[0] += 1
+
+    screen._digest_window = counted.__get__(screen)
+
+    screen.render_body(53)
+    assert passes[0] == 1
+    screen.render_body(53)
+    screen.render_body(53)
+    assert passes[0] == 1, "an idle repaint must not re-walk the window"
+
+    screen.on_event(MeshEvent.observation_event(_obs(node="new1")))
+    screen.render_body(53)
+    assert passes[0] == 2, "an arriving observation must refresh the aggregates"
+
+
+def test_a_new_observation_still_reaches_the_numbers_on_the_next_paint() -> None:
+    """The memo must not freeze the screen: a heard node has to show up in the tallies."""
+    screen = _screen(window=[_obs(node="a1b2")])
+    screen.render_body(53)
+    assert screen._win_nodes == {"a1b2"}
+
+    screen.on_event(MeshEvent.observation_event(_obs(node="3d63")))
+    screen.render_body(53)
+    assert screen._win_nodes == {"a1b2", "3d63"}
+
+
+def test_the_activity_chart_is_redrawn_only_when_its_picture_changes() -> None:
+    """Rasterizing the braille rows is the priciest part of this paint — do it once."""
+    histogram = [0] * ACTIVITY_BUCKETS
+    histogram[0] = 5
+    screen = _screen(histogram=histogram)
+
+    screen.render_body(53)
+    first = screen._chart_memo
+    assert first is not None
+    screen.render_body(53)
+    assert screen._chart_memo is first, "an identical histogram must reuse the chart"
+
+    histogram[0] = 40  # a packet lands: the newest column grows
+    screen.render_body(53)
+    assert screen._chart_memo is not first
+    assert screen._chart_memo[0] != first[0]
+
+
+def test_the_chart_is_redrawn_when_the_terminal_width_changes() -> None:
+    """The chart is sized to the terminal, so the memo key has to carry the width."""
+    screen = _screen(histogram=[3] * ACTIVITY_BUCKETS)
+    screen.render_body(53)
+    narrow = screen._chart_memo
+    screen.render_body(100)
+    assert screen._chart_memo is not narrow
