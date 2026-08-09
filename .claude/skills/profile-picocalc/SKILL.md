@@ -98,8 +98,19 @@ ssh … 'cd $HOME/MeshTerm && .venv/bin/python drive_console.py --script nav_all
 
 where `run_instrumented.sh` is a two-line wrapper `exec .venv/bin/python instrument.py "$@"`.
 It appends a CSV row per repaint to `$HOME/tmp/keytrace.csv`: handle, header, compose,
-dialog, parse, pt-render, total, and the `render_to_ansi` call count. Rows tagged `~tick`
-are idle repaints — what the app burns doing nothing.
+dialog, parse, paint, total, and the `render_to_ansi` call count. Rows tagged `~tick` are
+idle repaints — what the app burns doing nothing.
+
+It hooks `Application._redraw`, deliberately, because MeshTerm swaps in its own
+`FastRenderer` for plain frames: patching `Renderer.render` sees only the paints that fall
+back to prompt_toolkit, and reports a handful of dialog repaints as if they were the whole
+session. If a trace comes back suspiciously sparse, that is the first thing to check.
+
+**Read the row *after* an action, not just the action's own row.** Leaving a screen is a
+good example: the `escape` row is ~10 ms, and the menu that replaces it repaints ~46 ms
+later as an untriggered `~tick` (the menu loop resumes asynchronously, so it is not
+attributed to the key). Judging Esc by its own row alone understates it; judging it by
+console quiescence overstates it — the truth was ~90 ms, from the sequence.
 
 ## Traps that cost real time
 

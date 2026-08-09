@@ -31,8 +31,8 @@ def _add(key, dt):
 
 
 def install():
+    from prompt_toolkit.application import Application
     from prompt_toolkit.formatted_text import ANSI
-    from prompt_toolkit.renderer import Renderer
 
     from meshterm.ui.tui import frame as frame_mod
     from meshterm.ui.tui import render as render_mod
@@ -144,13 +144,17 @@ def install():
 
     ANSI.__init__ = ansi_init
 
-    # --- pt's render + the terminal write ----------------------------------------
-    orig_render = Renderer.render
+    # --- the paint, whichever renderer performs it -------------------------------
+    # Hooked at Application._redraw rather than Renderer.render, because MeshTerm swaps in
+    # its own FastRenderer for plain frames (ui/tui/fastrender.py) — patching the base
+    # class's method would then see only the paints that fall back to prompt_toolkit, and
+    # silently report a handful of dialog repaints as if they were the whole session.
+    orig_redraw = Application._redraw
 
-    def render(self, app, layout, is_done=False):
+    def redraw(self, render_as_done=False):
         t = time.perf_counter()
         try:
-            return orig_render(self, app, layout, is_done)
+            return orig_redraw(self, render_as_done)
         finally:
             try:
                 _log_render(time.perf_counter() - t)
@@ -159,6 +163,8 @@ def install():
 
                 with open(TRACE + ".log", "a") as fh:
                     fh.write(traceback.format_exc() + "\n")
+
+    Application._redraw = redraw
 
     def _log_render(dt):
         ms = lambda k: _acc.get(k, 0.0) * 1000  # noqa: E731
@@ -184,7 +190,6 @@ def install():
         _acc.clear()
         _flush()
 
-    Renderer.render = render
 
 
 def _flush():
