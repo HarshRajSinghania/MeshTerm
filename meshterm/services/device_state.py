@@ -99,6 +99,7 @@ class DeviceState:
         # quick succession) collapse onto a single round-trip instead of each firing their own.
         self._contacts_lock = asyncio.Lock()
         self._self_info_lock = asyncio.Lock()
+        self._path_hash_lock = asyncio.Lock()
         self._channels_lock = asyncio.Lock()
         self._capacity_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
@@ -256,8 +257,13 @@ class DeviceState:
             the optional-read callers that wrap this in ``try`` fall back exactly as before.
         """
         if self._path_hash_mode is None:
-            device = await self._ctx.device()
-            self._path_hash_mode = int(await device.get_path_hash_mode())
+            # Locked like the other first fetches: :meth:`prewarm` reads this in the background
+            # at connect, so a screen opening in that same beat would otherwise issue a second,
+            # identical round-trip alongside it rather than awaiting the one in flight.
+            async with self._path_hash_lock:
+                if self._path_hash_mode is None:
+                    device = await self._ctx.device()
+                    self._path_hash_mode = int(await device.get_path_hash_mode())
         return self._path_hash_mode
 
     # -- channel slots (held until the channel editor invalidates them) --------
@@ -308,13 +314,25 @@ class DeviceState:
     # -- prewarm (fill the slow caches in the background, off the navigation path) --
 
     def prewarm(self) -> None:
-        """Warm the slow caches (contacts, channel slots, capacity) in the background after connect.
+        """Warm *every* cached fact in the background after connect, cheapest reads first.
 
         Called once the session's link is up (see :func:`meshterm.ui.menu._resume_monitor`) so
-        the first screen that reads them — Chat, Trace, the Dashboard, the channel manager — is
-        served from cache instantly, rather than paying the round-trips in the navigation path
-        where the user is waiting on the screen to open. It folds the unavoidable first reads
-        into one quiet wait behind the menu instead of surfacing them on the first open.
+        the first screen that reads them — Contacts, Chat, Trace, the Dashboard, the channel
+        manager — is served from cache instantly, rather than paying the round-trips in the
+        navigation path where the user is waiting on the screen to open. It folds the
+        unavoidable first reads into one quiet wait behind the menu instead of surfacing them
+        on the first open.
+
+        **Order is the whole design.** The reads share one link and run in sequence, so a fact
+        warmed late is a fact the first open still queues behind — and the two slot probes at
+        the end are the slowest reads in the app (each walks the slot table one index at a
+        time, measured in seconds). So the warm runs cheapest-first: the two single round-trips
+        every list screen needs (:meth:`self_info`, :meth:`path_hash_mode`), then the contacts
+        table, then the probes only the channel manager waits on. Opening Contacts a second
+        after connect then finds its three facts already in hand instead of joining the queue
+        behind a slot walk. Warming ``path_hash_mode`` is what closed the last such gap: it is
+        read on the Contacts and Trace open paths to size the key-hash highlight, and nothing
+        else warmed it.
 
         The work runs as a tracked background task: **sequential** (never gathered — concurrent
         reads collide on the BLE UART; see the module note), best-effort (a failure just leaves
@@ -325,8 +343,10 @@ class DeviceState:
         self._spawn(self._prewarm())
 
     async def _prewarm(self) -> None:
-        """Fetch the slow caches one after another, swallowing failures (best-effort warm)."""
+        """Fetch every cached fact one after another, swallowing failures (best-effort warm)."""
         for label, fetch in (
+            ("self-info", self.self_info),
+            ("path-hash mode", self.path_hash_mode),
             ("contacts", self.contacts),
             ("channel slots", self.channel_slots),
             ("channel capacity", self.channel_capacity),

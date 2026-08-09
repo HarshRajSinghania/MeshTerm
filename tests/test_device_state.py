@@ -293,25 +293,77 @@ def test_channel_capacity_is_fetched_once_and_served_from_cache() -> None:
     assert dev.capacity_calls == 1
 
 
-def test_prewarm_fills_the_slow_caches_off_the_read_path() -> None:
-    """prewarm() warms contacts, channels, and capacity so the first read hits no wire."""
+def test_prewarm_fills_every_cache_off_the_read_path() -> None:
+    """prewarm() warms all five facts, so the first screen open hits no wire at all."""
     dev = FakeDevice()
     ds = _devstate(dev)
 
     async def run() -> None:
         ds.prewarm()
         await asyncio.gather(*list(ds._tasks))  # let the background warm finish
-        # Every slow cache was filled by the prewarm: contacts once, the channel probe once
-        # (idx 0 ok, idx 1 rejected), and the capacity probe once.
+        # Every cache was filled by the prewarm: self-info and the routing mode once each,
+        # contacts once, the channel probe once (idx 0 ok, idx 1 rejected), capacity once.
+        assert dev.self_info_calls == 1
+        assert dev.mode_calls == 1
         assert dev.contacts_calls == 1
         assert dev.channel_calls == 2
         assert dev.capacity_calls == 1
-        # A screen opening now is served from cache — no additional round-trips.
+        # A screen opening now is served from cache — no additional round-trips. The
+        # path-hash mode belongs in that list: Contacts and Trace both read it to size the
+        # key-hash highlight, and nothing else in the session warms it.
         await ds.contacts()
+        await ds.self_info()
+        await ds.path_hash_mode()
         await ds.channel_slots()
         await ds.channel_capacity()
+        assert dev.self_info_calls == 1
+        assert dev.mode_calls == 1
         assert dev.contacts_calls == 1
         assert dev.channel_calls == 2
         assert dev.capacity_calls == 1
+
+    asyncio.run(run())
+
+
+def test_prewarm_reads_the_cheap_facts_before_the_slot_probes() -> None:
+    """Order is the point: the reads share one link, and the probes are the slow ones.
+
+    Both slot reads walk the firmware's slot table an index at a time and are measured in
+    seconds; the facts every list screen needs are single round-trips. Warming them first
+    is what stops a Contacts open a second after connect from queueing behind a slot walk.
+    """
+    dev = FakeDevice()
+    ds = _devstate(dev)
+    order: list[str] = []
+    for name in ("get_self_info", "get_path_hash_mode", "get_contacts", "get_channel",
+                 "channel_capacity"):
+        inner = getattr(dev, name)
+
+        async def traced(*a, _name=name, _inner=inner, **k):  # noqa: ANN001, ANN202
+            if _name != "get_channel" or "get_channel" not in order:
+                order.append(_name)
+            return await _inner(*a, **k)
+
+        setattr(dev, name, traced)
+
+    async def run() -> None:
+        ds.prewarm()
+        await asyncio.gather(*list(ds._tasks))
+
+    asyncio.run(run())
+    assert order == [
+        "get_self_info", "get_path_hash_mode", "get_contacts",
+        "get_channel", "channel_capacity",
+    ]
+
+
+def test_a_concurrent_path_hash_read_joins_the_warm_instead_of_racing_it() -> None:
+    """The prewarm now reads the mode, so a screen opening beside it must not re-read."""
+    dev = FakeDevice()
+    ds = _devstate(dev)
+
+    async def run() -> None:
+        await asyncio.gather(ds.path_hash_mode(), ds.path_hash_mode(), ds.path_hash_mode())
+        assert dev.mode_calls == 1
 
     asyncio.run(run())
