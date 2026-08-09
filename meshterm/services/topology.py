@@ -29,6 +29,7 @@ so the graph is unit-testable without a device or a database.
 
 from __future__ import annotations
 
+import bisect
 import heapq
 import math
 import statistics
@@ -464,8 +465,9 @@ class MeshTopology:
         offered first, so a ``65`` → ``6532`` → ``6532eb`` chain collapses from the tail
         end inward over successive calls.
         """
+        ordered = sorted(nodes)
         for short in sorted(nodes, key=len):
-            exts = self._extensions(short, nodes)
+            exts = self._extensions(short, ordered)
             if not exts:
                 continue
             longest = max(exts, key=len)
@@ -474,19 +476,31 @@ class MeshTopology:
         return None
 
     @staticmethod
-    def _extensions(short: str, nodes: set[str]) -> list[str]:
-        """Every node id in ``nodes`` that strictly extends the under-specified ``short``.
+    def _extensions(short: str, ordered: list[str]) -> list[str]:
+        """Every node id in ``ordered`` that strictly extends the under-specified ``short``.
 
         Empty for a full-width canonical id (12 hex is never under-specified) and for a
         short id nothing in the graph extends.
+
+        ``ordered`` must be the node ids sorted lexicographically, which is what makes this
+        cheap: every id sharing a prefix sorts into one contiguous run, so the extensions
+        are a slice found by binary search rather than a scan of the whole graph. That
+        matters because the caller asks this question once per node, and its own caller
+        starts the whole pass again after every merge — a mesh with ~1100 links and a couple
+        of hundred merges to settle turned a linear scan here into ~24 million ``len``
+        calls and sixteen seconds of opening the mesh walk.
         """
         if len(short) >= 12:
             return []
-        return [
-            other
-            for other in nodes
-            if other != short and len(other) > len(short) and other.startswith(short)
-        ]
+        out: list[str] = []
+        width = len(short)
+        for i in range(bisect.bisect_left(ordered, short), len(ordered)):
+            other = ordered[i]
+            if not other.startswith(short):
+                break  # past the run: nothing further can share the prefix
+            if len(other) > width:
+                out.append(other)
+        return out
 
     def _next_corroborated_merge(self, nodes: set[str]) -> Optional[tuple[str, str]]:
         """The next ambiguous stub the *neighbourhood evidence* resolves, or ``None``.
@@ -512,8 +526,9 @@ class MeshTopology:
         ``f062eb…``) are the same node, so they never split their own vote.
         """
         adjacency = self._adjacency()
+        ordered = sorted(nodes)
         for short in sorted(nodes, key=len):
-            exts = self._extensions(short, nodes)
+            exts = self._extensions(short, ordered)
             candidates = [
                 ext for ext in exts
                 if not any(other != ext and other.startswith(ext) for other in exts)

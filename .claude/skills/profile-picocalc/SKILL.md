@@ -48,6 +48,30 @@ Tour scripts are one step per line: `down 8`, `enter`, `text:y`, `sleep 3`,
 `tours/` has `nav_all.txt` (every page), `nav_ab.txt` (short, for A/B runs) and
 `nav_map.txt`.
 
+## Timing a screen *open* — use `expect`, not silence
+
+A repaint is one burst of output, so "silent for 45 ms" cleanly ends it. An **open** is not:
+it paints the menu closing, falls silent for however long the tool takes to load and build,
+then paints the new screen. At the repaint threshold the clock stops on that first burst and
+reports an open that never happened (the mesh walk read as 124 ms when it truly took 4.9 s).
+Widening the window with `--quiet-ms` does not rescue it either — past about a second the
+2 s header tick lands inside every measurement and inflates all of them.
+
+So watch the panel instead:
+
+```
+label: open-walk
+enter
+expect  links
+```
+
+`expect TEXT` polls `/dev/vcs1` until `TEXT` is on screen and reports the time since the
+last key. **The needle must be unique to the destination screen.** Every main-menu row
+carries its screen's name, so `expect Mesh walk` and `expect Contacts` match the *menu* and
+return instantly — a silent false pass that made a 2.3× improvement look like no change.
+Use something only the opened screen draws: `links` for the walk (`… 334 nodes · 1145 links`),
+` known` for Contacts (`Contacts · 141 known`), `mesh overview` for the Dashboard.
+
 **The app boots to a device picker** — it does not auto-connect. A tour must press `enter`
 on the splash and then `sleep 25` for the radio, or everything after it measures the splash.
 Check `shots/*_boot.txt` if the numbers look uniform and wrong.

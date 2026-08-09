@@ -793,3 +793,70 @@ async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim
     empty.handle("up")
     empty.handle("enter")
     assert not empty.future.done()
+
+
+# --- the prefix settle is a sorted-range scan, not a sweep of the graph --------------
+
+
+def test_extensions_matches_a_naive_scan_over_awkward_shapes() -> None:
+    """The binary-searched range must return exactly what scanning every node would.
+
+    ``_extensions`` answers "which ids strictly extend this short one" by binary-searching
+    a lexicographically sorted list, because the caller asks it once per node and its own
+    caller restarts the whole pass after every merge — on a real mesh that was ~24 million
+    ``len`` calls and sixteen seconds. The shapes below are the ones a hex-prefix graph
+    actually produces: chains, shared stems, a full-width id, and near-misses either side
+    of the run that a sloppy range would swallow.
+    """
+    from meshterm.services.topology import MeshTopology
+
+    nodes = {
+        "6", "65", "6532", "6532eb", "6532eb00aa11",
+        "6533", "653300ff", "66", "6600",
+        "a1", "a1b2", "a1b3", "b0",
+        "ffffffffffff",
+    }
+    ordered = sorted(nodes)
+    for short in sorted(nodes):
+        naive = sorted(
+            other
+            for other in nodes
+            if other != short and len(other) > len(short) and other.startswith(short)
+        )
+        assert sorted(MeshTopology._extensions(short, ordered)) == naive, short
+
+
+def test_extensions_ignores_a_full_width_id() -> None:
+    """Twelve hex is canonical: it is nobody's prefix, however the graph sorts."""
+    from meshterm.services.topology import MeshTopology
+
+    ordered = sorted({"6532eb00aa11", "6532eb00aa1122", "65"})
+    assert MeshTopology._extensions("6532eb00aa11", ordered) == []
+
+
+def test_prefix_settle_folds_a_chain_but_not_a_fork() -> None:
+    """The end-to-end behaviour the fast lookup has to preserve.
+
+    ``65`` -> ``6532`` -> ``6532eb...`` is one node named three ways, so the graph ends up
+    holding it once. Add a sibling that genuinely forks the stem and ``65`` stops being an
+    abbreviation and starts being a coin toss between two real nodes — it must then stay
+    exactly as it is, under-named but honest, rather than be folded onto either.
+    """
+    from meshterm.core.models import utcnow
+    from meshterm.services.topology import MeshTopology
+
+    def graph(hops):
+        topo = MeshTopology(self_id="local", contacts=[])
+        now = utcnow()
+        for hop in hops:
+            topo.add_walk(["local", hop], when=now, source="trace")
+        topo.coalesce_prefixes()
+        return {end for link in topo._links for end in link}
+
+    chain = graph(("65", "6532", "6532eb00aa11"))
+    assert chain == {"local", "6532eb00aa11"}, f"chain not folded: {sorted(chain)}"
+
+    fork = graph(("65", "6532", "6532eb00aa11", "653300ff2211"))
+    assert "6532eb00aa11" in fork and "653300ff2211" in fork
+    assert "6532" not in fork, "an unambiguous link in the chain should still fold"
+    assert "65" in fork, "a stub opening two real nodes must not be guessed onto one"

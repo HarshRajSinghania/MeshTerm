@@ -65,6 +65,11 @@ KEYS = {
 #: A keystroke is "done" once the app has written nothing for this long. The app writes
 #: its frame in one burst, so this cleanly separates one repaint from the next without
 #: charging the gap to the keystroke.
+#:
+#: Raise it (``--quiet-ms``) when measuring something that *opens* a screen rather than
+#: repainting one. An open paints the menu closing, then goes quiet for as long as it takes
+#: to load and build, then paints the new screen — at the repaint threshold the clock stops
+#: on that first burst and reports a fast open that never happened.
 QUIET_S = 0.045
 
 #: Give up on a keystroke that never produces output (a key the screen ignores).
@@ -85,6 +90,8 @@ def main():
     ap.add_argument("--boot-wait", type=float, default=12.0)
     ap.add_argument("--out", default="")
     ap.add_argument("--exe", default="$HOME/MeshTerm/.venv/bin/meshterm")
+    ap.add_argument("--quiet-ms", type=float, default=QUIET_S * 1000,
+                    help="silence that ends a keystroke; raise it to time screen opens")
     ap.add_argument("--tee", default="", help="also copy the app's output to this file")
     ap.add_argument("--shots", default="", help="dump the console text after each group here")
     args = ap.parse_args()
@@ -94,6 +101,15 @@ def main():
         os.makedirs(args.shots, exist_ok=True)
 
     shot_n = [0]
+    last_key = [None]  # when the most recent key was delivered, for `expect`
+
+    def screen_text():
+        """The panel's current text, straight out of the console's screen memory."""
+        try:
+            with open("/dev/vcs1", "rb") as fh:
+                return fh.read(args.rows * args.cols).decode("utf-8", "replace")
+        except OSError:
+            return ""
 
     def shot(tag):
         """Read the console's own screen memory — exactly what is on the panel."""
@@ -132,8 +148,12 @@ def main():
 
     set_winsize(fd, args.rows, args.cols)
 
-    def drain(quiet=QUIET_S, timeout=TIMEOUT_S, mirror_out=True):
+    quiet_s = args.quiet_ms / 1000.0
+
+    def drain(quiet=None, timeout=TIMEOUT_S, mirror_out=True):
         """Read until the app has been silent for `quiet`; return (bytes, first, last)."""
+        if quiet is None:
+            quiet = quiet_s
         total = 0
         t_start = time.perf_counter()
         t_first = None
@@ -198,6 +218,31 @@ def main():
         if line.startswith("shot"):
             shot(line.split(None, 1)[1].strip() if " " in line else label)
             continue
+        if line.startswith("expect "):
+            # Time how long until the panel actually shows the screen we asked for.
+            # Quiescence cannot answer this: an *open* paints the menu closing, falls
+            # silent while it loads and builds, then paints the new screen — and widening
+            # the silence window far enough to span that gap lets the 2 s header tick
+            # into every other measurement instead. So watch the console itself.
+            needle = line[7:].strip()
+            deadline = time.perf_counter() + 30.0
+            found = None
+            while time.perf_counter() < deadline:
+                drain(quiet=0.005, timeout=0.005)
+                if needle in screen_text():
+                    found = time.perf_counter()
+                    break
+            base = last_key[0] if last_key[0] else time.perf_counter()
+            if found is None:
+                print(f"{label:<20} {'expect':<10} {'--':>3} "
+                      f"{'NEVER APPEARED: ' + needle:>40}")
+            else:
+                rows_out.append({"label": label, "key": f"expect:{needle}",
+                                 "n": 1, "p50": (found - base) * 1000})
+                print(f"{label:<20} {'appear':<10} {1:3d} "
+                      f"{(found - base) * 1000:8.1f} {'':>8} {'':>8} {'':>7}"
+                      f"  <- {needle}")
+            continue
         m = re.match(r"^(\S+?)(?:\s+(\d+))?$", line)
         name, count = m.group(1), int(m.group(2) or 1)
         if name.startswith("text:"):
@@ -214,11 +259,12 @@ def main():
             # Drain anything still in flight from the previous key. Without this a slow
             # app's tail lands on the next key's clock and reads as a 0.3 ms response.
             while True:
-                left, first, _, _ = drain(quiet=0.05, timeout=0.05, mirror_out=True)
+                left, first, _, _ = drain(timeout=quiet_s, mirror_out=True)
                 if left == 0:
                     break
             os.write(fd, seq.encode())
             t_send = time.perf_counter()
+            last_key[0] = t_send
             nbytes, t_first, t_last, _ = drain()
             if t_first is None:
                 continue

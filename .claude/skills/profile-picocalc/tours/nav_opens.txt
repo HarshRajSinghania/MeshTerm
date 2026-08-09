@@ -1,0 +1,47 @@
+# How long a screen takes to *appear* — the cost no repaint tracer can see.
+#
+# Each open is timed with `expect`, whose needle must be unique to the destination:
+# every main-menu row carries its own screen's name, so `expect Contacts` would match
+# the menu and pass instantly. See SKILL.md.
+
+label: splash
+down 1
+up 1
+label: connect
+enter
+sleep 25
+
+# Dashboard (menu row 3)
+label: nav
+down 3
+label: open-dashboard
+enter
+expect mesh overview
+sleep 2
+esc
+sleep 3
+
+# Contacts (row 5) — cold pays the device read, warm is served from devstate
+label: nav
+down 2
+label: open-contacts-cold
+enter
+expect  known
+sleep 2
+esc
+sleep 3
+label: open-contacts-warm
+enter
+expect  known
+sleep 2
+esc
+sleep 3
+
+# Mesh walk (row 7) — the heaviest open: build_topology over every stored path
+label: nav
+down 2
+label: open-walk
+enter
+expect  links
+sleep 2
+esc
