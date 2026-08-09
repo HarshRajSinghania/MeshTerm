@@ -305,13 +305,22 @@ def test_walk_trail_names_carry_their_node_hues() -> None:
     )
 
 
-def test_walk_home_refocuses_us() -> None:
-    """Home resets the walk to our own node from anywhere."""
+def test_walk_locate_refocuses_us_and_home_end_walk_the_list() -> None:
+    """^U resets the walk to our own node from anywhere; Home/End are the list's ends."""
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
     screen.handle("enter")  # us → YUL
+    rows = screen._rows()
+    assert len(rows) > 1, "the fixture's YUL needs a list to move within"
+
+    # Home/End move the highlight — they no longer abandon the walk.
+    screen.handle("end")
+    assert screen._index == len(rows) - 1 and screen._trail[-1] != topo.self_id
     screen.handle("home")
+    assert screen._index == 0 and screen._trail[-1] != topo.self_id
+
+    screen.handle("locate")
     assert screen._trail == [topo.self_id]
 
 
@@ -348,8 +357,8 @@ def test_walk_echoes_the_find_query_above_the_matches_it_narrows() -> None:
         set_platform(REGULAR)
 
 
-def test_walk_fkey_lane_says_you_where_the_shared_lane_would_say_top() -> None:
-    """Home drops the trail rather than scrolling, and End is bound to nothing at all."""
+def test_walk_fkey_lane_gives_you_its_own_slot_over_the_pagers_ends() -> None:
+    """``You`` is a verb of this screen (F3), not an end of the list the pager scrolls."""
     from meshterm.ui.tui.fkeys import action_for
 
     screen = _screen(_topo())
@@ -357,11 +366,28 @@ def test_walk_fkey_lane_says_you_where_the_shared_lane_would_say_top() -> None:
     lane = screen.fkey_lane
 
     assert [pair.label if pair else None for pair in lane] == [
-        None, None, None, "Page ↓", "Page ↑",
+        None, None, "You", "Page ↓", "Page ↑",
     ]
-    # The jump behind Page ↑ goes back to us; the one behind Page ↓ doesn't exist here.
-    assert lane[4].opp_label == "You" and action_for(lane, 10) == "home"
-    assert lane[3].opp_label == "" and action_for(lane, 9) is None
+    assert action_for(lane, 3) == "locate"
+    assert lane[2].opp_label == ""  # nothing is the opposite of going home
+    # And the pager's Shift bank means what it means everywhere else: the list's two ends.
+    assert lane[4].opp_label == "Top" and action_for(lane, 10) == "home"
+    assert lane[3].opp_label == "Bottom" and action_for(lane, 9) == "end"
+
+
+def test_walk_you_dims_once_the_focus_is_already_us() -> None:
+    """Dim says *a thing here, just not right now* — there is nowhere to come back from."""
+    screen = _screen(_topo())
+    screen.render_body(80)
+    assert screen.fkey_lane[2].enabled is False  # opens on us, trail of one
+
+    screen.handle("enter")  # walked away: now there is
+    assert screen.fkey_lane[2].enabled is True
+
+    screen.handle("locate")
+    assert screen.fkey_lane[2].enabled is False
+    screen.handle("text", "a")  # a find narrows the list off our own neighbours too
+    assert screen.fkey_lane[2].enabled is True
 
 
 def test_walk_came_from_anchors_west_and_the_fan_stays_east() -> None:

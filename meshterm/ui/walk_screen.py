@@ -213,20 +213,24 @@ class WalkScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The shared pager over the link list, with ``You`` behind Page ↑ and nothing behind ↓.
+        """``You`` on the screen's own F3, the shared pager and its two ends on F4/F5.
 
-        The walk's Home does not scroll to a top — it drops the whole trail and puts the
-        focus back on our own node — so the Shift companion that would say *Top* says
-        ``You`` instead. ``End`` is bound to nothing here, so its companion stays blank:
-        a trail has a beginning (us) but no far end to jump to. Both nav slots need rows
-        to move through, which a leaf node in a sparse graph may not have.
+        ``You`` is not an end of the link list — it drops the whole trail and puts the
+        focus back on our own node — so it never belonged behind the pager, where it had
+        to stand in for *Top* and leave *Bottom* blank to keep the pretence. It takes a
+        slot of the screen's own instead (JP, 2026-08-09), which is what F1-F3 are for,
+        and the pager's Shift bank goes back to meaning here what it means everywhere
+        else: the two ends of the list this screen scrolls. ^U reaches the same action on
+        a keyboard, the same chord the map spends on our node.
+
+        Both nav slots need rows to move through, which a leaf node in a sparse graph may
+        not have; ``You`` needs somewhere to come back *from* — a walked trail, or a find
+        narrowing the list — and dims once the focus is already us.
         """
         from .tui.fkeys import FPair, default_lane
 
-        paging = len(self._rows()) > 1
-        lane = list(default_lane(nav=paging))
-        lane[3] = FPair("Page ↓", "pagedown", enabled=paging)
-        lane[4] = FPair("Page ↑", "pageup", "You", "home", enabled=paging)
+        lane = list(default_lane(nav=len(self._rows()) > 1))
+        lane[2] = FPair("You", "locate", enabled=len(self._trail) > 1 or bool(self._filter))
         return lane
 
     def __init__(
@@ -364,10 +368,15 @@ class WalkScreen(Screen):
         """Walking keys — or the live find query while one is being typed."""
         if self._filter:
             return f"find: {self._filter}▏ · ↑↓ move · Enter focus · ⌫ erase · Esc clear"
-        return "↑↓ move · Enter focus · ⌫ back · Home you · type to find · Esc back"
+        return "↑↓ move · Enter focus · ⌫ back · ^U you · type to find · Esc back"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Move the highlight, walk, back up, find, or dismiss."""
+        """Move the highlight, walk, back up, find, or dismiss.
+
+        Home/End are the list's own ends here, as on every other scrolling screen; the jump
+        back to our own node is ``locate`` (^U, and the lane's F3), which is not a place in
+        this list at all — see :attr:`fkey_lane`.
+        """
         rows = self._rows()
         if action == "escape":
             if self._filter:
@@ -395,7 +404,13 @@ class WalkScreen(Screen):
             elif len(self._trail) > 1:
                 self._trail.pop()
                 self._index = 0
-        elif action in ("home", "ctrl_home"):
+        elif action in ("home", "ctrl_home") and rows:
+            self._index = 0
+        elif action in ("end", "ctrl_end") and rows:
+            self._index = len(rows) - 1
+        elif action == "locate":
+            # ^U (and F3): abandon the walk rather than move within it — the trail goes
+            # back to just us and any find narrowing the list is dropped with it.
             self._trail = [self._topo.self_id]
             self._filter = ""
             self._index = 0

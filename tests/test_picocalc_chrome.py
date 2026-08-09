@@ -212,13 +212,17 @@ def test_dialogs_draw_no_lane_at_all() -> None:
 
 
 def test_map_locate_is_reachable_from_both_control_keys() -> None:
-    """``locate`` is bound as a chord app-wide, so both Ctrl keys and F2 reach the same action."""
+    """``locate`` is bound as a chord app-wide, so both Ctrl keys and F2 reach the same action.
+
+    The letter is the mnemonic of the action — ^U for *you* — so it is the same chord on
+    every screen that can point at our own node, not one screen's initial.
+    """
     from prompt_toolkit.keys import Keys
 
     from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS
 
-    assert _CTRL_LETTER_CHORDS["l"] == "locate"  # the right-Ctrl rescue's half
-    assert _KEY_ACTIONS[Keys.ControlL] == "locate"  # the ordinary binding, generated from it
+    assert _CTRL_LETTER_CHORDS["u"] == "locate"  # the right-Ctrl rescue's half
+    assert _KEY_ACTIONS[Keys.ControlU] == "locate"  # the ordinary binding, generated from it
 
 
 def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:

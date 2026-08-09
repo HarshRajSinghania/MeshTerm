@@ -58,11 +58,14 @@ from .select import Choice, ReorderScreen, SelectScreen, Separator
 #: genuine third-level character arrives as some *other* glyph and never matches this table.
 #: ``m``/``i``/``h`` are not free: prompt_toolkit spells Enter, Tab and Backspace as
 #: ``Keys.ControlM``/``ControlI``/``ControlH``, so claiming them here would rebind those keys.
+#: A chord's letter is the mnemonic of the *action*, not of one screen's word for it —
+#: ``locate`` is ^U for **you** (JP, 2026-08-09), the same key on the map and in the mesh
+#: walk, because what it names on both is our own node.
 _CTRL_LETTER_CHORDS: dict[str, str] = {
     "c": "quit",
-    "l": "locate",
     "p": "paths",
     "r": "retry",
+    "u": "locate",
     "v": "paste_clipboard",
 }
 

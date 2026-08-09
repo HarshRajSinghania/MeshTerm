@@ -14,8 +14,8 @@ render_map`. Keys:
 * ``PgUp`` / ``PgDn`` zoom in / out,
 * ``Home`` recenters and refits to the dense core of the nodes — the *region* the mesh
   covers, and the same default view the map opens on,
-* ``Ctrl+L`` recenters on **your own node**, keeping the zoom you chose and clearing any
-  find (the lane's ``You`` chip; its Shift half also zooms in close),
+* ``^U`` (for *you*) recenters on **your own node**, keeping the zoom you chose and
+  clearing any find (the lane's ``You`` chip; its Shift half also zooms in close),
 * **typing finds nodes**: every letter key feeds a live name filter — matching nodes keep
   bright labels while the rest dim to context, ``Enter`` frames the matches, ``Backspace``
   edits, and ``Esc`` clears the filter (a second ``Esc`` leaves the map). This is why no
@@ -224,7 +224,7 @@ class MapScreen(Screen):
         editing keys, so the typed text is always visible somewhere fixed.
 
         The line spends its whole 72-cell budget, so the two view-jump keys share one atom
-        (``Home/^L region/you``) and ``⇧ fine`` — a refinement of a key the line already
+        (``Home/^U region/you``) and ``⇧ fine`` — a refinement of a key the line already
         names, and the only atom here that documents a *modifier* rather than a binding —
         is the one that gives way to make room for them. The basemap's state used to hang
         off the end of this line as a suffix; it is a status atom, not a key, so it moved
@@ -233,7 +233,7 @@ class MapScreen(Screen):
         """
         if self._filter:
             return f"find: {self._filter}▏ · Enter frame · ⌫ erase · Esc clear"
-        return "↑↓←→ pan · PgUp/PgDn zoom · Home/^L region/you · type to find · Esc back"
+        return "↑↓←→ pan · PgUp/PgDn zoom · Home/^U region/you · type to find · Esc back"
 
     def consume_edge_scrub(self) -> int:
         """Right-edge columns the session should force-repaint on the next paint (0 = none).
@@ -520,7 +520,7 @@ class MapScreen(Screen):
         active filter first, the map itself only once the filter is clear.
 
         Three actions reframe the view, and each has both a key and an F-key chip:
-        ``home`` the whole region, ``locate`` (Ctrl+L) our own node — ``locate_zoom``
+        ``home`` the whole region, ``locate`` (^U, for *you*) our own node — ``locate_zoom``
         the Shift-bank variant that also homes in — and ``frame`` the find matches,
         which is what Enter already does while a query is being typed, kept as a
         separate action so the lane can name it on a platform that draws no hint line.
@@ -589,7 +589,7 @@ class MapScreen(Screen):
         return next((m for m in self._markers if m.is_self), None)
 
     def _locate(self, vp: Viewport, *, zoom_in: bool = False) -> None:
-        """Recentre on our own node (``Ctrl+L`` / the ``You`` chip), clearing any find.
+        """Recentre on our own node (``^U`` / the ``You`` chip), clearing any find.
 
         Plain ``You`` keeps the zoom the user chose — pressing it twice does the same
         thing twice, and pairing it with one Zoom + is a single extra press. Its Shift
