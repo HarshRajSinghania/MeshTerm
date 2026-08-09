@@ -185,7 +185,6 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     def scaled(rgb: tuple[int, int, int], f: float) -> tuple[int, int, int]:
         return tuple(max(0, min(255, round(c * f))) for c in rgb)
 
-    assert code(_snr_rgb(10.0)) in canvas          # approach edge, full-strength green
     assert code(_snr_rgb(0.0)) in canvas           # Alice's edge, full-strength amber
     assert code(scaled(_snr_rgb(-15.0), 0.5)) in canvas   # Bob's edge stays faded…
     assert code(_snr_rgb(-15.0)) not in canvas     # …and never reaches full strength
@@ -215,7 +214,10 @@ def test_walk_enter_walks_and_grows_the_trail() -> None:
     # The focus line reads name (hash) — the glyph carries the type, not a spelled-out kind.
     assert "YUL-Cartierville (3d)" in body and "1 hop out" in body
     assert "Alice" in body  # YUL's onward neighbour is now a row
-    assert "⌫ back" in body  # the row leading home is marked
+    # The node we walked in from is not offered back as a link — ⌫ is the way back — so
+    # the list holds only ways *onward* and opens on the strongest of them.
+    assert screen._rows() == [topo.canonical(ALICE.public_key)]
+    assert "⌫ back" not in body
 
 
 def test_walk_backspace_steps_back_along_the_trail() -> None:
@@ -231,16 +233,29 @@ def test_walk_backspace_steps_back_along_the_trail() -> None:
     assert screen._trail == [topo.self_id]
 
 
-def test_walk_walking_into_the_back_node_pops_instead_of_growing() -> None:
-    """Enter on the trail-back row retraces rather than appending a ping-pong walk."""
+def test_walk_the_node_walked_in_from_is_not_offered_back_as_a_link() -> None:
+    """The way back is ⌫, not a row: a walk that just undoes the last one isn't on offer.
+
+    It leaves the list holding only ways onward, which is also what makes row 0 — where
+    every reset of the cursor lands — reliably the strongest link out of here.
+    """
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
     screen.handle("enter")  # us → YUL
-    rows = screen._rows()
-    screen._index = rows.index(topo.self_id)  # highlight the row leading back home
-    screen.handle("enter")
-    assert screen._trail == [topo.self_id]  # popped, not [us, yul, us]
+
+    assert topo.self_id not in screen._rows()
+    assert screen._rows() == screen._fan_nodes()  # the canvas draws the same set
+    assert screen._index == 0
+    strongest = max(
+        screen._links_of(screen._focus),
+        key=lambda pair: pair[1].median_snr if pair[1].median_snr is not None else -99,
+    )[0]
+    assert screen._rows()[screen._index] != topo.self_id
+    assert strongest in (topo.self_id, screen._rows()[0])  # us is stronger, and excluded
+
+    screen.handle("backspace")  # the way back, taken by key
+    assert screen._trail == [topo.self_id]
 
 
 def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
@@ -263,8 +278,10 @@ def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
     walk_to(yul)  # us → YUL
     walk_to(alice)  # YUL → Alice
     assert screen._trail == [topo.self_id, yul, alice]
-    walk_to(yul)  # Alice → YUL: loops back, so Alice is dropped, not re-appended
-    assert screen._trail == [topo.self_id, yul]
+    # Alice → us closes the loop. It is a real link onward (not the node we arrived from,
+    # which is YUL), so it is on offer — and taking it drops the stretch walked to get here.
+    walk_to(topo.self_id)
+    assert screen._trail == [topo.self_id]
 
 
 def test_walk_trail_drops_the_head_not_the_tail_when_narrow() -> None:
@@ -308,18 +325,25 @@ def test_walk_trail_names_carry_their_node_hues() -> None:
 
 def test_walk_locate_refocuses_us_and_home_end_walk_the_list() -> None:
     """^U resets the walk to our own node from anywhere; Home/End are the list's ends."""
-    topo = _topo()
+    # A hub of spokes off one of our neighbours: a walked-away focus with a list to move in.
+    topo = MeshTopology(US, contacts=[YUL])
+    yul = topo.canonical(YUL.public_key)
+    when = utcnow()
+    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
+    for i in range(5):
+        topo.add_walk([yul, f"{i:02x}" * 6], snrs=[5.0 - i], when=when, source="trace")
     screen = _screen(topo)
     screen.render_body(80)
     screen.handle("enter")  # us → YUL
+    screen.render_body(80)
     rows = screen._rows()
-    assert len(rows) > 1, "the fixture's YUL needs a list to move within"
+    assert len(rows) > 1 and topo.self_id not in rows
 
     # Home/End move the highlight — they no longer abandon the walk.
     screen.handle("end")
-    assert screen._index == len(rows) - 1 and screen._trail[-1] != topo.self_id
+    assert screen._index == len(rows) - 1 and screen._trail == [topo.self_id, yul]
     screen.handle("home")
-    assert screen._index == 0 and screen._trail[-1] != topo.self_id
+    assert screen._index == 0 and screen._trail == [topo.self_id, yul]
 
     screen.handle("locate")
     assert screen._trail == [topo.self_id]
@@ -391,17 +415,17 @@ def test_walk_you_dims_once_the_focus_is_already_us() -> None:
     assert screen.fkey_lane[2].enabled is True
 
 
-def test_walk_came_from_anchors_west_and_the_fan_stays_east() -> None:
-    """The trail-back node sits at the far west; every fan node east of the focus."""
+def test_walk_the_fan_is_all_east_and_holds_no_came_from() -> None:
+    """Everything drawn is a way onward, east of the focus — nothing ducks in behind it."""
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
     screen.handle("enter")  # focus YUL; we came from us
     alice = topo.canonical(ALICE.public_key)
-    fx, fy = screen._focus_pos(80, 12)
-    placed = screen._place_neighbours(80, 12, [alice], topo.self_id, False)
-    bx, by = placed[topo.self_id]
-    assert bx < fx and by > fy  # back home: far left, ducked under the focus label
+    fx, _fy = screen._focus_pos(80, 12)
+    placed = screen._place_neighbours(80, 12, screen._fan_nodes(), False)
+    assert topo.self_id not in placed  # the node we came from is behind us, not on screen
+    assert list(placed) == [alice]
     assert placed[alice][0] > fx  # the fan is east of the focus
     assert fx <= (80 * 2) // 3  # and the focus itself leans left
 
@@ -421,7 +445,7 @@ def test_walk_fan_rim_leaves_spread_east_not_curling_back() -> None:
         topo.add_walk([topo.self_id, node], snrs=[5.0 - i], when=when, source="trace")
     screen = _screen(topo)
     ax, _ay, _name = screen._focus_anchor(80, 14)
-    placed = screen._place_neighbours(80, 14, fan, None, False)
+    placed = screen._place_neighbours(80, 14, fan, False)
     tip = max(x for x, _y in placed.values())  # the due-east leaf, the fan's far tip
     midpoint = ax + (tip - ax) / 2
     assert placed[fan[0]][0] > midpoint  # the topmost leaf reaches past halfway east…
@@ -700,5 +724,99 @@ def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
     canvas = _plain(screen._canvas_lines(80, 12, None))
     assert "Alice" in canvas          # the way onward the query is about
     assert "Bob-Tower" not in canvas  # and the one it isn't
-    # The walk itself is not a candidate: both ends of it hold through any query.
-    assert "YUL-Cartierville" in canvas and "Homestead" in canvas
+    # The focus is not a candidate: it is the walk so far, and holds through any query.
+    assert "YUL-Cartierville" in canvas
+
+
+def test_walk_marks_wear_their_node_type_colour_not_the_key_hue() -> None:
+    """A mark is glyph *and* colour: the same one the map and the route graph pin with."""
+    from meshterm.ui.marks import NODE_MARK, REPEATER_MARK, SELF_MARK
+    from meshterm.ui.theme import mark_rgb, node_style
+
+    topo = _topo()
+    screen = _screen(topo)
+    yul, alice = topo.canonical(YUL.public_key), topo.canonical(ALICE.public_key)
+
+    assert screen._glyph(yul) == (REPEATER_MARK[0], "type.repeater")
+    assert screen._glyph(alice) == (NODE_MARK[0], "type.node")
+    assert screen._marker_rgb(yul) == mark_rgb("type.repeater")
+    assert screen._marker_rgb(topo.self_id) == mark_rgb(SELF_MARK[1])
+    # Identity has its own lane and keeps it: the *name* is what carries the key hue.
+    assert screen._marker_rgb(yul) != screen._label_rgb(yul)
+    assert screen._label_rgb(yul) == _plain_rgb(node_style(yul))
+    # The legend is a sample of those very marks, so it keys colour as well as shape.
+    legend = screen._legend()
+    hues = {
+        legend.plain[span.start:span.end]: str(span.style)
+        for span in legend.spans if span.end - span.start == 1
+    }
+    assert hues[REPEATER_MARK[0]] == "type.repeater"
+    assert hues[NODE_MARK[0]] == "type.node"
+    assert hues[SELF_MARK[0]] == SELF_MARK[1]
+
+
+def _plain_rgb(style: str) -> tuple[int, int, int]:
+    from meshterm.ui.mapcanvas import parse_hex
+
+    return parse_hex(style.rsplit("#", 1)[-1])
+
+
+def test_walk_fan_rows_leave_a_blank_line_between_each_and_around() -> None:
+    """One marker per row, a blank row between each, and a blank above and below."""
+    screen = _screen(_hub_topo(4))
+    rows = screen._fan_rows(11, 5)
+    assert rows == [1, 3, 5, 7, 9]  # 2n+1 = 11 rows exactly: 1 top, 1 bottom, 1 between
+    # The focus is level with the block's middle, not the canvas's, so the edges leaving
+    # it fan out symmetrically.
+    _fx, fy = screen._focus_pos(80, 11, 5)
+    assert fy >> 2 == rows[len(rows) // 2]
+    # A fan shorter than its rows keeps the air; the block just centres in what it has.
+    assert screen._fan_rows(11, 3) == [3, 5, 7]
+
+
+def test_walk_fan_gives_up_its_outer_rows_before_it_gives_up_a_node() -> None:
+    """Air is worth a row until it costs a node — below seven, the padding goes."""
+    screen = _screen(_hub_topo(4))
+    # Tall enough for seven with a blank row top and bottom (2·7+1 = 15): keep them.
+    assert screen._fan_capacity(15) == 7
+    assert screen._fan_rows(15, 7) == [1, 3, 5, 7, 9, 11, 13]
+    # One row short of that: the outer rows go to the seventh marker instead.
+    assert screen._fan_capacity(14) == 7
+    assert screen._fan_rows(14, 7)[0] == 0
+    # Roomier still: the padding simply grows, it is not spent on more nodes than fit.
+    assert screen._fan_rows(19, 7)[0] == 3
+
+
+def test_walk_collapsed_marker_stands_in_for_the_selected_weak_link() -> None:
+    """Selecting a collapsed node makes the ``…`` marker *be* it: mark, name, and rank."""
+    screen = _screen(_hub_topo(12))
+    screen.render_body(80)
+    rows = screen._rows()
+    capacity = screen._fan_capacity(14)
+    hidden = rows[capacity - 1:]
+    assert len(hidden) > 1
+
+    # Unselected, the marker is the anonymous ellipsis and counts what it swallowed.
+    plain_canvas = _plain(screen._canvas_lines(80, 14, rows[0]))
+    assert f"… +{len(hidden)} weaker" in plain_canvas
+    assert "…" in plain_canvas
+
+    # Selected, it wears that node's own type mark and name, with its rank among the
+    # collapsed in grey — so the count the label used to carry is never simply lost.
+    target = hidden[1]
+    canvas = screen._canvas_lines(80, 14, target)
+    body = _plain(canvas)
+    assert f"{screen._label(target)} (2/{len(hidden)})" in body
+    assert "weaker" not in body
+    glyph, _colour = screen._glyph(target)
+    assert f"{glyph} {screen._label(target)}" in body
+    # The name keeps its own hue and the counter is grey — two colours, one label.
+    from meshterm.ui.theme import mark_rgb
+
+    row = next(line for line in canvas if screen._label(target) in _plain([line]))
+    assert _code(screen._label_rgb(target)) in row
+    assert _code(mark_rgb("node.unknown")) in row
+
+
+def _code(rgb: tuple[int, int, int]) -> str:
+    return f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}m"

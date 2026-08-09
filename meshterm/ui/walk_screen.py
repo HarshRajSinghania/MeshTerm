@@ -13,22 +13,23 @@ only its immediate neighbourhood:
 * the **canvas** — the majority of the screen, so the shape stays legible — anchors the
   focus at the far **west** with its name to its right, then fans a deliberately sparse
   spread of its strongest neighbours across the width to the east, each named just to the
-  right of its marker. Every marker is drawn in its own **key-derived hue** (the app-wide
-  per-node colour, keyed on the node's key), never the node *type* — the glyph *shape*
-  still carries the type. Edges are braille lines coloured by the link's median SNR
-  (green → amber → red, slate for links with no reading) and faded by evidence age; they
-  leave the *right end of the focus name* (and land on the right end of the came-from
-  name) so a connecting line never crosses a label. The node the trail came from ducks
-  in just west of the focus and lower, so walking always reads as moving right and backing
-  up as moving left. Only as many neighbours as the canvas area can carry are drawn — a
-  sparse fan reads far better than a crowded one; the weaker rest, ranked by observed
-  strength (SNR, sample count, and recency folded together, so a strong-but-long-stale
-  link is not promoted over a fresher one), collapse into one ``…`` marker (which lights
-  up as whichever collapsed row the list highlights).
-* the **link list** beneath names every neighbour as a selectable row, strongest
-  observed link first: type glyph, name, hash, SNR with a quality bar, the evidence
-  behind the link (samples, sources, age), and how many links continue onward from
-  that node. The highlighted row's marker and label light white on the canvas. The
+  right of its marker. Every marker is the app-wide **node-type mark**, glyph and colour
+  both — the very mark the map and the route graph pin that node with — while *identity*
+  rides the name beside it, in the node's key hue. Edges are braille lines coloured by the
+  link's median SNR (green → amber → red, slate for links with no reading) and faded by
+  evidence age; they leave the *right end of the focus name* so a connecting line never
+  crosses a label. The fan sits on a row grid — one marker per row, a blank row between
+  each, a blank row above and below where the canvas can afford it — and only as many
+  neighbours as those rows carry are drawn; the weaker rest, ranked by observed strength
+  (SNR, sample count, and recency folded together, so a strong-but-long-stale link is not
+  promoted over a fresher one), collapse into one ``…`` marker, which stands in for
+  whichever of them the list highlights (its own mark, its own name, and a grey
+  ``(2/17)`` for where it sits among them). Only ways *onward* are drawn: the node the
+  walk came from is behind you, and ⌫ is how you go back to it.
+* the **link list** beneath names every way onward as a selectable row, strongest
+  observed link first — so the cursor's home, row 0, is always the strongest link out of
+  here: type glyph, name, hash, SNR with a quality bar, the evidence behind the link
+  (samples, sources, age), and how many links continue onward from that node. The highlighted row's marker and label light white on the canvas. The
   list scrolls *within* the screen — the canvas, legend, and heading hold still, and
   faint ``↑/↓ n more`` markers bracket the window — with ↑↓ moving one row and
   PgUp/PgDn a windowful.
@@ -60,33 +61,29 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..platforms import get_platform
-from ..core.models import (
-    NODE_TYPE_REPEATER,
-    Contact,
-    utcnow,
-)
+from ..core.models import NODE_TYPE_REPEATER, Contact, utcnow
 from ..services.topology import Link, MeshTopology
-from .map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
+from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
 from .pathline import ELIDE_HEAD, PathHop, PathLine
-from .theme import mark_rgb, name_style, node_style, snr_style
+from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import query_line, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import _format_age, highlighted_hash
+from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _format_age, highlighted_hash
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Horizontal / vertical dot-space margins the neighbour fan keeps clear of the canvas
-#: edge. The east margin holds a fan node's rightward label (see
+#: The dot-space margin the neighbour fan keeps clear of the canvas's *east* edge (the
+#: vertical margins are rows, not dots — see :meth:`WalkScreen._fan_rows`). It holds a
+#: fan node's rightward label (see
 #: :meth:`WalkScreen._label_right`); it is deliberately roomy — pulling the whole fan a
 #: little west of the edge — so even the tightest (due-east) marker has cells to name
 #: itself in full rather than clipping a long contact name, which the labels' room-to-edge
 #: clamp then spends wherever the fan leaves it.
 _PAD_X_DOTS = 44
-_PAD_Y_DOTS = 6
 
 #: The canvas's floor in character rows: below this the fan's shape stops reading.
 _CANVAS_MIN_H = 6
@@ -124,12 +121,10 @@ _FAN_HALF_ANGLE = math.radians(72)
 #: fan sitting near due-east barely eases back at all.
 _FAN_X_FLATTEN = 0.55
 
-#: Vertical dot span one fan marker (with the row its rightward label lands in) claims;
-#: the canvas area divided by this is how many neighbours the graph draws before the
-#: weaker rest collapse into the one ``…`` marker. Deliberately roomy — a sparser fan
-#: with space to breathe reads far better than a full one, and each marker's name gets
-#: a clear row beside it rather than jostling its neighbours'.
-_FAN_SLOT_DOTS = 12
+#: The fan size worth giving up its outer blank rows for. Above this the canvas keeps a
+#: blank row top and bottom; below it, those rows go to nodes instead — see
+#: :meth:`WalkScreen._fan_capacity`.
+_FAN_MIN_SLOTS = 7
 
 #: Sentinel key for the collapsed weaker-links marker in the placed-node map. NUL can
 #: never collide with a canonical id (those are hex).
@@ -383,10 +378,15 @@ class WalkScreen(Screen):
         return candidates[:_MAX_MATCHES]
 
     def _rows(self) -> list[str]:
-        """The selectable node ids the list currently shows (matches, or neighbours)."""
+        """The selectable node ids the list currently shows: matches, or the ways onward.
+
+        Neighbour rows are :meth:`_fan_nodes` — the same set the canvas draws, in the same
+        strongest-first order — so row 0, where every reset of the cursor lands, is the
+        strongest link out of here.
+        """
         if self._filter:
             return self._matches()
-        return [other for other, _link in self._links_of(self._focus)]
+        return self._fan_nodes()
 
     # --- input -------------------------------------------------------------------
 
@@ -563,10 +563,10 @@ class WalkScreen(Screen):
         link needs no half-screen void — and the link list always keeps its
         :data:`_LIST_MIN_ROWS` under the fixed chrome.
         """
-        crowd = len(self._links_of(self._focus))
+        crowd = len(self._fan_nodes())
         share = 0.62 - 0.12 * min(max(viewport - 20, 0) / 24.0, 1.0)
         height = round(viewport * share)
-        height = min(height, max(_CANVAS_MIN_H, 5 + 2 * crowd))
+        height = min(height, max(_CANVAS_MIN_H, 2 * crowd + 1))
         height = min(height, viewport - chrome - _LIST_MIN_ROWS)
         return max(4, height)
 
@@ -734,150 +734,181 @@ class WalkScreen(Screen):
 
         The focus icon sits at the far west with its name to its right; the fan spreads
         east across the available width (see :meth:`_place_neighbours`), each neighbour
-        named to the right of its marker. Every marker takes its own **key-derived hue**
-        (:meth:`_marker_rgb`) rather than a node-*type* colour — the glyph *shape* carries
-        the type — and no marker is whited out, not even the selection: the highlighted row
-        is shown by its *label* going white and by the lit route, so the icons stay
-        colourful throughout.
+        named to the right of its marker. Every marker is a whole **node-type mark**, glyph
+        and colour both (:meth:`_marker_rgb`), the same one the map and the route graph
+        pin that node with; identity rides the *name* beside it, in the key hue. No marker
+        is recoloured, not even the selection's — the highlighted row is shown by its
+        *label* going white and by the lit route.
 
         While a find query is being typed the fan is narrowed to the neighbours it matches
         — the east is *the ways onward*, which is what the query is asking about — and the
-        focus and the came-from node stay put through it: those two are the walk so far,
-        not candidates, so the picture keeps its bearings while the choices thin out.
+        focus holds through it: it is the walk so far, not a candidate, so the picture keeps
+        its bearings while the choices thin out. The node the walk came *from* is not drawn
+        at all (JP, 2026-08-09): it is behind you, ⌫ is how you go back to it, and drawing
+        it made the one thing on the canvas that isn't a way onward look like one.
 
         Only as many neighbours as the area can carry get their own marker (see
         :meth:`_fan_capacity`); the weaker rest collapse into one ``…`` marker at the fan's
-        foot. Highlighting a collapsed row from the list lights that marker white and swaps
-        its label for the highlighted node's name, so the selection is always somewhere on
-        the picture. Every edge leaves the *right end of the focus name* (and lands on the
-        right end of the came-from name) so a connecting line never crosses a label; the
-        edges tracing the *route to the selected link* — that link plus the approach the
-        walk took into the focus — draw brightest and undimmed, lighting the whole path that
-        reaches it.
+        foot. Highlighting a collapsed row from the list makes that marker *stand in for*
+        the highlighted node — its own type mark, its own name, and a grey ``(2/17)`` for
+        where it sits among the collapsed — so a selection is never invisible and never
+        mistaken for a node of its own. Every edge leaves the *right end of the focus name*
+        so a connecting line never crosses a label, and the edge to the selected link draws
+        brightest and undimmed over the rest.
         """
         canvas = MapCanvas(width, canvas_h)
-        fx, fy = self._focus_pos(width, canvas_h)
-        ax, ay, focus_name = self._focus_anchor(width, canvas_h)
-
-        pairs = self._links_of(self._focus)
-        by_other = dict(pairs)
-        back = self._came_from if self._came_from in by_other else None
-        # A find narrows the fan too (JP, 2026-08-09) — the *east* of the picture, which is
-        # the part the query is about: which of the ways onward from here am I looking for?
-        # The focus and the node we came from are the walk itself, not candidates, so they
-        # hold whatever is typed; the graph keeps its shape while the query thins the choices.
-        fan = [other for other, _link in pairs if other != back and self._is_match(other)]
+        by_other = dict(self._links_of(self._focus))
+        fan = self._fan_nodes()
         capacity = self._fan_capacity(canvas_h)
-        if len(fan) > capacity + 1:  # collapsing exactly one node would save nothing
-            shown, hidden = fan[:capacity], fan[capacity:]
+        if len(fan) > capacity:
+            # The … marker takes a slot of its own, so it has to earn it: it stands in for
+            # the last slot's worth *plus* whatever didn't fit, never for a single node.
+            shown, hidden = fan[: capacity - 1], fan[capacity - 1:]
         else:
             shown, hidden = fan, []
-        placed = self._place_neighbours(width, canvas_h, shown, back, bool(hidden))
-
-        # The came-from node keeps its icon on the west with its name to the right, but its
-        # edge home attaches at the *right end of that name* — like the focus — so the line
-        # never crosses the label. Work that attach point out before drawing edges.
-        back_attach: Optional[tuple[int, int]] = None
-        if back is not None and back in placed:
-            bx, by = placed[back]
-            back_name = self._clip(self._label(back), width - ((bx >> 1) + 2))
-            back_attach = (((bx >> 1) + 2 + cell_len(back_name) + 1) * 2, by)
+        slots = len(shown) + (1 if hidden else 0)
+        fx, fy = self._focus_pos(width, canvas_h, slots)
+        ax, ay, focus_name = self._focus_anchor(width, canvas_h, slots)
+        placed = self._place_neighbours(width, canvas_h, shown, bool(hidden))
 
         # Edges first (markers and labels overprint them), coloured by SNR and faded by
-        # evidence age. Every edge leaves the focus's name-end anchor; a fan edge lands on
-        # its marker, the came-from edge on its own name-end. The *route to the selected
-        # link* draws brightest and on top: the selected neighbour's own edge, plus the
-        # approach the walk took into the focus (came_from → focus) — so selecting a link
-        # lights the whole path that reaches it, west through the focus to east, not just the
-        # one hop. Route edges shed the age fade (drawn full-strength) so they read as one
-        # lit thread over the dimmer rest; the age is still legible in the row's age column.
-        # The collapsed marker's edge is slate — unless the selection hides in it, when it
-        # joins the route.
+        # evidence age. Every edge leaves the focus's name-end anchor and lands on its
+        # neighbour's marker. The selected link's edge draws brightest and on top, shedding
+        # the age fade so it reads as one lit thread over the dimmer rest (the age is still
+        # legible in the row's age column). The collapsed marker's edge is slate — unless
+        # the selection hides in it, when it becomes that node's own edge.
         now = utcnow()
-        route = {selected} if selected is not None else set()
-        if selected is not None and back is not None and back != selected:
-            route.add(back)  # the last walked step, drawn as part of the lit route
         for other, (x, y) in placed.items():
-            dest = back_attach if (other == back and back_attach is not None) else (x, y)
             if other == _MORE:
                 if selected in hidden:
-                    link = by_other[selected]
-                    color = _scaled(_snr_rgb(link.median_snr), 1.0)
+                    color = _scaled(_snr_rgb(by_other[selected].median_snr), 1.0)
                     priority = 4
                 else:
                     color = _scaled(_NO_READING, 0.6)
                     priority = 1
             else:
                 link = by_other[other]
-                if other in route:
+                if other == selected:
                     color = _scaled(_snr_rgb(link.median_snr), 1.0)
                     priority = 4
                 else:
                     color = _scaled(_snr_rgb(link.median_snr), _freshness(link.last_seen, now))
                     priority = 2
-            canvas.draw_line([(ax, ay), dest], color, priority)
+            canvas.draw_line([(ax, ay), (x, y)], color, priority)
 
         # The focus marker at the far west, its name to the RIGHT — icon left, name right,
-        # the walk's reading way — both in the node's key hue (ours white). The edges have
-        # already left the name-end, so they run east clear of the label rather than through
-        # it.
-        glyph, _type_color = self._glyph(self._focus)
+        # the walk's reading way. The edges have already left the name-end, so they run east
+        # clear of the label rather than through it.
+        glyph, _colour = self._glyph(self._focus)
         canvas.marker(fx, fy, glyph, self._marker_rgb(self._focus))
         self._label_right(canvas, fx, fy, focus_name, self._label_rgb(self._focus))
 
-        # Markers first, then labels. Every marker keeps its key hue — the selection is
-        # shown by its white *label* and the lit route, never by whiting out the icon.
-        # Labels are laid most-important-first (selection, then the trail-back node, then
-        # strongest links) so the collision check drops the least important where two would
-        # overprint.
+        # Markers first, then labels. Every marker wears its node type's colour — the
+        # selection is shown by its white *label* and the lit route, never by recolouring
+        # a mark that means something else. Labels are laid most-important-first (the
+        # selection, then the strongest links) so the collision check drops the least
+        # important where two would overprint.
         white = (255, 255, 255)
+        stand_in = selected if selected in hidden else None
         for other, (x, y) in placed.items():
-            if other == _MORE:
-                rgb = white if selected in hidden else mark_rgb(_UNKNOWN[1])
-                canvas.marker(x, y, "…", rgb)
+            node = stand_in if other == _MORE else other
+            if node is None:
+                canvas.marker(x, y, "…", mark_rgb(_UNKNOWN[1]))
                 continue
-            glyph, _type_color = self._glyph(other)
-            canvas.marker(x, y, glyph, self._marker_rgb(other))
+            glyph, _colour = self._glyph(node)
+            canvas.marker(x, y, glyph, self._marker_rgb(node))
         if selected is not None and selected in placed:
             x, y = placed[selected]
             self._place_label(canvas, x, y, self._label(selected), white)
-        rightward = [n for n in (back,) if n is not None and n in placed and n != selected]
-        rightward += [n for n in shown if n != selected and n != back]
-        for other in rightward:
-            x, y = placed[other]
-            self._label_right(canvas, x, y, self._label(other), self._label_rgb(other))
+        for other in shown:
+            if other != selected:
+                x, y = placed[other]
+                self._label_right(canvas, x, y, self._label(other), self._label_rgb(other))
         if _MORE in placed:
             x, y = placed[_MORE]
-            if selected in hidden:
-                self._label_right(canvas, x, y, self._label(selected), white)
+            grey = mark_rgb(_UNKNOWN[1])
+            if stand_in is not None:
+                # The marker is that node now, so it reads as that node: its own name in its
+                # own hue, with the counter saying which of the collapsed links it is. The
+                # count is what keeps it honest — a lone name here would claim the fan has
+                # one more member than it drew.
+                self._label_right(
+                    canvas, x, y, self._label(stand_in), self._label_rgb(stand_in),
+                    suffix=f" ({hidden.index(stand_in) + 1}/{len(hidden)})", suffix_rgb=grey,
+                )
             else:
-                self._label_right(canvas, x, y, f"+{len(hidden)} weaker", mark_rgb(_UNKNOWN[1]))
+                self._label_right(canvas, x, y, f"+{len(hidden)} weaker", grey)
 
         return canvas.to_ansi_lines()
 
-    def _fan_capacity(self, canvas_h: int) -> int:
-        """How many fan markers the canvas area carries before the rest collapse.
+    def _fan_nodes(self) -> list[str]:
+        """The focus's ways *onward*: every neighbour but the one the walk came from.
 
-        One marker (plus the row its label may need) wants :data:`_FAN_SLOT_DOTS`
-        of the fan's vertical span; the area's height decides the count — a taller
-        graph area simply shows more of the mesh.
+        The single definition of what the east of this screen is about, shared by the
+        canvas and the link list so the picture and the rows can never disagree about what
+        is on offer — including under a find, which narrows both. The came-from node is
+        excluded (JP, 2026-08-09) — it is where you have been, ⌫ is how you return to it,
+        and listing it as a link both invited a walk that just undoes the last one and cost
+        the list its top row: with it gone, the strongest link is always the row the cursor
+        opens on.
         """
-        span = canvas_h * 4 - 2 * _PAD_Y_DOTS
-        return max(3, span // _FAN_SLOT_DOTS + 1)
+        back = self._came_from
+        return [
+            other for other, _link in self._links_of(self._focus)
+            if other != back and self._is_match(other)
+        ]
 
-    def _focus_pos(self, width: int, canvas_h: int) -> tuple[int, int]:
+    def _fan_capacity(self, canvas_h: int) -> int:
+        """How many marker rows the canvas carries — the ``…`` marker's own among them.
+
+        The fan is a **row grid, not an arc's spread** (JP, 2026-08-09): one marker per
+        row with a blank row between each, and a blank row above and below the block —
+        ``2n + 1`` rows for ``n`` markers. Even spacing is what makes a fan of five read as
+        five rather than as a clump at the rim, which is what an evenly-spaced *angle*
+        sweep produced (its rows fell out of a sine, so they crowded top and bottom).
+
+        The outer blank rows are the part that gives: a canvas too short to reach
+        :data:`_FAN_MIN_SLOTS` neighbours with them drops them and fits ``n`` in ``2n - 1``
+        instead. Air is worth a row until it costs a *node* — seeing the neighbourhood is
+        what the screen is for.
+        """
+        padded = (canvas_h - 1) // 2
+        if padded >= _FAN_MIN_SLOTS:
+            return max(3, padded)
+        return max(3, (canvas_h + 1) // 2)
+
+    def _fan_rows(self, canvas_h: int, slots: int) -> list[int]:
+        """The canvas rows the fan's ``slots`` markers sit on, top to bottom.
+
+        Centred as one block, which is what hands back the outer blank row whenever the
+        canvas is taller than the block needs — and drops it, evenly, when it isn't (see
+        :meth:`_fan_capacity`).
+        """
+        if slots <= 0:
+            return []
+        span = 2 * slots - 1
+        top = max(0, (canvas_h - span) // 2)
+        return [min(canvas_h - 1, top + 2 * i) for i in range(slots)]
+
+    def _focus_pos(self, width: int, canvas_h: int, slots: int = 0) -> tuple[int, int]:
         """The focus marker's dot position: near the west edge, name and fan to its east.
 
         The icon hugs the left so its name (drawn to the right) and the neighbour fan get
         the whole width to spread across — the graph aired out rather than squeezed into
-        the middle; the came-from node ducks in just west of it and lower (see
-        :meth:`_place_neighbours`).
-        """
-        dot_w = width * 2
-        x = max(4, dot_w // 12)
-        return x, (canvas_h * 4) // 2
+        the middle.
 
-    def _focus_anchor(self, width: int, canvas_h: int) -> tuple[int, int, str]:
+        Vertically it sits level with the **fan's** middle rather than the canvas's: the
+        block of ``slots`` markers is centred, and the focus is centred on *it*, so the
+        edges leaving it fan out symmetrically however the block's parity falls. With no
+        fan to be level with (``slots`` 0 — a leaf node, or a find matching nothing here)
+        it takes the canvas midline.
+        """
+        x = max(4, (width * 2) // 12)
+        rows = self._fan_rows(canvas_h, slots)
+        row = (rows[0] + rows[-1]) / 2 if rows else (canvas_h - 1) / 2
+        return x, round(row * 4 + 2)
+
+    def _focus_anchor(self, width: int, canvas_h: int, slots: int = 0) -> tuple[int, int, str]:
         """The focus's edge-attach point and its on-canvas name.
 
         The focus icon sits at the far west (:meth:`_focus_pos`) with its name to the
@@ -885,58 +916,44 @@ class WalkScreen(Screen):
         never cross the label. Returns the attach point in dot coordinates and the name as
         it is drawn (clipped to the room between the icon and the canvas edge).
         """
-        fx, fy = self._focus_pos(width, canvas_h)
+        fx, fy = self._focus_pos(width, canvas_h, slots)
         icon_cx = fx >> 1
         name = self._clip(self._label(self._focus), width - (icon_cx + 2))
         anchor_cx = icon_cx + 2 + cell_len(name) + 1
         return anchor_cx * 2, fy, name
 
     def _place_neighbours(
-        self,
-        width: int,
-        canvas_h: int,
-        shown: list[str],
-        back: Optional[str],
-        more: bool,
+        self, width: int, canvas_h: int, shown: list[str], more: bool
     ) -> dict[str, tuple[int, int]]:
-        """Dot-space positions for the drawn neighbourhood.
+        """Dot-space positions for the drawn fan: a row grid east of the focus's name.
 
-        The trail-back node (when among the neighbours) ducks in just west of the focus
-        and lower — its icon stays on the west side, under the focus, with its name to the
-        right; everyone shown fans across the arc east of the focus's name-end anchor,
-        strongest link at the top, weakest at the bottom — the same order as the list
+        Everyone shown takes a row of their own east of the focus's name-end anchor,
+        strongest link at the top and weakest at the bottom — the same order as the list
         below, so the picture and the rows correspond — with the collapsed ``…`` marker
-        (keyed :data:`_MORE`) taking the fan's last slot. Anchoring the fan at the name-end
-        (rather than at the icon) hands it the whole width east of the focus label to
-        breathe in. The arc is flattened horizontally (:data:`_FAN_X_FLATTEN`): a leaf's
-        fan angle sets its row, but its east reach bows only gently back from due-east, so
-        the rim leaves spread across the width instead of curling in and leaving the
-        corners empty. A small fan uses proportionally less of the arc, so two neighbours
-        sit near due east rather than at opposite rims.
+        (keyed :data:`_MORE`) taking the fan's last slot. The rows come from
+        :meth:`_fan_rows`: evenly spaced, one blank row between each, the block centred.
+
+        Only the *easting* is an arc. A leaf's row sets an angle, and the marker eases
+        back from due-east by :data:`_FAN_X_FLATTEN` of it — so the fan bows gently rather
+        than standing as a flat column, while the rim leaves still reach well east instead
+        of curling back toward the focus on a true circle. A small fan uses proportionally
+        less of the arc, so two neighbours sit near due east rather than at opposite rims.
+        Anchoring at the name-end (rather than at the icon) hands the fan the whole width
+        east of the focus label to breathe in.
         """
-        dot_w, dot_h = width * 2, canvas_h * 4
-        fx, fy = self._focus_pos(width, canvas_h)
-        ax, ay, _name = self._focus_anchor(width, canvas_h)
         placed: dict[str, tuple[int, int]] = {}
-        if back is not None:
-            placed[back] = (max(0, fx - 6), min(fy + 14, dot_h - 4))
-        slots = len(shown) + (1 if more else 0)
-        if not slots:
-            return placed
-        rx = max(10.0, dot_w - _PAD_X_DOTS - ax)
-        ry = max(4.0, dot_h / 2.0 - _PAD_Y_DOTS)
-        phi = _FAN_HALF_ANGLE * min(1.0, (slots - 1) / 5.0)
         keys = list(shown) + ([_MORE] if more else [])
-        for i, node in enumerate(keys):
-            angle = 0.0 if slots == 1 else -phi + (2 * phi) * i / (slots - 1)
-            # The leaf's full fan angle sets its height (y); its east reach traces a
-            # *flatter* arc — only :data:`_FAN_X_FLATTEN` of that angle — so a rim leaf
-            # still reaches well east instead of curling back toward the focus on a true
-            # circle. The falloff scales with the fan's reach, so a small near-due-east
-            # fan barely eases back while a wide one fills the corners.
+        if not keys:
+            return placed
+        dot_w = width * 2
+        ax, _ay, _name = self._focus_anchor(width, canvas_h, len(keys))
+        rows = self._fan_rows(canvas_h, len(keys))
+        rx = max(10.0, dot_w - _PAD_X_DOTS - ax)
+        phi = _FAN_HALF_ANGLE * min(1.0, (len(keys) - 1) / 5.0)
+        for i, (node, row) in enumerate(zip(keys, rows)):
+            angle = 0.0 if len(keys) == 1 else -phi + (2 * phi) * i / (len(keys) - 1)
             x = ax + rx * math.cos(angle * _FAN_X_FLATTEN)
-            y = ay + ry * math.sin(angle)
-            placed[node] = (round(x), round(y))
+            placed[node] = (round(x), row * 4 + 2)  # mid-cell, so an edge meets the glyph
         return placed
 
     @staticmethod
@@ -970,7 +987,15 @@ class WalkScreen(Screen):
                 return
 
     def _label_right(
-        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
+        self,
+        canvas: MapCanvas,
+        x: int,
+        y: int,
+        label: str,
+        rgb: RGB,
+        *,
+        suffix: str = "",
+        suffix_rgb: Optional[RGB] = None,
     ) -> None:
         """Place a node's label to the *right* of its marker, dodging by row.
 
@@ -985,29 +1010,42 @@ class WalkScreen(Screen):
         """
         cx, cy = x >> 1, y >> 2
         start = cx + 2
-        label = self._clip(label, canvas.cell_w - start)
+        label = self._clip(label, canvas.cell_w - start - cell_len(suffix))
         if not label:
             return
+        run = label + suffix
         for dy in (0, 1, -1, 2, -2):
-            if canvas._place_run(start, cy + dy, label, rgb, bold=True, checked=True):
-                return
-        canvas._place_run(start, cy, label, rgb, bold=True)
+            if canvas._place_run(start, cy + dy, run, rgb, bold=True, checked=True):
+                cy = cy + dy
+                break
+        else:
+            canvas._place_run(start, cy, run, rgb, bold=True)
+        if suffix:
+            # Re-lay the tail in its own colour over the run just placed: the collision
+            # check has to weigh the whole label at once, so it goes down as one piece and
+            # the two-tone is painted back on.
+            canvas._place_run(start + cell_len(label), cy, suffix, suffix_rgb or rgb, bold=True)
 
     def _legend(self) -> Text:
         """The one-line glyph legend and edge key under the canvas.
 
-        A *shape* key: on the canvas the glyph carries the node type while its colour
-        carries the node's identity (its key hue), so the role glyphs here are drawn muted
-        rather than in a type colour that would falsely read as "repeaters are violet". Our
-        own node keeps the white ``you`` mark it wears on the canvas.
+        A key to both halves of a mark, now that the canvas draws marks whole: each role's
+        glyph in the very colour it wears up there, so the line is a sample rather than a
+        shape chart. The pairs come from the same places :meth:`_glyph` draws them from, so
+        the key cannot drift from the picture — including on the console, where the
+        ``type.*`` names are what let each mark pick its slot deliberately rather than
+        landing wherever a downsample of the hex drops it. The words stay muted: they are
+        chrome, the marks are the content.
         """
         legend = Text()
-        for glyph, _type_color in (_SELF, _REPEATER, _NODE, _UNKNOWN):
-            legend.append(glyph, style="you" if glyph == _SELF[0] else "muted")
-            legend.append(
-                {"★": " you   ", "▲": " repeater   ", "●": " node   ", "○": " unknown"}[glyph],
-                style="muted",
-            )
+        for (glyph, colour), word in (
+            (_SELF, " you   "),
+            (_NODE_GLYPHS[NODE_TYPE_REPEATER], " repeater   "),
+            (_DEFAULT_GLYPH, " node   "),
+            (_UNKNOWN, " unknown"),
+        ):
+            legend.append(glyph, style=colour)
+            legend.append(word, style="muted")
         legend.append("  ·  edge = SNR · faint = stale", style="muted")
         return legend
 
@@ -1145,9 +1183,7 @@ class WalkScreen(Screen):
             else None
         )
         row.append(f"{age:>5}", style="muted")
-        if other == self._came_from:
-            row.append("  ⌫ back", style="faint")
-        elif onward:
+        if onward:
             row.append(f"  ⋯ {onward}", style="faint")
         if selected:
             row.style = "brand"
@@ -1197,21 +1233,18 @@ class WalkScreen(Screen):
         return self._list_name_style(node) != "node.unknown"
 
     def _marker_rgb(self, node: str) -> RGB:
-        """The marker colour for a node: its key-derived hue, ours white, a keyless id grey.
+        """The marker colour for a node: the hue its *type* wears everywhere (JP, 2026-08-09).
 
-        The walk colours every marker by *identity* — the app-wide per-node hue
-        (:func:`~meshterm.ui.theme.node_style`, keyed on the node's own key) — rather than
-        by node *type*; the glyph *shape* (see :meth:`_glyph`) is what carries the type. Our
-        own node keeps the pure-white ``you`` convention, and a non-hex placeholder id (our
-        own ``"local"`` before a key is known) has no hue to derive, so it falls back to the
-        unknown grey.
+        The walk used to colour markers by identity — the key-derived per-node hue — with
+        the glyph shape left to carry the type alone. That put this one canvas at odds with
+        every other place a typed node is pinned (the map, the route graph, a contact row),
+        where the mark's colour *is* the type and is chosen deliberately per platform
+        through the theme's ``type.*`` (a naive downsample greys the repeater's violet).
+        Identity has its own lane here and always did: the **name** beside the marker, in
+        the key hue (:meth:`_label_rgb`). Shape and colour now agree, and the legend under
+        the canvas can key both.
         """
-        if node == self._topo.self_id:
-            return (255, 255, 255)
-        raw = node.lower()
-        if not raw or any(c not in "0123456789abcdef" for c in raw):
-            return mark_rgb(_UNKNOWN[1])
-        return parse_hex(node_style(node).rsplit("#", 1)[-1])
+        return mark_rgb(self._glyph(node)[1])
 
     def _label_rgb(self, node: str) -> RGB:
         """The label colour for a node on the canvas: its name hue, ours white, a bare hash grey.
@@ -1229,18 +1262,13 @@ class WalkScreen(Screen):
         return parse_hex(style.rsplit("#", 1)[-1])
 
     def _glyph_style(self, node: str) -> str:
-        """The Rich style a node's type glyph takes in body text: its key hue (ours white).
+        """The Rich style a node's type glyph takes in body text — its type colour.
 
-        The text-side companion of :meth:`_marker_rgb`, so the focus line's leading glyph
-        matches its canvas marker — key-hued for a real node, the white ``you`` for us, and
-        the unknown-node grey for a keyless placeholder id.
+        The text-side companion of :meth:`_marker_rgb`: the same ``type.*`` entry (or the
+        star's own yellow), so the focus line's leading glyph, the list rows' glyphs and
+        the canvas markers are one mark drawn three ways.
         """
-        if node == self._topo.self_id:
-            return "you"
-        raw = node.lower()
-        if not raw or any(c not in "0123456789abcdef" for c in raw):
-            return "node.unknown"
-        return node_style(node)
+        return self._glyph(node)[1]
 
     def _empty_state(self, width: int) -> list[str]:
         """A friendly explanation while the evidence graph is still empty."""
@@ -1258,15 +1286,27 @@ class WalkScreen(Screen):
         return [render_to_ansi(t, width, no_wrap=True) for t in lines]
 
     def _glyph(self, node: str) -> tuple[str, str]:
-        """The marker glyph and hex colour for a node, by identity and type."""
+        """A node's mark: the type glyph and the colour that type wears app-wide.
+
+        The shared marks (:data:`~meshterm.ui.widgets._NODE_GLYPHS`) and the shared
+        ``type.*`` colours behind them, so a node is pinned here in exactly the glyph and
+        hue the map, the route graph and the contact list pin it in — ``▲`` violet for a
+        repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` pink for a plain node, our
+        own the yellow ``★``, and a node we have heard of but never identified the grey
+        ``○``. Colour and shape say the same thing, which is what makes the legend below
+        the canvas a key rather than a coincidence.
+
+        Returns:
+            ``(glyph, colour)`` — the colour in whichever encoding
+            :func:`~meshterm.ui.theme.mark_rgb` takes (a literal hex, or a theme name where
+            the platform must pick its own slot).
+        """
         if node == self._topo.self_id:
             return _SELF
         contact = self._contacts.get(node)
         if contact is None:
             return _UNKNOWN
-        if contact.node_type == NODE_TYPE_REPEATER:
-            return _REPEATER
-        return _NODE
+        return _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
 
     def _label(self, node: str) -> str:
         """A node's display name: its own name for us, contact name, or short hash."""
