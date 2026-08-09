@@ -187,7 +187,11 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   (the promotion is the point, only `title.muted`), never silent. Rich merges a row's
   base style into every span, so a silent one changes colour inside a selected row. Same
   trap outside the theme: `MapCanvas` drops emphasis entirely where bold is brightness,
-  since its colours arrive quantized and it can't know which bank they landed in.
+  since its colours arrive quantized and it can't know which bank they landed in, and the
+  fold's quantizer (`theme._nearest_slot_sgr`) states intent for it — a dim slot leaves as
+  `22;3N`, never a bare `3N`, because `9N` is *how* the console spells bright and adjacent
+  art spans (the wordmark's bevels, a raster's neighbouring cells) reset nothing between
+  them, so a bare one inherits the intensity bit and lands a bank too high mid-row.
 - On picocalc, the node hue and the heat gradient **quantize** — same rule, coarser
   resolution: `node_style` snaps the key's hue to its sixth of the wheel
   (`theme._NODE_SLOT_HEXES`, the six chromatic bright slots) and heat to the `heat.*`

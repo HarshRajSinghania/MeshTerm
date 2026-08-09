@@ -200,7 +200,8 @@ def test_fold_quantizes_embedded_truecolor_to_the_slots() -> None:
     set_platform(PICOCALC)
     folded = fold_text("\x1b[38;2;148;163;184m○\x1b[0m")
     assert "38;2;" not in folded
-    assert "\x1b[37m" in folded  # #94a3b8 → nearest stock slot is 7 (#aaaaaa)
+    # #94a3b8 → nearest stock slot is 7 (#aaaaaa); a dim-bank slot states its intensity.
+    assert "\x1b[22;37m" in folded
     background = fold_text("\x1b[48;2;94;234;212mX\x1b[0m")
     assert "48;2;" not in background
     assert re.search(r"\x1b\[4[0-7]m", background), background  # bg clamps to the dim bank
@@ -312,7 +313,9 @@ def test_canvas_drops_emphasis_where_bold_means_brightness() -> None:
         canvas.marker(0, 0, "x", (148, 163, 184))  # markers always draw emboldened
         rendered = "".join(canvas.to_ansi_lines())
         assert ("\x1b[1m" in rendered) is expect_bold, (platform.name, repr(rendered))
-    assert "\x1b[37m" in rendered  # and the colour it was given survives intact
+    # And the colour it was given survives intact — a dim-bank slot with its intensity
+    # stated, so the span can't inherit brightness from the raster cell before it.
+    assert "\x1b[22;37m" in rendered
 
 
 # -- the font build script stays mirrored ---------------------------------------------
@@ -370,6 +373,29 @@ def test_specimen_renders_clean_on_picocalc() -> None:
         assert "[38;2;" not in line and "[48;2;" not in line, f"truecolor on line {i}: {line!r}"
         for ch in plain:
             assert ord(ch) in FONT_CODEPOINTS, f"line {i} char {ch!r} outside the font"
+
+
+def test_narrow_wordmark_keeps_its_dim_row_off_the_bright_bank() -> None:
+    """Every span of the wordmark's dim-slot row states its intensity.
+
+    The mark alternates letter blocks with slate bevels, so a row painted on the dim bank
+    is a run of ``3N`` spans each following a ``90``. Bare, they inherit the console's
+    intensity bit and half the row renders a bank too bright — the narrow mark's fourth
+    row came out part red (slot 1), part light red (slot 9), split at every span that
+    followed a bevel.
+    """
+    from meshterm.ui.logo import load_logo
+    from meshterm.ui.tui.frame import _banner_lines
+
+    set_platform(PICOCALC)
+    rows = _banner_lines(load_logo(53), 53)
+    assert rows, "the 53-column mark should fit a 53-column console"
+    for i, row in enumerate(rows):
+        for sgr in re.findall(r"\x1b\[([0-9;]*)m", row):
+            assert not re.fullmatch(r"3[0-7]", sgr), f"bare dim-bank SGR on row {i}: {row!r}"
+    # The fourth row is the mark's only dim-slot row, and it is one colour throughout.
+    reds = set(re.findall(r"\x1b\[([0-9;]+)m(?=█)", rows[3]))
+    assert reds == {"22;31"}, reds
 
 
 # -- relocated marks stay importable from their old homes -----------------------------

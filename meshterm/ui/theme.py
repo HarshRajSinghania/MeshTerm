@@ -664,6 +664,15 @@ def _nearest_slot_sgr(background: bool, r: int, g: int, b: int) -> str:
 
     Foregrounds may land on any slot (30–37 / 90–97); backgrounds only on 0–7 (the VT has
     no bright backgrounds), so a bright colour used as a fill picks its dim-bank cousin.
+
+    A **dim-bank foreground states its intent** (``22;3N``, normal intensity) rather than
+    emitting a bare ``3N``. Bold is brightness on the VT, and ``9N`` *is* how the console
+    spells bright — so a bare ``31`` immediately after a ``90`` inherits the intensity bit
+    and silently renders as ``91``. Quantized art is a run of adjacent colour spans with
+    no style boundaries to reset between them (the wordmark's every-other-span slate
+    bevel; a map raster's neighbouring cells), so the promotion lands mid-row and colours
+    half a row wrong: the narrow wordmark's fourth row — its only dim-slot row — came out
+    part red, part light red, split at each span that happened to follow the bevel.
     """
     key = (background, r, g, b)
     cached = _SLOT_CACHE.get(key)
@@ -678,10 +687,12 @@ def _nearest_slot_sgr(background: bool, r: int, g: int, b: int) -> str:
             ),
         )
         if background:
-            code = 40 + slot
+            sgr = f"\x1b[{40 + slot}m"
+        elif slot < 8:
+            sgr = f"\x1b[22;{30 + slot}m"
         else:
-            code = 30 + slot if slot < 8 else 90 + slot - 8
-        cached = _SLOT_CACHE[key] = f"\x1b[{code}m"
+            sgr = f"\x1b[{90 + slot - 8}m"
+        cached = _SLOT_CACHE[key] = sgr
     return cached
 
 
