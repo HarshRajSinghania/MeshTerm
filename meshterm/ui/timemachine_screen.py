@@ -5,7 +5,7 @@ overheard packet since the first session, but nothing surfaced that history beyo
 dashboard's two-hour window — this screen is the archaeology dig. A picker offers the
 whole mesh or any node ever heard; each subject renders as a scrollable page of braille
 charts and stats over a switchable window (``w`` cycles 24 h → 7 d → 30 d → all time —
-the PicoCalc stops at 30 d, its F1–F3 chips carrying the three spans directly):
+the PicoCalc's ring stops at 30 d, its F3 chip cycling the same three spans):
 
 * a **node** shows its reception volume over the window, its median-SNR band (coloured
   by quality), its hour-of-day rhythm (when does this node talk?), and the roll-up
@@ -68,9 +68,10 @@ _ALL_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
     ("all time", None),
 )
 
-#: The offered windows. The PicoCalc stops at 30 d (JP, 2026-08-08): its three window
-#: chips on F1–F3 *are* the offer there, and all-time — the one span whose scan grows
-#: with the whole history — stays a desktop affordance. Bound at platform-switch time.
+#: The offered windows. The PicoCalc's ring stops at 30 d (JP, 2026-08-08): all time —
+#: the one span whose scan grows with the whole history — stays a desktop affordance,
+#: and the F3 chip there cycles the three spans that remain. Bound at platform-switch
+#: time.
 _WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = _ALL_WINDOWS
 
 
@@ -79,6 +80,7 @@ def _bind_windows(platform: Platform) -> None:
     """Bind the offered window ring to the platform (runs now and on every switch)."""
     global _WINDOWS
     _WINDOWS = _ALL_WINDOWS[:3] if platform.footer_fkeys else _ALL_WINDOWS
+
 
 #: Picker sentinel for the whole-mesh overview page.
 MESH = ("mesh",)
@@ -221,21 +223,26 @@ class TimeMachineScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The shared pager, plus one chip per span on F1–F3.
+        """The shared pager, plus the window cycle on F3.
 
-        The window is the whole point of this screen — the same history at several spans
-        — and on a platform with no hint line the chips are the only place to learn the
-        spans exist. Each takes its own slot in ring order — F1 ``24 h``, F2 ``7 d``, F3
-        ``30 d`` (JP, 2026-08-08) — so any span is one press away rather than a cycle to
-        chase with ``w`` (which still cycles). The span on screen dims: it is a thing
-        here, its key just changes nothing this paint. All time is not in this platform's
-        ring at all (see :func:`_bind_windows`) — three chips, three spans.
+        ``w`` is the whole point of this screen — the same history at several spans — and
+        it is exactly the kind of affordance that vanishes on a platform with no hint line
+        to read it off. The chip is the only place the PicoCalc can learn the key exists,
+        so it earns the free F3 slot even though the letter itself is easy to press. (One
+        chip per span on F1–F3 was tried and reverted — JP, 2026-08-09: the cycle was
+        better.)
+
+        The chip names the span it would *take you to*, not the one on screen: the title
+        already says where you are, so a chip repeating it would be the same claim twice
+        and would never tell you what pressing it does. ``all time`` shortens to ``all``
+        to stay inside the 6-cell chip — the only span whose name doesn't already fit,
+        and one this platform's ring may not even offer (see :func:`_bind_windows`).
         """
         from .tui.fkeys import FPair, default_lane
 
         lane = list(default_lane(nav=self.content_overflows))
-        for i, (name, _delta) in enumerate(_WINDOWS[:3]):
-            lane[i] = FPair(name, f"window_{i}", enabled=i != self._window_index)
+        nxt, _delta = _WINDOWS[(self._window_index + 1) % len(_WINDOWS)]
+        lane[2] = FPair(f"▸ {'all' if nxt == 'all time' else nxt}", "window")
         return lane
 
     def __init__(
@@ -267,12 +274,11 @@ class TimeMachineScreen(Screen):
         self.title = f"{self._label} · {name}"
 
     def handle(self, action: str, data: str = "") -> None:
-        """Scroll, switch the window, or dismiss.
+        """Scroll, cycle the window, or dismiss.
 
-        Two ways onto a span, one behaviour: ``w`` (and the legacy ``window`` action)
-        cycles the platform's ring, while the lane's per-span chips land on a window
-        directly (``window_0`` … ``window_2``) — so a chip is never a second
-        implementation of the letter.
+        The window cycles on either the ``w`` key or the ``window`` action the F-key lane
+        dispatches — one behaviour, two ways in, so the chip is not a second implementation
+        of the letter. The ring it cycles is the platform's (see :func:`_bind_windows`).
         """
         if action == "up":
             self.scroll_lines(-1)
@@ -287,20 +293,12 @@ class TimeMachineScreen(Screen):
         elif action in ("end", "ctrl_end"):
             self.scroll_to_bottom()
         elif action == "window" or (action == "text" and data.lower() == "w"):
-            self._set_window((self._window_index + 1) % len(_WINDOWS))
-        elif action.startswith("window_") and action[7:].isdigit():
-            self._set_window(int(action[7:]))
+            self._window_index = (self._window_index + 1) % len(_WINDOWS)
+            self._set_title()
+            self.scroll_to_top()
+            self._session.invalidate()
         elif action == "escape":
             self.resolve(None)
-
-    def _set_window(self, index: int) -> None:
-        """Land the page on window ``index`` (a no-op off the ring or already there)."""
-        if not (0 <= index < len(_WINDOWS)) or index == self._window_index:
-            return
-        self._window_index = index
-        self._set_title()
-        self.scroll_to_top()
-        self._session.invalidate()
 
     def render_body(self, width: int) -> list[str]:
         """Render (or reuse) the current window's sections."""

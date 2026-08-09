@@ -909,17 +909,33 @@ def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
     screen.render_body(80)
     assert len(calls) == 2
 
-    # One chip per span on F1–F3 — the only way a platform that draws no hint line can
-    # learn the spans exist. The span on screen dims; the direct chips land on their
-    # window without cycling; `w` (and the legacy "window" action) still cycles the ring.
-    assert [pair.label for pair in screen.fkey_lane[:3]] == ["24 h", "7 d", "30 d"]
-    assert screen.fkey_lane[2].enabled is False  # 30 d is what's on screen
+    # The F-key chip is the same behaviour under another name — the only way a platform
+    # that draws no hint line can learn that `w` exists at all. It names the span it takes
+    # you *to*, since the title already says where you are.
+    assert screen.fkey_lane[2].label == "▸ all"
     screen.handle("window")
-    assert "all time" in screen.title  # the desktop ring still carries all time
-    assert all(pair.enabled for pair in screen.fkey_lane[:3])
-    screen.handle("window_0")
-    assert "24 h" in screen.title
-    assert screen.fkey_lane[0].enabled is False
+    assert "all time" in screen.title
+    assert screen.fkey_lane[2].label == "▸ 24 h"  # the ring wraps back around
+
+
+def test_picocalc_window_ring_stops_at_30_days() -> None:
+    """The handheld's ring skips all time: `w` wraps 24 h → 7 d → 30 d → 24 h.
+
+    All time is the one span whose scan grows with the whole history — a desktop
+    affordance (see ``_bind_windows``); the chip cycles the three spans that remain.
+    """
+    from meshterm.platforms import PICOCALC, set_platform
+
+    set_platform(PICOCALC)
+    screen = TimeMachineScreen(
+        session=_FakeSession(), label="YUL", build=lambda window, width: []
+    )
+    assert "7 d" in screen.title  # opens on 7 d, as everywhere
+    screen.handle("text", "w")
+    assert "30 d" in screen.title
+    assert screen.fkey_lane[2].label == "▸ 24 h"  # never "▸ all" on this ring
+    screen.handle("window")
+    assert "24 h" in screen.title  # wrapped straight past where all time would sit
 
 
 # --- the own-node page ------------------------------------------------------------------
