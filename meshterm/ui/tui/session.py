@@ -1331,18 +1331,33 @@ class TuiSession:
         )
 
     def _plain_frame(self) -> Optional[str]:
-        """The composed full-screen frame, when this paint is one the fast path may take.
+        """The whole frame as rows, when this paint is one the fast path may take.
 
-        Answers ``None`` — meaning "let prompt_toolkit lay this one out" — whenever the
-        frame is more than a single background screen: a floating dialog or the busy
-        overlay is placed by pt's float containers, not by us (see
-        :mod:`~meshterm.ui.tui.fastrender`). Composing the base is not wasted in that
-        case: the float layers draw *over* it, so pt asks for it a moment later and gets
-        the memoized composition.
+        The background screen, with every floating dialog composited over it exactly where
+        prompt_toolkit's ``FloatContainer`` would centre it (see
+        :func:`~meshterm.ui.tui.frame.composite_float`) — so a confirm, a picker or the
+        packet viewer stays on the row-diff path rather than paying prompt_toolkit's whole
+        grid rebuild on every keystroke.
+
+        Answers ``None`` — meaning "let prompt_toolkit lay this one out" — for the two
+        frames we don't place ourselves: the busy overlay, which is a content-sized window
+        the float container measures, and an empty stack, which has no background at all.
+
+        Every layer still goes through its usual renderer (:meth:`_render_base`,
+        :meth:`_render_float_layer`), so the layer bookkeeping those keep is identical
+        whichever path the paint takes.
         """
-        if self._has_float() or self._overlay_visible() or not self._stack:
+        if self._overlay_visible() or not self._stack:
             return None
-        return self._render_base().value
+        rows_out = self._render_base().value.split("\n")
+        layers = self._float_layers()
+        if layers:
+            cols, rows = self._size()
+            for index in range(len(layers)):
+                rows_out = frame.composite_float(
+                    rows_out, self._render_float_layer(index).value, cols, rows
+                )
+        return "\n".join(rows_out)
 
     @staticmethod
     def _fkey_lane(active: Screen) -> Optional[Callable[[], Text]]:

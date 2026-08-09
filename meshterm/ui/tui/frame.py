@@ -19,7 +19,7 @@ from ...platforms import Platform, get_platform, on_platform
 from ..logo import load_logo, logo_width
 from ..theme import fold_text, hint_style, title_style
 from .glow import apply_corner_glow
-from .render import render_lines
+from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
 
 
@@ -520,13 +520,84 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     return out
 
 
+#: Memoized composited rows, keyed by everything the merge is a function of: the base row
+#: under the box, the box's own line, and where it sits. A dialog repaints with almost every
+#: row identical to the last paint (only the highlight moved, or nothing did but the header's
+#: pulse), and each unchanged row then costs a dict hit instead of two ANSI parses, two cell
+#: crops and a render.
+_OVERLAY_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+
+#: Composited rows the memo holds — a few dialogs' worth of rows.
+_OVERLAY_CACHE_MAX = 256
+
+
+def _overlay_row(base_row: str, box_line: str, left: int, cols: int) -> str:
+    """Lay one box line over one base row at cell ``left``, keeping both sides' styling."""
+    key = (base_row, box_line, left, cols)
+    cached = _OVERLAY_CACHE.get(key)
+    if cached is not None:
+        _OVERLAY_CACHE.move_to_end(key)
+        return cached
+    under = Text.from_ansi(base_row)
+    over = Text.from_ansi(box_line)
+    merged = crop_cells(under, 0, left)
+    # A base row shorter than the box's left edge (a blank line under a wide dialog) still
+    # has to hold the box out at its true column, so pad the gap rather than closing it.
+    merged.append(" " * max(0, left - merged.cell_len))
+    merged.append_text(over)
+    tail_at = left + over.cell_len
+    merged.append_text(crop_cells(under, tail_at, max(0, cols - tail_at)))
+    merged.no_wrap = True
+    merged.overflow = "crop"
+    merged.truncate(cols)
+    out = render_to_ansi(merged, cols, no_wrap=True)
+    _OVERLAY_CACHE[key] = out
+    if len(_OVERLAY_CACHE) > _OVERLAY_CACHE_MAX:
+        _OVERLAY_CACHE.popitem(last=False)
+    return out
+
+
+def composite_float(base_rows: list[str], box: str, cols: int, rows: int) -> list[str]:
+    """Lay a dialog box over the full-screen rows beneath it, centred, and return the result.
+
+    The floating layers are normally placed by prompt_toolkit's ``FloatContainer``, which is
+    why a frame carrying one used to fall through to prompt_toolkit's renderer whole — and
+    pay its full grid rebuild and diff (70-125 ms on the PicoCalc) on every keystroke in
+    every dialog. There is nothing to that placement we cannot do here: an unanchored float
+    with no size of its own is centred on the frame, horizontally at its widest line and
+    vertically at its line count, clipped to the terminal. Doing it ourselves keeps dialogs
+    on the row-diff path with the rest of the app.
+
+    Args:
+        base_rows: The frame beneath, one ANSI string per terminal row.
+        box: The composed dialog, its rows joined by newlines (see :func:`compose_dialog`).
+        cols: Terminal width.
+        rows: Terminal height.
+
+    Returns:
+        A new list of rows with the box merged in. Rows the box doesn't reach are passed
+        through untouched — the same strings, so the row diff skips them for free.
+    """
+    lines = box.split("\n")
+    width = max((cell_len(Text.from_ansi(line).plain) for line in lines), default=0)
+    top = max(0, (rows - len(lines)) // 2)
+    left = max(0, (cols - width) // 2)
+    out = list(base_rows)
+    for i, line in enumerate(lines):
+        y = top + i
+        if 0 <= y < len(out):
+            out[y] = _overlay_row(out[y], line, left, cols)
+    return out
+
+
 @on_platform
 def _bind(platform: Platform) -> None:
     """Drop the composition memos on a platform switch — their output bakes the theme in.
 
     Registered at module bottom so the immediate first run (see
-    :func:`~meshterm.platforms.on_platform`) finds both caches already defined.
+    :func:`~meshterm.platforms.on_platform`) finds every cache already defined.
     """
     global _BASE_BOX_CACHE
     _BASE_BOX_CACHE = None
     _DIALOG_CACHE.clear()
+    _OVERLAY_CACHE.clear()

@@ -13,7 +13,8 @@ push/await/pop model behind ``await session.select(...)`` and friends.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence as _SequenceABC
+from typing import Any, Callable, Optional, Sequence, Union
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -329,6 +330,71 @@ class Screen:
         nxt = min((o for o in offsets if o > self.scroll), default=None)
         target = nxt if nxt is not None else self._scroll_total
         self.scroll = _clamp_scroll(target, self._scroll_total, self._scroll_viewport)
+
+
+class LazyLines(_SequenceABC):
+    """A body's ANSI lines, each rendered the first time something actually reads it.
+
+    A screen renders its body *whole* and the frame then slices a viewport out of it — so a
+    141-contact list rasterizes 150 rows to show the twenty that fit, on every keystroke and
+    on every idle tick. The lines outside the slice are never looked at; they are built and
+    thrown away.
+
+    This is the same list, deferred. A screen hands over one entry per body line — either the
+    finished string (for the few lines it had to render anyway: separators, headings, the
+    query echo) or a callable that will render it — and only the entries the frame indexes
+    are ever called. It is a plain :class:`~collections.abc.Sequence`, so ``len()``, slicing,
+    iteration and ``==`` against a list all behave exactly as the list it replaces; a slice
+    materializes to a real list of strings, which is what the frame goes on to pad and frame.
+
+    Two properties make it safe to substitute:
+
+    * **The line count is exact and immediate.** Deferring the *drawing* of a row never
+      defers *how many rows there are* — the screen counts them while it plans — so the
+      scroll clamp, the ``↑↓ more`` markers and the sticky-header offsets are unchanged.
+    * **A line is rendered at most once.** Results are memoized per index, so the frame
+      re-reading a row (a pinned header, a re-settled slice) costs nothing extra.
+
+    A row's content is resolved inside its callable, which means a :class:`Choice` with a
+    live callable title is resolved only while it is on screen — the same rows a person can
+    actually see changing.
+    """
+
+    __slots__ = ("_entries", "_drawn")
+
+    def __init__(self, entries: list[Union[str, Callable[[], str]]]) -> None:
+        """Wrap one entry per body line: a rendered string, or a callable rendering it."""
+        self._entries = entries
+        self._drawn: dict[int, str] = {}
+
+    def __len__(self) -> int:
+        """The body's height in lines — known without rendering any of them."""
+        return len(self._entries)
+
+    def __getitem__(self, index):  # type: ignore[no-untyped-def]
+        """Return line ``index`` (or a real list of lines for a slice), rendering on demand."""
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self._entries)))]
+        if index < 0:
+            index += len(self._entries)
+        if not 0 <= index < len(self._entries):
+            raise IndexError(index)
+        line = self._drawn.get(index)
+        if line is None:
+            entry = self._entries[index]
+            line = entry if isinstance(entry, str) else entry()
+            self._drawn[index] = line
+        return line
+
+    def __eq__(self, other: object) -> bool:
+        """Compare equal to the plain list of lines this stands in for."""
+        if isinstance(other, (LazyLines, list)):
+            return list(self) == list(other)
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        """Describe the height and how much of it has actually been drawn."""
+        return f"LazyLines({len(self._entries)} lines, {len(self._drawn)} drawn)"
 
 
 class ListWindow:

@@ -330,8 +330,15 @@ def test_fastrender_erases_before_it_draws_so_a_full_row_keeps_its_last_cell() -
         assert not chunk.rstrip().endswith("\x1b[K"), chunk[-40:]
 
 
-def test_fastrender_hands_dialogs_back_to_prompt_toolkit(monkeypatch) -> None:  # noqa: ANN001
-    """A ``None`` frame means a float is up, which pt lays out — it must own that paint."""
+def test_fastrender_hands_a_frame_it_cannot_place_back_to_prompt_toolkit(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """A ``None`` frame means the session declined to place it — pt must own that paint.
+
+    The session answers ``None`` for the frames it does not lay out itself: the busy
+    overlay, which the float container measures and centres as a content-sized window, and
+    an empty stack, which has no background at all.
+    """
     from prompt_toolkit.renderer import Renderer
     from prompt_toolkit.styles import Style
 
@@ -346,3 +353,88 @@ def test_fastrender_hands_dialogs_back_to_prompt_toolkit(monkeypatch) -> None:  
     assert calls == [True]
     assert renderer.slow_paints == 1
     assert renderer.fast_paints == 0
+
+
+def test_fastrender_writes_nothing_at_all_when_the_frame_is_unchanged() -> None:
+    """The idle tick's frame is usually identical, and identical must cost no bytes.
+
+    Not merely fewer bytes: an empty write leaves the panel's damage region empty, so the
+    display never flushes and the SPI bus stays quiet between real changes.
+    """
+    same = "\n".join(f"row {i:02d}" for i in range(26))
+    renderer, out = _fast_renderer([same, same])
+
+    renderer.render(None, None)  # first paint: everything
+    out.written.clear()
+    renderer.render(None, None)  # the tick: nothing moved
+
+    assert out.written == []
+    assert renderer.fast_paints == 2
+
+
+# --- dialogs stay on the fast path ---------------------------------------------------
+
+
+def test_a_dialog_is_composited_onto_the_frame_rather_than_handed_to_prompt_toolkit() -> None:
+    """A float used to drop the whole frame onto pt's renderer — and pay its grid rebuild.
+
+    The placement is reproducible: an unanchored float with no size of its own is centred
+    on the frame. So the box is merged in here, the row diff still applies, and the rows
+    the box does not reach come back as the *same strings* — which is what lets the diff
+    skip them.
+    """
+    from meshterm.ui.tui.frame import composite_float
+
+    base = [f"{i:02d}" + "." * 51 for i in range(26)]
+    box = "\n".join(["+" + "-" * 18 + "+"] + ["|" + " " * 18 + "|"] * 4
+                    + ["+" + "-" * 18 + "+"])
+    out = composite_float(base, box, 53, 26)
+
+    assert len(out) == 26
+    # Six box rows, centred vertically: (26 - 6) // 2 = 10.
+    for i in list(range(10)) + list(range(16, 26)):
+        assert out[i] is base[i], f"row {i} was rewritten for nothing"
+    # Centred horizontally too: (53 - 20) // 2 = 16 cells of the base still on the left.
+    plain = _plain_row(out[10])
+    assert plain.startswith("10" + "." * 14)
+    assert plain[16:36] == "+" + "-" * 18 + "+"
+    assert plain[36:].startswith(".")
+    assert len(plain) == 53
+
+
+def test_a_composited_row_keeps_the_styling_of_both_sides() -> None:
+    """The merge is cell-accurate over *styled* rows — the base's colour must survive it."""
+    from rich.text import Text
+
+    from meshterm.ui.tui.frame import composite_float
+    from meshterm.ui.tui.render import render_to_ansi
+
+    base = [render_to_ansi(Text("x" * 53, style="bold red"), 53)] * 10
+    box = render_to_ansi(Text("[ ok ]", style="bold green"), 6)
+    out = composite_float(base, box, 53, 10)
+
+    row = out[(10 - 1) // 2]
+    assert "[ ok ]" in _plain_row(row)
+    assert row.count("\x1b[") > 2, "styling was flattened by the merge"
+
+
+def test_stacked_dialogs_composite_in_z_order() -> None:
+    """A confirm over a picker over a menu: each box lands on the frame below it."""
+    from meshterm.ui.tui.frame import composite_float
+
+    rows = ["." * 53 for _ in range(26)]
+    rows = composite_float(rows, "\n".join(["under" + "." * 15] * 8), 53, 26)
+    rows = composite_float(rows, "\n".join(["OVER"] * 2), 53, 26)
+
+    middle = _plain_row(rows[12])
+    # The lower box is 20 cells wide, so it starts at (53 - 20) // 2 = 16; the 4-cell box
+    # above it starts at 24 and covers the lower one's middle without disturbing its edges.
+    assert middle.startswith("." * 16 + "under")
+    assert middle[24:28] == "OVER"
+
+
+def _plain_row(row: str) -> str:
+    """The row's text with its ANSI escapes stripped."""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", row)

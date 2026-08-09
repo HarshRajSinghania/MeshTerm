@@ -16,7 +16,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from .render import crop_cells, query_line, render_lines, render_to_ansi
-from .screen import Screen
+from .screen import LazyLines, Screen
 
 
 def _wants_width(fn: Callable) -> bool:
@@ -481,7 +481,18 @@ class SelectScreen(Screen):
         return max(widths, default=20) + 8
 
     def render_body(self, width: int) -> list[str]:
-        """Render the optional prompt then each row as one ANSI line, the choice marked."""
+        """Plan the body's lines, drawing the rows the viewport actually shows.
+
+        Walks every row to lay the body out — how many lines it takes, where the highlight
+        landed, which separators are sticky landmarks — because the frame's scroll clamp and
+        pinning need all of that exactly. But a *choice* row's own rasterizing is handed over
+        as a callable rather than done here (see
+        :class:`~meshterm.ui.tui.screen.LazyLines`): a list of 141 contacts laid out 150 rows
+        tall only ever shows the twenty that fit, so the other hundred and thirty were built
+        and discarded on every keystroke and every idle tick. Separators are rendered on the
+        spot — they are few, and their lines are the ones :meth:`sticky_rows` pins *outside*
+        the slice.
+        """
         rows = self._rows()
         choices = self._choices(rows)
         self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
@@ -497,7 +508,9 @@ class SelectScreen(Screen):
             sel_len = cell_len(_plain(selected.label)) if selected is not None else 0
             self._hshift = max(0, min(self._hshift, sel_len - avail))
 
-        lines: list[str] = []
+        # One entry per body line: a finished string, or a callable that draws it when the
+        # frame asks. Positions are exact either way, which is all the layout below reads.
+        lines: list[Union[str, Callable[[], str]]] = []
         # A prompt (when set) sits above the list, offsetting every row below it; the cursor
         # line and sticky-header indices below are shifted by exactly this many lines.
         prefix = 0
@@ -558,8 +571,24 @@ class SelectScreen(Screen):
             is_sel = item is selected
             if is_sel:
                 cursor_at = len(lines)
-            pointer = "❯ " if is_sel else "  "
-            style = "brand" if is_sel else ""
+            lines.append(self._row_drawer(item, is_sel, width))
+            # Resolved here, not in the drawer: whether the row is one line tall or two is
+            # part of the layout, so a callable detail is read while planning — and its one
+            # resolved value is what the drawer below renders, never a second call.
+            detail = item.detail_label if isinstance(item, Choice) else None
+            if detail is not None and _plain(detail):
+                lines.append(self._detail_drawer(detail, width))
+        if not choices:
+            lines.append(render_to_ansi(Text("no matches", style="muted"), width))
+        # Remember where the highlighted row landed so the session can keep it in view,
+        # shifted past any prompt lines drawn above the list.
+        self._cursor = None if cursor_at is None else cursor_at + prefix
+        return LazyLines(lines)
+
+    def _row_drawer(self, item: "Choice", is_sel: bool, width: int) -> Callable[[], str]:
+        """A callable that rasterizes one choice row — run only if the row is on screen."""
+
+        def draw() -> str:
             # A width-aware title fits itself to the row's content area (the width less
             # the 2-cell pointer). The exception is the highlighted row of an ``hscroll``
             # list, which keeps its natural form: ←→ slide the full line, and a row that
@@ -568,6 +597,8 @@ class SelectScreen(Screen):
                 label = item.label
             else:
                 label = item.text(max(1, width - 2))
+            pointer = "❯ " if is_sel else "  "
+            style = "brand" if is_sel else ""
             # A Text label carries its own spans (e.g. a red badge); keep them and lay the
             # row's base style underneath, so the highlight tints the row while the badge
             # keeps its colour. A plain string is styled uniformly as before.
@@ -582,24 +613,28 @@ class SelectScreen(Screen):
             text.no_wrap = True
             text.overflow = "ellipsis"
             text.truncate(width)
-            lines.append(render_to_ansi(text, width))
-            detail = item.detail_label if isinstance(item, Choice) else None
-            if detail is not None and _plain(detail):
-                # Hangs under the row at the pointer's own indent — never scrolls or
-                # wraps, just ellipsizes on its own if it's too wide to fit.
-                detail_text = detail if isinstance(detail, Text) else Text(detail)
-                line = Text("  ")
-                line.append_text(detail_text)
-                line.no_wrap = True
-                line.overflow = "ellipsis"
-                line.truncate(width)
-                lines.append(render_to_ansi(line, width))
-        if not choices:
-            lines.append(render_to_ansi(Text("no matches", style="muted"), width))
-        # Remember where the highlighted row landed so the session can keep it in view,
-        # shifted past any prompt lines drawn above the list.
-        self._cursor = None if cursor_at is None else cursor_at + prefix
-        return lines
+            return render_to_ansi(text, width)
+
+        return draw
+
+    @staticmethod
+    def _detail_drawer(detail: Union[str, Text], width: int) -> Callable[[], str]:
+        """A callable that rasterizes a row's already-resolved detail line, on demand.
+
+        Hangs under the row at the pointer's own indent — never scrolls or wraps, just
+        ellipsizes on its own if it's too wide to fit.
+        """
+
+        def draw() -> str:
+            detail_text = detail if isinstance(detail, Text) else Text(detail)
+            line = Text("  ")
+            line.append_text(detail_text)
+            line.no_wrap = True
+            line.overflow = "ellipsis"
+            line.truncate(width)
+            return render_to_ansi(line, width)
+
+        return draw
 
     def cursor_line(self) -> Optional[int]:
         """Return the body line index of the highlighted row."""

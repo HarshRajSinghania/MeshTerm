@@ -92,15 +92,19 @@ class FastRenderer(Renderer):
             return
 
         output = self.output
+        pending = False  # whether the terminal setup below has queued anything to flush
         if self.full_screen and not self._in_alternate_screen:
             self._in_alternate_screen = True
             output.enter_alternate_screen()
+            pending = True
         if not self._bracketed_paste_enabled:
             output.enable_bracketed_paste()
             self._bracketed_paste_enabled = True
+            pending = True
         if not self._cursor_key_mode_reset:
             output.reset_cursor_key_mode()
             self._cursor_key_mode_reset = True
+            pending = True
 
         size = output.get_size()
         dims = (size.rows, size.columns)
@@ -108,6 +112,14 @@ class FastRenderer(Renderer):
 
         # A resize invalidates both records of the screen: ours and prompt_toolkit's.
         full = self._prev_rows is None or self._prev_size != dims
+        if not full and not pending and rows == self._prev_rows:
+            # The app repaints on a timer to keep the header's pulse moving, and most of
+            # those frames come back identical. Writing nothing at all is not merely cheaper
+            # than writing the rows again — it leaves the panel's damage region empty, so
+            # the display never flushes and the SPI bus stays quiet.
+            self._last_size = size
+            self.fast_paints += 1
+            return
         if full:
             self._last_screen = None
             output.hide_cursor()

@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from meshterm import copyright_notice
+from tests.conftest import plain as _plain
 from meshterm.ui.menus import section_heading
 from meshterm.ui.tui import frame, glow
 from meshterm.ui.tui.glow import apply_corner_glow
@@ -2496,3 +2497,146 @@ def test_select_hscroll_leaves_the_detail_line_unshifted() -> None:
     screen.handle("right")
     lines = _row_plains(screen, 40)
     assert "weakest -6.0 dB" in lines[1]
+
+
+# --- the fast path's frame source ----------------------------------------------------
+
+
+def _framed_session():
+    """A session with just enough of an app behind it to compose a frame at 53x26."""
+    import types
+
+    from prompt_toolkit.data_structures import Size
+
+    session = TuiSession()
+    session._app = types.SimpleNamespace(
+        renderer=types.SimpleNamespace(_last_screen=None),
+        output=types.SimpleNamespace(get_size=lambda: Size(rows=26, columns=53)),
+        invalidate=lambda: None,
+    )
+    return session
+
+
+def test_a_dialog_frame_is_composed_here_not_handed_to_prompt_toolkit() -> None:
+    """A float used to send the whole frame down prompt_toolkit's renderer.
+
+    That cost its full grid rebuild and diff on every keystroke — in every confirm, picker
+    and viewer in the app. The float's placement is reproducible (an unanchored, unsized
+    float is centred), so the frame source returns the finished picture with the box merged
+    in, and the row diff applies to dialogs like everything else.
+    """
+    session = _framed_session()
+    session.push(ScrollScreen(Text("the list beneath"), title="Nodes", floating=False))
+    session.push(ButtonDialog("Remove this contact?", [("Cancel", 0), ("Remove", 1)]))
+
+    text = session._plain_frame()
+    assert text is not None, "a dialog must not fall back to prompt_toolkit"
+    rows = text.split("\n")
+    assert len(rows) == 26
+    body = "\n".join(rows)
+    assert "Remove this contact?" in _plain(body)
+    assert "the list beneath" in _plain(body), "the backdrop must show around the box"
+
+
+def test_the_busy_overlay_is_still_prompt_toolkits_to_place() -> None:
+    """The one float we don't place: a content-sized window the float container measures."""
+    from meshterm.ui.tui.overlay import BusyOverlay
+
+    session = _framed_session()
+    assert session._plain_frame() is None  # an empty stack has no background either
+    overlay = BusyOverlay(title="Starting up")
+    overlay.started_at -= overlay.hold + overlay.fade  # past the hold: it is on screen
+    session._overlay = overlay
+    assert session._overlay_visible()
+    assert session._plain_frame() is None
+
+
+def test_the_rows_a_dialog_does_not_reach_come_back_unchanged() -> None:
+    """What makes compositing worth doing: the diff still skips the untouched rows."""
+    session = _framed_session()
+    session.push(ScrollScreen(Text("\n".join(f"line {i}" for i in range(40))),
+                              title="Nodes", floating=False))
+    first = session._plain_frame().split("\n")
+    session.push(ButtonDialog("Sure?", [("Cancel", 0), ("Yes", 1)]))
+    second = session._plain_frame().split("\n")
+
+    unchanged = sum(1 for a, b in zip(first, second) if a == b)
+    assert unchanged >= 10, "the box should only rewrite the rows it covers"
+
+
+# --- the body is drawn one viewport at a time ----------------------------------------
+
+
+def test_a_long_list_only_rasterizes_the_rows_the_viewport_shows() -> None:
+    """141 contacts laid out 150 rows tall still only shows twenty of them.
+
+    Rendering the rest was pure waste on every keystroke *and* on the once-a-second tick.
+    The line count has to stay exact, though — the scroll clamp, the ``↑↓ more`` markers and
+    the sticky-header offsets are all measured against it.
+    """
+    from meshterm.ui.tui.screen import LazyLines
+
+    drawn: list[int] = []
+
+    def title(i: int):
+        def build():
+            drawn.append(i)
+            return f"contact {i:03d}"
+
+        return build
+
+    screen = SelectScreen("Contacts", [Choice(title(i), i) for i in range(150)])
+    lines = screen.render_body(53)
+
+    assert isinstance(lines, LazyLines)
+    assert len(lines) == 150  # the count is exact and cost nothing
+    assert drawn == [], "no row is rasterized until something reads it"
+
+    window = lines[0:20]
+    assert len(window) == 20
+    assert sorted(drawn) == list(range(20))
+    assert "contact 000" in _plain(window[0])
+
+    lines[5]  # a re-read is memoized, never a second render
+    assert sorted(drawn) == list(range(20))
+
+
+def test_a_lazy_body_slices_frames_and_scrolls_exactly_as_a_list_did() -> None:
+    """The substitution has to be invisible to the frame: same height, same clip flags.
+
+    Deferring a row's *drawing* must never defer how many rows there are — the scroll
+    clamp, the ``↑↓ more`` subtitle and the pinned heading are all measured against that
+    count, and every one of them would go wrong if the tail were merely unbuilt.
+    """
+    items = [section_heading("Group")]
+    items += [Choice(f"row {i}", i) for i in range(60)]
+    screen = SelectScreen("Long", items, footer_hint="Esc back")
+    screen.floating = False
+
+    out = frame.compose_base(Text("hdr"), screen, "Esc back", 53, 26)
+    assert len(out.split("\n")) == 26
+    plain = _plain(out)
+    assert "row 0" in plain and "↓ more" in plain
+    assert screen._scroll_total == 61  # the whole body is still measured
+
+    for _ in range(45):  # walk the highlight past the fold
+        screen.handle("down")
+    plain = _plain(frame.compose_base(Text("hdr"), screen, "Esc back", 53, 26))
+    assert "row 45" in plain, "the highlight must still be kept in view"
+    assert "row 0 " not in plain, "the top of the list should have scrolled away"
+    assert "── Group ──" in plain, "the section heading pins once it scrolls off"
+
+
+def test_an_off_screen_rows_live_title_is_left_alone() -> None:
+    """A row's callable title is resolved only while the row is actually on screen."""
+    calls: list[str] = []
+    items = [
+        Choice(lambda: (calls.append("top"), "top row")[1], 0),
+        *[Choice(f"filler {i}", i) for i in range(1, 40)],
+        Choice(lambda: (calls.append("bottom"), "bottom row")[1], 40),
+    ]
+    screen = SelectScreen("Live", items)
+    screen.floating = False
+    lines = screen.render_body(53)
+    lines[0:10]
+    assert calls == ["top"]
