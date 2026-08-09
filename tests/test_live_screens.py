@@ -1020,7 +1020,12 @@ def test_sweep_screen_stars_the_running_best() -> None:
     screen.on_level(1, 7, _level(12, -2.0))
     screen.on_level(2, 7, _level(18, 7.5))
     assert screen.phase_label() == "coarse sweep · level 2/7"
-    starred = next(line for line in _plain(screen.render_body(100)).splitlines() if "★" in line)
+    # The route lane wears ★ for our own ends, so the star that marks the winner is the
+    # one in the levels table — a row that also carries the level's reading.
+    starred = next(
+        line for line in _plain(screen.render_body(100)).splitlines()
+        if "★" in line and "dB" in line
+    )
     assert "18" in starred
 
 

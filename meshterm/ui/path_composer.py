@@ -73,7 +73,7 @@ from ..services.topology import (
 from .theme import snr_style
 from .tui.render import query_line, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .pathline import PathLine, path_line
+from .pathline import PathLine, cut_to, path_line
 from .widgets import NodeResolver, _age_seconds, _format_age, _identity, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
@@ -612,7 +612,10 @@ class PathComposerScreen(Screen):
             if is_sel:
                 text.style = "brand"
             text.no_wrap = True
-            text.truncate(width, overflow="ellipsis")
+            # A suggestion row names a node in the route's own vocabulary, so it is cut
+            # like one: a chip that runs off the dialog cracks, prose keeps the ellipsis.
+            text = cut_to(text, width)
+            text.no_wrap = True
             entries.append((i, render_to_ansi(text, width)))
         if not any(kind == "hop" for kind, _ in rows):
             if any(kind == "fetch" for kind, _ in rows):

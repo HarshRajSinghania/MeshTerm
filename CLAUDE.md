@@ -125,10 +125,15 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   `■` room · `◉` sensor · `○` unknown.
 - Path cuts: a path line drawn as **chips** that gets cut — a lane that ran out, a row
   scrolled past its edge — breaks the chip off on a half block in that chip's own fill
-  (`▌` end of line, `▐` start; `pathline.cut_mark`/`cut_to`), so half the cell is segment
-  and half is bare page. An ellipsis would say a *word* was shortened; the crack says the
-  segment continues. Arrow-drawn paths keep the `…` — nothing to shear. Distinct from
-  `⋯`, which marks whole hops *elided* out of the middle (`PathLine.ellipsized`).
+  (`▐` ends a line, `▌` opens one; `pathline.cut_mark`/`cut_to`), so half the cell is
+  segment and half is bare page. An ellipsis would say a *word* was shortened; the crack
+  says the segment continues. Arrow-drawn paths keep the `…` — nothing to shear. Distinct
+  from `⋯`, which marks whole hops *elided* out of the middle (`PathLine.ellipsized`).
+- Path endpoints: a path line runs between the nodes it actually went between — the true
+  origin and destination, never the first and last *relay*. Our own end is always the
+  app-wide `★` (`pathline.SELF_GLYPH`, or `path_line(bare_self=True)`), never our name:
+  the one node the reader never has to be told, and the cells belong to the hops that
+  differ from row to row.
 - Concept icons: 📡 advert · 🕒 clock/sync · 🔄 reboot · 💾 backup · 📂 restore ·
   🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·

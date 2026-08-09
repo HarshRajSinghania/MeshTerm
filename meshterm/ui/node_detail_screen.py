@@ -78,7 +78,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
-from ..core.models import LOCAL_DEVICE_LABEL, NODE_TYPE_LABELS, Contact, utcnow
+from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
 from .mapcanvas import RGB
 from .minimap import MiniMap
@@ -95,7 +95,15 @@ from .pathgraph import (
 )
 from .theme import mark_rgb, name_style, snr_style
 from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
-from .pathline import ELIDE_HEAD, ELIDE_TAIL, PathHop, PathLine, cut_mark, cut_to
+from .pathline import (
+    ELIDE_HEAD,
+    ELIDE_TAIL,
+    SELF_GLYPH,
+    PathHop,
+    PathLine,
+    cut_mark,
+    cut_to,
+)
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -1431,7 +1439,10 @@ def _route_line(
     :class:`~meshterm.ui.pathline.PathLine` drawn exactly as the Message paths dialog draws
     its arrivals (JP, 2026-08-09): **hops read as names** — every hop the resolver can place
     wears its contact name in that node's key-derived hue, as powerline chips where the
-    terminal can draw them, and our own end takes the ``you`` white. A hop nobody can name has
+    terminal can draw them, and our own end stands on the app-wide ``★`` — every route on this
+    screen ends on us, so the star says it in one cell and leaves the rest of the lane to the
+    hops that differ from row to row (the same trade the trace route lane and the trophy card
+    make, and the same mark the graph above plants on our end). A hop nobody can name has
     no name to show, so it stands in its own hash at the device's path-hash-mode width (the
     width the radio itself carries per hop) in the app-wide unknown-node grey — colour being
     the "this is a name" signal, exactly as in the graph above. No hop repeats its hash after
@@ -1457,7 +1468,7 @@ def _route_line(
         PathHop(node_label, key=name_key) if node_known and name_key
         else PathHop(_hop_hash(name_key, node_label, hash_bytes)),
         *(hop_of(hop) for hop in reversed(hops_out)),
-        PathHop(self_name or LOCAL_DEVICE_LABEL, you=True),
+        PathHop(SELF_GLYPH, you=True),
     ]).text()
 
     atoms: list[Text] = []

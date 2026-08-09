@@ -15,17 +15,19 @@ detail read together:
   so the graph's labels stay two cells wide and a many-path graph stays readable.
 * the **arrival list** beneath is two lines per logged copy. On top, alone on its lane
   and introduced by nothing, the **route** as a path line (:mod:`~meshterm.ui.pathline`):
-  each relay a chip in its own node hue, named where we know the node (``YUL-Poly``) and
-  standing in its own hash at the device's path-hash width where we don't (``e839f2``,
-  keyless grey). No hash is repeated after a name — the graph above is where the hash
+  the origin, every relay, and us — the same two endpoints the graph draws between, so
+  the row and the picture start and finish in the same places. Each node is a chip in its
+  own hue, named where we know it (``YUL-Poly``) and standing in its own hash at the
+  device's path-hash width where we don't (``e839f2``, keyless grey); our own end is the
+  app-wide ``★``. No hash is repeated after a name — the graph above is where the hash
   bytes live, and a chip and its label share the node's colour, so the two halves
   cross-reference by hue instead of by spelling the hex twice. Under it, hanging muted,
   the frame's own facts: time heard, reception SNR, and which resend it was.
   The route is the line you pick — it is what one arrival differs from another by, and
   what the graph highlights. ↑↓ move the selection (the graph's highlight follows); a
   route longer than the dialog **scrolls horizontally with ←→**, the whole line shifting
-  under a ``…`` at whichever edge continues, and snaps back the moment the selection
-  moves on.
+  under a cracked chip at whichever edge continues, and snaps back the moment the
+  selection moves on. A row you are *not* on is cut the same way — it just cannot slide.
 
 Nothing here transmits; like the service beneath it, this is a read-model over what
 the radio already heard.
@@ -40,7 +42,16 @@ from rich.text import Text
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
-from .pathline import ELIDE_HEAD, ELIDE_TAIL, cut_mark, path_line
+from .pathline import (
+    ELIDE_HEAD,
+    ELIDE_TAIL,
+    SELF_GLYPH,
+    PathHop,
+    PathLine,
+    cut_mark,
+    cut_to,
+    path_line,
+)
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
@@ -209,7 +220,10 @@ class MessagePathsScreen(Screen):
             else:
                 row = Text("  ")
                 row.append_text(self._path_text(arrival))
-                lines.append(render_to_ansi(row, width, no_wrap=True))
+                # Cut here rather than letting the render boundary ellipsize it: an
+                # unselected route runs off the lane exactly as the selected one does,
+                # and it owes the reader the same cracked chip rather than three dots.
+                lines.append(render_to_ansi(cut_to(row, width), width, no_wrap=True))
             detail = Text(" " * _DETAIL_INDENT)
             detail.append_text(self._detail_text(arrival))
             lines.append(render_to_ansi(detail, width, no_wrap=True))
@@ -219,7 +233,7 @@ class MessagePathsScreen(Screen):
     # -- the rows --
 
     def _path_text(self, arrival: Arrival) -> Text:
-        """One arrival's relay chain — the row's first line, and the one you pick.
+        """One arrival's whole route — the row's first line, and the one you pick.
 
         The route gets the row's full width to itself, so no ``via`` introduces it: on a
         lane that holds nothing else there is nothing to tell it apart from. It is THE
@@ -230,12 +244,36 @@ class MessagePathsScreen(Screen):
         "this is a name" signal), and no hop repeats its hash after its name. The hash
         bytes are the graph's job, one row up; what ties the two together is the shared
         node hue, not a second spelling of the hex.
+
+        The line runs **origin to us**, not relay to relay (JP, 2026-08-09): a path's
+        ends are the nodes it went between, and a chain that opens on its first *relay*
+        reads as a route from a node that only passed the message on. So the sender leads
+        (:meth:`_origin_hop`) and we close it on the app-wide ``★``, which is exactly what
+        the graph one row up draws between — the two now name the same two endpoints
+        instead of the row starting a hop later than the picture above it. A hopless
+        arrival is no longer a lone word: ``Alice ▶ ★`` *is* what direct delivery looks
+        like, and it reads on the same rails as every other row.
         """
-        return path_line(
+        relays = path_line(
             arrival.hops, self._resolve,
             prefix_bytes=self._prefix_bytes, self_name=self._self_name,
-            empty="direct", hash_as_name=True,
-        ).text()
+            hash_as_name=True,
+        ).hops
+        return PathLine([self._origin_hop(), *relays, PathHop(SELF_GLYPH, you=True)]).text()
+
+    def _origin_hop(self) -> PathHop:
+        """The node the message set out from — the route's true head.
+
+        The same origin the graph's left endpoint draws (:func:`~meshterm.ui.widgets.
+        route_graph_style`), named and hued the same way: the sender's display name in its
+        key-derived hue, our own ``★`` for a message we sent, and a bare ``?`` where the
+        frame named nobody — never a hue guessed from a name we can't place.
+        """
+        if not self._source:
+            return PathHop("?")
+        if self._self_name and self._source == self._self_name:
+            return PathHop(SELF_GLYPH, you=True)
+        return PathHop(self._source, key=self._key_of(self._source) if self._key_of else None)
 
     def _detail_text(self, arrival: Arrival) -> Text:
         """One arrival's reception facts — when it landed, how loudly, which copy.

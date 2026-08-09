@@ -208,12 +208,61 @@ def test_paths_screen_cracks_the_chips_the_scroll_cuts(monkeypatch) -> None:  # 
     assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row
 
 
+def test_paths_screen_route_runs_origin_to_us_not_relay_to_relay() -> None:
+    """A row is the whole route, not the relay chain it rode.
+
+    A path's ends are the nodes it went *between*, so the sender leads the line and we
+    close it on the ★ — the same two endpoints the graph one row up draws between, which
+    is what lets the row and the picture cross-read. A chain that opened on its first
+    relay read as a route from a node that had only passed the message on.
+    """
+    screen = _screen(_arrivals())
+    rows = _plain(screen.render_body(76)).split("sensor\n\n")[1].split("\n")
+    assert rows[0] == "❯ Alice → YUL-Cartierville → ★"
+    assert rows[2] == "  Alice → Waymarker → 77 → ★"  # an unnamed relay still stands in its hash
+
+
+def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> None:
+    """The head is named exactly as the graph's left endpoint is: our own ``★`` on a
+    message we sent, a bare ``?`` where the frame named nobody — never a guessed name."""
+    now = utcnow()
+    one = [Arrival(when=now, hops=("3d63",), snr=1.0)]
+    ours = _plain(_screen(one, source="Homestead").render_body(76))
+    assert "❯ ★ → YUL-Cartierville → ★" in ours
+    nameless = _plain(_screen(one, source=None).render_body(76))
+    assert "❯ ? → YUL-Cartierville → ★" in nameless
+
+
+def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  # noqa: ANN001
+    """A row you are not on runs off the lane exactly as the selected one does, so it owes
+    the reader the same cracked chip — it just cannot slide to read the rest."""
+    monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
+    now = utcnow()
+    long = tuple(f"{i:02x}{i:02x}" for i in range(12))
+    screen = _screen([
+        Arrival(when=now, hops=long, snr=1.0),
+        Arrival(when=now + timedelta(seconds=2), hops=long[::-1], snr=2.0),
+    ])
+    lines = _plain(screen.render_body(40)).split("\n")
+    rows = lines[next(i for i, ln in enumerate(lines) if ln.startswith("❯")):]
+    assert rows[0].rstrip().endswith(CRACK_TAIL)  # the selected row
+    unselected = rows[2]  # row 1 is the selected row's hanging reception facts
+    assert unselected.rstrip().endswith(CRACK_TAIL) and "…" not in unselected
+
+
 def test_paths_screen_direct_arrival_and_empty_state() -> None:
-    """A hop-less arrival reads direct; no arrivals at all explain themselves."""
+    """A hop-less arrival draws its two endpoints and nothing between; no arrivals at all
+    explain themselves.
+
+    The route no longer collapses to the word *direct*: with both ends on the line,
+    ``Alice → ★`` **is** what a direct delivery looks like, and it reads on the same rails
+    as every relayed row instead of swapping the picture for a caption.
+    """
     now = utcnow()
     screen = _screen([Arrival(when=now, hops=(), snr=2.5)])
     body = _plain(screen.render_body(76))
-    assert "direct" in body
+    assert "❯ Alice → ★" in body
+    assert "direct" not in body
     empty = _screen([], matched=False)
     body = _plain(empty.render_body(76))
     assert "No direct-message frames logged in the window." in body

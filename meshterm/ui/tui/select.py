@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional, Union
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..pathline import cut_to
 from .render import crop_cells, query_line, render_lines, render_to_ansi
 from .screen import LazyLines, Screen
 
@@ -611,8 +612,11 @@ class SelectScreen(Screen):
             text.append_text(label_text)
             text.style = style
             text.no_wrap = True
-            text.overflow = "ellipsis"
-            text.truncate(width)
+            # Cut rather than truncate, so a row carrying a path line (a trophy walk, a
+            # probe candidate) breaks its chip off on the crack while every ordinary row
+            # still ends in the ellipsis — ``cut_to`` decides that from the row itself.
+            text = cut_to(text, width)
+            text.no_wrap = True
             return render_to_ansi(text, width)
 
         return draw

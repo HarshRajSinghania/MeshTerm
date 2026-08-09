@@ -56,7 +56,7 @@ from .packet_viewer import (
     class_marks,
     node_label,
 )
-from .pathline import PathHop, PathLine
+from .pathline import SELF_GLYPH, PathHop, PathLine
 from .theme import name_style, snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -667,6 +667,11 @@ class LiveFeedScreen(Screen):
     def _hop(self, value: str, *, named: bool = True) -> PathHop:
         """One endpoint as a path hop: its contact name, or its one-byte hash in that hue.
 
+        Our own node resolves to the app-wide :data:`~meshterm.ui.pathline.SELF_GLYPH`
+        rather than its name — the one endpoint the reader never has to be told, and in an
+        18-cell lane the cells it gives back are the *other* end's name reading whole
+        instead of being cut.
+
         Args:
             value: The endpoint's key hash (or, for an anonymous request's sender, its
                 whole key — shown cut to the lane's one-byte width when it can't be named).
@@ -675,8 +680,10 @@ class LiveFeedScreen(Screen):
         """
         short = value[: 2 * ENDPOINT_HASH_BYTES]
         name = self._resolve(value) if named else None
+        if name and name == self._self_name:
+            return PathHop(SELF_GLYPH, you=True)
         if name and name != value:
-            return PathHop(name, key=value, you=bool(self._self_name and name == self._self_name))
+            return PathHop(name, key=value)
         return PathHop(short, key=value, lit_bytes=ENDPOINT_HASH_BYTES)
 
     @staticmethod

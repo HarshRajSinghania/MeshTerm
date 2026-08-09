@@ -128,8 +128,8 @@ _ELLIPSIS = "…"
 #: the page takes the right); :data:`CRACK_HEAD` is its mirror, opening a line whose
 #: start is off-screen. Only chips crack — :func:`cut_mark` finds a fill or falls back to
 #: :data:`_ELLIPSIS`, so arrow lines are untouched by the whole idea.
-CRACK_TAIL = "▌"
-CRACK_HEAD = "▐"
+CRACK_TAIL = "▐"
+CRACK_HEAD = "▌"
 
 #: Which side of a path an :meth:`PathLine.ellipsized` fit eats into. ``ELIDE_TAIL`` is
 #: the route reading — the origin anchors the line, the destination is rescued off the

@@ -11,6 +11,7 @@ from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
+from meshterm.ui.pathline import SELF_GLYPH
 from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import WalkScreen
 
@@ -210,7 +211,7 @@ def test_walk_enter_walks_and_grows_the_trail() -> None:
     screen.handle("enter")  # walk to YUL (our only neighbour)
     assert screen._focus == topo.canonical(YUL.public_key)
     body = _plain(screen.render_body(80))
-    assert "Homestead › YUL-Cartierville" in body  # the trail
+    assert "★ › YUL-Cartierville" in body  # the trail, our end on the app-wide star
     # The focus line reads name (hash) — the glyph carries the type, not a spelled-out kind.
     assert "YUL-Cartierville (3d)" in body and "1 hop out" in body
     assert "Alice" in body  # YUL's onward neighbour is now a row
@@ -303,7 +304,7 @@ def test_walk_trail_sits_left_until_it_overflows() -> None:
     """A trail that fits is left-aligned; only an elided one snaps to the right edge."""
     screen = _screen(_topo())
     screen._trail = [screen._topo.self_id]
-    assert screen._trail_text(40).plain == "Homestead"
+    assert screen._trail_text(40).plain == SELF_GLYPH  # us, in one cell
 
 
 def test_walk_trail_names_carry_their_node_hues() -> None:
@@ -669,7 +670,7 @@ def test_walk_trail_scroll_stops_at_the_head_and_resets_with_the_trail() -> None
         screen.handle("left")
     assert screen._trail_scroll == limit
     head = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
-    assert "Homestead" in head  # scrolled far enough to read where the walk set out from
+    assert head.lstrip().startswith(SELF_GLYPH)  # scrolled far enough to see where it set out
 
     screen.handle("backspace")  # stepping back is a change to the trail
     assert screen._trail_scroll == 0

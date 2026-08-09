@@ -21,6 +21,7 @@ from rich.text import Text
 from meshterm import copyright_notice
 from tests.conftest import plain as _plain
 from meshterm.ui.menus import section_heading
+from meshterm.ui.pathline import CRACK_TAIL, PathHop, PathLine
 from meshterm.ui.tui import frame, glow
 from meshterm.ui.tui.glow import apply_corner_glow
 from meshterm.ui.tui.progress import ProgressScreen
@@ -206,6 +207,22 @@ def test_select_width_aware_title_fits_itself_to_the_row() -> None:
     assert screen.dialog_width > cell_len("you → hub → far")  # measured at its fullest
     screen.handle("text", "hub")  # the filter reads the natural (unbounded) form
     assert screen._rows() == screen._items
+
+
+def test_select_row_cracks_a_chip_path_and_ellipsizes_everything_else() -> None:
+    """A row too wide for the list is *cut*, not truncated: a row carrying a path line
+    (a trophy walk, a probe candidate) breaks its chip off on the crack, while an
+    ordinary prose row keeps the ellipsis. The row itself decides which — the list has
+    no idea it is ever holding a route."""
+    route = PathLine(
+        [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(8)], mode="powerline"
+    ).text()
+    screen = SelectScreen("pick", [Choice(route, 1), Choice("a plainly worded row", 2)])
+    rows = [ln for ln in _plain(screen.render_body(16)).split("\n") if ln.strip()]
+    route_row = next(ln for ln in rows if "NODE" in ln)
+    prose_row = next(ln for ln in rows if "plainly" in ln)
+    assert route_row.rstrip().endswith(CRACK_TAIL) and "…" not in route_row
+    assert prose_row.rstrip().endswith("…")  # prose was shortened; that is what happened
 
 
 def test_select_hscroll_highlight_keeps_the_natural_row() -> None:

@@ -66,7 +66,7 @@ from ..services.topology import Link, MeshTopology
 from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
-from .pathline import ELIDE_HEAD, PathHop, PathLine
+from .pathline import ELIDE_HEAD, SELF_GLYPH, PathHop, PathLine
 from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import query_line, render_to_ansi
@@ -667,12 +667,19 @@ class WalkScreen(Screen):
         return limit
 
     def _trail_hop(self, node: str) -> PathHop:
-        """One walked step as a path hop: its display name in its own identity colour."""
+        """One walked step as a path hop: its display name in its own identity colour.
+
+        Our own node takes the app-wide :data:`~meshterm.ui.pathline.SELF_GLYPH` instead
+        of its name: every walk sets out from us, so the star says in one cell what the
+        trail's most width-starved line would otherwise spend a whole name on — and the
+        cells it frees are steps that stay in view before the head has to be elided.
+        """
         style = self._list_name_style(node)
+        if style == "you":
+            return PathHop(SELF_GLYPH, you=True)
         return PathHop(
             self._label(node),
-            key=None if style in ("you", "node.unknown") else node,
-            you=style == "you",
+            key=None if style == "node.unknown" else node,
         )
 
     def _focus_line(self, depths: dict[str, int]) -> Text:

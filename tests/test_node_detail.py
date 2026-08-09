@@ -36,7 +36,7 @@ from meshterm.ui.node_detail_screen import (
     _signal_row,
 )
 from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
-from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, PathHop, PathLine
+from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, SELF_GLYPH, PathHop, PathLine
 from meshterm.ui.tui.screen import CANCEL
 from meshterm.ui.widgets import highlighted_hash, route_graph_style, tab_strip
 
@@ -203,7 +203,8 @@ def test_route_line_names_its_hops() -> None:
     assert line.startswith("Far")  # the contact anchors the left, by name
     assert "Hub" in line  # the relay reads as the contact it is, not as ``3d``
     assert "3d" not in line and "f2" not in line  # no hop repeats its hash after its name
-    assert line.rstrip().endswith("Us")  # our own node anchors the right
+    assert line.rstrip().endswith(SELF_GLYPH)  # our own node anchors the right, as the ★
+    assert "Us" not in line  # …in one cell, not a name every row would repeat
     assert context.plain == "device route"  # the firmware-route tag, off the pathline itself
 
 
@@ -257,8 +258,7 @@ def test_route_line_direct_route_has_no_relay() -> None:
         resolve=make_node_resolver([HUB]), node_known=True,
         self_name="Us", hash_bytes=1,
     )
-    line = path.plain
-    assert "Far" in line and "Us" in line and "→" in line
+    assert path.plain == f"Far → {SELF_GLYPH}"
 
 
 # --- the routes view (list + graph callbacks) -----------------------------------

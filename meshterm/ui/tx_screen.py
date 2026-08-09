@@ -41,7 +41,7 @@ from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN
 from ..core.models import Contact, TraceResult, TxLevelResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..services.topology import build_topology, render_custom_spec
-from .pathline import PathHop, PathLine, path_line
+from .pathline import SELF_GLYPH, PathHop, PathLine, cut_to, path_line
 from .theme import name_style, snr_style
 from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
 from .tui.render import render_lines, render_to_ansi
@@ -352,7 +352,10 @@ class TxSweepScreen(Screen):
             selected = i == self._index
             text = self._action_text(key, selected)
             text.no_wrap = True
-            text.truncate(width, overflow="ellipsis")
+            # The route row carries a path line, so it is cut rather than truncated: a
+            # chip that runs off the row cracks, every other row keeps the ellipsis.
+            text = cut_to(text, width)
+            text.no_wrap = True
             if selected:
                 self._cursor = len(lines)
             lines.append(render_to_ansi(text, width))
@@ -446,11 +449,16 @@ class TxSweepScreen(Screen):
         """The walk one measurement makes: out through the tuned link, mirrored home.
 
         The outbound leg — us, any composed hops, the tuned node, the target — draws
-        in full colour (each name in its own key hue, us the white ``you``); the
-        return (the outbound mirrored back, the trace boomerang the optimizer
-        actually flies) is dimmed, reading as "not yours to compose".
+        in full colour (each name in its own key hue); the return (the outbound
+        mirrored back, the trace boomerang the optimizer actually flies) is dimmed,
+        reading as "not yours to compose".
+
+        Both our ends stand on the app-wide ``★`` rather than our name: every
+        measurement this screen makes leaves us and comes home to us, so spelling
+        ourselves out twice per line would cost the lane the very hops the sweep is
+        tuning — the same trade the trace route lane and the trophy card make.
         """
-        hops: list[PathHop] = [PathHop(self._device_label, you=True)]
+        hops: list[PathHop] = [PathHop(SELF_GLYPH, you=True)]
         for hop in self.route_hops:
             hops.append(PathHop(self._hop_name(hop), key=hop))
         hops.append(PathHop(self._admin_label, key=self._admin_key))
@@ -458,7 +466,7 @@ class TxSweepScreen(Screen):
         hops.append(PathHop(self._admin_label, key=self._admin_key, dim=True))
         for hop in reversed(self.route_hops):
             hops.append(PathHop(self._hop_name(hop), key=hop, dim=True))
-        hops.append(PathHop(self._device_label, you=True, dim=True))
+        hops.append(PathHop(SELF_GLYPH, you=True, dim=True))
         return PathLine(hops)
 
     def _hop_name(self, hop: str) -> str:
