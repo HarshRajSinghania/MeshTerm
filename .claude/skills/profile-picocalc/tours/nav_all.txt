@@ -1,0 +1,86 @@
+label: splash
+down 1
+up 1
+label: connect
+enter
+sleep 25
+
+label: main-menu
+down 6
+up 4
+pgdn 2
+
+# --- Chat (row 0) ---
+label: to-chat
+pgup 2
+enter
+sleep 4
+label: chat
+down 3
+up 2
+esc
+sleep 3
+
+# --- Dashboard (row 3) ---
+label: to-dashboard
+down 3
+enter
+sleep 5
+label: dashboard
+down 3
+up 2
+esc
+sleep 3
+
+# --- Live feed (row 4) ---
+label: to-livefeed
+down 1
+enter
+sleep 5
+label: livefeed
+down 3
+pgdn 2
+esc
+sleep 3
+
+# --- Contacts (row 5) ---
+label: to-contacts
+down 1
+enter
+sleep 5
+label: contacts
+down 5
+up 3
+pgdn 2
+label: contacts-type
+text:y
+text:u
+sleep 1
+backspace 2
+esc
+sleep 3
+
+# --- Map (row 6) ---
+label: to-map
+down 1
+enter
+sleep 6
+label: map-pan
+right 2
+down 2
+label: map-zoom
+pgdn 1
+pgup 1
+esc
+sleep 3
+
+# --- Mesh walk (row 7) ---
+label: to-walk
+down 1
+enter
+sleep 5
+label: walk
+down 3
+up 2
+esc
+sleep 3

@@ -1,0 +1,31 @@
+# The map: the one screen whose keystrokes were ever seconds long.
+# Pans and zooms first (each schedules a background raster), then a settled view.
+
+label: splash
+down 1
+up 1
+label: connect
+enter
+sleep 25
+
+label: to-map
+down 6
+enter
+sleep 10
+
+label: map-pan
+right 4
+left 4
+down 3
+up 3
+
+label: map-zoom
+pgdn 2
+pgup 2
+sleep 4
+
+# One key on a view whose ground is already drawn: the best case the map can reach.
+label: map-settled
+right 1
+sleep 4
+esc

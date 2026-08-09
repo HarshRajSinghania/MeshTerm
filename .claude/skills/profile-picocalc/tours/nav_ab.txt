@@ -1,0 +1,30 @@
+label: splash
+down 1
+up 1
+label: connect
+enter
+sleep 25
+label: main-menu
+down 8
+up 6
+pgdn 2
+pgup 2
+label: to-dashboard
+down 3
+enter
+sleep 5
+label: dashboard
+down 4
+up 3
+esc
+sleep 3
+label: to-contacts
+down 2
+enter
+sleep 5
+label: contacts
+down 6
+up 4
+pgdn 2
+esc
+sleep 3
