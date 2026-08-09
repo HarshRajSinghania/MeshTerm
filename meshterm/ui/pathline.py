@@ -14,7 +14,10 @@ drawn*, so every surface the survey found can eventually route through it:
   oh-my-posh look, where a route reads as a row of distinct blocks rather than one
   fused ribbon. The chip fill is the node's hash-derived hue
   (:func:`~meshterm.ui.theme.node_style`), our own node the pure ``you`` white, a
-  faded hop dark slate, a keyless hop grey. ``auto`` (the default) picks powerline exactly
+  faded hop dark slate, a keyless hop grey. A chip caught by a *cut* — a lane that ran
+  out, a line scrolled past its edge — breaks off on a half block in its own fill
+  (:func:`cut_mark`), and that crack is what says the segment continues; only chips
+  crack, an arrow line still ellipsizes. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
@@ -56,6 +59,7 @@ earned, and a cursor can never be stranded on a line break.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
@@ -111,6 +115,21 @@ _DIM_FG = "#94a3b8"
 #: The mark standing in for elided hops (see :meth:`PathLine.ellipsized`) — rendered as
 #: a dim pseudo-hop so it recedes in both modes.
 _ELISION = "⋯"
+
+#: The classic truncation mark, and what an *arrow* line still cuts with: three dots
+#: standing where words were. An arrow hop is text, so shortening it is what happened.
+_ELLIPSIS = "…"
+
+#: What a *chip* line cuts with instead (JP, 2026-08-09) — the half block, drawn in the
+#: cut chip's own fill with no background, so the cell is half segment and half bare
+#: page: the chip breaks off mid-body and the crack says it is incomplete. An ellipsis
+#: would claim the opposite, that a *word* was shortened, when what ran out is the lane.
+#: :data:`CRACK_TAIL` closes a line the path runs on past (the fill's left half survives,
+#: the page takes the right); :data:`CRACK_HEAD` is its mirror, opening a line whose
+#: start is off-screen. Only chips crack — :func:`cut_mark` finds a fill or falls back to
+#: :data:`_ELLIPSIS`, so arrow lines are untouched by the whole idea.
+CRACK_TAIL = "▌"
+CRACK_HEAD = "▐"
 
 #: Which side of a path an :meth:`PathLine.ellipsized` fit eats into. ``ELIDE_TAIL`` is
 #: the route reading — the origin anchors the line, the destination is rescued off the
@@ -177,6 +196,98 @@ def _style_hex(style: str) -> Optional[str]:
     return None
 
 
+#: A chip's fill, as it appears in a rendered span's style — the ``on #rrggbb`` half.
+#: Only :meth:`PathLine._chip` sets a background, which is what makes this the test for
+#: "is there a chip here": a seam's point, a notch, and every arrow-mode span carry a
+#: foreground alone.
+_ON_FILL = re.compile(r"\bon\s+(#[0-9a-fA-F]{6})\b")
+
+
+def _fills(line: Text) -> list[Optional[str]]:
+    """The chip fill under each *character* of a rendered line (``None`` off a chip)."""
+    fills: list[Optional[str]] = [None] * len(line.plain)
+    for span in line.spans:
+        style = span.style if isinstance(span.style, str) else str(span.style)
+        found = _ON_FILL.search(style)
+        if found is None:
+            continue
+        for i in range(max(0, span.start), min(len(fills), span.end)):
+            fills[i] = found.group(1)
+    return fills
+
+
+def _char_of_cell(plain: str, cell: int) -> int:
+    """The character index a display cell falls in, clamped to the string's ends."""
+    if cell <= 0:
+        return 0
+    at = 0
+    for i, ch in enumerate(plain):
+        at += cell_len(ch)
+        if at > cell:
+            return i
+    return max(0, len(plain) - 1)
+
+
+def cut_mark(line: Text, at: int, side: str) -> Text:
+    """The one cell that says a rendered path line was cut here.
+
+    A chip caught by the cut breaks off in its own colour (:data:`CRACK_TAIL` /
+    :data:`CRACK_HEAD`) — half the cell is still segment, half is bare page, so the
+    reader sees a chip that *continues* rather than a route that ended. A line drawn in
+    arrows has no fill to shear, so it cuts the classic way, with :data:`_ELLIPSIS`; that
+    fallback is the whole mode test, and it costs the caller nothing to ask for.
+
+    The fill is read from the nearest cell *inside* the line — scanning back from ``at``
+    for a tail cut, forward for a head cut — so a cut landing on a seam or on the closing
+    edge still cracks in the colour of the chip the reader can see, not in nothing.
+
+    Args:
+        line: The rendered line being cut (whole, unshifted — cells are absolute).
+        at: The cell index of the nearest *visible* cell on the mark's side: the last
+            one still drawn for :data:`ELIDE_TAIL`, the first for :data:`ELIDE_HEAD`.
+        side: Which end of the line the mark closes — :data:`ELIDE_TAIL` (the path runs
+            on to the right) or :data:`ELIDE_HEAD` (it began off to the left).
+
+    Returns:
+        The styled single cell, ready to append or prepend.
+    """
+    fills = _fills(line)
+    if not fills:  # nothing drawn to shear — a caller cutting an empty line
+        return Text(_ELLIPSIS, style="muted")
+    index = _char_of_cell(line.plain, at)
+    steps = range(index, len(fills)) if side == ELIDE_HEAD else range(index, -1, -1)
+    fill = next((fills[i] for i in steps if fills[i]), None)
+    if fill is None:
+        return Text(_ELLIPSIS, style="muted")
+    return Text(CRACK_HEAD if side == ELIDE_HEAD else CRACK_TAIL, style=fill)
+
+
+def cut_to(line: Text, width: int) -> Text:
+    """Fit a rendered path line to ``width`` by cutting its tail — cracked, not elided.
+
+    The drop-in for ``Text.truncate(width, overflow="ellipsis")`` wherever the line being
+    cut is a path: the body is cropped a cell short and the freed cell carries
+    :func:`cut_mark`, so chips break off in their own colour and arrow lines end in the
+    same ``…`` they always did. A line that already fits comes back untouched.
+
+    Args:
+        line: The rendered line to fit.
+        width: The cell budget.
+
+    Returns:
+        A line no wider than ``width``.
+    """
+    if line.cell_len <= width:
+        return line
+    if width <= 0:
+        return Text()
+    mark = cut_mark(line, width - 2, ELIDE_TAIL)
+    body = line.copy()
+    body.truncate(max(0, width - mark.cell_len), overflow="crop")
+    body.append_text(mark)
+    return body
+
+
 class PathLine:
     """A hop sequence, renderable as arrow-joined text or powerline chips.
 
@@ -237,7 +348,8 @@ class PathLine:
           the *middle* and both endpoints survive — a route reads origin and
           destination first, and a plain right-truncation would amputate the second.
           The origin is only given up if even that won't fit, and a lone over-long hop
-          is truncated the classic way as the last resort.
+          is cut where the width runs out as the last resort (:func:`cut_to` — a chip
+          cracks off in its own colour, an arrow line ellipsizes).
         * :data:`ELIDE_HEAD` anchors the line on its tail: the last hop holds and hops
           go from the head end, the origin among them, with no endpoint rescued. A
           breadcrumb trail's news is where the walk *is*; where it set out from is
@@ -266,8 +378,7 @@ class PathLine:
                 if candidate.cell_len <= width:
                     return candidate
         last = self._render([mark, self._hops[-1]]) if count > 1 else full
-        last.truncate(width, overflow="ellipsis")
-        return last
+        return cut_to(last, width)
 
     def wrapped(self, width: int, *, indent: int = 0) -> list[Text]:
         """The line broken at hop boundaries, hanging under ``indent`` columns.
@@ -283,7 +394,8 @@ class PathLine:
         second line down, open by redrawing the seam the break interrupted — the point
         arriving out of the previous line's last fill — so a continuation is never
         mistakable for a path starting over. A single hop wider than the content column
-        stands alone, truncated with an ellipsis.
+        stands alone, cut to it by :func:`cut_to`: a chip breaks off on the crack, an
+        arrow hop ellipsizes.
 
         Where the breaks fall is chosen for how it *reads* (see :meth:`_flow` and
         :meth:`_turn_seam`), not by cramming each line full: the fold takes the
@@ -329,7 +441,7 @@ class PathLine:
             continues = i < len(groups) - 1 and 0 < cell_len(cue) < budget
             room = budget - step - (cell_len(cue) if continues else 0)
             if body.cell_len > room:
-                body.truncate(room, overflow="ellipsis")
+                body = cut_to(body, room)
             line.append_text(body)
             if continues:
                 line.append(cue, style="muted")

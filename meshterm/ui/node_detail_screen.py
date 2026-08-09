@@ -95,7 +95,7 @@ from .pathgraph import (
 )
 from .theme import mark_rgb, name_style, snr_style
 from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
-from .pathline import PathHop, PathLine
+from .pathline import ELIDE_HEAD, ELIDE_TAIL, PathHop, PathLine, cut_mark, cut_to
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -971,13 +971,17 @@ class NodeDetailScreen(Screen):
         app-wide opens-further-prompts mark: Enter on the row arms a trace on it. The
         pathline never hop-wraps — it is one line, cropped: the highlighted row rides
         :attr:`_hshift` (``←→``, see :meth:`handle`) so a named chain wider than the lane can
-        still be read to its end, under a faint :data:`_MORE_MARK` at whichever edge the line
-        continues past — the same window the Info tab's key lane scrolls in, and the same one
-        the Message paths rows do. That scroll is what buys the row its *names*
+        still be read to its end, under a :func:`~meshterm.ui.pathline.cut_mark` at whichever
+        edge the line continues past — a chip broken off on its own colour where the route is
+        drawn in chips, the faint ``…`` where it is drawn in arrows. Same window the Info
+        tab's key lane scrolls in, and the same one the Message paths rows do. That scroll is
+        what buys the row its *names*
         (:func:`_route_line`): a hop chain spelled out in places outruns a lane far sooner
         than one spelled in hash bytes, and the answer is to read it, not to shorten it. Every
-        other row (and the context line under any row) just ellipsizes — only the row you are
-        on can scroll, and it is the only one whose end you are asking to see. The context —
+        other row is simply cut to the lane (:func:`~meshterm.ui.pathline.cut_to`, cracked or
+        ellipsized by the same rule), and the context line under any row — plain prose, never
+        a path — ellipsizes: only the row you are on can scroll, and it is the only one whose
+        end you are asking to see. The context —
         bottleneck SNR, sample count, the ``★ best`` / ``device route`` tag — is dropped
         entirely when a route earns none of it.
         """
@@ -1001,17 +1005,16 @@ class NodeDetailScreen(Screen):
             left = 1 if shift else 0
             inner = avail - left
             right = 1 if shift + inner < total else 0
+            window = max(1, inner - right)
             path = Text()
             if left:
-                path.append(_MORE_MARK, style="muted")
-            path.append_text(crop_cells(marked, shift, max(1, inner - right)))
+                path.append_text(cut_mark(marked, shift, ELIDE_HEAD))
+            path.append_text(crop_cells(marked, shift, window))
             if right:
-                path.append(_MORE_MARK, style="muted")
+                path.append_text(cut_mark(marked, shift + window - 1, ELIDE_TAIL))
         else:
-            path = marked
+            path = cut_to(marked, avail)
             path.no_wrap = True
-            path.overflow = "ellipsis"
-            path.truncate(avail)
         line1 = Text()
         line1.append_text(pointer)
         line1.append_text(path)

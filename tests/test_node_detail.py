@@ -36,6 +36,7 @@ from meshterm.ui.node_detail_screen import (
     _signal_row,
 )
 from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
+from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, PathHop, PathLine
 from meshterm.ui.tui.screen import CANCEL
 from meshterm.ui.widgets import highlighted_hash, route_graph_style, tab_strip
 
@@ -749,6 +750,40 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     body = _plain(screen.render_body(72))
     assert "f2 00 01 02" in body  # the shift reset, back at the start
     assert "←→ scroll" in screen.footer_hint  # route 0 overflows again
+
+
+def test_node_detail_route_row_cracks_a_chip_path_at_both_edges() -> None:
+    """The same window, drawn in chips: each edge the route runs past breaks the chip off
+    on a half block instead of hiding it behind an ellipsis — the row is a view onto a
+    route that continues, and a cracked segment says so where three dots would claim a
+    shortened word."""
+    chips = PathLine(
+        [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(12)], mode="powerline"
+    ).text()
+    routes = _RoutesView(
+        routes=[
+            _Route(draw=("3d",), spec="s0", path=chips.copy(), context=Text("")),
+            _Route(draw=("a1",), spec="s1", path=Text("f2 3d aa"), context=Text("")),
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+
+    def selected_row() -> str:
+        return next(
+            l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+        )
+
+    row = selected_row()
+    assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row  # cut at the lane's edge
+    screen.handle("right")
+    screen.handle("right")
+    row = selected_row()
+    assert row.startswith("❯ " + CRACK_HEAD)  # the start is off to the left now, cracked
+    assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row
 
 
 #: A 64-digit key whose every byte is distinct (``000102…1e1f``), so a window's first digits

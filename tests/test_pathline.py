@@ -14,8 +14,9 @@ import pytest
 
 import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
-    CURSOR_GLYPH, ELIDE_HEAD, POWERLINE_ROUND_CLOSE, POWERLINE_ROUND_OPEN, POWERLINE_SEP,
-    SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine, _style_hex, path_line,
+    CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, POWERLINE_ROUND_CLOSE,
+    POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine,
+    _style_hex, cut_mark, cut_to, path_line,
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
@@ -173,6 +174,68 @@ def test_ellipsized_last_resort_truncates_a_single_giant_hop() -> None:
     fitted = line.ellipsized(8)
     assert fitted.cell_len <= 8
     assert fitted.plain.endswith("…")
+
+
+def _chips() -> PathLine:
+    """Three keyed hops in chip mode — each fill a different hash-derived hue."""
+    return PathLine(
+        [PathHop("AAAA", key="11aa"), PathHop("BBBB", key="22bb"), PathHop("CCCC", key="33cc")],
+        mode="powerline",
+    )
+
+
+def test_cut_to_cracks_a_chip_in_its_own_fill_instead_of_ellipsizing() -> None:
+    """A chip caught by the cut breaks off on the half block, coloured by the very chip
+    it shears — the crack reads as a segment that continues, where ``…`` would claim a
+    word was shortened."""
+    full = _chips().text()
+    fitted = cut_to(full, 14)
+    assert fitted.cell_len == 14
+    assert fitted.plain.endswith(CRACK_TAIL)
+    assert "…" not in fitted.plain
+    # The cut lands inside ``BBBB``, so the crack wears BBBB's hue, not its neighbours'.
+    assert str(fitted.spans[-1].style) == _style_hex(node_style("22bb"))
+    assert cut_to(full, 200) is full  # fits → untouched, no copy, no mark
+
+
+def test_cut_to_leaves_arrow_lines_on_the_ellipsis() -> None:
+    """Only chips crack: an arrow line has no fill to shear, so shortening it is exactly
+    what happened and the classic mark still says so."""
+    fitted = cut_to(PathLine(_chips().hops, mode="plain").text(), 10)
+    assert fitted.cell_len <= 10
+    assert fitted.plain.endswith("…")
+    assert CRACK_TAIL not in fitted.plain
+
+
+def test_cut_mark_mirrors_itself_and_reads_the_visible_side() -> None:
+    """The head mark is the tail's mirror, and each takes the fill of the nearest cell
+    still *drawn* — so a cut landing on a seam cracks in the colour the reader can see,
+    which is a different chip on each side of it."""
+    full = _chips().text()
+    seam = full.plain.index(POWERLINE_SEP)  # the two cells between AAAA and BBBB
+    head, tail = cut_mark(full, seam, ELIDE_HEAD), cut_mark(full, seam, ELIDE_TAIL)
+    assert (head.plain, tail.plain) == (CRACK_HEAD, CRACK_TAIL)
+    assert str(head.style) == _style_hex(node_style("22bb"))  # forward, into BBBB
+    assert str(tail.style) == _style_hex(node_style("11aa"))  # back, into AAAA
+
+
+def test_cut_mark_falls_back_to_the_ellipsis_off_a_chip() -> None:
+    """An arrow line asks the same question and gets the muted ``…`` — the fallback is
+    the whole mode test, so no caller has to know which mode drew the line."""
+    arrows = PathLine(_chips().hops, mode="plain").text()
+    for side in (ELIDE_HEAD, ELIDE_TAIL):
+        mark = cut_mark(arrows, 6, side)
+        assert mark.plain == "…"
+        assert str(mark.style) == "muted"
+
+
+def test_wrapped_cracks_an_over_wide_lone_chip() -> None:
+    """The one place a chip line is cut mid-hop rather than folded: a hop wider than the
+    content column stands alone, cracked, still inside the budget."""
+    lines = PathLine([PathHop("N" * 40, key="11aa")], mode="powerline").wrapped(20)
+    assert len(lines) == 1
+    assert lines[0].cell_len <= 20
+    assert lines[0].plain.endswith(CRACK_TAIL)
 
 
 def test_wrapped_breaks_at_hops_under_a_hanging_indent() -> None:

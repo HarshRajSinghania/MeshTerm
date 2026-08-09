@@ -40,7 +40,7 @@ from rich.text import Text
 from ..core.models import ChatMessage
 from ..services.message_paths import Arrival
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
-from .pathline import path_line
+from .pathline import ELIDE_HEAD, ELIDE_TAIL, cut_mark, path_line
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
 from .tui.screen import Screen
@@ -253,12 +253,18 @@ class MessagePathsScreen(Screen):
         return text
 
     def _selected_line(self, arrival: Arrival, width: int) -> str:
-        """The highlighted path: ``❯`` pointer, shifted by ``←→`` under edge ``…``.
+        """The highlighted path: ``❯`` pointer, shifted by ``←→`` under an edge cut mark.
 
         The picked line is the route — the one thing here long enough to need scrolling,
         and the one the graph above highlights — and the shift bound is measured here
         against the current width, so a resize can only ever leave the row clamped back
         into range.
+
+        Each edge the route continues past wears :func:`~meshterm.ui.pathline.cut_mark`,
+        so a chip the scroll cuts breaks off on a half block in its own colour rather
+        than behind an ellipsis: the route is being *slid*, not shortened, and a cracked
+        segment is what says so. An arrow-drawn route falls back to the ``…`` the row has
+        always shown.
         """
         full = self._path_text(arrival)
         avail = max(1, width - 2)
@@ -269,11 +275,14 @@ class MessagePathsScreen(Screen):
         right_more = 1 if shift + avail < full.cell_len else 0
         inner = max(1, avail - left_more - right_more)
         line = Text("❯ ", style="brand", no_wrap=True)
+        # The marks stand for the cell just outside the window on their own side, so each
+        # takes its colour from the nearest cell still drawn — the chip the reader can see
+        # being the one that visibly runs on.
         if left_more:
-            line.append("…", style="muted")
+            line.append_text(cut_mark(full, shift + left_more, ELIDE_HEAD))
         line.append_text(crop_cells(full, shift + left_more, inner))
         if right_more:
-            line.append("…", style="muted")
+            line.append_text(cut_mark(full, shift + left_more + inner - 1, ELIDE_TAIL))
         line.style = "brand"
         return render_to_ansi(line, width, no_wrap=True)
 

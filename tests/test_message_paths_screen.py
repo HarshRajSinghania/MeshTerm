@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import meshterm.ui.pathline as pathline
 from meshterm.core.models import ChatMessage, utcnow
 from meshterm.services.message_paths import Arrival
 from meshterm.ui.message_paths_screen import MessagePathsScreen
+from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL
 
 
 def _resolve(hop: str) -> str:
@@ -180,6 +182,30 @@ def test_paths_screen_scrolls_the_selected_route_sideways() -> None:
     assert stamp in after and stamp not in selected_after  # the facts hold their lane
     screen.handle("down")
     assert screen._hshift == 0  # only the selected route stays scrolled
+
+
+def test_paths_screen_cracks_the_chips_the_scroll_cuts(monkeypatch) -> None:  # noqa: ANN001
+    """Where the terminal draws chips, each edge the route runs past breaks the chip off
+    on a half block in its own colour rather than behind an ellipsis: the row is sliding
+    over a route that continues, not shortening a word."""
+    monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
+    now = utcnow()
+    long = Arrival(when=now, hops=tuple(f"{i:02x}{i:02x}" for i in range(12)), snr=1.0)
+    screen = _screen([long, Arrival(when=now, hops=(), snr=None)])
+    narrow = 40
+
+    def selected() -> str:
+        return next(
+            ln for ln in _plain(screen.render_body(narrow)).split("\n") if ln.startswith("❯")
+        )
+
+    row = selected()
+    assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row  # only the tail runs on
+    for _ in range(3):
+        screen.handle("right")
+    row = selected()
+    assert row.startswith("❯ " + CRACK_HEAD)  # …and now the head is off to the left too
+    assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row
 
 
 def test_paths_screen_direct_arrival_and_empty_state() -> None:
