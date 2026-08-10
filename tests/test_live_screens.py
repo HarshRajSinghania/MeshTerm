@@ -11,6 +11,7 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from rich.cells import cell_len
 
 from meshterm.core.models import Contact, Hop, TraceResult, TraceStats, TxLevelResult, \
     TxOptResult, utcnow
@@ -417,6 +418,22 @@ async def test_trace_screen_explore_adopts_a_scenario_path() -> None:
     screen.handle("enter")  # the cursor is still on Explore paths
     await asyncio.sleep(0)
     assert screen._path_spec == "3d63,f2c2"  # None leaves the spec untouched
+
+
+async def test_trace_screen_action_labels_share_one_column() -> None:
+    """Every action's label starts in the same column, wide mark or narrow.
+
+    ``⚡`` is an emoji — two cells where ``✎``/``⚙``/``#``/``▶`` are one — so a fixed
+    ``"icon "`` prefix would start Explore's label a column right of the rest.
+    """
+    screen, _ = _trace_screen()
+    labels = ["Compose path", "Explore paths", "Path width", "Sample count", "Trace —"]
+    columns = set()
+    for row in _plain(screen.render_body(100)).splitlines():
+        for label in labels:
+            if label in row:
+                columns.add(cell_len(row[: row.index(label)]))
+    assert len(columns) == 1, columns
 
 
 async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:

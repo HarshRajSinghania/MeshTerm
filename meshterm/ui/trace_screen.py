@@ -97,7 +97,7 @@ from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
 from .menus import back_rows, section_heading
-from .theme import snr_style
+from .theme import glyph, snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner, spinner_interval
@@ -148,6 +148,35 @@ _ROUTE_LANE = "route  "
 #: The path lane's label column — the aggregate block's own label width, so the wire
 #: spec starts, and hangs, in the same column as the numbers above it.
 _PATH_LANE = "path            "
+
+#: Every mark the action rows lead with, in row order. The list exists to *measure*
+#: the icon column: ``⚡`` is an emoji, two cells where the rest are one, so a hard
+#: ``"icon "`` prefix would start Explore's label a column right of every other
+#: action's. See :func:`_icon_lane`.
+_ACTION_ICONS = ("✎", "⇄", "⚡", "⚙", "#", "▶")
+
+
+def _icon_lane() -> int:
+    """The action rows' icon column, in cells: the widest mark on this platform.
+
+    Measured rather than hard-coded because the marks themselves change width with
+    the platform: on PicoCalc every icon funnels through :func:`~meshterm.ui.theme.glyph`
+    to a single console-font character (``⚡`` → ``!``), so the column tightens to one
+    cell and the labels move left with it — the same alignment rule at the console's
+    own resolution.
+    """
+    return max(cell_len(glyph(icon)) for icon in _ACTION_ICONS)
+
+
+def _icon(text: Text, icon: str, style: str) -> None:
+    """Append an action row's mark in the icon column, its trailing space included.
+
+    A one-cell mark pads out to :func:`_icon_lane` so every label — narrow mark or
+    wide emoji — starts in the same column.
+    """
+    mark = glyph(icon)
+    text.append(mark, style=style)
+    text.append(" " * (_icon_lane() - cell_len(mark) + 1))
 
 
 def _lane_lines(label: str, value: list[Text], width: int) -> list[str]:
@@ -842,27 +871,27 @@ class TraceScreen(Screen):
         """One action row: pointer, glyph, and label (current value inlined)."""
         text = Text("❯ " if selected else "  ", style="brand" if selected else "")
         if key == "compose":
-            text.append("✎ ", style="brand")
+            _icon(text, "✎", "brand")
             text.append("Compose path")
         elif key == "reverse":
-            text.append("⇄ ", style="accent")
+            _icon(text, "⇄", "accent")
             if self._effective_spec()[0]:
                 text.append("Reverse path — trace it the other way")
             else:
                 text.append("Reverse path — compose a path first", style="muted")
         elif key == "explore":
-            text.append("⚡ ", style="warn")
+            _icon(text, "⚡", "warn")
             text.append("Explore paths")
         elif key == "width":
             w = self._width_bytes()
-            text.append("⚙ ", style="accent")
+            _icon(text, "⚙", "accent")
             text.append(f"Path width — {w} byte{'s' if w != 1 else ''} per hop")
         elif key == "samples":
             n = self._sample_count()
-            text.append("# ", style="accent")
+            _icon(text, "#", "accent")
             text.append(f"Sample count — {n} trace{'s' if n != 1 else ''}")
         elif key == "trace":
-            text.append("▶ ", style="ok")
+            _icon(text, "▶", "ok")
             if self._mode == "path" and not self._effective_spec()[0]:
                 text.append("Trace — compose a path first", style="muted")
             else:
