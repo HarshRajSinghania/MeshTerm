@@ -29,6 +29,7 @@ from prompt_toolkit.utils import get_cwidth  # noqa: E402
 
 from meshterm.ui.tui.emoji_width import (  # noqa: E402
     _DEFAULT_NARROW_LONE,
+    _DEFAULT_WIDE_BASE,
     _is_regional_indicator,
     _make_cell_len,
     _make_pt_cache,
@@ -37,13 +38,38 @@ from meshterm.ui.tui.emoji_width import (  # noqa: E402
 _ZWJ = "‍"
 _VS16 = "️"
 
+_NARROW = frozenset(_DEFAULT_NARROW_LONE)
+_WIDE = frozenset(_DEFAULT_WIDE_BASE) - frozenset((_ZWJ, _VS16))
+
+
+def _base(emoji: str) -> str:
+    """The emoji's base codepoint — what the wide set is keyed on (selectors dropped)."""
+    others = [c for c in emoji if c not in (_VS16, _ZWJ)]
+    return others[0] if len(others) == 1 else ""
+
 
 def _classify(emoji: str) -> tuple[str, str]:
     """Return ``(label, action)`` for ``emoji`` — what it is and what the skill should do."""
-    cps = [ord(c) for c in emoji]
-    if not cps:
+    if not emoji:
         return "empty", "Nothing to classify — pass an emoji as the argument."
-    if all(_is_regional_indicator(c) for c in emoji) and len(emoji) == 2:
+
+    # Already curated? Say so first — it is the commonest answer to "please add this one",
+    # and every branch below would otherwise re-derive advice for a decision already made.
+    base = _base(emoji)
+    if base and base in _WIDE:
+        return (
+            "lone codepoint drawn WIDE — already listed",
+            "ALREADY IN _DEFAULT_WIDE_BASE (both authorities measure it 2, bare and with its "
+            "VS16 selector). Nothing to add. If a row still misaligns, the culprit is another "
+            "glyph on it — classify that one instead.",
+        )
+    if len(emoji) == 1 and emoji in _NARROW:
+        return (
+            "lone codepoint drawn NARROW — already listed",
+            "ALREADY IN _DEFAULT_NARROW_LONE (both authorities measure it 1). Nothing to add.",
+        )
+
+    if len(emoji) == 2 and all(_is_regional_indicator(c) for c in emoji):
         return (
             "flag (Regional Indicator pair)",
             "ALREADY HANDLED as a category — no allowlist entry. Verify pt width is 2 below; "
@@ -54,7 +80,7 @@ def _classify(emoji: str) -> tuple[str, str]:
         return (
             "ZWJ sequence (multi-glyph cluster)",
             "NOT covered by the lone/flag mechanism (a family, a profession, a flag-with-tag). "
-            "Do not add it to the allowlist — the parts would be narrowed individually and "
+            "Do not add it to either set — the parts would be resized individually and "
             "misalign. Flag this to a maintainer for bespoke handling.",
         )
     if len(emoji) == 1:
@@ -67,19 +93,23 @@ def _classify(emoji: str) -> tuple[str, str]:
             )
         return (
             "lone narrow codepoint",
-            "Already one cell everywhere — it never notches a border. No change needed.",
+            "Both authorities measure it ONE. If your terminal draws it that way, no change is "
+            "needed. If the font draws it as a two-cell colour glyph (an emoji outside "
+            "Emoji_Presentation, e.g. U+1F6E3 🛣), it overruns every row that pads to a width — "
+            "add it to _DEFAULT_WIDE_BASE (or MESHTERM_WIDE_EMOJI for a session test).",
         )
-    others = [c for c in emoji if c not in (_VS16, _ZWJ)]
-    if len(others) == 1 and _VS16 in emoji:
+    if base and _VS16 in emoji:
         return (
             "VS16 emoji-presentation sequence",
-            "ALREADY HANDLED (the variation selector is skipped so the base is measured alone). "
-            "No allowlist entry needed.",
+            "HANDLED BY DEFAULT (the variation selector is skipped, so the base is measured "
+            "alone and the narrow-VS16 verdict applies). If your terminal draws THIS one two "
+            "cells wide anyway — the renderer is not uniform — add its BASE codepoint to "
+            "_DEFAULT_WIDE_BASE (or MESHTERM_WIDE_EMOJI), as U+1F6E9 🛩️ needed.",
         )
     return (
         "multi-codepoint cluster (keycap / skin-tone / other)",
         "NOT a plain lone codepoint — the lone/flag mechanism does not cover it. Flag this to a "
-        "maintainer rather than adding parts to the allowlist.",
+        "maintainer rather than adding parts to either set.",
     )
 
 
@@ -88,7 +118,6 @@ def main(argv: list[str]) -> int:
         print("usage: classify.py <emoji>")
         return 2
     emoji = argv[1]
-    narrow = frozenset(_DEFAULT_NARROW_LONE)
     label, action = _classify(emoji)
 
     print(f"emoji      : {emoji}")
@@ -98,8 +127,9 @@ def main(argv: list[str]) -> int:
           + ", ".join(str(wcwidth(c)) for c in emoji) + ")")
     print(f"Rich now   : {rc.cell_len(emoji)}")
     print(f"pt now     : {get_cwidth(emoji)}  <- the authority that places the panel border")
-    print(f"Rich fixed : {_make_cell_len(narrow)(emoji)}")
-    print(f"pt fixed   : {_make_pt_cache(narrow)[emoji]}")
+    # "fixed" = what the width-1 calibration path already produces today, both sets applied.
+    print(f"Rich fixed : {_make_cell_len(_NARROW, _WIDE)(emoji)}")
+    print(f"pt fixed   : {_make_pt_cache(_NARROW, _WIDE)[emoji]}")
     print()
     print(f"class      : {label}")
     print(f"action     : {action}")
