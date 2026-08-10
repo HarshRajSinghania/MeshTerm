@@ -2480,6 +2480,31 @@ def test_select_hscroll_from_pins_the_rows_head_and_slides_only_its_run() -> Non
     assert end.startswith("❯ " + lanes) and "-end" in end  # the tail is reachable
 
 
+def test_select_hscroll_hint_is_gated_on_the_run_not_the_whole_row() -> None:
+    """A row whose *run* fits earns no ←→ atom, however wide its pinned head makes it.
+
+    The hint may only advertise a key that would do something (the footer's own rule), and
+    on a row that pins a head block the key moves the run alone — so a long lane block in
+    front of a short tail is not overflow, it is just a wide row.
+    """
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    lanes = "#1 ✓ replied  min -6.0 dB  248 ms  via "
+    fits = SelectScreen(
+        "probe", [Choice(lanes + "3d,f2", 1, hscroll_from=len(lanes))], hscroll=True
+    )
+    fits.render_body(60)
+    assert "←→ scroll" not in fits.footer_hint
+
+    overflows = SelectScreen(
+        "probe",
+        [Choice(lanes + ",".join(["3d"] * 20), 1, hscroll_from=len(lanes))],
+        hscroll=True,
+    )
+    overflows.render_body(60)
+    assert "←→ scroll" in overflows.footer_hint
+
+
 def test_select_hscroll_marks_both_edges_the_run_continues_past() -> None:
     """A scrolled row cracks/ellipsizes at whichever side its run runs on."""
     from meshterm.ui.pathline import _ELLIPSIS

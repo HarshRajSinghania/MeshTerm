@@ -446,14 +446,21 @@ class SelectScreen(Screen):
         The gate for both the ←→ scroll and its footer atom: a row that fits has nothing to
         scroll. Measured against the row's content area (the width less the 2-cell pointer),
         using the width the last :meth:`render_body` saw (``0`` before the first paint, so
-        nothing reads as overflowing until a real width is known).
+        nothing reads as overflowing until a real width is known). Asked of
+        :meth:`_max_hshift` rather than of the raw label width, so a row that pins a head
+        block (:attr:`Choice.hscroll_from`) is judged on the run that would actually move —
+        the marks a scrolled row spends cells on included.
         """
         if not self._hscroll or self._last_width <= 0:
             return False
         current = self._current_choice()
         if current is None:
             return False
-        return cell_len(_plain(current.label)) > max(1, self._last_width - 2)
+        return self._max_hshift(
+            cell_len(_plain(current.label)),
+            current.hscroll_from,
+            max(1, self._last_width - 2),
+        ) > 0
 
     @property
     def sizing_footer_hint(self) -> str:

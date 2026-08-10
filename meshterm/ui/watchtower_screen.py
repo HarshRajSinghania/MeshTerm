@@ -121,7 +121,11 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
             wrap=False,
             hscroll=True,
             # ←→ scroll is surfaced by the list itself, but only while the highlighted
-            # alert actually overflows the width (see SelectScreen.hscroll_hint).
+            # alert actually overflows the width (see SelectScreen.hscroll_hint) — and it
+            # slides the *message* alone: each row pins its own lanes (see _alert_lanes).
+            # The two section headings below earn the list its ^PgUp/^PgDn jumps and their
+            # F1/F2 chips for free (SelectScreen.fkey_lane); the hint has no room to name
+            # them beside the ←→ atom, and no other grouped list spells them out either.
             footer_hint="↑↓ move · Enter select/acknowledge · Esc back",
         )
         menu.future = loop.create_future()
@@ -183,8 +187,13 @@ def _menu_items(
     if not alerts:
         items.append(Separator("  nothing yet — tripped rules land here"))
     for alert in alerts[:_SHOWN_ALERTS]:
+        lanes = _alert_lanes(alert, label_key, alert_type_of)
         items.append(
-            Choice(_alert_row(alert, label_key, alert_type_of), ("ack", alert.ident))
+            Choice(
+                _alert_row(lanes, alert),
+                ("ack", alert.ident),
+                hscroll_from=lanes.cell_len,
+            )
         )
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
@@ -214,12 +223,12 @@ def _menu_items(
     return items
 
 
-def _alert_row(
+def _alert_lanes(
     alert: Alert,
     key_of: Callable[[str], Optional[str]],
     type_of: Callable[[str], Optional[int]] = lambda label: None,
 ) -> Text:
-    """One alert as a row: marker, age, kind, type glyph, node, and the message.
+    """An alert's fixed head: marker, age, kind, type glyph, node — and the ``—`` lead-in.
 
     The leading ``●``/``○`` is the *acknowledgement* state, so the node's own type marker
     (``▲`` repeater, ``●`` node, …) leads the node name instead — the map's shared marker
@@ -228,6 +237,12 @@ def _alert_row(
     alert's node label takes its key-derived hue (resolved through ``key_of``, muted when
     no key is known); an acked row recedes to muted throughout — the type glyph included —
     with the rest of its history.
+
+    Split from the message so the row can measure what it pins out of the ←→ scroll (see
+    :attr:`~meshterm.ui.tui.select.Choice.hscroll_from`): these lanes are *which alert this
+    is*, and reading a long message to its end is no reason to lose the row's identity.
+    The ``—`` stays with the head so the message still arrives introduced, whatever it is
+    slid to.
     """
     row = Text()
     if alert.acked:
@@ -243,7 +258,14 @@ def _alert_row(
         row.append(alert.label, style="muted")
     else:
         row.append(alert.label, style=name_style(alert.label, key_of(alert.label)))
-    row.append(f" — {alert.message}", style="muted")
+    row.append(" — ", style="muted")
+    return row
+
+
+def _alert_row(lanes: Text, alert: Alert) -> Text:
+    """One alert as a row: its fixed lanes, then the message ``←→`` scrolls."""
+    row = lanes.copy()
+    row.append(alert.message, style="muted")
     return row
 
 

@@ -235,11 +235,11 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
     """An unacked alert's label takes its key-derived hue; acked recedes to muted."""
     from meshterm.core.watch_store import Alert
     from meshterm.ui.theme import name_style
-    from meshterm.ui.watchtower_screen import _alert_row
+    from meshterm.ui.watchtower_screen import _alert_lanes
 
     key_of = lambda label: "d4" * 6 if label == "Roof" else None
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
-    row = _alert_row(alert, key_of)
+    row = _alert_lanes(alert, key_of)
     at = row.plain.index("Roof")
     assert any(
         s.style == name_style("Roof", "d4" * 6) and s.start <= at < s.end
@@ -249,7 +249,7 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
     acked = Alert(
         ident=2, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True
     )
-    acked_row = _alert_row(acked, key_of)
+    acked_row = _alert_lanes(acked, key_of)
     at = acked_row.plain.index("Roof")
     assert any(s.style == "muted" and s.start <= at < s.end for s in acked_row.spans)
 
@@ -257,7 +257,7 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
 def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     """The node name is preceded by its shared type glyph (own colour, muted when acked)."""
     from meshterm.core.watch_store import Alert
-    from meshterm.ui.watchtower_screen import _alert_row
+    from meshterm.ui.watchtower_screen import _alert_lanes
     from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
     key_of = lambda label: None
@@ -265,18 +265,42 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     glyph, glyph_style = _NODE_GLYPHS[2]
 
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
-    row = _alert_row(alert, key_of, type_of)
+    row = _alert_lanes(alert, key_of, type_of)
     assert f"{glyph} Roof" in row.plain  # glyph sits immediately left of the name
     gi = row.plain.index(glyph)
     assert any(s.style == glyph_style and s.start <= gi < s.end for s in row.spans)
 
     # Unknown type (and a keyless kind like courier) falls back to the plain-node glyph.
     ghost = Alert(ident=2, when=utcnow(), kind="courier", label="Ghost", message="gave up")
-    assert f"{_DEFAULT_GLYPH[0]} Ghost" in _alert_row(ghost, key_of).plain
+    assert f"{_DEFAULT_GLYPH[0]} Ghost" in _alert_lanes(ghost, key_of).plain
 
     # An acked alert mutes the glyph with the rest of its history.
     acked = Alert(ident=3, when=utcnow(), kind="silence", label="Roof",
                   message="quiet", acked=True)
-    acked_row = _alert_row(acked, key_of, type_of)
+    acked_row = _alert_lanes(acked, key_of, type_of)
     gi = acked_row.plain.index(glyph)
     assert any(s.style == "muted" and s.start <= gi < s.end for s in acked_row.spans)
+
+
+def test_alert_rows_pin_their_lanes_and_scroll_only_the_message() -> None:
+    """←→ slide an alert's *message*; the marker, age, kind, glyph and node hold still.
+
+    The lanes in front of the ``—`` are which alert this is (JP, 2026-08-10). Reading a
+    long message to its end is no reason to lose them off the left edge — they are the part
+    that already fits, so scrolling them buys nothing and costs the row its identity.
+    """
+    from meshterm.core.watch_store import Alert
+    from meshterm.ui.tui import Choice
+    from meshterm.ui.watchtower_screen import _alert_lanes, _menu_items
+
+    alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof",
+                  message="nothing heard for 6 h " + "and counting " * 6)
+    items = _menu_items([alert], {}, False)
+    row = next(it for it in items
+               if isinstance(it, Choice) and it.value == ("ack", alert.ident))
+
+    lanes = _alert_lanes(alert, lambda label: None)
+    assert row.hscroll_from == lanes.cell_len
+    assert row.label.plain.startswith(lanes.plain)
+    assert lanes.plain.endswith(" — ")  # the lead-in stays with the head it introduces
+    assert row.label.plain[row.hscroll_from:] == alert.message  # …and the run is the message
