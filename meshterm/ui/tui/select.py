@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional, Union
 from rich.cells import cell_len
 from rich.text import Text
 
-from ..pathline import cut_to
+from ..pathline import ELIDE_HEAD, ELIDE_TAIL, cut_mark, cut_to
 from .render import crop_cells, query_line, render_lines, render_to_ansi
 from .screen import LazyLines, Screen
 
@@ -62,12 +62,21 @@ class Choice:
             ellipsizes on its own if too wide. ``None`` (the default) draws nothing, so an
             ordinary row stays exactly one line. May be a zero-argument callable like
             ``title``.
+        hscroll_from: Cells at the *head* of the row that stay pinned while ``←→`` scroll
+            everything to their right (``hscroll`` lists only; ``0``, the default, slides
+            the whole line). For a row that is fixed lanes followed by one long run — the
+            Trophy case's rank/date/score columns in front of the walk — the lanes are the
+            reader's place in the list, and sliding them off to read the walk costs the row
+            its identity and gains nothing (the columns are the part that already fits).
+            Set it to the cell width of that fixed block, measured from the row itself, so
+            the scroll rides only the run that overflows.
     """
 
     title: Union[str, Text, Callable[[], Union[str, Text]], Callable[[int], Union[str, Text]]]
     value: Any
     deletable: bool = False
     detail: Union[str, Text, Callable[[], Union[str, Text]], None] = None
+    hscroll_from: int = 0
 
     def __post_init__(self) -> None:
         # The callable form's arity, read once — see _wants_width.
@@ -286,7 +295,10 @@ class SelectScreen(Screen):
                 actually overflows the width scrolls; a short row (and every separator or
                 column header) stays put, and the shift resets to the start whenever the
                 highlight moves to another row or the filter is edited — each row scrolls
-                on its own, independently of the rest of the screen.
+                on its own, independently of the rest of the screen. A row may hold a head
+                block out of the scroll (:attr:`Choice.hscroll_from`), so only its
+                overflowing run slides; whichever edges the line then continues past wear a
+                :func:`~meshterm.ui.pathline.cut_mark`.
             hscroll_hint: The footer atom surfaced (as the second ` · ` atom, right after
                 the move atom) while ``hscroll`` is on and the highlighted row overflows —
                 so ←→ advertises itself exactly when it would do something. Ignored when
@@ -505,9 +517,11 @@ class SelectScreen(Screen):
         # width — against the row's content area (width less the 2-cell pointer).
         self._last_width = width
         if self._hscroll and self._hshift:
-            avail = max(1, width - 2)
             sel_len = cell_len(_plain(selected.label)) if selected is not None else 0
-            self._hshift = max(0, min(self._hshift, sel_len - avail))
+            anchor = selected.hscroll_from if selected is not None else 0
+            self._hshift = max(0, min(
+                self._hshift, self._max_hshift(sel_len, anchor, max(1, width - 2))
+            ))
 
         # One entry per body line: a finished string, or a callable that draws it when the
         # frame asks. Positions are exact either way, which is all the layout below reads.
@@ -608,7 +622,9 @@ class SelectScreen(Screen):
             if self._hscroll and self._hshift and is_sel:
                 # Only the highlighted row slides, and only its label — the 2-cell pointer
                 # stays pinned. Every other row (and separator) renders unshifted.
-                label_text = crop_cells(label_text, self._hshift, max(1, width - 2))
+                label_text = self._scroll_window(
+                    label_text, item.hscroll_from, max(1, width - 2)
+                )
             text.append_text(label_text)
             text.style = style
             text.no_wrap = True
@@ -620,6 +636,53 @@ class SelectScreen(Screen):
             return render_to_ansi(text, width)
 
         return draw
+
+    def _max_hshift(self, label_cells: int, anchor: int, avail: int) -> int:
+        """How far ←→ may slide a row of ``label_cells`` whose head holds ``anchor`` cells.
+
+        The stop is the first whole :attr:`_HSCROLL_STEP` that brings the run's tail inside
+        the lane — not the exact cell that flushes it right. A scrolled row has given up a
+        cell to its left :func:`~meshterm.ui.pathline.cut_mark`, so its last window spans one
+        less than the lane; stopping short of a whole step would leave the *right* mark drawn
+        at the far end, promising a remainder ←→ can no longer reach. (Both hand-rolled
+        windowed path rows — the node page's routes, the Message paths lanes — clamp the
+        same way.)
+        """
+        lane = max(1, avail - max(0, anchor))
+        run = max(0, label_cells - max(0, anchor))
+        steps = -(-max(0, run - (lane - 1)) // self._HSCROLL_STEP)
+        return steps * self._HSCROLL_STEP
+
+    def _scroll_window(self, label: Text, anchor: int, avail: int) -> Text:
+        """The highlighted row's label with its head pinned and its run slid ``_hshift`` in.
+
+        The first ``anchor`` cells are drawn whole and never move — a row that declares them
+        (:attr:`Choice.hscroll_from`) is columns-then-content, and the columns are what tells
+        the reader which row they are on. Everything past them is the scrolling run, shown a
+        lane at a time, with the edge it continues past on each side wearing
+        :func:`~meshterm.ui.pathline.cut_mark` — a chip broken off in its own fill where the
+        run is a path drawn in chips, the faint ``…`` where it isn't. Those marks are chrome
+        *inside* the lane rather than extra width, so each costs the window a cell and the
+        crop is measured only once both are known; else the run would draw a cell past the
+        row. With ``anchor`` at ``0`` (the default) the whole line is the run, which is the
+        behaviour every hscroll list had before rows could pin a head.
+        """
+        head = crop_cells(label, 0, anchor) if anchor > 0 else Text()
+        anchor = head.cell_len  # a head wider than the label itself keeps only what is there
+        run = max(0, label.cell_len - anchor)
+        shift = self._hshift
+        left = 1 if shift else 0
+        inner = max(1, avail - anchor - left)
+        right = 1 if shift + inner < run else 0
+        window = max(1, inner - right)
+        out = Text(no_wrap=True)
+        out.append_text(head)
+        if left:
+            out.append_text(cut_mark(label, anchor + shift, ELIDE_HEAD))
+        out.append_text(crop_cells(label, anchor + shift, window))
+        if right:
+            out.append_text(cut_mark(label, anchor + shift + window - 1, ELIDE_TAIL))
+        return out
 
     @staticmethod
     def _detail_drawer(detail: Union[str, Text], width: int) -> Callable[[], str]:

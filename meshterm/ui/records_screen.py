@@ -689,30 +689,22 @@ async def open_records(ctx: "AppContext") -> dict:
             score = "≥ " + score
         return score
 
-    def browser_row(
+    def browser_lanes(
         rank: int,
         category: Category,
         record: DiscoveredPath,
         *,
         show_width: bool,
         score_w: int,
-        width: int,
     ) -> Text:
-        """One record row: rank, date, score (width when it disambiguates), then the walk.
+        """A record row's fixed lanes: rank, date, score, and the width when it disambiguates.
 
-        The columns left of the walk are held to what they actually say — the day the record
-        was set (the dialog carries the time), and a score lane fitted to the widest score on
-        *this* board rather than a fixed twelve — because every cell they don't spend is a hop
-        the route gets to show. The walk itself draws on THE path widget with both ends bare
-        (:data:`~meshterm.ui.pathline.SELF_GLYPH`): a record is a boomerang by construction,
-        so naming ourselves twice per row would cost more cells than the whole score lane and
-        tell the reader what every other row already told them. Those stars keep the ``you``
-        white (``dim_self=False``) — the fade means "not yours to compose", and nothing on a
-        board of walks already made is being composed. A walk wider than ``width`` (the
-        row's render budget) middle-elides through ``PathLine.ellipsized`` so both endpoints
-        survive — a right truncation would amputate the return leg — while the *highlighted*
-        row keeps its natural length and h-scrolls under ←→, so the elided middle is read by
-        sliding it.
+        Held to what they actually say — the day the record was set (the dialog carries the
+        time), and a score lane fitted to the widest score on *this* board rather than a fixed
+        twelve — because every cell they don't spend is a hop the route gets to show. Composed
+        without a width, since nothing here fits itself to the terminal: this block is the
+        same on every platform and at every size, which is also what makes it the row's
+        h-scroll anchor (see :func:`browser_row`).
         """
         row = Text(f"#{rank} ", style="muted")
         row.append(record.discovered_at.astimezone().strftime("%b %d"), style="muted")
@@ -721,6 +713,26 @@ async def open_records(ctx: "AppContext") -> dict:
         if show_width:
             row.append(f" {record.width_bytes} B", style="muted")
         row.append("  ")
+        return row
+
+    def browser_row(lanes: Text, record: DiscoveredPath, width: int) -> Text:
+        """One record row: its fixed lanes (:func:`browser_lanes`), then the walk.
+
+        The walk draws on THE path widget with both ends bare
+        (:data:`~meshterm.ui.pathline.SELF_GLYPH`): a record is a boomerang by construction,
+        so naming ourselves twice per row would cost more cells than the whole score lane and
+        tell the reader what every other row already told them. Those stars keep the ``you``
+        white (``dim_self=False``) — the fade means "not yours to compose", and nothing on a
+        board of walks already made is being composed. A walk wider than ``width`` (the
+        row's render budget) middle-elides through ``PathLine.ellipsized`` so both endpoints
+        survive — a right truncation would amputate the return leg — while the *highlighted*
+        row keeps its natural length and h-scrolls under ←→, so the elided middle is read by
+        sliding it. That scroll starts at the lanes' own width (``Choice.hscroll_from``): the
+        walk is the only thing on the row that overflows, so it is the only thing that moves —
+        sliding rank and score off to the left would cost the reader their place in the board
+        and buy back cells the walk was already going to be given.
+        """
+        row = lanes.copy()
         walk = path_line(
             [None, *record.route, None],
             resolve,
@@ -768,10 +780,7 @@ async def open_records(ctx: "AppContext") -> dict:
         ):
             ctx.repo.delete_discoveries(category.id)
 
-    def record_row_title(
-        rank: int, category: Category, record: DiscoveredPath,
-        show_width: bool, score_w: int,
-    ):
+    def record_row_title(lanes: Text, record: DiscoveredPath):
         """A width-aware row title, memoized per width — the record is frozen, so the
         path-widget assembly and middle-elide only ever run once per render width
         instead of once per record per repaint."""
@@ -780,10 +789,7 @@ async def open_records(ctx: "AppContext") -> dict:
         def title(width: int) -> Text:
             cached = memo.get(width)
             if cached is None:
-                cached = memo[width] = browser_row(
-                    rank, category, record,
-                    show_width=show_width, score_w=score_w, width=width,
-                )
+                cached = memo[width] = browser_row(lanes, record, width)
             return cached
 
         return title
@@ -801,14 +807,16 @@ async def open_records(ctx: "AppContext") -> dict:
             # spend the difference on padding in front of every route.
             score_w = max((cell_len(scored(category, r)) for r in board), default=0)
             for rank, record in enumerate(board, start=1):
+                lanes = browser_lanes(
+                    rank, category, record, show_width=show_width, score_w=score_w,
+                )
                 items.append(Choice(
                     # Width-aware (see Choice.title): the row re-fits its walk to each
                     # render width, middle-eliding rather than dying at the right edge.
-                    title=record_row_title(
-                        rank, category, record,
-                        show_width=show_width, score_w=score_w,
-                    ),
+                    title=record_row_title(lanes, record),
                     value=("open", category, rank, record),
+                    # ←→ slide the walk alone; the lanes in front of it hold (browser_row).
+                    hscroll_from=lanes.cell_len,
                 ))
         total = len(ctx.repo.discoveries())
         items.append(Separator(" "))
@@ -827,7 +835,7 @@ async def open_records(ctx: "AppContext") -> dict:
             items,
             footer_hint="↑↓ move · Enter open · Esc back",
             wrap=False,
-            hscroll=True,  # a long walk's row slides under ←→ instead of dying at the fold
+            hscroll=True,  # a long walk slides under ←→ instead of dying at the fold
         )
         picked = await session.run_screen(browser)
         if picked is CANCEL or picked is None or picked[0] == "back":

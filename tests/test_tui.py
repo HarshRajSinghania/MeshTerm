@@ -2428,7 +2428,11 @@ def test_select_hscroll_clamps_at_the_highlighted_rows_tail() -> None:
     plains = _row_plains(screen, 40)  # the render clamps the shift
     assert any("-tail" in ln for ln in plains)  # the highlighted row's end is visible
     row_len = len("row-one-" + "x" * 60 + "-tail")
-    assert screen._hshift == row_len - (40 - 2)  # clamped to its tail (width less pointer)
+    # Clamped to the first whole step that brings the tail inside the lane (the width less
+    # the pointer, less the cell a scrolled row spends on its left cut mark) — stopping on
+    # the exact flush-right cell would leave a right mark promising a remainder.
+    step = screen._HSCROLL_STEP
+    assert screen._hshift == -(-(row_len - (40 - 2 - 1)) // step) * step
 
 
 def test_select_hscroll_resets_when_the_highlight_moves() -> None:
@@ -2454,6 +2458,40 @@ def test_select_hscroll_only_acts_on_an_overflowing_row() -> None:
     screen.handle("right")
     screen.render_body(40)
     assert screen._hshift == 0  # a row that fits can't shift
+
+
+def test_select_hscroll_from_pins_the_rows_head_and_slides_only_its_run() -> None:
+    """A row that declares a head block keeps it drawn while ←→ scroll everything past it."""
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    lanes = "#1 Aug 09  "
+    screen = SelectScreen(
+        "long",
+        [Choice(lanes + "run-" + "y" * 60 + "-end", 1, hscroll_from=len(lanes))],
+        hscroll=True,
+    )
+    screen.handle("right")
+    row = _row_plains(screen, 40)[0]
+    assert row.startswith("❯ " + lanes)  # the lanes never move…
+    assert "run-" not in row  # …while the run behind them has slid off to the left
+    for _ in range(50):
+        screen.handle("right")
+    end = _row_plains(screen, 40)[0]
+    assert end.startswith("❯ " + lanes) and "-end" in end  # the tail is reachable
+
+
+def test_select_hscroll_marks_both_edges_the_run_continues_past() -> None:
+    """A scrolled row cracks/ellipsizes at whichever side its run runs on."""
+    from meshterm.ui.pathline import _ELLIPSIS
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    screen = SelectScreen(
+        "long", [Choice("z" * 200, 1)], hscroll=True
+    )
+    screen.handle("right")
+    row = _row_plains(screen, 40)[0]
+    # Plain prose has no chip fill to shear, so both marks fall back to the ellipsis.
+    assert row.startswith("❯ " + _ELLIPSIS) and row.endswith(_ELLIPSIS)
 
 
 def test_select_without_hscroll_ignores_left_right() -> None:
