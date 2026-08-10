@@ -23,9 +23,9 @@ An emoji in a row breaks its layout, in either of two ways:
   the right of the glyph — the terminal draws it in *fewer* cells than the authorities
   reserve. → the narrow allowlist (`_DEFAULT_NARROW_LONE`).
 - **The row overruns**, pushing what follows a column right — the terminal draws it in
-  *more* cells than the authorities reserve. → the wide set (`_DEFAULT_WIDE_BASE`). This is
-  the case for an emoji outside Emoji_Presentation, which wcwidth and Rich both call one
-  cell while the font paints a two-cell colour glyph.
+  *more* cells than the authorities reserve. → the wide set (`_DEFAULT_WIDE_BASE`). In
+  practice this only happens to a **VS16 sequence** the narrow verdict got wrong; a *bare*
+  codepoint both authorities call one cell is measured correctly and must be left alone.
 
 Step 1 tells you which; it also tells you when the glyph is **already listed**, which is
 the commonest answer to "please add this one".
@@ -52,11 +52,14 @@ the commonest answer to "please add this one".
      `_DEFAULT_NARROW_LONE` in [emoji_width.py](../../..//meshterm/ui/tui/emoji_width.py):
      `_DEFAULT_NARROW_LONE = "👋👍"`. (For a throwaway session test instead of a code
      change, set `MESHTERM_NARROW_EMOJI="👋👍"` in the environment.)
-   - **lone narrow codepoint** (e.g. `🛣` U+1F6E3): both authorities already say one. If
-     the font nonetheless paints a two-cell colour glyph — an emoji outside
-     Emoji_Presentation whose East-Asian width is Neutral — it *overruns* every row that
-     pads to a width; nothing narrowed it, it was never measured right. Add it to
-     `_DEFAULT_WIDE_BASE` (or `MESHTERM_WIDE_EMOJI` for a session test). Otherwise no change.
+   - **lone narrow codepoint, bare** (e.g. `🛣` U+1F6E3, `🕸` U+1F578): **no change**, and
+     resist the pull to "fix" it. Both authorities say one because the codepoint is outside
+     Emoji_Presentation, and with no VS16 asking for emoji presentation the font draws a
+     one-cell *text* glyph — they are right. Forcing it into `_DEFAULT_WIDE_BASE` reserves a
+     cell the terminal never draws and pulls the row's border a column **in**; that is
+     exactly what listing `🛣` did to the Trophy case, while `🕸` — same class, one board
+     down, never listed — framed flush throughout. Both authorities already agreeing is not
+     a bug to correct.
    - **VS16 emoji-presentation sequence** (e.g. `☀️`): **handled by default** (the variation
      selector is skipped, so the base is measured alone). But the renderer is not uniform —
      if *this* one paints two cells wide, add its **base** codepoint to `_DEFAULT_WIDE_BASE`,

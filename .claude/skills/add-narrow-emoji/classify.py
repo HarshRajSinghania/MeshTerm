@@ -92,11 +92,13 @@ def _classify(emoji: str) -> tuple[str, str]:
                 "If your terminal draws it TWO wide, leave it — narrowing would break its border.",
             )
         return (
-            "lone narrow codepoint",
-            "Both authorities measure it ONE. If your terminal draws it that way, no change is "
-            "needed. If the font draws it as a two-cell colour glyph (an emoji outside "
-            "Emoji_Presentation, e.g. U+1F6E3 🛣), it overruns every row that pads to a width — "
-            "add it to _DEFAULT_WIDE_BASE (or MESHTERM_WIDE_EMOJI for a session test).",
+            "lone narrow codepoint (bare, text presentation)",
+            "NO CHANGE — and resist the pull to 'fix' it. Both authorities measure it one "
+            "because it sits outside Emoji_Presentation, and with no VS16 asking for emoji "
+            "presentation the font draws a one-cell text glyph: they are right. Forcing it "
+            "to two reserves a cell the terminal never draws and pulls the row's border a "
+            "column IN — the mistake U+1F6E3 🛣 cost the Trophy case. If this row really is "
+            "misaligned, another glyph on it is the culprit; classify that one.",
         )
     if base and _VS16 in emoji:
         return (
