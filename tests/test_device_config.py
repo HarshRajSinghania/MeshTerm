@@ -327,11 +327,16 @@ def test_purge_buckets_split_stale_from_never_heard() -> None:
 
     now = utcnow()
     fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=now - timedelta(hours=1))
+    quiet = Contact(name="Quiet", public_key="ee" * 32, last_seen=now - timedelta(days=3))
     old = Contact(name="Old", public_key="bb" * 32, last_seen=now - timedelta(days=45))
     ancient = Contact(name="Ancient", public_key="cc" * 32, last_seen=now - timedelta(days=400))
     unheard = Contact(name="Unheard", public_key="dd" * 32)  # no last_seen
-    contacts = [fresh, old, ancient, unheard]
+    contacts = [fresh, quiet, old, ancient, unheard]
 
+    # A day catches everything heard but not heard *today* — the tightest rung the ladder
+    # offers (JP, 2026-08-10), so a contact three days quiet is swept where the week rung
+    # would still have kept it.
+    assert {c.name for c in stale_past(contacts, _DAY)} == {"Quiet", "Old", "Ancient"}
     # A week catches the two aged ones but not the fresh — and never the never-heard one.
     week = {c.name for c in stale_past(contacts, 7 * _DAY)}
     assert week == {"Old", "Ancient"}

@@ -11,7 +11,7 @@ and backing out of that page returns to the list right where it stood. The one-s
 :func:`~meshterm.ui.widgets.contacts_table`; only the menu gets the live list.
 
 Below the contacts sits one maintenance action — **Purge stale contacts** — that sweeps out
-the contacts a device has accumulated but no longer hears. It offers an age ladder (a week up
+the contacts a device has accumulated but no longer hears. It offers an age ladder (a day up
 to a year, plus a *never heard* bucket), each rung showing a live count of how many contacts
 it would remove, so the impact is visible before anything is chosen; the pick is then gated
 behind a typed ``delete`` confirm. A purge deletes the contacts from the device's table and
@@ -55,6 +55,7 @@ _DAY = 86400
 #: bucket, so an age rung never quietly deletes a freshly-added contact that hasn't had time
 #: to advert yet.
 PURGE_RUNGS: tuple[tuple[str, int], ...] = (
+    ("Older than 1 day", _DAY),
     ("Older than 1 week", 7 * _DAY),
     ("Older than 1 month", 30 * _DAY),
     ("Older than 3 months", 90 * _DAY),
