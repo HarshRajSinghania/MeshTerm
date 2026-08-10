@@ -43,6 +43,7 @@ from ..core.channels import decrypt_channel_text, identify_channel
 from ..core.models import NODE_TYPE_LABELS, Observation, utcnow
 from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
+from .menus import SEP_COMPACT, SEP_ROOMY
 
 #: Composed packet cards the viewer memoizes (a few pages either side of the view).
 _BODY_CACHE_MAX = 8
@@ -295,6 +296,44 @@ def node_label(
     if self_name and name == self_name:
         return (name, "you")
     return (name, name_style(name, entry.node))
+
+
+@dataclass(frozen=True, slots=True)
+class _Reception:
+    """The card's reception row — SNR with its quality bar, then RSSI — sized to its lane.
+
+    Handed to the grid *unsized*, like the via path beside it: the value column's width is
+    only settled once the label lane is (see :meth:`PacketViewer._label_width`), so the row
+    lays itself out at render time. The two atoms chain on the app's roomy separator and
+    fall back to the compact one (:data:`~meshterm.ui.menus.SEP_ROOMY`) when the roomy form
+    would not fit — the header's own trade, made wherever the cells are the scarce thing.
+    On the 53-column console they are: a two-digit SNR beside a three-digit RSSI misses the
+    lane by exactly that padding, and folding put the bare word ``rssi`` on a line of its
+    own (JP, on-device, 2026-08-10).
+
+    Attributes:
+        snr: Signal-to-noise ratio in dB, if measured.
+        rssi: Reception strength in dBm, if measured.
+    """
+
+    snr: Optional[float]
+    rssi: Optional[float]
+
+    def _line(self, separator: str) -> Text:
+        """The row drawn with ``separator`` between the two atoms."""
+        line = Text()
+        if self.snr is not None:
+            line.append(f"{self.snr:+.1f} dB  ", style=snr_style(self.snr))
+            line.append_text(snr_bar(self.snr))
+        if self.rssi is not None:
+            if self.snr is not None:
+                line.append(separator, style="muted")
+            line.append(f"{self.rssi:.0f} dBm rssi", style="muted")
+        return line
+
+    def __rich_console__(self, console, options):
+        roomy = self._line(SEP_ROOMY)
+        yield roomy if roomy.cell_len <= options.max_width else self._line(SEP_COMPACT)
 
 
 class PacketViewer(Screen):
@@ -679,17 +718,10 @@ class PacketViewer(Screen):
                 return resolved
         return entry.name or None
 
-    def _reception(self, entry: PacketEntry) -> Text:
-        """SNR (with the shared quality bar) and RSSI on one line."""
-        line = Text()
-        if entry.snr is not None:
-            line.append(f"{entry.snr:+.1f} dB  ", style=snr_style(entry.snr))
-            line.append_text(snr_bar(entry.snr))
-        if entry.rssi is not None:
-            if entry.snr is not None:
-                line.append("  ·  ", style="muted")
-            line.append(f"{entry.rssi:.0f} dBm rssi", style="muted")
-        return line
+    @staticmethod
+    def _reception(entry: PacketEntry) -> _Reception:
+        """SNR (with the shared quality bar) and RSSI on one line — see :class:`_Reception`."""
+        return _Reception(entry.snr, entry.rssi)
 
     def _via_path(self, entry: PacketEntry) -> PathLine:
         """A ``packet`` entry's relay chain as THE path line (:mod:`~meshterm.ui.pathline`).

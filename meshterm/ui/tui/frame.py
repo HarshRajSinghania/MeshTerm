@@ -444,7 +444,9 @@ def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int,
     # Most dialogs stretch to a generous cap; a screen may instead request a natural width
     # (a short confirm sized to its content), still bounded to the terminal. A grow-only
     # screen's natural width ratchets like its height, so the box never narrows either.
-    cap = min(cols - 6, 100)
+    # What the cap leaves behind is the backdrop gutter the box floats over, and how many
+    # columns that is worth is the platform's call (see Platform.dialog_margin).
+    cap = min(cols - get_platform().dialog_margin, 100)
     natural = getattr(screen, "dialog_width", None)
     max_w = cap if natural is None else max(24, min(cap, screen.ratchet_width(natural)))
     # Rows the box may spend between its borders — on body lines and breathing room alike.

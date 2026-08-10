@@ -13,6 +13,7 @@ from Crypto.Hash import HMAC, SHA256
 
 from meshterm.core.channels import channel_hash, derive_secret
 from meshterm.core.models import utcnow
+from meshterm.platforms import set_platform
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 
 
@@ -344,3 +345,27 @@ def test_packet_viewer_names_a_channel_datagram_by_its_confirmed_channel() -> No
 
     unknown = _plain(_viewer(entry).render_body(80))  # no keys held: named by fingerprint only
     assert "unknown" in unknown and "Public" not in unknown
+
+
+def test_packet_viewer_reception_row_keeps_rssi_on_one_line() -> None:
+    """SNR and RSSI never fold: the separator tightens before the row does.
+
+    The card's narrowest lane is the PicoCalc dialog's (53 columns less the backdrop
+    gutter and the box's own chrome), where a two-digit SNR beside a three-digit RSSI
+    misses the roomy ``  ·  `` by exactly its padding — and folding puts the bare word
+    ``rssi`` on a line of its own.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR
+    from meshterm.ui.tui.frame import _dialog_layout
+
+    entry = PacketEntry(when=utcnow(), kind="advert", node="3d63", snr=-13.5, rssi=-101.0)
+    for platform, cols in ((REGULAR, 72), (PICOCALC, PICOCALC.readable_cols)):
+        set_platform(platform)
+        viewer = _viewer(entry)
+        _, _, _, body = _dialog_layout(viewer, cols, 26)
+        rows = [row for row in _stripped(body) if "rssi" in row]
+        assert len(rows) == 1, (platform.name, _stripped(body))
+        assert "-13.5 dB" in rows[0] and "-101 dBm rssi" in rows[0], platform.name
+    # Where the cells are there, the roomy separator stays.
+    set_platform(REGULAR)
+    assert "  ·  " in _plain(_viewer(entry).render_body(80))

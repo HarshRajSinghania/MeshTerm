@@ -43,6 +43,14 @@ class Platform:
         frame_border: Whether the base screen draws inside a bordered ``Panel``. ``False``
             swaps it for a title-bar row instead (+4 cols, +1 row reclaimed) — a PicoCalc
             chrome saving, wired in P4.
+        dialog_margin: Total columns a floating dialog leaves to the backdrop it sits over
+            — half of it on each side (see
+            :func:`~meshterm.ui.tui.frame._dialog_layout`). The gutter is what makes a
+            dialog read as floating rather than as a new screen, and three columns a side
+            do that comfortably at 72. On the 53-column console the *same* gutter is a
+            twelfth of the whole display, and it costs content: a packet card's reception
+            row folds ``rssi`` onto a line of its own for want of two cells (JP, on-device,
+            2026-08-10). Two columns a side still reads as floating and buys them back.
         header_atoms: Which segments compose the persistent header, in the vocabulary
             ``"version"``, ``"device"``, ``"badges"``, ``"pulse"``, ``"battery"``. Wired
             into :func:`~meshterm.ui.menu._header` in P4; unconsumed until then.
@@ -98,6 +106,7 @@ class Platform:
     readable_cols: int
     readable_rows: int
     frame_border: bool
+    dialog_margin: int
     header_atoms: tuple[str, ...]
     footer_fkeys: bool
     width_reclaim: bool
@@ -117,6 +126,7 @@ REGULAR = Platform(
     readable_cols=72,
     readable_rows=24,
     frame_border=True,
+    dialog_margin=6,
     header_atoms=("version", "device", "badges", "pulse", "battery"),
     footer_fkeys=False,
     width_reclaim=True,
@@ -139,6 +149,7 @@ PICOCALC = Platform(
     readable_cols=53,
     readable_rows=26,
     frame_border=False,
+    dialog_margin=4,
     # JP's call (2026-08-01, post-P7 review): the handheld's header brands the app —
     # "MeshTerm vX" — rather than naming the device/port (on a soldered radio the port
     # never changes), and the activity pulse takes whatever room remains.

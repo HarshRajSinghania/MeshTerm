@@ -40,6 +40,16 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 
+#: The app's status-atom separator, in its two widths. ``·`` chains atoms (the standards'
+#: rule — ``Map · z12 · 34 nodes``); the roomy form is the default, and a surface running
+#: out of cells falls back to the compact one rather than folding an atom onto a line of
+#: its own. The header lays its segments out this way (see :func:`~meshterm.ui.menu._header`)
+#: and so does the packet card's reception row — the same trade, wherever the cells are the
+#: scarce thing.
+SEP_ROOMY = "  ·  "
+SEP_COMPACT = " · "
+
+
 def back_rows(value: Any = None) -> list:
     """The standard exit group closing a select list: a blank line, then ``Back``.
 

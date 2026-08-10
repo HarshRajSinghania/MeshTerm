@@ -29,7 +29,7 @@ from ..platforms import get_platform
 from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
-from .menus import section_heading
+from .menus import SEP_COMPACT, SEP_ROOMY, section_heading
 from .theme import make_console
 from .widgets import battery_cell
 from .tui import (
@@ -124,12 +124,6 @@ _SPARK_MIN_CELLS = 24
 #: many packets-per-minute, so a single stray reads as a small nub, not a full column.
 _HEADER_ACTIVITY_FLOOR = 3.0
 
-#: The header's default segment separator, and the tighter one it falls back to when the
-#: roomy form would squeeze the pulse below :data:`_SPARK_MIN_CELLS` (see :func:`_header`).
-_SEP_ROOMY = "  ·  "
-_SEP_COMPACT = " · "
-
-
 def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
 
@@ -176,10 +170,10 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
         joined = content + len(pieces) * cell_len(sep)
         return joined, (cell_len(sep) + battery.cell_len) if battery.cell_len else 0
 
-    sep = _SEP_ROOMY
+    sep = SEP_ROOMY
     header_w, reserve = _measure(sep)
     if width - header_w - reserve < _SPARK_MIN_CELLS:
-        sep = _SEP_COMPACT
+        sep = SEP_COMPACT
         header_w, reserve = _measure(sep)
     header = Text()
     for piece in pieces:
