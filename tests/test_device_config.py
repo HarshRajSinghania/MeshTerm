@@ -341,6 +341,112 @@ def test_purge_buckets_split_stale_from_never_heard() -> None:
     assert [c.name for c in never_heard(contacts)] == ["Unheard"]
 
 
+async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> None:
+    """The purge counts down a real bar, then hands its outcome back in a dialog.
+
+    Two things the busy overlay could not do (JP, 2026-08-10). It only ever said "working",
+    and only in the gaps *between* screens — over the pushed contacts list it drew nothing
+    at all, so a long sweep looked like a screen that had stopped answering while the arrow
+    keys still moved a cursor nothing was being done with. And the count of what it removed
+    went to a note the reader would only meet on their way off the screen. So: the app's
+    progress dialog (which swallows every key for its lifetime) while it runs, and a
+    dismissible dialog naming the count when it is done.
+    """
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact, utcnow
+    from meshterm.ui.contacts_screen import _purge_stale
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.progress import ProgressScreen
+    from meshterm.ui.tui.session import TuiSession
+
+    from datetime import timedelta
+
+    old = utcnow() - timedelta(days=400)
+    victims = [
+        Contact(name=f"Old{i}", public_key=f"{i:02x}" * 32, key_prefix=f"{i:02x}" * 6,
+                last_seen=old)
+        for i in range(3)
+    ]
+    removed_from_device: list[str] = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            await asyncio.sleep(0)  # a real companion command takes a turn of the loop
+            removed_from_device.append(contact.name)
+
+    session = TuiSession()
+    ui = TuiUi(session)
+    ui.typed_confirm = lambda *a, **k: _true()  # the red gate is its own tested thing
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.purge"),
+        contact_store=None,
+        devstate=SimpleNamespace(
+            contacts=lambda: _contacts(victims), invalidate_contacts=lambda: None
+        ),
+        device=lambda: _device(_Device()),
+    )
+
+    task = asyncio.ensure_future(_purge_stale(ctx, "cc" * 32))
+
+    # The age ladder: Enter on its first rung (a week) sweeps every one of these.
+    ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge stale"))
+    ladder.handle("enter")
+
+    # The sweep now runs under the progress dialog, which is the frontmost screen for its
+    # whole lifetime — so the list underneath cannot be walked while it works.
+    bar = await _step_until_screen(session, lambda s: isinstance(s, ProgressScreen))
+    assert bar.title == "Purge stale contacts"
+    assert bar.render_body(60)  # a real bar, with a real total to count down
+    bar.handle("down")  # every key is swallowed; nothing underneath moves
+
+    # …and the count lands in a dialog, not in a note read on the way out.
+    done = await _step_until_screen(
+        session, lambda s: not isinstance(s, ProgressScreen) and "purged" in _screen_text(s)
+    )
+    assert "purged 3 contacts" in _screen_text(done)
+    done.handle("escape")
+    assert await task == 3
+    assert removed_from_device == ["Old0", "Old1", "Old2"]
+
+
+async def _true() -> bool:
+    return True
+
+
+async def _contacts(rows):  # noqa: ANN001
+    return list(rows)
+
+
+async def _device(device):  # noqa: ANN001
+    return device
+
+
+def _screen_text(screen) -> str:  # noqa: ANN001
+    """Everything a pushed screen says, as one plain string."""
+    import re
+
+    body = screen.render_body(60)
+    lines = body if isinstance(body, list) else list(body)
+    drawn = [line() if callable(line) else line for line in lines]
+    return re.sub(r"\[[0-9;]*m", "", " ".join(drawn) + " " + str(screen.title))
+
+
+async def _step_until_screen(session, predicate, *, limit: int = 500):  # noqa: ANN001
+    """Yield to the loop until the frontmost screen satisfies ``predicate``, then return it."""
+    import asyncio
+
+    for _ in range(limit):
+        top = session.top
+        if top is not None and predicate(top):
+            return top
+        await asyncio.sleep(0)
+    raise AssertionError("the expected screen never reached the top of the stack")
+
+
 def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:
     """A populated list closes with the purge action + Back; an empty one has no tail action."""
     from meshterm.core.models import Contact

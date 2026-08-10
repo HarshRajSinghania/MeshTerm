@@ -230,6 +230,10 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
     a forgetful bridge doesn't merge it back. Only the *contact* is dropped — each node's
     reception history in MeshTerm stays. Runs over the pushed contacts list as its backdrop.
 
+    The sweep itself runs under the app's progress dialog — one command per victim, so the
+    bar has a real total to count down — and its outcome lands in a dialog the reader
+    dismisses, rather than in a note they would only meet on their way off the screen.
+
     Args:
         ctx: Shared application context (interactive menu).
         self_key: The device's own public key (hex) — how the contact store scopes this
@@ -295,10 +299,16 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
     removed = 0
     failed = 0
     # A companion-local command per contact (no LoRa transmission), so a straight sequential
-    # sweep — not paced radio traffic — under a busy overlay for the slower links.
-    async with ctx.ui.busy_overlay(
-        f"Purging {_count_desc(len(victims))}…", title="Purge stale contacts"
-    ):
+    # sweep — not paced radio traffic. It runs under the app's progress dialog rather than
+    # the busy overlay (JP, 2026-08-10): the sweep is one command per victim over a link that
+    # can be slow, so its end is a *count* away and the reader deserves to watch it come
+    # down. The overlay only ever said "working", and only in the gaps between screens —
+    # over a pushed list it drew nothing at all, so a hundred-contact purge looked like a
+    # screen that had simply stopped answering while the arrow keys still moved a cursor
+    # nothing was being done with. The dialog swallows every key for its whole lifetime, so
+    # the list underneath holds still until the work is actually finished.
+    with ctx.ui.progress("Purge stale contacts") as progress:
+        task = progress.add_task("Purging", total=len(victims))
         for contact in victims:
             try:
                 await device.remove_contact(contact)
@@ -306,6 +316,8 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
                 failed += 1
                 ctx.log.debug("contacts: purge failed for %s: %s", contact.name, exc)
                 continue
+            finally:
+                progress.advance(task)
             if store is not None and dev_pub and contact.public_key:
                 store.forget(dev_pub, contact.public_key)
             removed += 1
@@ -313,12 +325,16 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
     # device without the swept contacts.
     ctx.devstate.invalidate_contacts()
 
+    # The outcome lands in a dialog the reader dismisses, not in a note they would only
+    # meet on their way out of the screen: they asked for this sweep and waited on its bar,
+    # so what it did belongs in front of them while the list they purged is still behind it.
     if removed and not failed:
-        ctx.ui.note(f"[ok]✓[/ok] purged {_count_desc(removed)}")
+        outcome = Text(f"✓ purged {_count_desc(removed)}", style="ok")
     elif removed:
-        ctx.ui.note(
-            f"[warn]purged {_count_desc(removed)}; {failed} could not be removed[/warn]"
+        outcome = Text(
+            f"purged {_count_desc(removed)}; {failed} could not be removed", style="warn"
         )
     else:
-        ctx.ui.note("[err]no contacts could be removed[/err]")
+        outcome = Text("no contacts could be removed", style="err")
+    await session.message_dialog(outcome, title="Purge stale contacts")
     return removed
