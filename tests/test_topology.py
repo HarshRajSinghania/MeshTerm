@@ -643,6 +643,32 @@ def test_composer_hides_fetch_row_off_fetchable_tails() -> None:
     assert "Fetch neighbours" not in _rows_plain(screen)  # tail is us, not the repeater
 
 
+def test_composer_use_row_names_the_action_not_the_path() -> None:
+    """The commit row doesn't respell the route — the preview two rows up *is* the route.
+
+    Repeating it as raw hex (JP, 2026-08-10) said the same thing worse, and grew the row by
+    a hop every time the path did. Only the unarmed case still needs words: a row that
+    cannot commit has to say why.
+    """
+    from tests.conftest import plain
+
+    walks = [_traced(("3d", 12.0), (None, 12.0))]
+
+    def use_row(screen: PathComposerScreen) -> str:
+        body = plain(screen.render_body(90))
+        row = next(l for l in body.splitlines() if "Use this path" in l)
+        return row.replace("❯", "").strip()
+
+    armed = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"])
+    assert use_row(armed) == "✓ Use this path"
+    assert armed._spec() == "3d,f2,3d"  # …the spec is still what Enter commits
+
+    # An unarmed row still has to say why it can't commit.
+    empty = _composer(_topo(trace_paths=walks), hops=[])
+    empty._spec = lambda: ""  # type: ignore[method-assign]
+    assert use_row(empty) == "✓ Use this path  (add a hop first)"
+
+
 async def test_composer_commits_spec_auto_and_cancel() -> None:
     """Use resolves the spec with its mirrored return leg; Auto resolves empty; Esc cancels."""
     import asyncio

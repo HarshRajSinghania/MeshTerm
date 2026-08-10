@@ -52,8 +52,9 @@ and a hop the topology can't name falling back to the owning screen's own resolv
 (see :meth:`PathComposerScreen._resolve_entry`), so a node reads the same here as in
 the trace window this dialog floats over. The route preview is that same trace-window
 route lane, live: :mod:`~meshterm.ui.pathline` chips (or arrows), wrapped at hop
-boundaries, our two ends the bare ``★``, and no hash repeated after a name — the hex
-is on the *Use this path* row, verbatim. The suggestion list scrolls in a window under the pinned route
+boundaries, our two ends the bare ``★``, and no hash repeated after a name. That preview
+*is* the path, so the *Use this path* row doesn't respell it: the row names the action and
+the picture above it names the route. The suggestion list scrolls in a window under the pinned route
 preview (faint ``↑/↓ n more`` markers at its edges; PgUp/PgDn stride by a windowful),
 so the route under construction never leaves the screen.
 """
@@ -487,10 +488,10 @@ class PathComposerScreen(Screen):
 
         Both our ends go bare (``bare_self``): a composed walk always leaves us and
         comes home to us, so the ``★`` says it in one cell and leaves the rest of the
-        dialog's width to the hops being chosen. Named hops show no hash either — the
-        wire spec on the *Use this path* row is the hex, verbatim and at the width it
-        goes on the air, so repeating it after every name would only crowd the route
-        this dialog exists to shape. An unnamed hop still reads as its hash, truncated
+        dialog's width to the hops being chosen. Named hops show no hash either: the hex
+        the spec goes on the air as is not what anyone is choosing here — it would only
+        crowd the route this dialog exists to shape, which is why the *Use this path* row
+        no longer respells it either. An unnamed hop still reads as its hash, truncated
         to the session's chosen path-hash width.
 
         The insertion cursor is *in* the route, not between two of its hops: the
@@ -551,9 +552,13 @@ class PathComposerScreen(Screen):
             return text
         if payload == _USE:
             label = Text.assemble(("✓ ", "ok"), "Use this path")
-            spec = self._spec()
-            # A path walk with no hops yet has no spec to commit.
-            label.append(f"  ({spec})" if spec else "  (add a hop first)", style="muted")
+            # "This path" is the one pinned two rows up, in colour and at full width — the
+            # dialog exists to shape it and never lets it scroll away. Respelling it here
+            # as raw hex (JP, 2026-08-10) said the same thing worse, and grew the row by a
+            # hop every time the route did. Only the empty case still needs words: an
+            # unarmed row has to say why.
+            if not self._spec():
+                label.append("  (add a hop first)", style="muted")
             return label
         if payload == _AUTO:
             return Text("Auto — let the device route")
