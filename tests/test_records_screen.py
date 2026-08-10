@@ -494,3 +494,40 @@ async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(
 
     assert walked == ["3d,f2"]  # the record's spec went straight to Trace path
     assert result == {"records": 1}
+
+
+async def test_browser_cuts_every_row_the_way_it_cuts_the_highlighted_one(tui_ctx) -> None:
+    """Unselected walks are cut, not middle-elided — the highlight only adds the shift.
+
+    Both ends of a record's walk are the same ``★`` on every row (a record is a boomerang),
+    so the ``⋯`` rescue that saves a route's two endpoints from a right truncation would buy
+    back nothing here while spending cells the walk's *front* — the part that differs from row
+    to row — was going to get. Every row therefore carries the whole line and is cut at the
+    lane, exactly as the highlighted row is at shift zero.
+    """
+    ctx = tui_ctx
+    long_route = tuple(f"{byte:02x}c24f54551e" for byte in range(0x20, 0x2c))
+    for rank, route in enumerate((long_route, long_route[::-1]), start=1):
+        ctx.repo.record_discovery(
+            "grand_tour", 1, f"{route[0][:2]},f2", route,
+            score=float(20 - rank), stats={"hop_count": len(route), "distinct_nodes": len(route)},
+            app_version="0.1.0",
+        )
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(ctx.ui.session))
+        assert browser is not None
+        rows = [_plain([line]) for line in browser.render_body(72)]
+        walks = [row for row in rows if "★" in row]
+        assert len(walks) == 2, rows  # one highlighted, one not
+        assert not any("⋯" in row for row in walks)  # nothing middle-elides any more
+        # Highlighted and not, every walk starts at our star right after the score lane…
+        assert all(re.search(r"#\d+ .*nodes  ★ → ", row) for row in walks), walks
+        # …and runs on past the lane rather than closing on a rescued second endpoint.
+        assert all(row.rstrip().endswith("…") for row in walks), walks
+        browser.resolve(("back", None, 0, None))
+        await task
+    finally:
+        if not task.done():
+            task.cancel()

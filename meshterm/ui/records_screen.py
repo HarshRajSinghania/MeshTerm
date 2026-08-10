@@ -715,22 +715,30 @@ async def open_records(ctx: "AppContext") -> dict:
         row.append("  ")
         return row
 
-    def browser_row(lanes: Text, record: DiscoveredPath, width: int) -> Text:
-        """One record row: its fixed lanes (:func:`browser_lanes`), then the walk.
+    def browser_row(lanes: Text, record: DiscoveredPath) -> Text:
+        """One record row: its fixed lanes (:func:`browser_lanes`), then the whole walk.
 
         The walk draws on THE path widget with both ends bare
         (:data:`~meshterm.ui.pathline.SELF_GLYPH`): a record is a boomerang by construction,
         so naming ourselves twice per row would cost more cells than the whole score lane and
         tell the reader what every other row already told them. Those stars keep the ``you``
         white (``dim_self=False``) — the fade means "not yours to compose", and nothing on a
-        board of walks already made is being composed. A walk wider than ``width`` (the
-        row's render budget) middle-elides through ``PathLine.ellipsized`` so both endpoints
-        survive — a right truncation would amputate the return leg — while the *highlighted*
-        row keeps its natural length and h-scrolls under ←→, so the elided middle is read by
-        sliding it. That scroll starts at the lanes' own width (``Choice.hscroll_from``): the
-        walk is the only thing on the row that overflows, so it is the only thing that moves —
-        sliding rank and score off to the left would cost the reader their place in the board
-        and buy back cells the walk was already going to be given.
+        board of walks already made is being composed.
+
+        The line is composed at its **natural** length and handed over whole, so every row is
+        cut the same way the highlighted one is: anchored on its first hop and cracked at the
+        lane's edge (:func:`~meshterm.ui.pathline.cut_to`, applied by the list). It is
+        deliberately *not* middle-elided to the width. That rescue exists to save a route's
+        two endpoints from a right truncation — but on this board both endpoints are the
+        same ``★`` on every row, by construction, so the ``⋯`` would spend three cells and a
+        hop to arrive back at the one thing the reader already knows. What differs from row to
+        row is the walk's front, and every cell goes to it.
+
+        A row that outruns the lane is read by *sliding* it: the highlight keeps the same line
+        and h-scrolls under ←→ from the lanes' own width (``Choice.hscroll_from``), so the walk
+        is the only thing on the row that moves — sliding rank and score off to the left would
+        cost the reader their place in the board and buy back cells the walk was already going
+        to be given. Unselected and selected therefore differ in exactly one thing, the shift.
         """
         row = lanes.copy()
         walk = path_line(
@@ -742,7 +750,7 @@ async def open_records(ctx: "AppContext") -> dict:
             bare_self=True,
             dim_self=False,
         )
-        row.append_text(walk.ellipsized(max(8, width - row.cell_len)))
+        row.append_text(walk.text())
         return row
 
     async def delete_category_flow() -> None:
@@ -780,20 +788,6 @@ async def open_records(ctx: "AppContext") -> dict:
         ):
             ctx.repo.delete_discoveries(category.id)
 
-    def record_row_title(lanes: Text, record: DiscoveredPath):
-        """A width-aware row title, memoized per width — the record is frozen, so the
-        path-widget assembly and middle-elide only ever run once per render width
-        instead of once per record per repaint."""
-        memo: dict[int, Text] = {}
-
-        def title(width: int) -> Text:
-            cached = memo.get(width)
-            if cached is None:
-                cached = memo[width] = browser_row(lanes, record, width)
-            return cached
-
-        return title
-
     while True:
         items: list = []
         for category in CATEGORIES:
@@ -811,9 +805,11 @@ async def open_records(ctx: "AppContext") -> dict:
                     rank, category, record, show_width=show_width, score_w=score_w,
                 )
                 items.append(Choice(
-                    # Width-aware (see Choice.title): the row re-fits its walk to each
-                    # render width, middle-eliding rather than dying at the right edge.
-                    title=record_row_title(lanes, record),
+                    # A finished line, not a width-aware callable: the row fits itself to
+                    # nothing, so the list cuts every row — highlighted or not — the one way
+                    # (see browser_row). Records are frozen, so it is composed once per open
+                    # rather than per repaint.
+                    title=browser_row(lanes, record),
                     value=("open", category, rank, record),
                     # ←→ slide the walk alone; the lanes in front of it hold (browser_row).
                     hscroll_from=lanes.cell_len,
