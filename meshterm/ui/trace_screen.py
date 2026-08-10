@@ -101,7 +101,7 @@ from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner, spinner_interval
-from .pathline import PathHop, PathLine, path_line
+from .pathline import PathHop, PathLine, cut_to, hops_atom, path_line
 from .widgets import NodeResolver, _link_text, _route_path, highlighted_hash
 
 if TYPE_CHECKING:
@@ -1257,8 +1257,16 @@ def _scenario_path(
     unnamed hop its prefix-lit hash) instead of the old single-colour smear — and, as
     in the route lane above it, our own end goes bare: every candidate starts from us,
     so the word would be the same on every row and the cells are the candidates'.
-    With a ``width`` budget the line middle-elides (``PathLine.ellipsized``) so both
-    endpoints survive a narrow terminal; ``None`` returns the full line.
+
+    A ``width`` budget *cuts* the line rather than middle-eliding it
+    (:func:`~meshterm.ui.pathline.cut_to`): the ``⋯`` rescue exists to save a route's two
+    endpoints, and here both endpoints are the same two on every row by construction — our
+    own ``★`` and the one target the whole screen is about — so it would spend cells on
+    what the reader already knows and take them from the candidates' *front*, the only part
+    that differs. Cutting also makes every row read the way the highlighted one does at
+    shift zero, so walking the cursor down the list no longer rewrites the row under it
+    (JP, 2026-08-10). ``None`` returns the full line, which is what the highlighted row
+    slides under ``←→``.
     """
     route = path_line(
         [None, *scenario.hops, target_id],
@@ -1267,21 +1275,24 @@ def _scenario_path(
         self_name=device_label,
         bare_self=True,
     )
-    return route.text() if width is None else route.ellipsized(width)
+    return route.text() if width is None else cut_to(route.text(), width)
 
 
 def _scenario_detail(scenario: Any) -> Text:
-    """The line hanging under a scenario's pathline: its provenance and evidence.
+    """The line hanging under a scenario's pathline: its length, provenance and evidence.
 
-    The device route and the direct shot keep their short provenance tag (observed
-    candidates *are* their hop sequence, so they carry none); then the bottleneck
-    SNR and sample count a trace would expect to measure, or ``unobserved`` when
-    the evidence graph has nothing to say about it yet.
+    The hop count leads (:func:`~meshterm.ui.pathline.hops_atom`) — the figure the line
+    above encodes but never states, and the first thing one candidate route is weighed
+    against another on. It also absorbs the *direct* shot's provenance tag, which was
+    that same word for the same reason (no repeaters at all); the device route keeps its
+    own, since a firmware-learned route is a claim about where the hops came from rather
+    than about how many there are. Observed candidates *are* their hop sequence and carry
+    no tag. Then the bottleneck SNR and sample count a trace would expect to measure, or
+    ``unobserved`` when the evidence graph has nothing to say about it yet.
     """
-    atoms: list[Text] = []
-    if scenario.source in ("device", "direct"):
-        style = "accent" if scenario.source == "device" else "muted"
-        atoms.append(Text(scenario.label, style=style))
+    atoms: list[Text] = [hops_atom(len(scenario.hops))]
+    if scenario.source == "device":
+        atoms.append(Text(scenario.label, style="accent"))
     if scenario.weakest_snr is not None:
         snr = Text("weakest ", style="muted")
         snr.append(f"{scenario.weakest_snr:+.1f} dB", style=snr_style(scenario.weakest_snr))
@@ -1772,8 +1783,15 @@ async def _open_session(
             sample_count = int(picked)
         return None
 
-    def outcome_title(rank: int, outcome: ProbeOutcome) -> Text:
-        """One probed candidate as a ranked select row: one measured trace, not a guess."""
+    def outcome_lanes(rank: int, outcome: ProbeOutcome) -> Text:
+        """A probed candidate's fixed head: rank, verdict, bottleneck SNR, round trip.
+
+        Split out from :func:`outcome_title` so the row can *measure* the block it pins
+        out of the ←→ scroll (:attr:`~meshterm.ui.tui.select.Choice.hscroll_from`) rather
+        than guess at it. These lanes are the whole reason the list is ranked — sliding
+        them off to read the tail of a ten-hop spec would cost the row its identity and
+        gain nothing, since the columns are the part that already fits.
+        """
         stats = outcome.stats
         text = Text(f"#{rank}  ", style="muted")
         if stats.successes:
@@ -1787,6 +1805,11 @@ async def _open_session(
         if stats.median_rtt_ms is not None:
             text.append(f"  {stats.median_rtt_ms:.0f} ms", style="muted")
         text.append("  via ", style="muted")
+        return text
+
+    def outcome_title(lanes: Text, outcome: ProbeOutcome) -> Text:
+        """One probed candidate as a ranked select row: one measured trace, not a guess."""
+        text = lanes.copy()
         text.append(outcome.candidate.spec, style="brand")
         text.append(f"  ({outcome.candidate.label})", style="faint")
         return text
@@ -1914,9 +1937,10 @@ async def _open_session(
         for scenario in scenarios:
             items.append(
                 Choice(
-                    # Width-aware (see Choice.title): a long candidate middle-elides to
-                    # the terminal so both endpoints survive; the highlighted row keeps
-                    # its natural length and slides under ←→ instead.
+                    # Width-aware (see Choice.title): a long candidate is cut to the
+                    # terminal, cracking on its own chip exactly as the highlighted row
+                    # does at shift zero — the highlight then keeps its natural length
+                    # and slides under ←→ instead of the row being redrawn as it lands.
                     title=(
                         lambda width, scenario=scenario: _scenario_path(
                             scenario, topo, target_id,
@@ -1965,7 +1989,14 @@ async def _open_session(
             section_heading("Ranked · reliability, then bottleneck SNR")
         ]
         for rank, outcome in enumerate(outcomes, start=1):
-            result_items.append(Choice(title=outcome_title(rank, outcome), value=outcome))
+            lanes = outcome_lanes(rank, outcome)
+            result_items.append(
+                Choice(
+                    title=outcome_title(lanes, outcome),
+                    value=outcome,
+                    hscroll_from=lanes.cell_len,
+                )
+            )
         result_items.append(Separator(" "))
         result_items.append(Choice(title="Keep current path", value=None))  # the exit: no adoption
         adopted = await session.run_screen(
@@ -1974,7 +2005,9 @@ async def _open_session(
                 result_items,
                 footer_hint="↑↓ move · Enter adopt path · Esc keep",
                 wrap=False,
-                hscroll=True,  # ranked rows carry whole specs — let ←→ read the tail
+                # ←→ read the tail of a long spec; the ranking lanes in front of it stay
+                # pinned (each row declares their width — see outcome_lanes).
+                hscroll=True,
             )
         )
         if adopted is CANCEL or adopted is None:

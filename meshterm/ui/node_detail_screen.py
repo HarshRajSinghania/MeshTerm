@@ -103,6 +103,8 @@ from .pathline import (
     PathLine,
     cut_mark,
     cut_to,
+    hops_atom,
+    with_action_mark,
 )
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
@@ -216,11 +218,6 @@ _CLUSTER_NODE = "\x00clu"
 #: Columns a route row's pathline and its hanging context line indent by — the ``"❯ "``/
 #: ``"  "`` pointer's own width, so the context lines up under the path it belongs to.
 _ROUTE_INDENT = 2
-
-#: The app-wide opens-further-prompts mark, trailing every route row's pathline (Enter on
-#: it arms a trace). Applied at render time rather than baked into :attr:`_Route.path`, so
-#: measuring/cropping the raw hash chain for horizontal scroll never has to account for it.
-_OPENS_MARKER = " …"
 
 #: Cells one ←/→ press horizontally scrolls the highlighted route's pathline, or the Info
 #: tab's key lane (see :meth:`NodeDetailScreen.handle`) — the same step the app-wide select
@@ -518,8 +515,10 @@ class NodeDetailScreen(Screen):
         if not routes or not (0 <= self._row_index < len(routes)):
             return False
         avail = max(1, self._last_width - _ROUTE_INDENT)
-        total = cell_len(routes[self._row_index].path.plain) + cell_len(_OPENS_MARKER)
-        return total > avail
+        # The trailing `…` is chrome riding outside the lane (pathline.with_action_mark), so
+        # it is no part of what has to fit: a route exactly as wide as its lane scrolls
+        # nowhere, and the mark is simply the thing that goes unshown.
+        return cell_len(routes[self._row_index].path.plain) > avail
 
     def _on_info_tab(self) -> bool:
         """Whether the Info tab is the one filling the stage (so its key lane is on screen)."""
@@ -976,7 +975,11 @@ class NodeDetailScreen(Screen):
         The route keeps its per-node colours even when selected (the pointer, and the white
         line in the graph above, carry the selection) — unlike the plain action rows, which
         go fully brand, since here the colour *is* the content. The trailing ``…`` is the
-        app-wide opens-further-prompts mark: Enter on the row arms a trace on it. The
+        app-wide opens-further-prompts mark: Enter on the row arms a trace on it. It rides
+        *outside* the lane (:func:`~meshterm.ui.pathline.with_action_mark`) — chrome buys no
+        cells off the route, so a chain that fits stays whole and closes on its rounded cap
+        instead of cracking to make room for two cells of hint, and the mark is what goes
+        unshown where the lane is full. The
         pathline never hop-wraps — it is one line, cropped: the highlighted row rides
         :attr:`_hshift` (``←→``, see :meth:`handle`) so a named chain wider than the lane can
         still be read to its end, under a :func:`~meshterm.ui.pathline.cut_mark` at whichever
@@ -989,15 +992,14 @@ class NodeDetailScreen(Screen):
         other row is simply cut to the lane (:func:`~meshterm.ui.pathline.cut_to`, cracked or
         ellipsized by the same rule), and the context line under any row — plain prose, never
         a path — ellipsizes: only the row you are on can scroll, and it is the only one whose
-        end you are asking to see. The context —
-        bottleneck SNR, sample count, the ``★ best`` / ``device route`` tag — is dropped
-        entirely when a route earns none of it.
+        end you are asking to see. The context — hop count, bottleneck SNR, sample count, the
+        ``★ best`` / ``device route`` tag — always leads with the count, so every row is two
+        lines tall and the list stops changing height as the cursor walks it.
         """
         indent = _ROUTE_INDENT
         avail = max(1, width - indent)
         pointer = Text("❯ " if selected else "  ", style="brand" if selected else "")
-        marked = route.path.copy()
-        marked.append(_OPENS_MARKER, style="muted")
+        marked = route.path
         if selected and self._hshift:
             total = cell_len(marked.plain)
             # A scrolled row has given up a cell to its left mark, so its last window spans
@@ -1022,7 +1024,8 @@ class NodeDetailScreen(Screen):
                 path.append_text(cut_mark(marked, shift + window - 1, ELIDE_TAIL))
         else:
             path = cut_to(marked, avail)
-            path.no_wrap = True
+        path = with_action_mark(path, avail)
+        path.no_wrap = True
         line1 = Text()
         line1.append_text(pointer)
         line1.append_text(path)
@@ -1452,9 +1455,14 @@ def _route_line(
     Names cost cells that hashes don't, which is what the row's horizontal scroll is for (see
     :meth:`NodeDetailScreen._route_row_lines`) — the same trade the Message paths rows make,
     and the reason a name is worth it: a route reads as places, and the reader pays only for
-    the one row they are on. ``context`` is the bottleneck SNR, sample count, and a ``★ best``
-    / ``device route`` tag marking the winner and the firmware's learned route — kept off the
-    pathline itself so a long chain never crowds it out, and empty when a route earns none.
+    the one row they are on. ``context`` leads with the route's hop count
+    (:func:`~meshterm.ui.pathline.hops_atom` — the figure the line above encodes but never
+    states, and the one two routes are compared on first), then the bottleneck SNR, sample
+    count, and a ``★ best`` / ``device route`` tag marking the winner and the firmware's
+    learned route — all kept off the pathline itself so a long chain never crowds it out.
+    The count means the row always earns a context line, which is right: every route has a
+    length, and a row whose second line came and went with the evidence made the list jump
+    a row taller as the cursor moved.
     """
     hash_bytes = max(hash_bytes, 1)  # an unknown mode still needs a real width to slice
 
@@ -1471,7 +1479,7 @@ def _route_line(
         PathHop(SELF_GLYPH, you=True),
     ]).text()
 
-    atoms: list[Text] = []
+    atoms: list[Text] = [hops_atom(len(hops_out))]
     if weakest is not None:
         snr = Text("weakest ", style="muted")
         snr.append(f"{weakest:+.1f} dB", style=snr_style(weakest))

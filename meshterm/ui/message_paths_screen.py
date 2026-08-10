@@ -50,6 +50,7 @@ from .pathline import (
     PathLine,
     cut_mark,
     cut_to,
+    hops_atom,
     path_line,
 )
 from .theme import snr_style
@@ -281,8 +282,14 @@ class MessagePathsScreen(Screen):
         The row's second line, hanging muted under the route it describes: the path is
         what distinguishes one arrival from another (and what the graph above draws), so
         it takes the lane, and the frame's own particulars step in beneath it.
+
+        The hop count leads (:func:`~meshterm.ui.pathline.hops_atom`): it is the one fact
+        about the route the line above encodes without stating, and the number two
+        arrivals of the same message are compared on before anything else.
         """
-        text = Text(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
+        text = hops_atom(len(arrival.hops))
+        text.append("  ")
+        text.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
         if arrival.snr is not None:
             text.append("  ")
             text.append(f"{arrival.snr:+.1f} dB", style=snr_style(arrival.snr))

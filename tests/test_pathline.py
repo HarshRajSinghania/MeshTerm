@@ -16,7 +16,8 @@ import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
     CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, POWERLINE_ROUND_CLOSE,
     POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine,
-    _SELF_INK, _YOU_BG, _style_hex, cut_mark, cut_to, elision_hop, path_line,
+    _SELF_INK, _YOU_BG, _style_hex, cut_mark, cut_to, elision_hop, hops_atom,
+    path_line, with_action_mark,
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
@@ -553,3 +554,60 @@ def test_bare_self_keeps_us_in_the_you_white_where_nothing_is_composed() -> None
                       dim_self=False, dim_from=3, mode="plain").text()
     tail = [s for s in faded.spans if faded.plain[s.start : s.end] == SELF_GLYPH]
     assert [str(s.style) for s in tail] == ["you", "faint"]
+
+
+def test_action_mark_rides_outside_the_width_budget() -> None:
+    """The opens-further ``…`` costs the path no cells — it takes what is left, or nothing.
+
+    Reserving room for it made a route that filled its lane exactly crack on its last chip
+    (JP, 2026-08-10): the row claimed the walk ran on when the walk had finished, and the
+    two cells the hint wanted were two the reader lost. So the path is fitted first and the
+    mark lands in the leftovers.
+    """
+    hops = [None, "3d63", "f2a1", None]
+    line = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                     dim_self=False, mode="plain").text()
+    exact = line.cell_len
+
+    # A lane the route fills exactly: the route survives whole, and the mark is what goes.
+    fitted = cut_to(line, exact, action=True)
+    assert fitted.plain == line.plain
+    assert fitted.cell_len == exact
+
+    # One cell of slack still isn't enough for " …" — the mark is two cells, all or nothing.
+    assert cut_to(line, exact + 1, action=True).plain == line.plain
+
+    # Room for both: the mark appears, and the whole thing still fits the lane.
+    roomy = cut_to(line, exact + 2, action=True)
+    assert roomy.plain == line.plain + " …"
+    assert roomy.cell_len <= exact + 2
+
+    # A route that genuinely overflows is cut as always, and then has no room left over.
+    cut = cut_to(line, exact - 4, action=True)
+    assert cut.cell_len == exact - 4 and not cut.plain.endswith(" …")
+
+    # The mark never widens a line past its lane, whatever it is handed.
+    assert with_action_mark(line, exact - 1).plain == line.plain
+
+
+def test_action_mark_leaves_a_chip_path_closed_rather_than_cracked() -> None:
+    """In chips, the whole point: a route that fits keeps its closing cap, not a crack."""
+    hops = [None, "3d63", "f2a1", None]
+    line = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
+                     dim_self=False, mode="powerline").text()
+    fitted = cut_to(line, line.cell_len, action=True)
+    assert CRACK_TAIL not in fitted.plain
+    assert fitted.plain == line.plain
+
+
+def test_hops_atom_counts_relays_and_says_direct_for_none() -> None:
+    """The stats-line atom: ``direct`` for a hopless route, else ``n hop(s)``.
+
+    A path with no relays isn't "0 hops" — ``direct`` is the app's own word for a frame
+    that went straight there, and it is what :class:`PathLine` says for an empty path too.
+    """
+    assert hops_atom(0).plain == "direct"
+    assert hops_atom(1).plain == "1 hop"
+    assert hops_atom(4).plain == "4 hops"
+    assert hops_atom(-1).plain == "direct"  # a caller that subtracted its endpoints twice
+    assert all(str(atom.style) == "muted" for atom in (hops_atom(0), hops_atom(3)))

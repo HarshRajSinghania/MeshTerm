@@ -205,7 +205,9 @@ def test_route_line_names_its_hops() -> None:
     assert "3d" not in line and "f2" not in line  # no hop repeats its hash after its name
     assert line.rstrip().endswith(SELF_GLYPH)  # our own node anchors the right, as the ★
     assert "Us" not in line  # …in one cell, not a name every row would repeat
-    assert context.plain == "device route"  # the firmware-route tag, off the pathline itself
+    # The context leads with the route's length, then the firmware-route tag — both off the
+    # pathline itself.
+    assert context.plain == "1 hop  ·  device route"
 
 
 def test_route_line_greys_hops_nobody_can_name() -> None:
@@ -733,10 +735,11 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     for _ in range(20):  # run the scroll to its stop
         screen.handle("right")
     row = next(l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯"))
-    # The clamp lands where the tail is actually readable: the line's own end — the last hop
-    # and the opens-marker — is on screen rather than cropped behind a right-hand edge mark
-    # promising a remainder the keys can no longer reach. Only the left mark is left drawn.
-    assert row.rstrip().endswith("aa …") and row.count("…") == 2
+    # The clamp lands where the tail is actually readable: the line's own end — its last hop
+    # — is on screen rather than cropped behind a right-hand edge mark promising a remainder
+    # the keys can no longer reach. Only the left mark is left drawn; the opens-further `…`
+    # rides outside the lane, so a window filled to its edge is exactly where it goes unshown.
+    assert row.rstrip().endswith("aa") and row.count("…") == 1
     screen.handle("right")  # …and the stop holds: nothing moves past it
     assert next(
         l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
@@ -784,6 +787,48 @@ def test_node_detail_route_row_cracks_a_chip_path_at_both_edges() -> None:
     row = selected_row()
     assert row.startswith("❯ " + CRACK_HEAD)  # the start is off to the left now, cracked
     assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row
+
+
+def test_node_detail_route_row_spends_no_lane_cells_on_the_opens_marker() -> None:
+    """A route that fills its lane exactly stays whole — the trailing ``…`` is not its cost.
+
+    The mark says what Enter does; it is chrome, not route. Reserving two cells for it made
+    a chain that fitted crack on its own last chip (JP, 2026-08-10) — the row claiming the
+    walk ran on when it had in fact arrived, the crack being nothing but the closing cap
+    with half of it taken away. Now the path is fitted to the whole lane and the mark takes
+    whatever is left, which on a full lane is nothing at all.
+    """
+    avail = 72 - 2  # the row's lane: the width less the pointer column
+    exact = Text("x" * avail)
+    routes = _RoutesView(
+        routes=[_Route(draw=("3d",), spec="s0", path=exact.copy(), context=Text(""))],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    row = next(
+        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+    )
+    assert row == "❯ " + "x" * avail  # whole, uncut, and no mark squeezed in
+    # …and with nothing to scroll, ←→ stay inert and unadvertised.
+    assert "←→ scroll" not in screen.footer_hint
+
+    # Two cells of slack is exactly what the mark costs, so there it is drawn.
+    roomy = _RoutesView(
+        routes=[_Route(draw=("3d",), spec="s0", path=Text("x" * (avail - 2)),
+                       context=Text(""))],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=roomy, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    row = next(
+        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+    )
+    assert row == "❯ " + "x" * (avail - 2) + " …"
 
 
 #: A 64-digit key whose every byte is distinct (``000102…1e1f``), so a window's first digits

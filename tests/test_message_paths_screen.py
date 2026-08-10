@@ -52,8 +52,10 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     rows = body.split("sensor\n\n")[1].split("\n")
     assert len(rows) == 2 * len(_arrivals())
     assert rows[0].startswith("❯ ") and "YUL-Cartierville" in rows[0]  # the picked route
-    assert rows[1].strip().startswith(_arrivals()[0].when.astimezone().strftime("%H:%M"))
-    assert "+4.0 dB" in rows[1]  # …with its time and SNR tucked beneath it
+    # …with its length, time and SNR tucked beneath it, the hop count leading
+    assert rows[1].strip().startswith("1 hop  ")
+    assert _arrivals()[0].when.astimezone().strftime("%H:%M") in rows[1]
+    assert "+4.0 dB" in rows[1]
     assert "❯" in body
     assert "white = selected path" in body  # the graph caption
     assert "★ you" in body and "▲ repeater" in body  # the node-type legend
@@ -256,13 +258,17 @@ def test_paths_screen_direct_arrival_and_empty_state() -> None:
 
     The route no longer collapses to the word *direct*: with both ends on the line,
     ``Alice → ★`` **is** what a direct delivery looks like, and it reads on the same rails
-    as every relayed row instead of swapping the picture for a caption.
+    as every relayed row instead of swapping the picture for a caption. The word survives
+    one row down, where it belongs — as the hop-count stat under the line, saying how far
+    the frame came rather than standing in for the picture of it.
     """
     now = utcnow()
     screen = _screen([Arrival(when=now, hops=(), snr=2.5)])
     body = _plain(screen.render_body(76))
     assert "❯ Alice → ★" in body
-    assert "direct" not in body
+    route = next(l for l in body.splitlines() if l.startswith("❯"))
+    assert "direct" not in route
+    assert body.splitlines()[body.splitlines().index(route) + 1].strip().startswith("direct")
     empty = _screen([], matched=False)
     body = _plain(empty.render_body(76))
     assert "No direct-message frames logged in the window." in body

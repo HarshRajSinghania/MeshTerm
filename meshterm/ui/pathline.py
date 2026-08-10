@@ -22,7 +22,9 @@ drawn*, so every surface the survey found can eventually route through it:
   that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past its
   edge — breaks off on a half block in its own fill
   (:func:`cut_mark`), and that crack is what says the segment continues; only chips
-  crack, an arrow line still ellipsizes. ``auto`` (the default) picks powerline exactly
+  crack, an arrow line still ellipsizes. A row that also carries the app-wide
+  opens-further-prompts ``…`` hangs it *outside* the budget
+  (:func:`with_action_mark`) — chrome may not cost the route cells. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
@@ -130,6 +132,11 @@ _ELISION = "⋯"
 #: The classic truncation mark, and what an *arrow* line still cuts with: three dots
 #: standing where words were. An arrow hop is text, so shortening it is what happened.
 _ELLIPSIS = "…"
+
+#: The app-wide "this row opens further prompts" mark (see the UX standards), as a *path*
+#: row wears it — see :func:`with_action_mark` for why it is spelled here rather than
+#: appended by each surface.
+ACTION_MARK = " …"
 
 #: What a *chip* line cuts with instead (JP, 2026-08-09) — the half block, drawn in the
 #: cut chip's own fill with no background, so the cell is half segment and half bare
@@ -292,7 +299,37 @@ def cut_mark(line: Text, at: int, side: str) -> Text:
     return Text(CRACK_HEAD if side == ELIDE_HEAD else CRACK_TAIL, style=fill)
 
 
-def cut_to(line: Text, width: int) -> Text:
+def with_action_mark(line: Text, width: int) -> Text:
+    """``line`` plus the opens-further-prompts ``…`` — riding *past* the width budget.
+
+    The mark says what Enter on the row does. It is not part of the path, so it must not
+    cost the path a cell: reserving room for it up front made a route that fitted its lane
+    exactly crack on its last chip (JP, 2026-08-10), so the row claimed the walk ran on
+    when the walk had in fact finished — the crack only replaces the closing cap, and the
+    two cells the mark wanted were the two the reader lost.
+
+    So the path is fitted to the *whole* lane first and the mark lands in whatever is left
+    over; where nothing is left, it simply isn't drawn. Losing it costs the reader a hint
+    the row's own behaviour gives them the moment they press Enter; losing the tail of a
+    hop costs them the route. That is the widget's default answer wherever a path row
+    carries the mark, not one surface's local trade — pass the *fitted* line here (after
+    :func:`cut_to` or after a scroll window) and let the leftovers decide.
+
+    Args:
+        line: The path line, already fitted to ``width``.
+        width: The lane's cell budget.
+
+    Returns:
+        The line with the mark appended, or unchanged when the lane has no room for it.
+    """
+    if line.cell_len + cell_len(ACTION_MARK) > width:
+        return line
+    out = line.copy()
+    out.append(ACTION_MARK, style="muted")
+    return out
+
+
+def cut_to(line: Text, width: int, *, action: bool = False) -> Text:
     """Fit a rendered path line to ``width`` by cutting its tail — cracked, not elided.
 
     The drop-in for ``Text.truncate(width, overflow="ellipsis")`` wherever the line being
@@ -303,19 +340,44 @@ def cut_to(line: Text, width: int) -> Text:
     Args:
         line: The rendered line to fit.
         width: The cell budget.
+        action: Append the opens-further-prompts mark afterwards, free of the budget
+            (:func:`with_action_mark`) — for a row Enter opens something from.
 
     Returns:
         A line no wider than ``width``.
     """
-    if line.cell_len <= width:
-        return line
     if width <= 0:
         return Text()
-    mark = cut_mark(line, width - 2, ELIDE_TAIL)
-    body = line.copy()
-    body.truncate(max(0, width - mark.cell_len), overflow="crop")
-    body.append_text(mark)
-    return body
+    if line.cell_len <= width:
+        fitted = line
+    else:
+        mark = cut_mark(line, width - 2, ELIDE_TAIL)
+        fitted = line.copy()
+        fitted.truncate(max(0, width - mark.cell_len), overflow="crop")
+        fitted.append_text(mark)
+    return with_action_mark(fitted, width) if action else fitted
+
+
+def hops_atom(count: int) -> Text:
+    """The hop count, as the stats line hanging under a path line spells it.
+
+    Wherever a surface hangs stats under a path, the number of hops is one of them (JP,
+    2026-08-10): it is the figure the picture above encodes but never states, the one two
+    routes are most often compared on, and the one a reader would otherwise have to count
+    chips to get. ``direct`` where there are none — a path with no relays isn't "0 hops",
+    it is the app's own word for a frame that went straight there (:class:`PathLine`'s
+    own ``empty`` note says exactly that).
+
+    Args:
+        count: How many *relay* hops the route took (endpoints excluded — us and the far
+            node are on every route here, so counting them would say nothing).
+
+    Returns:
+        The muted atom, ready to join a ``·`` chain.
+    """
+    if count <= 0:
+        return Text("direct", style="muted")
+    return Text(f"{count} hop" if count == 1 else f"{count} hops", style="muted")
 
 
 class PathLine:

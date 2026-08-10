@@ -1167,6 +1167,44 @@ def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
     assert text.plain == "★ → Far"
 
 
+def test_scenario_path_cuts_a_long_candidate_rather_than_eliding_its_middle() -> None:
+    """Every row is cut the way the highlighted one is at shift zero — no ``⋯`` rescue.
+
+    The middle-elide exists to save a route's two endpoints, and here both endpoints are
+    the same two on every row by construction (our own ``★``, the one target the screen is
+    about), so it would spend cells on what the reader knows and take them off the
+    candidates' *front* — the only part that differs. Cutting also stops the row being
+    redrawn the moment the cursor lands on it (JP, 2026-08-10).
+    """
+    topo = _scenario_topo()
+    scenario = PathScenario(
+        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
+    )
+    full = _scenario_path(
+        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+    )
+    narrow = _scenario_path(
+        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1,
+        width=full.cell_len - 3,
+    )
+    assert narrow.cell_len <= full.cell_len - 3
+    assert "⋯" not in narrow.plain  # nothing elided out of the middle…
+    assert narrow.plain.startswith("★ → Hub")  # …the head is intact, the tail is what went
+
+
+def test_scenario_detail_leads_with_the_hop_count() -> None:
+    """The stats line under a candidate opens with how long the route is."""
+    scenario = PathScenario(
+        label="observed path", hops=("3d63c6429436", "f2c24f54551e"), source="observed",
+        score=1.0, weakest_snr=-4.0, samples=2,
+    )
+    assert _scenario_detail(scenario).plain.startswith("2 hops  ·  ")
+    # The direct shot's provenance tag *was* this same word, so the atom absorbs it rather
+    # than the row reading "direct  ·  direct".
+    direct = PathScenario(label="direct", hops=(), source="direct", score=0.0, samples=1)
+    assert direct.label == "direct" and _scenario_detail(direct).plain.count("direct") == 1
+
+
 def test_scenario_detail_carries_provenance_snr_and_samples() -> None:
     """The device/direct provenance tag, weakest SNR, and sample count all show, in order."""
     scenario = PathScenario(
