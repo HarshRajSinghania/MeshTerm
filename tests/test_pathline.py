@@ -16,7 +16,7 @@ import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
     CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, POWERLINE_ROUND_CLOSE,
     POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine,
-    _style_hex, cut_mark, cut_to, path_line,
+    _SELF_INK, _YOU_BG, _style_hex, cut_mark, cut_to, elision_hop, path_line,
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import path_text
@@ -87,22 +87,19 @@ def test_empty_path_reads_as_the_callers_word() -> None:
     assert PathLine([], mode="plain").wrapped(40)[0].plain == "direct"
 
 
-def test_chips_are_separated_by_a_gap_not_an_interlock() -> None:
-    """A seam is two points, not one interlock: the previous chip tapers out with no
-    background of its own (the page shows through the wedge), and the next chip's left
-    edge notches the same point back inward out of its own fill. The closing edge keeps
-    its single taper — nothing follows it to notch."""
+def test_chips_are_joined_by_one_interlocked_chevron() -> None:
+    """A seam is one cell, not two: the previous chip's point laid *on* the next chip's
+    fill, so the route reads as a ribbon whose segments meet on a chevron. The closing
+    edge keeps its lone taper — nothing follows it to lay the point on."""
     alice_fill = node_style("aa").split()[-1]
     line = PathLine(
         [PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline"
     )
     text = line.text()
-    assert text.plain == f" Alice {POWERLINE_SEP * 2} you {POWERLINE_SEP}"
+    assert text.plain == f" Alice {POWERLINE_SEP} you {POWERLINE_SEP}"
     seam_styles = [str(s.style) for s in text.spans
                    if text.plain[s.start:s.end] == POWERLINE_SEP]
-    # taper out of Alice, notch into you (reverse = the page's own colour), closing edge
-    assert seam_styles == [alice_fill, "#ffffff reverse", "#ffffff"]
-    assert all(" on " not in style for style in seam_styles)  # never an interlock
+    assert seam_styles == [f"{alice_fill} on {_YOU_BG}", _YOU_BG]
 
 
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
@@ -136,7 +133,7 @@ def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
     assert _styles(plain)[CURSOR_GLYPH] == "selected"  # the reverse-video block
 
     chips = PathLine(hops, mode="powerline").text()
-    assert chips.plain == f" a {POWERLINE_SEP * 2} {CURSOR_GLYPH} {POWERLINE_SEP * 2} b {POWERLINE_SEP}"
+    assert chips.plain == f" a {POWERLINE_SEP} {CURSOR_GLYPH} {POWERLINE_SEP} b {POWERLINE_SEP}"
     slot = next(s for s in chips.spans if chips.plain[s.start : s.end] == CURSOR_GLYPH)
     assert str(slot.style).endswith(f"on {_style_hex('brand')}")  # the brand accent fill
 
@@ -209,14 +206,18 @@ def test_cut_to_leaves_arrow_lines_on_the_ellipsis() -> None:
 
 def test_cut_mark_mirrors_itself_and_reads_the_visible_side() -> None:
     """The head mark is the tail's mirror, and each takes the fill of the nearest cell
-    still *drawn* — so a cut landing on a seam cracks in the colour the reader can see,
-    which is a different chip on each side of it."""
+    still *drawn* — scanning back for a tail cut, forward for a head cut."""
     full = _chips().text()
-    seam = full.plain.index(POWERLINE_SEP)  # the two cells between AAAA and BBBB
-    head, tail = cut_mark(full, seam, ELIDE_HEAD), cut_mark(full, seam, ELIDE_TAIL)
+    body = full.plain.index("AAAA")  # inside the first chip, either way you scan
+    head, tail = cut_mark(full, body, ELIDE_HEAD), cut_mark(full, body, ELIDE_TAIL)
     assert (head.plain, tail.plain) == (CRACK_HEAD, CRACK_TAIL)
-    assert str(head.style) == _style_hex(node_style("22bb"))  # forward, into BBBB
-    assert str(tail.style) == _style_hex(node_style("11aa"))  # back, into AAAA
+    assert str(head.style) == str(tail.style) == _style_hex(node_style("11aa"))
+
+    # A cut landing on the interlocked seam itself cracks in the field that cell carries —
+    # the chip *ahead*, whose fill is literally the seam's background — so the mark reads
+    # as the next segment beginning and being sheared, not as a colour off the line.
+    seam = full.plain.index(POWERLINE_SEP)
+    assert str(cut_mark(full, seam, ELIDE_TAIL).style) == _style_hex(node_style("22bb"))
 
 
 def test_cut_mark_falls_back_to_the_ellipsis_off_a_chip() -> None:
@@ -227,6 +228,36 @@ def test_cut_mark_falls_back_to_the_ellipsis_off_a_chip() -> None:
         mark = cut_mark(arrows, 6, side)
         assert mark.plain == "…"
         assert str(mark.style) == "muted"
+
+
+def test_the_elision_sits_between_chips_rather_than_being_one() -> None:
+    """Hops dropped out of a path are a break *in* the ribbon, not a node called ``⋯``.
+
+    The chip before it closes onto the page, the mark sits there bare — no fill, no
+    padding — and the chip after it opens on its notch. Three cells for the whole gap
+    where a filled ``⋯`` chip with its pads and two seams cost seven, which is four more
+    hops of route on a line that is short of room by definition.
+    """
+    line = PathLine(
+        [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(5)], mode="powerline"
+    )
+    fitted = line.ellipsized(30)
+    assert fitted.cell_len <= 30
+    at = fitted.plain.index("⋯")
+    assert fitted.plain[at - 1] == POWERLINE_SEP and fitted.plain[at + 1] == POWERLINE_SEP
+    styles = {fitted.plain[s.start : s.end]: str(s.style) for s in fitted.spans}
+    assert styles["⋯"] == "faint"  # bare on the page: no ``on`` fill, and no pads either
+
+    # Arrow mode needed no special case — a bare label between two arrows already *is* a gap.
+    plain = PathLine(line.hops, mode="plain").ellipsized(30)
+    assert " ⋯ " in plain.plain and "→ ⋯ →" in plain.plain
+
+
+def test_elision_hop_is_the_one_definition_both_surfaces_share() -> None:
+    """The widget and the mesh walk's trail elide with the same mark *and* the same
+    gap semantics, so a head the widget hid reads as a tail the scroll hid."""
+    mark = elision_hop()
+    assert (mark.label, mark.gap, mark.dim) == ("⋯", True, True)
 
 
 def test_wrapped_cracks_an_over_wide_lone_chip() -> None:
@@ -439,19 +470,24 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     assert all(text.cell_len <= 20 for text in wrapped)
 
 
-def test_every_seam_opens_onto_the_page_whatever_the_fills() -> None:
-    """One gap rule, no exceptions: a seam never takes a background, so two chips of
-    one colour — a hue collision, a run of dimmed hops — can't fuse into a single block,
-    and two chips of different colours are still visibly two chips."""
+def test_a_seam_between_two_of_one_colour_falls_back_to_the_page() -> None:
+    """The interlock can't draw a chevron in its own background, so where two chips land
+    on the same fill the point drops its background and the page cuts the wedge instead.
+
+    Not a rare accident, either: a mirrored return leg is a run of identically faded hops
+    by construction, and a stretch of keyless hops shares one grey. Either way it stays a
+    single cell — the fallback trades the blend for the separation, not for width.
+    """
     hue = _style_hex(node_style("aa"))
     same = PathLine([PathHop("A", key="aa"), PathHop("B", key="aa")], mode="powerline")
-    seam = next(s for s in same.text().spans if same.text().plain[s.start] == POWERLINE_SEP)
-    assert str(seam.style) == hue  # foreground only: the page shows through the taper
+    text = same.text()
+    seam = next(s for s in text.spans if text.plain[s.start] == POWERLINE_SEP)
+    assert str(seam.style) == hue  # foreground only: the page shows through the wedge
 
     apart = PathLine([PathHop("A", key="aa"), PathHop("B", key="77")], mode="powerline")
     text = apart.text()
     seams = [str(s.style) for s in text.spans if text.plain[s.start] == POWERLINE_SEP]
-    assert seams[0] == hue  # the fill it tapers out of, and nothing behind it
+    assert seams[0] == f"{hue} on {_style_hex(node_style('77'))}"  # blended, one cell
 
     dimmed = PathLine([PathHop("A", dim=True), PathHop("B", dim=True)], mode="powerline")
     text = dimmed.text()
@@ -504,11 +540,13 @@ def test_bare_self_keeps_us_in_the_you_white_where_nothing_is_composed() -> None
                      dim_self=False, mode="plain").text()
     stars = [s for s in text.spans if text.plain[s.start : s.end] == SELF_GLYPH]
     assert [str(s.style) for s in stars] == ["you", "you"]
+    # In chips the same identity is the map's yellow star on the neutral dark grey — the
+    # marker itself rather than a hue, since our end is a fixture and not a node to tell apart.
     chips = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
                       dim_self=False, mode="powerline").text()
     fills = [str(s.style) for s in chips.spans
              if chips.plain[s.start : s.end] == SELF_GLYPH]
-    assert all("#ffffff" in fill for fill in fills)  # the you white, as a chip fill
+    assert fills == [f"bold {_SELF_INK} on {_YOU_BG}"] * 2
 
     # The explicit fade still rules: a star inside a dimmed return leg stays grey.
     faded = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,

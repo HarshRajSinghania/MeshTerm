@@ -8,14 +8,19 @@ caller), a :class:`PathLine` separates *what the hops are* from *how the line is
 drawn*, so every surface the survey found can eventually route through it:
 
 * **Two separator styles.** ``plain`` joins hops with muted ``→`` arrows — today's
-  look, unchanged. ``powerline`` renders each hop as a colour-filled chip, seams drawn
-  as two solid triangles U+E0B0 — the previous chip tapering out to a point, the next
-  one notched inward out of its own fill, a sliver of bare page between them: the gapped
-  oh-my-posh look, where a route reads as a row of distinct blocks rather than one
-  fused ribbon. The chip fill is the node's hash-derived hue
-  (:func:`~meshterm.ui.theme.node_style`), our own node the pure ``you`` white, a
-  faded hop dark slate, a keyless hop grey. A chip caught by a *cut* — a lane that ran
-  out, a line scrolled past its edge — breaks off on a half block in its own fill
+  look, unchanged. ``powerline`` renders each hop as a colour-filled chip, joined by one
+  solid triangle U+E0B0 interlocked between them — the chip behind as its foreground, the
+  chip ahead as its background — so a route reads as a ribbon whose segments meet on a
+  chevron: the oh-my-posh look, at one cell a seam. The chip fill is the node's
+  hash-derived hue (:func:`~meshterm.ui.theme.node_style`), our own node the map's yellow
+  ``★`` on a neutral dark grey, a faded hop dark slate, a keyless hop grey. Two chips that
+  land on the *same* fill — a mirrored return leg, a stretch of keyless greys — take the
+  one exception the interlock can't draw, dropping the background so the page cuts the
+  wedge (:meth:`PathLine._seam`). Hops elided out of the middle break the ribbon instead
+  of joining it: the mark sits bare on the page between a closing point and the next
+  chip's notch (:func:`elision_hop`), because a filled ``⋯`` chip would read as a node by
+  that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past its
+  edge — breaks off on a half block in its own fill
   (:func:`cut_mark`), and that crack is what says the segment continues; only chips
   crack, an arrow line still ellipsizes. ``auto`` (the default) picks powerline exactly
   when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
@@ -69,6 +74,7 @@ from rich.measure import Measurement
 from rich.text import Text
 
 from ..core.models import LOCAL_DEVICE_LABEL
+from .marks import SELF_MARK
 from .termfont import powerline_enabled, powerline_full
 from .theme import active_theme, node_style
 
@@ -87,8 +93,10 @@ POWERLINE_ROUND_OPEN = ""
 POWERLINE_ROUND_CLOSE = ""
 
 #: Our own node, wherever a surface asks for it stripped of name and hash
-#: (``bare_self``): the app-wide ``★`` — the same mark the map plants on us.
-SELF_GLYPH = "★"
+#: (``bare_self``): the app-wide ``★`` — literally the map's own marker, taken from
+#: :data:`~meshterm.ui.marks.SELF_MARK` so the star in a route and the star on the map
+#: can never drift apart, in glyph or in hue.
+SELF_GLYPH, _SELF_INK = SELF_MARK
 
 #: The composer's insertion cursor, standing in the route as a hop of its own: the
 #: empty slot the next chosen hop drops into. A ``+`` because that is exactly what
@@ -106,8 +114,11 @@ _CHIP_FG_SOFT = "#334155"
 #: Chip fill for a keyless hop — the ``faint`` grey; colour stays reserved for
 #: keyed identities in chips just as it is in arrow mode.
 _KEYLESS_BG = "#64748b"
-#: Our own node's chip fill: the pure ``you`` white.
-_YOU_BG = "#ffffff"
+#: Our own node's chip fill: a neutral dark grey, so the yellow ``★`` riding it reads as
+#: the map's marker rather than as a node's hue (JP, 2026-08-09). Deliberately *not* a
+#: spectrum colour and not the white it used to be — our end of a route is a fixture the
+#: reader already knows, so it sits back and lets the hops that differ carry the colour.
+_YOU_BG = "#3f3f46"
 #: A dimmed hop's chip: dark slate fill with muted ink, receding like ``faint`` text.
 _DIM_BG = "#334155"
 _DIM_FG = "#94a3b8"
@@ -156,7 +167,10 @@ class PathHop:
         key: Any known prefix of the node's key/hash — picks the hash-derived hue
             (its first byte, so every prefix agrees). ``None`` renders muted/grey:
             colour is reserved for keyed identities.
-        you: Our own node — pure white, in either mode.
+        you: Our own node. Arrows draw it in the pure-white ``you`` style; chips draw it
+            in the map's own yellow on the neutral dark grey :data:`_YOU_BG` — and where
+            the label is the bare :data:`SELF_GLYPH`, without the padding a word would
+            need, so our end of a route costs three cells rather than five.
         annotation: The trace-flavour hash note, rendered ``" (3d)"`` after the
             label in both modes (pass the bare ``3d``, no parentheses).
         lit_bytes: For a hash label: leading *bytes* drawn in the hue (the
@@ -170,6 +184,12 @@ class PathHop:
             :data:`CURSOR_GLYPH` in the app's brand accent, the same colour the list
             cursor (``❯``) below it wears, so the two halves of one gesture (the row
             you pick, the slot it lands in) read as one thing.
+        gap: This hop is a mark standing *between* two nodes rather than being one — the
+            elision (:func:`elision_hop`). Chips draw it in the break between two
+            segments, bare on the page with no fill and no padding, because what it says
+            is "the ribbon stops here and picks up again"; a chip would say the opposite,
+            that some node in the route is called ``⋯``. Arrow mode needs no special case:
+            a bare label between two arrows is already exactly that.
     """
 
     label: str
@@ -180,6 +200,17 @@ class PathHop:
     dim: bool = False
     style: Optional[str] = None
     cursor: bool = False
+    gap: bool = False
+
+
+def elision_hop() -> PathHop:
+    """The mark standing in for hops dropped out of a path's middle (or its head).
+
+    THE way to say "hops were left out here", so every surface that shortens a path
+    agrees on the glyph *and* on the fact that it is a gap rather than a node (see
+    :attr:`PathHop.gap`).
+    """
+    return PathHop(_ELISION, dim=True, gap=True)
 
 
 def _style_hex(style: str) -> Optional[str]:
@@ -366,7 +397,7 @@ class PathLine:
         full = self.text()
         if full.cell_len <= width or not self._hops:
             return full
-        mark = PathHop(_ELISION, dim=True)
+        mark = elision_hop()
         count = len(self._hops)
         # The heads worth trying, most-rescued first: a tail-side elision spares the
         # origin while it fits and gives it up only when it must; a head-side one is
@@ -498,19 +529,23 @@ class PathLine:
 
         Returns:
             ``(cells, join, tail, lead, head)`` — each hop's cells, the cells one join
-            between two hops costs (chip mode's seam is two: the point tapering out and
-            the notch cut into the next chip), the cells a line always closes with (chip
-            mode's edge; nothing in arrow mode), the cells every line *after the first*
-            opens with (chip mode's notch, the seam's second half redrawn), and the
-            cells the *first* line opens with (chip mode's rounded cap, nothing where
-            the font has none).
+            between two hops costs (chip mode's seam is the single interlocked chevron —
+            and so is either side of an elision gap, so the figure holds there too), the
+            cells a line always closes with (chip mode's edge; nothing in arrow mode), the
+            cells every line *after the first* opens with (chip mode's notch, the seam
+            redrawn), and the cells the *first* line opens with (chip mode's rounded cap,
+            nothing where the font has none).
         """
         if plain:
             return [self._plain_hop(hop).cell_len for hop in hops],                 cell_len(self._separator), 0, 0, 0
-        widths = [self._chip(hop, self._chip_fill(hop)).cell_len for hop in hops]
+        widths = [
+            cell_len(hop.label) if hop.gap
+            else self._chip(hop, self._chip_fill(hop)).cell_len
+            for hop in hops
+        ]
         sep = cell_len(POWERLINE_SEP)
         head = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
-        return widths, sep * 2, sep, sep, head
+        return widths, sep, sep, sep, head
 
     @staticmethod
     def _fill(
@@ -711,6 +746,11 @@ class PathLine:
         outruns closes on the point, the same "goes on" cue arrow mode spells with a
         trailing ``→``.
 
+        An elision (:attr:`PathHop.gap`) interrupts the ribbon rather than joining it: the
+        chip before it closes on the page, the mark sits on the page bare, and the chip
+        after it opens on its notch — the picture of a route whose middle was left out,
+        where a filled ``⋯`` chip would have read as a node by that name.
+
         Args:
             hops: The hops of this one line, in order.
             carry_in: This line continues a wrapped path (it does not open one).
@@ -721,43 +761,54 @@ class PathLine:
         text = Text()
         if carry_in:
             text.append_text(self._notch(fills[0]))  # the break's other half
-        elif rounded:
+        elif rounded and not hops[0].gap:
             text.append(POWERLINE_ROUND_OPEN, style=fills[0])
         for i, hop in enumerate(hops):
             if i:
-                text.append_text(self._seam(fills[i - 1], fills[i]))
-            text.append_text(self._chip(hop, fills[i]))
+                if hops[i - 1].gap:
+                    text.append_text(self._notch(fills[i]))  # the ribbon picks up again
+                elif hop.gap:
+                    text.append(POWERLINE_SEP, style=fills[i - 1])  # …and stops here
+                else:
+                    text.append_text(self._seam(fills[i - 1], fills[i]))
+            if hop.gap:
+                text.append(hop.label, style="faint" if hop.dim else "muted")
+            else:
+                text.append_text(self._chip(hop, fills[i]))
+        if hops[-1].gap:
+            return text  # the line ended on the page; there is no chip left to close
         close = POWERLINE_SEP if carry_on or not rounded else POWERLINE_ROUND_CLOSE
         text.append(close, style=fills[-1])  # the edge into the page: pointed or round
         return text
 
-    @classmethod
-    def _seam(cls, before: str, after: str) -> Text:
-        """The two cells between two chips: a point tapering out, a notch cut back in.
+    @staticmethod
+    def _seam(before: str, after: str) -> Text:
+        """The one cell between two chips: the previous fill's point, laid on the next.
 
-        The previous chip's point carries *no* background, so the page shows through the
-        wedge it tapers into; the next chip's left edge then opens on the same point in
-        the page's own colour, notched inward out of its fill. Both faces angle the way
-        the path flows, and between them sits a sliver of bare page — the small gap
-        oh-my-posh leaves between its segments.
+        The classic interlock — foreground the chip behind, background the chip ahead —
+        so the route reads as one ribbon whose segments meet on a chevron. It costs a
+        single cell, and with 256 node hues on the wheel two neighbours are near enough
+        to always differ that the join reads as a join (JP, 2026-08-09; the widget used
+        to spend two cells leaving a sliver of page between every pair, insurance against
+        a collision that the palette makes rare).
 
-        The alternative (one cell, the previous fill interlocked *on* the next) packs
-        the row tighter but fuses the route into a continuous ribbon, and two neighbours
-        that happen to land on the same fill — a hue collision, a run of faded hops, two
-        keyless greys — then read as a single block where the route has two nodes. One
-        gap, every seam: a chip is always a chip.
+        Two fills that *do* land the same are the exception the interlock cannot draw —
+        a chevron in its own background is no chevron — and they are not always bad luck:
+        a mirrored return leg is a run of identically faded hops by construction, and so
+        is a stretch of keyless greys. There the point drops its background and the page
+        shows through the wedge instead, which is the one thing that still separates two
+        blocks of one colour. One cell either way.
 
         Args:
-            before: The fill the seam tapers out of (the previous chip's).
-            after: The fill the seam notches back into (the next chip's).
+            before: The fill the point is drawn in (the previous chip's).
+            after: The fill it is laid on (the next chip's).
 
         Returns:
-            The seam's two cells, styled.
+            The seam's single styled cell.
         """
-        text = Text()
-        text.append(POWERLINE_SEP, style=before)
-        text.append_text(cls._notch(after))
-        return text
+        if before == after:
+            return Text(POWERLINE_SEP, style=before)  # fg only — the page cuts the wedge
+        return Text(POWERLINE_SEP, style=f"{before} on {after}")
 
     @staticmethod
     def _notch(fill: str) -> Text:
@@ -779,16 +830,15 @@ class PathLine:
         return text
 
     def _chip_fill(self, hop: PathHop) -> str:
-        """A chip's fill: cursor accent, override, dim slate, white you, hue, grey.
+        """A chip's fill: cursor accent, override, dim slate, our grey, hue, keyless grey.
 
         The insertion slot outranks everything — it is the one chip that isn't a node,
         and it wears the brand accent so it reads as chrome among identities rather than
         as a hop with an unlucky hue. The fade comes next, outranking identity including
-        our own. A dimmed hop is one nobody composed (an automatic landing back home, a
-        mirrored return leg), and the white ``you`` chip is the loudest thing on the
-        line: our automatic end must recede with the rest of the automatic half, not
-        shout over the hops that *are* news. Plain mode says the same thing by fading
-        the name.
+        our own: a dimmed hop is one nobody composed (an automatic landing back home, a
+        mirrored return leg), and our end must recede with the rest of that automatic
+        half rather than keep its yellow among the greys. Plain mode says the same thing
+        by fading the name.
         """
         if hop.cursor:
             return _style_hex("brand") or _KEYLESS_BG
@@ -805,11 +855,21 @@ class PathLine:
         return _KEYLESS_BG
 
     def _chip(self, hop: PathHop, fill: str) -> Text:
-        """One chip: same words as arrow mode, dark ink on the identity fill."""
-        ink = _DIM_FG if hop.dim else _CHIP_FG
+        """One chip: same words as arrow mode, dark ink on the identity fill.
+
+        A chip whose whole label is the ``★`` drops its padding: the pads exist to keep a
+        *word* off the chevrons that bracket it, and a single mark centred in its own cell
+        needs no such room — so our end of a route is three cells (cap, star, cap) rather
+        than five. Its ink is the map's own yellow, on the neutral dark grey
+        :data:`_YOU_BG`, so the star in the line and the star on the map read as one mark.
+        """
+        star = hop.you and hop.label == SELF_GLYPH
+        ink = _DIM_FG if hop.dim else (_SELF_INK if hop.you else _CHIP_FG)
         soft = _DIM_FG if hop.dim else _CHIP_FG_SOFT
+        pad = "" if star else " "
         text = Text()
-        text.append(" ", style=f"on {fill}")
+        if pad:
+            text.append(pad, style=f"on {fill}")
         if hop.lit_bytes > 0 and not hop.dim:
             split = hop.lit_bytes * 2
             text.append(hop.label[:split], style=f"bold {ink} on {fill}")
@@ -819,7 +879,8 @@ class PathLine:
             text.append(hop.label, style=f"{weight}{ink} on {fill}")
         if hop.annotation:
             text.append(f" ({hop.annotation})", style=f"{soft} on {fill}")
-        text.append(" ", style=f"on {fill}")
+        if pad:
+            text.append(pad, style=f"on {fill}")
         return text
 
 

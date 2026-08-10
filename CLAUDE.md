@@ -131,9 +131,14 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   from `⋯`, which marks whole hops *elided* out of the middle (`PathLine.ellipsized`).
 - Path endpoints: a path line runs between the nodes it actually went between — the true
   origin and destination, never the first and last *relay*. Our own end is always the
-  app-wide `★` (`pathline.SELF_GLYPH`, or `path_line(bare_self=True)`), never our name:
-  the one node the reader never has to be told, and the cells belong to the hops that
-  differ from row to row.
+  app-wide `★` (`pathline.SELF_GLYPH`, taken straight from `marks.SELF_MARK`), never our
+  name: the one node the reader never has to be told, and the cells belong to the hops
+  that differ from row to row. As a chip it is the map's yellow star on neutral dark
+  grey, padless — three cells, not five.
+- Chip seams are **one** interlocked chevron (previous fill on next). Two chips of the
+  same fill are the exception the interlock can't draw: the point drops its background so
+  the page cuts the wedge. An elision breaks the ribbon rather than joining it — bare `⋯`
+  on the page between a closing point and the next chip's notch, no fill, no padding.
 - Concept icons: 📡 advert · 🕒 clock/sync · 🔄 reboot · 💾 backup · 📂 restore ·
   🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·

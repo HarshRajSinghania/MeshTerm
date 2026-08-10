@@ -66,7 +66,7 @@ from ..services.topology import Link, MeshTopology
 from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
-from .pathline import ELIDE_HEAD, SELF_GLYPH, PathHop, PathLine
+from .pathline import ELIDE_HEAD, SELF_GLYPH, PathHop, PathLine, elision_hop
 from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import query_line, render_to_ansi
@@ -136,12 +136,11 @@ _FAN_MIN_SLOTS = 7
 #: never collide with a canonical id (those are hex).
 _MORE = "\x00more"
 
-#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``) and the mark it
-#: shows on whichever side holds walk that is out of view (see :meth:`WalkScreen._trail_text`).
-#: The mark is the one :mod:`~meshterm.ui.pathline` elides with, so a head the widget hid
-#: and a tail the scroll hid read as the same thing.
+#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``). The mark it shows
+#: on whichever side holds walk that is out of view is
+#: :func:`~meshterm.ui.pathline.elision_hop` itself (see :meth:`WalkScreen._trail_text`), so
+#: a head the widget hid and a tail the scroll hid read as the same thing.
 _TRAIL_SEP = " › "
-_ELISION = "⋯"
 
 #: How many find matches the list shows at most (the filter narrows it fast).
 _MAX_MATCHES = 10
@@ -634,7 +633,7 @@ class WalkScreen(Screen):
                 return full
         kept = hops[: len(hops) - self._trail_scroll]
         if self._trail_scroll:
-            kept.append(PathHop(_ELISION, dim=True))  # the focus is off to the right
+            kept.append(elision_hop())  # the focus is off to the right
         fitted = PathLine(kept, separator=_TRAIL_SEP).ellipsized(width, elide=ELIDE_HEAD)
         snapped = Text(" " * max(0, width - fitted.cell_len))  # snap the tail to the edge
         snapped.append_text(fitted)
@@ -657,7 +656,7 @@ class WalkScreen(Screen):
         hops = [self._trail_hop(node) for node in self._trail]
         limit = 0
         if PathLine(hops, separator=_TRAIL_SEP).text().cell_len > width:
-            mark = PathHop(_ELISION, dim=True)
+            mark = elision_hop()
             for dropped in range(1, len(hops)):
                 limit = dropped
                 head = PathLine(hops[: len(hops) - dropped] + [mark], separator=_TRAIL_SEP)
