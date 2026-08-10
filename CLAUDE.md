@@ -134,7 +134,7 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   app-wide `★` (`pathline.SELF_GLYPH`, taken straight from `marks.SELF_MARK`), never our
   name: the one node the reader never has to be told, and the cells belong to the hops
   that differ from row to row. As a chip it is the map's yellow star on neutral dark
-  grey, padless — three cells, not five.
+  grey, padded like every other chip.
 - Chip seams are **one** interlocked chevron (previous fill on next). Two chips of the
   same fill are the exception the interlock can't draw: the point drops its background so
   the page cuts the wedge. An elision breaks the ribbon rather than joining it — bare `⋯`

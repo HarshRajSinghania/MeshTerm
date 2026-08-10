@@ -168,9 +168,8 @@ class PathHop:
             (its first byte, so every prefix agrees). ``None`` renders muted/grey:
             colour is reserved for keyed identities.
         you: Our own node. Arrows draw it in the pure-white ``you`` style; chips draw it
-            in the map's own yellow on the neutral dark grey :data:`_YOU_BG` — and where
-            the label is the bare :data:`SELF_GLYPH`, without the padding a word would
-            need, so our end of a route costs three cells rather than five.
+            in the map's own yellow on the neutral dark grey :data:`_YOU_BG`, padded like
+            every other chip.
         annotation: The trace-flavour hash note, rendered ``" (3d)"`` after the
             label in both modes (pass the bare ``3d``, no parentheses).
         lit_bytes: For a hash label: leading *bytes* drawn in the hue (the
@@ -857,19 +856,17 @@ class PathLine:
     def _chip(self, hop: PathHop, fill: str) -> Text:
         """One chip: same words as arrow mode, dark ink on the identity fill.
 
-        A chip whose whole label is the ``★`` drops its padding: the pads exist to keep a
-        *word* off the chevrons that bracket it, and a single mark centred in its own cell
-        needs no such room — so our end of a route is three cells (cap, star, cap) rather
-        than five. Its ink is the map's own yellow, on the neutral dark grey
-        :data:`_YOU_BG`, so the star in the line and the star on the map read as one mark.
+        Every chip is padded on both sides, the ``★`` included (JP, 2026-08-09): the pads
+        are not there to make room for a long *word*, they are the chip's own shape, and a
+        star squeezed between two chevrons reads as a glyph wedged into the seam rather
+        than as a segment of the route. Our own chip's ink is the map's yellow on the
+        neutral dark grey :data:`_YOU_BG`, so the star in the line and the star on the map
+        read as one mark.
         """
-        star = hop.you and hop.label == SELF_GLYPH
         ink = _DIM_FG if hop.dim else (_SELF_INK if hop.you else _CHIP_FG)
         soft = _DIM_FG if hop.dim else _CHIP_FG_SOFT
-        pad = "" if star else " "
         text = Text()
-        if pad:
-            text.append(pad, style=f"on {fill}")
+        text.append(" ", style=f"on {fill}")
         if hop.lit_bytes > 0 and not hop.dim:
             split = hop.lit_bytes * 2
             text.append(hop.label[:split], style=f"bold {ink} on {fill}")
@@ -879,8 +876,7 @@ class PathLine:
             text.append(hop.label, style=f"{weight}{ink} on {fill}")
         if hop.annotation:
             text.append(f" ({hop.annotation})", style=f"{soft} on {fill}")
-        if pad:
-            text.append(pad, style=f"on {fill}")
+        text.append(" ", style=f"on {fill}")
         return text
 
 
