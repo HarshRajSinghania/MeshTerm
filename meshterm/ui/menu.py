@@ -29,7 +29,7 @@ from ..platforms import get_platform
 from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
-from .menus import SEP_COMPACT, SEP_ROOMY, section_heading
+from .menus import SEP_COMPACT, SEP_ROOMY, command_icon, command_label, section_heading
 from .theme import make_console
 from .widgets import battery_cell
 from .tui import (
@@ -464,7 +464,8 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
 
         def _label(tool) -> str:  # noqa: ANN001 - registry Tool; typed at the source
             title = tool.title or tool.name
-            return f"{tool.icon} {title}" if tool.icon else title
+            icon = command_icon(tool.icon)
+            return f"{icon} {title}" if icon else title
 
         name_w = max((cell_len(_label(tool)) for tool in tools), default=0)
         items: list = []
@@ -479,7 +480,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
             row.append(tool.help, style="muted")
             items.append(Choice(title=row, value=tool.name))
         items.append(Separator(" "))
-        items.append(Choice(title="🚪 Quit", value="__quit__"))
+        items.append(Choice(title=command_label("🚪 Quit"), value="__quit__"))
 
         # Drive the menu list ourselves (rather than via session.select) so it stays on the
         # stack while the quit dialog floats over it: the confirm is drawn as a centered box

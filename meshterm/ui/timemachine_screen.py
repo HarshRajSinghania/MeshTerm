@@ -41,7 +41,7 @@ from .braillechart import (
     chart_span,
     timeline_rows,
 )
-from .menus import fit_cells, section_heading
+from .menus import command_label, fit_cells, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import name_style, snr_style
 from .tui.render import render_lines
@@ -1272,7 +1272,7 @@ class TimeMachinePickerScreen(ContactListScreen):
             sort=sort,
             prompt=prompt,
             lead=[
-                Choice("🌐 The whole mesh — days, arrivals, the ledger", MESH),
+                Choice(command_label("🌐 The whole mesh — days, arrivals, the ledger"), MESH),
                 Separator(" "),
                 section_heading("Nodes"),
             ],

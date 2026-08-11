@@ -33,6 +33,7 @@ import asyncio
 import re
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
@@ -41,6 +42,7 @@ from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN
 from ..core.models import Contact, TraceResult, TxLevelResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..services.topology import build_topology, render_custom_spec
+from .menus import command_icon
 from .pathline import SELF_GLYPH, PathHop, PathLine, cut_to, path_line
 from .theme import name_style, snr_style
 from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
@@ -65,6 +67,27 @@ STEP_CHOICES = (1, 2, 3, 4, 5)
 
 #: The per-level sample counts the Samples dialog offers (the trace tool's ladder).
 SAMPLE_CHOICES = (1, 2, 3, 5, 8)
+
+
+#: Every mark the sweep's action rows lead with. The list exists to *measure* the icon
+#: column so each label starts in the same place, and so a platform that draws no icon
+#: lane at all (see :func:`~meshterm.ui.menus.command_icon`) collapses it to nothing.
+_ACTION_ICONS = ("✎", "⚙", "#", "▶", "★")
+
+
+def _icon_lane() -> int:
+    """The action rows' icon column, in cells: the widest mark on this platform."""
+    return max(cell_len(command_icon(icon)) for icon in _ACTION_ICONS)
+
+
+def _icon(text: Text, icon: str, style: str) -> None:
+    """Append an action row's mark in the icon column, its trailing space included."""
+    lane = _icon_lane()
+    if not lane:
+        return
+    mark = command_icon(icon)
+    text.append(mark, style=style)
+    text.append(" " * (lane - cell_len(mark) + 1))
 
 
 class TxSweepScreen(Screen):
@@ -379,29 +402,29 @@ class TxSweepScreen(Screen):
         """One action row: pointer, glyph, and label (current value inlined)."""
         text = Text("❯ " if selected else "  ", style="brand" if selected else "")
         if key == "route":
-            text.append("✎ ", style="brand")
+            _icon(text, "✎", "brand")
             if self.route_hops:
                 text.append("Route — via ")
                 text.append_text(path_line(list(self.route_hops), self._resolve).text())
             else:
                 text.append(f"Route — direct to {self._admin_label}")
         elif key == "range":
-            text.append("⚙ ", style="accent")
+            _icon(text, "⚙", "accent")
             text.append(f"Range — TX {self.tx_min}–{self.tx_max}")
         elif key == "step":
-            text.append("⚙ ", style="accent")
+            _icon(text, "⚙", "accent")
             text.append(f"Step — every {_nth(self.step)} level, then refine"
                         if self.step > 1 else "Step — every level (no refine needed)")
         elif key == "samples":
-            text.append("# ", style="accent")
+            _icon(text, "#", "accent")
             text.append(
                 f"Samples — {self.samples} trace{'s' if self.samples != 1 else ''} per level"
             )
         elif key == "sweep":
-            text.append("▶ ", style="ok")
+            _icon(text, "▶", "ok")
             text.append(f"Sweep — up to {self.estimated_traces()} paced transmissions")
         elif key == "apply":
-            text.append("★ ", style="ok")
+            _icon(text, "★", "ok")
             best = self._result.best_tx if self._result is not None else "?"
             text.append(f"Apply winner — set TX {best} on {self._admin_label}")
         else:

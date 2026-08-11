@@ -29,7 +29,7 @@ from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
-from .menus import back_rows, section_heading
+from .menus import back_rows, command_label, marked_label, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import glyph
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
@@ -472,8 +472,8 @@ async def _entry_actions(ctx: "AppContext", ident: int) -> None:
         await session.message_dialog(body, title=message.node_name)
         return
     items = [
-        Choice("📤 Send now — one forced attempt", "send"),
-        Choice(Text.assemble(("✗ ", "err"), "Cancel this message"), "cancel"),
+        Choice(command_label("📤 Send now — one forced attempt"), "send"),
+        Choice(marked_label("✗", "Cancel this message", "err"), "cancel"),
     ]
     picked = await session.select(
         f"{message.node_name} — “{_shorten(message.text, 28)}”",

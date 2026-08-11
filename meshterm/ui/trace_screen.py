@@ -96,8 +96,8 @@ from ..services import trace_runner
 from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
-from .menus import back_rows, section_heading
-from .theme import glyph, snr_style
+from .menus import back_rows, command_icon, marked_label, section_heading
+from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner, spinner_interval
@@ -159,24 +159,26 @@ _ACTION_ICONS = ("✎", "⇄", "⚡", "⚙", "#", "▶")
 def _icon_lane() -> int:
     """The action rows' icon column, in cells: the widest mark on this platform.
 
-    Measured rather than hard-coded because the marks themselves change width with
-    the platform: on PicoCalc every icon funnels through :func:`~meshterm.ui.theme.glyph`
-    to a single console-font character (``⚡`` → ``!``), so the column tightens to one
-    cell and the labels move left with it — the same alignment rule at the console's
-    own resolution.
+    Measured rather than hard-coded because the marks themselves change with the
+    platform: PicoCalc draws no icon lane on a command row at all
+    (:func:`~meshterm.ui.menus.command_icon`), so the column measures zero and the labels
+    take the cells — the same alignment rule wherever the icons land.
     """
-    return max(cell_len(glyph(icon)) for icon in _ACTION_ICONS)
+    return max(cell_len(command_icon(icon)) for icon in _ACTION_ICONS)
 
 
 def _icon(text: Text, icon: str, style: str) -> None:
     """Append an action row's mark in the icon column, its trailing space included.
 
-    A one-cell mark pads out to :func:`_icon_lane` so every label — narrow mark or
-    wide emoji — starts in the same column.
+    A one-cell mark pads out to :func:`_icon_lane` so every label starts in the same
+    column; an emptied lane (see there) appends nothing, separator included.
     """
-    mark = glyph(icon)
+    lane = _icon_lane()
+    if not lane:
+        return
+    mark = command_icon(icon)
     text.append(mark, style=style)
-    text.append(" " * (_icon_lane() - cell_len(mark) + 1))
+    text.append(" " * (lane - cell_len(mark) + 1))
 
 
 def _lane_lines(label: str, value: list[Text], width: int) -> list[str]:
@@ -1984,7 +1986,7 @@ async def _open_session(
         items.append(Separator(" "))
         items.append(
             Choice(
-                title=Text.assemble(("⚡ ", "warn"), "Probe all — trace each path once and rank"),
+                title=marked_label("⚡", "Probe all — trace each path once and rank", "warn"),
                 value=("probe", None),
             )
         )

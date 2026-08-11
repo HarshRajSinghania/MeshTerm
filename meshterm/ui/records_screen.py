@@ -47,7 +47,7 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
-from .menus import back_rows, fit_cells, section_heading
+from .menus import back_rows, command_icon, fit_cells, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
 from .pathline import path_line
 from .theme import name_style, snr_style
@@ -473,11 +473,11 @@ class RecordDialog(Screen):
             selected = i == self._index
             row = Text("❯ " if selected else "  ", style="brand" if selected else "")
             if key == "trace":
-                row.append("👣 ", style="accent")
-                row.append("Trace this path — reopen in Trace path")
+                row.append_text(marked_label(
+                    "👣", "Trace this path — reopen in Trace path", "accent"
+                ))
             elif key == "delete":
-                row.append("🗑 ", style="err")
-                row.append("Delete record…")
+                row.append_text(marked_label("🗑", "Delete record…", "err"))
             else:
                 row.append("Back")
             if selected:
@@ -840,11 +840,11 @@ async def open_records(ctx: "AppContext") -> dict:
         items.append(Separator(" "))
         if total:
             items.append(Choice(
-                title=Text.assemble(("🗑 ", "err"), "Delete a discipline's records…"),
+                title=marked_label("🗑", "Delete a discipline's records…", "err"),
                 value=("del_cat", None, 0, None),
             ))
             items.append(Choice(
-                title=Text.assemble(("🗑 ", "err"), "Delete all records…"),
+                title=marked_label("🗑", "Delete all records…", "err"),
                 value=("del_all", None, 0, None),
             ))
         items.extend(back_rows(("back", None, 0, None)))

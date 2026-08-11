@@ -81,6 +81,7 @@ from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
 from .mapcanvas import RGB
+from .menus import command_icon
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -1043,8 +1044,11 @@ class NodeDetailScreen(Screen):
     def _action_line(self, action: _Action, selected: bool, width: int) -> str:
         """One action row: ``❯`` + icon + label, the whole row brand when it is the cursor's."""
         text = Text("❯ " if selected else "  ", style="brand" if selected else "")
-        if action.glyph:
-            text.append(f"{action.glyph} ", style=action.glyph_style)
+        # The icon lane is decoration a platform may drop whole (command_icon); the label
+        # is what names the action, so an emptied lane simply gives it the cells.
+        mark = command_icon(action.glyph) if action.glyph else ""
+        if mark:
+            text.append(f"{mark} ", style=action.glyph_style)
         text.append(action.label)
         if selected:
             text.style = "brand"

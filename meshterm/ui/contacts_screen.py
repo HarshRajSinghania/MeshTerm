@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from .contactlist import ContactListScreen, ContactRow
-from .menus import back_rows, menu_rows
+from .menus import back_rows, marked_label, menu_rows
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
 from .widgets import ContactsSort, _age_seconds, _contact_pkts
@@ -146,7 +146,7 @@ class ContactsScreen(ContactListScreen):
             tail = [
                 Separator(" "),
                 Choice(
-                    title=Text.assemble(("🗑 ", "err"), "Purge stale contacts…"),
+                    title=marked_label("🗑", "Purge stale contacts…", "err"),
                     value=_PURGE,
                 ),
                 *back_rows(_BACK),

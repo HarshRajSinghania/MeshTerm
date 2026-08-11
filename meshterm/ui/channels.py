@@ -63,7 +63,7 @@ from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
 from .braillechart import activity_peak, activity_sparkline
-from .menus import back_rows, fit_cells, menu_rows, section_heading
+from .menus import back_rows, command_label, fit_cells, menu_rows, section_heading
 from .qr import share_popup
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
@@ -595,8 +595,9 @@ def _menu_items(
         items.append(section_heading("Organize"))
         # Two spaces after the arrow: ↕ (East-Asian-ambiguous width) renders one cell where
         # the sibling rows' glyphs (＋ ＃ 🔑 🔗) render two, so the extra space keeps this
-        # label's text column-aligned with theirs.
-        items.append(Choice(title="↕  Reorder channels", value=_REORDER))
+        # label's text column-aligned with theirs. Both go together where the platform
+        # draws no icon lane at all.
+        items.append(Choice(title=command_label("↕  Reorder channels"), value=_REORDER))
 
     items.append(section_heading("Add a channel"))
     rows = []

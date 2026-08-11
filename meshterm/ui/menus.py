@@ -34,10 +34,16 @@ from typing import TYPE_CHECKING, Any, Iterable, Sequence, Union
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..platforms import get_platform
+from .theme import glyph
 from .tui import Choice, Separator
 
 if TYPE_CHECKING:
     from ..context import AppContext
+
+#: What a command row's label may be: plain text, or styled text whose spans survive the
+#: icon cut (an err-tinted destructive row, a live unread badge).
+LabelT = Union[str, Text]
 
 
 #: The app's status-atom separator, in its two widths. ``·`` chains atoms (the standards'
@@ -48,6 +54,79 @@ if TYPE_CHECKING:
 #: scarce thing.
 SEP_ROOMY = "  ·  "
 SEP_COMPACT = " · "
+
+
+def command_icon(icon: str) -> str:
+    """The glyph a command row leads with — empty where the platform drops the icon lane.
+
+    The compose-time half of :data:`~meshterm.platforms.Platform.menu_icons`, for a row
+    that builds its own icon lane (a screen's body actions) rather than carrying the icon
+    inside a label string — :func:`command_label` is that case. Returning ``""`` rather
+    than a stand-in is the point: the caller measures what comes back, so an emptied lane
+    costs no cells at all, and the padding it would have taken goes to the label.
+
+    Args:
+        icon: The row's icon, as written on the regular platform.
+
+    Returns:
+        :func:`~meshterm.ui.theme.glyph`'s rendering of it, or ``""``.
+    """
+    return glyph(icon) if get_platform().menu_icons else ""
+
+
+def marked_label(icon: str, label: str, style: str) -> Text:
+    """A command row whose icon carries a tint — the tint moving to the label if it goes.
+
+    The app marks a destructive command by tinting its icon, not its words (``🗑`` in
+    ``err`` before a plain "Delete all records…"). Drop the icon on a platform without an
+    icon lane and the tint would go with it, leaving a delete row looking like any other,
+    so it lands on the label instead — the presentation the config editor's *Factory
+    reset* has always used.
+
+    Args:
+        icon: The row's icon, as written on the regular platform.
+        label: The row's words, with no icon and no leading space.
+        style: The theme style the mark (or, iconless, the label) is drawn in.
+
+    Returns:
+        The composed row label.
+    """
+    mark = command_icon(icon)
+    return Text.assemble((f"{mark} ", style), label) if mark else Text(label, style=style)
+
+
+def command_label(label: LabelT) -> LabelT:
+    """``label`` with its leading icon dropped where the platform drops the icon lane.
+
+    A command row's icon is *decoration*: it names the action's family while the label
+    names the action, so it is the first thing to go when cells are scarce (see
+    :data:`~meshterm.platforms.Platform.menu_icons`). The icon is taken to be everything
+    before the label's first space, and only when that head starts with a non-alphanumeric
+    character — so ``"🗑 Clear this slot…"`` and ``"↻ Read settings"`` both lose their
+    head while ``"Back"`` and ``"Trace target"`` pass through untouched.
+
+    What must *not* come through here: a glyph carrying data (a channel's openness, a
+    packet's class, a node's type) or a status mark on an outcome or commit row
+    (``✓ Apply…``, ``✗ Back — discard…``, built by :func:`exit_rows`). Those say something
+    the label doesn't, on every platform.
+
+    Args:
+        label: The row's full label, icon included — a plain string or a styled
+            :class:`~rich.text.Text` (whose spans survive the cut).
+
+    Returns:
+        The label, iconless or unchanged. The type is the one that went in.
+    """
+    if get_platform().menu_icons:
+        return label
+    plain = label.plain if isinstance(label, Text) else label
+    head, sep, rest = plain.partition(" ")
+    if not sep or not head or head[0].isalnum() or not rest.strip():
+        return label
+    # Take the gap with the icon: a row that padded a one-cell mark out to the width of
+    # its two-cell siblings ("↕  Reorder channels") must not leave the padding behind.
+    cut = len(plain) - len(rest.lstrip(" "))
+    return label[cut:]
 
 
 def back_rows(value: Any = None) -> list:
@@ -102,6 +181,10 @@ def menu_rows(rows: Iterable[tuple[Union[str, Text], str, Any]]) -> list:
     description column starting two cells past the widest label, padding computed in
     display cells so a double-width emoji can't skew it.
 
+    Each label passes through :func:`command_label` first, so a platform that draws no
+    icon lane loses it *before* the lane is measured — the description column moves left
+    with the labels rather than going ragged behind them.
+
     Args:
         rows: ``(label, description, value)`` triples. A :class:`Text` label keeps its
             own styling (an err-tinted destructive row, a live unread badge).
@@ -110,8 +193,10 @@ def menu_rows(rows: Iterable[tuple[Union[str, Text], str, Any]]) -> list:
         One :class:`Choice` per row, lanes aligned across them all.
     """
     prepared = [
-        (label if isinstance(label, Text) else Text(label), help_text, value)
-        for label, help_text, value in rows
+        (Text(label) if isinstance(label, str) else label.copy(), help_text, value)
+        for label, help_text, value in (
+            (command_label(label), help_text, value) for label, help_text, value in rows
+        )
     ]
     width = max((cell_len(label.plain) for label, _, _ in prepared), default=0)
     items: list = []
@@ -267,8 +352,13 @@ def section_heading(label: str) -> Separator:
     :attr:`~meshterm.ui.tui.select.Separator.heading`, so it re-pins to the top row once its
     section scrolls under it and the Ctrl+PageUp/PageDown jumps step by it. Building the row
     by hand is how a section loses that — go through here.
+
+    A heading that leads with an icon (``📡 Channels``, a trophy discipline's mark) loses it
+    on a platform that draws no icon lane, exactly as a command row does — a heading is the
+    same kind of label, and a stand-in glyph beside the rule already drawing ``──`` reads as
+    noise (see :func:`command_label`).
     """
-    return Separator(f"── {label} ──", style="accent", heading=True)
+    return Separator(f"── {command_label(label)} ──", style="accent", heading=True)
 
 
 def fit_cells(text: str, width: int, *, align: str = "left") -> str:

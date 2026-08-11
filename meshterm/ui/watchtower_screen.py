@@ -23,7 +23,7 @@ from rich.text import Text
 from ..core.models import Contact
 from ..core.watch_store import OFF, SILENCE_CHOICES_H, Alert, WatchedNode
 from ..services.trace_runner import make_name_key_resolver
-from .menus import back_rows, section_heading
+from .menus import back_rows, command_label, marked_label, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age
@@ -198,9 +198,9 @@ def _menu_items(
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
     if unacked:
-        items.append(Choice(f"✓ Acknowledge all ({unacked})", _ACK_ALL))
+        items.append(Choice(marked_label("✓", f"Acknowledge all ({unacked})", "ok"), _ACK_ALL))
     if acked:
-        items.append(Choice("🗑 Clear acknowledged", _CLEAR))
+        items.append(Choice(marked_label("🗑", "Clear acknowledged", "err"), _CLEAR))
 
     items.append(Separator(" "))
     items.append(section_heading("Watched nodes"))
@@ -208,13 +208,16 @@ def _menu_items(
         items.append(Separator("  none starred yet — silence and SNR rules need one"))
     for key in sorted(watched, key=lambda k: watched[k].name.casefold()):
         items.append(Choice(_watched_row(watched[key], type_of), ("node", key)))
-    items.append(Choice("⭐ Watch a node…", _WATCH))
+    items.append(Choice(command_label("⭐ Watch a node…"), _WATCH))
 
     items.append(Separator(" "))
     state = "[ok]on[/ok]" if new_node_alerts else "[muted]off[/muted]"
     items.append(
         Choice(
-            Text.from_markup(f"🔔 New-node alerts: {state}  [muted]— announce first-ever appearances[/muted]"),
+            command_label(Text.from_markup(
+                f"🔔 New-node alerts: {state}"
+                "  [muted]— announce first-ever appearances[/muted]"
+            )),
             _TOGGLE_NEW,
         )
     )
@@ -350,10 +353,12 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             return
         silence = "off" if entry.silence_hours == OFF else f"after {entry.silence_hours} h"
         items = [
-            Choice(f"🕒 Silence alarm      {silence}", "silence"),
-            Choice("📶 SNR watch          " + ("on" if entry.snr_watch else "off"), "snr"),
+            Choice(command_label(f"🕒 Silence alarm      {silence}"), "silence"),
+            Choice(command_label(
+                "📶 SNR watch          " + ("on" if entry.snr_watch else "off")
+            ), "snr"),
             Separator(" "),
-            Choice(Text.assemble(("✗ ", "err"), "Stop watching this node"), "unwatch"),
+            Choice(marked_label("✗", "Stop watching this node", "err"), "unwatch"),
             *back_rows(),
         ]
         picked = await session.select(

@@ -43,6 +43,17 @@ class Platform:
         frame_border: Whether the base screen draws inside a bordered ``Panel``. ``False``
             swaps it for a title-bar row instead (+4 cols, +1 row reclaimed) — a PicoCalc
             chrome saving, wired in P4.
+        menu_icons: Whether a *command row* leads with a decorative icon — the main menu's
+            per-tool mark, an action list's ``🗑``/``🕒``, a body action's ``✎``. The label
+            already names the action, so the icon is a family cue, not information; where
+            the console can only spell it as a one-glyph stand-in the cue is worth less
+            than the cells it costs and reads as noise besides (``@`` for both Map and
+            Mesh walk, ``…`` for both Live feed and Time machine — JP, on-device,
+            2026-08-11). ``False`` drops the whole lane, mark and emoji alike, and the
+            cells go to the label and its description. This is about *decoration* only:
+            a glyph that carries data — a channel's openness, a packet's class, a node's
+            type, a status mark on an outcome — is not a menu icon and is never dropped
+            (see :func:`~meshterm.ui.menus.command_label`).
         dialog_margin: Total columns a floating dialog leaves to the backdrop it sits over
             — half of it on each side (see
             :func:`~meshterm.ui.tui.frame._dialog_layout`). The gutter is what makes a
@@ -106,6 +117,7 @@ class Platform:
     readable_cols: int
     readable_rows: int
     frame_border: bool
+    menu_icons: bool
     dialog_margin: int
     header_atoms: tuple[str, ...]
     footer_fkeys: bool
@@ -126,6 +138,7 @@ REGULAR = Platform(
     readable_cols=72,
     readable_rows=24,
     frame_border=True,
+    menu_icons=True,
     dialog_margin=6,
     header_atoms=("version", "device", "badges", "pulse", "battery"),
     footer_fkeys=False,
@@ -149,6 +162,7 @@ PICOCALC = Platform(
     readable_cols=53,
     readable_rows=26,
     frame_border=False,
+    menu_icons=False,
     dialog_margin=4,
     # JP's call (2026-08-01, post-P7 review): the handheld's header brands the app —
     # "MeshTerm vX" — rather than naming the device/port (on a soldered radio the port
