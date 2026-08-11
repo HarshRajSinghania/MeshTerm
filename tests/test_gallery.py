@@ -54,6 +54,7 @@ from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 from meshterm.services.records import CATEGORY_BY_ID
 from meshterm.services.topology import MeshTopology, build_topology
+from meshterm.ui.about import AboutPage, about_author, about_meshterm, support_project
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
 from meshterm.ui.contacts_screen import ContactsScreen
@@ -396,6 +397,18 @@ def _tx_sweep(cols: int, rows: int) -> Screen:
     return screen
 
 
+def _about_meshterm(cols: int, rows: int) -> Screen:
+    return AboutPage("About MeshTerm", about_meshterm())
+
+
+def _about_author(cols: int, rows: int) -> Screen:
+    return AboutPage("About the author", about_author())
+
+
+def _support_project(cols: int, rows: int) -> Screen:
+    return AboutPage("Support this project", support_project())
+
+
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
     _Entry("contacts", _contacts, has_exit_group=True),
@@ -413,6 +426,9 @@ _ENTRIES: list[_Entry] = [
     _Entry("packet_viewer", _packet_viewer),
     _Entry("trace", _trace),
     _Entry("tx_sweep", _tx_sweep),
+    _Entry("about_meshterm", _about_meshterm),
+    _Entry("about_author", _about_author),
+    _Entry("support_project", _support_project),
 ]
 
 #: (platform, cols, rows) combos every entry above renders under. PicoCalc gets both its

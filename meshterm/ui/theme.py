@@ -555,6 +555,8 @@ _GLYPH_MAP: dict[str, str] = {
     "🔗": "&",   # link — the joining glyph
     "🏆": "★",   # trophy case — the best/winner star
     "⌨": "❯",   # command line — the prompt cursor
+    "📖": "¶",   # read/about — a page of prose (the text mark, as ¶ is for a message)
+    "💰": "$",   # support/donate — the plainest possible money mark
     "🚪": "",    # quit — no icon; the word carries it
     "🌍": "@",   # map/world (globe family)
     "🕸": "∟",   # mesh walk (route family)

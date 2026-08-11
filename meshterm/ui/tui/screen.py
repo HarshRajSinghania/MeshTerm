@@ -512,7 +512,7 @@ class ScrollScreen(Screen):
         renderable: RenderableType,
         *,
         title: str = "",
-        footer_hint: str = "↑↓ PgUp/PgDn scroll · Esc close",
+        footer_hint: Optional[str] = None,
         floating: bool = True,
     ) -> None:
         """Wrap a renderable in a dismissable, scrollable screen.
@@ -520,14 +520,31 @@ class ScrollScreen(Screen):
         Args:
             renderable: The Rich content to display.
             title: Heading for the screen/dialog.
-            footer_hint: Footer key hint.
+            footer_hint: Footer key hint, or ``None`` to derive it (see
+                :attr:`footer_hint`).
             floating: Whether to draw as a centered dialog over the parent.
         """
         super().__init__()
         self._renderable = renderable
         self.title = title
-        self.footer_hint = footer_hint
+        self._footer_hint = footer_hint
         self.floating = floating
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The footer keys — whatever the caller passed, or the honest default.
+
+        A read-only body has only two keys to name, the pager and Esc, so the hint can
+        be derived rather than spelled out at each call site — and derived, it keeps the
+        standing rule that a footer never advertises a key that would do nothing: the
+        scroll atom appears only while the body is actually taller than its viewport
+        (:attr:`Screen.content_overflows`). The Esc verb follows the surface the standards
+        assign it: a floating read-only view *closes*, a full screen goes *back*.
+        """
+        if self._footer_hint is not None:
+            return self._footer_hint
+        verb = "Esc close" if self.floating else "Esc back"
+        return f"↑↓ PgUp/PgDn scroll · {verb}" if self.content_overflows else verb
 
     def render_body(self, width: int) -> list[str]:
         """Render the wrapped content to ANSI lines and remember the total count."""

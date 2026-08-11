@@ -103,7 +103,7 @@ def specimen_lines() -> list[RenderableType]:
     concepts = Text("concepts ")
     for icon in ("📡", "🕒", "🔄", "💾", "📂", "🔑", "🗑", "✎", "⚡", "⭐", "📤", "📨"):
         concepts.append(glyph(icon) + " ")
-    for icon in ("🔔", "🔕", "📱", "🔗", "🏆", "⌨"):
+    for icon in ("🔔", "🔕", "📱", "🔗", "🏆", "⌨", "📖", "💰"):
         concepts.append(glyph(icon) + " ")
     lines.append(concepts)
 

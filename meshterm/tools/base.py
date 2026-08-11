@@ -155,9 +155,21 @@ _REGISTRY: dict[str, Tool] = {}
 #: pick a recipient from), then Watch (what the mesh is doing, what it did, what to be
 #: told about), Explore (where the nodes are, how they reach each other, and the boards
 #: that score the walking), then the two scopes a setting can belong to — This node, the
-#: radio in your hand, and Other nodes, someone else's over the mesh. Categories not
-#: listed here sort last, alphabetically, so a new category still appears.
-_CATEGORY_ORDER = ["Message", "Watch", "Explore", "This node", "Other nodes"]
+#: radio in your hand, and Other nodes, someone else's over the mesh.
+#:
+#: About MeshTerm closes the list and is the one section that names a *subject* instead:
+#: "what is this thing, and who made it" is a question none of the five doings can hold,
+#: and its pages act on nothing — so it sits last, where a reader who has run out of
+#: things to do finds it. Categories not listed here sort last, alphabetically, so a new
+#: category still appears.
+_CATEGORY_ORDER = [
+    "Message",
+    "Watch",
+    "Explore",
+    "This node",
+    "Other nodes",
+    "About MeshTerm",
+]
 
 
 def _category_rank(category: str) -> int:
