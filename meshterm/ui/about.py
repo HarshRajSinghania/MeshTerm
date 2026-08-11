@@ -6,166 +6,151 @@ made it" is a question the other five can't answer. Each opens as a full screen,
 if the terminal is short, and is left with Esc; nothing here touches the radio or the
 database, so a page reads the same with no device attached at all.
 
+Unlike every other screen in the app, these are **written** rather than composed: their
+content is markdown, living beside the wordmark in ``meshterm/assets/pages``, drawn
+through :mod:`meshterm.ui.markdown` in the app's own visual language (see that module
+for what each construct becomes). Filling a page in means editing its ``.md`` file —
+no screen, menu row, or CLI face has to follow — and everything markdown offers is
+available while doing it: sections, sub-headings, lists, quotes, links, tables.
+
 Every page is **scaffolding** today. The headings are the real shape — that is the part
 worth settling first — and each carries one lowercase muted ``placeholder — …`` line
 where its prose will go, in the same empty-state voice the rest of the app uses, so an
 unwritten page reads as deliberately unwritten rather than as a screen that failed to
-load. Filling one in means replacing its placeholder with prose; the screen, the menu
-rows, and the CLI faces need no change to follow.
+load.
 
-What is *not* a placeholder: the version, the author, and the copyright span all come
-from :mod:`meshterm` itself (:func:`~meshterm.copyright_notice`), so the About page can
-never drift from the package it describes.
+What is *not* written into those files: the version, the author, and the copyright span.
+Each page names them with a ``{version}`` / ``{author}`` / ``{copyright}`` placeholder
+that is filled from :mod:`meshterm` itself (:func:`~meshterm.copyright_notice`) as the
+page is opened, so the About page can never drift from the package it describes.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Group, RenderableType
-from rich.padding import Padding
-from rich.text import Text
-
 from .. import __author__, __version__, copyright_notice
+from .markdown import MarkdownDoc, render_markdown
 from .tui import ScrollScreen
+from .tui.render import render_lines
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
-
-#: Cells every page's prose hangs at, under its flush section heading. Applied as
-#: :class:`~rich.padding.Padding` rather than a literal two spaces so a paragraph that
-#: wraps keeps its block — a continuation line falling back to column 0 would read as a
-#: new, unheaded thought (the app's hanging-indent rule, see ``CLAUDE.md``).
-_INDENT = 2
+#: Where the written pages live — beside the wordmark, in the package's assets, so they
+#: ship with the wheel and can be edited without touching Python.
+_PAGES = Path(__file__).resolve().parent.parent / "assets" / "pages"
 
 
-def _heading(title: str, note: str = "") -> Text:
-    """A page section heading: accent title, optional muted ``·`` note.
+def _page(name: str) -> MarkdownDoc:
+    """Load ``assets/pages/<name>.md``, fill in the live package facts, and render it.
 
     Args:
-        title: The section's name, sentence case.
-        note: An optional aside chained after it in muted.
+        name: The page file's stem.
 
     Returns:
-        The heading line.
+        The rendered page.
     """
-    text = Text(title, style="accent")
-    if note:
-        text.append(f"  ·  {note}", style="muted")
-    return text
+    source = (_PAGES / f"{name}.md").read_text(encoding="utf-8")
+    for token, value in (
+        ("{version}", __version__),
+        ("{author}", __author__),
+        ("{copyright}", copyright_notice()),
+    ):
+        source = source.replace(token, value)
+    return render_markdown(source)
 
 
-def _para(body: str, *, style: str = "") -> RenderableType:
-    """One paragraph of page prose, indented under its heading and wrapped as a block."""
-    return Padding(Text(body, style=style), (0, 0, 0, _INDENT))
+def about_meshterm() -> MarkdownDoc:
+    """The *About MeshTerm* page: what the app is, where it came from, its terms."""
+    return _page("about")
 
 
-def _placeholder(what: str) -> RenderableType:
-    """The stand-in for prose not written yet.
-
-    Written in the app's empty-state voice — lowercase, muted, an em-dash explanation,
-    never parenthesized — so an unfinished section is legibly unfinished instead of
-    looking like a rendering failure.
-
-    Args:
-        what: What will eventually be written here.
-
-    Returns:
-        The muted placeholder line, indented like the prose it stands in for.
-    """
-    return _para(f"placeholder — {what}", style="muted")
-
-
-def about_meshterm() -> RenderableType:
-    """The *About MeshTerm* page: what the app is, where it came from, its terms.
-
-    The lead is live package data — the wordmark, the running version, and the canonical
-    copyright line — so this page always describes the build it is running inside.
-    """
-    lead = Text()
-    lead.append("MeshTerm", style="brand")
-    lead.append(f" v{__version__}", style="muted")
-    return Group(
-        lead,
-        Text("a terminal companion for MeshCore LoRa mesh devices", style="muted"),
-        Text(),
-        _heading("What it is"),
-        _placeholder("what MeshTerm does, and who it is for"),
-        Text(),
-        _heading("Where it came from"),
-        _placeholder("why it was built, and what it grew out of"),
-        Text(),
-        _heading("Licence"),
-        _placeholder("the terms this ships under"),
-        Text(),
-        Text(copyright_notice(), style="muted"),
-    )
-
-
-def about_author() -> RenderableType:
+def about_author() -> MarkdownDoc:
     """The *About the author* page: the person behind MeshTerm, on the mesh and off it."""
-    return Group(
-        Text(__author__),
-        Text("wrote MeshTerm", style="muted"),
-        Text(),
-        _heading("Who"),
-        _placeholder("a few lines about the person behind MeshTerm"),
-        Text(),
-        _heading("On the mesh"),
-        _placeholder("call sign, home node, the mesh this was written on"),
-        Text(),
-        _heading("Elsewhere"),
-        _placeholder("where to find the author off the mesh"),
-    )
+    return _page("author")
 
 
-def support_project() -> RenderableType:
+def support_project() -> MarkdownDoc:
     """The *Support this project* page: what keeps it going, and how to chip in.
 
     Deliberately two-sided — money is one way to help and not the only one, so the page
     keeps a section for the other kind rather than folding it into a donate link.
     """
-    return Group(
-        _heading("Why it needs support"),
-        _placeholder("what keeps the project going, and what it costs"),
-        Text(),
-        _heading("Chip in"),
-        _placeholder("where to sponsor, donate, or buy a coffee"),
-        Text(),
-        _heading("Other ways to help"),
-        _placeholder("report a bug, test on hardware, tell another operator"),
-    )
+    return _page("support")
 
 
 class AboutPage(ScrollScreen):
-    """One About page: a read-only body, drawn full-screen, left with Esc.
+    """One written page: a read-only body, drawn full-screen, left with Esc.
 
-    A thin name over the shared read-only screen — the pages carry no controls of their
-    own, so everything they need (the pager, the derived footer hint that only names the
-    pager when there *is* something to page, the PicoCalc F-key lane that dims on the same
-    gate) already lives in :class:`~meshterm.ui.tui.screen.ScrollScreen`. Only the framing
-    differs: these are full screens rather than floating views, so Esc reads *back*.
+    Nearly all of it is the shared read-only screen — the pager, the derived footer hint
+    that only names the pager when there *is* something to page, the PicoCalc F-key lane
+    that dims on the same gate — with two things added, both of which come from the body
+    being a *document* rather than a block:
+
+    * It renders block by block and records where each ``##`` section starts, so a
+      heading pins to the top row while its prose scrolls under it and ``^PgUp``/``^PgDn``
+      step section by section (the same landmark machinery a grouped select list uses).
+    * Its lane claims the left-hand ``Sect ↑`` / ``Sect ↓`` pair once the page has more
+      than one section, because on the console the lane is the only place a chord can
+      advertise itself.
+
+    Only the framing differs from a result window: these are full screens rather than
+    floating views, so Esc reads *back*.
     """
 
-    def __init__(self, title: str, body: RenderableType) -> None:
-        """Show ``body`` as the page under ``title``.
+    def __init__(self, title: str, doc: MarkdownDoc) -> None:
+        """Show ``doc`` as the page under ``title``.
 
         Args:
             title: The page's heading — sentence case, no icon (icons live in the menu
                 rows that open these pages, never in a title).
-            body: The page's content, from one of the builders above.
+            doc: The rendered page, from one of the builders above.
         """
-        super().__init__(body, title=title, floating=False)
+        super().__init__(doc, title=title, floating=False)
+        self._doc = doc
+
+    @property
+    def fkey_lane(self):
+        """The shared pager lane, plus the section step on a page that has sections.
+
+        A left-hand pair rises toward F1, so ``Sect ↑`` sits outside ``Sect ↓`` — the
+        order a grouped select list uses on the same two keys, dispatching the same two
+        actions. Both are lit only while the page actually scrolls: with the whole page
+        on screen there is no section to step *to*.
+        """
+        from .tui.fkeys import FPair, default_lane
+
+        lane = list(default_lane(nav=self.content_overflows))
+        if len(self._doc.sections) >= 2:
+            lane[0] = FPair("Sect ↑", "ctrl_pageup", enabled=self.content_overflows)
+            lane[1] = FPair("Sect ↓", "ctrl_pagedown", enabled=self.content_overflows)
+        return lane
+
+    def render_body(self, width: int) -> list[str]:
+        """Render the page a block at a time, noting where its section headings land."""
+        lines: list[str] = []
+        self._sticky_headers = []
+        for block in self._doc.blocks:
+            # A blank separator renders to no lines at all on its own (it is one empty
+            # Text, and an empty render has nothing to split); inside the document's
+            # Group it would be the empty line it is meant to be, so it stays one here.
+            rendered = render_lines(block.renderable, width) or [""]
+            if block.heading:
+                self._sticky_headers.append((len(lines), rendered))
+            lines.extend(rendered)
+        self._scroll_total = max(1, len(lines))
+        return lines
 
 
-async def open_about_page(ctx: "AppContext", title: str, body: RenderableType) -> None:
+async def open_about_page(ctx: "AppContext", title: str, doc: MarkdownDoc) -> None:
     """Open one About page full-screen and hold it until the reader backs out.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
         title: The page's heading.
-        body: The page's content.
+        doc: The page's content.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
@@ -174,7 +159,7 @@ async def open_about_page(ctx: "AppContext", title: str, body: RenderableType) -
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the About pages are only available in the menu")
-    await ctx.ui.session.run_screen(AboutPage(title, body))
+    await ctx.ui.session.run_screen(AboutPage(title, doc))
 
 
 __all__ = [

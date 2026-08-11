@@ -3,8 +3,10 @@
 The pages carry no state and no controls, so what is worth pinning is what they *say*
 and how they are framed: the live package facts they must never drift from, the
 empty-state voice their unwritten sections speak in, the derived footer that only names
-the pager when there is something to page, and the section they hang under in the main
-menu. Width discipline on both platforms is the gallery's job (``test_gallery``).
+the pager when there is something to page, the landmarks their written sections leave
+for the sticky heading and the section jump, and the section they hang under in the main
+menu. How markdown itself is drawn is ``test_markdown``'s subject; width discipline on
+both platforms is the gallery's (``test_gallery``).
 """
 
 from __future__ import annotations
@@ -108,6 +110,70 @@ def test_footer_names_the_pager_only_when_there_is_something_to_page() -> None:
 def test_page_is_a_full_screen_not_a_floating_view() -> None:
     """These are pages, so Esc reads *back*; a floating read-only view would say *close*."""
     assert AboutPage("About MeshTerm", about_meshterm()).floating is False
+
+
+def test_pages_are_written_markdown_that_ships_with_the_package() -> None:
+    """Filling a page in is editing its ``.md`` file — no Python has to follow."""
+    from meshterm.ui.about import _PAGES
+
+    for name in ("about", "author", "support"):
+        source = (_PAGES / f"{name}.md").read_text(encoding="utf-8")
+        assert source.lstrip().startswith("#"), f"{name}.md doesn't open with a heading"
+
+
+def test_no_package_placeholder_survives_into_the_rendered_page() -> None:
+    """The live facts are filled in as the page opens, so none of the braces reach a reader."""
+    for builder in (about_meshterm, about_author, support_project):
+        text = _page(builder)
+        assert "{" not in text and "}" not in text, text
+
+
+@pytest.mark.parametrize(
+    ("builder", "headings"),
+    [
+        (about_meshterm, ("What it is", "Where it came from", "Licence")),
+        (about_author, ("Who", "On the mesh", "Elsewhere")),
+        (support_project, ("Why it needs support", "Chip in", "Other ways to help")),
+    ],
+)
+def test_each_section_heading_is_a_landmark_the_page_can_pin(builder, headings) -> None:  # noqa: ANN001
+    """A page is a document, so its ``##`` headings pin and its ^PgUp/^PgDn steps by them.
+
+    The screen records where each one landed while rendering (the same machinery a
+    grouped select list uses), which is what makes a heading stay on the top row while
+    its own prose scrolls under it.
+    """
+    screen = AboutPage("About MeshTerm", builder())
+    screen.note_viewport(40)
+    lines = plain(screen.render_body(72)).splitlines()
+
+    assert [lines[at].strip() for at, _ in screen._sticky_headers] == list(headings)
+    # Scrolled one line past its heading, the page pins that heading and nothing else.
+    at = screen._sticky_headers[1][0]
+    assert plain(screen.sticky_block(at + 1)) == headings[1]
+
+
+def test_the_console_lane_claims_the_section_step_only_while_the_page_scrolls() -> None:
+    """On the PicoCalc the lane is the only place a chord can advertise itself — but it
+    never advertises a key that would do nothing (``CLAUDE.md``), and a page you can see
+    whole has no section to step to."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    set_platform(PICOCALC)
+    try:
+        screen = AboutPage("About MeshTerm", about_meshterm())
+        screen.note_metrics(12, 40)  # the whole page fits
+        assert [pair.label for pair in screen.fkey_lane[:2]] == ["Sect ↑", "Sect ↓"]
+        assert not any(pair.enabled for pair in screen.fkey_lane[:2])
+
+        screen.note_metrics(60, 20)  # taller than the viewport
+        assert all(pair.enabled for pair in screen.fkey_lane[:2])
+        assert [pair.action for pair in screen.fkey_lane[:2]] == [
+            "ctrl_pageup",
+            "ctrl_pagedown",
+        ]
+    finally:
+        set_platform(REGULAR)
 
 
 def test_menu_rows_carry_the_icon_and_the_titles_do_not() -> None:

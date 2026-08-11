@@ -19,6 +19,7 @@ dependencies = [
     "bleak>=0.22",        # Bluetooth LE scanning + companion connection
     "typer>=0.12",        # scripted CLI; subcommands mirror the menu
     "rich>=13.7",         # modern console rendering (progress, tables, panels)
+    "markdown-it-py>=3.0", # CommonMark parser behind the written About pages
     "prompt_toolkit>=3.0",  # full-screen interactive TUI (terminal, input, resize)
     "segno>=1.6",         # pure-Python QR codes (channel share links)
     "tomli>=2.0; python_version < '3.11'",  # TOML config reader on 3.10

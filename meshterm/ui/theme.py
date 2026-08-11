@@ -136,6 +136,20 @@ MESH_THEME = Theme(
         # only PicoCalc's footer_fkeys ever asks for them.
         "fkey.chip": "bold #ffffff on #475569",
         "fkey.chip.shift": "bold #ffffff on #16a34a",
+        # The prose voices — what a markdown page's inline marks are drawn in (see
+        # ui.markdown). Headings borrow the styles the rest of the app already heads
+        # sections with (``brand``, ``accent``), so only the *body* marks need names of
+        # their own: emphasis brighter than the page, an aside dimmer than it, code and
+        # links in the two hues nothing else in a body claims, a struck-out run receding
+        # to the placeholder grey, and the bullet/rail chrome a list or a quote hangs on.
+        "md.strong": "bold #e2e8f0",
+        "md.em": "italic #cbd5e1",
+        "md.code": "#7dd3fc",
+        "md.link": "underline #a5b4fc",
+        "md.quote": "italic #cbd5e1",
+        "md.strike": "strike #64748b",
+        "md.bullet": "#818cf8",
+        "md.rail": "#475569",
     }
 )
 
@@ -298,6 +312,23 @@ MESH_THEME_16 = Theme(
         # Shift bank, white text on both.
         "fkey.chip": "bold color(15) on color(7)",
         "fkey.chip.shift": "bold color(15) on color(2)",
+        # Prose on the console. The page's body text is the default light grey (slot 7),
+        # so emphasis is the one place the VT's bold-is-brightness rule *is* the design:
+        # ``md.strong`` says bold on purpose and lands on white, exactly the step up the
+        # truecolor theme spells out. Its opposite, ``md.em``, keeps slot 7 by saying so.
+        # Code takes the dim cyan (never bold — slot 6's bright partner is the brand),
+        # links the bright blue, and the chrome (bullets, rails, a struck run) the two
+        # greys, so a page reads as text with landmarks rather than as a colour chart.
+        # No underline anywhere: the VT renders it by swapping in the console's own
+        # underline colour, which would take the link's hue away from it.
+        "md.strong": "bold color(7)",
+        "md.em": "not bold color(7)",
+        "md.code": "not bold color(6)",
+        "md.link": "color(12)",
+        "md.quote": "not bold color(7)",
+        "md.strike": "color(8)",
+        "md.bullet": "color(12)",
+        "md.rail": "color(8)",
     }
 )
 

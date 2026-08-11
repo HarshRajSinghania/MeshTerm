@@ -9,16 +9,20 @@ prompting for anything first.
 Each also keeps a CLI face — ``meshterm about``, ``meshterm about-author``,
 ``meshterm support`` — printing the same page to the terminal, so the answers are
 reachable from a shell without launching the full-screen session.
+
+The pages themselves are written in markdown under ``meshterm/assets/pages`` (see
+:mod:`meshterm.ui.about`); nothing here knows what any of them say.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
-
-from rich.console import RenderableType
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..context import AppContext
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:
+    from ..ui.markdown import MarkdownDoc
 
 
 class _AboutTool(Tool):
@@ -32,8 +36,8 @@ class _AboutTool(Tool):
     category = "About MeshTerm"
 
     @staticmethod
-    def page() -> RenderableType:
-        """Build this page's Rich content.
+    def page() -> "MarkdownDoc":
+        """Build this page's content.
 
         Overridden by each page. Subclasses import their builder *inside* the override
         rather than at module scope: the registry imports every tool module at startup
@@ -84,7 +88,7 @@ class AboutMeshTermTool(_AboutTool):
     order = 10  # the question a stranger asks first
 
     @staticmethod
-    def page() -> RenderableType:
+    def page() -> "MarkdownDoc":
         """The *About MeshTerm* page."""
         from ..ui.about import about_meshterm
 
@@ -102,7 +106,7 @@ class AboutAuthorTool(_AboutTool):
     order = 20  # who made the thing you just read about
 
     @staticmethod
-    def page() -> RenderableType:
+    def page() -> "MarkdownDoc":
         """The *About the author* page."""
         from ..ui.about import about_author
 
@@ -120,7 +124,7 @@ class SupportProjectTool(_AboutTool):
     order = 30  # the ask, and only once the first two have earned it
 
     @staticmethod
-    def page() -> RenderableType:
+    def page() -> "MarkdownDoc":
         """The *Support this project* page."""
         from ..ui.about import support_project
 

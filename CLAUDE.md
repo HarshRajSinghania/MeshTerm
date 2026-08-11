@@ -24,6 +24,8 @@ them instead of hand-rolling:
 
 - `ui/menus.py` — `back_rows`, `exit_rows`, `menu_rows`, `lane_row`, `section_heading`,
   `confirm_discard`, `fit_cells`.
+- `ui/markdown.py` — `render_markdown` (THE prose renderer: a page of writing, drawn in
+  the language below).
 - `ui/widgets.py` — `highlighted_hash` (THE key widget — shows a key, lights its hash),
   `format_ago` (prose ages),
   `_format_age` (column ages), `channel_glyph`, `_NODE_GLYPHS`, heard-age heat colouring.
@@ -79,6 +81,21 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   the query in its footer hint draws the body line only where the footer isn't drawn
   (`Platform.footer_fkeys`), never both: the query must be visible on every platform, and
   twice on none.
+
+### Written pages
+
+A screen that is *prose* (the three About pages) is **markdown**, not composed rows: the
+text lives in `meshterm/assets/pages/*.md` and `ui/markdown.py` draws it in the language
+above — `#` the page's own name in brand, `##` a section in the body accent (`## Title ·
+note` gives it the muted aside), `###` a sub-heading indented with its prose, paragraphs
+and lists hanging as blocks, quotes and fences behind a rail that survives wrapping,
+links showing where they go (nothing is clickable on a framebuffer console). Two
+paragraphs are page frame rather than body and sit flush and muted: the **standfirst**
+under the `#` title and the **colophon**, the last paragraph under a closing `---`. Live
+package facts arrive as `{version}` / `{author}` / `{copyright}` placeholders, filled as
+the page opens. The `##` headings are the page's landmarks — they pin and the section
+jumps step by them — so a written page earns `Sect ↑`/`Sect ↓` on the F-key lane exactly
+as a grouped list does. Filling a page in is editing its `.md`; no Python follows.
 
 ### Titles
 
