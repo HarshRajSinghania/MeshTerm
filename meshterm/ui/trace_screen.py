@@ -473,6 +473,9 @@ class TraceScreen(Screen):
         self._status = ""
         self._progress: Optional[tuple[int, int]] = None  # (current, total) mid-run
         self._spinner = Spinner()
+        #: Loop clock at this screen's last transmission — what :meth:`_pace_remaining`
+        #: measures the cooldown from, so pacing survives an abort-and-retry.
+        self._last_tx: Optional[float] = None
         self._worker: Optional[asyncio.Task] = None
         self._flight: Optional[TracingDialog] = None
         # The action rows, in display order. The build-path group leads: Compose,
@@ -515,12 +518,17 @@ class TraceScreen(Screen):
     async def _run_trace(self) -> None:
         """Drive one Trace commit — the chosen number of traces — under the dialog.
 
-        Multi-sample runs are paced: :attr:`_pace_s` sleeps between transmissions so
-        the repeaters never see a burst, and the dialog counts the run off as replies
-        land. The dialog is pushed for the duration and popped however the run ends —
-        completion, failure, or abort — and its Abort wires straight to :meth:`cancel`,
-        so the cancellation path is the same whether Esc lands on the dialog or the
-        screen. An aborted run keeps every trace already recorded.
+        Every transmission is paced, not just the ones inside a multi-sample run:
+        :attr:`_pace_s` is measured from the *last* transmission this screen made, so
+        aborting a walk and immediately re-running it waits out the same gap a second
+        sample would. Pacing only between samples left the one hole that matters — a
+        user watching a failure and hitting Enter again straight away is exactly the
+        burst repeaters penalize, and a penalized node's every later trace comes home
+        empty. The dialog counts the run off as replies land; it is pushed for the
+        duration and popped however the run ends — completion, failure, or abort — and
+        its Abort wires straight to :meth:`cancel`, so the cancellation path is the
+        same whether Esc lands on the dialog or the screen. An aborted run keeps every
+        trace already recorded.
         """
         total = max(1, int(self._sample_count()))
         dialog = TracingDialog(
@@ -532,14 +540,18 @@ class TraceScreen(Screen):
         try:
             for done in range(total):
                 self._progress = (done + 1, total)
+                wait = self._pace_remaining()
+                if wait > 0:
+                    dialog.status = (
+                        f"trace {done + 1}/{total} · pacing…" if total > 1 else "pacing…"
+                    )
+                    self._session.invalidate()
+                    await asyncio.sleep(wait)
                 if total > 1:
                     dialog.status = f"trace {done + 1}/{total} · transmitting…"
                     self._session.invalidate()
+                self._last_tx = asyncio.get_event_loop().time()
                 await self._trace_once(self._path_spec, self._on_trace)
-                if done + 1 < total and self._pace_s > 0:
-                    dialog.status = f"trace {done + 1}/{total} landed · pacing…"
-                    self._session.invalidate()
-                    await asyncio.sleep(self._pace_s)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - report inline, keep the screen alive
@@ -564,6 +576,13 @@ class TraceScreen(Screen):
                 # a run whose screen is already resolving (Esc mid-run) skips it —
                 # a popup must never chase the user out of the screen.
                 asyncio.ensure_future(self._announce_records())
+
+    def _pace_remaining(self) -> float:
+        """Seconds still owed before the next transmission may go out (0 when clear)."""
+        if self._last_tx is None or self._pace_s <= 0:
+            return 0.0
+        elapsed = asyncio.get_event_loop().time() - self._last_tx
+        return max(0.0, self._pace_s - elapsed)
 
     async def _animate(self) -> None:
         """Advance the in-flight spinner and repaint on a steady cadence, until cancelled."""

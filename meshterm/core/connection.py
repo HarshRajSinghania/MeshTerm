@@ -1600,7 +1600,8 @@ class MeshCoreDevice(Device):
 
         mc = self._require()
         tag = random.randint(0, 0xFFFFFFFF)
-        started = asyncio.get_event_loop().time()
+        loop = asyncio.get_event_loop()
+        started = loop.time()
 
         # A trace packet has no destination field — it walks an explicit path of
         # repeater hops. Send the path as raw bytes so any uniform hash width
@@ -1627,13 +1628,54 @@ class MeshCoreDevice(Device):
         if timeout is None:
             hops_walked = len(path_bytes) // (1 << flags) if path_bytes else 0
             timeout = trace_timeout(hops_walked)
-        await mc.commands.send_trace(auth_code=0, tag=tag, flags=flags, path=path_bytes)
-        event = await mc.wait_for_event(
-            EventType.TRACE_DATA,
-            attribute_filters={"tag": tag},
-            timeout=timeout,
+
+        # Listen for our tag *before* transmitting, and keep listening for the whole
+        # trace. ``send_trace`` doesn't return until the companion's ``MSG_SENT``
+        # arrives, and the library correlates that acknowledgement by nothing but its
+        # event type — so any other command in flight (a scheduled advert, a telemetry
+        # poll, the courier) can consume ours and leave the send blocked on its own
+        # 15-second default. Subscribing afterwards would mean every reply that landed
+        # during that stall was dispatched to no listener and dropped, and the trace
+        # recorded as "no reply" though the mesh answered it — which is why a burst of
+        # background traffic used to fail *every* trace for as long as it lasted, not
+        # just the one it collided with. The reply's own arrival time is stamped in the
+        # handler so a stalled send inflates no round trip.
+        reply: asyncio.Future = loop.create_future()
+        landed = started
+
+        def on_trace_reply(event) -> None:  # noqa: ANN001 - meshcore Event
+            nonlocal landed
+            if not reply.done():
+                landed = loop.time()
+                reply.set_result(event)
+
+        subscription = mc.subscribe(
+            EventType.TRACE_DATA, on_trace_reply, {"tag": tag}
         )
-        elapsed_ms = (asyncio.get_event_loop().time() - started) * 1000.0
+        try:
+            sent = await mc.commands.send_trace(
+                auth_code=0, tag=tag, flags=flags, path=path_bytes
+            )
+            if getattr(sent, "is_error", None) is not None and sent.is_error():
+                # Uncorrelated acknowledgements make this ambiguous — the error may
+                # belong to another command entirely — so it is evidence, not a verdict:
+                # the trace is still on the air and its reply may yet arrive.
+                _log.debug("trace %08x: send reported %s", tag, sent.payload)
+            try:
+                event = await asyncio.wait_for(reply, timeout)
+            except asyncio.TimeoutError:
+                event = None
+        finally:
+            subscription.unsubscribe()
+        elapsed_ms = (landed - started) * 1000.0
+        _log.debug(
+            "trace %08x: path=%s flags=%d timeout=%.1fs -> %s",
+            tag,
+            path_bytes.hex() if path_bytes else "(none)",
+            flags,
+            timeout,
+            f"{elapsed_ms:.0f}ms" if event is not None else "no reply",
+        )
         # The firmware addresses each hop by a hash of ``1 << flags`` bytes; record it
         # so the summary can show node hashes at the width the command actually used.
         hash_bytes = 1 << flags
@@ -1789,6 +1831,21 @@ class MeshCoreDevice(Device):
         etype = getattr(EventType, "ACK", None)
         if etype is not None:
             subs.append(subscribe(etype, ack_handler))
+        # Trace replies aren't observations — the issuing ``run_trace`` consumes them by
+        # tag — but logging every one that lands is what makes a "no reply" diagnosable:
+        # a reply logged here with no matching ``trace <tag>`` line means the walk came
+        # home and we weren't listening, which is a different fault from silence on air.
+        etype = getattr(EventType, "TRACE_DATA", None)
+        if etype is not None:
+            subs.append(
+                subscribe(
+                    etype,
+                    lambda event: _log.debug(
+                        "trace reply heard: tag=%08x",
+                        (getattr(event, "payload", {}) or {}).get("tag", 0),
+                    ),
+                )
+            )
 
         # Drive the inbound-message pull ourselves (see ``_message_pump``): MeshCore never
         # pushes message bodies, so without this sending works but nothing is received.

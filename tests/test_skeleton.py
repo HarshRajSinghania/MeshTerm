@@ -366,16 +366,26 @@ def test_trace_timeout_scales_with_hops() -> None:
     assert trace_timeout(10_000) == TRACE_TIMEOUT_CEILING_S
 
 
-async def test_run_trace_sizes_wait_to_the_forced_route() -> None:
+async def test_run_trace_sizes_wait_to_the_forced_route(monkeypatch) -> None:  # noqa: ANN001
     """A forced path's reply-wait is sized to its hop count, not a flat default.
 
-    The real device must hand ``wait_for_event`` the route-scaled budget so a long walk
-    isn't cut off before its reply can travel out and back.
+    The real device must give the reply the route-scaled budget so a long walk isn't
+    cut off before it can travel out and back.
     """
+    import asyncio as _asyncio
+
+    from meshterm.core import connection as connection_module
     from meshterm.core.connection import MeshCoreDevice
     from meshterm.services.trace_runner import trace_timeout
 
     seen: dict[str, float] = {}
+    real_wait_for = _asyncio.wait_for
+
+    async def spy_wait_for(awaitable, timeout):  # noqa: ANN001, ANN202
+        seen["timeout"] = timeout
+        return await real_wait_for(awaitable, 0)  # a miss, without burning the budget
+
+    monkeypatch.setattr(connection_module.asyncio, "wait_for", spy_wait_for)
 
     class _Commands:
         async def send_trace(self, *, auth_code, tag, flags, path):  # noqa: ANN001, ANN201
@@ -384,9 +394,12 @@ async def test_run_trace_sizes_wait_to_the_forced_route() -> None:
     class _MC:
         commands = _Commands()
 
-        async def wait_for_event(self, event_type, *, attribute_filters=None, timeout=None):  # noqa: ANN001, ANN201
-            seen["timeout"] = timeout
-            return None  # a miss: run_trace returns a clean failure, no further calls
+        def subscribe(self, event_type, callback, attribute_filters=None):  # noqa: ANN001, ANN201
+            return _Subscription()
+
+    class _Subscription:
+        def unsubscribe(self) -> None:
+            return None
 
     device = MeshCoreDevice(port="COM-test")
     device._mc = _MC()
@@ -399,6 +412,55 @@ async def test_run_trace_sizes_wait_to_the_forced_route() -> None:
     # An explicit timeout still wins over the auto-scaling.
     await device.run_trace("Alice", path="3d,f2,3d,f2,3d", timeout=2.0)
     assert seen["timeout"] == 2.0
+
+
+async def test_run_trace_catches_a_reply_that_beats_the_send_acknowledgement() -> None:
+    """A reply landing while ``send_trace`` is still blocked is still our trace's reply.
+
+    The companion's send acknowledgement is correlated by nothing but its event type, so
+    a concurrent command can consume ours and leave the send waiting out its own default.
+    Listening for the tag only *after* the send returns dropped every reply that arrived
+    in that window — the trace read as "no reply" though the mesh had answered it.
+    """
+    import asyncio as _asyncio
+
+    from meshterm.core.connection import MeshCoreDevice
+
+    class _Event:
+        payload = {"tag": 1, "path": [{"hash": "3d", "snr": 4.0}, {"snr": 2.0}]}
+
+    listeners: list = []
+
+    class _Commands:
+        async def send_trace(self, *, auth_code, tag, flags, path):  # noqa: ANN001, ANN201
+            # The reply overtakes the acknowledgement: deliver it, then keep stalling.
+            for callback in listeners:
+                callback(_Event())
+            await _asyncio.sleep(0)
+            return None
+
+        async def send_appstart(self):  # noqa: ANN201 - the tx-power read on success
+            return _SelfInfo()
+
+    class _SelfInfo:
+        payload = {"tx_power": 20}
+
+    class _MC:
+        commands = _Commands()
+
+        def subscribe(self, event_type, callback, attribute_filters=None):  # noqa: ANN001, ANN201
+            listeners.append(callback)
+            return _Subscription()
+
+    class _Subscription:
+        def unsubscribe(self) -> None:
+            listeners.clear()
+
+    device = MeshCoreDevice(port="COM-test")
+    device._mc = _MC()
+    result = await device.run_trace("Alice", path="3d,f2,3d")
+    assert result.success is True
+    assert [h.node for h in result.hops] == ["3d", None]
 
 
 def test_trace_edges_endpoints_are_our_device() -> None:

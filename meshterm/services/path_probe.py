@@ -12,6 +12,7 @@ the winner — measurement proposes, the user disposes.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
@@ -102,6 +103,13 @@ async def probe_paths(
 
     outcomes: list[ProbeOutcome] = []
     for index, candidate in enumerate(candidates):
+        if index and cooldown_s > 0:
+            # ``run_traces`` paces *between* its own samples and never after the last
+            # one, so at the default of one trace per candidate it paces nothing at
+            # all: without this the sweep walks every candidate back to back and the
+            # repeaters see a burst — the traffic pattern that gets a node ignored,
+            # after which every later trace comes home empty.
+            await asyncio.sleep(cooldown_s)
         results = await trace_runner.run_traces(
             device,
             target,

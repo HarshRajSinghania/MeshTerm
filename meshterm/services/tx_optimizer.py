@@ -23,6 +23,7 @@ when ``apply`` is set (the whole point of the run is to leave it tuned).
 
 from __future__ import annotations
 
+import asyncio
 import statistics
 from typing import Callable, Optional
 
@@ -209,6 +210,11 @@ async def optimize_tx_power(
     async def measure_level(tx: int) -> TxLevelResult:
         """Run a batch of traces at ``tx`` (accumulating) and refresh its aggregate."""
         nonlocal completed
+        if completed and cooldown_s > 0:
+            # ``run_traces`` paces between its own samples but not after the last one,
+            # so without this the first trace of a level follows the previous level's
+            # last one with no gap — a burst across every level boundary.
+            await asyncio.sleep(cooldown_s)
         await device.set_remote_tx_power(admin_node, tx)
         batch = await trace_runner.run_traces(
             device,
