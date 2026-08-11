@@ -41,8 +41,8 @@ class TxOptimizeTool(Tool):
     title = "TX optimize"
     icon = "📶"
     help = "Tune a remote node's TX power for the best signal at a target"
-    category = "Tools"
-    order = 15  # right after Trace, its measurement sibling
+    category = "Other nodes"
+    order = 20  # like Repeater admin: a remote radio, changed over the mesh
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Pick the tuned link for the live sweep: the admin node, then the target.

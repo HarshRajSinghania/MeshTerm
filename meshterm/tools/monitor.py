@@ -38,8 +38,8 @@ class MonitorTool(Tool):
     title = "Monitor"
     icon = "🎧"
     help = "Capture overheard packets live for a while and summarize them"
-    category = "Tools"
-    order = 20
+    category = "Watch"
+    order = 50
     menu_visible = False  # recording is always on; in the menu the header/Nodes/Map show it
 
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:

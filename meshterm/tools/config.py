@@ -38,8 +38,8 @@ class ConfigTool(Tool):
     title = "Device configuration"
     icon = "🔧"
     help = "View and change device settings — identity, radio, tuning, …"
-    category = "Device management"
-    order = 8
+    category = "This node"
+    order = 20
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Launch the interactive editor and collect the operations to perform.

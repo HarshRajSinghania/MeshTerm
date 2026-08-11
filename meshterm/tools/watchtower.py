@@ -30,8 +30,8 @@ class WatchtowerTool(Tool):
     title = "Watchtower"
     icon = "🚨"
     help = "Alerts for watched nodes — silence, SNR sag, new arrivals"
-    category = "Mesh"
-    order = 35  # after the views: the section's always-on alerting eye
+    category = "Watch"
+    order = 30  # after the live views: the section's always-on alerting eye
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the Watchtower screen; there are never parameters to collect.

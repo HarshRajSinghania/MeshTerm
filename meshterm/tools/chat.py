@@ -58,7 +58,7 @@ class ChatTool(Tool):
     title = "Chat"
     icon = "💬"
     help = "Channel and direct messaging — live chat, with stored history"
-    category = "Messaging"
+    category = "Message"
     order = 10
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:

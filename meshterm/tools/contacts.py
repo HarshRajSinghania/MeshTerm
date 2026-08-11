@@ -18,8 +18,8 @@ class ContactsTool(Tool):
     title = "Contacts"
     icon = "👥"
     help = "List this node and known contacts (last heard, packets, type, key)"
-    category = "Mesh"
-    order = 10  # right under the Dashboard: the "who's out there" view
+    category = "Message"
+    order = 40  # the address book the three above pick their recipient from
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Query the device and render the contacts list.

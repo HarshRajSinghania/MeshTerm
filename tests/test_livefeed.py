@@ -82,15 +82,16 @@ def _col(line: str, needle: str) -> int:
 
 
 def test_livefeed_tool_registers_under_the_dashboard() -> None:
-    """The livefeed tool lands in the Mesh section, right below the dashboard."""
+    """The livefeed tool lands in the Watch section, right below the dashboard."""
     from meshterm.tools import load_all_tools
     from meshterm.tools.base import all_tools
 
     load_all_tools()
     tools = {t.name: t for t in all_tools()}
     tool = tools["livefeed"]
-    assert tool.title == "Live feed" and tool.category == "Mesh"
-    assert tools["dashboard"].order < tool.order < tools["contacts"].order
+    assert tool.title == "Live feed" and tool.category == "Watch"
+    assert tools["dashboard"].category == tool.category
+    assert tools["dashboard"].order < tool.order < tools["watchtower"].order
 
 
 def test_livefeed_live_events_land_in_the_feed() -> None:

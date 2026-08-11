@@ -31,8 +31,8 @@ class RepeaterAdminTool(Tool):
     title = "Repeater admin"
     icon = "🗼"
     help = "Set up a remote repeater — settings, actions, command line"
-    category = "Device management"
-    order = 12  # after Device info: the remote sibling of the local config tools
+    category = "Other nodes"
+    order = 10  # the remote sibling of the local config tools
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the interactive flow; there are never parameters to collect.

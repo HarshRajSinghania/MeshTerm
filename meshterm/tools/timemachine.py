@@ -28,8 +28,8 @@ class TimeMachineTool(Tool):
     title = "Time machine"
     icon = "⏳"
     help = "Explore the recorded history — timelines, rhythms, arrivals"
-    category = "Tools"
-    order = 18  # after the measurement tools: they make history, this reads it
+    category = "Watch"
+    order = 40  # the past tense of the Dashboard above it
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the explorer; there are never parameters to collect.

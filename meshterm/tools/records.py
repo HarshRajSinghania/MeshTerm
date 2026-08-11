@@ -32,8 +32,8 @@ class TrophyCaseTool(Tool):
     title = "Trophy case"
     icon = "🏆"
     help = "Record-setting mesh walks, scored from every trace"
-    category = "Tools"
-    order = 12
+    category = "Explore"
+    order = 40  # what the two walks above it score into
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Open the browser; returning ``None`` completes the invocation with no run row.

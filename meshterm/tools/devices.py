@@ -41,7 +41,7 @@ class DevicesTool(Tool):
     name = "devices"
     title = "Devices"
     help = "List attached serial and Bluetooth devices, flagging likely companions"
-    category = "Device management"
+    category = "This node"
     order = 5
     menu_visible = False  # CLI-only: a startup diagnostic with no place in a connected session
 

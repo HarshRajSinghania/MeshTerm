@@ -141,3 +141,34 @@ def test_fit_cells_measures_display_cells_not_characters() -> None:
     assert cell_len(fit_cells("日本語の名前", 5)) == 5  # wide chars: truncated by cells
     assert fit_cells("abcdef", 5).endswith("…")
     assert fit_cells("ab", 5, align="right") == "   ab"
+
+
+def test_main_menu_sections_answer_the_menus_own_question() -> None:
+    """Each section is a *doing*, in workflow order, and holds only what shares it.
+
+    The menu asks "What would you like to do?", so the grouping is by verb rather than
+    by subject: the address book sits with the features that message from it, the
+    recorded history with the live views it is the past tense of, the two walks with the
+    topology they walk over, and a setting lands under the scope it changes — this radio,
+    or someone else's over the mesh.
+    """
+    from meshterm.tools import load_all_tools
+    from meshterm.tools.base import _CATEGORY_ORDER, all_tools
+
+    load_all_tools()
+    sections: dict[str, list[str]] = {}
+    for tool in all_tools():
+        if tool.menu_visible:
+            sections.setdefault(tool.category, []).append(tool.name)
+
+    assert list(sections) == _CATEGORY_ORDER  # all_tools already sorts them this way
+    assert sections == {
+        "Message": ["chat", "channels", "courier", "contacts"],
+        "Watch": ["dashboard", "livefeed", "watchtower", "timemachine"],
+        "Explore": ["map", "walk", "trace", "trace-path", "records"],
+        "This node": ["info", "config", "device-actions", "advert"],
+        "Other nodes": ["repeater-admin", "tx-optimize"],
+    }
+    # No section is so big it stops being a grouping (the old Mesh bucket held seven of
+    # nineteen rows), and none is a bucket of one.
+    assert all(2 <= len(names) <= 5 for names in sections.values())

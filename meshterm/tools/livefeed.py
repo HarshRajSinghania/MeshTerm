@@ -30,8 +30,8 @@ class LiveFeedTool(Tool):
     title = "Live feed"
     icon = "📰"
     help = "Every packet as it arrives, newest first — open any in the viewer"
-    category = "Mesh"
-    order = 6  # right under the dashboard it was promoted out of
+    category = "Watch"
+    order = 20  # right under the dashboard it was promoted out of
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the live feed; there are never parameters to collect.

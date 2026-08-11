@@ -149,12 +149,15 @@ class Tool(ABC):
 
 _REGISTRY: dict[str, Tool] = {}
 
-#: Explicit menu ordering for tool categories. Messaging leads because it holds the
-#: first-class, everyday features (chat, channels, the courier); Mesh follows with
-#: the views over the mesh itself (dashboard, nodes, map, walk, watchtower,
-#: adverts); the rest in a natural workflow order. Categories not listed here sort
-#: last, alphabetically, so a new category still appears.
-_CATEGORY_ORDER = ["Messaging", "Mesh", "Device management", "Tools"]
+#: Explicit menu ordering for tool categories. The menu asks "What would you like to
+#: do?", so its sections answer that: each names a *doing*, not a subject, and holds
+#: everything that shares it. Message leads (the everyday features, plus the book you
+#: pick a recipient from), then Watch (what the mesh is doing, what it did, what to be
+#: told about), Explore (where the nodes are, how they reach each other, and the boards
+#: that score the walking), then the two scopes a setting can belong to — This node, the
+#: radio in your hand, and Other nodes, someone else's over the mesh. Categories not
+#: listed here sort last, alphabetically, so a new category still appears.
+_CATEGORY_ORDER = ["Message", "Watch", "Explore", "This node", "Other nodes"]
 
 
 def _category_rank(category: str) -> int:

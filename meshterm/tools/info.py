@@ -28,8 +28,8 @@ class InfoTool(Tool):
     title = "Device info"
     icon = "📋"
     help = "Show device status, identity, and radio config"
-    category = "Device management"
-    order = 11  # after Send advert (10), which slots in behind Device actions
+    category = "This node"
+    order = 10  # what it is, before anything that changes it
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Query the device and render its live status plus its full configuration.

@@ -1,9 +1,9 @@
-"""The ``dashboard`` tool: the live mesh overview, at the top of the Mesh section.
+"""The ``dashboard`` tool: the live mesh overview, at the top of the Watch section.
 
 Opens the full-screen dashboard (see :mod:`meshterm.ui.dashboard_screen`): the two-hour
 all-packet activity chart with its pulse line, the session's traffic tallies by packet
 class, and the window's RF health beside the radio's own live numbers. (The per-packet
-stream is the Live feed tool, right below.) It leads the Mesh section because it answers
+stream is the Live feed tool, right below.) It leads the Watch section because it answers
 the section's first question — *what's going on out there?* — before any specific tool
 is reached for.
 
@@ -30,8 +30,8 @@ class DashboardTool(Tool):
     title = "Dashboard"
     icon = "📊"
     help = "Watch the mesh live — activity, traffic, RF health"
-    category = "Mesh"
-    order = 5  # the section's overview, above the tools it summarizes
+    category = "Watch"
+    order = 10  # the section's overview, above the tools it summarizes
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the live dashboard; there are never parameters to collect.

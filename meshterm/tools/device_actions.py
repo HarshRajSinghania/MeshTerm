@@ -30,8 +30,8 @@ class DeviceActionsTool(Tool):
     title = "Device actions"
     icon = "🔨"
     help = "Act on the device itself — clock, backup, identity key, reboot, reset"
-    category = "Device management"
-    order = 9
+    category = "This node"
+    order = 30
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
         """Run the interactive actions screen; there are never parameters to collect.

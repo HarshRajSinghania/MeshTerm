@@ -38,7 +38,7 @@ class ChannelsTool(Tool):
     title = "Channels"
     icon = "📻"
     help = "Create, join, and share mesh channels (with QR codes)"
-    category = "Messaging"
+    category = "Message"
     order = 20
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
