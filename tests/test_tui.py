@@ -2480,6 +2480,43 @@ def test_select_hscroll_from_pins_the_rows_head_and_slides_only_its_run() -> Non
     assert end.startswith("❯ " + lanes) and "-end" in end  # the tail is reachable
 
 
+def test_select_scrolls_for_a_row_that_pins_a_head_without_being_told() -> None:
+    """A row declaring ``hscroll_from`` turns its list's scrolling on by itself.
+
+    The builders that lay out label+description rows (:func:`~meshterm.ui.menus.menu_rows`,
+    the main menu) never see the screen their list is opened in — ``ctx.ui.select`` builds
+    it — so the row is where the intent has to live.
+    """
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    lanes = "Send advert  "
+    row = Choice(lanes + "Announce this node " + "and then some " * 6, 1,
+                 hscroll_from=len(lanes))
+    screen = SelectScreen("menu", [row])  # no hscroll= anywhere
+    screen.handle("right")
+    drawn = _row_plains(screen, 40)[0]
+    assert drawn.startswith("❯ " + lanes)  # the name stays pinned…
+    assert "Announce this node" not in drawn  # …and the description has slid under it
+    # A list of plain rows still ignores ←→ entirely.
+    plain = SelectScreen("menu", [Choice("x" * 80, 1)])
+    before = _row_plains(plain, 40)[0]
+    plain.handle("right")
+    assert _row_plains(plain, 40)[0] == before
+
+
+def test_menu_rows_pin_their_label_lane_so_only_the_description_slides() -> None:
+    """The shared label+description builder hands each row its own head block."""
+    from meshterm.ui.menus import menu_rows
+
+    rows = menu_rows([("Sync clock…", "Set the device clock", 1),
+                      ("Reboot device…", "Restart the companion", 2)])
+    lane = rows[0].hscroll_from
+    assert lane and all(row.hscroll_from == lane for row in rows)
+    # The head block ends exactly where the descriptions start, on every row.
+    for row in rows:
+        assert row.label.plain[lane:].startswith(("Set the", "Restart the"))
+
+
 def test_select_hscroll_hint_is_gated_on_the_run_not_the_whole_row() -> None:
     """A row whose *run* fits earns no ←→ atom, however wide its pinned head makes it.
 

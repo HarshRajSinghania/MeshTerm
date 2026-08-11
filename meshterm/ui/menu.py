@@ -478,7 +478,9 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
             row = Text(label)
             row.append(" " * (name_w - cell_len(label) + 2))
             row.append(tool.help, style="muted")
-            items.append(Choice(title=row, value=tool.name))
+            # The tool's name is the row's identity and always fits; only the description
+            # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).
+            items.append(Choice(title=row, value=tool.name, hscroll_from=name_w + 2))
         items.append(Separator(" "))
         items.append(Choice(title=command_label("🚪 Quit"), value="__quit__"))
 

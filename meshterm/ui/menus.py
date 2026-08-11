@@ -183,7 +183,9 @@ def menu_rows(rows: Iterable[tuple[Union[str, Text], str, Any]]) -> list:
 
     Each label passes through :func:`command_label` first, so a platform that draws no
     icon lane loses it *before* the lane is measured — the description column moves left
-    with the labels rather than going ragged behind them.
+    with the labels rather than going ragged behind them. Each row also pins that column
+    as its :attr:`~meshterm.ui.tui.select.Choice.hscroll_from`, so on an ``hscroll`` list
+    ←→ slide the description under a label that stays put.
 
     Args:
         rows: ``(label, description, value)`` triples. A :class:`Text` label keeps its
@@ -205,7 +207,9 @@ def menu_rows(rows: Iterable[tuple[Union[str, Text], str, Any]]) -> list:
         row.append_text(label)
         row.append(" " * (width - cell_len(label.plain) + 2))
         row.append(help_text, style="muted")
-        items.append(Choice(title=row, value=value))
+        # The label lane is the row's identity; only the description overflows, so the
+        # h-scroll rides it alone and the name stays pinned (see Choice.hscroll_from).
+        items.append(Choice(title=row, value=value, hscroll_from=width + 2))
     return items
 
 

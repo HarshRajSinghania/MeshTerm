@@ -69,7 +69,10 @@ class Choice:
             reader's place in the list, and sliding them off to read the walk costs the row
             its identity and gains nothing (the columns are the part that already fits).
             Set it to the cell width of that fixed block, measured from the row itself, so
-            the scroll rides only the run that overflows.
+            the scroll rides only the run that overflows. Setting it at all also *turns the
+            list's scrolling on* (see :class:`SelectScreen`): a head block is only meaningful
+            as the part that stays put, so a row that pins one is a row built to scroll,
+            wherever the builder's list ends up being shown.
     """
 
     title: Union[str, Text, Callable[[], Union[str, Text]], Callable[[int], Union[str, Text]]]
@@ -306,7 +309,15 @@ class SelectScreen(Screen):
         """
         super().__init__()
         self.title = title
-        self._hscroll = hscroll
+        # A row that pins a head block (:attr:`Choice.hscroll_from`) is a row built to
+        # scroll — the head is only meaningful as "the part that stays put" — so declaring
+        # one turns the list's scrolling on without the builder having to reach the screen
+        # it will be shown in. That is what makes every label+description list
+        # (:func:`~meshterm.ui.menus.menu_rows`, the main menu) scroll its description
+        # wherever it is opened, ``ctx.ui.select`` included.
+        self._hscroll = hscroll or any(
+            getattr(item, "hscroll_from", 0) > 0 for item in items
+        )
         self._hscroll_hint = hscroll_hint
         self._hshift = 0
         self._last_width = 0  # the last render width, for the footer's overflow probe
