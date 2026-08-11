@@ -9,8 +9,9 @@ hop and the final hop's transmission lands back on us. Every trace is one:
   → us``, which starts and ends at us just the same.
 
 So any successful trace can be scored, and the trophy case keeps the record-setters in
-six disciplines — the longest distance, the farthest node, the most nodes (with and
-without revisits), the weakest surviving link, and the widest enclosed loop. This module
+seven disciplines — the longest distance, the farthest node, the longest single link,
+the most nodes (with and without revisits), the weakest surviving link, and the widest
+enclosed loop. This module
 is pure measurement: :func:`walk_from_trace` turns a reply into a spec, a canonical
 route, and its :class:`WalkStats`; :func:`walk_scores` scores those stats against every
 discipline at once (a walk found while tracing one thing still counts everywhere it
@@ -95,6 +96,13 @@ class WalkStats:
         km_complete: Whether every segment was positioned (``km_travelled`` exact).
         far_km: The furthest hop's distance from us (km), when both ends are
             positioned; ``None`` without our own or any hop's position.
+        leg_km: The longest single link of the circuit (km) — one hop's transmission,
+            end to end — when both of its ends are positioned; ``None`` when no
+            segment had both. A different game from ``far_km``: a distant node reached
+            over a chain of short hops scores far, not long.
+        leg_link: The ids of that link's two ends, in walk order, with ``None`` for our
+            own node (a link touching us is the first or last segment). ``None``
+            alongside a ``None`` ``leg_km``.
         area_km2: The unsigned area enclosed by the circuit's positioned points in
             walk order (km², shoelace over a local plane). ``None`` below three
             positioned points; self-crossing walks score their net algebraic area.
@@ -110,6 +118,8 @@ class WalkStats:
     km_complete: bool
     far_km: Optional[float]
     area_km2: Optional[float]
+    leg_km: Optional[float] = None
+    leg_link: Optional[tuple[Optional[str], Optional[str]]] = None
 
     def as_dict(self) -> dict:
         """The stats as a JSON-serializable dict (the ``stats_json`` column)."""
@@ -123,6 +133,10 @@ class WalkStats:
             "km_complete": self.km_complete,
             "far_km": round(self.far_km, 3) if self.far_km is not None else None,
             "area_km2": round(self.area_km2, 3) if self.area_km2 is not None else None,
+            "leg_km": round(self.leg_km, 3) if self.leg_km is not None else None,
+            # A list, not a tuple, because this round-trips through JSON; our own end
+            # stays null so the reader draws it as the app-wide ★ rather than a name.
+            "leg_link": list(self.leg_link) if self.leg_link is not None else None,
         }
 
 
@@ -172,6 +186,10 @@ def _score_far_point(stats: WalkStats) -> Optional[float]:
     return stats.far_km
 
 
+def _score_long_leg(stats: WalkStats) -> Optional[float]:
+    return stats.leg_km if stats.leg_km else None
+
+
 def _score_grand_tour(stats: WalkStats) -> Optional[float]:
     return float(stats.distinct_nodes) if stats.distinct_nodes else None
 
@@ -192,7 +210,7 @@ def _score_big_loop(stats: WalkStats) -> Optional[float]:
     return stats.area_km2
 
 
-#: The six disciplines. Ids are stable database keys and must never change; titles and
+#: The seven disciplines. Ids are stable database keys and must never change; titles and
 #: descriptions are display-only and kept plain and descriptive.
 CATEGORIES: tuple[Category, ...] = (
     Category(
@@ -204,6 +222,11 @@ CATEGORIES: tuple[Category, ...] = (
         id="far_point", title="Farthest node", icon="🎯", unit="km",
         description="reach the node furthest from here",
         score=_score_far_point, needs_positions=True,
+    ),
+    Category(
+        id="long_leg", title="Longest leg", icon="🏹", unit="km",
+        description="cross the greatest distance in a single hop",
+        score=_score_long_leg, needs_positions=True,
     ),
     Category(
         id="grand_tour", title="Most nodes", icon="🧳", unit="nodes",
@@ -274,13 +297,23 @@ def compute_walk_stats(
     points.extend(positions.get(node) for node in ids)
     points.append(self_pos)
 
+    # The circuit's segments carry their endpoints alongside their positions, so the
+    # longest one can name the link it was: ``None`` at either end is our own node,
+    # which the walk leaves from and comes home to.
+    ends: list[Optional[str]] = [None, *ids, None]
+
     km = 0.0
     complete = True
-    for a, b in zip(points, points[1:]):
+    leg_km: Optional[float] = None
+    leg_link: Optional[tuple[Optional[str], Optional[str]]] = None
+    for i, (a, b) in enumerate(zip(points, points[1:])):
         if a is None or b is None:
             complete = False
             continue
-        km += haversine_km(a[0], a[1], b[0], b[1])
+        span = haversine_km(a[0], a[1], b[0], b[1])
+        km += span
+        if leg_km is None or span > leg_km:
+            leg_km, leg_link = span, (ends[i], ends[i + 1])
 
     far: Optional[float] = None
     if self_pos is not None:
@@ -313,6 +346,8 @@ def compute_walk_stats(
         km_complete=complete,
         far_km=far,
         area_km2=area,
+        leg_km=leg_km,
+        leg_link=leg_link,
     )
 
 

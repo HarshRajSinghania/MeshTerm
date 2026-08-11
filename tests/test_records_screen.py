@@ -194,6 +194,37 @@ def test_record_dialog_names_the_far_point() -> None:
     assert re.search(r"far point\s+1\.5 km\s+Far", body)
 
 
+def test_record_dialog_names_the_link_the_longest_leg_spanned() -> None:
+    """The leg lane carries its distance and the two nodes it crossed between."""
+    record = _record(
+        category="long_leg", score=12.4,
+        stats={"hop_count": 2, "distinct_nodes": 2, "km_travelled": 21.0,
+               "km_complete": True, "leg_km": 12.4, "leg_link": [HUB_ID, FAR_ID]},
+    )
+    body = _plain(_dialog(record).render_body(60))
+    assert re.search(r"longest leg\s+12\.4 km\s+YUL-Cartierville → Far", body)
+
+
+def test_record_dialog_stars_our_own_end_of_the_longest_leg() -> None:
+    """A leg that leaves home takes the app-wide ★ at our end, never our name."""
+    record = _record(
+        category="long_leg", score=12.4,
+        stats={"hop_count": 1, "distinct_nodes": 1, "leg_km": 12.4,
+               "leg_link": [None, HUB_ID]},
+    )
+    lane = next(
+        line for line in _plain(_dialog(record).render_body(60)).splitlines()
+        if "longest leg" in line
+    )
+    assert "★ → YUL-Cartierville" in lane and "Homestead" not in lane
+
+
+def test_record_dialog_skips_the_leg_lane_for_a_record_stored_without_one() -> None:
+    """Records set before the discipline existed simply have no leg to show."""
+    body = _plain(_dialog(_record()).render_body(60))
+    assert "longest leg" not in body
+
+
 def test_record_dialog_shows_reliability_when_the_far_node_has_history() -> None:
     """The reliability lane reads the % and its sample count; absent without history."""
     with_rate = _plain(_dialog(_record(), reliability=(0.875, 7, 8)).render_body(60))

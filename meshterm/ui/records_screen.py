@@ -2,10 +2,10 @@
 
 A read-only board over the ``discovered_paths`` table (:meth:`Repository.discoveries`),
 opened from the main menu. Every successful trace — a *Trace target* boomerang or a
-*Trace path* walk — is scored against all six disciplines and offered to their boards
+*Trace path* walk — is scored against every discipline and offered to their boards
 (see :mod:`~meshterm.services.records`); this screen is where the survivors live.
 
-* the browser groups the six disciplines, each under its heading with a one-line
+* the browser groups the disciplines, each under its heading with a one-line
   description of the game (word-wrapped when it must) — the two pin overhead together as
   one block while that board scrolls, so a row deep in a discipline still says which game
   it is winning and what that game scores — then the discipline's records ranked
@@ -14,8 +14,9 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   hops). A discipline holding records at more than one hash width tags each row with its
   width, since the widths are genuinely different games;
 * opening a record floats :class:`RecordDialog` — every stat the walk was measured by
-  (the far point named with the node it reached), the walk drawn two ways: on THE route
-  graph (the Message paths dialog's shape, us at both ends, drawn no taller than one lane
+  (the far point named with the node it reached, the longest leg with the link it spanned),
+  the walk drawn two ways: on THE route graph (the Message paths dialog's shape, us at both
+  ends, drawn no taller than one lane
   needs) and, beside the stats, as the enclosed area it swept on a braille mini-map (us and
   every positioned hop, coloured node pins, no labels); then the full route — the path
   widget again, unlabelled across the card's whole width, wrapping at hop boundaries — and
@@ -146,7 +147,8 @@ class RecordDialog(Screen):
     """One record's full story, floating over the screen beneath.
 
     Every stat the walk was measured by — a reliability read from the far node's trace
-    history, the far point named with the node it reached — with the walk's enclosed area
+    history, the far point named with the node it reached, the longest leg drawn as the
+    link it spanned (our own end on the app-wide ★) — with the walk's enclosed area
     drawn beside them on a braille mini-map (us at the origin, every positioned hop pinned
     in its own name hue, no labels) when the terminal has the room; below, the walk on THE
     route graph (us at both ends, relays wearing their map marker over a node-type key),
@@ -310,7 +312,9 @@ class RecordDialog(Screen):
 
         Which lanes appear varies by discipline — a walk with no positions has no distance,
         far point, or area — so callers size to the returned list rather than a fixed count.
-        The far-point lane carries the reached node's name when one is known.
+        The far-point lane carries the reached node's name when one is known, and the
+        longest-leg lane the link it spanned; a record set before a stat existed simply has
+        no lane for it.
         """
         record, category = self._record, self._category
         stats = record.stats
@@ -347,6 +351,24 @@ class RecordDialog(Screen):
                 value.append("  ")
                 value.append(self._far_label, style=name_style(self._far_label, self._far_id))
             lanes.append(self._lane("far point", value))
+        leg = stats.get("leg_km")
+        if leg is not None:
+            value = Text(f"{leg:.1f} km")
+            link = stats.get("leg_link")
+            if link and len(link) == 2:
+                # The link itself on THE path widget, both ends named the way the walk
+                # below names them — our own end on the app-wide ★, since a leg that
+                # starts or ends at home is the commonest kind there is.
+                value.append("  ")
+                value.append_text(path_line(
+                    list(link),
+                    self._resolve,
+                    self_name=self._device_label,
+                    bare_self=True,
+                    dim_self=False,
+                    show_hash=False,
+                ).text())
+            lanes.append(self._lane("longest leg", value))
         area = stats.get("area_km2")
         if area is not None:
             lanes.append(self._lane("area", Text(f"{area:.1f} km²")))

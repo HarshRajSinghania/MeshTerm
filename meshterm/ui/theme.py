@@ -560,6 +560,7 @@ _GLYPH_MAP: dict[str, str] = {
     "🕸": "∟",   # mesh walk (route family)
     "🚨": "⚠",   # watchtower alert
     "🛣": "∟",   # longest-haul route (route family)
+    "🏹": "►",   # longest leg — the arrow in flight (▶ is the run *action*, not this)
     "🧳": "→",   # trip/journey
     "🔆": "°",   # brightest sighting
     "📶": "≥",   # TX power sweep — the power ramp

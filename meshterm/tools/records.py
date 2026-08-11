@@ -76,7 +76,7 @@ class TrophyCaseTool(Tool):
 
         Args:
             ctx: Shared application context.
-            category: Only this category id, or ``None`` for all six.
+            category: Only this category id, or ``None`` for every discipline.
             width: Only this hash width, or ``None`` for every width.
 
         Returns:
@@ -136,8 +136,8 @@ class TrophyCaseTool(Tool):
                 None,
                 "--category",
                 "-c",
-                help="Only this discipline (long_haul, far_point, grand_tour, "
-                "clean_trail, thin_thread, big_loop)",
+                help="Only this discipline (long_haul, far_point, long_leg, "
+                "grand_tour, clean_trail, thin_thread, big_loop)",
             ),
             width: Optional[int] = typer.Option(
                 None, "--width", "-w", help="Only records at this hash width (1, 2, or 4)"

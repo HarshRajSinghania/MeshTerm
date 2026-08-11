@@ -65,6 +65,42 @@ def test_walk_stats_unpositioned_segments_score_a_lower_bound() -> None:
     assert 1.0 < stats.km_travelled < 1.3  # only the positioned us→Hub leg counts
 
 
+def test_longest_leg_measures_one_link_and_names_its_ends() -> None:
+    """The longest single segment of the circuit, with the two nodes it spanned.
+
+    Hub sits ~1.11 km north and Leaf ~1.11 km south, so the Hub→Leaf crossing (~2.2 km)
+    beats both of the legs touching us — a link between two hops, neither of them ours.
+    """
+    stats = compute_walk_stats(
+        (HUB_ID, LEAF_ID), _result(8.0, 6.0, 7.0).hops, rtt_ms=None,
+        positions=POSITIONS, self_pos=SELF_POS,
+    )
+    assert stats.leg_km is not None and 2.0 < stats.leg_km < 2.5
+    assert stats.leg_link == (HUB_ID, LEAF_ID)
+    # Far point measures reach, not span: the furthest node is only half as far away.
+    assert stats.far_km is not None and stats.far_km < stats.leg_km
+    assert stats.as_dict()["leg_link"] == [HUB_ID, LEAF_ID]  # JSON-shaped for storage
+
+
+def test_longest_leg_names_our_own_end_as_none() -> None:
+    """A leg that leaves or comes home marks our end ``None`` — the ★ the UI draws."""
+    stats = compute_walk_stats(
+        (HUB_ID,), _result(8.0, 7.0).hops, rtt_ms=None,
+        positions=POSITIONS, self_pos=SELF_POS,
+    )
+    assert stats.leg_link == (None, HUB_ID)  # us → Hub, the outbound half
+
+
+def test_longest_leg_needs_two_positioned_ends() -> None:
+    """No segment with both ends placed scores nothing rather than a bogus zero."""
+    stats = compute_walk_stats(
+        (HUB_ID,), _result(8.0, 7.0).hops, rtt_ms=None,
+        positions=POSITIONS, self_pos=None,
+    )
+    assert stats.leg_km is None and stats.leg_link is None
+    assert "long_leg" not in walk_scores(stats)
+
+
 def test_cross_category_scores_score_every_game_at_once() -> None:
     """One walk competes everywhere it can — the every-board-at-once rule."""
     stats = compute_walk_stats(
@@ -77,6 +113,7 @@ def test_cross_category_scores_score_every_game_at_once() -> None:
     assert scores["thin_thread"] == -11.0       # the weakest surviving link
     assert scores["long_haul"] > 3.0
     assert scores["far_point"] > 1.0
+    assert scores["long_leg"] > 0.5
 
 
 def test_category_titles_are_plain_and_ids_are_stable() -> None:
@@ -86,7 +123,8 @@ def test_category_titles_are_plain_and_ids_are_stable() -> None:
     assert CATEGORY_BY_ID["long_haul"].title == "Longest distance"
     # Every id still resolves — the persisted keys never changed under the rename.
     assert set(CATEGORY_BY_ID) == {
-        "long_haul", "far_point", "grand_tour", "clean_trail", "thin_thread", "big_loop"
+        "long_haul", "far_point", "long_leg", "grand_tour", "clean_trail", "thin_thread",
+        "big_loop",
     }
 
 
