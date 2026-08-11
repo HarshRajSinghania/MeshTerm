@@ -521,8 +521,8 @@ _GLYPH_MAP: dict[str, str] = {
     "✅": "✓",   # ack (the ok-family check)
     "❔": "·",   # unknown class — a neutral dot
     # Raw payload classes (PAYLOAD_ICONS); raw ADVERT/ACK reuse ☼/✓ above
-    "📥": "↓",   # REQ — inbound ask
-    "📮": "↑",   # RESPONSE — outbound answer
+    "📥": "↑",   # REQ — a question going out
+    "📮": "↓",   # RESPONSE — the answer coming back
     "📩": "→",   # TEXT_MSG (overheard direct message) — text in flight
     "📻": "#",   # GRP_TXT — channel text (the # channel mark)
     "💽": "§",   # GRP_DATA — a data section on a channel
