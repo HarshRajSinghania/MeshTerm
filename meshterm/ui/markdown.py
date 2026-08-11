@@ -447,13 +447,19 @@ def _append_link(
 
 
 def _display_url(href: str) -> str:
-    """A link target as a page shows it: no scheme, no trailing slash, no in-page anchor."""
+    """A link target as a page shows it: no scheme, no ``www.``, no trailing slash.
+
+    An in-page anchor shows nothing at all — it names a place in the page the reader is
+    already on.
+    """
     if not href or href.startswith("#"):
         return ""
     for noise in _URL_NOISE:
         if href.lower().startswith(noise):
             href = href[len(noise):]
             break
+    if href.lower().startswith("www."):
+        href = href[4:]
     return href.rstrip("/")
 
 

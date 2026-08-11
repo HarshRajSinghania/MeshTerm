@@ -66,12 +66,13 @@ def test_each_page_shows_its_sections(builder, headings) -> None:  # noqa: ANN00
     assert at == sorted(at), f"{headings} are out of order in the rendered page"
 
 
-@pytest.mark.parametrize("builder", [about_meshterm, about_author, support_project])
+@pytest.mark.parametrize("builder", [about_author, support_project])
 def test_unwritten_sections_speak_the_empty_state_voice(builder) -> None:  # noqa: ANN001
     """Placeholders read as deliberately unwritten: lowercase, em-dashed, unparenthesized.
 
     The app's empty-state rule (see the UX standards in ``CLAUDE.md``) is what keeps a
-    scaffolded page from looking like a screen that failed to load.
+    scaffolded page from looking like a screen that failed to load. *About MeshTerm* is
+    written now and so has none; these two are still scaffolding.
     """
     text = _page(builder)
     placeholders = [line for line in text.splitlines() if "placeholder" in line]
@@ -110,6 +111,19 @@ def test_footer_names_the_pager_only_when_there_is_something_to_page() -> None:
 def test_page_is_a_full_screen_not_a_floating_view() -> None:
     """These are pages, so Esc reads *back*; a floating read-only view would say *close*."""
     assert AboutPage("About MeshTerm", about_meshterm()).floating is False
+
+
+def test_the_licence_section_states_the_terms_and_the_credit_it_owes() -> None:
+    """This page is where a reader with no shell finds them.
+
+    The terms MeshTerm ships under, the project it stands on, and the map data it draws
+    with — the ODbL asks for that credit by name, and a page nobody can read it on is no
+    credit at all.
+    """
+    prose = " ".join(_page(about_meshterm).split())
+
+    for owed in ("MIT licence", "MeshCore", "OpenStreetMap contributors", "ODbL"):
+        assert owed in prose, owed
 
 
 def test_pages_are_written_markdown_that_ships_with_the_package() -> None:

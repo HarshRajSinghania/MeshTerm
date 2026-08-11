@@ -214,7 +214,7 @@ def test_each_inline_mark_takes_its_own_style() -> None:
 def test_a_link_shows_where_it_goes() -> None:
     """Nothing is clickable on a framebuffer console, so a link that reads "the repo"
     has to name the repo or it says nothing at all — scheme stripped, it is noise."""
-    text = _texts("see [the repo](https://github.com/example/meshterm)\n")[0]
+    text = _texts("see [the repo](https://www.github.com/example/meshterm/)\n")[0]
 
     assert text.plain == "see the repo github.com/example/meshterm"
 
