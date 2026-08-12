@@ -35,7 +35,7 @@ class ConfigTool(Tool):
     """View and edit the connected device's full configuration."""
 
     name = "config"
-    title = "Device configuration"
+    title = "Device config"
     icon = "🔧"
     help = "Device settings — identity, radio, tuning, …"
     category = "This node"

@@ -1,6 +1,6 @@
 """The About MeshTerm tools: the three pages under the menu's last section.
 
-*About MeshTerm*, *About the author*, *Support this project* — in that order, which is
+*About MeshTerm*, *About the author*, *Support MeshTerm* — in that order, which is
 the order a stranger asks the questions in: what is this, who made it, how do I help.
 Each is a page rather than a feature: it reads nothing, transmits nothing, and needs no
 device, so it opens straight to its screen (see :mod:`meshterm.ui.about`) instead of
@@ -118,14 +118,14 @@ class SupportProjectTool(_AboutTool):
     """What keeps MeshTerm going, and the ways — paid and unpaid — to help it along."""
 
     name = "support"
-    title = "Support this project"
+    title = "Support MeshTerm"
     icon = "💰"
     help = "What keeps MeshTerm going, and how to help"
     order = 30  # the ask, and only once the first two have earned it
 
     @staticmethod
     def page() -> "MarkdownDoc":
-        """The *Support this project* page."""
+        """The *Support MeshTerm* page."""
         from ..ui.about import support_project
 
         return support_project()

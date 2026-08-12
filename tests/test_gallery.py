@@ -406,7 +406,7 @@ def _about_author(cols: int, rows: int) -> Screen:
 
 
 def _support_project(cols: int, rows: int) -> Screen:
-    return AboutPage("Support this project", support_project())
+    return AboutPage("Support MeshTerm", support_project())
 
 
 _ENTRIES: list[_Entry] = [

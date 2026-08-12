@@ -86,7 +86,7 @@ def test_unwritten_sections_speak_the_empty_state_voice(builder) -> None:  # noq
 
 def test_prose_wraps_into_its_own_indented_block() -> None:
     """A wrapped placeholder hangs under its heading rather than falling to column 0."""
-    screen = AboutPage("Support this project", support_project())
+    screen = AboutPage("Support MeshTerm", support_project())
     screen.note_viewport(40)
     # Narrow enough to force every placeholder to wrap at least once.
     lines = plain(screen.render_body(28)).splitlines()

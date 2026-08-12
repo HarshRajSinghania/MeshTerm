@@ -73,7 +73,7 @@ def about_author() -> MarkdownDoc:
 
 
 def support_project() -> MarkdownDoc:
-    """The *Support this project* page: what keeps it going, and how to chip in.
+    """The *Support MeshTerm* page: what keeps it going, and how to chip in.
 
     Deliberately two-sided — money is one way to help and not the only one, so the page
     keeps a section for the other kind rather than folding it into a donate link.

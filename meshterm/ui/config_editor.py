@@ -2,7 +2,7 @@
 
 Two sibling screens live here, deliberately kept distinct:
 
-* **Device configuration** (:func:`edit_config`, behind the ``config`` tool) — one grouped,
+* **Device config** (:func:`edit_config`, behind the ``config`` tool) — one grouped,
   column-aligned list of every setting under its category heading, each row showing its
   current value, any staged change, and a one-line explanation. Editing a row *stages* the
   new value (shown as ``current → new``) and nothing touches the radio until *Apply*;
@@ -223,7 +223,7 @@ def config_table(
     # Match the contacts list: a frameless SIMPLE_HEAD table with a left-justified accent title
     # and muted headers, so the two screens read as one family (see widgets.contacts_table).
     table = Table(
-        title="[accent]Device configuration[/accent]",
+        title="[accent]Device config[/accent]",
         title_justify="left",
         box=box.SIMPLE_HEAD,
         show_edge=False,
@@ -383,7 +383,7 @@ def _menu_items(
     # Back spells out the consequence of leaving (see menus.exit_rows).
     items.extend(exit_rows(staged, apply_value=_APPLY, back_value=_CANCEL))
 
-    title = "Device configuration" + (f" — {staged} staged" if staged else "")
+    title = "Device config" + (f" — {staged} staged" if staged else "")
     return title, items
 
 
