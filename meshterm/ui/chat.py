@@ -436,15 +436,22 @@ class ChatScreen(Screen):
         return (self._name(message.peer) or message.peer or "?"), message.text
 
     def _group_header(self, sender: str, *, is_self: bool = False) -> Text:
-        """Build the sender header that starts a group: the name, chipped, in its hue.
+        """Build the sender header that starts a group: the name, drawn as a chip.
 
         The chip is what separates a *label* from the prose under it — a name standing
         alone above its messages reads as a tag rather than as a coloured word someone
-        typed. Only this one is framed: an ``@mention`` inside a body (see
+        typed. It is a path line's own chip (see :func:`~meshterm.ui.widgets.name_chip`),
+        so a sender wears exactly what that node wears as a hop in a route, our own
+        messages included: the ``★``, never our name.
+
+        Only this one is framed: an ``@mention`` inside a body (see
         :meth:`_render_mentions`) is part of what was said, and inscribing it would put a
         chip in the middle of a sentence.
         """
-        return name_chip(sender, self._sender_style(sender, is_self=is_self))
+        if is_self:
+            return name_chip("", you=True)
+        # ``·`` is a channel line that arrived with no sender prefix — nobody to key on.
+        return name_chip(sender, None if sender == "·" else self._sender_key(sender))
 
     def _body_lines(
         self, body: str, message: ChatMessage, width: int, *, selected: bool = False
@@ -560,10 +567,23 @@ class ChatScreen(Screen):
             return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
             return "node.unknown"
+        return name_style(sender, self._sender_key(sender, mention=mention))
+
+    def _sender_key(self, sender: str, *, mention: bool = False) -> Optional[str]:
+        """The key a sender name resolves back to, or ``None`` when nothing places it.
+
+        Contacts first, then the recorder's stored names; in a *direct* thread a sender
+        label that resolves to nothing falls back to the peer's own key, since the only
+        two people in the conversation are us and them. A mention names an arbitrary
+        person, so that fallback must not apply to one.
+
+        Shared by the colour (:meth:`_sender_style`) and the chip
+        (:meth:`_group_header`) so the two can't disagree about who a name is.
+        """
         key = self._key_of(sender)
         if not key and not self._is_channel and not mention:
             key = self._peer_key or None
-        return name_style(sender, key)
+        return key
 
     # --- input ---------------------------------------------------------------
 

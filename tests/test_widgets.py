@@ -7,7 +7,16 @@ and every caller inherits it.
 
 from __future__ import annotations
 
-from meshterm.platforms import PICOCALC, REGULAR, set_platform
+from rich.style import Style
+from rich.text import Text
+
+from meshterm.ui.pathline import (
+    POWERLINE_ROUND_CLOSE,
+    POWERLINE_ROUND_OPEN,
+    PathHop,
+    PathLine,
+)
+from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import (
     _format_age,
     format_ago,
@@ -15,6 +24,11 @@ from meshterm.ui.widgets import (
     path_text,
     revisit_note,
 )
+
+
+def _span_style(text: Text, run: str) -> Style:
+    """The style over ``run`` in ``text``, parsed — pathline spans carry style *strings*."""
+    return Style.parse(next(str(s.style) for s in text.spans if text.plain[s.start : s.end] == run))
 
 
 def test_format_age_is_the_bare_column_form() -> None:
@@ -192,40 +206,49 @@ def test_revisit_note_is_absent_when_nothing_repeats() -> None:
     assert revisit_note(()) is None
 
 
-def test_name_chip_frames_the_name_without_recolouring_it() -> None:
-    """The chip adds a field; the hue it fields is exactly the one it was handed."""
-    chip = name_chip("Alice", "bold #ff00aa")
+def test_name_chip_is_a_path_line_of_one_hop() -> None:
+    """The framing isn't imitated — it *is* the route language, so it can't drift from it."""
+    chip = name_chip("Alice", "a1b2")
+    hop = PathLine([PathHop("Alice", key="a1b2")]).text()
 
-    assert chip.plain[1:-1] == "Alice"  # a cap either side, the name untouched between
-    styles = {chip.plain[s.start : s.end]: s.style for s in chip.spans}
-    assert styles["Alice"].color.name == "#ff00aa"  # its own hue, still
-    assert styles["Alice"].bgcolor is not None      # now with something under it
-    # The caps are the fill drawn over the page — foreground only, so the half-cell that
-    # isn't chip keeps whatever the row behind it is.
-    for cap in (chip.plain[0], chip.plain[-1]):
-        assert styles[cap].bgcolor is None
-        assert styles[cap].color == styles["Alice"].bgcolor
+    assert chip.plain == hop.plain
+    assert [(s.start, s.end, str(s.style)) for s in chip.spans] == [
+        (s.start, s.end, str(s.style)) for s in hop.spans
+    ]
 
 
-def test_name_chip_takes_a_theme_name_as_readily_as_a_hex() -> None:
-    """``node.unknown``/``you`` arrive as theme names — the fill must not flatten them.
+def test_name_chip_wears_the_hue_as_its_fill_padded_like_every_chip(powerline) -> None:
+    """A route's colour scheme: the node's hue fills the chip, the ink on it is dark."""
+    powerline(True)
+    chip = name_chip("Alice", "a1b2")
 
-    Rich drops a style string that mixes a theme name with anything else, so a chip built
-    by concatenation renders the name unstyled. This is that regression, pinned.
-    """
-    chip = name_chip("·", "node.unknown")
-
-    style = next(s.style for s in chip.spans if chip.plain[s.start : s.end] == "·")
-    assert style.color is not None and style.bgcolor is not None
-    assert style.color.name != style.bgcolor.name  # not the invisible-on-itself case
+    assert chip.plain.strip(POWERLINE_ROUND_OPEN + POWERLINE_ROUND_CLOSE) == " Alice "
+    ink = _span_style(chip, "Alice")
+    assert ink.bgcolor.name == node_style("a1b2").removeprefix("bold ")  # the hue
+    assert ink.color.name == "#0f172a"  # the chip ink every hop is lettered in
 
 
-def test_name_chip_draws_bare_where_the_console_has_no_field_for_it() -> None:
-    """PicoCalc's greys stop at slot 7 as backgrounds — so the name goes unframed there."""
-    set_platform(PICOCALC)
-    try:
-        chip = name_chip("Alice", "bold #ff00aa")
-    finally:
-        set_platform(REGULAR)
+def test_name_chip_draws_us_as_the_star_never_as_our_name(powerline) -> None:
+    """Our end of a route is the map's own marker; a sender label is no different."""
+    powerline(True)
+    chip = name_chip("you", you=True)
 
-    assert chip.plain == "Alice"  # no caps, no field — and no tofu on the console font
+    assert "★" in chip.plain and "you" not in chip.plain
+    assert _span_style(chip, "★").bgcolor.name == "#3f3f46"  # neutral grey, not a hue
+
+
+def test_name_chip_greys_a_node_it_cannot_place(powerline) -> None:
+    """No key, no hue — colour is reserved for keyed identities, in a chip as in a route."""
+    powerline(True)
+    keyless = name_chip("·")
+
+    assert _span_style(keyless, "·").bgcolor.name == "#64748b"  # the keyless grey
+
+
+def test_name_chip_falls_back_to_the_bare_name_without_powerline(powerline) -> None:
+    """No separator glyph to draw a chip with — the PicoCalc's console font among them."""
+    powerline(False)
+    chip = name_chip("Alice", "a1b2")
+
+    assert chip.plain == "Alice"  # exactly what an arrow-mode path line makes of one hop
+    assert str(next(iter(chip.spans)).style) == node_style("a1b2")  # still its own hue

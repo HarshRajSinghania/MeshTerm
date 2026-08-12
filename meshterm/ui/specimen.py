@@ -116,15 +116,16 @@ def specimen_lines() -> list[RenderableType]:
     names.append("me", style="you")
     lines.append(names)
 
-    # The same names framed — the chat's sender labels. On the console this row shows
-    # them bare, which is the point: there is no dark grey to field a chip with there.
+    # The same names as chips — the chat's sender labels, drawn through the path line's
+    # own segment, so this row is also a one-hop sample of the route language: hue in the
+    # fill, our end the star, a node nobody can place in the keyless grey.
     chips = Text("chips   ")
     for name, key in _DEMO_NAMES[:2]:
-        chips.append_text(name_chip(name, name_style(name, key)))
+        chips.append_text(name_chip(name, key))
         chips.append(" ")
-    chips.append_text(name_chip("me", "you"))
+    chips.append_text(name_chip("", you=True))
     chips.append(" ")
-    chips.append_text(name_chip("·", "node.unknown"))
+    chips.append_text(name_chip("·"))
     lines.append(chips)
 
     lines.append(Text("heard   ").append_text(_ages_row()))

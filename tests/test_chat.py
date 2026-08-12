@@ -976,7 +976,8 @@ def test_channel_transcript_groups_by_sender() -> None:
     rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
 
     assert rendered.count("Alice") == 1  # the two Alice messages share one header
-    assert "Bob" in rendered and "you" in rendered
+    # Our own group is headed by the ★ a route draws our end with, never by our name.
+    assert "Bob" in rendered and "★" in rendered
     assert "hi" in rendered and "again" in rendered  # bodies present, prefix stripped
     assert "Alice: hi" not in rendered  # the raw name prefix is lifted into the header
     # Each message keeps its own timestamp on its line, even when grouped under one sender.
@@ -986,10 +987,11 @@ def test_channel_transcript_groups_by_sender() -> None:
     assert stamps[0] != stamps[1]  # grouped Alice messages show distinct times
 
 
-def test_transcript_inscribes_the_sender_label_but_never_a_mention() -> None:
-    """The name that *opens* a group is a tag; the same name inside a body is prose."""
+def test_transcript_inscribes_the_sender_label_but_never_a_mention(powerline) -> None:
+    """The name that *opens* a group is a chip; the same name inside a body is prose."""
     from meshterm.ui.widgets import name_chip
 
+    powerline(True)  # this is a test *about* the chip, so ask for a glass that draws one
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
     messages = [
         ChatMessage(text="Alice: @[Bob] you around?", is_channel=True, channel_idx=0),
@@ -997,14 +999,11 @@ def test_transcript_inscribes_the_sender_label_but_never_a_mention() -> None:
     screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession())
     rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
 
-    # Built through the widget rather than spelled out: which caps it uses depends on the
-    # font the session found, and the point here is the framing, not the glyph.
-    def chipped(name: str) -> str:
-        return name_chip(name, "bold #ffffff").plain
-
-    assert chipped("Alice") in rendered   # the header, inscribed
-    assert "@Bob" in rendered             # the mention, as it was typed
-    assert chipped("Bob") not in rendered  # …and not framed mid-sentence
+    # Built through the widget rather than spelled out: the caps are the path line's, and
+    # what is being asserted here is the framing, not the glyph.
+    assert name_chip("Alice").plain in rendered   # the header, as a chip
+    assert "@Bob" in rendered                     # the mention, as it was typed
+    assert name_chip("Bob").plain not in rendered  # …and never framed mid-sentence
 
 
 def test_unidentified_sender_takes_the_node_grey_not_the_chrome_grey() -> None:
@@ -1230,7 +1229,8 @@ def test_channel_own_messages_do_not_merge_with_remote_namesake() -> None:
     ]
     screen = _channel_screen(messages)
     rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
-    assert rendered.count("you") == 2  # two separate headers, not one merged group
+    # Two headers, and not merely un-merged: theirs is the name they sent, ours is the ★.
+    assert rendered.count("you") == 1 and rendered.count("★") == 1
 
 
 def _channel_screen(messages, session=None, key_of=None) -> ChatScreen:

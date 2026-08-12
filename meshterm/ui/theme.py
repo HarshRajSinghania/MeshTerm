@@ -136,11 +136,6 @@ MESH_THEME = Theme(
         # only PicoCalc's footer_fkeys ever asks for them.
         "fkey.chip": "bold #ffffff on #475569",
         "fkey.chip.shift": "bold #ffffff on #16a34a",
-        # The field a node name is inscribed on when a surface draws it as a chip (see
-        # ui.widgets.name_chip): the same neutral dark grey pathline fills our own ``★``
-        # chip with, so the two chip languages agree. Background only — the ink is always
-        # the node's own hue, laid over this.
-        "name.chip": "on #3f3f46",
         # The prose voices — what a markdown page's inline marks are drawn in (see
         # ui.markdown). Headings borrow the styles the rest of the app already heads
         # sections with (``brand``, ``accent``), so only the *body* marks need names of
@@ -317,13 +312,6 @@ MESH_THEME_16 = Theme(
         # Shift bank, white text on both.
         "fkey.chip": "bold color(15) on color(7)",
         "fkey.chip.shift": "bold color(15) on color(2)",
-        # The name chip's field, which this console cannot actually draw: the palette's
-        # dark grey is slot 8 and backgrounds stop at 7, so there is no neutral field for
-        # a coloured name to sit on (the F-key lane's light grey is far too bright to take
-        # a node hue). The name is drawn bare here instead — ui.widgets.name_chip fields a
-        # chip only where the platform has the colour for one — and this entry exists so
-        # the style name resolves on both platforms, as every style name must.
-        "name.chip": "on color(0)",
         # Prose on the console. The page's body text is the default light grey (slot 7),
         # so emphasis is the one place the VT's bold-is-brightness rule *is* the design:
         # ``md.strong`` says bold on purpose and lands on white, exactly the step up the

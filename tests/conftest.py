@@ -19,7 +19,7 @@ always see the colours the app really emits.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Iterator, Union
+from typing import Callable, Iterable, Iterator, Union
 
 import pytest
 
@@ -51,6 +51,24 @@ def _plain_path_rendering(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     powerline_support.cache_clear()
     yield
     powerline_support.cache_clear()
+
+
+@pytest.fixture
+def powerline(monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
+    """Pin the powerline verdict for a test that is *about* chips.
+
+    The suite runs with ``MESHTERM_POWERLINE=0`` so screen assertions don't change with
+    the developer's glass (see the module docstring); a test of the chip language itself
+    needs the other answer, and asks for it through the supported override rather than by
+    reaching into the widget. ``monkeypatch`` restores the env and the autouse fixture
+    above clears the memoized verdict either side, so nothing leaks.
+    """
+
+    def _set(on: bool) -> None:
+        monkeypatch.setenv("MESHTERM_POWERLINE", "1" if on else "0")
+        powerline_support.cache_clear()
+
+    return _set
 
 
 @pytest.fixture(autouse=True)
