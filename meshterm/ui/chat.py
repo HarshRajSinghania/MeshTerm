@@ -392,8 +392,13 @@ class ChatScreen(Screen):
                 if new_day:
                     if lines:
                         lines += render_lines(Text(""), width)
+                    # A day divider is this transcript's section heading — it pins to the
+                    # top row while its day scrolls under it and ^PgUp/^PgDn step by it —
+                    # so it wears the app's heading dress (``── Label ──`` in accent, see
+                    # menus.section_heading) rather than reading as grey chrome. The rule
+                    # above the compose line stays muted: that one really is chrome.
                     divider = render_lines(
-                        Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="muted"), width
+                        Text(f"── {stamp:%a} {stamp:%b} {stamp.day} ──", style="accent"), width
                     )
                     self._sticky_headers.append((len(lines), [divider[0]]))
                     lines += divider
