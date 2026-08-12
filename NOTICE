@@ -1,0 +1,24 @@
+MeshTerm
+Copyright 2026 Jean-Pierre Martineau
+
+This product includes software developed by Jean-Pierre Martineau
+(https://github.com/jpmartineau/MeshTerm).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file
+for the full terms.
+
+--------------------------------------------------------------------------------
+
+Trademark notice: "MeshTerm" and any associated logo are trademarks of
+Jean-Pierre Martineau and are not licensed under the Apache License,
+Version 2.0. The license grants rights to the source code; it does not
+grant permission to use the MeshTerm name, or to represent a modified
+or redistributed copy as the MeshTerm project, except as needed to
+describe the origin of the work (e.g. "based on MeshTerm"). A
+redistributed fork should use its own name.
+
+Donation notice: MeshTerm's built-in donation link supports this
+project and its original author. A fork that keeps soliciting
+donations through that link, or through a lookalike of it, without
+clearly redirecting them to itself, is not affiliated with this
+project and is not authorized to do so.

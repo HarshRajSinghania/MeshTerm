@@ -283,3 +283,11 @@ respective project for the authoritative terms):
 ## License
 
 Copyright © 2026 Jean-Pierre Martineau.
+
+MeshTerm is open source under the [Apache License, Version 2.0](LICENSE) — free to
+use, modify, and redistribute, commercially or otherwise. The "MeshTerm" name and any
+associated logo are trademarks reserved by the author and aren't covered by the code
+license (see [NOTICE](NOTICE)); a redistributed fork should go by its own name. The
+donate link built into the app supports this project and its original author —
+forks that keep soliciting through it without redirecting it to themselves aren't
+affiliated with this project.

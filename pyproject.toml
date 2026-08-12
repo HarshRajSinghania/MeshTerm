@@ -9,7 +9,7 @@ description = "A modern command-line toolkit for tuning and exploring a MeshCore
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Jean-Pierre Martineau" }]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 keywords = ["meshcore", "lora", "mesh", "radio", "cli"]
 
 dependencies = [
