@@ -250,6 +250,8 @@ ruff format .            # format
 
 Screens are designed to stay readable at **72 columns**.
 
+Want to send a pull request? See [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
 ## Acknowledgements & attribution
 
 MeshTerm stands on the [MeshCore](https://meshcore.co.uk/) project — its firmware and the
