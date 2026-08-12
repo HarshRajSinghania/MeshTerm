@@ -1,6 +1,6 @@
 # MeshTerm
 
-**A full-screen terminal companion for [MeshCore](https://meshcore.co.uk/) LoRa mesh
+**A full-screen terminal companion for [MeshCore](https://meshcore.io/) LoRa mesh
 devices** — tune your radio, chat across the mesh, watch the network live, and keep a
 longitudinal record of everything you overhear, all from a connected serial, Bluetooth, or
 network (TCP) companion.
@@ -254,7 +254,7 @@ Want to send a pull request? See [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Acknowledgements & attribution
 
-MeshTerm stands on the [MeshCore](https://meshcore.co.uk/) project — its firmware and the
+MeshTerm stands on the [MeshCore](https://meshcore.io/) project — its firmware and the
 `meshcore` Python companion library are what make talking to the radio possible.
 
 ### Map data
