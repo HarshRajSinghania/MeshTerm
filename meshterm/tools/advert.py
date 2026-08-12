@@ -27,7 +27,7 @@ class SendAdvertTool(Tool):
     name = "advert"
     title = "Send advert"
     icon = "📡"
-    help = "Announce this node to the mesh — zero-hop, flood, or share as QR"
+    help = "Announce this node — zero-hop, flood, or QR"
     category = "This node"
     order = 40  # your own node announcing itself: a device action, not a view
     popup = True  # dialog-sized: float over the menu instead of replacing it

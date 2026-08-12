@@ -37,7 +37,7 @@ class ConfigTool(Tool):
     name = "config"
     title = "Device configuration"
     icon = "🔧"
-    help = "View and change device settings — identity, radio, tuning, …"
+    help = "Device settings — identity, radio, tuning, …"
     category = "This node"
     order = 20
 

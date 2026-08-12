@@ -40,7 +40,7 @@ class TxOptimizeTool(Tool):
     name = "tx-optimize"
     title = "TX optimize"
     icon = "📶"
-    help = "Tune a remote node's TX power for the best signal at a target"
+    help = "Tune a remote node's TX power for a target"
     category = "Other nodes"
     order = 20  # like Repeater admin: a remote radio, changed over the mesh
 

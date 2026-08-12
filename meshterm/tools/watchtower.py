@@ -29,7 +29,7 @@ class WatchtowerTool(Tool):
     name = "watchtower"
     title = "Watchtower"
     icon = "🚨"
-    help = "Alerts for watched nodes — silence, SNR sag, new arrivals"
+    help = "Alerts on watched nodes — silence, SNR sag"
     category = "Watch"
     order = 30  # after the live views: the section's always-on alerting eye
 

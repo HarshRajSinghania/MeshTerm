@@ -30,7 +30,7 @@ class RepeaterAdminTool(Tool):
     name = "repeater-admin"
     title = "Repeater admin"
     icon = "🗼"
-    help = "Set up a remote repeater — settings, actions, command line"
+    help = "Run a remote repeater — settings and actions"
     category = "Other nodes"
     order = 10  # the remote sibling of the local config tools
 

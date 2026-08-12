@@ -17,7 +17,7 @@ class ContactsTool(Tool):
     name = "contacts"
     title = "Contacts"
     icon = "👥"
-    help = "List this node and known contacts (last heard, packets, type, key)"
+    help = "Known contacts — last heard, packets, type"
     category = "Message"
     order = 40  # the address book the three above pick their recipient from
 

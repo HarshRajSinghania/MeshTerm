@@ -37,7 +37,7 @@ class MapTool(Tool):
     name = "map"
     title = "Map"
     icon = "🌍"
-    help = "Show mesh nodes on a street map (pannable; repeaters highlighted)"
+    help = "Mesh nodes on a pannable street map"
     category = "Explore"
     order = 10
 

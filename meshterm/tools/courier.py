@@ -33,7 +33,7 @@ class CourierTool(Tool):
     name = "courier"
     title = "Courier"
     icon = "📨"
-    help = "Store-and-forward outbox — deliver when the contact is next heard"
+    help = "Outbox that delivers when a contact is heard"
     category = "Message"
     order = 30  # after Chat and Channels: the same conversations, minus the waiting around
 

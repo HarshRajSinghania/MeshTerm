@@ -31,7 +31,7 @@ class TrophyCaseTool(Tool):
     name = "records"
     title = "Trophy case"
     icon = "🏆"
-    help = "Record-setting mesh walks, scored from every trace"
+    help = "Record-setting walks, scored from every trace"
     category = "Explore"
     order = 40  # what the two walks above it score into
 

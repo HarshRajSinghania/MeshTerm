@@ -29,7 +29,7 @@ class DashboardTool(Tool):
     name = "dashboard"
     title = "Dashboard"
     icon = "📊"
-    help = "Watch the mesh live — activity, traffic, RF health"
+    help = "The mesh live — activity, traffic, RF health"
     category = "Watch"
     order = 10  # the section's overview, above the tools it summarizes
 

@@ -27,7 +27,7 @@ class TimeMachineTool(Tool):
     name = "timemachine"
     title = "Time machine"
     icon = "⏳"
-    help = "Explore the recorded history — timelines, rhythms, arrivals"
+    help = "Recorded history — timelines, rhythms, arrivals"
     category = "Watch"
     order = 40  # the past tense of the Dashboard above it
 

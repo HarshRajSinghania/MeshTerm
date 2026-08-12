@@ -29,7 +29,7 @@ class DeviceActionsTool(Tool):
     name = "device-actions"
     title = "Device actions"
     icon = "🔨"
-    help = "Act on the device itself — clock, backup, identity key, reboot, reset"
+    help = "Clock, backup, identity key, reboot, reset"
     category = "This node"
     order = 30
 

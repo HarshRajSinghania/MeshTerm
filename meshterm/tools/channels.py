@@ -37,7 +37,7 @@ class ChannelsTool(Tool):
     name = "channels"
     title = "Channels"
     icon = "📻"
-    help = "Create, join, and share mesh channels (with QR codes)"
+    help = "Create, join, and share mesh channels"
     category = "Message"
     order = 20
 

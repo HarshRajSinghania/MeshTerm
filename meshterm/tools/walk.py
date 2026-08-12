@@ -35,7 +35,7 @@ class WalkTool(Tool):
     # the column the others align to. The wireframe globe reads as the logical topology,
     # the geographic map's 🌍 counterpart.
     icon = "🌐"
-    help = "Walk the mesh's observed topology — links, SNR, evidence"
+    help = "Walk the observed topology — links and SNR"
     category = "Explore"
     order = 20  # beside Map: the logical shape next to the geographic one
 

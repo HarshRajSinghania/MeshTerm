@@ -84,7 +84,7 @@ class AboutMeshTermTool(_AboutTool):
     name = "about"
     title = "About MeshTerm"
     icon = "📖"
-    help = "What this is, where it came from, and the terms it ships under"
+    help = "What this is, and the terms it ships under"
     order = 10  # the question a stranger asks first
 
     @staticmethod
@@ -102,7 +102,7 @@ class AboutAuthorTool(_AboutTool):
     name = "about-author"
     title = "About the author"
     icon = "👤"
-    help = "The person behind MeshTerm, on the mesh and off it"
+    help = "The person behind MeshTerm, on and off the mesh"
     order = 20  # who made the thing you just read about
 
     @staticmethod
@@ -120,7 +120,7 @@ class SupportProjectTool(_AboutTool):
     name = "support"
     title = "Support this project"
     icon = "💰"
-    help = "What keeps MeshTerm going, and the ways to help it along"
+    help = "What keeps MeshTerm going, and how to help"
     order = 30  # the ask, and only once the first two have earned it
 
     @staticmethod

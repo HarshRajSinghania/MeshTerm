@@ -29,7 +29,7 @@ class LiveFeedTool(Tool):
     name = "livefeed"
     title = "Live feed"
     icon = "📰"
-    help = "Every packet as it arrives, newest first — open any in the viewer"
+    help = "Every packet as it arrives, newest first"
     category = "Watch"
     order = 20  # right under the dashboard it was promoted out of
 
