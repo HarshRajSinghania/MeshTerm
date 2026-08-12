@@ -18,6 +18,7 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -51,8 +52,14 @@ from .marks import (
     LabelRgbOf,
     parse_hex,
 )
-from .pathline import PathLine, path_line
-from .theme import glyph, mark_rgb, name_style, node_style, snr_style
+from .pathline import (
+    POWERLINE_ROUND_CLOSE,
+    POWERLINE_ROUND_OPEN,
+    PathLine,
+    path_line,
+)
+from .termfont import powerline_full
+from .theme import active_theme, glyph, mark_rgb, name_style, node_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
@@ -493,6 +500,84 @@ def highlighted_hash(
         text.append("…", style=hue if len(raw) < split else rest)
     text.append(" " * pad)
     return text
+
+
+#: The theme name of the field a chipped name sits on (defined by both themes).
+_CHIP_FILL = "name.chip"
+
+#: The chip's two end caps, in the two shapes a terminal can give them. The rounded caps
+#: (:data:`~meshterm.ui.pathline.POWERLINE_ROUND_OPEN` / ``_CLOSE``) are the lozenge a
+#: path line already closes on, so a chipped name and a chipped hop round the same way —
+#: but they live in a full Nerd Font patch's extended block. Without one the caps fall
+#: back to the half blocks: ``▐`` fills a cell's right half and ``▌`` its left, so drawn in
+#: the fill over the page they widen the field by half a cell at each end and taper it,
+#: exactly the way the device picker's Bluetooth badge is rounded off (see
+#: :func:`~meshterm.ui.device_picker._type_cell`). Two cells of overhead either way.
+_ROUND_CAPS = (POWERLINE_ROUND_OPEN, POWERLINE_ROUND_CLOSE)
+_HALF_CAPS = ("▐", "▌")
+
+
+def name_chip(label: str, style: str) -> Text:
+    """A node name inscribed in a chip — THE way a surface *frames* a name.
+
+    The name keeps its own hue (the caller passes whatever style it would have drawn the
+    name in — a key-derived palette colour, the ``you`` white, the ``node.unknown`` grey)
+    and that hue becomes the chip's ink, laid on the neutral dark grey field
+    :data:`_CHIP_FILL` names. Nothing about which colour a name gets changes here; the
+    chip only gives the colour something to sit on, so a sender label reads as a tag
+    rather than as a stray coloured word above a message.
+
+    The ink is resolved to a concrete :class:`~rich.style.Style` and *added* to the fill
+    rather than concatenated as text: Rich silently drops a style string that mixes a
+    theme name with anything else (``"node.unknown on #3f3f46"`` renders as plain text),
+    which is exactly the shape a naive f-string would build here.
+
+    A platform whose console cannot field the chip draws the bare name instead — see
+    :func:`_bind_chip`, and the ``name.chip`` note in the 16-slot theme.
+
+    Args:
+        label: The name as it should read (already resolved; this never renames it).
+        style: The style the name would wear uncipped — a theme name or a literal
+            ``"bold #rrggbb"``, either way the node's own colour.
+
+    Returns:
+        The chip as a :class:`Text`, or the plain styled name where chips aren't drawn.
+    """
+    if not _chip_fielded:
+        return Text(label, style=style)
+    fill = active_theme().styles[_CHIP_FILL]
+    themed = active_theme().styles.get(style)
+    ink = themed if themed is not None else Style.parse(style)
+    # The caps are the fill drawn *over the page* — foreground only, so the half of the
+    # cell that isn't chip stays whatever the row behind it is.
+    edge = Style(color=fill.bgcolor)
+    # Asked per call rather than bound: the verdict is cached after the first ask, and
+    # binding it would move termfont's installed-font scan onto every import of this
+    # module — including a bare ``meshterm --help``, which draws nothing at all.
+    open_cap, close_cap = _ROUND_CAPS if powerline_full() else _HALF_CAPS
+    text = Text()
+    text.append(open_cap, style=edge)
+    text.append(label, style=ink + fill)
+    text.append(close_cap, style=edge)
+    return text
+
+
+#: Whether this platform draws the chip at all, rather than the bare name (bound below).
+_chip_fielded: bool = True
+
+
+@on_platform
+def _bind_chip(platform: Platform) -> None:
+    """Decide whether the platform can field a chip behind a name.
+
+    The chip is a *field* behind a name, and the 16-slot console has none to offer: its
+    one dark grey is slot 8 and backgrounds stop at 7, so the choice there is between a
+    name on light grey (which drowns the hue the chip exists to carry) and no chip at
+    all. Truecolor is the honest proxy for "this platform has a neutral dark grey", the
+    same test the heat gradient binds on.
+    """
+    global _chip_fielded
+    _chip_fielded = platform.truecolor
 
 
 def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:

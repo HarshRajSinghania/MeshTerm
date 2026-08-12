@@ -7,7 +7,14 @@ and every caller inherits it.
 
 from __future__ import annotations
 
-from meshterm.ui.widgets import _format_age, format_ago, path_text, revisit_note
+from meshterm.platforms import PICOCALC, REGULAR, set_platform
+from meshterm.ui.widgets import (
+    _format_age,
+    format_ago,
+    name_chip,
+    path_text,
+    revisit_note,
+)
 
 
 def test_format_age_is_the_bare_column_form() -> None:
@@ -183,3 +190,42 @@ def test_revisit_note_is_absent_when_nothing_repeats() -> None:
     """No repeats, no line — the warning is evidence, never chrome."""
     assert revisit_note([], _resolve) is None
     assert revisit_note(()) is None
+
+
+def test_name_chip_frames_the_name_without_recolouring_it() -> None:
+    """The chip adds a field; the hue it fields is exactly the one it was handed."""
+    chip = name_chip("Alice", "bold #ff00aa")
+
+    assert chip.plain[1:-1] == "Alice"  # a cap either side, the name untouched between
+    styles = {chip.plain[s.start : s.end]: s.style for s in chip.spans}
+    assert styles["Alice"].color.name == "#ff00aa"  # its own hue, still
+    assert styles["Alice"].bgcolor is not None      # now with something under it
+    # The caps are the fill drawn over the page — foreground only, so the half-cell that
+    # isn't chip keeps whatever the row behind it is.
+    for cap in (chip.plain[0], chip.plain[-1]):
+        assert styles[cap].bgcolor is None
+        assert styles[cap].color == styles["Alice"].bgcolor
+
+
+def test_name_chip_takes_a_theme_name_as_readily_as_a_hex() -> None:
+    """``node.unknown``/``you`` arrive as theme names — the fill must not flatten them.
+
+    Rich drops a style string that mixes a theme name with anything else, so a chip built
+    by concatenation renders the name unstyled. This is that regression, pinned.
+    """
+    chip = name_chip("·", "node.unknown")
+
+    style = next(s.style for s in chip.spans if chip.plain[s.start : s.end] == "·")
+    assert style.color is not None and style.bgcolor is not None
+    assert style.color.name != style.bgcolor.name  # not the invisible-on-itself case
+
+
+def test_name_chip_draws_bare_where_the_console_has_no_field_for_it() -> None:
+    """PicoCalc's greys stop at slot 7 as backgrounds — so the name goes unframed there."""
+    set_platform(PICOCALC)
+    try:
+        chip = name_chip("Alice", "bold #ff00aa")
+    finally:
+        set_platform(REGULAR)
+
+    assert chip.plain == "Alice"  # no caps, no field — and no tofu on the console font

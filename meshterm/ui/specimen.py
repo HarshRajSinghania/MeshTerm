@@ -18,7 +18,7 @@ from ..platforms import get_platform
 from .packet_viewer import KIND_ICONS, PAYLOAD_ICONS
 from .theme import _VT_SLOTS, fold_text, glyph, name_style, snr_style
 from .tui.fkeys import FPair, lane_text
-from .widgets import _recency_style, channel_glyph
+from .widgets import _recency_style, channel_glyph, name_chip
 
 #: Demo identities for the name-colour row: ``(name, key)``. The keys are synthetic, and
 #: chosen so their first bytes land in three different sectors of the hue wheel — on the
@@ -115,6 +115,17 @@ def specimen_lines() -> list[RenderableType]:
         names.append(name + "  ", style=name_style(name, key))
     names.append("me", style="you")
     lines.append(names)
+
+    # The same names framed — the chat's sender labels. On the console this row shows
+    # them bare, which is the point: there is no dark grey to field a chip with there.
+    chips = Text("chips   ")
+    for name, key in _DEMO_NAMES[:2]:
+        chips.append_text(name_chip(name, name_style(name, key)))
+        chips.append(" ")
+    chips.append_text(name_chip("me", "you"))
+    chips.append(" ")
+    chips.append_text(name_chip("·", "node.unknown"))
+    lines.append(chips)
 
     lines.append(Text("heard   ").append_text(_ages_row()))
 

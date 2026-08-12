@@ -35,6 +35,7 @@ from .tui.prompt import (
 from .tui.render import render_hanging, render_lines, right_aligned_tail
 from .tui.screen import CANCEL, Screen
 from .tui.spinner import Spinner, spinner_interval
+from .widgets import name_chip
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -435,8 +436,15 @@ class ChatScreen(Screen):
         return (self._name(message.peer) or message.peer or "?"), message.text
 
     def _group_header(self, sender: str, *, is_self: bool = False) -> Text:
-        """Build the sender header that starts a group, colored per sender."""
-        return Text(sender, style=self._sender_style(sender, is_self=is_self))
+        """Build the sender header that starts a group: the name, chipped, in its hue.
+
+        The chip is what separates a *label* from the prose under it — a name standing
+        alone above its messages reads as a tag rather than as a coloured word someone
+        typed. Only this one is framed: an ``@mention`` inside a body (see
+        :meth:`_render_mentions`) is part of what was said, and inscribing it would put a
+        chip in the middle of a sentence.
+        """
+        return name_chip(sender, self._sender_style(sender, is_self=is_self))
 
     def _body_lines(
         self, body: str, message: ChatMessage, width: int, *, selected: bool = False
@@ -533,20 +541,25 @@ class ChatScreen(Screen):
 
         Our own messages are white — keyed on ``is_self`` (the message being outbound), not
         on the ``"you"`` label, so a remote sender who happens to be named ``you`` still gets
-        a hue from the palette rather than masquerading as us. ``·`` (unknown) is muted.
-        Every other sender resolves its name back to a key (contacts, then the recorder's
-        stored names; a direct thread's *sender label* falls back to the peer's own key)
-        and takes that key's hue; a name no known node carries stays muted — the app-wide
-        rule that colour marks a keyed identity.
+        a hue from the palette rather than masquerading as us. ``·`` (unknown) takes
+        ``node.unknown``. Every other sender resolves its name back to a key (contacts, then
+        the recorder's stored names; a direct thread's *sender label* falls back to the
+        peer's own key) and takes that key's hue; a name no known node carries stays
+        ``node.unknown`` too — the app-wide rule that colour marks a keyed identity.
+
+        Every grey here is the *node* grey, never ``muted``: an unidentified sender is
+        content you can still act on (pick the message, open its paths), not chrome, and
+        the two must not track each other — on the console ``muted`` is the dark slot and
+        ``node.unknown`` the light one (JP, 2026-08-12).
 
         ``mention=True`` styles an ``@mention`` in the body rather than a sender label: a
         mention names an arbitrary person, so the peer-key fallback must not apply — an
-        unresolved one stays muted (gray) in a direct chat exactly as it does in a channel.
+        unresolved one stays grey in a direct chat exactly as it does in a channel.
         """
         if is_self:
             return "you"  # white, out of the per-sender hue range — always easy to spot
         if sender == "·":
-            return "muted"
+            return "node.unknown"
         key = self._key_of(sender)
         if not key and not self._is_channel and not mention:
             key = self._peer_key or None

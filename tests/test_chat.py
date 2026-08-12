@@ -986,6 +986,41 @@ def test_channel_transcript_groups_by_sender() -> None:
     assert stamps[0] != stamps[1]  # grouped Alice messages show distinct times
 
 
+def test_transcript_inscribes_the_sender_label_but_never_a_mention() -> None:
+    """The name that *opens* a group is a tag; the same name inside a body is prose."""
+    from meshterm.ui.widgets import name_chip
+
+    conv = Conversation(label="#public", is_channel=True, channel_idx=0)
+    messages = [
+        ChatMessage(text="Alice: @[Bob] you around?", is_channel=True, channel_idx=0),
+    ]
+    screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession())
+    rendered = _strip_ansi("\n".join(screen._render_grouped(80)))
+
+    # Built through the widget rather than spelled out: which caps it uses depends on the
+    # font the session found, and the point here is the framing, not the glyph.
+    def chipped(name: str) -> str:
+        return name_chip(name, "bold #ffffff").plain
+
+    assert chipped("Alice") in rendered   # the header, inscribed
+    assert "@Bob" in rendered             # the mention, as it was typed
+    assert chipped("Bob") not in rendered  # …and not framed mid-sentence
+
+
+def test_unidentified_sender_takes_the_node_grey_not_the_chrome_grey() -> None:
+    """``·`` is a sender we can't place — content, so ``node.unknown``, never ``muted``.
+
+    The two are one hex apart on the desktop and a whole slot apart on the console (light
+    grey against dark), which is where a sender drawn in chrome grey stops reading as a
+    node at all.
+    """
+    conv = Conversation(label="#public", is_channel=True, channel_idx=0)
+    screen = ChatScreen(conv, [], send=None, names={}, session=_StubSession())
+
+    assert screen._sender_style("·") == "node.unknown"
+    assert screen._sender_style("nobody-knows-me") == "node.unknown"  # no key, no hue
+
+
 def _two_day_messages():
     """Two days of direct messages, long enough to overflow a small viewport."""
     from datetime import datetime, timedelta, timezone
