@@ -280,11 +280,77 @@ def test_livefeed_column_header_is_pinned_and_carries_no_sort_cue() -> None:
 def test_livefeed_highlight_uses_the_app_wide_cursor() -> None:
     """The feed marks its row like every other list: a ``❯`` pointer over a brand row."""
     screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
+    screen.handle("down")  # off the pin, onto the newest packet normally selected
     rows = _rows(screen, 100)
     assert rows[0].startswith("❯ ") and rows[1].startswith("  ")
     assert "▸" not in "\n".join(rows)  # the old odd-one-out mark is gone
     raw = screen.render_body(100)[2]
     assert raw.startswith("\x1b[")  # the pointer carries the brand style, not bare text
+
+
+def test_livefeed_opens_pinned_and_the_pin_rides_the_newest_packet() -> None:
+    """The top stop follows the stream: arrivals take the highlight with them.
+
+    A live feed's resting state is *watching*, so the screen opens on the pin — drawn
+    ``^`` rather than ``❯`` — and every packet that lands keeps the cursor on the very
+    topmost row instead of being pushed down with the packet it was on.
+    """
+    screen = _screen(seed=[_obs(node="n0", age_s=1)])
+    assert screen._pinned and screen._selected == 0
+    assert _rows(screen, 100)[0].startswith("^ ")  # the pin's own mark
+
+    screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
+    assert screen._selected == 0, "the pin let go of the top"
+    rows = _rows(screen, 100)
+    assert rows[0].startswith("^ ") and rows[1].startswith("  ")
+    assert "Alice" in rows[0]  # …and it is the *newly arrived* packet under the cursor
+
+
+def test_livefeed_down_off_the_pin_selects_the_newest_packet_itself() -> None:
+    """``↓`` off the pin does not move a row — it changes what the cursor is attached to.
+
+    The two stops share the top line: the pin holds the position, a selection holds the
+    packet. So the first ``↓`` lands on that same newest packet under a plain ``❯``, and
+    only the *second* reaches the packet below it. ``↑`` re-pins.
+    """
+    screen = _screen(seed=[_obs(node="n0", age_s=2), _obs(node="n1", age_s=1)])
+    screen.handle("down")
+    assert screen._selected == 0 and not screen._pinned, "↓ skipped past the newest packet"
+    assert _rows(screen, 100)[0].startswith("❯ ")
+
+    # Now the highlight belongs to that packet: an arrival pushes it down, as ever.
+    screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
+    assert screen._selected == 1
+
+    screen.handle("down")
+    assert screen._selected == 2 and not screen._pinned  # the next ↓ really does move
+    screen.handle("up")
+    screen.handle("up")
+    assert screen._selected == 0 and not screen._pinned  # back on the newest packet…
+    screen.handle("up")
+    assert screen._pinned                                # …and one more ↑ re-pins
+
+
+def test_livefeed_home_resumes_following_from_deep_in_the_history() -> None:
+    """Home lands on the pin, not merely on whichever packet is newest right now."""
+    screen = _screen(seed=[_obs(node=f"n{i}", age_s=i) for i in range(10)])
+    screen.handle("end")
+    assert screen._selected is None and not screen._pinned
+    screen.handle("home")
+    assert screen._pinned and screen._selected == 0
+    screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
+    assert screen._selected == 0  # following again, not parked on the old newest
+
+
+def test_livefeed_opening_a_packet_drops_the_pin() -> None:
+    """Enter names *this* packet, so arrivals during a long read can't walk off it."""
+    screen = _screen(seed=[_obs(node="n0", age_s=1)])
+    screen.future = _Fut()
+    assert screen._pinned
+    screen._select_row(0)  # what _open_packet does before floating the viewer
+    assert not screen._pinned and screen._selected == 0
+    screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
+    assert screen._selected == 1, "the cursor left the packet being viewed"
 
 
 def test_livefeed_page_keys_move_the_feed_selection() -> None:
@@ -294,11 +360,13 @@ def test_livefeed_page_keys_move_the_feed_selection() -> None:
     screen._feed_window.page = 5  # as if the last paint settled a five-row window
     assert screen._selected == 0  # the newest packet is highlighted from the start
     screen.handle("pagedown")
-    assert screen._selected == 5  # the selection travelled down a page, not just the view
+    # A page is five *stops*, and the pin is the first of them (see LiveFeedScreen._cursor),
+    # so paging off it lands on row 4 — the same five positions every other page travels.
+    assert screen._selected == 4  # the selection travelled down a page, not just the view
     screen.handle("pageup")
-    assert screen._selected == 0
+    assert screen._selected == 0 and screen._pinned
     screen.handle("pageup")
-    assert screen._selected == 0  # …and stops at the newest rather than wrapping
+    assert screen._selected == 0  # …and stops at the pin rather than wrapping
 
     for _ in range(5):  # paged past the oldest packet, the cursor lands on Back and stays
         screen.handle("pagedown")
@@ -329,6 +397,7 @@ def test_livefeed_back_row_is_the_cursors_last_stop() -> None:
     screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
     screen.future = _Fut()
 
+    screen.handle("down")                                 # off the pin, onto the newest
     screen.handle("down")
     screen.handle("down")
     assert screen._selected is None                       # past the oldest packet: Back
@@ -391,7 +460,9 @@ def test_livefeed_highlighted_row_scrolls_sideways_to_its_tail() -> None:
         screen.handle("right")
     scrolled = _rows(screen, _CRAMPED)[0]
     assert screen._hshift == screen._hmax
-    assert scrolled.startswith("❯ ")  # the pointer lane stays pinned while the row slides
+    # The cursor lane holds its two cells while the row slides under it — here carrying
+    # the pin's ``^``, since a feed just opened is following the stream.
+    assert scrolled.startswith("^ ")
     assert scrolled.rstrip().endswith("-90 dBm")  # the tail is now readable
     assert opening[2:10] not in scrolled  # …at the cost of the time lane, slid off left
 
