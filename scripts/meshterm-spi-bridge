@@ -680,13 +680,32 @@ def _wire_trace_push(companion, server, log) -> None:
     the hash/SNR blocks ``push_trace_data`` wants and push the standard 0x89
     frame — exactly what the ``meshcore`` client on MeshTerm's side decodes.
 
+    Reading the SNRs is the subtle part. A TRACE packet keeps the *route* (the
+    hop hashes) in its payload, unchanged as it travels; the per-hop SNRs ride in
+    the packet **header's path field** instead — one signed byte (SNR × 4) appended
+    by each hop, which is where ``push_trace_data``'s SNR block and MeshTerm's
+    decoder both source them. So the payload never grows, and an earlier attempt
+    that waited for SNRs to appear *in the payload* never fired.
+
+    A received TRACE packet is also not a reply just because it exists. The
+    dispatcher is promiscuous — it runs the trace handler and this callback for
+    every non-duplicate TRACE frame it overhears, including third parties' traces
+    and our own outbound echoed back by the first repeater (same tag, header path
+    still filling). Pushing on those makes MeshTerm's tag-filtered wait resolve
+    instantly against a half-walked trace, so *every* trace reads as success. So
+    we gate hard: remember the tag and route of every trace we originate
+    (``send_trace_path_raw`` is the one send seam the frame server calls), and push
+    only a received TRACE whose tag we sent *and* whose header has accumulated an
+    SNR for every hop of that route — the completed reply.
+
     Upstream, the clean fix is the mirror of every other push: have
-    ``_on_packet_received`` fire ``trace_received`` for a TRACE packet and have
+    ``_on_packet_received`` fire ``trace_received`` for a completed trace and have
     ``frame_server._setup_push_callbacks`` register ``on_trace_received`` →
     ``push_trace_data``. Until a pymc_core release carries that, this shim stands
     (same spirit as :func:`_patch_pymc_ack_compat`).
     """
     import struct
+    import time
 
     try:
         from pymc_core.protocol.constants import PAYLOAD_TYPE_TRACE
@@ -699,40 +718,66 @@ def _wire_trace_push(companion, server, log) -> None:
         log.warning("trace push not wired (no dispatcher)")
         return
 
+    orig_send = getattr(companion, "send_trace_path_raw", None)
+    if orig_send is None:
+        log.warning("trace push not wired (no send_trace_path_raw)")
+        return
+
+    # tag -> (flags, path_bytes, deadline). Only a trace WE originated, walked in
+    # full, becomes a push. Entries expire so a never-answered trace can't later
+    # match a recycled tag.
+    SENT_TTL_S = 90.0
+    sent: dict = {}
+
+    def _prune(now: float) -> None:
+        for tag in [t for t, (_f, _p, dl) in sent.items() if dl < now]:
+            sent.pop(tag, None)
+
+    async def send_trace_path_raw(tag, auth_code, flags, path_bytes, _orig=orig_send):
+        now = time.monotonic()
+        _prune(now)
+        key = tag & 0xFFFFFFFF
+        sent[key] = (flags, bytes(path_bytes), now + SENT_TTL_S)
+        log.info(
+            "trace sent tag=0x%08X flags=0x%02x path=%s",
+            key, flags, bytes(path_bytes).hex().upper(),
+        )
+        return await _orig(tag, auth_code, flags, path_bytes)
+
+    companion.send_trace_path_raw = send_trace_path_raw
+
     prev = getattr(companion, "_on_packet_received", None)
 
     def push_reply(pkt) -> None:
         payload = bytes(pkt.payload or b"")
         if len(payload) < 9:
-            log.debug("trace reply too short (%d bytes)", len(payload))
             return
         tag, auth_code, flags = struct.unpack_from("<IIB", payload, 0)
-        hash_width = 1 << (flags & 0x03)
-        tail = payload[9:]
-        stride = hash_width + 1  # each hop: its hash bytes + one appended SNR byte
-        remainder = len(tail) % stride
-        if remainder == 0:
-            # Per-hop SNRs are in the payload; our own reception SNR is the final byte.
-            hops = len(tail) // stride
-            snr = pkt.get_snr() if hasattr(pkt, "get_snr") else getattr(pkt, "_snr", 0.0)
-            final_snr_byte = max(-128, min(127, int(round((snr or 0.0) * 4)))) & 0xFF
-        elif remainder == 1:
-            # Firmware that also carries the final device SNR as a trailing byte.
-            hops = (len(tail) - 1) // stride
-            final_snr_byte = tail[-1]
-        else:
-            log.info(
-                "trace tail %d not %d*(width %d + 1)[+1] (flags=0x%02x); raw=%s",
-                len(tail), len(tail) // stride, hash_width, flags, payload.hex().upper(),
-            )
-            return
-        path_bytes = hops * hash_width
-        path_hashes = tail[:path_bytes]
-        path_snrs = tail[path_bytes : path_bytes + hops]
-        server.push_trace_data(
-            path_bytes, flags, tag, auth_code, path_hashes, path_snrs, final_snr_byte
+        rec = sent.get(tag & 0xFFFFFFFF)
+        if rec is None:
+            return  # a trace we didn't send — overheard third party, ignore
+        _sent_flags, _sent_path, _dl = rec
+        hw = 1 << (flags & 0x03)
+        route = payload[9:]                 # the hop hashes, unchanged in flight
+        hops = len(route) // hw if hw else 0
+        # Per-hop SNRs live in the header path: one signed byte (SNR*4) per hop.
+        header_path = bytes(getattr(pkt, "path", b"") or b"")
+        snr_count = getattr(pkt, "path_len", 0) & 0x3F
+        header_snrs = header_path[:snr_count]
+        log.info(
+            "trace rx tag=0x%08X hops=%d hdr_snrs=%d payload=%s hdrpath=%s",
+            tag, hops, len(header_snrs), payload.hex().upper(), header_path.hex().upper(),
         )
-        log.info("pushed TRACE_DATA tag=0x%08X hops=%d width=%d", tag, hops, hash_width)
+        if hops == 0 or len(header_snrs) < hops:
+            return  # still in flight: not every hop has reported an SNR yet
+        path_snrs = header_snrs[:hops]
+        snr = pkt.get_snr() if hasattr(pkt, "get_snr") else getattr(pkt, "_snr", 0.0)
+        final_snr_byte = max(-128, min(127, int(round((snr or 0.0) * 4)))) & 0xFF
+        sent.pop(tag & 0xFFFFFFFF, None)  # one reply per trace
+        server.push_trace_data(
+            hops * hw, flags, tag, auth_code, route, path_snrs, final_snr_byte
+        )
+        log.info("pushed TRACE_DATA tag=0x%08X hops=%d width=%d", tag, hops, hw)
 
     async def on_packet(pkt) -> None:
         if prev is not None:
@@ -748,7 +793,7 @@ def _wire_trace_push(companion, server, log) -> None:
             log.warning("trace push failed: %s", exc)
 
     dispatcher.set_packet_received_callback(on_packet)
-    log.info("compat: TRACE replies now push PUSH_CODE_TRACE_DATA to the client")
+    log.info("compat: completed TRACE replies push PUSH_CODE_TRACE_DATA to the client")
 
 
 def run_bridge(host: str, port: int, node_name: str) -> int:
