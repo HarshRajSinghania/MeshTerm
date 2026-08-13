@@ -213,7 +213,9 @@ class MapScreen(Screen):
         # own is drawn (see :meth:`_ground`).
         self._ghost: Optional[Ghost] = None
         self._drawing: Optional[tuple] = None  # the key currently being rasterized
-        self._wanted: Optional[tuple[tuple, Viewport]] = None  # the next one to draw
+        # The next raster to draw: its key plus the whole scene it stands for — viewport,
+        # markers, find query — snapshotted at request time (see :meth:`_schedule_ground`).
+        self._wanted: Optional[tuple[tuple, Viewport, list[MapMarker], str]] = None
 
     # --- rendering -----------------------------------------------------------
 
@@ -272,24 +274,31 @@ class MapScreen(Screen):
         behind the echo while a query is live, but the viewport itself never resizes, so
         nothing jumps and the pan/zoom geometry holds steady.
         """
-        _, cell_h = self._session.base_body_size()
-        cell_w = width
-        dot_w, dot_h = cell_w * 2, max(1, cell_h) * 4
+        vp = self._ensure_viewport(width)
+        self._ensure_tiles(vp)
+        self._persist()
+        lines = self._ground(vp)
+        self.title = self._title(vp)
+        if lines and self._query_echo():
+            lines[-1] = query_line(self._filter, width)
+        return lines
 
+    def _ensure_viewport(self, width: int) -> Viewport:
+        """The viewport for a body ``width`` cells wide — built on first paint, else resized.
+
+        Split out of :meth:`render_body` because a subclass may need the view *before* it
+        renders anything: the picker's crosshair rides the centre, so it has to know where
+        the centre is to build its marker (see :meth:`LocationPickScreen.render_body`).
+        """
+        _, cell_h = self._session.base_body_size()
+        dot_w, dot_h = width * 2, max(1, cell_h) * 4
         if self._viewport is None:
             self._viewport = self._initial_viewport(dot_w, dot_h)
             self._size = (dot_w, dot_h)
         elif self._size != (dot_w, dot_h):
             self._viewport = self._viewport.resized(dot_w, dot_h)
             self._size = (dot_w, dot_h)
-
-        self._ensure_tiles(self._viewport)
-        self._persist()
-        lines = self._ground(self._viewport)
-        self.title = self._title(self._viewport)
-        if lines and self._query_echo():
-            lines[-1] = query_line(self._filter, width)
-        return lines
+        return self._viewport
 
     def _ground_key(self, vp: Viewport) -> tuple:
         """Everything the rasterized ground is a function of.
@@ -328,7 +337,10 @@ class MapScreen(Screen):
 
         self._schedule_ground(key, vp)
         if self._frame is not None and self._frame_key is not None:
-            if self._frame_key[0] == vp and self._frame_key[2] == key[2]:
+            # Everything but the tiles (key[1]) has to match: a frame drawn for a different
+            # marker set is not "the same picture missing streets", it is a picture missing
+            # a node — the picker's crosshair, say.
+            if self._frame_key[0] == key[0] and self._frame_key[2:] == key[2:]:
                 return list(self._frame)  # same view, only tiles differ — still aligned
         # The view moved (or nothing has ever been drawn): markers over the last ground.
         return render_map(vp, {}, self._markers, find=self._filter, ghost=self._ghost)
@@ -342,10 +354,18 @@ class MapScreen(Screen):
         each frame of it already stale on arrival, and the contention would slow the very
         keystrokes this is meant to keep quick. So a request that arrives mid-draw only
         replaces the pending one, and the draw that finishes picks it up.
+
+        The markers and the find query are **snapshotted here**, alongside the viewport, so
+        the raster draws the very scene ``key`` stands for. The draw itself happens later,
+        on a thread, long after the paint that asked for it returned — and a marker list
+        can be per-frame: the picker's crosshair is appended for the duration of one
+        ``render_body`` and taken straight back out (see
+        :meth:`LocationPickScreen.render_body`). Reading it at draw time would find it
+        gone, and the finished basemap would land over the crosshair and erase it.
         """
         if key == self._drawing or key == self._frame_key:
             return
-        self._wanted = (key, vp)
+        self._wanted = (key, vp, list(self._markers), self._filter)
         if self._drawing is None:
             self._start_ground()
 
@@ -353,32 +373,37 @@ class MapScreen(Screen):
         """Begin the pending raster, or draw it inline where there is no event loop."""
         if self._wanted is None:
             return
-        key, vp = self._wanted
+        key, vp, markers, find = self._wanted
         self._wanted = None
         tiles = {t: self._tiles.get(t) for t in vp.tiles(self._max_tile_zoom)}
         if not _loop_running():
             # A static render (the CLI's map export, a test): there is nothing to be
             # responsive *to*, so draw it here and now rather than never.
             self._drawing = None
-            self._frame, self._ghost = render_ground(
-                vp, tiles, self._markers, find=self._filter
-            )
+            self._frame, self._ghost = render_ground(vp, tiles, markers, find=find)
             self._frame_key = key
             return
         self._drawing = key
-        asyncio.ensure_future(self._draw_ground(key, vp, tiles))
+        asyncio.ensure_future(self._draw_ground(key, vp, tiles, markers, find))
 
-    async def _draw_ground(self, key: tuple, vp: Viewport, tiles: dict) -> None:
+    async def _draw_ground(
+        self, key: tuple, vp: Viewport, tiles: dict, markers: list[MapMarker], find: str
+    ) -> None:
         """Rasterize one view off the event loop, then repaint and take the next request.
 
         The work is pure Python, so a thread does not truly run it in parallel — but the
         interpreter still switches between threads every few milliseconds, which is the
         whole point: keystrokes keep being serviced throughout instead of waiting for the
         frame (measured worst-case delay ~50 ms, against the ~1 s of a blocking draw).
+
+        Everything the frame is a function of arrives as an argument (see
+        :meth:`_schedule_ground`) — the screen's own state may have moved on by the time
+        the thread runs, and the frame is filed under the key of the scene it was asked
+        for, so it must *be* that scene.
         """
         try:
             drawn = await asyncio.to_thread(
-                render_ground, vp, tiles, self._markers, find=self._filter
+                render_ground, vp, tiles, markers, find=find
             )
         except Exception:  # noqa: BLE001 - a frame we couldn't draw is one we draw again
             drawn = None
@@ -735,22 +760,25 @@ class LocationPickScreen(MapScreen):
 
         The crosshair is a transient marker appended for just this frame (never stored in
         :attr:`_markers`), drawn in the "self" style so it reads as *your* position-to-be
-        and labelled with the live coordinates it would commit.
+        and labelled with the live coordinates it would commit. The viewport is settled
+        first (:meth:`~MapScreen._ensure_viewport`) so the crosshair rides the centre from
+        the very first frame, and rides the *resized* centre when the window changes.
+
+        Because the marker only exists for the duration of this call, every raster it
+        should appear in has to be requested from inside it — which is why the background
+        draw snapshots the scene rather than reading it back later (see
+        :meth:`~MapScreen._schedule_ground`); otherwise the finished basemap would land
+        over the crosshair and the picker would lose sight of what it is picking.
         """
-        if self._viewport is None:
-            # First paint: let the base class establish the viewport so the crosshair can
-            # ride the centre from the very first frame (the extra render is one-off).
-            super().render_body(width)
         real = self._markers
-        vp = self._viewport
-        if vp is not None:
-            cross = MapMarker(
-                label=f"⌖ {vp.center_lat:.5f}, {vp.center_lon:.5f}",
-                lat=vp.center_lat,
-                lon=vp.center_lon,
-                is_self=True,
-            )
-            self._markers = real + [cross]
+        vp = self._ensure_viewport(width)
+        cross = MapMarker(
+            label=f"⌖ {vp.center_lat:.5f}, {vp.center_lon:.5f}",
+            lat=vp.center_lat,
+            lon=vp.center_lon,
+            is_self=True,
+        )
+        self._markers = real + [cross]
         try:
             return super().render_body(width)
         finally:

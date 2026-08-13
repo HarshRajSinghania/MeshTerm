@@ -242,6 +242,34 @@ def test_location_picker_draws_a_live_crosshair_without_keeping_it() -> None:
     assert "Set location" in screen._title(screen._viewport)
 
 
+async def test_location_picker_keeps_the_crosshair_when_the_basemap_lands(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """The finished ground raster must carry the crosshair, not paint over it.
+
+    The crosshair lives for exactly one ``render_body`` call, while the real raster runs on
+    a thread and lands much later. Reading the marker list back at draw time found it gone,
+    so every basemap frame arrived crosshair-less and erased the pick the moment the
+    streets appeared (JP, 2026-08-13).
+    """
+    from meshterm.ui import map_screen as ms
+
+    monkeypatch.setattr(ms, "_loop_running", lambda: True)
+    coros: list = []
+    monkeypatch.setattr(ms.asyncio, "ensure_future", coros.append)
+
+    screen = _picker(initial=(45.5, -73.6))
+    screen.render_body(80)  # paints now, schedules the ground raster
+    assert coros, "no background raster was scheduled"
+
+    await coros[-1]  # the raster finishes — long after the crosshair was taken back
+    assert screen._frame is not None
+    assert "⌖" in _plain(screen._frame), "the basemap landed over the crosshair"
+    # And the finished frame is what the next paint serves, crosshair intact.
+    assert "⌖" in _plain(screen.render_body(80))
+    assert screen._markers == [], "the crosshair leaked into the marker list"
+
+
 def test_location_picker_without_nodes_or_initial_shows_the_world() -> None:
     """With nothing to frame the picker opens on a world view rather than crashing."""
     screen = _picker()

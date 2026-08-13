@@ -1739,7 +1739,9 @@ async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:
     screen = _async_map(monkeypatch, started)
     screen.render_body(80)
 
-    await screen._draw_ground(screen._ground_key(screen._viewport), screen._viewport, {})
+    await screen._draw_ground(
+        screen._ground_key(screen._viewport), screen._viewport, {}, screen._markers, ""
+    )
     assert screen._ghost is not None, "the finished raster left no ground behind"
     assert screen._ghost.viewport == screen._viewport
 
