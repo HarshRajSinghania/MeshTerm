@@ -7,3 +7,7 @@
 # git, e.g. for a quick on-hardware test) never carries CRLF git would otherwise see as
 # a spurious modification blocking the next `git pull` there.
 *.py text eol=lf
+
+# Patch files are fed to `git apply` against LF sources; a CR sneaking into a context line
+# is how a patch that applied yesterday stops applying on somebody else's checkout.
+*.patch text eol=lf
