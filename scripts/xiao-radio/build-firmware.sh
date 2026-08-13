@@ -6,10 +6,15 @@
 # What it does:
 #   1. clones MeshCore (pinned to a tested commit) if you don't already have it
 #   2. applies meshcore-uart1.patch -- the two changes that make this work:
-#        * bind the companion protocol to hardware UART1 (Serial1 = D6/D7) instead of USB
-#        * move the I2C bus OFF D6/D7 (to internal pins 16/17) so it can't seize the UART pins
-#   3. builds the companion_radio_usb environment
+#        * teach the existing SERIAL_RX companion interface to build on nRF52 (upstream
+#          declares an ESP32-only HardwareSerial; nRF52 wants Serial1)
+#        * add a Xiao_nrf52_companion_radio_serial env: companion on D6/D7, and I2C moved
+#          off those pads (to internal pins 16/17) so it can't seize them
+#   3. builds that environment
 #   4. converts the .hex to .uf2
+#
+# The patch is upstream-shaped and has been submitted to MeshCore. Once it lands, delete
+# the `git apply` step below -- the env ships with the firmware and nothing needs patching.
 #
 # Prerequisites: git, and PlatformIO CLI on PATH (`pio`). Install pio with:
 #     pip install platformio
@@ -23,10 +28,11 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PATCH="$HERE/meshcore-uart1.patch"
 MC="${MESHCORE_DIR:-$HERE/_meshcore-build}"
-ENV=Xiao_nrf52_companion_radio_usb
-# Commit this patch was cut against. Newer MeshCore may need the two edits re-applied by hand
-# (see README "Updating"). Override with MESHCORE_COMMIT= to track upstream.
-PIN="${MESHCORE_COMMIT:-03b6ef4}"
+ENV=Xiao_nrf52_companion_radio_serial
+# Commit this patch was cut against (a `dev` commit -- that is the branch MeshCore takes work
+# on). Newer MeshCore may need the edits re-applied by hand (see README "Updating").
+# Override with MESHCORE_COMMIT= to track upstream.
+PIN="${MESHCORE_COMMIT:-e9edfc8e}"
 
 command -v git >/dev/null 2>&1 || { echo "ERROR: git not found"; exit 1; }
 command -v pio >/dev/null 2>&1 || command -v platformio >/dev/null 2>&1 || {

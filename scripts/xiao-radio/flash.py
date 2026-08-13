@@ -41,7 +41,13 @@ def find_uf2_drive():
 
 
 def touch_1200():
-    """Best-effort: pulse any Seeed XIAO app serial port at 1200 baud to reset to bootloader."""
+    """Best-effort: pulse any Seeed XIAO app serial port at 1200 baud to reset to bootloader.
+
+    Matched on Seeed's USB vendor id (2886) *only*. Deliberately not widened to Adafruit's
+    239A even though nRF52840 boards commonly use it: other nRF52840 gear on the same bench
+    (a LilyGo T-Echo, say) answers to 239A, and knocking somebody else's radio into its
+    bootloader is a rude way to find out you grabbed the wrong board.
+    """
     try:
         import serial
         import serial.tools.list_ports as lp
@@ -57,13 +63,70 @@ def touch_1200():
                 pass
 
 
+def bootloader_port():
+    """Return the COM/tty device of a XIAO sitting in its bootloader, or None."""
+    try:
+        import serial.tools.list_ports as lp
+    except Exception:
+        return None
+    for p in lp.comports():
+        hwid = (p.hwid or "").upper()
+        if "2886" in hwid and "0045" in hwid:  # Seeed VID + bootloader PID
+            return p.device
+    return None
+
+
+def read_uf2_info(drive):
+    """Parse INFO_UF2.TXT on ``drive`` into a dict of its ``Key: value`` lines."""
+    info = {}
+    try:
+        with open(os.path.join(drive, "INFO_UF2.TXT")) as fh:
+            for line in fh:
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    info[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return info
+
+
+def check_drive_is_ours(drive, force=False):
+    """Refuse to write to a bootloader that isn't the board this firmware was built for.
+
+    Two different mistakes are cheap to make and expensive to debug. A drive letter is not an
+    identity -- when one board leaves the bus another can inherit its letter, so the volume you
+    found may not be the one you just touched. And this firmware links for SoftDevice S140 v7
+    (app at 0x27000); a board carrying S140 6.1.1 wants it at 0x26000 and would simply not boot.
+    """
+    info = read_uf2_info(drive)
+    model = info.get("Model", "?")
+    softdev = info.get("SoftDevice", "?")
+    print("   %s reports: %s / %s" % (drive, model, softdev))
+
+    problems = []
+    if "xiao" not in model.lower():
+        problems.append("this is a %r bootloader, not a XIAO" % model)
+    if "6." in softdev:
+        problems.append("%s expects the app at 0x26000; this build is linked for S140 v7" % softdev)
+    if problems and not force:
+        sys.exit(
+            "ERROR: refusing to flash %s --\n  - %s\n"
+            "Unplug the other board, or re-run with --force if you are sure."
+            % (drive, "\n  - ".join(problems))
+        )
+    return True
+
+
 def main():
-    uf2 = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "meshcore-xiao-radio.uf2")
+    args = [a for a in sys.argv[1:] if a != "--force"]
+    force = "--force" in sys.argv[1:]
+    uf2 = args[0] if args else os.path.join(HERE, "meshcore-xiao-radio.uf2")
     if not os.path.exists(uf2):
         sys.exit("ERROR: firmware not found: %s\n(run build-firmware.sh first)" % uf2)
 
     print(">> looking for XIAO bootloader drive ...")
     drive = find_uf2_drive()
+    before = drive
     if not drive:
         touch_1200()
         for _ in range(30):
@@ -71,12 +134,26 @@ def main():
             if drive:
                 break
             time.sleep(1)
+    if drive and drive == before:
+        # The letter was already there before we touched anything, so it may belong to some
+        # other board entirely -- check what it says rather than trusting the letter.
+        print("   note: %s was already mounted before the touch" % drive)
     if not drive:
+        port = bootloader_port()
+        if port:
+            sys.exit(
+                "ERROR: the XIAO is in its bootloader on %s but exposes no UF2 drive.\n"
+                "This bootloader presents a serial port only, so copy-to-drive can't work.\n"
+                "Flash it over serial DFU instead, from your MeshCore checkout:\n"
+                "    pio run -e Xiao_nrf52_companion_radio_serial -t upload --upload-port %s"
+                % (port, port)
+            )
         sys.exit(
-            "ERROR: no UF2 bootloader drive found.\n"
-            "Double-tap the XIAO's reset button (it mounts as XIAO-SENSE), then re-run."
+            "ERROR: no UF2 bootloader drive and no XIAO bootloader serial port found.\n"
+            "Double-tap the XIAO's reset button, then re-run."
         )
 
+    check_drive_is_ours(drive, force=force)
     print(">> flashing %s -> %s" % (os.path.basename(uf2), drive))
     with open(uf2, "rb") as src:
         data = src.read()

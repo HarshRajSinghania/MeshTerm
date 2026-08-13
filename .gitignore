@@ -17,3 +17,7 @@ venv/
 # MeshTerm runtime data
 *.db
 output/
+
+# Built radio firmware (scripts/xiao-radio/build-firmware.sh writes it here)
+scripts/xiao-radio/*.uf2
+scripts/xiao-radio/_meshcore-build/

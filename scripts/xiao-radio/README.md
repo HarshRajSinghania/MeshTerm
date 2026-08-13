@@ -53,11 +53,16 @@ sh build-firmware.sh
 ```
 
 This clones MeshCore, applies [`meshcore-uart1.patch`](meshcore-uart1.patch), builds the
-`Xiao_nrf52_companion_radio_usb` environment, and writes **`meshcore-xiao-radio.uf2`**.
+`Xiao_nrf52_companion_radio_serial` environment, and writes **`meshcore-xiao-radio.uf2`**.
 
 The patch makes two changes that are *both* required (see [Why](#why-it-works)):
-- binds the companion protocol to **hardware UART1** (`Serial1`, D6/D7) instead of USB;
-- moves the **I²C bus off D6/D7** (to internal pins 16/17) so it can't steal the UART pins.
+- teaches MeshCore's existing **`SERIAL_RX` companion interface** to build on nRF52 — it was
+  written for ESP32 and declares a `HardwareSerial` the Adafruit nRF52 core doesn't have;
+- adds the **`Xiao_nrf52_companion_radio_serial` env**, which puts the companion on D6/D7 and
+  moves the **I²C bus off those pads** (to internal pins 16/17) so it can't steal them.
+
+Both changes are upstream-shaped and have been **submitted to MeshCore**. If they land, this
+patch step disappears: the env ships with the firmware and you just build it.
 
 ---
 
@@ -69,8 +74,28 @@ Plug the **XIAO's own USB‑C** into your computer (it may stay wired to the Lyr
 python flash.py
 ```
 
-It triggers the bootloader and copies the firmware. If it can't, **double‑tap the XIAO's
-reset button** (it mounts as the `XIAO-SENSE` drive) and re‑run.
+It pulses the XIAO's app port at 1200 baud to drop it into the bootloader, checks that the
+bootloader it found really is a XIAO, and copies the firmware. If it can't get there,
+**double‑tap the XIAO's reset button** and re‑run.
+
+**If no UF2 drive appears**, that isn't necessarily a fault: on our board the bootloader came
+up as a **serial port only, with no mass‑storage interface at all**, so there is nothing to
+copy a file onto. `flash.py` detects that and prints the serial‑DFU command to run from your
+MeshCore checkout instead:
+
+```bash
+pio run -e Xiao_nrf52_companion_radio_serial -t upload --upload-port <bootloader port>
+```
+
+That is the route that worked here — it ends in `Device programmed.` and the XIAO reboots
+itself into the radio firmware.
+
+> ⚠️ **Check which board you are flashing.** A drive letter is not an identity — when one
+> board leaves the USB bus another can inherit its letter, so the volume you found may not be
+> the one you just touched. `flash.py` reads `INFO_UF2.TXT` and refuses anything that isn't a
+> XIAO, or that carries **SoftDevice S140 6.1.1** (which wants the app at `0x26000`, while
+> this firmware links for S140 v7 at `0x27000` — it would flash and then not boot). Override
+> with `--force` only if you know better than it does.
 
 Sanity check: after flashing, the XIAO's USB serial port goes **silent to the companion
 protocol** — because the companion now lives on D6/D7, not USB. That silence is correct.
@@ -105,6 +130,14 @@ should see your node come up (ours reports as `Johnputer-Pico`).
 
 Everything below was the hard part; the scripts encode the answers so you don't repeat it.
 
+- **MeshCore already had companion‑over‑UART; nRF52 was just never wired into it.** The
+  `SERIAL_RX`/`SERIAL_TX` defines and the per‑board `*_companion_radio_serial` envs have
+  shipped for a while — `Xiao_S3_WIO_companion_radio_serial` uses *the same D6/D7 pads* on the
+  ESP32‑S3 twin of this board. The nRF52 build just doesn't compile: the shared code declares
+  `HardwareSerial companion_serial(1)` and calls `setPins()`, and on the Adafruit nRF52 core
+  `HardwareSerial` is abstract with no numbered constructor. `Serial1` is the concrete `Uart`
+  the core always defines, and `Uart::setPins(pin_rx, pin_tx)` takes the same arguments in the
+  same order — so one reference fixes it and the call site is untouched.
 - **Calculinux never wires UART1 to a pad.** The controller is enabled (so `/dev/ttyS1`
   exists) but reaches no pin. The RK3506 *matrix IO* can carry UART1 on almost any pad, so
   [`uart1-mux.py`](uart1-mux.py) pokes two register groups over `/dev/mem` to put UART1‑TX on
@@ -127,15 +160,22 @@ Everything below was the hard part; the scripts encode the answers so you don't 
 | Symptom | Check |
 |---|---|
 | `meshterm` can't open the port | Is `MT_USER` in `dialout`? (`groups`) — needs a fresh login after setup. |
-| Port opens but no node / silence | Re‑flash with the **`_usb`** firmware (not `_ble`); the BLE build ignores Serial1. Confirm the XIAO's USB serial is *silent* to companion frames. |
-| Still silent, wiring confirmed | Confirm the firmware has the **I²C‑remap** patch (`PIN_WIRE_SCL=16`, `PIN_WIRE_SDA=17`). |
+| Port opens but no node / silence | Re‑flash with the **`_serial`** env (not `_ble`/`_usb`); only that one defines `SERIAL_RX`/`SERIAL_TX`. Confirm the XIAO's USB serial is *silent* to companion frames. |
+| Still silent, wiring confirmed | Confirm the firmware has the **I²C‑remap** (`PIN_WIRE_SCL=16`, `PIN_WIRE_SDA=17`). |
+| Flashed fine, board never comes back | Wrong board, or wrong SoftDevice — check `INFO_UF2.TXT` said a XIAO and **S140 v7**, not 6.1.1. `flash.py` refuses both unless you passed `--force`. |
+| `flash.py` finds no UF2 drive | Expected on a bootloader that exposes CDC only. Use the `pio … -t upload --upload-port` line it prints. |
 | Nothing on `/dev/ttyS1` after reboot | `systemctl status uart1-radio-mux` — the mux must run each boot. |
 | Verify the raw link, as root | Route the mux, open `/dev/ttyS1` @115200, send an `APP_START` frame (`3c 0e 00 01` + 7×`00` + name); a good radio replies with a `>`‑framed `05` (SELF_INFO). |
 
 ### Updating MeshCore
-`build-firmware.sh` pins a tested commit. To track upstream, run it with
-`MESHCORE_COMMIT=main`; if the patch no longer applies cleanly, re‑apply the two edits in
-[`meshcore-uart1.patch`](meshcore-uart1.patch) by hand — they're two hunks.
+`build-firmware.sh` pins a tested commit on MeshCore's `dev` branch (that's where work lands
+first). To track upstream, run it with `MESHCORE_COMMIT=dev`; if the patch no longer applies
+cleanly, re‑apply the two edits in [`meshcore-uart1.patch`](meshcore-uart1.patch) by hand —
+they're two hunks.
+
+**This patch is upstream in review.** If it merges, drop the `git apply` line from
+`build-firmware.sh` and delete the patch: `Xiao_nrf52_companion_radio_serial` becomes a stock
+env and there is nothing left to carry.
 
 ---
 
