@@ -796,6 +796,46 @@ def _wire_trace_push(companion, server, log) -> None:
     log.info("compat: completed TRACE replies push PUSH_CODE_TRACE_DATA to the client")
 
 
+def _wire_rx_log_push(companion, server, log) -> None:
+    """Forward the promiscuous RX packet log to the client (PUSH_CODE_LOG_RX_DATA).
+
+    The same missing-wiring gap as the trace push, one seam over. MeshTerm's live
+    feed is built from RX_LOG_DATA events — every overheard frame with its SNR/RSSI.
+    pymc_core's frame server has ``push_rx_raw`` (which builds the 0x88 push) but its
+    ``_setup_push_callbacks`` never registers ``on_rx_log_data``, so it is never
+    called. Adverts still show because they carry their *own* decoded push
+    (``advert_received``, which is wired); everything else we overhear — requests,
+    channel text we can't decrypt, acks — travels only via this raw log and is
+    dropped. So the feed looks advert-only.
+
+    Subscribe to the dispatcher's raw-packet feed directly and push each frame.
+    Going through the dispatcher (not ``on_rx_log_data``) keeps it clear of the
+    frame server's per-connection ``clear_push_callbacks()``, and that feed fires
+    before dedup, so the client sees every repeat — exactly what a live feed wants.
+
+    Upstream, the fix is again the mirror of the wired pushes: register
+    ``on_rx_log_data`` → ``push_rx_raw`` in ``frame_server._setup_push_callbacks``.
+    """
+    dispatcher = getattr(getattr(companion, "node", None), "dispatcher", None)
+    if dispatcher is None or not hasattr(dispatcher, "add_raw_packet_subscriber"):
+        log.warning("rx-log push not wired (no dispatcher)")
+        return
+    if not hasattr(server, "push_rx_raw"):
+        log.warning("rx-log push not wired (no push_rx_raw)")
+        return
+
+    async def on_raw(pkt, data, _analysis=None) -> None:
+        try:
+            snr = getattr(pkt, "snr", getattr(pkt, "_snr", 0.0))
+            rssi = getattr(pkt, "rssi", getattr(pkt, "_rssi", 0))
+            server.push_rx_raw(snr or 0.0, rssi or 0, bytes(data))
+        except Exception as exc:
+            log.warning("rx-log push failed: %s", exc)
+
+    dispatcher.add_raw_packet_subscriber(on_raw)
+    log.info("compat: raw RX packets now push PUSH_CODE_LOG_RX_DATA to the client")
+
+
 def run_bridge(host: str, port: int, node_name: str) -> int:
     import asyncio
     import logging
@@ -917,6 +957,7 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
         )
         await server.start()
         _wire_trace_push(companion, server, log)
+        _wire_rx_log_push(companion, server, log)
         log.info("READY — connect with:  meshterm --tcp %s:%d", host, port)
 
         import signal
