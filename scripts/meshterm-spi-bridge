@@ -661,6 +661,96 @@ def _wire_contact_persistence(companion, log) -> None:
     log.info("contact persistence at %s", path)
 
 
+def _wire_trace_push(companion, server, log) -> None:
+    """Forward over-the-air trace replies to the client as PUSH_CODE_TRACE_DATA.
+
+    pymc_core parses received TRACE packets but never hands them to the
+    companion client: its frame server registers every push callback *except*
+    ``on_trace_received``, and nothing in the library ever fires the
+    ``trace_received`` event — so the whole path is dead code. The only
+    ``push_trace_data`` call is the self-hop shortcut in ``_cmd_send_trace_path``.
+    The upshot is that MeshTerm's ``run_trace`` sends the trace, gets
+    ``RESP_CODE_SENT``, then waits on ``TRACE_DATA`` and times out while the node
+    quietly drops the reply.
+
+    Bridge it at the one seam that sees every received packet with its measured
+    SNR — the dispatcher's packet-received callback (``CompanionRadio`` already
+    installs ``_on_packet_received`` there and only acts on group data). Wrap it:
+    run the original, then, for a TRACE payload, re-slice the on-air bytes into
+    the hash/SNR blocks ``push_trace_data`` wants and push the standard 0x89
+    frame — exactly what the ``meshcore`` client on MeshTerm's side decodes.
+
+    Upstream, the clean fix is the mirror of every other push: have
+    ``_on_packet_received`` fire ``trace_received`` for a TRACE packet and have
+    ``frame_server._setup_push_callbacks`` register ``on_trace_received`` →
+    ``push_trace_data``. Until a pymc_core release carries that, this shim stands
+    (same spirit as :func:`_patch_pymc_ack_compat`).
+    """
+    import struct
+
+    try:
+        from pymc_core.protocol.constants import PAYLOAD_TYPE_TRACE
+    except Exception as exc:  # package layout changed — leave it alone
+        log.warning("trace push not wired (%s)", exc)
+        return
+
+    dispatcher = getattr(getattr(companion, "node", None), "dispatcher", None)
+    if dispatcher is None or not hasattr(dispatcher, "set_packet_received_callback"):
+        log.warning("trace push not wired (no dispatcher)")
+        return
+
+    prev = getattr(companion, "_on_packet_received", None)
+
+    def push_reply(pkt) -> None:
+        payload = bytes(pkt.payload or b"")
+        if len(payload) < 9:
+            log.debug("trace reply too short (%d bytes)", len(payload))
+            return
+        tag, auth_code, flags = struct.unpack_from("<IIB", payload, 0)
+        hash_width = 1 << (flags & 0x03)
+        tail = payload[9:]
+        stride = hash_width + 1  # each hop: its hash bytes + one appended SNR byte
+        remainder = len(tail) % stride
+        if remainder == 0:
+            # Per-hop SNRs are in the payload; our own reception SNR is the final byte.
+            hops = len(tail) // stride
+            snr = pkt.get_snr() if hasattr(pkt, "get_snr") else getattr(pkt, "_snr", 0.0)
+            final_snr_byte = max(-128, min(127, int(round((snr or 0.0) * 4)))) & 0xFF
+        elif remainder == 1:
+            # Firmware that also carries the final device SNR as a trailing byte.
+            hops = (len(tail) - 1) // stride
+            final_snr_byte = tail[-1]
+        else:
+            log.info(
+                "trace tail %d not %d*(width %d + 1)[+1] (flags=0x%02x); raw=%s",
+                len(tail), len(tail) // stride, hash_width, flags, payload.hex().upper(),
+            )
+            return
+        path_bytes = hops * hash_width
+        path_hashes = tail[:path_bytes]
+        path_snrs = tail[path_bytes : path_bytes + hops]
+        server.push_trace_data(
+            path_bytes, flags, tag, auth_code, path_hashes, path_snrs, final_snr_byte
+        )
+        log.info("pushed TRACE_DATA tag=0x%08X hops=%d width=%d", tag, hops, hash_width)
+
+    async def on_packet(pkt) -> None:
+        if prev is not None:
+            await prev(pkt)
+        try:
+            if pkt.get_payload_type() != PAYLOAD_TYPE_TRACE:
+                return
+        except Exception:
+            return
+        try:
+            push_reply(pkt)
+        except Exception as exc:
+            log.warning("trace push failed: %s", exc)
+
+    dispatcher.set_packet_received_callback(on_packet)
+    log.info("compat: TRACE replies now push PUSH_CODE_TRACE_DATA to the client")
+
+
 def run_bridge(host: str, port: int, node_name: str) -> int:
     import asyncio
     import logging
@@ -781,6 +871,7 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
             device_model="pyMC-spi-bridge",
         )
         await server.start()
+        _wire_trace_push(companion, server, log)
         log.info("READY — connect with:  meshterm --tcp %s:%d", host, port)
 
         import signal
