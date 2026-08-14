@@ -19,8 +19,7 @@ from meshterm.services.battery_service import (
     BatteryService,
     battery_percent,
 )
-from meshterm.ui.fontset import in_font
-from meshterm.ui.widgets import _BATTERY_CRITICAL, _CHARGE_MARK, battery_cell
+from meshterm.ui.widgets import _BATTERY_CRITICAL, battery_cell
 
 # --- the LiPo state-of-charge curve -------------------------------------------------------
 
@@ -86,24 +85,21 @@ def test_battery_cell_charging_sweeps_bottom_to_full_holding_the_percent() -> No
     assert {str(battery_cell(20, charging=True, frame=f).style) for f in range(6)} == {"batt.low"}
 
 
-def test_battery_cell_marks_charging_statically_when_nothing_animates() -> None:
-    """With animation off the fill stays true and a mark — not the sweep — says charging."""
-    still = battery_cell(20, charging=True, frame=0, animate=False)
-    # The frozen sweep used to draw an *empty* cell here, under-reading the pack outright.
-    assert still.plain == chr(0x2800 | 0xC0) + _CHARGE_MARK + " 20%"
-    assert still.plain[:1] == battery_cell(20).plain[:1]  # the same fill as at rest
-    # It says the same thing whatever the frame — there are no frames to read.
-    assert {battery_cell(20, charging=True, frame=f, animate=False).plain for f in range(6)} == {
-        still.plain
-    }
-    # Not charging draws no mark, and the low-battery blink stays still too.
-    assert battery_cell(20, animate=False).plain == chr(0x2800 | 0xC0) + " 20%"
+def test_battery_cell_sweeps_even_where_decoration_is_switched_off() -> None:
+    """``animate=False`` silences the blink, never the sweep — the sweep *is* the state."""
+    fills = [battery_cell(20, charging=True, frame=f, animate=False).plain[0] for f in range(5)]
+    assert fills == [battery_cell(20, charging=True, frame=f).plain[0] for f in range(5)]
+    assert len(set(fills)) == 5  # it really climbs, rather than holding one frame
+    # The blink, being decoration over a charge the cell already shows, does hold still.
     assert {str(battery_cell(5, frame=f, animate=False).style) for f in range(4)} == {"batt.low"}
 
 
-def test_charge_mark_is_drawable_on_the_console_font() -> None:
-    """The static mark is only useful on the platform whose font has to have it."""
-    assert in_font(_CHARGE_MARK)
+def test_battery_cell_at_full_rests_full_however_the_charging_flag_reads() -> None:
+    """A topped-off pack draws as not charging, so a plugged-in charger stops the sweep."""
+    assert battery_cell(100, charging=True, frame=0).plain == "⣿ 100%"
+    assert {battery_cell(100, charging=True, frame=f).plain for f in range(6)} == {"⣿ 100%"}
+    # One percent short is still filling, and still sweeps.
+    assert battery_cell(99, charging=True, frame=0).plain[0] == chr(0x2800)
 
 
 # --- the poller ---------------------------------------------------------------------------

@@ -1361,12 +1361,6 @@ _BATTERY_CRITICAL = 10
 #: Frames in the charging sweep: empty → four fills → round again (bottom-to-full loop).
 _CHARGE_FRAMES = 5
 
-#: The charging mark for a platform that can't animate (``Platform.effects`` off): one arrow
-#: beside the true fill, saying charge is going *in*. The sweep is the desktop's way of
-#: telling the same thing over time; where time isn't available the glyph has to say it at
-#: rest, and it must stay inside the console font's inventory (see ``ui/fontset.py``).
-_CHARGE_MARK = "↑"
-
 
 def _braille_fill(rows: int) -> str:
     """A single braille cell with its bottom ``rows`` (0–4) dot rows lit."""
@@ -1401,39 +1395,35 @@ def battery_cell(
     * **Critically low** (≤ :data:`_BATTERY_CRITICAL`%, not charging) blinks the red cell to a
       dim slate on alternate frames — an unmissable pulse in the corner.
 
-    Both are *animations*, and a platform without effects (the PicoCalc — see
-    ``Platform.effects``) has no frames to spend on them, so it passes ``animate=False``.
-    The blink simply doesn't run there, but charging still has to be legible at rest: the
-    sweep would otherwise freeze on whichever fill its held frame happened to land on and
-    lie about the charge. So the static gauge keeps the **true** fill and says charging with
-    :data:`_CHARGE_MARK` beside it instead.
+    The two differ in what they're *for*, which is what ``animate`` sorts out. The sweep is
+    the only thing that says charging at all, so it runs everywhere — a platform whose frames
+    are dear (the PicoCalc: see ``Platform.effects``) just steps it on that platform's own
+    slower repaint cadence. The blink is an alarm laid over a charge the gauge already shows,
+    so it is genuinely decorative and ``animate=False`` drops it, leaving the red cell steady.
+
+    A pack at 100% is drawn as **not charging** whichever way the flag reads: a full cell
+    resting full is the honest picture, and a topped-off charger left plugged in shouldn't
+    leave the gauge sweeping forever.
 
     Args:
         percent: State of charge, 0–100 (clamped).
-        charging: Whether the pack is taking charge (drives the fill sweep, or the static
-            mark where nothing animates).
+        charging: Whether the pack is taking charge (drives the fill sweep). Ignored at 100%.
         frame: A monotonically advancing tick; only its phase is read, so any
             steadily-incrementing integer animates the two live states.
-        animate: Whether the caller repaints often enough for animation. ``False`` draws the
-            gauge's resting state — true fill, no blink — and marks charging statically.
+        animate: Whether decorative animation runs. ``False`` holds the low-battery blink at
+            its resting frame; the charging sweep runs regardless, being the state itself.
 
     Returns:
-        A Rich :class:`Text`: the coloured glyph (plus the charge mark, when charging with
-        no animation), a space, and ``NN%`` in muted text.
+        A Rich :class:`Text`: the coloured glyph, a space, and ``NN%`` in muted text.
     """
     pct = max(0, min(100, int(percent)))
     rows, color = _battery_tier(pct)
-    mark = ""
-    if charging and animate:
+    if charging and pct < 100:
         # The charge colour is held; only the fill sweeps, so it reads as "filling", not
         # as the charge itself jumping around.
         rows = frame % _CHARGE_FRAMES
-    elif charging:
-        mark = _CHARGE_MARK
     elif animate and pct <= _BATTERY_CRITICAL and frame % 2:
         color = "batt.dim"
     out = Text(_braille_fill(rows), style=color)
-    if mark:
-        out.append(mark, style=color)
     out.append(f" {pct}%", style="muted")
     return out

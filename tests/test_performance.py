@@ -194,8 +194,9 @@ def test_an_explicit_spinner_cycle_still_wins() -> None:
     assert Spinner("ab").frames == "ab"
 
 
-def test_battery_gauge_holds_still_where_effects_are_off() -> None:
-    """No charging sweep and no low-battery blink: the gauge draws its resting frame."""
+def test_battery_gauge_steps_the_sweep_at_the_platforms_own_cadence(monkeypatch) -> None:
+    """The charging sweep runs on the PicoCalc too — a step per repaint, not per second."""
+    from meshterm.ui import menu
     from meshterm.services.battery_service import BatteryReading
     from meshterm.ui.menu import _battery_segment
 
@@ -206,13 +207,24 @@ def test_battery_gauge_holds_still_where_effects_are_off() -> None:
                 return BatteryReading(millivolts=3300, percent=5, charging=True)
 
     ctx = _Ctx()
+    clock = 0.0
+    monkeypatch.setattr(menu.time, "monotonic", lambda: clock)
+
+    def _sweep(seconds: float) -> list[str]:
+        """The gauge's fills over five ticks of ``seconds`` each."""
+        nonlocal clock
+        out = []
+        for step in range(5):
+            clock = step * seconds
+            out.append(_battery_segment(ctx).plain[0])  # type: ignore[arg-type]
+        return out
+
     set_platform(PICOCALC)
-    # Frame 0 of a charging sweep is the empty cell; any later frame differs. Two calls at
-    # different wall-clock instants must agree, which they only can if the clock isn't read.
-    first = _battery_segment(ctx).plain  # type: ignore[arg-type]
-    second = _battery_segment(ctx).plain  # type: ignore[arg-type]
-    assert first == second
+    # A step per 2 s idle repaint: the sweep climbs, and does not alias across skipped frames.
+    assert len(set(_sweep(PICOCALC.tick_s))) == 5
+    assert len(set(_sweep(PICOCALC.tick_s / 2))) < 5  # half a tick apart, some frames repeat
     set_platform(REGULAR)
+    assert len(set(_sweep(REGULAR.tick_s))) == 5
     assert _battery_segment(ctx).plain.endswith("5%")  # type: ignore[arg-type]
 
 
