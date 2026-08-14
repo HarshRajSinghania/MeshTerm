@@ -10,16 +10,18 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
+from unittest import mock
 
 from meshterm.core.connection import charging_from_battery_level_status
 from meshterm.services import battery_service
 from meshterm.services.battery_service import (
     _BATTERY_PRESENT_FLOOR_MV,
     POLL_S,
+    BatteryReading,
     BatteryService,
     battery_percent,
 )
-from meshterm.ui.widgets import _BATTERY_CRITICAL, battery_cell
+from meshterm.ui.widgets import _BATTERY_CRITICAL, BATTERY_ANIM_S, battery_cell
 
 # --- the LiPo state-of-charge curve -------------------------------------------------------
 
@@ -202,6 +204,56 @@ def test_battery_poller_charging_ignores_load_sag_and_flat_or_falling_packs() ->
     svc._history.clear()
     svc._history.extend(_history_of(now, [3800, 3900]))
     assert svc._charging(now) is False
+
+
+# --- the repaints a live sweep needs -------------------------------------------------------
+
+
+def _idle_repaints(svc: BatteryService, tick_s: float) -> int:
+    """Run one poll interval on a platform ticking every ``tick_s``, counting repaints."""
+    painted = 0
+
+    def invalidate() -> None:
+        nonlocal painted
+        painted += 1
+
+    svc._ctx.ui = SimpleNamespace(invalidate=invalidate)
+    slept = 0.0
+
+    async def sleep(seconds: float) -> None:
+        """Advance a fake clock instead of actually waiting."""
+        nonlocal slept
+        slept += seconds
+
+    with_platform = SimpleNamespace(tick_s=tick_s)
+    with mock.patch.object(battery_service.asyncio, "sleep", sleep), mock.patch.object(
+        battery_service.time, "monotonic", lambda: slept
+    ), mock.patch.object(battery_service, "get_platform", lambda: with_platform):
+        asyncio.run(svc._idle())
+    assert slept >= POLL_S  # however it waits, it waits the whole poll interval
+    return painted
+
+
+def test_a_live_sweep_buys_the_repaints_a_slow_platform_wont_give_it() -> None:
+    """Where the idle tick is slower than a frame, the poller paces the sweep itself."""
+    svc = _service([])
+    svc._reading = BatteryReading(millivolts=3800, percent=40, charging=True)
+    # A 2 s idle tick would show every other frame, so the poller fills in a frame a second.
+    assert _idle_repaints(svc, tick_s=2.0) == POLL_S / BATTERY_ANIM_S
+    # A platform already ticking that fast needs nothing bought for it.
+    assert _idle_repaints(svc, tick_s=BATTERY_ANIM_S) == 0
+
+
+def test_a_gauge_that_isnt_sweeping_costs_nothing() -> None:
+    """No sweep, no repaints — a pack left full on the charger doesn't paint all night."""
+    svc = _service([])
+    for reading in (
+        None,
+        BatteryReading(millivolts=3800, percent=40, charging=False),  # discharging
+        BatteryReading(millivolts=4200, percent=100, charging=True),  # full: draws at rest
+    ):
+        svc._reading = reading
+        assert _idle_repaints(svc, tick_s=2.0) == 0
 
 
 # --- the host pack (the PicoCalc's own power_supply) ---------------------------------------

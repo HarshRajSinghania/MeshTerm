@@ -189,7 +189,7 @@ class BatteryService:
         await self.stop()
 
     async def _run(self) -> None:
-        """Read once at once, then tick forever: a best-effort pass, then sleep."""
+        """Read once at once, then tick forever: a best-effort pass, then sleep it out."""
         while True:
             try:
                 await self._poll()
@@ -197,7 +197,38 @@ class BatteryService:
                 raise
             except Exception as exc:  # noqa: BLE001 - a bad read must not kill the loop
                 self._ctx.log.debug("battery poller: read failed: %s", exc)
+            await self._idle()
+
+    async def _idle(self) -> None:
+        """Sleep out the poll interval — stepping the header's charging sweep through it.
+
+        The gauge says *charging* by sweeping its fill, one frame per
+        :data:`~meshterm.ui.widgets.BATTERY_ANIM_S`, and a frame only advances when something
+        repaints. The desktop's own idle tick is already that fast, but a platform where a
+        frame is expensive idles slower (``Platform.tick_s``: the PicoCalc's 2 s), and at that
+        rate the sweep would show every other frame — a cell jumping two rows at a time rather
+        than climbing. So the poller buys the missing repaints itself, and only where all
+        three things are true: the gauge is actually sweeping (:func:`~meshterm.ui.widgets.
+        battery_sweeps` — a pack left full on the charger is *not*, which is where a forgotten
+        handheld spends the night), the platform idles slower than a frame, and there is a
+        surface listening. Every other case is one plain sleep, exactly as before.
+        """
+        from ..ui.widgets import BATTERY_ANIM_S, battery_sweeps  # deferred: services < ui
+
+        reading = self._reading
+        sweeping = reading is not None and battery_sweeps(reading.percent, reading.charging)
+        if not sweeping or get_platform().tick_s <= BATTERY_ANIM_S:
             await asyncio.sleep(POLL_S)
+            return
+        deadline = time.monotonic() + POLL_S
+        while (remaining := deadline - time.monotonic()) > 0:
+            await asyncio.sleep(min(BATTERY_ANIM_S, remaining))
+            try:
+                self._ctx.ui.invalidate()
+            except Exception as exc:  # noqa: BLE001 - a dead surface must not kill the loop
+                self._ctx.log.debug("battery poller: repaint failed: %s", exc)
+                await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+                return
 
     async def _poll(self) -> None:
         """One pass: read the pack, estimate charge, and re-derive the charging trend.

@@ -194,11 +194,12 @@ def test_an_explicit_spinner_cycle_still_wins() -> None:
     assert Spinner("ab").frames == "ab"
 
 
-def test_battery_gauge_steps_the_sweep_at_the_platforms_own_cadence(monkeypatch) -> None:
-    """The charging sweep runs on the PicoCalc too — a step per repaint, not per second."""
+def test_battery_gauge_sweeps_a_frame_a_second_on_both_platforms(monkeypatch) -> None:
+    """One second a frame everywhere — the PicoCalc buys the repaints rather than slowing."""
     from meshterm.ui import menu
     from meshterm.services.battery_service import BatteryReading
     from meshterm.ui.menu import _battery_segment
+    from meshterm.ui.widgets import BATTERY_ANIM_S
 
     class _Ctx:
         class battery:  # noqa: N801 - a stand-in for the service, not a real class name
@@ -210,21 +211,18 @@ def test_battery_gauge_steps_the_sweep_at_the_platforms_own_cadence(monkeypatch)
     clock = 0.0
     monkeypatch.setattr(menu.time, "monotonic", lambda: clock)
 
-    def _sweep(seconds: float) -> list[str]:
-        """The gauge's fills over five ticks of ``seconds`` each."""
+    def _sweep() -> list[str]:
+        """The gauge's fills over five one-second steps."""
         nonlocal clock
         out = []
         for step in range(5):
-            clock = step * seconds
+            clock = step * BATTERY_ANIM_S
             out.append(_battery_segment(ctx).plain[0])  # type: ignore[arg-type]
         return out
 
-    set_platform(PICOCALC)
-    # A step per 2 s idle repaint: the sweep climbs, and does not alias across skipped frames.
-    assert len(set(_sweep(PICOCALC.tick_s))) == 5
-    assert len(set(_sweep(PICOCALC.tick_s / 2))) < 5  # half a tick apart, some frames repeat
-    set_platform(REGULAR)
-    assert len(set(_sweep(REGULAR.tick_s))) == 5
+    for platform in (PICOCALC, REGULAR):
+        set_platform(platform)
+        assert len(set(_sweep())) == 5  # a distinct frame each second, no held frames
     assert _battery_segment(ctx).plain.endswith("5%")  # type: ignore[arg-type]
 
 
