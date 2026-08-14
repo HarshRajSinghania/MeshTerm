@@ -7,7 +7,15 @@ it holds no device subscription — each pass just checks whether a device is co
 skips quietly otherwise — so it is indifferent to reconnects, ticking across a link drop
 and resuming once the radio is back.
 
-Two device facts shape what it can report:
+Which pack it reads is platform data (``Platform.battery``). On the **PicoCalc** the gauge is
+the handheld's own — its BMS hangs off the keyboard MCU's I2C register block and the kernel
+publishes it as a standard ``power_supply`` (:data:`_HOST_SUPPLY`), so both numbers are the
+device's own ground truth: ``capacity`` is a real percent and ``status`` a real charging flag
+(the MCU's battery register carries charge in its low bits and *charging* in its top one).
+Nothing below is estimated there — no voltage curve, no trend.
+
+The rest of this module is the **companion** path, where the radio gives far less. Two device
+facts shape what it can report:
 
 * Firmware exposes the pack as a **terminal voltage in millivolts**, not a percentage, so
   the reading is turned into a state-of-charge estimate against a single-cell LiPo

@@ -12,13 +12,15 @@ import time
 from types import SimpleNamespace
 
 from meshterm.core.connection import charging_from_battery_level_status
+from meshterm.services import battery_service
 from meshterm.services.battery_service import (
     _BATTERY_PRESENT_FLOOR_MV,
     POLL_S,
     BatteryService,
     battery_percent,
 )
-from meshterm.ui.widgets import _BATTERY_CRITICAL, battery_cell
+from meshterm.ui.fontset import in_font
+from meshterm.ui.widgets import _BATTERY_CRITICAL, _CHARGE_MARK, battery_cell
 
 # --- the LiPo state-of-charge curve -------------------------------------------------------
 
@@ -82,6 +84,26 @@ def test_battery_cell_charging_sweeps_bottom_to_full_holding_the_percent() -> No
     assert battery_cell(20, charging=True, frame=4).plain.endswith(" 20%")
     # The charge colour tracks the real state of charge (20% → red), held across the sweep.
     assert {str(battery_cell(20, charging=True, frame=f).style) for f in range(6)} == {"batt.low"}
+
+
+def test_battery_cell_marks_charging_statically_when_nothing_animates() -> None:
+    """With animation off the fill stays true and a mark — not the sweep — says charging."""
+    still = battery_cell(20, charging=True, frame=0, animate=False)
+    # The frozen sweep used to draw an *empty* cell here, under-reading the pack outright.
+    assert still.plain == chr(0x2800 | 0xC0) + _CHARGE_MARK + " 20%"
+    assert still.plain[:1] == battery_cell(20).plain[:1]  # the same fill as at rest
+    # It says the same thing whatever the frame — there are no frames to read.
+    assert {battery_cell(20, charging=True, frame=f, animate=False).plain for f in range(6)} == {
+        still.plain
+    }
+    # Not charging draws no mark, and the low-battery blink stays still too.
+    assert battery_cell(20, animate=False).plain == chr(0x2800 | 0xC0) + " 20%"
+    assert {str(battery_cell(5, frame=f, animate=False).style) for f in range(4)} == {"batt.low"}
+
+
+def test_charge_mark_is_drawable_on_the_console_font() -> None:
+    """The static mark is only useful on the platform whose font has to have it."""
+    assert in_font(_CHARGE_MARK)
 
 
 # --- the poller ---------------------------------------------------------------------------
@@ -184,6 +206,51 @@ def test_battery_poller_charging_ignores_load_sag_and_flat_or_falling_packs() ->
     svc._history.clear()
     svc._history.extend(_history_of(now, [3800, 3900]))
     assert svc._charging(now) is False
+
+
+# --- the host pack (the PicoCalc's own power_supply) ---------------------------------------
+
+
+def _host_supply(tmp_path, monkeypatch, **files: str):
+    """Stand a fake ``power_supply`` directory up and point the poller at it."""
+    supply = tmp_path / "picocalc"
+    supply.mkdir(exist_ok=True)
+    for name, value in files.items():
+        (supply / name).write_text(f"{value}\n")
+    monkeypatch.setattr(battery_service, "_HOST_SUPPLY", supply)
+    return supply
+
+
+def test_host_pack_reads_the_drivers_own_percent_and_charging_flag(tmp_path, monkeypatch) -> None:
+    """On the handheld both numbers are the device's: no LiPo curve, no voltage trend."""
+    monkeypatch.setattr(battery_service, "get_platform", lambda: SimpleNamespace(battery="host"))
+    svc = _service([])
+    # A discharging pack, as the driver reports it (no voltage_now on this one — it has none).
+    _host_supply(tmp_path, monkeypatch, capacity="76", status="Discharging")
+    asyncio.run(svc._poll())
+    assert svc.reading().percent == 76 and svc.reading().charging is False
+    # Plugged in: the flag flips on the driver's word alone, with no history to trend over.
+    _host_supply(tmp_path, monkeypatch, capacity="22", status="Charging")
+    asyncio.run(svc._poll())
+    assert svc.reading().charging is True
+    assert not svc._history  # the trend machinery never runs on this path
+    # A topped-off pack is *not* taking charge, whatever is plugged into it.
+    _host_supply(tmp_path, monkeypatch, capacity="100", status="Full")
+    asyncio.run(svc._poll())
+    assert svc.reading().percent == 100 and svc.reading().charging is False
+
+
+def test_host_pack_absent_when_the_supply_cant_be_read(tmp_path, monkeypatch) -> None:
+    """No driver (or an unreadable one) reports *no battery*, so the header draws no gauge."""
+    monkeypatch.setattr(battery_service, "get_platform", lambda: SimpleNamespace(battery="host"))
+    svc = _service([])
+    monkeypatch.setattr(battery_service, "_HOST_SUPPLY", tmp_path / "nothing-here")
+    asyncio.run(svc._poll())
+    assert svc.reading() is None
+    # A supply that answers with junk is just as absent — never a bogus gauge.
+    _host_supply(tmp_path, monkeypatch, capacity="", status="Charging")
+    asyncio.run(svc._poll())
+    assert svc.reading() is None
 
 
 # --- the standard BLE charging flag (GATT Battery Level Status, 0x2BED) --------------------

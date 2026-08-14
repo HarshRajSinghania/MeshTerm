@@ -238,12 +238,16 @@ def _battery_segment(ctx: AppContext) -> Text:
     reading = ctx.battery.reading()
     if reading is None:
         return Text()
-    # Frame 0 is the gauge's resting state: the true fill, unblinking. A platform without
-    # effects holds it there, so the charging sweep and the low-battery blink never run —
-    # both exist to catch the eye, and neither is worth a forced repaint (nor, on a 16-slot
-    # console, a colour swap) on hardware where the cells are dear.
-    frame = int(time.monotonic() / _BATTERY_ANIM_S) if get_platform().effects else 0
-    return battery_cell(reading.percent, charging=reading.charging, frame=frame)
+    # A platform without effects draws the gauge's resting state instead: the true fill,
+    # unblinking, with charging said by a static mark rather than the sweep. The blink and
+    # the sweep both exist to catch the eye, and neither is worth a forced repaint (nor, on
+    # a 16-slot console, a colour swap) on hardware where the cells are dear — but charging
+    # is a *fact about the pack*, not decoration, so it still has to show at rest.
+    effects = get_platform().effects
+    frame = int(time.monotonic() / _BATTERY_ANIM_S) if effects else 0
+    return battery_cell(
+        reading.percent, charging=reading.charging, frame=frame, animate=effects
+    )
 
 
 def _header_segments(ctx: AppContext, cache: dict) -> list[Text]:
