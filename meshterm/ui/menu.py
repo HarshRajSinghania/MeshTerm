@@ -31,7 +31,7 @@ from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
 from .menus import SEP_COMPACT, SEP_ROOMY, command_icon, command_label, section_heading
 from .theme import make_console
-from .widgets import BATTERY_ANIM_S, battery_cell
+from .widgets import battery_cell
 from .tui import (
     CANCEL,
     Choice,
@@ -213,6 +213,15 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     return header
 
 
+#: Floor on the seconds per animation step of the header battery gauge (the charging sweep
+#: and the low-battery blink). The step is the platform's own idle repaint interval
+#: (``Platform.tick_s``, the app's ``refresh_interval``) so each repaint advances the
+#: animation by one clean step rather than aliasing across skipped frames — 1 s on the
+#: desktop, one every 2 s on the PicoCalc's slower tick, where a full sweep therefore takes
+#: :data:`~meshterm.ui.widgets._CHARGE_FRAMES` × 2 s to climb.
+_BATTERY_ANIM_MIN_S = 1.0
+
+
 def _battery_segment(ctx: AppContext) -> Text:
     """The header's right-anchored battery gauge, or an empty Text when there is no pack.
 
@@ -231,16 +240,17 @@ def _battery_segment(ctx: AppContext) -> Text:
     reading = ctx.battery.reading()
     if reading is None:
         return Text()
-    # The sweep is how the gauge says "charging" at all, so its clock runs at the same second
-    # a step on every platform — the poller buys a slow-ticking one the repaints to show it.
-    # The low-battery blink is decoration over a charge the cell already shows, so it stays
-    # behind `effects`: not worth a forced repaint, nor a colour swap on a 16-slot console.
-    frame = int(time.monotonic() / BATTERY_ANIM_S)
+    platform = get_platform()
+    # The sweep is how the gauge says "charging" at all, so its clock runs on every platform;
+    # only the step widens to whatever that platform actually repaints at. The low-battery
+    # blink is decoration over a charge the cell already shows, so it stays behind `effects`
+    # — not worth a forced repaint, nor a colour swap on a 16-slot console.
+    frame = int(time.monotonic() / max(_BATTERY_ANIM_MIN_S, platform.tick_s))
     return battery_cell(
         reading.percent,
         charging=reading.charging,
         frame=frame,
-        animate=get_platform().effects,
+        animate=platform.effects,
     )
 
 

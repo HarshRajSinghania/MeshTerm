@@ -105,16 +105,6 @@ class Ui:
     def discard(self) -> None:
         """Drop any buffered-but-unshown output (a no-op when output is immediate)."""
 
-    def invalidate(self) -> None:
-        """Ask for a repaint (a no-op where there is no persistent frame to repaint).
-
-        The one channel a background service has to move the *chrome* — a header the user
-        is looking at whose data changed on nobody's keystroke. Screens invalidate their own
-        session directly; this exists for the services, which hold no session (the battery
-        poller's charging sweep, at :data:`~meshterm.ui.widgets.BATTERY_ANIM_S` a frame, is
-        the first). Cheap and safe to call when nothing is listening.
-        """
-
     def progress(self, title: str = "Working"):  # noqa: ANN201 - context manager, varies by backend
         """Return a progress context manager exposing ``add_task``/``advance``/``update``."""
         raise NotImplementedError
@@ -599,10 +589,6 @@ class TuiUi(Ui):
         """
         self.session = session
         self._buffer: list[RenderableType] = []
-
-    def invalidate(self) -> None:
-        """Repaint the live frame, so a service's change to the chrome actually shows."""
-        self.session.invalidate()
 
     # --- output --------------------------------------------------------------
 

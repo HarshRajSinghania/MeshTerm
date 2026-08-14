@@ -1361,32 +1361,6 @@ _BATTERY_CRITICAL = 10
 #: Frames in the charging sweep: empty → four fills → round again (bottom-to-full loop).
 _CHARGE_FRAMES = 5
 
-#: Seconds per animation step of the gauge (the charging sweep and the low-battery blink) —
-#: a second a step, so a full sweep climbs in :data:`_CHARGE_FRAMES` seconds. THE cadence for
-#: the gauge: the header derives its frame from it, and the battery poller paces the repaints
-#: a sweep needs by it (see :meth:`~meshterm.services.battery_service.BatteryService._idle`),
-#: since a platform idling slower than this would otherwise show every other frame.
-BATTERY_ANIM_S = 1.0
-
-
-def battery_sweeps(percent: int, charging: bool) -> bool:
-    """Whether the gauge animates for this reading — i.e. whether the charging sweep runs.
-
-    The rule the sweep is drawn by, exposed because the cost of animating is paid somewhere
-    else: the poller reads this to decide whether the header is worth repainting faster than
-    the platform's idle tick. A pack at 100% doesn't sweep (see :func:`battery_cell`), and a
-    device left on the charger overnight sits exactly there, so asking first is the difference
-    between an idle handheld and one repainting all night for a cell that never moves.
-
-    Args:
-        percent: State of charge, 0–100.
-        charging: Whether the pack is taking charge.
-
-    Returns:
-        Whether the gauge's fill moves between frames.
-    """
-    return charging and int(percent) < 100
-
 
 def _braille_fill(rows: int) -> str:
     """A single braille cell with its bottom ``rows`` (0–4) dot rows lit."""
@@ -1422,11 +1396,10 @@ def battery_cell(
       dim slate on alternate frames — an unmissable pulse in the corner.
 
     The two differ in what they're *for*, which is what ``animate`` sorts out. The sweep is
-    the only thing that says charging at all, so it runs everywhere, at :data:`BATTERY_ANIM_S`
-    a step — a platform whose frames are dear (the PicoCalc: see ``Platform.effects``) buys
-    the repaints for it while a sweep is live rather than going without. The blink is an alarm
-    laid over a charge the gauge already shows, so it is genuinely decorative and
-    ``animate=False`` drops it, leaving the red cell steady.
+    the only thing that says charging at all, so it runs everywhere — a platform whose frames
+    are dear (the PicoCalc: see ``Platform.effects``) just steps it on that platform's own
+    slower repaint cadence. The blink is an alarm laid over a charge the gauge already shows,
+    so it is genuinely decorative and ``animate=False`` drops it, leaving the red cell steady.
 
     A pack at 100% is drawn as **not charging** whichever way the flag reads: a full cell
     resting full is the honest picture, and a topped-off charger left plugged in shouldn't
@@ -1445,7 +1418,7 @@ def battery_cell(
     """
     pct = max(0, min(100, int(percent)))
     rows, color = _battery_tier(pct)
-    if battery_sweeps(pct, charging):
+    if charging and pct < 100:
         # The charge colour is held; only the fill sweeps, so it reads as "filling", not
         # as the charge itself jumping around.
         rows = frame % _CHARGE_FRAMES
