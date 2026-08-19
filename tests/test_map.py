@@ -339,13 +339,36 @@ def test_canvas_paste_raster_offsets_fades_and_yields_the_cell() -> None:
     src.plot(4, 0, (60, 120, 240), 5)  # cell 2
 
     canvas = MapCanvas(3, 1)
-    canvas.paste_raster(src.raster(), [-1, 0, 2], [0], fade=0.5)
+    canvas.paste_raster(src.raster(), [(-1, 0), (0, 0), (2, 0)], [(0, 0)], fade=0.5)
     out = "".join(canvas.to_ansi_lines())
     assert _plain([out]) == " ⠁⠁"  # shifted one cell right; the gap has no source
     assert _dot_colors([out]) == {(100, 50, 25), (30, 60, 120)}
 
     canvas.plot(2, 0, (10, 20, 30), 0)  # a real feature, drawn after, takes the cell
     assert _dot_colors(["".join(canvas.to_ansi_lines())]) >= {(10, 20, 30)}
+
+
+def test_canvas_paste_raster_magnifies_by_the_dot_not_by_the_glyph() -> None:
+    """A zoomed-in stand-in shows each cell its own share of the source, enlarged.
+
+    Stamping the whole source glyph into every cell of the block it grew into is double
+    vision — the same 2x4 pattern side by side and one above the other, which reads as a
+    fault rather than as a coarse preview (JP, 2026-08-18).
+    """
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    src = MapCanvas(1, 1)
+    src.plot(0, 0, (200, 100, 50), 5)  # the cell's top-left dot, and nothing else
+
+    canvas = MapCanvas(2, 2)
+    cols = [(0, 0), (0, 1)]
+    canvas.paste_raster(src.raster(), cols, cols, magnify=2)
+    rendered = [_plain([line]) for line in canvas.to_ansi_lines()]
+
+    # A source cell is 2x4 dots, so at 2x it becomes the 2x2 block of cells drawn here,
+    # and its one top-left dot becomes a 2x2 block of dots: the top half of the top-left
+    # cell alone. The glyph repeated four times would be the bug.
+    assert rendered == ["⠛ ", "  "], rendered
 
 
 def test_parse_hex() -> None:

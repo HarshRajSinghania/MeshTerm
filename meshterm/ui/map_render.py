@@ -222,9 +222,11 @@ class Ghost:
 #: title's ``drawing…`` carries the same news on both platforms.
 _GHOST_FADE = 0.6
 
-#: Zoom steps of difference beyond which the ghost is dropped rather than scaled. One step
-#: reads as the coarse preview it is; past two it is a smear of blocks that says nothing
-#: true about the ground.
+#: Zoom steps of difference beyond which the ghost is dropped rather than scaled. What it
+#: shows is true at any distance — the dots are reprojected, not the glyphs (see
+#: :func:`~meshterm.ui.mapcanvas._magnified`) — but a dot enlarged past two steps is eight
+#: cells across, and a mosaic that coarse orients nobody: there is nothing left of the
+#: street pattern to recognise, and the markers alone are the better picture.
 _GHOST_MAX_STEPS = 2
 
 
@@ -236,14 +238,26 @@ def _bind(platform: Platform) -> None:
 
 
 def _ghost_axis(
-    cells: int, dots: int, origin: float, src_origin: float, scale: float, src_cells: int
-) -> list[int]:
-    """Source cell index per canvas cell along one axis (``-1`` where there is none).
+    cells: int,
+    dots: int,
+    origin: float,
+    src_origin: float,
+    scale: float,
+    src_cells: int,
+    magnify: int,
+) -> list[tuple[int, int]]:
+    """Source cell and sub-cell per canvas cell along one axis (``(-1, 0)`` for none).
 
     Both viewports are windows in Web Mercator, so one maps onto the other by an affine
     scale-and-shift on each axis independently — a dot at world position ``d + origin``
     sits at ``(d + origin) * scale - src_origin`` in the older view — and the whole
     reprojection collapses to two little index tables the paste then reads off.
+
+    Where the view has zoomed *in*, one source cell spans ``magnify`` cells here, so the
+    whole number of that division is only half the answer: the remainder says which of
+    those cells this is, and hence which share of the source's dots it should show
+    enlarged (see :meth:`~meshterm.ui.mapcanvas.MapCanvas.paste_raster`). At ``magnify``
+    of 1 the remainder is always zero and this is the plain cell-index table it was.
 
     Args:
         cells: Canvas size along this axis, in cells.
@@ -252,12 +266,20 @@ def _ghost_axis(
         src_origin: The ghost viewport's world-pixel origin, at *its* zoom.
         scale: World pixels of the ghost's zoom per world pixel of ours.
         src_cells: The ghost raster's size along this axis, for the bounds test.
+        magnify: How many cells here one source cell covers.
     """
-    out: list[int] = []
+    out: list[tuple[int, int]] = []
     for c in range(cells):
         centre = c * dots + dots / 2  # sample each cell at its middle dot
-        src = math.floor((centre + origin) * scale - src_origin) // dots
-        out.append(src if 0 <= src < src_cells else -1)
+        exact = ((centre + origin) * scale - src_origin) / dots
+        src = math.floor(exact)
+        if not 0 <= src < src_cells:
+            out.append((-1, 0))
+            continue
+        # Which magnified sub-cell the middle of this cell falls in. Floating point can
+        # land the fraction a hair short of 1.0, so the last sub-cell is clamped rather
+        # than trusted to divide.
+        out.append((src, min(int((exact - src) * magnify), magnify - 1)))
     return out
 
 
@@ -269,18 +291,20 @@ def _paste_ghost(canvas: MapCanvas, viewport: Viewport, ghost: Ghost) -> None:
     left to stand in, and the markers alone are the honest picture.
     """
     src = ghost.viewport
-    if abs(src.zoom - viewport.zoom) > _GHOST_MAX_STEPS:
+    steps = viewport.zoom - src.zoom
+    if abs(steps) > _GHOST_MAX_STEPS:
         return
-    scale = 2.0 ** (src.zoom - viewport.zoom)
+    scale = 2.0 ** -steps
+    magnify = 1 << steps if steps > 0 else 1  # a view zoomed *out* keeps whole glyphs
     ox, oy = viewport.origin_world
     sx, sy = src.origin_world
-    cols = _ghost_axis(canvas.cell_w, 2, ox, sx, scale, ghost.raster.cell_w)
-    if not any(c >= 0 for c in cols):
+    cols = _ghost_axis(canvas.cell_w, 2, ox, sx, scale, ghost.raster.cell_w, magnify)
+    if not any(c >= 0 for c, _ in cols):
         return
-    rows = _ghost_axis(canvas.cell_h, 4, oy, sy, scale, ghost.raster.cell_h)
-    if not any(r >= 0 for r in rows):
+    rows = _ghost_axis(canvas.cell_h, 4, oy, sy, scale, ghost.raster.cell_h, magnify)
+    if not any(r >= 0 for r, _ in rows):
         return
-    canvas.paste_raster(ghost.raster, cols, rows, fade=_GHOST_FADE)
+    canvas.paste_raster(ghost.raster, cols, rows, magnify=magnify, fade=_GHOST_FADE)
 
 
 # -- composing a frame --------------------------------------------------------

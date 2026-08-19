@@ -69,6 +69,55 @@ _DOT_BITS = (
     (0x08, 0x10, 0x20, 0x80),  # right column, rows 0..3
 )
 
+#: Magnification tables, by factor — see :func:`_magnified`.
+_MAGNIFIED: dict[int, tuple[tuple[int, ...], ...]] = {}
+
+
+def _magnified(factor: int) -> tuple[tuple[int, ...], ...]:
+    """How one source cell's dots land in each cell of the ``factor``x block it becomes.
+
+    A braille cell is 2x4 dots, so magnifying a raster by *n* turns every source cell into
+    an ``n`` by ``n`` block of cells — and the only thing that makes the result a *picture*
+    rather than a smear is that each of those cells shows its own quarter (or sixteenth) of
+    the source, enlarged. Stamping the whole source glyph into all of them instead is
+    double vision: the same 2x4 pattern repeated, which reads as a rendering fault rather
+    than as a coarse preview (JP, 2026-08-18).
+
+    None of that arithmetic belongs on the paint path, and it doesn't have to be there: a
+    cell holds one byte, so the whole mapping is 256 source patterns by ``factor * factor``
+    sub-positions, and it is the same table every time. Built once per factor, on first
+    use, and read with a single index per cell — the cost of the honest picture is one
+    list lookup over the naive one.
+
+    Args:
+        factor: Magnification, a power of two (``1`` yields the identity table).
+
+    Returns:
+        ``table[source_byte][sub_y * factor + sub_x]`` — the dots that sub-position of the
+        magnified source cell shows.
+    """
+    ready = _MAGNIFIED.get(factor)
+    if ready is not None:
+        return ready
+    table: list[tuple[int, ...]] = []
+    for pattern in range(256):
+        block: list[int] = []
+        for sub_y in range(factor):
+            for sub_x in range(factor):
+                dots = 0
+                for dx in range(2):
+                    # Which source dot this destination dot magnifies. Integer division is
+                    # exact here: the block spans 2*factor by 4*factor destination dots.
+                    src_x = (sub_x * 2 + dx) // factor
+                    for dy in range(4):
+                        src_y = (sub_y * 4 + dy) // factor
+                        if pattern & _DOT_BITS[src_x][src_y]:
+                            dots |= _DOT_BITS[dx][dy]
+                block.append(dots)
+        table.append(tuple(block))
+    _MAGNIFIED[factor] = out = tuple(table)
+    return out
+
 
 @dataclass(frozen=True, slots=True)
 class Raster:
@@ -226,38 +275,58 @@ class MapCanvas:
         )
 
     def paste_raster(
-        self, src: Raster, cols: list[int], rows: list[int], *, fade: float = 1.0
+        self,
+        src: Raster,
+        cols: list[tuple[int, int]],
+        rows: list[tuple[int, int]],
+        *,
+        magnify: int = 1,
+        fade: float = 1.0,
     ) -> None:
         """Fill this canvas's braille layer from ``src``, one cell at a time.
 
-        Cell ``(cx, cy)`` here takes cell ``(cols[cx], rows[cy])`` of ``src``; a ``-1`` in
-        either list is a cell with no source (the ground the view has moved onto, which
-        nothing has ever drawn) and is left blank. The caller owns the projection — it is
-        the one that knows what the two rasters *mean* geographically — and this end is a
-        copy loop, deliberately: it runs on the paint path, between a pan keystroke and the
-        frame that answers it.
+        Cell ``(cx, cy)`` here takes cell ``(cols[cx][0], rows[cy][0])`` of ``src``; a
+        ``-1`` for either is a cell with no source (the ground the view has moved onto,
+        which nothing has ever drawn) and is left blank. The caller owns the projection —
+        it is the one that knows what the two rasters *mean* geographically — and this end
+        is a copy loop, deliberately: it runs on the paint path, between a pan keystroke
+        and the frame that answers it.
 
-        Cell granularity is the whole point of the shape: a dot-exact reprojection would be
-        eight times the work for a picture that is about to be replaced anyway, so a paste
-        lands within half a cell of true and the real raster corrects it a moment later.
+        Under ``magnify`` a source cell covers an ``n`` by ``n`` block of cells here, and
+        the second half of each axis entry says *which* cell of that block this one is, so
+        each shows its own enlarged share of the source's dots rather than the whole glyph
+        over again (see :func:`_magnified`). One list lookup per cell either way.
+
+        Cell granularity is the whole point of the shape: within a source cell the paste
+        lands where the *dots* say, but the two rasters' cell grids are only aligned to
+        the nearest cell, so a pan settles within half a cell of true and the real raster
+        corrects it a moment later. Reduction (a view that zoomed *out*) keeps the whole
+        source glyph in the one cell it shrank to, deliberately: dropping three quarters
+        of its dots would break every thin line into dashes just as it gets smaller.
 
         Args:
             src: The raster to sample.
-            cols: Source cell x per canvas column (``-1`` = none), length ``cell_w``.
-            rows: Source cell y per canvas row (``-1`` = none), length ``cell_h``.
+            cols: ``(source cell x, sub-cell x)`` per canvas column (``(-1, 0)`` = none),
+                length ``cell_w``.
+            rows: ``(source cell y, sub-cell y)`` per canvas row (``(-1, 0)`` = none),
+                length ``cell_h``.
+            magnify: How many cells across a source cell covers here — a power of two,
+                ``1`` for a paste at or below the source's own scale.
             fade: Multiplier on every pasted colour, for a caller marking the ground as
                 provisional. ``1.0`` pastes the colours untouched.
         """
         faded: dict[RGB, RGB] = {}
-        for cy, sy in enumerate(rows):
+        block = _magnified(magnify)
+        for cy, (sy, sub_y) in enumerate(rows):
             if sy < 0 or cy >= self.cell_h:
                 continue
             src_bits, src_color = src.bits[sy], src.color[sy]
             bits, color, prio = self._bits[cy], self._color[cy], self._prio[cy]
-            for cx, sx in enumerate(cols):
+            lane = sub_y * magnify
+            for cx, (sx, sub_x) in enumerate(cols):
                 if sx < 0 or cx >= self.cell_w:
                     continue
-                dots = src_bits[sx]
+                dots = block[src_bits[sx]][lane + sub_x]
                 if not dots:
                     continue
                 bits[cx] = dots
