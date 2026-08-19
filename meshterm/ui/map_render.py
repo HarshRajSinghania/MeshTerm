@@ -158,6 +158,18 @@ DRAWN_LAYERS: frozenset[str] = frozenset(
 #: memos, where ``None`` is a real answer meaning "a class we deliberately don't draw".
 _UNRESOLVED = object()
 
+#: Lowest road priority a **coarse** pass draws — see :func:`render_ground`. Tertiary and
+#: up: the through-roads whose pattern says *where you are*, against the residential mesh
+#: that says only *town*. Derived from :data:`_ROAD_STYLE` rather than listed again, so a
+#: reclassified road can't end up in one pass and not the other.
+_COARSE_ROAD_PRIORITY = 23
+
+#: The road classes a coarse pass keeps. At the PicoCalc's zoom 13 that is 2 522 features
+#: of 5 416 — under half the lines for nearly all of the legibility.
+_COARSE_ROADS: frozenset[str] = frozenset(
+    cls for cls, (_, prio) in _ROAD_STYLE.items() if prio >= _COARSE_ROAD_PRIORITY
+)
+
 
 @dataclass(slots=True)
 class _Label:
@@ -181,11 +193,17 @@ class _Label:
 
 @dataclass(slots=True)
 class _Frame:
-    """Working state while composing one frame."""
+    """Working state while composing one frame.
+
+    Attributes:
+        coarse: Whether this is the quick first pass — ground and through-roads only,
+            no buildings, no back streets, no text (see :func:`render_ground`).
+    """
 
     canvas: MapCanvas
     viewport: Viewport
     labels: list[_Label] = field(default_factory=list)
+    coarse: bool = False
 
 
 # -- the stale ground ---------------------------------------------------------
@@ -349,14 +367,37 @@ def render_ground(
     *,
     max_labels: int = 80,
     find: str = "",
+    coarse: bool = False,
 ) -> tuple[list[str], Ghost]:
     """Render a frame and keep its ground, for the next moved view to stand on.
 
     The same work as :func:`render_map`, plus the :class:`Ghost` the frame leaves behind —
     which is why the interactive map calls this one for the real (background) raster and
     :func:`render_map` for the immediate paints in between.
+
+    ``coarse`` draws the **first pass**: the ground fills, the watercourses, the admin
+    boundaries and the through-roads (:data:`_COARSE_ROADS`) — no buildings, no back
+    streets, no text at all. It is the same picture at a lower resolution of detail, and
+    it is a quarter of the work: on the PicoCalc, 249 ms against 962 at zoom 13, 120 ms
+    against 529 at zoom 16. The map draws one of these before the full frame so a view
+    that has run past its last ground has *something* true on it within a blink, and so
+    that a pan being held has a unit of work small enough to abandon (see
+    :meth:`meshterm.ui.map_screen.MapScreen._draw_ground`).
+
+    Args:
+        viewport: The view to render.
+        tiles: Decoded layers keyed by ``(z, x, y)``.
+        markers: Mesh nodes to overlay.
+        max_labels: Cap on basemap labels placed.
+        find: A live node-name filter (see :func:`render_map`).
+        coarse: Draw the quick first pass rather than the finished frame.
+
+    Returns:
+        The ANSI lines, and the ground they leave behind.
     """
-    canvas = _compose(viewport, tiles, markers, max_labels=max_labels, find=find)
+    canvas = _compose(
+        viewport, tiles, markers, max_labels=max_labels, find=find, coarse=coarse
+    )
     return canvas.to_ansi_lines(), Ghost(canvas.raster(), viewport)
 
 
@@ -368,10 +409,11 @@ def _compose(
     max_labels: int = 80,
     find: str = "",
     ghost: Optional[Ghost] = None,
+    coarse: bool = False,
 ) -> MapCanvas:
     """Draw one frame onto a fresh canvas — see :func:`render_map` for the arguments."""
     canvas = MapCanvas(viewport.dot_w // 2, viewport.dot_h // 4)
-    frame = _Frame(canvas=canvas, viewport=viewport)
+    frame = _Frame(canvas=canvas, viewport=viewport, coarse=coarse)
 
     if ghost is not None:
         _paste_ghost(canvas, viewport, ghost)
@@ -452,7 +494,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
 
     # Buildings, as a stippled texture under the streets.
     building = by_name.get("building")
-    if building is not None and frame.viewport.zoom >= _BUILDING_MIN_ZOOM:
+    if building is not None and frame.viewport.zoom >= _BUILDING_MIN_ZOOM and not frame.coarse:
         rgb = mark_rgb(_BUILDING_FILL[0])
         # One tile-local unit is a fixed number of dots, so the visible slab of the tile
         # is a rectangle in tile coordinates: work out its bounds once and reject each
@@ -503,7 +545,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             for ring in feat.rings:
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, waterway.extent), rgb, prio)
-            if feat.name:
+            if feat.name and not frame.coarse:
                 _add_line_label(frame, feat.rings, waterway.extent, z, x, y, feat.name, _WATER_LABEL)
 
     # Roads / rail.
@@ -521,6 +563,8 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
                 )
                 style = road_styles[cls] = (mark_rgb(named[0]), named[1])
             rgb, prio = style
+            if frame.coarse and prio < _COARSE_ROAD_PRIORITY:
+                continue  # the back streets are the bulk of the lines and the last to matter
             for ring in feat.rings:
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, transportation.extent), rgb, prio)
@@ -539,6 +583,9 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             for ring in feat.rings:
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, boundary.extent), boundary_rgb, 14)
+
+    if frame.coarse:
+        return  # everything past here is text, and text is what the second pass is for
 
     # Street-name labels (only kick in at high zoom via the label's min_zoom gate).
     tname = by_name.get("transportation_name")

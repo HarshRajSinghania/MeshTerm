@@ -1812,6 +1812,120 @@ def test_map_fetches_before_the_source_has_resolved(monkeypatch) -> None:  # noq
     asyncio.run(drive())
 
 
+# --- the coarse first pass -----------------------------------------------------------
+
+
+def test_coarse_ground_keeps_the_shape_and_drops_the_detail() -> None:
+    """The quick pass draws water, parks and through-roads — no buildings, no text."""
+    from meshterm.ui.map_render import MapMarker, render_ground
+
+    vp = Viewport(45.5019, -73.5674, 15, 160, 96)
+    tiles = {(14, 4843, 5861): decode_tile(_FIXTURE.read_bytes())}
+    markers = [MapMarker("Yagi", 45.5019, -73.5674)]
+
+    coarse, _ = render_ground(vp, tiles, markers, coarse=True)
+    full, _ = render_ground(vp, tiles, markers)
+
+    def ink(lines):
+        return sum(1 for ch in _plain(lines) if ch.strip())
+
+    assert ink(coarse), "the coarse pass drew nothing at all"
+    assert ink(coarse) < ink(full), "the coarse pass drew as much as the full one"
+    # Our own marker label is overlaid on every paint; the basemap's text is not.
+    assert "Yagi" in _plain(coarse)
+    assert not (_street_names(full) & _street_names(coarse)), "text came with the quick pass"
+
+
+def _street_names(lines: list[str]) -> set:
+    """Words in a frame that are basemap text rather than a node marker's label."""
+    return {w for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", _plain(lines))} - {"Yagi"}
+
+
+def test_map_draws_a_coarse_frame_before_the_finished_one(monkeypatch) -> None:  # noqa: ANN001
+    """A view with no ground under it must not sit black for a whole raster.
+
+    A coarse pan step is 30% of the screen, so four keypresses leave nothing of the last
+    frame to reproject — and a full raster is most of a second on the PicoCalc (JP,
+    2026-08-18).
+    """
+    from meshterm.ui import map_screen as ms
+
+    passes: list = []
+    monkeypatch.setattr(
+        ms, "render_ground",
+        lambda vp, tiles, m, **k: (passes.append(k.get("coarse", False)) or (["x"], None)),
+    )
+    screen = _map_over(_StubSource())
+
+    async def drive() -> None:
+        screen.render_body(80)  # builds the viewport, and asks for its own first draw
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+        passes.clear()
+        await screen._draw_ground(("k",), screen._viewport, {}, [], "", True)
+
+    asyncio.run(drive())
+    assert passes == [True, False], "the coarse pass did not come first, or at all"
+    assert screen._frame_coarse is False, "the frame was left owing its detail"
+
+
+def test_map_abandons_the_finished_pass_for_a_view_that_moved(monkeypatch) -> None:  # noqa: ANN001
+    """Between the passes is where a held key gets off: don't finish a stale frame."""
+    from meshterm.ui import map_screen as ms
+
+    screen = _map_over(_StubSource())
+    passes: list = []
+
+    def render(vp, tiles, m, **k):
+        coarse = k.get("coarse", False)
+        passes.append(coarse)
+        if coarse and len(passes) == 1:
+            # The user pans on while the coarse pass is being drawn.
+            screen._wanted = (("newer",), screen._viewport, [], "")
+        return ["x"], None
+
+    monkeypatch.setattr(ms, "render_ground", render)
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+        passes.clear()
+        screen._drawing = ("k",)
+        await screen._draw_ground(("k",), screen._viewport, {}, [], "", True)
+
+    asyncio.run(drive())
+    assert False not in passes, "a finished pass was drawn for a view already left behind"
+    assert screen._frame_coarse is True
+
+
+def test_map_skips_the_coarse_pass_over_a_picture_already_drawn(monkeypatch) -> None:  # noqa: ANN001
+    """A tile landing must refine the frame, never coarsen it."""
+    from meshterm.ui import map_screen as ms
+
+    screen = _map_over(_StubSource())
+    coarse_asked: list = []
+    monkeypatch.setattr(
+        ms, "render_ground",
+        lambda vp, tiles, m, **k: (coarse_asked.append(k.get("coarse", False))
+                                   or (["x"], None)),
+    )
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+        coarse_asked.clear()
+        # A tile lands: same view, more detail. The frame on screen is still aligned.
+        screen._tiles[screen._viewport.tiles(14)[0]] = _loaded_tile()
+        screen.render_body(80)
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+
+    asyncio.run(drive())
+    assert coarse_asked == [False], "a drawn frame was replaced by a coarser one"
+
+
 # --- the ground raster runs off the paint path ---------------------------------------
 
 
@@ -1917,7 +2031,8 @@ async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:
     screen.render_body(80)
 
     await screen._draw_ground(
-        screen._ground_key(screen._viewport), screen._viewport, {}, screen._markers, ""
+        screen._ground_key(screen._viewport), screen._viewport, {}, screen._markers, "",
+        False,
     )
     assert screen._ghost is not None, "the finished raster left no ground behind"
     assert screen._ghost.viewport == screen._viewport

@@ -219,6 +219,8 @@ class MapScreen(Screen):
         # path and the paint serves whatever is ready.
         self._frame: Optional[list[str]] = None
         self._frame_key: Optional[tuple] = None
+        # Whether that frame is only the coarse first pass, and so still owes its detail.
+        self._frame_coarse = False
         # That frame's ground, kept so a view that has moved on can stand on it until its
         # own is drawn (see :meth:`_ground`).
         self._ghost: Optional[Ghost] = None
@@ -329,7 +331,8 @@ class MapScreen(Screen):
         immediately, with the best picture available *right now*, and a background task
         draws the real one and asks for a repaint when it lands:
 
-        * **Nothing has changed** — the finished raster is exactly this view: serve it.
+        * **Nothing has changed** — the raster is exactly this view: serve it (and if it
+          is only the coarse first pass, ask for the finishing one behind it).
         * **Only the tiles changed** (a fetch landed, the view did not move) — the previous
           raster is still correctly aligned, just missing some streets. Keep showing it
           rather than blanking a good picture to redraw the same ground.
@@ -340,20 +343,37 @@ class MapScreen(Screen):
           keys exactly, and the streets slide with the view — dimmed, and short of the
           edge you are panning onto — instead of the map blanking to black between every
           keypress and flashing back when the frame lands (JP, 2026-08-09).
+
+        The last of those is where the map used to go black *and stay black*: four coarse
+        pan steps are 120% of the screen, so nothing drawn is under the view any more and
+        there is no ground to reproject. What fixes that is not this method but the one it
+        schedules — see :meth:`_draw_ground`, which now lands a rough picture in a quarter
+        of the time rather than nothing at all for a whole raster.
         """
         key = self._ground_key(vp)
         if self._frame_key == key and self._frame is not None:
+            if self._frame_coarse:
+                self._schedule_ground(key, vp)  # the first pass is on screen; finish it
             return list(self._frame)
 
         self._schedule_ground(key, vp)
-        if self._frame is not None and self._frame_key is not None:
-            # Everything but the tiles (key[1]) has to match: a frame drawn for a different
-            # marker set is not "the same picture missing streets", it is a picture missing
-            # a node — the picker's crosshair, say.
-            if self._frame_key[0] == key[0] and self._frame_key[2:] == key[2:]:
-                return list(self._frame)  # same view, only tiles differ — still aligned
+        if self._aligned(key) and self._frame is not None:
+            return list(self._frame)  # same view, only tiles differ — still aligned
         # The view moved (or nothing has ever been drawn): markers over the last ground.
         return render_map(vp, {}, self._markers, find=self._filter, ghost=self._ghost)
+
+    def _aligned(self, key: tuple) -> bool:
+        """Whether the drawn frame is this view's picture, merely short of some detail.
+
+        Everything but the tiles (``key[1]``) has to match: a frame drawn for a different
+        marker set is not "the same picture missing streets", it is a picture missing a
+        node — the picker's crosshair, say. A frame that *is* aligned stays on screen
+        while the newer one draws, and tells :meth:`_draw_ground` not to bother with a
+        first pass, since a coarser picture of ground already drawn is a step backwards.
+        """
+        if self._frame is None or self._frame_key is None:
+            return False
+        return self._frame_key[0] == key[0] and self._frame_key[2:] == key[2:]
 
     def _schedule_ground(self, key: tuple, vp: Viewport) -> None:
         """Note that ``key`` wants drawing, and start on it if nothing else is in flight.
@@ -373,7 +393,7 @@ class MapScreen(Screen):
         :meth:`LocationPickScreen.render_body`). Reading it at draw time would find it
         gone, and the finished basemap would land over the crosshair and erase it.
         """
-        if key == self._drawing or key == self._frame_key:
+        if key == self._drawing or (key == self._frame_key and not self._frame_coarse):
             return
         self._wanted = (key, vp, list(self._markers), self._filter)
         if self._drawing is None:
@@ -391,40 +411,91 @@ class MapScreen(Screen):
             # responsive *to*, so draw it here and now rather than never.
             self._drawing = None
             self._frame, self._ghost = render_ground(vp, tiles, markers, find=find)
-            self._frame_key = key
+            self._frame_key, self._frame_coarse = key, False
             return
         self._drawing = key
-        asyncio.ensure_future(self._draw_ground(key, vp, tiles, markers, find))
+        preview = not self._aligned(key)
+        asyncio.ensure_future(self._draw_ground(key, vp, tiles, markers, find, preview))
 
     async def _draw_ground(
-        self, key: tuple, vp: Viewport, tiles: dict, markers: list[MapMarker], find: str
+        self,
+        key: tuple,
+        vp: Viewport,
+        tiles: dict,
+        markers: list[MapMarker],
+        find: str,
+        preview: bool,
     ) -> None:
-        """Rasterize one view off the event loop, then repaint and take the next request.
+        """Rasterize one view off the event loop, coarse then finished, repainting at each.
 
         The work is pure Python, so a thread does not truly run it in parallel — but the
         interpreter still switches between threads every few milliseconds, which is the
         whole point: keystrokes keep being serviced throughout instead of waiting for the
         frame (measured worst-case delay ~50 ms, against the ~1 s of a blocking draw).
 
+        **Two passes, because a whole frame is too big a thing to wait for or to throw
+        away.** A coarse pass (ground, water, through-roads; see
+        :func:`~meshterm.ui.map_render.render_ground`) is a quarter of the work — 249 ms
+        against 962 at zoom 13 on the PicoCalc — and it lands first, so a view that has
+        run past every scrap of drawn ground shows something true within a blink instead
+        of sitting black. Then the finished pass replaces it in place.
+
+        The gap between the passes is also where a moving view gets off. A coarse pan step
+        is 30% of the screen, so four keypresses leave *nothing* of the last frame under
+        the view and the stand-in has no ground to reproject — and each of those presses
+        used to have to wait out a full raster being drawn for a view already three steps
+        stale. Checking :attr:`_wanted` between the passes cuts the unit of abandonable
+        work to the coarse one, so a pan being held is answered with real ground roughly
+        four times as often, and the finished frame is drawn for where the user actually
+        stopped.
+
         Everything the frame is a function of arrives as an argument (see
         :meth:`_schedule_ground`) — the screen's own state may have moved on by the time
         the thread runs, and the frame is filed under the key of the scene it was asked
         for, so it must *be* that scene.
+
+        Args:
+            key: What the finished frame will be filed under.
+            vp: The view to draw.
+            tiles: The decoded tiles it draws from.
+            markers: The nodes to overlay, snapshotted at request time.
+            find: The live find filter, likewise.
+            preview: Whether to draw the coarse pass first. Skipped when an aligned frame
+                is already on screen (see :meth:`_aligned`): there a coarse picture would
+                *remove* detail the reader can already see.
         """
-        try:
-            drawn = await asyncio.to_thread(
-                render_ground, vp, tiles, markers, find=find
-            )
-        except Exception:  # noqa: BLE001 - a frame we couldn't draw is one we draw again
-            drawn = None
+        if preview and await self._pass(key, vp, tiles, markers, find, coarse=True):
+            if self._wanted is not None:
+                self._drawing = None  # the view has moved on; draw where it is now
+                self._start_ground()
+                return
+        await self._pass(key, vp, tiles, markers, find, coarse=False)
         self._drawing = None
-        if drawn is not None:
-            lines, self._ghost = drawn
-            self._frame, self._frame_key = lines, key
-            self._needs_scrub = True
-            self._session.invalidate()
         if self._wanted is not None:
             self._start_ground()
+
+    async def _pass(
+        self,
+        key: tuple,
+        vp: Viewport,
+        tiles: dict,
+        markers: list[MapMarker],
+        find: str,
+        *,
+        coarse: bool,
+    ) -> bool:
+        """Draw one pass off the loop and publish it; report whether it landed."""
+        try:
+            drawn = await asyncio.to_thread(
+                render_ground, vp, tiles, markers, find=find, coarse=coarse
+            )
+        except Exception:  # noqa: BLE001 - a frame we couldn't draw is one we draw again
+            return False
+        lines, self._ghost = drawn
+        self._frame, self._frame_key, self._frame_coarse = lines, key, coarse
+        self._needs_scrub = True
+        self._session.invalidate()
+        return True
 
     def _initial_viewport(self, dot_w: int, dot_h: int) -> Viewport:
         """Restore the saved view (clamped to sane bounds) or frame the nodes' dense core.
