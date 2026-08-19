@@ -126,6 +126,20 @@ _PLACE_STYLE: dict[str, tuple[str, bool, int, int]] = {
 _WATER_LABEL = ("#7dd3fc", False, 2)
 _STREET_LABEL = ("#9aa0aa", False, 7)
 
+#: The zoom street names appear at. Below it a canvas 53 cells wide is nowhere near
+#: holding one name per street, and the few that fit label a grid too coarse to tell which
+#: line they belong to — the place names are what orients you at that scale.
+#:
+#: Read **twice**, and it has to be: :func:`_compose` will not place a label under its own
+#: ``min_zoom``, and :func:`_draw_tile` will not build one it knows cannot be placed. The
+#: second is the load-bearing one. Queuing a street label is not cheap — the line is
+#: clipped to the canvas segment by segment, each surviving piece measured, and the pieces
+#: sorted (see :func:`_add_line_label`) — and a central tile carries 270 of them, which
+#: measured 16.8 ms of a 46 ms frame on the desktop and so upwards of a third of a second
+#: on the PicoCalc, at the two zooms the map most often sits at, for text that was
+#: discarded at placement every time.
+_STREET_LABEL_MIN_ZOOM = 15
+
 #: Polygon layers drawn as fills, in painting order (later wins the shared cell).
 _FILL_LAYERS = ("water", "landcover", "landuse", "park")
 
@@ -585,15 +599,19 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
     if frame.coarse:
         return  # everything past here is text, and text is what the second pass is for
 
-    # Street-name labels (only kick in at high zoom via the label's min_zoom gate).
+    # Street-name labels, once the streets are far enough apart to carry a name each.
+    # Gated here as well as at placement (:data:`_STREET_LABEL_MIN_ZOOM`): the label is
+    # the expensive half of a named road, and below the gate every one of them was built
+    # and then dropped. The *display* zoom decides, not the tile's — an overzoomed view
+    # reads its ground off a lower tile but is still zoomed in, and still wants names.
     tname = by_name.get("transportation_name")
-    if tname is not None:
+    if tname is not None and frame.viewport.zoom >= _STREET_LABEL_MIN_ZOOM:
         color, bold, rank = _STREET_LABEL
         for feat in tname.features:
             if feat.name and feat.rings:
                 _add_line_label(
                     frame, feat.rings, tname.extent, z, x, y, feat.name,
-                    (color, bold, rank), min_zoom=15,
+                    (color, bold, rank), min_zoom=_STREET_LABEL_MIN_ZOOM,
                 )
 
     # Place labels.

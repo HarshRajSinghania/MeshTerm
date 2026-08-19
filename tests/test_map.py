@@ -443,6 +443,59 @@ def test_street_labels_get_denser_as_you_zoom_in() -> None:
     assert _street_labels_placed(72, 24, 16) >= _street_labels_placed(53, 26, 16)
 
 
+def test_street_labels_are_not_built_below_the_zoom_that_can_place_them() -> None:
+    """The expensive half of a named road is the label, and below the gate it was binned.
+
+    ``_compose`` never places a label under its own ``min_zoom``; ``_draw_tile`` used to
+    build one anyway — clipping the line segment by segment, measuring each surviving
+    piece and sorting them, 270 times over for a central tile. Measured at 16.8 ms of a
+    46 ms frame on the desktop, so upwards of a third of a second on the PicoCalc, at the
+    two zooms the map most often sits at.
+
+    The gate must be invisible in the picture: what it drops is exactly what was thrown
+    away a moment later, so the frame either side of it is the same frame.
+    """
+    from meshterm.ui.map_render import (
+        DRAWN_LAYERS, MapMarker, _STREET_LABEL_MIN_ZOOM, render_ground,
+    )
+
+    layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
+    tiles = {(14, 4843, 5861): layers}
+    markers = [MapMarker("Yagi", 45.5019, -73.5674)]
+    below = _STREET_LABEL_MIN_ZOOM - 1
+
+    assert _street_labels_queued(below, tiles) == 0, "street labels built below the gate"
+    assert _street_labels_queued(_STREET_LABEL_MIN_ZOOM, tiles) > 0, (
+        "the gate swallowed the labels at the zoom that wants them"
+    )
+    # Overzoom: the display is past the source's max, so the ground comes off a z14 tile —
+    # but the reader is still zoomed in, and still wants the names.
+    assert _street_labels_queued(_STREET_LABEL_MIN_ZOOM + 2, tiles) > 0, (
+        "an overzoomed view lost its street names to the tile's zoom"
+    )
+
+    # And the picture is untouched either side of the gate, coarse pass included.
+    for zoom in (below - 2, below, _STREET_LABEL_MIN_ZOOM, _STREET_LABEL_MIN_ZOOM + 2):
+        vp = Viewport(45.5019, -73.5674, zoom, 53 * 2, 26 * 4)
+        for coarse in (False, True):
+            lines, ghost = render_ground(vp, tiles, markers, coarse=coarse)
+            assert lines, f"nothing drawn at z{zoom}"
+            # The ghost is the braille layer alone: a label never reached it anyway.
+            assert ghost.raster.cell_w == vp.dot_w // 2
+
+
+def _street_labels_queued(zoom: int, tiles) -> int:
+    """How many street-name candidates a frame at ``zoom`` builds before placing anything."""
+    from meshterm.ui.map_render import _STREET_LABEL, _Frame, _draw_tile
+    from meshterm.ui.mapcanvas import MapCanvas
+
+    vp = Viewport(45.5019, -73.5674, zoom, 53 * 2, 26 * 4)
+    frame = _Frame(canvas=MapCanvas(vp.dot_w // 2, vp.dot_h // 4), viewport=vp)
+    for (z, x, y), layers in tiles.items():
+        _draw_tile(frame, layers, z, x, y)
+    return sum(1 for label in frame.labels if label.rank == _STREET_LABEL[2])
+
+
 def _tile_local_of_view_centre(vp: Viewport, tz: int, tx: int, ty: int, extent: int = 4096):
     """The tile-local point that lands in the middle of this viewport (inverts feature_to_dot)."""
     from meshterm.core.geo import TILE_PX
