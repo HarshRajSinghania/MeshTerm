@@ -27,6 +27,7 @@ from meshterm.core.models import (
 )
 from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, Layer, decode_tile
 from meshterm.tools.map import MapTool
+from meshterm.ui.map_screen import _PAN_DIRS, _PAN_STEP
 from meshterm.ui.map_screen import _TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
@@ -1810,6 +1811,163 @@ def test_map_fetches_before_the_source_has_resolved(monkeypatch) -> None:  # noq
         assert source.asked, "the map wrote the source off instead of asking it"
 
     asyncio.run(drive())
+
+
+# --- anticipating the next move ------------------------------------------------------
+
+
+class _CountingSource(_StubSource):
+    """A source that answers instantly and remembers everything it was asked for."""
+
+    available = True
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[int, int, int]] = []
+
+    def load_tile(self, z: int, x: int, y: int):
+        self.asked.append((z, x, y))
+        return _loaded_tile()
+
+
+def _settled_map(source, zoom: int = 13):
+    """A map screen with its own view drawn and every visible tile in hand."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    screen = MapScreen(
+        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], source, 14,
+        saved_view=(45.5, -73.6, zoom),
+    )
+    return screen
+
+
+async def _quiet(screen, source) -> list:
+    """Paint until the prefetcher runs dry, and report what it went and got.
+
+    Real sleeps, not ``sleep(0)``: both the raster and every tile load go through
+    ``asyncio.to_thread``, and a thread does not finish on a bare loop turn.
+    """
+    for _ in range(200):
+        screen.render_body(80)
+        screen._settled_at = 0.0  # the settle wait has its own test; don't sleep it out
+        await asyncio.sleep(0.005)
+        if (not screen._pending and not screen._speculating and screen._drawing is None
+                and screen._next_speculation(screen._viewport) is None):
+            break
+    visible = set(screen._viewport.tiles(14))
+    return [t for t in source.asked if t not in visible]
+
+
+def test_map_fetches_ahead_of_the_way_it_is_being_panned() -> None:
+    """Two steps one way is a heading, and ground is bought in front of it."""
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> list:
+        await _quiet(screen, source)
+        source.asked.clear()
+        screen._speculated.clear()
+        for _ in range(2):  # two steps east: a heading, not a nudge
+            screen.handle("right")
+        return await _quiet(screen, source)
+
+    ahead = asyncio.run(drive())
+    vp = screen._viewport
+    east = set(vp.panned(_PAN_STEP, 0).tiles(14)) - set(vp.tiles(14))
+    west = set(vp.panned(-_PAN_STEP, 0).tiles(14)) - set(vp.tiles(14))
+    assert east, "the fixture leaves no tile to the east to fetch"
+    assert east <= set(ahead), "the ground ahead of the pan was not fetched"
+    if west & set(ahead):  # a hedge is allowed, but it comes after the heading
+        assert ahead.index(next(iter(east))) < ahead.index(next(iter(west & set(ahead))))
+
+
+def test_map_fetches_the_step_out_it_has_no_tiles_for() -> None:
+    """Zooming out is the one move whose tiles were never on screen."""
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> list:
+        return await _quiet(screen, source)
+
+    ahead = asyncio.run(drive())
+    out = set(screen._viewport.zoomed(-1).tiles(14))
+    assert out <= set(ahead), "the view one step out was not anticipated"
+
+
+def test_map_does_not_fetch_ahead_while_the_view_is_still_arriving() -> None:
+    """Speculation must never be the thing in the way of the view being looked at."""
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> None:
+        screen.render_body(80)  # visible tiles now pending, nothing drawn
+        assert screen._pending, "the fixture settled too early to test this"
+        screen._ensure_prefetch(screen._viewport)
+        assert not screen._speculating, "fetched ahead while the visible tiles were in flight"
+
+        screen._pending.clear()
+        screen._drawing = ("busy",)
+        screen._ensure_prefetch(screen._viewport)
+        assert not screen._speculating, "fetched ahead while the ground was being drawn"
+
+    asyncio.run(drive())
+
+
+def test_map_waits_for_the_view_to_settle_before_it_guesses() -> None:
+    """A raster landing between two keypresses of a pan is a gap, not a pause.
+
+    Starting a fetch there puts a tile decode in front of the next frame — measured at
+    ~110 ms on the device, which is exactly what the prefetcher must never cost.
+    """
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> None:
+        screen.render_body(80)  # builds the viewport
+        screen._pending.clear()  # ...and here it is, arrived and drawn this instant
+        screen._drawing = screen._wanted = None
+
+        screen._ensure_prefetch(screen._viewport)  # stamps the view as newly arrived
+        assert not screen._speculating, "guessed while the view was still moving"
+
+        screen._settled_at = 0.0  # ...and now it has been still for a while
+        screen._ensure_prefetch(screen._viewport)
+        assert screen._speculating, "never got round to guessing at all"
+
+    asyncio.run(drive())
+
+
+def test_map_forgets_its_heading_when_the_reader_reframes() -> None:
+    """A zoom or a jump home is looking around, not travelling on."""
+    screen = _settled_map(_CountingSource())
+    screen.render_body(80)
+    screen.handle("right")
+    screen.handle("right")  # two coarse steps east
+    assert screen._heading == "right" and screen._momentum == 2
+
+    screen.handle("pagedown")  # a zoom out
+    assert screen._heading is None and screen._momentum == 0
+    plan = screen._prefetch_plan(screen._viewport)
+    vp = screen._viewport
+    for direction, (dx, dy) in _PAN_DIRS.items():
+        stepped = set(vp.panned(dx * _PAN_STEP, dy * _PAN_STEP).tiles(14))
+        assert stepped - set(vp.tiles(14)) <= set(plan) or not (
+            stepped - set(vp.tiles(14))
+        ), f"{direction} was not hedged once the heading was gone"
+
+
+def test_map_keeps_no_speculated_tile_of_its_own() -> None:
+    """A prefetch warms the source's cache; the screen holds only what it draws."""
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> None:
+        await _quiet(screen, source)
+
+    asyncio.run(drive())
+    visible = set(screen._viewport.tiles(14))
+    assert set(screen._tiles) <= visible, "speculated tiles landed in the view's working set"
+    assert screen._speculated, "nothing was speculated at all"
 
 
 # --- the coarse first pass -----------------------------------------------------------

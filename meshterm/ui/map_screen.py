@@ -88,6 +88,25 @@ _TILE_CACHE_SCREENS = 2
 #: history for a pan away and back to be instant.
 _MIN_TILE_CACHE = 8
 
+#: How far ahead of a sustained pan to fetch, in pan steps. Two steps is 60% of the view:
+#: enough that ground arrives before it is looked at without reaching for tiles a change of
+#: mind would waste. Momentum earns the second step (see :meth:`MapScreen._prefetch_plan`).
+_PREFETCH_LEAD = 2
+
+#: How many pans in one direction it takes to read as a heading rather than a nudge.
+_PREFETCH_MOMENTUM = 2
+
+#: How long the view must have held still before the prefetcher starts guessing. A raster
+#: finishing between two keypresses of a pan is not a pause — starting a fetch there puts
+#: a tile decode in the way of the next frame, which measured ~110 ms on the device. Long
+#: enough to tell a pause from a gap, short enough to still be reading time.
+_PREFETCH_SETTLE = 1.0
+
+#: How many tiles the prefetcher will ask for around one view before it is satisfied. A
+#: bound rather than a target: the plan usually runs dry first, and this stops a view at a
+#: tile-grid corner from walking the whole neighbourhood.
+_PREFETCH_MAX = 12
+
 #: How long a tile the source gave no answer about is left alone before it is asked for
 #: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
 #: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
@@ -213,6 +232,15 @@ class MapScreen(Screen):
         # Tiles the source gave no answer about, and when each may be asked for again —
         # a cooldown, not a verdict (see :meth:`_load`).
         self._unanswered: dict[tuple[int, int, int], float] = {}
+        # Anticipation (see :meth:`_prefetch_plan`): which way the view has been moving and
+        # for how many steps, the tiles already speculated on, and the one fetch in flight.
+        self._heading: Optional[str] = None
+        self._momentum = 0
+        # When the view last stopped changing, and which view that was (monotonic).
+        self._settled_at = 0.0
+        self._settled_view: Optional[Viewport] = None
+        self._speculated: OrderedDict[tuple[int, int, int], None] = OrderedDict()
+        self._speculating = False
         # The last finished ground frame and what it was drawn for — see :meth:`render_body`.
         # Rasterizing a downtown view is ~0.5-1 s of pure Python (tens of thousands of
         # vector features), far too slow to sit on a keystroke, so it happens off the paint
@@ -593,6 +621,7 @@ class MapScreen(Screen):
                 continue
             self._pending.add(t)
             asyncio.ensure_future(self._load(t))
+        self._ensure_prefetch(vp)
 
     def _expire_cooldowns(self) -> None:
         """Forget the silences that have served their time, so a long pan can't hoard them."""
@@ -600,6 +629,163 @@ class MapScreen(Screen):
             return
         now = monotonic()
         self._unanswered = {t: at for t, at in self._unanswered.items() if at > now}
+
+    # --- anticipation ---------------------------------------------------------
+
+    def _ensure_prefetch(self, vp: Viewport) -> None:
+        """Fetch one tile the next move is likely to need — but only in the quiet.
+
+        A tile is 1.4 s off the PicoCalc's Wi-Fi and a few hundred milliseconds to decode
+        the first time, so ground that is fetched only once it is looked at arrives after
+        it was wanted. Fetching it a move early costs nothing the user can feel *provided
+        it is never the thing in the way*, and that is the whole of the pacing rule here:
+        the prefetcher runs only when the view it is guessing from is finished *and has
+        been for a moment* — every visible tile in, no raster running, nothing queued, and
+        :data:`_PREFETCH_SETTLE` of that since. Those are the seconds the user spends
+        reading the screen, which are also the seconds before they move; the wait is what
+        keeps a raster landing between two keypresses of a pan from being mistaken for a
+        pause, and it is measured from when the screen went quiet rather than from when
+        the view stopped moving, because a frame that took a second to draw has not been
+        looked at for a second.
+
+        One fetch at a time, and the finished one asks for the next itself
+        (:meth:`_prefetch`) rather than waiting for a repaint: chaining through the paint
+        would cost a 40-80 ms interim frame per tile on the device, to show a picture that
+        has not changed.
+        """
+        # Still owing the reader something: a tile in flight, a raster running or queued.
+        busy = bool(self._pending) or self._drawing is not None or self._wanted is not None
+        if busy or self._settled_view is not vp:
+            self._settled_view, self._settled_at = vp, monotonic()
+        if busy or self._speculating or not _loop_running():
+            return
+        if monotonic() - self._settled_at < _PREFETCH_SETTLE:
+            return  # a raster landing between two keypresses of a pan is a gap, not a pause
+        tile = self._next_speculation(vp)
+        if tile is None:
+            return
+        self._speculating = True
+        self._remember_speculation(tile)
+        asyncio.ensure_future(self._prefetch(tile, vp))
+
+    def _next_speculation(self, vp: Viewport) -> Optional[tuple[int, int, int]]:
+        """The first tile in :meth:`_prefetch_plan` we have neither got nor guessed at."""
+        for tile in self._prefetch_plan(vp):
+            if tile in self._tiles or tile in self._pending or tile in self._speculated:
+                continue
+            return tile
+        return None
+
+    def _prefetch_plan(self, vp: Viewport) -> list[tuple[int, int, int]]:
+        """The tiles the next few moves would want, in the order they'd be wanted.
+
+        What the user does next is not a mystery to be modelled. Whatever they press, the
+        ground it reveals comes from the **ring of tiles around the ones on screen** —
+        that is what a pan uncovers, in whichever direction — or from one of the two
+        neighbouring zooms, which are the only moves whose tiles are a different set
+        entirely. So the plan is that ring and those two views, ordered by what the reader
+        just did:
+
+        * **Ahead first.** A pan is rarely alone; the view is being carried somewhere. The
+          side of the ring the heading points at is fetched before any other, and once the
+          run reads as a heading rather than a nudge
+          (:data:`_PREFETCH_MOMENTUM`) the corners flanking it come too, because a
+          diagonal is two keys and readers steer.
+        * **Then out, then in.** Zooming out is how you find where you are, and it is the
+          move that shares nothing with the screen: a step out is four times the ground at
+          a tile zoom never visited. A step in is cheap to ask for and often free to
+          answer — at or above the source's max zoom it is the same tiles, magnified.
+        * **Then the rest of the ring**, for a reader who hasn't moved yet or is about to
+          change their mind. With no heading at all this is the whole of it, nearest
+          neighbours before corners, which is the right hedge when there is nothing to read.
+
+        Working in tiles rather than in pan steps matters at the zooms where a single step
+        uncovers no new tile at all: the plan asks for the ground a move *reaches*, not
+        the ground one keypress lands on.
+
+        Deliberately not here: the nodes a find could jump to. Those are a keystroke away
+        all over the map, so speculating on them is speculating on everything — and the
+        jump reframes the view anyway, arriving here as a new view with its own plan.
+        """
+        visible = vp.tiles(self._max_tile_zoom)
+        if not visible:
+            return []
+        tz = visible[0][0]
+        span = 2**tz
+        xs = [x for _, x, _ in visible]
+        ys = [y for _, _, y in visible]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        seen = set(visible)
+
+        ahead: list[tuple[int, int, int]] = []
+        flank: list[tuple[int, int, int]] = []
+        hx, hy = _PAN_DIRS.get(self._heading or "", (0, 0))
+        corners = self._momentum >= _PREFETCH_MOMENTUM
+        for ty in range(y0 - 1, y1 + 2):
+            if not 0 <= ty < span:
+                continue
+            for tx in range(x0 - 1, x1 + 2):
+                tile = (tz, tx % span, ty)  # wrap x around the antimeridian, as tiles() does
+                if tile in seen:
+                    continue
+                seen.add(tile)
+                # Which way this tile lies from the block on screen: -1, 0 or +1 per axis.
+                off_x = -1 if tx < x0 else (1 if tx > x1 else 0)
+                off_y = -1 if ty < y0 else (1 if ty > y1 else 0)
+                towards = off_x * hx + off_y * hy
+                if towards > 0 and (corners or not (off_x and off_y)):
+                    ahead.append(tile)
+                else:
+                    # No heading: straight neighbours before corners. With one: everything
+                    # that isn't ahead is equally a change of mind, so distance decides.
+                    flank.append(tile)
+        flank.sort(key=lambda t: abs(t[1] - (x0 + x1) // 2) + abs(t[2] - (y0 + y1) // 2))
+
+        zooms: list[tuple[int, int, int]] = []
+        for view in (vp.zoomed(-1), vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)):
+            for tile in view.tiles(self._max_tile_zoom):
+                if tile not in seen:
+                    seen.add(tile)
+                    zooms.append(tile)
+        # With a heading to follow: ahead, then the zooms, then the change of mind. With
+        # none: every way a pan could go *first*, because the arrows are how this screen
+        # is driven and a zoom guessed at ahead of them is a tile the pan then waits for.
+        plan = ahead + zooms + flank if ahead else flank + zooms
+        return plan[:_PREFETCH_MAX]
+
+    def _remember_speculation(self, tile: tuple[int, int, int]) -> None:
+        """Note that we've already guessed at ``tile``, keeping the record bounded.
+
+        Guessed-at, not *held*: what a prefetch leaves behind is a decoded tile in the
+        source's own cache (on disk, and in its small resident memo), which is the whole
+        point — the screen keeps only what it is drawing. This is just the note that stops
+        the plan from asking twice, and it is allowed to forget, since forgetting costs at
+        worst a cache hit.
+        """
+        self._speculated[tile] = None
+        self._speculated.move_to_end(tile)
+        while len(self._speculated) > _PREFETCH_MAX * 4:
+            self._speculated.popitem(last=False)
+
+    async def _prefetch(self, tile: tuple[int, int, int], vp: Viewport) -> None:
+        """Warm one tile into the source's cache, then take the next guess.
+
+        The result is thrown away on purpose. A prefetched tile is not this screen's to
+        hold — :attr:`_tiles` is the view's working set and has a budget sized to it — and
+        it does not need to be: the fetch has written the tile and its decoded form to
+        disk and left it in the source's resident memo, so the paint that finally wants it
+        gets it in tens of milliseconds instead of a second and a half.
+
+        No repaint either way: nothing on screen changed, and the whole point of doing
+        this early was to not spend the user's time.
+        """
+        try:
+            await asyncio.to_thread(self._source.load_tile, *tile)
+        except Exception:  # noqa: BLE001 - a guess that didn't pay off is not an error
+            pass
+        self._speculating = False
+        if self._viewport is vp:  # still the same view, so the same plan: keep going
+            self._ensure_prefetch(vp)
 
     def _trim_tiles(self, in_view: int) -> None:
         """Release the least recently shown tiles once the view's budget is exceeded.
@@ -700,21 +886,27 @@ class MapScreen(Screen):
                 # so a raw PgUp with Shift held can only *be* a shifted arrow: fine-pan.
                 self._pan(vp, "up", fine=True)
             else:
+                self._reorient()
                 self._viewport = vp.zoomed(1, max_zoom=self._max_tile_zoom + _OVERZOOM)
         elif action == "pagedown":
             if modifier_watch.shift_down():
                 self._pan(vp, "down", fine=True)  # Shift+↓ arrives as PgDn — see above
             else:
+                self._reorient()
                 self._viewport = vp.zoomed(-1)
         elif action in ("home", "ctrl_home"):
+            self._reorient()
             self._reset_view(vp)
         elif action == "locate":
+            self._reorient()
             self._locate(vp)
         elif action == "locate_zoom":
+            self._reorient()
             self._locate(vp, zoom_in=True)
         elif action in ("clear_find", "enter"):
             self._filter = ""
         elif action in ("frame", "ctrl_enter") and self._filter:
+            self._reorient()
             self._frame_matches(vp)
         elif action == "text" and self.find_enabled:
             if not data.isspace() or self._filter:  # never begin the filter with a space
@@ -783,6 +975,16 @@ class MapScreen(Screen):
             fraction=1.0,
         )
 
+    def _reorient(self) -> None:
+        """Forget which way the view was being carried — this move is not a continuation.
+
+        A zoom or a jump home is the reader looking *around* rather than travelling, and
+        the ground it lands on says nothing about which way they will go from there. The
+        prefetcher reads the cleared heading as "no reading available" and hedges the four
+        directions evenly instead of buying ground ahead of a pan that has ended.
+        """
+        self._heading, self._momentum = None, 0
+
     def _pan(self, vp: Viewport, direction: str, *, fine: bool) -> None:
         """Pan by one coarse step, or — when ``fine`` — a single character cell.
 
@@ -790,6 +992,12 @@ class MapScreen(Screen):
         dots expressed as a fraction of the current view.
         """
         dx, dy = _PAN_DIRS[direction]
+        # Which way the view is being carried, and for how long — what the prefetcher
+        # reads to tell a heading from a nudge (see :meth:`_prefetch_plan`). A fine step
+        # is a correction, not a direction, so it holds the heading without extending it.
+        if not fine:
+            self._momentum = self._momentum + 1 if direction == self._heading else 1
+            self._heading = direction
         if fine:
             self._viewport = vp.panned(dx * 2 / vp.dot_w, dy * 4 / vp.dot_h)
         else:
