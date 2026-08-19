@@ -1956,6 +1956,45 @@ def test_map_forgets_its_heading_when_the_reader_reframes() -> None:
         ), f"{direction} was not hedged once the heading was gone"
 
 
+def test_map_does_not_guess_in_the_paint_that_queues_a_raster() -> None:
+    """The pacing rule is read at the end of a paint, not off the last one's answer.
+
+    A find keystroke moves the view nowhere, so this is still the settled view the
+    prefetcher is entitled to guess from — but the paint it triggers queues the raster
+    the reader is waiting for. Asked a step earlier, from inside ``_ensure_tiles``, the
+    prefetcher saw the *previous* paint's quiet and started a tile decode alongside it.
+    """
+    source = _CountingSource()
+    screen = _settled_map(source)
+
+    async def drive() -> None:
+        await _quiet(screen, source)
+        screen._speculated.clear()
+        screen._settled_at = 0.0  # settled, quiet, and entitled to guess
+
+        screen.handle("text", "a")
+        screen.render_body(80)
+        assert screen._drawing is not None, "the fixture drew nothing to be in the way of"
+        assert not screen._speculating, "guessed alongside the raster the reader waits for"
+
+    asyncio.run(drive())
+
+
+def test_map_leaves_a_cooling_tile_alone_when_it_guesses() -> None:
+    """A source that has just gone quiet is the last one a guess should be poking."""
+    screen = _settled_map(_CountingSource())
+    screen.render_body(80)  # builds the viewport
+    vp = screen._viewport
+    plan = screen._prefetch_plan(vp)
+    assert plan, "the fixture had nothing to guess at"
+
+    screen._unanswered = {t: monotonic() + 20.0 for t in plan}
+    assert screen._next_speculation(vp) is None, "guessed at a tile serving out its silence"
+
+    screen._unanswered.clear()  # the cooldown expires and the plan is a plan again
+    assert screen._next_speculation(vp) in plan
+
+
 def test_map_keeps_no_speculated_tile_of_its_own() -> None:
     """A prefetch warms the source's cache; the screen holds only what it draws."""
     source = _CountingSource()
@@ -2082,6 +2121,38 @@ def test_map_skips_the_coarse_pass_over_a_picture_already_drawn(monkeypatch) -> 
 
     asyncio.run(drive())
     assert coarse_asked == [False], "a drawn frame was replaced by a coarser one"
+
+
+def test_map_keeps_its_detail_while_a_find_is_typed(monkeypatch) -> None:  # noqa: ANN001
+    """Typing a node name moves the view nowhere, so the streets must not flatten.
+
+    A find query changes which markers are bright — the *overlay* — while the ground
+    under them is the same ground, already drawn and reprojected at zero offset as the
+    stand-in. Deciding the rough pass on the whole picture rather than on the view meant
+    every letter replaced the streets with the coarse pass and drew them back.
+    """
+    from meshterm.ui import map_screen as ms
+
+    screen = _map_over(_StubSource())
+    coarse_asked: list = []
+    monkeypatch.setattr(
+        ms, "render_ground",
+        lambda vp, tiles, m, **k: (coarse_asked.append(k.get("coarse", False))
+                                   or (["x"], None)),
+    )
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+        coarse_asked.clear()
+        screen.handle("text", "a")  # one letter of a find query; the view does not move
+        screen.render_body(80)
+        while screen._drawing is not None:
+            await asyncio.sleep(0)
+
+    asyncio.run(drive())
+    assert coarse_asked == [False], "a find keystroke coarsened the ground under it"
 
 
 # --- the ground raster runs off the paint path ---------------------------------------

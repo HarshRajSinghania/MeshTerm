@@ -88,11 +88,6 @@ _TILE_CACHE_SCREENS = 2
 #: history for a pan away and back to be instant.
 _MIN_TILE_CACHE = 8
 
-#: How far ahead of a sustained pan to fetch, in pan steps. Two steps is 60% of the view:
-#: enough that ground arrives before it is looked at without reaching for tiles a change of
-#: mind would waste. Momentum earns the second step (see :meth:`MapScreen._prefetch_plan`).
-_PREFETCH_LEAD = 2
-
 #: How many pans in one direction it takes to read as a heading rather than a nudge.
 _PREFETCH_MOMENTUM = 2
 
@@ -313,11 +308,19 @@ class MapScreen(Screen):
         row the moment a find began (JP, 2026-08-08). Overlaying costs a strip of ground
         behind the echo while a query is live, but the viewport itself never resizes, so
         nothing jumps and the pan/zoom geometry holds steady.
+
+        The order matters at the end: the prefetcher only guesses while the screen owes
+        the reader nothing, and what this paint owes is not known until :meth:`_ground`
+        has asked for its raster. Read a step earlier — from inside :meth:`_ensure_tiles`,
+        where it used to live — it sees the *previous* paint's answer, and a settled map
+        given a find keystroke starts a speculative fetch in the very paint that queues
+        the frame the reader is waiting for.
         """
         vp = self._ensure_viewport(width)
         self._ensure_tiles(vp)
         self._persist()
         lines = self._ground(vp)
+        self._ensure_prefetch(vp)  # last: it reads what this paint just asked for
         self.title = self._title(vp)
         if lines and self._query_echo():
             lines[-1] = query_line(self._filter, width)
@@ -396,12 +399,35 @@ class MapScreen(Screen):
         Everything but the tiles (``key[1]``) has to match: a frame drawn for a different
         marker set is not "the same picture missing streets", it is a picture missing a
         node — the picker's crosshair, say. A frame that *is* aligned stays on screen
-        while the newer one draws, and tells :meth:`_draw_ground` not to bother with a
-        first pass, since a coarser picture of ground already drawn is a step backwards.
+        while the newer one draws.
+
+        This is a question about the whole *picture*, which is why it is not the question
+        :meth:`_ground_drawn` asks.
         """
         if self._frame is None or self._frame_key is None:
             return False
         return self._frame_key[0] == key[0] and self._frame_key[2:] == key[2:]
+
+    def _ground_drawn(self, key: tuple) -> bool:
+        """Whether this view's ground is already drawn in full, so a rough pass would undo it.
+
+        The two passes exist for a view that has run past every scrap of drawn ground; a
+        view whose ground is *already there* wants none of the first one, because a coarse
+        picture of ground the reader can already see takes detail away (buildings, back
+        streets, every street name) for the length of a raster.
+
+        Only the viewport is asked about, and that is the difference from
+        :meth:`_aligned`. The find query and the marker count belong to the *overlay* —
+        change one and the frame on screen is the wrong picture and stops being served,
+        but the ground under it is the same ground, still drawn, still correct, and
+        reprojected onto the very next paint at zero offset as the stand-in
+        (:class:`~meshterm.ui.map_render.Ghost`, published with the frame it came from).
+        Asking the fuller question here meant every letter of a find query flattened the
+        streets to the rough pass and drew them back, once per keystroke.
+        """
+        if self._frame_key is None or self._frame_coarse:
+            return False
+        return self._frame_key[0] == key[0]
 
     def _schedule_ground(self, key: tuple, vp: Viewport) -> None:
         """Note that ``key`` wants drawing, and start on it if nothing else is in flight.
@@ -442,7 +468,7 @@ class MapScreen(Screen):
             self._frame_key, self._frame_coarse = key, False
             return
         self._drawing = key
-        preview = not self._aligned(key)
+        preview = not self._ground_drawn(key)
         asyncio.ensure_future(self._draw_ground(key, vp, tiles, markers, find, preview))
 
     async def _draw_ground(
@@ -488,9 +514,9 @@ class MapScreen(Screen):
             tiles: The decoded tiles it draws from.
             markers: The nodes to overlay, snapshotted at request time.
             find: The live find filter, likewise.
-            preview: Whether to draw the coarse pass first. Skipped when an aligned frame
-                is already on screen (see :meth:`_aligned`): there a coarse picture would
-                *remove* detail the reader can already see.
+            preview: Whether to draw the coarse pass first. Skipped where this view's
+                ground is already drawn in full (see :meth:`_ground_drawn`): there a
+                coarse picture would *remove* detail the reader can already see.
         """
         if preview and await self._pass(key, vp, tiles, markers, find, coarse=True):
             if self._wanted is not None:
@@ -621,7 +647,6 @@ class MapScreen(Screen):
                 continue
             self._pending.add(t)
             asyncio.ensure_future(self._load(t))
-        self._ensure_prefetch(vp)
 
     def _expire_cooldowns(self) -> None:
         """Forget the silences that have served their time, so a long pan can't hoard them."""
@@ -652,6 +677,9 @@ class MapScreen(Screen):
         (:meth:`_prefetch`) rather than waiting for a repaint: chaining through the paint
         would cost a 40-80 ms interim frame per tile on the device, to show a picture that
         has not changed.
+
+        All of which rests on being asked at the *end* of a paint, once :meth:`_ground`
+        has said what this frame owes — see :meth:`render_body`.
         """
         # Still owing the reader something: a tile in flight, a raster running or queued.
         busy = bool(self._pending) or self._drawing is not None or self._wanted is not None
@@ -669,10 +697,21 @@ class MapScreen(Screen):
         asyncio.ensure_future(self._prefetch(tile, vp))
 
     def _next_speculation(self, vp: Viewport) -> Optional[tuple[int, int, int]]:
-        """The first tile in :meth:`_prefetch_plan` we have neither got nor guessed at."""
+        """The first tile in :meth:`_prefetch_plan` we have neither got nor guessed at.
+
+        A tile serving out its silence (:attr:`_unanswered`) is passed over as well, and
+        that is the same rule as the pacing above rather than an extra one: the cooldown
+        exists because the source has just gone quiet about that square and hammering it
+        helps nobody (see :meth:`_load`), and a guess is the last request that should be
+        the exception. It comes back into the plan when the cooldown expires — by which
+        time the reader may well have panned onto it, and then it is *their* fetch, made
+        on their behalf, which is the one the cooldown was always sized for.
+        """
         for tile in self._prefetch_plan(vp):
             if tile in self._tiles or tile in self._pending or tile in self._speculated:
                 continue
+            if tile in self._unanswered:
+                continue  # the source just went quiet about it; a guess must not push
             return tile
         return None
 

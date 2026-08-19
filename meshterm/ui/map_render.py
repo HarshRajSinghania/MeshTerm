@@ -158,17 +158,14 @@ DRAWN_LAYERS: frozenset[str] = frozenset(
 #: memos, where ``None`` is a real answer meaning "a class we deliberately don't draw".
 _UNRESOLVED = object()
 
-#: Lowest road priority a **coarse** pass draws — see :func:`render_ground`. Tertiary and
-#: up: the through-roads whose pattern says *where you are*, against the residential mesh
-#: that says only *town*. Derived from :data:`_ROAD_STYLE` rather than listed again, so a
-#: reclassified road can't end up in one pass and not the other.
+#: Lowest drawing priority a **coarse** pass keeps among the road/rail lines — see
+#: :func:`render_ground`. Tertiary and up: the through-roads whose pattern says *where you
+#: are*, against the residential mesh that says only *town*, and above rail
+#: (:data:`_RAIL`) and the unrecognised-class default. Stated as the priority the styles
+#: already carry rather than as a second list of class names, so a reclassified road
+#: cannot end up in one pass and not the other. At the PicoCalc's zoom 13 it keeps 2 522
+#: lines of 5 416 — under half of them for nearly all of the legibility.
 _COARSE_ROAD_PRIORITY = 23
-
-#: The road classes a coarse pass keeps. At the PicoCalc's zoom 13 that is 2 522 features
-#: of 5 416 — under half the lines for nearly all of the legibility.
-_COARSE_ROADS: frozenset[str] = frozenset(
-    cls for cls, (_, prio) in _ROAD_STYLE.items() if prio >= _COARSE_ROAD_PRIORITY
-)
 
 
 @dataclass(slots=True)
@@ -376,7 +373,7 @@ def render_ground(
     :func:`render_map` for the immediate paints in between.
 
     ``coarse`` draws the **first pass**: the ground fills, the watercourses, the admin
-    boundaries and the through-roads (:data:`_COARSE_ROADS`) — no buildings, no back
+    boundaries and the through-roads (:data:`_COARSE_ROAD_PRIORITY`) — no buildings, no back
     streets, no text at all. It is the same picture at a lower resolution of detail, and
     it is a quarter of the work: on the PicoCalc, 249 ms against 962 at zoom 13, 120 ms
     against 529 at zoom 16. The map draws one of these before the full frame so a view
