@@ -20,7 +20,10 @@ costs only the decode it was saving.
 The default source is **OpenFreeMap** (openfreemap.org) — full-planet OpenStreetMap vector
 tiles, free and requiring no API key. Everything here is best-effort: with no network and no
 cached tiles the loader simply returns ``None`` and the map falls back to plotting nodes on a
-blank grid, never raising into the UI.
+blank grid, never raising into the UI. Best-effort, and **never given up on**: neither a
+failed tile fetch nor a failed metadata resolve is remembered as a verdict on the source,
+because the app can perfectly well open before the device it runs on has finished bringing
+its network up (see :meth:`BasemapSource._resolve`).
 
 **Only tiles that decode to real geometry are ever written to disk.** A cache is a memory,
 and the one thing it must not remember is a lie: on a flaky link (the PicoCalc's Wi-Fi, most
@@ -41,6 +44,7 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
@@ -75,6 +79,13 @@ _PRUNE_AFTER_BYTES = 8 * 1024 * 1024
 #: the view plus the ring a pan or a zoom step reaches into, and little more — the PicoCalc
 #: has 100 MB of RAM in total and decoded layers are not small.
 _MEMO_TILES = 24
+
+#: How long a failed TileJSON resolve stands before the source will ask again. The PicoCalc
+#: brings its Wi-Fi up some 40 seconds into the boot, well after the app it was started
+#: alongside can reach the menu — so "offline" asked once at open is a verdict on the
+#: *device's boot order*, not on the network, and latching it costs the whole session's
+#: basemap. Long enough that a genuinely offline session isn't retrying into a void.
+_RESOLVE_RETRY_SECONDS = 30.0
 
 _log = logging.getLogger(__name__)
 
@@ -137,7 +148,9 @@ class BasemapSource:
         self._stamp = "all" if layers is None else ",".join(sorted(layers))  # type: ignore[arg-type]
         self._template: Optional[str] = None
         self._max_zoom: Optional[int] = None
-        self._resolved = False  # whether we've tried (success or offline) this session
+        # When the source may next try to resolve its template. Zero means "now";
+        # a success sets the template and this is never consulted again.
+        self._resolve_after = 0.0
         # Tiles the source answered "nothing here" for this session. Held in memory rather
         # than on disk so the claim expires with the process: a blank tile is cheap to
         # re-ask about, and a stale one on disk is a permanent hole in the map.
@@ -155,10 +168,30 @@ class BasemapSource:
         return self.cache_dir / "tilejson.json"
 
     def _resolve(self) -> None:
-        """Resolve and cache the tile-URL template and max zoom (best-effort, once)."""
-        if self._resolved:
+        """Resolve and cache the tile-URL template and max zoom (best-effort, retried).
+
+        Latched on **success only**. A failed resolve is the absence of an answer, exactly
+        as a failed tile fetch is (see :class:`_Response`), and remembering it as "this
+        source is offline" is the same lie in a costlier place: it is asked once, seconds
+        after the app opens, and its verdict then governs every tile for the rest of the
+        session. On the PicoCalc the Wi-Fi associates some forty seconds into the boot, so
+        an app started with it answers that question before the answer can be true and
+        draws the whole session's map from whatever was already on disk — which is exactly
+        a scatter of black tiles at the zooms whose ground the cache happens not to hold.
+
+        So a failure only stands for :data:`_RESOLVE_RETRY_SECONDS`, and the next caller
+        past that asks again. The deadline is claimed *before* the round-trip, so the
+        several worker threads a map frame puts through here don't all make the same call.
+
+        Blocking, and called from worker threads (a tile fetch, the menu's warm) — never
+        from the paint path, which reads :attr:`available` instead.
+        """
+        if self._template is not None:
             return
-        self._resolved = True
+        now = time.monotonic()
+        if now < self._resolve_after:
+            return
+        self._resolve_after = now + _RESOLVE_RETRY_SECONDS
         # Prefer a freshly fetched TileJSON (the template is versioned and rotates), but fall
         # back to a previously cached copy so a session started offline can still use disk
         # tiles and even re-fetch if the template is still valid.
@@ -194,9 +227,30 @@ class BasemapSource:
 
     @property
     def available(self) -> bool:
-        """Whether a tile-URL template is known (network reachable, or one was cached)."""
-        self._resolve()
+        """Whether a tile-URL template is already known — asking nothing to find out.
+
+        Read on the paint path (the map's title, the mini-map's caption), so it must never
+        be the thing that goes to the network: a resolve is a blocking round-trip, and one
+        answered from a repaint would stall the UI for its whole timeout. Touching
+        :attr:`max_zoom` — which every map surface does, off the loop, before it opens —
+        is what resolves; a tile fetch resolves too, in its own thread. This only reports.
+
+        False therefore means "no template *yet*", not "give up": a caller that skips its
+        fetches on it will never let one happen (see
+        :meth:`meshterm.ui.map_screen.MapScreen._ensure_tiles`, which asks regardless).
+        """
         return self._template is not None
+
+    def answered_empty(self, z: int, x: int, y: int) -> bool:
+        """Whether the source *answered* that there is no tile at these coordinates.
+
+        The one way to tell the two ``None`` returns of :meth:`load_tile` apart: a tile the
+        source served as absent (a 404, or bytes holding no layer at all) will never
+        become anything else, while a tile we simply got no answer about is worth asking
+        again. Callers that cache the ``None`` need the difference — see
+        :meth:`meshterm.ui.map_screen.MapScreen._load`.
+        """
+        return (z, x, y) in self._blank
 
     # -- tiles ------------------------------------------------------------------
 

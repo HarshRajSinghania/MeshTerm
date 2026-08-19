@@ -18,6 +18,7 @@ calls :meth:`render` from its own ``render_body`` and forwards nothing back.
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 from typing import TYPE_CHECKING, Optional
 
 from ..core.geo import Viewport, clamp_lat
@@ -31,6 +32,26 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: magnified to fill it. Matches the big map's overzoom so a close preview still has a
 #: (blurred) basemap rather than blank tiles.
 _OVERZOOM = 2
+
+#: How long a tile the source gave no answer about is left alone before the preview asks
+#: for it again — the big map's cooldown, for the same reason (see
+#: :meth:`meshterm.ui.map_screen.MapScreen._load`).
+_TILE_RETRY_SECONDS = 20.0
+
+
+def _loop_running() -> bool:
+    """Whether there is an event loop to hand background work to.
+
+    Asked *before* building a coroutine, not after: ``ensure_future`` without a loop
+    raises, but by then the coroutine exists and never gets awaited, which Python reports
+    as a resource warning on a path that is otherwise perfectly correct (a screen rendered
+    in a test, or a one-shot CLI draw).
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 class MiniMap:
@@ -74,13 +95,20 @@ class MiniMap:
         self._center_lon = center_lon
         self._zoom = max(2, min(int(zoom), max_tile_zoom + _OVERZOOM))
         self._markers = markers
-        # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
+        # Decoded tiles keyed by (z, x, y); a stored ``None`` is the source's own word that
+        # there is no tile there. Silence is not that answer and is not stored here.
         self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
         self._pending: set[tuple[int, int, int]] = set()
+        # Tiles we got no answer about, and when each may be asked for again.
+        self._unanswered: dict[tuple[int, int, int], float] = {}
 
     @property
     def has_basemap(self) -> bool:
-        """Whether the source can serve a basemap at all (network reachable, or cached)."""
+        """Whether the source has resolved a basemap to draw from — not yet is not never.
+
+        The preview keeps asking either way (see :meth:`_ensure_tiles`); this is for a
+        host that wants to caption the wait.
+        """
         return self._source.available
 
     @property
@@ -112,17 +140,23 @@ class MiniMap:
         return render_map(viewport, tiles, self._markers)
 
     def _ensure_tiles(self, viewport: Viewport) -> None:
-        """Schedule background fetches for any visible tiles not yet loaded or pending."""
-        if not self._source.available:  # offline (resolved at open time) — markers only
+        """Schedule background fetches for any visible tile we don't have and aren't owed.
+
+        Not gated on :attr:`~meshterm.services.basemap.BasemapSource.available`, and a
+        tile the source gave no answer about is asked for again once its cooldown runs
+        out — the big map's rules, and for its reasons (see
+        :meth:`meshterm.ui.map_screen.MapScreen._ensure_tiles`).
+        """
+        if not _loop_running():  # nothing to fetch onto — draw whatever is already here
             return
+        if self._unanswered:  # the silences that have served their time
+            now = monotonic()
+            self._unanswered = {t: at for t, at in self._unanswered.items() if at > now}
         for t in viewport.tiles(self._max_tile_zoom):
-            if t in self._tiles or t in self._pending:
+            if t in self._tiles or t in self._pending or t in self._unanswered:
                 continue
             self._pending.add(t)
-            try:
-                asyncio.ensure_future(self._load(t))
-            except RuntimeError:  # pragma: no cover - no running loop (non-interactive)
-                self._pending.discard(t)
+            asyncio.ensure_future(self._load(t))
 
     async def _load(self, t: tuple[int, int, int]) -> None:
         """Fetch+decode one tile off the event loop, then repaint the host screen."""
@@ -130,6 +164,9 @@ class MiniMap:
             layers = await asyncio.to_thread(self._source.load_tile, *t)
         except Exception:  # noqa: BLE001 - a failed tile is just an absent one
             layers = None
-        self._tiles[t] = layers
         self._pending.discard(t)
+        if layers is not None or self._source.answered_empty(*t):
+            self._tiles[t] = layers  # an answer, settled for the session
+        else:
+            self._unanswered[t] = monotonic() + _TILE_RETRY_SECONDS  # silence — ask again
         self._session.invalidate()

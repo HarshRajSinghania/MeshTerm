@@ -8,10 +8,12 @@ against the :class:`MockDevice` simulator with the basemap disabled (no network 
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import re
 from pathlib import Path
+from time import monotonic
 
 import pytest
 from rich.cells import cell_len
@@ -25,6 +27,7 @@ from meshterm.core.models import (
 )
 from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, Layer, decode_tile
 from meshterm.tools.map import MapTool
+from meshterm.ui.map_screen import _TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tile_14_4843_5861.mvt"
@@ -681,8 +684,7 @@ def test_basemap_source_never_caches_an_unanswered_fetch(tmp_path: Path) -> None
     # The same, with the source resolved and the *fetch* the thing that fails — the flaky
     # link the PicoCalc lives on. The tile stays unknown, so the next pan asks again.
     src = _offline_source(cache)
-    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"
-    src._resolved = True
+    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"  # resolved: the fetch is what fails
     calls: list[str] = []
 
     def _get(url: str):
@@ -694,6 +696,54 @@ def test_basemap_source_never_caches_an_unanswered_fetch(tmp_path: Path) -> None
     assert src.load_tile(14, 4843, 5861) is None
     assert len(calls) == 2  # retried, not written off as empty
     assert list(cache.rglob("*.pbf")) == []
+
+
+def test_basemap_source_asks_again_after_a_failed_resolve(tmp_path: Path) -> None:
+    """Offline at open is a moment, not a verdict — the PicoCalc's Wi-Fi lands after boot.
+
+    Latching the first failure meant an app started alongside the device's network drew
+    every tile of every session from whatever the cache already held (JP, 2026-08-18).
+    """
+    from meshterm.services import basemap as basemap_mod
+
+    src = _offline_source(tmp_path / "cache")
+    assert src.available is False
+    assert src.max_zoom == 14  # the default, because nothing was resolved
+
+    doc = b'{"tiles": ["http://tiles.invalid/{z}/{x}/{y}.pbf"], "maxzoom": 14}'
+    src._http_get = lambda url: basemap_mod._Response(True, doc)  # type: ignore[method-assign]
+    src._resolve_after = 0.0  # the cooldown, stepped over rather than slept through
+    assert src.max_zoom == 14
+    assert src.available is True, "the source never asked again"
+
+
+def test_basemap_source_holds_a_failed_resolve_for_its_cooldown(tmp_path: Path) -> None:
+    """Asking again is not asking constantly: a genuinely offline map isn't a retry loop."""
+    from meshterm.services import basemap as basemap_mod
+
+    src = _offline_source(tmp_path / "cache")
+    calls: list[str] = []
+    src._http_get = lambda url: (  # type: ignore[method-assign]
+        calls.append(url), basemap_mod._Response(False, b"")
+    )[1]
+    for _ in range(5):
+        assert src.available is False
+    assert calls == []  # the constructor's own failed resolve still stands
+
+
+def test_basemap_source_tells_an_empty_answer_from_silence(tmp_path: Path) -> None:
+    """The two ``None`` returns of ``load_tile``, told apart — a caching caller needs it."""
+    from meshterm.services import basemap as basemap_mod
+
+    src = _offline_source(tmp_path / "cache")
+    src._template = "http://tiles.invalid/{z}/{x}/{y}.pbf"
+    src._http_get = lambda url: basemap_mod._Response(False, b"")  # type: ignore[method-assign]
+    assert src.load_tile(14, 4843, 5861) is None
+    assert src.answered_empty(14, 4843, 5861) is False  # no answer — worth asking again
+
+    src._http_get = lambda url: basemap_mod._Response(True, b"")  # type: ignore[method-assign]
+    assert src.load_tile(14, 1, 1) is None
+    assert src.answered_empty(14, 1, 1) is True  # the source said so; that settles it
 
 
 def test_basemap_source_prunes_a_blank_cached_tile(tmp_path: Path) -> None:
@@ -1080,6 +1130,9 @@ class _StubSource:
     def load_tile(self, z: int, x: int, y: int):
         return None
 
+    def answered_empty(self, z: int, x: int, y: int) -> bool:
+        return False  # offline is silence, never the source saying "nothing there"
+
 
 def _loaded_tile() -> list[Layer]:
     """A stand-in for a decoded tile: truthy, which is all the budget cares about."""
@@ -1398,7 +1451,6 @@ def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
 
 def test_map_screen_find_filters_frames_and_clears() -> None:
     """Typing builds the query; ^Enter frames matches; Enter/Esc drop it; Esc then leaves."""
-    import asyncio
 
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -1584,7 +1636,6 @@ def test_map_screen_scrubs_right_edge_after_move() -> None:
 
 def test_map_screen_escape_dismisses() -> None:
     """Esc resolves the screen's future with None (backs out to the menu)."""
-    import asyncio
 
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -1640,6 +1691,104 @@ def test_render_map_find_matches_still_label_white() -> None:
     assert _glyph_color(lines, "TARGET") == (255, 255, 255)
 
 
+# --- a tile nobody answered about is asked for again ----------------------------------
+
+
+def _map_over(source) -> "MapScreen":  # noqa: ANN001
+    """A map screen fetching from ``source``, with an event loop it can hand work to."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    return MapScreen(
+        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], source, 14
+    )
+
+
+class _SilentSource(_StubSource):
+    """A source that never answers — the flaky Wi-Fi, not an empty planet."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[int, int, int]] = []
+
+    def load_tile(self, z: int, x: int, y: int):
+        self.asked.append((z, x, y))
+        return None
+
+
+class _EmptySource(_SilentSource):
+    """A source that answers, and the answer is that there is nothing at those tiles."""
+
+    def answered_empty(self, z: int, x: int, y: int) -> bool:
+        return True
+
+
+def test_map_asks_again_for_a_tile_it_got_no_answer_about(monkeypatch) -> None:  # noqa: ANN001
+    """One Wi-Fi blip must not black out that ground until the app is restarted.
+
+    On the PicoCalc a missing z14 tile *is* the picture at the two highest zooms, where
+    one tile covers the whole screen many times over (JP, 2026-08-18).
+    """
+    from meshterm.ui import map_screen as ms
+
+    source = _SilentSource()
+    screen = _map_over(source)
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._pending:
+            await asyncio.sleep(0)
+        first = len(source.asked)
+        assert first, "no tile was ever asked for"
+
+        screen.render_body(80)  # still inside the cooldown
+        await asyncio.sleep(0)
+        assert len(source.asked) == first, "the source is being hammered"
+
+        monkeypatch.setattr(ms, "monotonic", lambda: monotonic() + _TILE_RETRY + 1)
+        screen.render_body(80)
+        while screen._pending:
+            await asyncio.sleep(0)
+        assert len(source.asked) > first, "the unanswered tile was written off for good"
+
+    asyncio.run(drive())
+
+
+def test_map_takes_the_sources_word_that_a_tile_is_empty(monkeypatch) -> None:  # noqa: ANN001
+    """An answer settles it: ocean tiles must not be re-requested for ever."""
+    from meshterm.ui import map_screen as ms
+
+    source = _EmptySource()
+    screen = _map_over(source)
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._pending:
+            await asyncio.sleep(0)
+        asked = len(source.asked)
+
+        monkeypatch.setattr(ms, "monotonic", lambda: monotonic() + _TILE_RETRY * 10)
+        screen.render_body(80)
+        await asyncio.sleep(0)
+        assert len(source.asked) == asked, "a settled answer was asked about again"
+
+    asyncio.run(drive())
+
+
+def test_map_fetches_before_the_source_has_resolved(monkeypatch) -> None:  # noqa: ANN001
+    """``available`` says "not yet", never "don't bother" — a fetch is what resolves it."""
+    source = _SilentSource()
+    assert source.available is False  # nothing has reached the network at open time
+    screen = _map_over(source)
+
+    async def drive() -> None:
+        screen.render_body(80)
+        while screen._pending:
+            await asyncio.sleep(0)
+        assert source.asked, "the map wrote the source off instead of asking it"
+
+    asyncio.run(drive())
+
+
 # --- the ground raster runs off the paint path ---------------------------------------
 
 
@@ -1677,18 +1826,23 @@ def test_map_paints_without_waiting_for_the_ground(monkeypatch) -> None:  # noqa
     assert screen._drawing is not None, "no background raster was scheduled"
 
 
+def _rasters(started: list) -> list:
+    """Just the ground-rasterizing coroutines — a pan also schedules its tile fetches."""
+    return [c for c in started[0] if "_draw_ground" in c.__qualname__]
+
+
 def test_map_keeps_one_raster_in_flight_while_panning(monkeypatch) -> None:  # noqa: ANN001
     """A held arrow key must not queue a second of thread work per keypress."""
     started: list = []
     screen = _async_map(monkeypatch, started)
     screen.render_body(80)
-    scheduled = len(started[0])
+    scheduled = len(_rasters(started))
 
     for _ in range(8):
         screen.handle("right")
         screen.render_body(80)
 
-    assert len(started[0]) == scheduled, "a second raster started before the first finished"
+    assert len(_rasters(started)) == scheduled, "a second raster started before the first finished"
     assert screen._wanted is not None, "the newest view was not remembered for next"
 
 

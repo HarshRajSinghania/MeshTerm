@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import OrderedDict
+from time import monotonic
 from typing import TYPE_CHECKING, Callable, Optional
 
 from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
@@ -86,6 +87,12 @@ _TILE_CACHE_SCREENS = 2
 #: Floor on that budget, so a zoomed-out view needing one or two tiles still keeps enough
 #: history for a pan away and back to be instant.
 _MIN_TILE_CACHE = 8
+
+#: How long a tile the source gave no answer about is left alone before it is asked for
+#: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
+#: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
+#: the rest of the session (see :meth:`MapScreen._load`).
+_TILE_RETRY_SECONDS = 20.0
 
 #: The zoom a frame homes in at when the matches set no extent of their own — a
 #: single node (or several at one spot) has nothing to frame, so ^Enter zooms to this
@@ -199,10 +206,13 @@ class MapScreen(Screen):
         # :meth:`consume_edge_scrub`). Seeded ``True`` so the first braille frame's edge is
         # cleaned even before the first pan.
         self._needs_scrub = True
-        # Decoded tiles keyed by (z, x, y); a stored ``None`` means "fetched, empty/absent".
-        # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`.
+        # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`. A stored
+        # ``None`` is the source's own answer that there is nothing at those coordinates.
         self._tiles: OrderedDict[tuple[int, int, int], Optional[list[Layer]]] = OrderedDict()
         self._pending: set[tuple[int, int, int]] = set()
+        # Tiles the source gave no answer about, and when each may be asked for again —
+        # a cooldown, not a verdict (see :meth:`_load`).
+        self._unanswered: dict[tuple[int, int, int], float] = {}
         # The last finished ground frame and what it was drawn for — see :meth:`render_body`.
         # Rasterizing a downtown view is ~0.5-1 s of pure Python (tens of thousands of
         # vector features), far too slow to sit on a keystroke, so it happens off the paint
@@ -487,29 +497,47 @@ class MapScreen(Screen):
     # --- tiles ---------------------------------------------------------------
 
     def _ensure_tiles(self, vp: Viewport) -> None:
-        """Schedule background fetches for any visible tiles not yet loaded or pending."""
+        """Schedule background fetches for any visible tile we don't have and aren't owed.
+
+        Asked on every paint, and deliberately **not** gated on
+        :attr:`~meshterm.services.basemap.BasemapSource.available`: that only reports
+        whether a template is known *yet*, and skipping the fetch while it isn't is how a
+        map that opened a moment too early stays empty for the rest of the session. The
+        fetch resolves the source itself, in its own thread, so asking is what un-sticks it.
+
+        A tile the source never answered about waits out :data:`_TILE_RETRY_SECONDS` in
+        :attr:`_unanswered` and is then asked for again — see :meth:`_load` for why that
+        isn't the same as a tile it answered "nothing here" about.
+        """
         wanted = vp.tiles(self._max_tile_zoom)
         for t in wanted:
             if t in self._tiles:
                 self._tiles.move_to_end(t)  # on screen now, so last in line to be dropped
         self._trim_tiles(len(wanted))
-        if not self._source.available:  # offline (resolved at open time) — nodes only
-            return
         if not _loop_running():  # nothing to fetch onto — a static render draws what it has
             return
+        self._expire_cooldowns()
         for t in wanted:
-            if t in self._tiles or t in self._pending:
+            if t in self._tiles or t in self._pending or t in self._unanswered:
                 continue
             self._pending.add(t)
             asyncio.ensure_future(self._load(t))
+
+    def _expire_cooldowns(self) -> None:
+        """Forget the silences that have served their time, so a long pan can't hoard them."""
+        if not self._unanswered:
+            return
+        now = monotonic()
+        self._unanswered = {t: at for t, at in self._unanswered.items() if at > now}
 
     def _trim_tiles(self, in_view: int) -> None:
         """Release the least recently shown tiles once the view's budget is exceeded.
 
         Only tiles holding geometry are counted or dropped. An entry whose value is
-        ``None`` is the memory of having *asked* — the tile was absent, or the source
-        never answered — and it costs a dict slot rather than a megabyte, so it stays;
-        dropping it would only buy a pointless re-request on the next repaint.
+        ``None`` is the source's word that the tile is absent — a settled answer costing a
+        dict slot rather than a megabyte, so it stays; dropping it would only buy a
+        pointless re-request on the next repaint. A tile we got no answer about isn't here
+        at all: it waits out its cooldown in :attr:`_unanswered` and is asked for again.
 
         Args:
             in_view: How many tiles the current viewport needs, which sets the budget.
@@ -527,13 +555,30 @@ class MapScreen(Screen):
                 loaded -= 1
 
     async def _load(self, t: tuple[int, int, int]) -> None:
-        """Fetch+decode one tile off the event loop, then repaint."""
+        """Fetch+decode one tile off the event loop, then repaint.
+
+        What comes back is filed under the same distinction the tile source keeps (see
+        :class:`~meshterm.services.basemap._Response`), because this is where forgetting it
+        costs a picture. Geometry, or the source's own word that there is nothing at those
+        coordinates, is an answer: it goes in :attr:`_tiles` and is never asked about
+        again. Silence — offline, a timeout, a body the Wi-Fi cut short — is *not* an
+        answer, and filing it as one turns one bad moment into a black square that stays
+        black until the app is restarted. It goes in :attr:`_unanswered` instead, which is
+        a cooldown rather than a verdict.
+
+        That distinction is only visible on a link that actually drops. On the PicoCalc it
+        is the difference between a map and a map with holes in it (JP, 2026-08-18: tiles
+        black at the two highest zooms, where one z14 tile is the whole screen).
+        """
         try:
             layers = await asyncio.to_thread(self._source.load_tile, *t)
         except Exception:  # noqa: BLE001 - a failed tile is just an absent one
             layers = None
-        self._tiles[t] = layers
         self._pending.discard(t)
+        if layers is not None or self._source.answered_empty(*t):
+            self._tiles[t] = layers
+        else:
+            self._unanswered[t] = monotonic() + _TILE_RETRY_SECONDS
         self._session.invalidate()
 
     # --- input ---------------------------------------------------------------

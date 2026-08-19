@@ -190,6 +190,9 @@ class _StubTileSource:
     def load_tile(self, z: int, x: int, y: int):  # noqa: ANN001
         return None
 
+    def answered_empty(self, z: int, x: int, y: int) -> bool:  # noqa: ANN001
+        return False  # offline is silence, never the source saying "nothing there"
+
 
 def _map(cols: int, rows: int) -> Screen:
     session = _GallerySession(cols, rows)

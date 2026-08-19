@@ -186,6 +186,9 @@ class _StubSource:
     def load_tile(self, z: int, x: int, y: int):
         return None
 
+    def answered_empty(self, z: int, x: int, y: int) -> bool:
+        return False  # offline is silence, never the source saying "nothing there"
+
 
 def _picker(markers=None, initial=None):
     from meshterm.ui.map_screen import LocationPickScreen
