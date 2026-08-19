@@ -2083,17 +2083,21 @@ def test_map_abandons_the_finished_pass_for_a_view_that_moved(monkeypatch) -> No
 
     monkeypatch.setattr(ms, "render_ground", render)
 
-    async def drive() -> None:
+    async def drive() -> tuple:
         screen.render_body(80)
         while screen._drawing is not None:
             await asyncio.sleep(0)
         passes.clear()
         screen._drawing = ("k",)
         await screen._draw_ground(("k",), screen._viewport, {}, [], "", True)
+        # Read here, not after the loop closes: the newer view's own draw is a task of its
+        # own by now, and what it goes on to ask for is that view's business, not this
+        # one's. The question is only what the *abandoned* key got.
+        return list(passes), screen._frame_coarse
 
-    asyncio.run(drive())
-    assert False not in passes, "a finished pass was drawn for a view already left behind"
-    assert screen._frame_coarse is True
+    stale, rough_on_screen = asyncio.run(drive())
+    assert stale == [True], "a finished pass was drawn for a view already left behind"
+    assert rough_on_screen is True, "the abandoned view left no rough picture on screen"
 
 
 def test_map_skips_the_coarse_pass_over_a_picture_already_drawn(monkeypatch) -> None:  # noqa: ANN001
@@ -2121,6 +2125,41 @@ def test_map_skips_the_coarse_pass_over_a_picture_already_drawn(monkeypatch) -> 
 
     asyncio.run(drive())
     assert coarse_asked == [False], "a drawn frame was replaced by a coarser one"
+
+
+def test_the_rough_pass_is_a_switch_the_map_reads(monkeypatch) -> None:  # noqa: ANN001
+    """Both passes work; whether a moved view is offered the first one is a knob.
+
+    Off, every view waits for the whole picture and stands on the last frame's ground
+    until it lands. The machinery is :meth:`MapScreen._draw_ground`'s either way — what
+    the switch decides is the *asking*, which is why it is read where the raster is
+    requested and not inside the renderer.
+    """
+    from meshterm.ui import map_screen as ms
+
+    def first_draw() -> list:
+        """The passes a view with nothing drawn under it asks for."""
+        asked: list = []
+        monkeypatch.setattr(
+            ms, "render_ground",
+            lambda vp, tiles, m, **k: (asked.append(k.get("coarse", False))
+                                       or (["x"], None)),
+        )
+        screen = _map_over(_StubSource())
+
+        async def drive() -> None:
+            screen.render_body(80)
+            while screen._drawing is not None:
+                await asyncio.sleep(0)
+
+        asyncio.run(drive())
+        return asked
+
+    monkeypatch.setattr(ms, "_COARSE_PREVIEW", True)
+    assert first_draw() == [True, False], "the rough pass did not come first when asked for"
+
+    monkeypatch.setattr(ms, "_COARSE_PREVIEW", False)
+    assert first_draw() == [False], "a rough pass was drawn with the switch off"
 
 
 def test_map_keeps_its_detail_while_a_find_is_typed(monkeypatch) -> None:  # noqa: ANN001

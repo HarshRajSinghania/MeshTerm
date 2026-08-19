@@ -88,6 +88,19 @@ _TILE_CACHE_SCREENS = 2
 #: history for a pan away and back to be instant.
 _MIN_TILE_CACHE = 8
 
+#: Whether a moved view is answered with the **rough first pass** before its finished
+#: frame — the ground fills, the watercourses and the through-roads, in a quarter of the
+#: time (see :func:`~meshterm.ui.map_render.render_ground`). Currently **off**: every view
+#: waits for the whole picture, and what it stands on until then is the last frame's
+#: ground reprojected (:class:`~meshterm.ui.map_render.Ghost`), or nothing where the view
+#: has run past that too.
+#:
+#: The switch is here rather than in the renderer because it is a decision about *when to
+#: ask*, not about what can be drawn: both passes still work, both are still tested, and
+#: the abandonment point between them (:meth:`MapScreen._draw_ground`) is still where a
+#: held pan key gets off. Turning it back on is this line.
+_COARSE_PREVIEW = False
+
 #: How many pans in one direction it takes to read as a heading rather than a nudge.
 _PREFETCH_MOMENTUM = 2
 
@@ -375,11 +388,12 @@ class MapScreen(Screen):
           edge you are panning onto — instead of the map blanking to black between every
           keypress and flashing back when the frame lands (JP, 2026-08-09).
 
-        The last of those is where the map used to go black *and stay black*: four coarse
-        pan steps are 120% of the screen, so nothing drawn is under the view any more and
-        there is no ground to reproject. What fixes that is not this method but the one it
-        schedules — see :meth:`_draw_ground`, which now lands a rough picture in a quarter
-        of the time rather than nothing at all for a whole raster.
+        The last of those is where the map goes black *and stays black*: four coarse pan
+        steps are 120% of the screen, so nothing drawn is under the view any more and
+        there is no ground to reproject. The answer to that is not this method but the one
+        it schedules — :meth:`_draw_ground` can land a rough picture in a quarter of the
+        time rather than nothing at all for a whole raster, which is
+        :data:`_COARSE_PREVIEW`, currently off.
         """
         key = self._ground_key(vp)
         if self._frame_key == key and self._frame is not None:
@@ -468,7 +482,7 @@ class MapScreen(Screen):
             self._frame_key, self._frame_coarse = key, False
             return
         self._drawing = key
-        preview = not self._ground_drawn(key)
+        preview = _COARSE_PREVIEW and not self._ground_drawn(key)
         asyncio.ensure_future(self._draw_ground(key, vp, tiles, markers, find, preview))
 
     async def _draw_ground(
@@ -488,7 +502,8 @@ class MapScreen(Screen):
         frame (measured worst-case delay ~50 ms, against the ~1 s of a blocking draw).
 
         **Two passes, because a whole frame is too big a thing to wait for or to throw
-        away.** A coarse pass (ground, water, through-roads; see
+        away** — where ``preview`` asks for both, which :data:`_COARSE_PREVIEW` currently
+        does not. A coarse pass (ground, water, through-roads; see
         :func:`~meshterm.ui.map_render.render_ground`) is a quarter of the work — 249 ms
         against 962 at zoom 13 on the PicoCalc — and it lands first, so a view that has
         run past every scrap of drawn ground shows something true within a blink instead
@@ -514,9 +529,10 @@ class MapScreen(Screen):
             tiles: The decoded tiles it draws from.
             markers: The nodes to overlay, snapshotted at request time.
             find: The live find filter, likewise.
-            preview: Whether to draw the coarse pass first. Skipped where this view's
-                ground is already drawn in full (see :meth:`_ground_drawn`): there a
-                coarse picture would *remove* detail the reader can already see.
+            preview: Whether to draw the coarse pass first. Off wholesale while
+                :data:`_COARSE_PREVIEW` is; and skipped anyway where this view's ground is
+                already drawn in full (see :meth:`_ground_drawn`), since there a coarse
+                picture would *remove* detail the reader can already see.
         """
         if preview and await self._pass(key, vp, tiles, markers, find, coarse=True):
             if self._wanted is not None:

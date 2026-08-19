@@ -376,9 +376,10 @@ def render_ground(
     boundaries and the through-roads (:data:`_COARSE_ROAD_PRIORITY`) — no buildings, no back
     streets, no text at all. It is the same picture at a lower resolution of detail, and
     it is a quarter of the work: on the PicoCalc, 249 ms against 962 at zoom 13, 120 ms
-    against 529 at zoom 16. The map draws one of these before the full frame so a view
-    that has run past its last ground has *something* true on it within a blink, and so
-    that a pan being held has a unit of work small enough to abandon (see
+    against 529 at zoom 16. Drawn before the full frame it gives a view that has run past
+    its last ground *something* true within a blink, and gives a pan being held a unit of
+    work small enough to abandon — which is what the map asks for when
+    :data:`~meshterm.ui.map_screen._COARSE_PREVIEW` is on (see
     :meth:`meshterm.ui.map_screen.MapScreen._draw_ground`).
 
     Args:
