@@ -13,7 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from meshterm.core.connection import packet_observation_from_event
-from meshterm.core.frames import frame_addressing
+from meshterm.core.frames import frame_addressing, trace_link_snrs
 from meshterm.core.models import Observation, utcnow
 from meshterm.persistence.repository import Repository
 
@@ -135,3 +135,71 @@ def test_stored_frames_remember_what_they_addressed(tmp_path: Path) -> None:
         for key, value in decoded.items():
             assert read_back[typename][key] == value, (typename, key)
     repo.close()
+
+
+def test_a_trace_path_is_link_readings_not_relay_hashes() -> None:
+    """The one class whose header path field means something else entirely.
+
+    A trace grows its path by one signed SNR byte per hop, so reading it as hashes both
+    invents adjacency and throws away the readings. Bytes here span the wire's signed
+    range: +13.25 dB, then two negative legs.
+    """
+    payload = _frame("TRACE", bytes(9), path_len=3, path_hash_size=1, path="35eeef")
+    assert trace_link_snrs(payload) == [13.25, -4.5, -4.25]
+
+
+def test_only_a_trace_reads_its_path_that_way() -> None:
+    """Every other class keeps hashes there, so nothing else may be decoded as readings."""
+    for typename in ("TEXT_MSG", "ADVERT", "GRP_TXT", "ACK", "PATH"):
+        assert trace_link_snrs(_frame(typename, bytes(9), path_len=1, path="35")) is None
+
+
+def test_an_unrelayed_trace_has_readings_for_no_hops() -> None:
+    """Nobody has forwarded it yet, so there is nothing to have measured it — not a fault."""
+    assert trace_link_snrs(_frame("TRACE", bytes(9), path_len=0, path="")) == []
+
+
+def test_a_trace_path_shorter_than_announced_is_not_invented() -> None:
+    """Three hops promised, one byte delivered: the missing readings stay missing."""
+    assert trace_link_snrs(_frame("TRACE", bytes(9), path_len=3, path="35")) is None
+
+
+def test_a_traces_readings_reach_the_observation_and_its_hops_do_not() -> None:
+    """The readings ride in the raw payload; ``path`` stays empty, having no hops to hold.
+
+    Storing those bytes as a path fed the topology graph links that were never observed —
+    whichever nodes happened to share the leading digits of an SNR reading.
+    """
+    obs = packet_observation_from_event(
+        _Event(payload_typename="TRACE", pkt_payload=bytes.fromhex("5f3c2a10") + bytes(5),
+               path_len=3, path_hash_size=1, path="35eeef", snr=13.75)
+    )
+    assert obs is not None and obs.raw is not None
+    assert obs.path == ""
+    assert obs.raw["trace_snrs"] == [13.25, -4.5, -4.25]
+    assert obs.raw["trace_tag"] == "102a3c5f"
+
+
+def test_a_frame_heard_straight_off_its_sender_is_kept() -> None:
+    """Zero relays is the strongest adjacency evidence there is, not the absence of any.
+
+    This is the whole of what a device sitting beside this one puts on the air: nothing
+    has relayed it, so it names no repeater, and only an advert carries an origin key.
+    Dropping it made a neighbour's every trace, message and ack invisible.
+    """
+    for typename in ("TRACE", "TEXT_MSG", "ACK", "REQ", "GRP_TXT"):
+        obs = packet_observation_from_event(
+            _Event(payload_typename=typename, pkt_payload=bytes(24),
+                   path_len=0, path_hash_size=1, path="", snr=9.25, rssi=-61)
+        )
+        assert obs is not None, typename
+        assert obs.path == "" and obs.snr == 9.25
+        assert (obs.raw or {})["payload_typename"] == typename
+
+
+def test_a_frame_with_no_class_at_all_is_still_dropped() -> None:
+    """The library's sentinel for a frame too short to parse teaches nothing about anything."""
+    assert packet_observation_from_event(
+        _Event(payload_typename="UNK", pkt_payload=b"", path_len=0, path="")
+    ) is None
+    assert packet_observation_from_event(_Event(snr=6.0)) is None

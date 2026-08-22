@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
-from .frames import frame_addressing
+from .frames import frame_addressing, trace_link_snrs
 from .models import (
     NODE_TYPE_CHAT,
     NODE_TYPE_REPEATER,
@@ -2857,8 +2857,18 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
     The originating node is only knowable when the payload class reveals it: the library
     decodes adverts inline (``adv_key``/``adv_name``), so those carry an origin; other
     packet classes are recorded origin-less — their path (plus our reception of its last
-    relay) is still adjacency evidence. Frames that carry neither an origin nor any path
-    teach us nothing about topology and map to ``None``.
+    relay) is still adjacency evidence.
+
+    A frame that crossed no relays at all is kept too, with an empty path. Far from
+    teaching us nothing, it is the strongest adjacency evidence there is — we heard the
+    transmitter directly — and it is the whole of what an adjacent device puts on the air,
+    so discarding it made a neighbour's traffic invisible. Only a frame the library could
+    not even assign a payload class to is dropped.
+
+    One class needs its header read differently from the rest: a ``TRACE``'s ``path``
+    field carries per-hop SNR readings rather than relay hashes (see
+    :func:`~meshterm.core.frames.trace_link_snrs`), so it yields no hops and its readings
+    are merged in as ``trace_snrs`` instead.
 
     Origin-less does not mean featureless, though: what the frame *addresses* is decoded
     out of its undecoded body (:func:`~meshterm.core.frames.frame_addressing`) and merged
@@ -2870,28 +2880,45 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
         event: A meshcore ``RX_LOG_DATA`` event (anything exposing a ``payload`` mapping).
 
     Returns:
-        The parsed :class:`Observation` (``kind="packet"``), or ``None`` for frames with
-        no topology content or an unparsable path.
+        The parsed :class:`Observation` (``kind="packet"``), or ``None`` for a frame with
+        no decodable payload class or an unparsable path.
     """
     payload = dict(getattr(event, "payload", {}) or {})
+    typename = payload.get("payload_typename")
+    if not typename or typename == "UNK":
+        return None  # the library's sentinel for a frame too short to have a class at all
     path_len = _as_int(payload.get("path_len")) or 0
     hash_size = _as_int(payload.get("path_hash_size")) or 1
     path_hex = str(payload.get("path") or "").lower().removeprefix("0x")
     hops: list[str] = []
-    if path_len > 0:
+    # A trace's path field is SNR readings, not relay hashes (see
+    # :func:`~meshterm.core.frames.trace_link_snrs`), so it contributes no hops — its
+    # readings are recovered below and kept beside the frame instead.
+    if path_len > 0 and typename != "TRACE":
         width = hash_size * 2
         hops = [path_hex[i * width : (i + 1) * width] for i in range(path_len)]
         if any(len(h) != width for h in hops):
             return None  # a truncated path would fabricate adjacency between wrong nodes
 
     origin = payload.get("adv_key")
-    if not origin and not hops:
-        return None  # neither endpoint nor relays: no topology content
+    # A frame with no origin and no relays is not featureless — it is the strongest
+    # adjacency evidence the mesh produces: we heard the transmitter *directly*, with
+    # nothing in between. Dropping it made every non-advert frame from an adjacent node
+    # invisible, which is why a companion device sitting beside this one could trace all
+    # day and never appear in the feed. What it carries — its class, what it addresses,
+    # how well it was heard — is recorded exactly as a relayed frame's is, with an empty
+    # path standing for the zero hops it crossed.
+    #
     # What the frame addresses — the recipient, the sender, the channel, the token it
     # carries — read out of the body the library leaves undecoded for every class but
     # advert and channel text (see :mod:`~meshterm.core.frames`). Merged in under its own
     # keys so a class that names no origin node still says what it is *about*.
     payload.update(frame_addressing(payload))
+    readings = trace_link_snrs(payload)
+    if readings is not None:
+        # Kept beside the frame, not in ``path``: a trace's hop readings say how well each
+        # leg was heard, and nothing at all about who relayed it.
+        payload["trace_snrs"] = readings
     ident = str(origin).lower().removeprefix("0x") if origin else None
     node = ident[:12] if ident else None
     public_key = ident if ident and len(ident) > 12 else None  # keep the whole adv_key
