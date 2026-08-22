@@ -87,9 +87,10 @@ AUTO_SPEC = ""
 _MAX_SUGGESTIONS = 12
 
 #: Action-row sentinels (kept distinct from suggestion rows, which carry node ids).
+#: There is no cancel sentinel: leaving is Esc's, and a row that only pressed Esc for
+#: you cost a cursor stop above the row that commits.
 _USE = "use"
 _AUTO = "auto"
-_CANCEL = "cancel"
 
 #: One-letter tags for the evidence classes backing a link, shown beside each
 #: suggestion: T(race), R(oute — the firmware's learned out_path), P(acket log),
@@ -382,7 +383,6 @@ class PathComposerScreen(Screen):
         rows.append(("action", _USE))
         if self._mirrored:  # a path walk has no target for the device to route to
             rows.append(("action", _AUTO))
-        rows.append(("action", _CANCEL))
         return rows
 
     def _spec(self) -> str:
@@ -560,9 +560,7 @@ class PathComposerScreen(Screen):
             if not self._spec():
                 label.append("  (add a hop first)", style="muted")
             return label
-        if payload == _AUTO:
-            return Text("Auto — let the device route")
-        return Text.assemble(("✗ ", "err"), "Cancel")
+        return Text("Auto — let the device route")
 
     @property
     def dialog_width(self) -> int:
@@ -681,8 +679,6 @@ class PathComposerScreen(Screen):
                 self.resolve(spec)
         elif payload == _AUTO:
             self.resolve(AUTO_SPEC)
-        else:
-            super().handle("escape")
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the cursors, edit the entry, add/remove hops, or commit/cancel."""

@@ -512,7 +512,7 @@ def test_composer_windows_rows_under_the_pinned_route_preview() -> None:
     assert "↓" in body and "more" in body  # hidden rows are counted at the edge
     screen.handle("end")  # cursor to the last action row — the window follows
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
-    assert "Cancel" in body and "↑" in body
+    assert "Auto" in body and "↑" in body
 
 
 def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:
@@ -670,23 +670,25 @@ def test_composer_use_row_names_the_action_not_the_path() -> None:
 
 
 async def test_composer_commits_spec_auto_and_cancel() -> None:
-    """Use resolves the spec with its mirrored return leg; Auto resolves empty; Esc cancels."""
+    """Use resolves the spec with its mirrored return leg; Auto resolves empty; Esc cancels.
+
+    Leaving is Esc's alone — the action group ends at Auto, so End lands on the last row
+    that *does* something rather than on one that only pressed Esc on your behalf.
+    """
     import asyncio
 
     walks = [_traced(("3d", 12.0), (None, 12.0))]
 
     screen = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"])
     screen.future = asyncio.get_running_loop().create_future()
-    screen.handle("end")  # jump to the last action row (Cancel)…
-    screen.handle("up")  # …past Auto…
+    screen.handle("end")  # jump to the last action row (Auto)…
     screen.handle("up")  # …up to "Use this path"
     screen.handle("enter")
     assert screen.future.result() == "3d,f2,3d"
 
     auto = _composer(_topo(trace_paths=walks))
     auto.future = asyncio.get_running_loop().create_future()
-    auto.handle("end")
-    auto.handle("up")  # "Auto — let the device route"
+    auto.handle("end")  # "Auto — let the device route" now closes the group
     auto.handle("enter")
     assert auto.future.result() == AUTO_SPEC
 
@@ -805,8 +807,7 @@ async def test_composer_path_mode_suggests_through_anything_and_commits_verbatim
 
     loop = asyncio.get_running_loop()
     screen.future = loop.create_future()
-    screen.handle("end")  # Cancel…
-    screen.handle("up")  # …up to "Use this path" (no Auto row between them)
+    screen.handle("end")  # "Use this path" — path mode ends the group there, no Auto row
     screen.handle("enter")
     assert screen.future.result() == "3d,f2"
 
