@@ -203,3 +203,41 @@ def test_a_frame_with_no_class_at_all_is_still_dropped() -> None:
         _Event(payload_typename="UNK", pkt_payload=b"", path_len=0, path="")
     ) is None
     assert packet_observation_from_event(_Event(snr=6.0)) is None
+
+
+def test_a_traces_readings_survive_being_stored(tmp_path: Path) -> None:
+    """A replayed trace reads back with the same links as the live one, not a blank lane.
+
+    The feed opens seeded from history, so readings that lived only in a live event's raw
+    payload would vanish the moment the screen was drawn from storage — the same gap the
+    crypto and addressing columns were added to close.
+    """
+    repo = Repository(tmp_path / "trace.db")
+    run = repo.start_run("monitor", {}, None)
+    repo.record_observation(
+        run,
+        Observation(
+            node=None, kind="packet", path="",
+            raw={"payload_typename": "TRACE", "trace_tag": "102a3c5f",
+                 "trace_snrs": [13.25, -4.5, -4.25]},
+        ),
+    )
+    (stored,) = repo.recent_observations(since=utcnow() - timedelta(hours=2))
+    assert stored.path == ""
+    assert (stored.raw or {})["trace_snrs"] == [13.25, -4.5, -4.25]
+    assert (stored.raw or {})["trace_tag"] == "102a3c5f"
+    repo.close()
+
+
+def test_only_a_trace_stores_readings(tmp_path: Path) -> None:
+    """No other class has any, so a stray value on one is not written down as though it did."""
+    repo = Repository(tmp_path / "notrace.db")
+    run = repo.start_run("monitor", {}, None)
+    repo.record_observation(
+        run,
+        Observation(node=None, kind="packet", path="3d",
+                    raw={"payload_typename": "TEXT_MSG", "trace_snrs": [1.0]}),
+    )
+    (stored,) = repo.recent_observations(since=utcnow() - timedelta(hours=2))
+    assert "trace_snrs" not in (stored.raw or {})
+    repo.close()

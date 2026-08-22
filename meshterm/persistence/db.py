@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS observations (
     lat         REAL,
     lon         REAL,
     path        TEXT,             -- 'packet' rows: comma-separated relay-hop hex hashes
+                                  --   (never a TRACE's: see trace_snrs)
     observed_at TEXT    NOT NULL,
     chan_hash   TEXT,             -- overheard channel frames: channel-hash fingerprint (hex)
     cipher_mac  TEXT,             -- …its 2-byte MAC (hex)
@@ -136,7 +137,8 @@ CREATE TABLE IF NOT EXISTS observations (
     payload_typename TEXT,        -- 'packet' rows: the frame's payload class (GRP_TXT/TRACE/…)
     dest        TEXT,             -- …the recipient's key hash, for an addressed class (hex)
     src         TEXT,             -- …the sender's key hash, or its whole key (anon request)
-    tag         TEXT              -- …the frame's own token: an ack's checksum, a trace's tag
+    tag         TEXT,             -- …the frame's own token: an ack's checksum, a trace's tag
+    trace_snrs  TEXT              -- TRACE rows: comma-separated per-hop SNR readings (dB)
 );
 
 -- One chat message, sent or received, on a channel or with a contact. Unlike the other
@@ -306,3 +308,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # carry NULL until re-heard — the raw payloads the past keys arrived in were never
         # persisted, so history can't be completed from itself.
         conn.execute("ALTER TABLE observations ADD COLUMN public_key TEXT")
+    if "trace_snrs" not in observation_cols:
+        # v13 -> v14: a trace's header path field is not relay hashes but one signed SNR
+        # byte per hop it traversed (see meshterm.core.frames.trace_link_snrs), so it gets
+        # a column of its own rather than sitting in `path` pretending to be adjacency.
+        # Live frames carried the readings in their raw payload; without somewhere to keep
+        # them a replayed row would show a trace's links blank, the same gap the crypto
+        # trio and the addressing columns above were added to close.
+        conn.execute("ALTER TABLE observations ADD COLUMN trace_snrs TEXT")

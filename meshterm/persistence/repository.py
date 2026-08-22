@@ -67,14 +67,18 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     sender, the token — restored to the key each was decoded under. The stored sender is
     a hash or a whole public key, and the stored token an ack's checksum or a trace's tag;
     the value's own width and the frame's class say which, so neither needed a second
-    column to be told apart. A row that stored none of it carries no raw (``None``).
+    column to be told apart. A trace's per-hop link readings are the one thing that did
+    need a column of its own — they arrive where every other class keeps its relay hashes,
+    so ``path`` was exactly the wrong place for them. A row that stored none of it carries
+    no raw (``None``).
     """
     typename = _row_value(row, "payload_typename")
     chan_hash = row["chan_hash"]
     dest = _row_value(row, "dest")
     src = _row_value(row, "src")
     tag = _row_value(row, "tag")
-    if not any((typename, chan_hash, dest, src, tag)):
+    trace_snrs = _row_value(row, "trace_snrs")
+    if not any((typename, chan_hash, dest, src, tag, trace_snrs)):
         return None
     raw: dict = {}
     if typename:
@@ -91,6 +95,8 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
         raw["src_key" if len(src) > 2 * ENDPOINT_HASH_BYTES else "src_hash"] = src
     if tag:
         raw["trace_tag" if typename == "TRACE" else "ack_crc"] = tag
+    if trace_snrs:
+        raw["trace_snrs"] = [float(v) for v in str(trace_snrs).split(",") if v]
     return raw
 
 
@@ -978,11 +984,16 @@ class Repository:
         dest = raw.get("dest_hash") if typename else None
         src = (raw.get("src_key") or raw.get("src_hash")) if typename else None
         tag = (raw.get("ack_crc") or raw.get("trace_tag")) if typename else None
+        # A trace's per-hop readings, which live in its header path field where every other
+        # class keeps relay hashes — so they get their own column rather than `path`.
+        readings = raw.get("trace_snrs") if typename == "TRACE" else None
+        trace_snrs = ",".join(f"{v:g}" for v in readings) if readings else None
         self._conn.execute(
             "INSERT INTO observations "
             "(run_id, node, public_key, name, kind, node_type, snr, rssi, lat, lon, path, "
-            "observed_at, chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "observed_at, chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, "
+            "trace_snrs) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
@@ -1003,6 +1014,7 @@ class Repository:
                 dest,
                 src,
                 tag,
+                trace_snrs,
             ),
         )
         self._conn.commit()
@@ -1040,7 +1052,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs "
             "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
             (since.isoformat(), limit),
         ).fetchall()
@@ -1066,7 +1078,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs "
             "FROM observations WHERE kind = 'packet' AND observed_at >= ? "
             "AND observed_at <= ? ORDER BY observed_at ASC LIMIT ?",
             (start.isoformat(), end.isoformat(), limit),
