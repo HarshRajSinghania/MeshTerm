@@ -1,0 +1,350 @@
+# Navigation survey — every exception to "Esc pops the stack"
+
+Written 2026-08-22 against `main` @ `4b29248`. A catalogue, not a change: nothing here has
+been fixed. Each finding says where it is, what it does, and what makes it a question.
+
+The point of the survey is that MeshTerm's navigation is *almost* uniform. The exceptions
+are few enough to list exhaustively, which means they can be decided one at a time rather
+than discovered one at a time.
+
+---
+
+## 1. The machinery, in one screenful
+
+Three primitives, all in [`ui/tui/`](../meshterm/ui/tui/):
+
+| Call | What it does |
+|---|---|
+| `session.push(screen)` | screen becomes the top of the stack and is drawn |
+| `session.pop(screen)` | that screen leaves the stack |
+| `screen.resolve(value)` | the screen's future completes; the awaiting caller decides what happens next |
+
+`session.run_screen(screen)` is push + await + pop as one call — the normal way to show a
+screen. `Screen.handle("escape")` resolves with the `CANCEL` sentinel
+([`screen.py:243`](../meshterm/ui/tui/screen.py#L243)); every screen inherits that unless it
+overrides `handle`.
+
+So the app has no "navigator". A screen never decides where the user goes — it resolves a
+value and its *caller* decides. Every exception below is a caller deciding something other
+than "pop and carry on".
+
+---
+
+## 2. What "normal" looks like
+
+The reference flow is the main menu ([`menu.py:466-559`](../meshterm/ui/menu.py#L466)):
+
+1. build the row list
+2. `push` the menu
+3. await a choice
+4. `pop` the menu in a `finally`
+5. run whatever was chosen
+6. loop — rebuilding the menu, **re-highlighting the row just used** (`default=last_selection`)
+
+Point 6 is the part worth naming: *returning from a thing lands you on the thing you
+returned from.* It is the behaviour every list should have, and most do.
+
+---
+
+## 3. Exception A — cursor position on re-entry
+
+**The single largest inconsistency in the app.** Three groups, three behaviours:
+
+### A1. Restores the cursor — the intended behaviour (7 sites)
+
+| Screen | Where | How |
+|---|---|---|
+| Main menu | [`menu.py:502`](../meshterm/ui/menu.py#L502) | `default=last_selection` |
+| Channels (manager) | [`channels.py:214`](../meshterm/ui/channels.py#L214) | `default=highlight` |
+| Channels (one channel) | [`channels.py:728`](../meshterm/ui/channels.py#L728) | `default=cursor` |
+| Device config editor | [`config_editor.py:161`](../meshterm/ui/config_editor.py#L161) | `default=cursor` |
+| Device actions | [`config_editor.py:688`](../meshterm/ui/config_editor.py#L688) | `default=cursor` |
+| Repeater admin | [`repeater_admin.py:172`](../meshterm/ui/repeater_admin.py#L172) | `default=cursor` |
+| Courier outbox | [`courier_screen.py:120`](../meshterm/ui/courier_screen.py#L120) | `default=cursor` |
+| Watchtower | [`watchtower_screen.py:137`](../meshterm/ui/watchtower_screen.py#L137) | `cursor = choice` |
+
+Watchtower has the most careful version of it — it *drops* the restore when the chosen row
+is about to vanish ([`watchtower_screen.py:145-146`](../meshterm/ui/watchtower_screen.py#L145)):
+
+```python
+elif choice == _CLEAR:
+    store.clear_acked()
+    cursor = None  # the row itself disappears
+```
+
+That refinement exists in exactly one place. Anywhere else a row can disappear, the restore
+either silently fails to match (harmless — falls back to the top) or lands on whatever row
+slid into the vacated position (not harmless).
+
+### A2. Reuses the screen object, so it keeps everything (4 sites)
+
+Contacts states the principle outright
+([`contacts_screen.py:200-201`](../meshterm/ui/contacts_screen.py#L200)):
+
+> One screen for the whole visit: re-running it keeps the highlight (and any sort or
+> filter) on the row the user just opened a detail for, rather than snapping to the top.
+
+Also chat, live feed, dashboard. Strictly better than A1 — it preserves sort and filter too,
+not just the cursor — and it costs less code.
+
+Contacts also shows the honest exception: after a purge changes the data, it deliberately
+*does* rebuild ([`contacts_screen.py:217-219`](../meshterm/ui/contacts_screen.py#L217)), and
+says why.
+
+### A3. Rebuilds and loses your place (3 sites) — **the actual finding**
+
+| Screen | Where | What is lost |
+|---|---|---|
+| Trophy case | [`records_screen.py:851`](../meshterm/ui/records_screen.py#L851) | cursor — a fresh `SelectScreen` per round, no `default=` |
+| Time Machine picker | [`timemachine_screen.py:1323`](../meshterm/ui/timemachine_screen.py#L1323) | cursor (sort *is* carried) |
+| Node detail | [`node_detail_screen.py:1360`](../meshterm/ui/node_detail_screen.py#L1360) | cursor **and the open tab** |
+
+Node detail is the sharpest case. `NodeDetailScreen.__init__` sets `self._tab_index = 0`
+([`node_detail_screen.py:446`](../meshterm/ui/node_detail_screen.py#L446)) and the opener
+constructs a new one every iteration. So: open a contact → Tab to **Routes** → pick a route
+→ Enter to trace it → come back → **you are on Info, at the top**. The route you were
+working through is two keypresses away again, every time.
+
+All three are a one-line fix in the A2 direction (hoist the construction out of the loop).
+
+> **Question for JP:** is A2 the rule? If so these three are bugs. If a *deliberate* reset
+> is wanted anywhere, Contacts' purge branch is the model for how to say so.
+
+---
+
+## 4. Exception B — hand-offs that flatten the stack instead of nesting
+
+Two places let one screen hand off to a *peer* screen, and both deliberately unwind first so
+the user does not end up deep in a stack they have to climb.
+
+**B1. Trace → Trophy case.** A trace that sets a record raises a dialog offering the trophy
+case. Choosing it resolves the sentinel `OPEN_TROPHY_CASE`
+([`trace_screen.py:128`](../meshterm/ui/trace_screen.py#L128)), the trace screen comes down,
+and only then does the caller open records
+([`trace_screen.py:2193-2199`](../meshterm/ui/trace_screen.py#L2193)):
+
+> the trace screen (and every prompt over it) is already down, so the trophy case opens
+> over a clean stack and Esc from it unwinds straight to the main menu — never back into
+> this session.
+
+**B2. Trophy case → Trace.** The mirror image, and the comment is even more explicit
+([`records_screen.py:905-909`](../meshterm/ui/records_screen.py#L905)):
+
+> the browser does not reopen behind it: when the trace screen closes, this whole flow
+> returns, landing the user on the main menu instead of a trophy-case → trace →
+> trophy-case stack that takes many Escs to climb out of.
+
+These two are the same rule discovered twice: **a hand-off between peers flattens; only a
+sub-view nests.** It is not written down anywhere.
+
+**B3. Node detail → Trace / Map / Time Machine / Share** ([`node_detail_screen.py:1372-1397`](../meshterm/ui/node_detail_screen.py#L1372))
+follows the same rule *without saying so*, and that is where §3's A3 comes from. Because
+`run_screen` pops on resolve, node detail is already down when the peer opens — so the peer
+gets a clean stack, exactly as B1 and B2 arrange by hand. But unlike B1/B2, node detail then
+**comes back**, by constructing a fresh screen at the top of the loop.
+
+So the three sites agree on flattening and differ on what happens afterwards:
+
+| | flattens before the peer | returns afterwards | keeps its state |
+|---|---|---|---|
+| B1 Trace → Trophy case | yes, deliberately | no — lands on the menu | n/a |
+| B2 Trophy case → Trace | yes, deliberately | no — lands on the menu | n/a |
+| B3 Node detail → peers | yes, as a side effect of `run_screen` | **yes** | **no** |
+
+B3 is the only one that re-enters, and re-entering through a constructor is what costs the
+tab and the cursor. That makes A3-on-node-detail a *consequence* of this shape, not an
+independent bug: fixing it means either hoisting the screen out of the loop (keep the object,
+keep the state) or nesting properly (keep it pushed while the peer runs).
+
+> **Question for JP:** "flatten before a peer opens" looks like the settled rule — three for
+> three. What is unsettled is whether a hub screen should *nest* instead, so it never has to
+> be rebuilt. Node detail is the only hub, so this is really one decision about one screen.
+
+---
+
+## 5. Exception C — the backdrop re-push
+
+`run_screen` pops the screen when it resolves. But a dialog raised straight afterwards needs
+something behind it, or it draws over a blank frame. So five sites pop, then immediately
+re-push the same screen as a static backdrop:
+
+| Site | Screen re-pushed as backdrop |
+|---|---|
+| [`records_screen.py:867`](../meshterm/ui/records_screen.py#L867) | trophy case, behind the discipline picker / delete confirms |
+| [`contacts_screen.py:210`](../meshterm/ui/contacts_screen.py#L210) | contacts, behind the purge picker |
+| [`repeater_admin.py:108`](../meshterm/ui/repeater_admin.py#L108) | node picker, behind the login prompt |
+| [`menu.py:910-911`](../meshterm/ui/menu.py#L910) | base screen, behind the disconnect dialog |
+| [`tx_screen.py:885`](../meshterm/ui/tx_screen.py#L885) | flight screen |
+
+Records has the fullest explanation ([`records_screen.py:862-866`](../meshterm/ui/records_screen.py#L862)).
+
+This is a **workaround for an API shape**, repeated five times. The screens that avoid it
+(channels, config editor, repeater admin's own menu, courier, watchtower, main menu) all
+drive `push`/`await future`/`pop` by hand instead of calling `run_screen`, precisely so the
+screen stays up while sub-prompts float.
+
+> **Question for JP:** would a `session.run_screen(screen, keep_pushed=True)` — or a
+> `session.backdrop(screen)` context manager — retire both the five re-pushes and the six
+> hand-rolled push/await/pop loops? They are the same need spelled two ways.
+
+---
+
+## 6. Exception D — what Esc peels before it leaves
+
+Four screens carry a live find-as-you-type filter and draw it through the one
+`render.query_line`. **Esc means two different things across them:**
+
+| Screen | Esc with a filter active | ⌫ with a filter active |
+|---|---|---|
+| Map | clears the filter, stays ([`map_screen.py:920-925`](../meshterm/ui/map_screen.py#L920)) | — |
+| Mesh walk | clears the filter, stays ([`walk_screen.py:430-436`](../meshterm/ui/walk_screen.py#L430)) | deletes a char, then pops the trail ([`walk_screen.py:449-456`](../meshterm/ui/walk_screen.py#L449)) |
+| **Select list** | **leaves the screen, filter and all** ([`select.py:773-774`](../meshterm/ui/tui/select.py#L773)) | deletes a char |
+| **Path composer** | **leaves the screen, filter and all** ([`path_composer.py:717-718`](../meshterm/ui/path_composer.py#L717)) | deletes a char, then pops a hop |
+
+So on the map, typing `yul` then Esc shows you the map again. On a contact list, typing
+`yul` then Esc drops you back to the menu. Same affordance, same glyphs, opposite outcome —
+and the select list is by far the most-used of the four.
+
+Chat is a fifth member of the family with a different peelable thing
+([`chat.py:624-629`](../meshterm/ui/chat.py#L624)):
+
+```python
+if self._selected is not None:
+    self._clear_selection()  # first Esc unpicks; next leaves the chat
+```
+
+so chat peels, and its comment reads as though peeling were the house rule.
+
+**Score: 3 screens peel, 2 do not.** Worth noting the peel is *not* free — on a screen where
+Esc peels, leaving a filtered list takes two Escs, which is the cost JP is weighing on exit
+rows elsewhere.
+
+> **Question for JP:** peel everywhere, or nowhere? The current split is not defensible as
+> a distinction between spatial and list screens, because the path composer is a list and
+> does not peel, while chat is not a filter and does.
+
+---
+
+## 7. Exception E — six spellings of "the user pressed Back"
+
+`back_rows(value)` takes the value its Back row resolves with. Call sites, verbatim:
+
+| Value passed | Sites |
+|---|---|
+| *(nothing — `None`)* | [`admin_picker.py:49`](../meshterm/ui/admin_picker.py#L49), [`:77`](../meshterm/ui/admin_picker.py#L77), [`config_editor.py:617`](../meshterm/ui/config_editor.py#L617), [`:790`](../meshterm/ui/config_editor.py#L790), [`:1025`](../meshterm/ui/config_editor.py#L1025), [`courier_screen.py:242`](../meshterm/ui/courier_screen.py#L242), [`watchtower_screen.py:225`](../meshterm/ui/watchtower_screen.py#L225), [`:362`](../meshterm/ui/watchtower_screen.py#L362) |
+| explicit `None` | [`tx_optimize.py:439`](../meshterm/tools/tx_optimize.py#L439), [`contacts_screen.py:263`](../meshterm/ui/contacts_screen.py#L263) |
+| `"__back__"` | [`tools/chat.py:187`](../meshterm/tools/chat.py#L187), [`records_screen.py:790`](../meshterm/ui/records_screen.py#L790) |
+| `_BACK` | [`channels.py:619`](../meshterm/ui/channels.py#L619), [`:683`](../meshterm/ui/channels.py#L683), [`contacts_screen.py:152`](../meshterm/ui/contacts_screen.py#L152) |
+| `_CANCEL` | [`config_editor.py:736`](../meshterm/ui/config_editor.py#L736) |
+| a tuple shaped like the screen's other values | [`records_screen.py:850`](../meshterm/ui/records_screen.py#L850) `("back", None, 0, None)`, [`trace_screen.py:2012`](../meshterm/ui/trace_screen.py#L2012) `("back", None)` |
+
+The cost lands on the callers, which have to test every way at once:
+
+```python
+# contacts_screen.py:204
+if chosen is CANCEL or chosen is None or chosen == _BACK:
+# records_screen.py:858
+if picked is CANCEL or picked is None or picked[0] == "back":
+```
+
+Note `config_editor` names its Back sentinel `_CANCEL` — the one word CLAUDE.md reserves for
+dialogs, used here for a row that says "Back".
+
+> **Suggestion:** `back_rows()` could default its value to `CANCEL` itself, so a Back row and
+> Esc resolve *identically* and every caller's three-way test collapses to `is CANCEL`. The
+> tuple-shaped ones exist only because their screens type their values as tuples; those could
+> take `CANCEL` too.
+
+This ties directly into the exit-row question — see §10.
+
+---
+
+## 8. Exception F — the stack reset
+
+One site clears the whole stack: [`menu.py:824`](../meshterm/ui/menu.py#L824), when the device
+link drops mid-session. The watcher cancels the menu worker, `session.reset()` drops whatever
+screens it left behind, and the reconnect dialog opens over a clean frame.
+
+This is the only place the stack is cleared rather than unwound. It relies on every screen
+being pop-safe in a `finally`, which is documented at
+[`session.py:388-395`](../meshterm/ui/tui/session.py#L388). Correct as written — noted here
+because it is the one code path where a screen can vanish without its caller resolving it,
+and anything holding state across a `run_screen` boundary would silently lose it.
+
+---
+
+## 9. Exception G — one tool floats, twenty-two replace
+
+`Tool.popup` ([`tools/base.py:67`](../meshterm/tools/base.py#L67)) decides whether the menu
+stays pushed while the tool runs. **Exactly one tool sets it:** `advert`
+([`tools/advert.py:33`](../meshterm/tools/advert.py#L33)).
+
+Every other tool pops the menu, runs full-screen, and the menu is rebuilt afterwards. Which
+is right for a screen — but several tools are *also* dialog-sized in practice, and the result
+presenter already makes exactly this call at the other end
+([`surface.py:603-610`](../meshterm/ui/surface.py#L603)): a short text-only result floats as
+a dialog, anything bigger opens a window.
+
+So the app decides "float or replace" twice, by two different mechanisms, one hand-declared
+per tool and one measured from the content.
+
+> **Question for JP:** should `popup` be inferred the way the result presentation is, or is
+> one declared flag on one tool the whole of the need?
+
+---
+
+## 10. Where the exit-row question actually lands
+
+JP's note — *"remove the cancel and close actions at the bottom of pages; Esc is quicker and
+available on all platforms; keep it where there is a confirm or cancel situation"* — was
+acted on for the one unambiguous case (the path composer's `Cancel` row, which literally ran
+`super().handle("escape")`; removed in `4b29248`). The rest of the territory:
+
+**Already clean.** The three About pages have no exit row at all — prose, Esc, done. Titles
+carry no emoji. Footer hints are 100% compliant on width, Esc-last, and verb choice (56
+literal hints audited).
+
+**Rows that are exactly Esc, still standing:**
+
+- `back_rows()` — the app-wide **Back** row, 19 sites. Two of them carry the comment
+  `# a visible exit beside Esc` ([`courier_screen.py:242`](../meshterm/ui/courier_screen.py#L242),
+  [`watchtower_screen.py:225`](../meshterm/ui/watchtower_screen.py#L225)) — i.e. the row exists
+  *because* it duplicates Esc, which is precisely the premise now in question.
+- `ReorderScreen`'s Back row ([`select.py:931`](../meshterm/ui/tui/select.py#L931)) —
+  `super().handle("escape")  # Back resolves CANCEL, same as Esc`.
+- Live feed's Back row, reached by scrolling past the oldest packet
+  ([`livefeed_screen.py:41-44`](../meshterm/ui/livefeed_screen.py#L41)).
+
+Removing **Back** app-wide is a bigger decision than the path composer's Cancel, because:
+
+- it is written into CLAUDE.md as a binding standard ("the only exit word on rows");
+- `exit_rows()` builds on it — an editor with staged changes shows `✓ Apply n staged changes`
+  over `✗ Back — discard staged changes`, where Back is *not* redundant: it names a
+  consequence Esc does not;
+- on PicoCalc, Esc is a real key, so the platform argument does not add anything there.
+
+**A middle position worth considering:** keep Back exactly where it says something Esc does
+not (the `exit_rows` discard case), drop it where it says nothing (the plain `back_rows`
+case). That is roughly 3 sites kept, 16 dropped — and §7's suggestion (Back resolves `CANCEL`)
+would make the drop mechanical rather than a per-caller edit.
+
+**Buttons that are exactly Esc:** only one — the `Close` button on the new-record dialog
+([`trace_screen.py:639`](../meshterm/ui/trace_screen.py#L639)). Left alone deliberately: it
+is the *default*, so Enter dismisses safely, and this dialog appears unbidden after a trace.
+Dropping it would leave `Trophy case` as the default and make a stray Enter navigate away.
+Every other `Cancel` in the app is one half of a real two-way choice.
+
+---
+
+## 11. Summary — the shortlist
+
+| # | Finding | Sites | Weight |
+|---|---|---|---|
+| A3 | Screen rebuilt per round, losing cursor (and node detail's tab) | 3 | **high** — felt on every visit |
+| D | Esc peels the filter on 3 screens, leaves on 2 | 5 | **high** — same keys, opposite result |
+| E | Six spellings of the Back value; callers test three at once | 19 | medium — invisible to users, costly in code |
+| C | Pop-then-re-push backdrop workaround | 5 | medium — an API gap, repeated |
+| B | Peer hand-offs all flatten, but the rule is unwritten and node detail pays for it | 3 | medium |
+| G | `popup` declared once by hand while the result presenter infers it | 1 | low |
+| A1 | Cursor restore doesn't handle a vanishing row (except watchtower) | 7 | low |
+| F | `session.reset()` on disconnect — correct, noted for completeness | 1 | none |
