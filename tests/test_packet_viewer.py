@@ -369,3 +369,48 @@ def test_packet_viewer_reception_row_keeps_rssi_on_one_line() -> None:
     # Where the cells are there, the roomy separator stays.
     set_platform(REGULAR)
     assert "  ·  " in _plain(_viewer(entry).render_body(80))
+
+
+def test_packet_viewer_shows_a_traces_per_hop_links() -> None:
+    """A trace reports on the mesh as it crosses it, so the card shows every leg it heard.
+
+    One reading per hop travelled, in walk order — which for a walk out and back through
+    a repeater means the return legs read weaker than the outbound one.
+    """
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="",
+        raw={"payload_typename": "TRACE", "route_typename": "DIRECT",
+             "trace_tag": "52a37882", "trace_snrs": [13.25, -5.0, -4.25]},
+    )
+    body = _plain(_viewer(entry).render_body(80))
+    assert "🎯 TRACE" in body
+    assert "links" in body
+    for reading in ("+13.25 dB", "-5.00 dB", "-4.25 dB"):
+        assert reading in body, reading
+    assert "trace_snrs" not in body  # folded into its own row, not dumped raw
+
+
+def test_packet_viewer_omits_links_for_a_trace_nobody_relayed() -> None:
+    """No hop has measured it yet, so there is no link row to draw — not an empty one."""
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="",
+        raw={"payload_typename": "TRACE", "trace_tag": "52a37882", "trace_snrs": []},
+    )
+    assert "links" not in _plain(_viewer(entry).render_body(80))
+
+
+def test_packet_viewer_says_whose_signal_the_reading_is() -> None:
+    """The SNR beside a frame measures its last transmitter — which is not always a relay.
+
+    A relayed frame's reading belongs to the repeater that passed it on, and reading it as
+    the origin's would be wrong. One that crossed nothing was heard straight off its
+    sender, so the reading is exactly that link — the strongest evidence there is.
+    """
+    def note(path: str) -> str:
+        entry = PacketEntry(when=utcnow(), kind="packet", path=path, snr=9.0,
+                            raw={"payload_typename": "TRACE"})
+        return _plain(_viewer(entry).render_body(80))
+
+    assert "last relay, not the origin" in note("a1b2c3,d4e5f6")
+    assert "the sender itself" in note("")
+    assert "last relay" not in note("")

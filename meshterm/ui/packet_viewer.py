@@ -95,7 +95,7 @@ _RAW_ROW_SKIP = frozenset({
     "pkt_payload", "pkt_hash", "raw_hex", "payload", "payload_length", "recv_time",
     "chan_hash", "cipher_mac", "crypted", "message", "msg_hash", "sender_timestamp",
     "attempt", "txt_type",
-    "dest_hash", "src_hash", "src_key", "trace_tag", "ack_crc",
+    "dest_hash", "src_hash", "src_key", "trace_tag", "ack_crc", "trace_snrs",
     "adv_key", "adv_name", "adv_type", "adv_lat", "adv_lon",
 })
 
@@ -752,9 +752,17 @@ class PacketViewer(Screen):
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))
         rows.append(("via", self._via_path(entry)))
+        # Which node the SNR beside it actually measured. On a relayed frame that is the
+        # last repeater, and saying so stops the figure being read as the origin's signal;
+        # on one that crossed nothing it *is* the origin's, which is worth saying outright
+        # — a frame heard straight off its sender is the best evidence a link ever gives.
+        relayed = bool([hop for hop in (entry.path or "").split(",") if hop])
         rows.append((
-            "", Text("reception describes the last relay, not the origin",
-                     style="faint"),
+            "", Text(
+                "reception describes the last relay, not the origin" if relayed
+                else "reception describes the sender itself — nothing relayed it",
+                style="faint",
+            ),
         ))
         # A chain that names one hop twice reads as a mistake until it is explained; the graph
         # below draws that hop twice too (see ``_graph_lines``), so the note covers both.
@@ -809,10 +817,36 @@ class PacketViewer(Screen):
             rows.append(("from", self._endpoint(src)))
         if raw.get("trace_tag"):
             rows.append(("tag", Text(raw["trace_tag"], style="muted")))
+        readings = raw.get("trace_snrs")
+        if readings:
+            rows.append(("links", self._link_readings(readings)))
         if raw.get("ack_crc"):
             # An ack identifies the message it answers, by that message's own checksum.
             rows.append(("acks", Text(raw["ack_crc"], style="muted")))
         return rows
+
+    def _link_readings(self, readings: list[float]) -> Text:
+        """How well each leg of a trace's walk was heard, in the order it walked them.
+
+        A trace is the one class that reports on the mesh as it crosses it: every node
+        that forwards it records the SNR it heard its predecessor at, so an overheard
+        trace carries a reading per hop travelled — and how many there are says how far
+        along its route the frame had got when we caught it. Read oldest hop first, the
+        same direction a path line runs, each coloured by :func:`~meshterm.ui.theme.
+        snr_style` like every other reception figure in the app.
+
+        Args:
+            readings: The per-hop SNRs in dB, in walk order.
+
+        Returns:
+            The readings as one separated line.
+        """
+        line = Text()
+        for at, value in enumerate(readings):
+            if at:
+                line.append(SEP_COMPACT, style="muted")
+            line.append(f"{value:+.2f} dB", style=snr_style(value))
+        return line
 
     def _endpoint(self, value: str) -> Text:
         """One end of an addressed frame: its resolved name, then the key it was named by.
