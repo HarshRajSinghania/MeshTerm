@@ -414,3 +414,39 @@ def test_packet_viewer_says_whose_signal_the_reading_is() -> None:
     assert "last relay, not the origin" in note("a1b2c3,d4e5f6")
     assert "the sender itself" in note("")
     assert "last relay" not in note("")
+
+
+def test_packet_viewer_does_not_call_a_walked_trace_direct() -> None:
+    """A trace names no relays, so an empty chain there means "unrecorded", not "none".
+
+    Its readings prove three nodes forwarded it; saying "direct — no relays" two lines
+    under a links row listing three legs would contradict the card's own evidence.
+    """
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="", snr=13.75,
+        raw={"payload_typename": "TRACE", "trace_snrs": [13.25, -5.0, -4.25]},
+    )
+    body = _plain(_viewer(entry).render_body(80))
+    assert "3 hops walked" in body
+    assert "direct — no relays" not in body
+    assert "last relay, not the origin" in body  # something *did* relay it
+
+
+def test_packet_viewer_still_calls_an_unwalked_frame_direct() -> None:
+    """Nothing forwarded it and nothing measured it — that really is a direct shot."""
+    for raw in ({"payload_typename": "TRACE", "trace_snrs": []},
+                {"payload_typename": "TEXT_MSG"}):
+        body = _plain(_viewer(
+            PacketEntry(when=utcnow(), kind="packet", path="", snr=9.0, raw=raw)
+        ).render_body(80))
+        assert "direct — no relays" in body, raw
+        assert "the sender itself" in body, raw
+
+
+def test_packet_viewer_counts_one_walked_hop_in_the_singular() -> None:
+    """One leg is "1 hop walked", not "1 hops walked"."""
+    entry = PacketEntry(
+        when=utcnow(), kind="packet", path="", snr=13.75,
+        raw={"payload_typename": "TRACE", "trace_snrs": [13.25]},
+    )
+    assert "1 hop walked" in _plain(_viewer(entry).render_body(80))

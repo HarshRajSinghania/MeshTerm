@@ -731,14 +731,30 @@ class PacketViewer(Screen):
         mid-chip — and hanging its continuations under the value block. The dialog has
         the rows to spend, so a long chain reads whole here, unlike the feed row behind
         it, which has to elide its middle to stay on one line.
+
+        A trace with no hops is the one case where an empty chain does not mean a direct
+        shot. A trace names its relays nowhere — it records a *reading* per hop instead
+        (see :func:`~meshterm.core.frames.trace_link_snrs`) — so a walked trace arrives
+        with an empty path and a full set of readings, and "direct — no relays" would be
+        a flat contradiction of the ``links`` row two lines above. It says how far the
+        packet got instead, which is the one thing those readings do establish.
         """
         return path_line(
             (entry.path or "").split(","),
             self._resolve,
             prefix_bytes=self._prefix_bytes,
             self_name=self._self_name,
-            empty="direct — no relays",
+            empty=self._empty_via(entry),
         )
+
+    @staticmethod
+    def _empty_via(entry: PacketEntry) -> str:
+        """What an empty relay chain means for this frame's class."""
+        readings = (entry.raw or {}).get("trace_snrs") if isinstance(entry.raw, dict) else None
+        if readings:
+            hops = len(readings)
+            return f"{hops} hop{'' if hops == 1 else 's'} walked — a trace logs each leg, not its relays"
+        return "direct — no relays"
 
     def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """A raw ``packet`` entry's addressing, parsed class/route, relay path, and — for a
@@ -756,7 +772,11 @@ class PacketViewer(Screen):
         # last repeater, and saying so stops the figure being read as the origin's signal;
         # on one that crossed nothing it *is* the origin's, which is worth saying outright
         # — a frame heard straight off its sender is the best evidence a link ever gives.
-        relayed = bool([hop for hop in (entry.path or "").split(",") if hop])
+        # A trace that walked counts as relayed even with no hops to name: its readings
+        # are the proof something forwarded it (see :meth:`_via_path`).
+        relayed = bool(
+            [hop for hop in (entry.path or "").split(",") if hop] or raw.get("trace_snrs")
+        )
         rows.append((
             "", Text(
                 "reception describes the last relay, not the origin" if relayed
