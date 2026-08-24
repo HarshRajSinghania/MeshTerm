@@ -108,16 +108,20 @@ def test_a_node_that_goes_quiet_after_working_keeps_its_password(store) -> None:
     assert store.get(_NODE) == "hunter2"
 
 
-# --- reading the wire: a refusal is not a timeout -------------------------------------
+# --- reading the wire: who is listening, and for how long -----------------------------
 
 
 class _Subscription:
-    """Stands in for meshcore's Subscription handle."""
+    """Stands in for meshcore's Subscription handle, unsubscribe method and all."""
 
-    def __init__(self, event_type, callback) -> None:  # noqa: ANN001
+    def __init__(self, mc, event_type, callback) -> None:  # noqa: ANN001
+        self.mc = mc
         self.event_type = event_type
         self.callback = callback
-        self.live = True
+
+    def unsubscribe(self) -> None:
+        if self in self.mc.subscriptions:
+            self.mc.subscriptions.remove(self)
 
 
 class _Event:
@@ -127,48 +131,62 @@ class _Event:
 
 
 class _FakeCommands:
-    """``send_login_sync`` as the library really behaves: it only ever sees success.
+    """``send_login_sync`` as the library really behaves.
 
-    A refusal reaches the app the way it reaches it on hardware — dispatched to whoever
-    subscribed to ``LOGIN_FAILED`` while the library's own wait quietly times out.
+    It waits for LOGIN_SUCCESS and only LOGIN_SUCCESS, so it returns a success it saw and
+    ``None`` for everything else — a refusal included. And ``late`` models the case that
+    broke a healthy node: the answer lands *after* it has already given up, which only a
+    listener outliving it can catch.
     """
 
-    def __init__(self, mc, *, success: bool, dispatch=()) -> None:  # noqa: ANN001
+    def __init__(self, mc, *, answer=None, late=None, late_delay: float = 0.0) -> None:  # noqa: ANN001
         self._mc = mc
-        self._success = success
-        self._dispatch = list(dispatch)
+        self._answer = answer
+        self._late = late
+        self._late_delay = late_delay
 
     async def send_login_sync(self, pubkey, password):  # noqa: ANN001
         from meshcore import EventType
 
         self._mc.sent.append((pubkey, password))
-        self._mc.subscribed_before_send = bool(self._mc.subscriptions)
-        for event in self._dispatch:
-            self._mc.dispatch(event)
+        self._mc.armed_before_send = len(self._mc.subscriptions)
         await asyncio.sleep(0)
-        return _Event(EventType.LOGIN_SUCCESS, {"is_admin": True}) if self._success else None
+        if self._answer is not None:
+            self._mc.dispatch(self._answer)
+            if self._answer.type is EventType.LOGIN_SUCCESS:
+                return self._answer
+            return None  # a refusal is nothing it was ever waiting for
+        if self._late is not None:
+            asyncio.get_running_loop().call_later(
+                self._late_delay, self._mc.dispatch, self._late
+            )
+        return None
 
 
 class _FakeMeshCore:
-    def __init__(self, *, success: bool = False, dispatch=()) -> None:  # noqa: ANN001
+    def __init__(self, **commands) -> None:  # noqa: ANN003
         self.subscriptions: list[_Subscription] = []
         self.sent: list[tuple] = []
-        self.subscribed_before_send = False
-        self.commands = _FakeCommands(self, success=success, dispatch=dispatch)
+        self.armed_before_send = 0
+        self.commands = _FakeCommands(self, **commands)
 
     def subscribe(self, event_type, callback, attribute_filters=None):  # noqa: ANN001
-        sub = _Subscription(event_type, callback)
+        sub = _Subscription(self, event_type, callback)
         self.subscriptions.append(sub)
         return sub
-
-    def unsubscribe(self, subscription) -> None:  # noqa: ANN001
-        subscription.live = False
-        self.subscriptions.remove(subscription)
 
     def dispatch(self, event) -> None:  # noqa: ANN001
         for sub in list(self.subscriptions):
             if sub.event_type is event.type:
                 sub.callback(event)
+
+
+@pytest.fixture()
+def quick_budget(monkeypatch):  # noqa: ANN001
+    """Shrink the route-sized reply budget so a no-reply test is not a ten-second wait."""
+    import meshterm.services.trace_runner as trace_runner
+
+    monkeypatch.setattr(trace_runner, "trace_timeout", lambda hops: 0.05)
 
 
 def _device(mc) -> MeshCoreDevice:  # noqa: ANN001
@@ -177,93 +195,148 @@ def _device(mc) -> MeshCoreDevice:  # noqa: ANN001
     return device
 
 
-def _login_failed(prefix: str | None = None):
+def _login_success(prefix: str | None = "a1b2c3d4a1b2"):
+    from meshcore import EventType
+
+    return _Event(EventType.LOGIN_SUCCESS, {"pubkey_prefix": prefix} if prefix else {})
+
+
+def _login_failed(prefix: str | None = "a1b2c3d4a1b2"):
     from meshcore import EventType
 
     return _Event(EventType.LOGIN_FAILED, {"pubkey_prefix": prefix} if prefix else {})
 
 
-def test_a_login_the_node_accepts_reads_as_accepted() -> None:
-    """The happy path is unchanged; the session is open."""
-    mc = _FakeMeshCore(success=True)
+def test_a_login_the_node_accepts_reads_as_accepted(quick_budget) -> None:  # noqa: ANN001
+    """The happy path: the session is open."""
+    mc = _FakeMeshCore(answer=_login_success())
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.ACCEPTED
     assert mc.sent == [(_NODE.public_key, "hunter2")]
 
 
-def test_a_dispatched_refusal_frame_reads_as_refused() -> None:
+def test_an_answer_that_lands_after_the_library_gave_up_is_still_the_answer() -> None:
+    """THE reported regression: a healthy node, the right password, a no-reply popup.
+
+    ``send_login_sync`` does not start listening until its own send returns, and that send
+    blocks on a MSG_SENT the library correlates by event type alone — so a scheduled advert
+    or the courier can consume ours and leave it stalled. Everything that lands during the
+    stall is dispatched to no listener and dropped. Owning the wait, armed before the send,
+    is what makes a login the repeater accepted read as accepted.
+    """
+    mc = _FakeMeshCore(late=_login_success(), late_delay=0.05)
+
+    assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.ACCEPTED
+
+
+def test_a_late_refusal_is_still_a_refusal() -> None:
+    """The same window, the other verdict — and this one must still clear the password."""
+    mc = _FakeMeshCore(late=_login_failed(), late_delay=0.05)
+
+    assert asyncio.run(_device(mc).admin_login(_NODE, "wrong")) is LoginResult.REFUSED
+
+
+def test_a_refusal_frame_reads_as_refused(quick_budget) -> None:  # noqa: ANN001
     """The library's wait times out on it, so the app has to hear the frame itself.
 
     Without this, a genuinely wrong password would report no-reply and be kept forever —
-    the mirror image of the reported bug, and the reason the refusal is not simply assumed.
+    the mirror image of the reported bug, and the reason a refusal is not simply assumed.
     """
-    mc = _FakeMeshCore(success=False, dispatch=[_login_failed("a1b2c3d4a1b2")])
+    mc = _FakeMeshCore(answer=_login_failed())
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "wrong")) is LoginResult.REFUSED
 
 
-def test_silence_reads_as_no_reply() -> None:
+def test_silence_reads_as_no_reply(quick_budget) -> None:  # noqa: ANN001
     """THE case that started this: nothing came back, so nothing is known."""
-    mc = _FakeMeshCore(success=False)
+    mc = _FakeMeshCore()
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.NO_REPLY
 
 
-def test_a_terse_refusal_with_no_key_prefix_still_counts_as_one() -> None:
-    """Firmware only stamps the sender's prefix when the frame is long enough to carry it.
+def test_a_terse_answer_with_no_key_prefix_still_counts(quick_budget) -> None:  # noqa: ANN001
+    """Firmware only stamps the answering node's prefix when the frame carries one.
 
-    Demanding one would quietly turn every refusal from terse firmware back into a
-    no-reply — and back into keeping a password the node has already rejected.
+    Demanding one would turn every answer from terse firmware into a no-reply — which is
+    the failure this path exists to stop, not one to reintroduce at the filter.
     """
-    mc = _FakeMeshCore(success=False, dispatch=[_login_failed()])
+    mc = _FakeMeshCore(answer=_login_failed(prefix=None))
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "wrong")) is LoginResult.REFUSED
 
 
-def test_a_refusal_meant_for_a_different_node_is_not_ours() -> None:
+def test_an_answer_meant_for_a_different_node_is_not_ours(quick_budget) -> None:  # noqa: ANN001
     """Two admin flows can overlap; a stranger's rejection must not clear our password."""
-    mc = _FakeMeshCore(success=False, dispatch=[_login_failed("ffeeddccbbaa")])
+    mc = _FakeMeshCore(answer=_login_failed("ffeeddccbbaa"))
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.NO_REPLY
 
 
-def test_the_refusal_watch_is_in_place_before_the_request_goes_out() -> None:
-    """A refusal can land the instant the request does — subscribing after would miss it."""
-    mc = _FakeMeshCore(success=True)
+def test_the_listener_is_armed_before_the_request_goes_out(quick_budget) -> None:  # noqa: ANN001
+    """Both frames, both subscribed — an answer landing mid-send has somewhere to go."""
+    mc = _FakeMeshCore(answer=_login_success())
 
     asyncio.run(_device(mc).admin_login(_NODE, "hunter2"))
 
-    assert mc.subscribed_before_send
+    assert mc.armed_before_send == 2  # LOGIN_SUCCESS and LOGIN_FAILED
 
 
-def test_the_refusal_watch_is_released_even_when_the_send_blows_up() -> None:
-    """One subscription per attempt; a leaked one would accumulate over a session."""
+def test_the_listeners_are_released_even_when_the_send_blows_up() -> None:
+    """One pair of subscriptions per attempt; leaked ones would pile up over a session."""
 
     class _Exploding(_FakeCommands):
         async def send_login_sync(self, pubkey, password):  # noqa: ANN001
             raise RuntimeError("the companion dropped the link")
 
     mc = _FakeMeshCore()
-    mc.commands = _Exploding(mc, success=False)
+    mc.commands = _Exploding(mc)
 
     with pytest.raises(RuntimeError):
         asyncio.run(_device(mc).admin_login(_NODE, "hunter2"))
     assert mc.subscriptions == []
 
 
-def test_a_companion_side_error_is_silence_not_a_denial() -> None:
+def test_a_companion_side_error_is_silence_not_a_denial(quick_budget) -> None:  # noqa: ANN001
     """The request never left the radio, so the node cannot have rejected anything."""
     from meshcore import EventType
 
-    mc = _FakeMeshCore(success=False)
-    mc.commands = _FakeCommands(mc, success=False)
+    mc = _FakeMeshCore()
 
     async def _errored(pubkey, password):  # noqa: ANN001
-        return _Event(EventType.ERROR, {})
+        return _Event(EventType.ERROR, {"reason": "timeout"})
 
     mc.commands.send_login_sync = _errored
 
     assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.NO_REPLY
+
+
+def test_the_reply_budget_is_sized_to_the_route_the_login_has_to_walk() -> None:
+    """A neighbour's second or two would cut a multi-hop repeater off mid-flight.
+
+    The login goes out along the contact's route and the answer comes back over it, so the
+    wire carries twice the stored one-way hops — the same shape ``run_trace`` budgets for.
+    """
+    import meshterm.services.trace_runner as trace_runner
+
+    asked: list[int] = []
+    real = trace_runner.trace_timeout
+
+    def spy(hops):  # noqa: ANN001
+        asked.append(hops)
+        return 0.01
+
+    trace_runner.trace_timeout = spy
+    try:
+        two_hops = Contact(
+            name="YUL-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2")
+        )
+        asyncio.run(_device(_FakeMeshCore()).admin_login(two_hops, "hunter2"))
+        asyncio.run(_device(_FakeMeshCore()).admin_login(_NODE, "hunter2"))
+    finally:
+        trace_runner.trace_timeout = real
+
+    assert asked == [4, 0]  # out and back over two hops; then a contact with no route
+    assert real(4) > real(2) > real(1)  # and the budget grows with the walk
 
 
 # --- the simulator speaks the same three answers --------------------------------------

@@ -1609,28 +1609,81 @@ class MeshCoreDevice(Device):
     async def admin_login(self, node: Contact, password: str) -> LoginResult:  # noqa: D102
         from meshcore import EventType
 
+        from ..services.trace_runner import trace_timeout
+
         mc = self._require()
         pub = self._node_pubkey(node)
-        # ``send_login_sync`` waits for LOGIN_SUCCESS and *only* LOGIN_SUCCESS, so its
-        # ``None`` covers both halves of failure: a node that refused the password and a
-        # node that was never there. The firmware does distinguish them — it answers a bad
-        # password with a LOGIN_FAILED frame, which the library parses and dispatches like
-        # any other event — so the distinction is recoverable by listening for that frame
-        # ourselves, alongside the library's own wait. Subscribed *before* the send, since
-        # the refusal can land the moment the request does.
-        refusals: list[object] = []
-        subscription = mc.subscribe(EventType.LOGIN_FAILED, refusals.append)
-        try:
-            event = await mc.commands.send_login_sync(pub, password)
-        finally:
-            mc.unsubscribe(subscription)
+        loop = asyncio.get_running_loop()
+        # Listen for the node's answer *before* transmitting, and keep listening across the
+        # whole exchange — the rule :meth:`run_trace` follows, for the same two reasons, and
+        # ``send_login_sync`` breaks both of them.
+        #
+        # It waits for LOGIN_SUCCESS and *only* LOGIN_SUCCESS, and it does not start waiting
+        # until its own send has returned. So:
+        #
+        # * A refusal — which firmware does send, as a LOGIN_FAILED frame the library parses
+        #   and dispatches like any other event — is never waited for, and times out exactly
+        #   like an unreachable node. Both halves of failure came back as the same ``None``.
+        # * Worse, for a node that is perfectly reachable: the send itself blocks until a
+        #   MSG_SENT arrives, and the library correlates that acknowledgement by nothing but
+        #   its event type — so a scheduled advert, a telemetry poll or the courier can
+        #   consume ours and leave the send sitting on its own 15-second default. Every
+        #   answer that lands during that stall is dispatched to no listener and dropped, and
+        #   a login the repeater *accepted* is recorded as no reply. The mirror case is as
+        #   bad: catching some other command's MSG_SENT takes its ``suggested_timeout`` with
+        #   it, which for a neighbour is a second or two — nowhere near a multi-hop
+        #   repeater's round trip. This is the reported bug: a healthy node, the right
+        #   password, and a no-reply popup.
+        #
+        # Both go away by owning the wait. ``send_login_sync`` is still what transmits (it is
+        # the library's supported path, and its own listener is harmless — the dispatcher
+        # delivers to every matching subscription), but ours is armed first and outlives it:
+        # when it gives up early we keep waiting for the rest of a budget sized to the route,
+        # the way a trace to the same node would be.
+        answer: asyncio.Future = loop.create_future()
 
-        etype = getattr(event, "type", None) if event is not None else None
-        if event is not None and etype not in (EventType.ERROR, EventType.LOGIN_FAILED):
+        def on_answer(event) -> None:  # noqa: ANN001 - meshcore Event
+            if not answer.done() and self._refers_to(event, pub):
+                answer.set_result(event)
+
+        subscriptions = [
+            mc.subscribe(EventType.LOGIN_SUCCESS, on_answer),
+            mc.subscribe(EventType.LOGIN_FAILED, on_answer),
+        ]
+        # A login is a round trip along the contact's route and back, which is the shape a
+        # trace budget already describes; the stored route is one-way, so the wire carries
+        # twice its hops. A contact we hold no route for floods, and takes the flood budget.
+        budget = trace_timeout(2 * len(node.route_hops or ()))
+        started = loop.time()
+        try:
+            sent = await mc.commands.send_login_sync(pub, password)
+            if not answer.done():
+                remaining = budget - (loop.time() - started)
+                if remaining > 0:
+                    # Shielded: a timeout here must leave the future readable, not cancel it.
+                    try:
+                        await asyncio.wait_for(asyncio.shield(answer), remaining)
+                    except asyncio.TimeoutError:
+                        pass
+        finally:
+            for subscription in subscriptions:
+                subscription.unsubscribe()
+
+        event = answer.result() if answer.done() else None
+        if event is None and getattr(sent, "type", None) is EventType.LOGIN_SUCCESS:
+            # Cannot normally happen — our subscription was registered first, so anything the
+            # library's own wait saw, ours saw too. Deferring to it anyway costs nothing and
+            # can only ever turn a false no-reply into the acceptance it really was, which is
+            # the direction this whole method is trying to fail in.
+            event = sent
+        etype = getattr(event, "type", None)
+        _log.debug(
+            "admin login to %s: budget=%.1fs -> %s after %.0fms",
+            node.name, budget, etype, (loop.time() - started) * 1000.0,
+        )
+        if etype is EventType.LOGIN_SUCCESS:
             return LoginResult.ACCEPTED
-        if etype is EventType.LOGIN_FAILED or any(
-            self._refers_to(refusal, pub) for refusal in refusals
-        ):
+        if etype is EventType.LOGIN_FAILED:
             return LoginResult.REFUSED
         # Nothing came back — including the local-ERROR case, where the companion would not
         # even send the request. Either way we never heard the node, so the password stands
@@ -1641,11 +1694,11 @@ class MeshCoreDevice(Device):
     def _refers_to(event: object, pubkey: str) -> bool:
         """Is this login frame about the node we addressed?
 
-        The firmware stamps a login reply with the sender's 6-byte key prefix when the frame
-        is long enough to carry one; older/terser frames arrive bare. So this matches when
-        there is something to match on and accepts the frame otherwise — the alternative,
-        demanding a prefix, would silently downgrade every refusal from terse firmware into
-        a no-reply and put us back to keeping a password the node has already rejected.
+        The firmware stamps a login reply with the *answering node's* 6-byte key prefix when
+        the frame is long enough to carry one; older/terser frames arrive bare. So this
+        matches when there is something to match on and accepts the frame otherwise — the
+        alternative, demanding a prefix, would silently downgrade every answer from terse
+        firmware into a no-reply, which is the failure this whole path exists to stop.
         """
         payload = getattr(event, "payload", None) or {}
         prefix = str(payload.get("pubkey_prefix") or "").lower().removeprefix("0x")
