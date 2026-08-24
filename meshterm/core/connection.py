@@ -116,10 +116,11 @@ _DISCONNECT_TIMEOUT_S = 2.0
 #: ``_DISCONNECT_TIMEOUT_S + _FORCE_DISCONNECT_TIMEOUT_S`` stays under the exit watchdog.
 _FORCE_DISCONNECT_TIMEOUT_S = 1.5
 
-#: Bound on closing a meshcore client whose own ``connect`` failed (seconds). Deliberately
-#: short: this runs on a failure path the user is waiting through — the startup probe that is
-#: about to raise "needs a PIN" — and a half-open client has no session state worth draining.
-_DISCARD_TIMEOUT_S = 3.0
+#: Bound on the graceful half of closing a meshcore client whose own ``connect`` failed
+#: (seconds). Deliberately short: this runs on a failure path the user is waiting through —
+#: the startup probe that is about to raise "needs a PIN" — and a half-open client has no
+#: session state worth draining. The forced transport close follows regardless.
+_DISCARD_TIMEOUT_S = 2.0
 
 #: Total attempts at opening the BLE link before its failure is surfaced. Opening a BLE
 #: connection on Windows is intermittently flaky (a slow-advertising peripheral is missed by
@@ -1106,6 +1107,21 @@ class MeshCoreDevice(Device):
     async def _discard_meshcore(mc) -> None:  # type: ignore[no-untyped-def]
         """Close a client whose ``connect`` didn't complete. Bounded, and never raises.
 
+        The graceful ``mc.disconnect()`` is **not sufficient on its own here**, and that is
+        the whole subtlety of this path. ``ConnectionManager.disconnect`` closes the
+        transport only ``if self._is_connected`` — a flag it sets *after*
+        ``connection.connect()`` returns. A connect that raised (the GATT authentication
+        error, thrown from ``start_notify`` well after bleak brought the link up) never got
+        that far, so the manager is certain there is nothing to close while ``BLEConnection``
+        is still holding a live, connected ``BleakClient``. Calling only the graceful path
+        therefore looks like a teardown and leaks the link anyway — which is exactly how the
+        first attempt at this fix still left the peripheral off the air.
+
+        So both halves run: the graceful call first (it stops the dispatcher and cancels any
+        reconnect task), then the transport closed directly, which is what actually drops the
+        link. ``BLEConnection.disconnect`` re-checks ``client.is_connected``, so the second
+        close is a no-op whenever the first one did the job.
+
         Shielded on purpose. The other way into this method is a probe whose ``wait_for``
         expired and cancelled the handshake mid-flight; a plain ``await`` would then be
         cancelled itself the moment it suspended, abandoning the very teardown it was called
@@ -1115,15 +1131,46 @@ class MeshCoreDevice(Device):
         Args:
             mc: A half-open ``meshcore.MeshCore`` client.
         """
-        closing = asyncio.ensure_future(
-            asyncio.wait_for(mc.disconnect(), timeout=_DISCARD_TIMEOUT_S)
-        )
+
+        async def _close() -> None:
+            try:
+                await asyncio.wait_for(mc.disconnect(), timeout=_DISCARD_TIMEOUT_S)
+            except Exception as exc:  # noqa: BLE001 - the forced close is the real one
+                _log.debug("graceful discard failed (%s); forcing the transport close", exc)
+            await MeshCoreDevice._force_close_transport(mc)
+
+        closing = asyncio.ensure_future(_close())
         try:
             await asyncio.shield(closing)
         except BaseException as exc:  # noqa: BLE001 - teardown of a doomed client
             # Includes CancelledError: swallowed here only so the caller's own exception
             # (or cancellation) is the one that propagates. ``closing`` runs on regardless.
-            _log.debug("discarded a half-open BLE client: %s", exc)
+            _log.debug("discarding a half-open BLE client: %s", exc)
+
+    @staticmethod
+    async def _force_close_transport(mc) -> None:  # type: ignore[no-untyped-def]
+        """Cancel the dispatcher and close the raw transport directly. Best-effort, silent.
+
+        The escape hatch from both library traps: a dispatcher stop that deadlocks on its own
+        ``queue.join()``, and a connection manager that refuses to close a transport it never
+        recorded as connected. Reaching past both is what actually releases the serial port or
+        the BLE link.
+
+        Args:
+            mc: The ``meshcore.MeshCore`` client to tear down.
+        """
+        try:
+            stop = getattr(mc, "stop", None)
+            if stop is not None:
+                stop()
+        except Exception as exc:  # noqa: BLE001 - best-effort force-stop
+            _log.debug("dispatcher force-stop failed: %s", exc)
+        try:
+            raw = getattr(getattr(mc, "connection_manager", None), "connection", None)
+            if raw is not None:
+                await asyncio.wait_for(raw.disconnect(), timeout=_FORCE_DISCONNECT_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - the link may already be gone
+            _log.debug("forced transport close failed: %s", exc)
 
     async def _pair_ble_windows(self, *, force: bool) -> bool:
         """Establish an authenticated BLE bond via the WinRT ProvidePin ceremony (Windows only).
@@ -1440,18 +1487,7 @@ class MeshCoreDevice(Device):
         # Forced teardown: cancel the (possibly wedged) dispatcher task without awaiting the
         # deadlocked join, then close the underlying transport so the serial port / BLE link
         # is actually released. Every step is best-effort — nothing here may block the exit.
-        try:
-            stop = getattr(mc, "stop", None)
-            if stop is not None:
-                stop()
-        except Exception as exc:  # noqa: BLE001 - best-effort force-stop
-            _log.debug("dispatcher force-stop failed: %s", exc)
-        try:
-            raw = getattr(getattr(mc, "connection_manager", None), "connection", None)
-            if raw is not None:
-                await asyncio.wait_for(raw.disconnect(), timeout=_FORCE_DISCONNECT_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 - the link may already be gone
-            _log.debug("forced transport close failed: %s", exc)
+        await MeshCoreDevice._force_close_transport(mc)
 
     def _require(self):  # type: ignore[no-untyped-def]
         """Return the live client or raise if not connected."""
