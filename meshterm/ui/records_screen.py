@@ -471,7 +471,7 @@ class RecordDialog(Screen):
             if key == "back":
                 lines.append("")
             selected = i == self._index
-            row = Text("❯ " if selected else "  ", style="brand" if selected else "")
+            row = Text("❯ " if selected else "  ", style="cursor" if selected else "")
             if key == "trace":
                 row.append_text(marked_label(
                     "👣", "Trace this path — reopen in Trace path", "accent"
@@ -481,7 +481,7 @@ class RecordDialog(Screen):
             else:
                 row.append("Back")
             if selected:
-                row.style = "brand"
+                row.style = "cursor"
                 self._cursor = len(lines)
             row.no_wrap = True
             row.truncate(width, overflow="ellipsis")

@@ -278,14 +278,14 @@ def test_livefeed_column_header_is_pinned_and_carries_no_sort_cue() -> None:
 
 
 def test_livefeed_highlight_uses_the_app_wide_cursor() -> None:
-    """The feed marks its row like every other list: a ``❯`` pointer over a brand row."""
+    """The feed marks its row like every other list: ``❯`` over a ``cursor``-white row."""
     screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
     screen.handle("down")  # off the pin, onto the newest packet normally selected
     rows = _rows(screen, 100)
     assert rows[0].startswith("❯ ") and rows[1].startswith("  ")
     assert "▸" not in "\n".join(rows)  # the old odd-one-out mark is gone
     raw = screen.render_body(100)[2]
-    assert raw.startswith("\x1b[")  # the pointer carries the brand style, not bare text
+    assert raw.startswith("\x1b[")  # the pointer carries the cursor style, not bare text
 
 
 def test_livefeed_opens_pinned_and_the_pin_rides_the_newest_packet() -> None:

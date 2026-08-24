@@ -468,12 +468,12 @@ class ChatScreen(Screen):
         sender — otherwise a run of same-sender messages would appear to share one time.
         A long body wraps with a hanging indent so continuation lines align under the body
         rather than under the timestamp gutter. When ``selected``, the line is marked as the
-        reply target (matching the select screen's ``❯`` pointer and brand highlight).
+        reply target (matching the select screen's ``❯`` pointer and cursor highlight).
         """
         stamp = message.created_at.astimezone()
         prefix = Text()
-        prefix.append("❯ " if selected else "  ", style="brand" if selected else None)
-        prefix.append(f"{stamp:%H:%M}  ", style="brand" if selected else "muted")
+        prefix.append("❯ " if selected else "  ", style="cursor" if selected else None)
+        prefix.append(f"{stamp:%H:%M}  ", style="cursor" if selected else "muted")
         body_text = self._body_text(body, message, selected=selected)
         return render_hanging(prefix, body_text, width, indent=prefix.cell_len)
 
@@ -499,10 +499,10 @@ class ChatScreen(Screen):
         The reply flow primes the compose line with an ``@[Name]`` token (see
         :meth:`_begin_reply`); here it reads back as a bare ``@Name`` colored in that
         sender's stable hue, so a mention is visually tied to the person it names. Text
-        around the mentions keeps the line's base style (brand when the message is the
+        around the mentions keeps the line's base style (``cursor`` when the message is the
         picked reply target, otherwise unstyled).
         """
-        base = "brand" if selected else None
+        base = "cursor" if selected else None
         text = Text()
         pos = 0
         for match in _MENTION.finditer(body):

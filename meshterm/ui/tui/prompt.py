@@ -806,7 +806,7 @@ class AutocompleteScreen(_KeylessDialog):
         self._sugg = max(0, min(self._sugg, len(suggestions) - 1)) if suggestions else 0
         for i, sug in enumerate(suggestions):
             is_sel = i == self._sugg
-            row = Text(("❯ " if is_sel else "  ") + sug, style="brand" if is_sel else "muted")
+            row = Text(("❯ " if is_sel else "  ") + sug, style="cursor" if is_sel else "muted")
             row.truncate(width)
             parts.append(row)
         if self._error:

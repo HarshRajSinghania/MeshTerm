@@ -400,7 +400,7 @@ class TxSweepScreen(Screen):
 
     def _action_text(self, key: str, selected: bool) -> Text:
         """One action row: pointer, glyph, and label (current value inlined)."""
-        text = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        text = Text("❯ " if selected else "  ", style="cursor" if selected else "")
         if key == "route":
             _icon(text, "✎", "brand")
             if self.route_hops:
@@ -430,7 +430,7 @@ class TxSweepScreen(Screen):
         else:
             text.append("Back")
         if selected:
-            text.style = "brand"
+            text.style = "cursor"
         return text
 
     def _header_lines(self, width: int) -> list[str]:

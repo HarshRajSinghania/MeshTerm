@@ -631,7 +631,7 @@ class SelectScreen(Screen):
             else:
                 label = item.text(max(1, width - 2))
             pointer = "❯ " if is_sel else "  "
-            style = "brand" if is_sel else ""
+            style = "cursor" if is_sel else ""
             # A Text label carries its own spans (e.g. a red badge); keep them and lay the
             # row's base style underneath, so the highlight tints the row while the badge
             # keeps its colour. A plain string is styled uniformly as before.
@@ -876,9 +876,9 @@ class ReorderScreen(Screen):
         for pos, orig in enumerate(self._order):
             is_cursor = pos == self._index
             if is_cursor and self._grabbed:
-                pointer, style = "▸ ", "brand"
+                pointer, style = "▸ ", "cursor"
             elif is_cursor:
-                pointer, style = "❯ ", "brand"
+                pointer, style = "❯ ", "cursor"
             else:
                 pointer, style = "  ", ""
             text = Text(pointer + self._labels[orig], style=style, no_wrap=True,
@@ -888,9 +888,9 @@ class ReorderScreen(Screen):
         lines.append("")
         for i, (_key, label) in enumerate(self._actions()):
             if n + i == self._index:
-                # The cursor row goes full-brand like the list rows above it,
+                # The cursor row takes the highlight like the list rows above it,
                 # trading the ✓/✗ tint for the highlight.
-                text = Text("❯ " + label.plain, style="brand", no_wrap=True)
+                text = Text("❯ " + label.plain, style="cursor", no_wrap=True)
             else:
                 text = Text("  ", no_wrap=True)
                 text.append_text(label)

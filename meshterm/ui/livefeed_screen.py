@@ -478,13 +478,13 @@ class LiveFeedScreen(Screen):
         The very rows :func:`~meshterm.ui.menus.back_rows` gives a select list, drawn here
         by hand because the feed is a rendered screen rather than a list of choices — same
         blank line, same bare word, no arrow and no icon, and the same ``❯`` cursor over a
-        brand row when it is the stop the cursor rests on.
+        highlighted row when it is the stop the cursor rests on.
         """
         selected = self._selected is None
-        row = Text(_CURSOR if selected else "  ", style="brand" if selected else "")
+        row = Text(_CURSOR if selected else "  ", style="cursor" if selected else "")
         row.append("Back")
         if selected:
-            row.style = "brand"
+            row.style = "cursor"
         return ["", render_to_ansi(row, width, no_wrap=True)]
 
     def _heading(self) -> Text:
@@ -563,14 +563,14 @@ class LiveFeedScreen(Screen):
         72-column screen precisely because it doesn't try to, and the route is drawn
         properly one keypress away, in the packet viewer.
 
-        The highlight is the app's own: the ``❯`` pointer and a brand base style under the
+        The highlight is the app's own: the ``❯`` pointer and a ``cursor`` base under the
         whole row, exactly as every select list draws its cursor. The lanes keep their own
         colours over it — the SNR its quality hue, a name its palette hue — because those
         colours are the content; the pointer and the base tint are what say "this row".
         The one row that can wear a *different* pointer is the newest, which takes ``^``
         while the cursor is pinned to the top of the stream rather than to the packet
         currently sitting there (:data:`_PIN_CURSOR`, and the module docstring). Same lane,
-        same brand tint, same one cell — only the mark differs, because only the meaning
+        same cursor tint, same one cell — only the mark differs, because only the meaning
         does.
 
         A row that runs past the right edge — a terminal narrower than the lanes need —
@@ -582,7 +582,7 @@ class LiveFeedScreen(Screen):
         """
         row = Text(no_wrap=True, overflow="ellipsis")
         cursor = _PIN_CURSOR if self._pinned else _CURSOR
-        row.append(cursor if selected else "  ", style="brand" if selected else "")
+        row.append(cursor if selected else "  ", style="cursor" if selected else "")
         avail = max(1, width - 2)
 
         body = Text(no_wrap=True, overflow="ellipsis")
@@ -626,9 +626,9 @@ class LiveFeedScreen(Screen):
                 body = crop_cells(body, self._hshift, avail)
         row.append_text(body)
         if selected:
-            # The brand tint rides *under* the row's spans (the select list's own
+            # The cursor tint rides *under* the row's spans (the select list's own
             # convention), so the lanes keep their colours and only the gaps take it.
-            row.style = "brand"
+            row.style = "cursor"
         return row
 
     def _feed_subject(self, entry: PacketEntry) -> Text:

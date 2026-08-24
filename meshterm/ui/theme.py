@@ -32,6 +32,18 @@ MESH_THEME = Theme(
         # theme name with an attribute (e.g. "reverse brand" renders as plain text), so the
         # reverse is baked into the definition here rather than tacked on at the call site.
         "selected": "reverse bold #5eead4",
+        # THE cursor row — the one row the ❯ points at, in every select list and in every
+        # screen that draws its own rows (feed, routes, records, walk, composer). White,
+        # and deliberately *not* ``brand``: the highlight used to borrow the wordmark's
+        # teal, which put the app's identity ink and "the row you're on" on the same hue,
+        # and worse, teal/cyan is itself a node hue — a cyan-keyed node's name vanished
+        # into its own highlight. White is outside the per-node spectrum (see node_style)
+        # so it can never collide with an identity. It does share ink with ``you``, which
+        # is the accepted cost: spans that set their own colour keep it over the base, so
+        # only *unstyled* text goes white, and only on the row already under the reader's
+        # eye. Bold like ``brand`` was, so the dim-slot ``not bold`` pins that protect a
+        # span inside a highlighted row (see MESH_THEME_16) go on meaning what they meant.
+        "cursor": "bold #ffffff",
         # Reversed error (the text-editor cursor sitting on an over-budget character). Baked
         # in for the same reason as ``selected`` — "reverse err" would render as plain text.
         "err.reverse": "reverse bold #f87171",
@@ -246,6 +258,10 @@ MESH_THEME_16 = Theme(
         "brand": "bold color(14)",
         "accent": "bold color(12)",
         "selected": "reverse bold color(14)",
+        # Slot 15, the top of the bright bank — so the row's bold cannot promote it
+        # further, and every dim-slot span inside it behaves exactly as it did under the
+        # old bold slot-14 highlight.
+        "cursor": "bold color(15)",
         "err.reverse": "reverse bold color(9)",
         "you": "bold color(15)",
         "device.known": "bold color(15)",

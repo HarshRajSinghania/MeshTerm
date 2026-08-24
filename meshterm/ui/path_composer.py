@@ -26,7 +26,7 @@ Interaction, following the reorder screen's cursor-over-rows-and-actions pattern
 * ↑/↓ move over suggestions and the action rows; Enter on a suggestion inserts it
   at the route's insertion cursor.
 * ←/→ slide that insertion cursor along the editable leg — it rides *in* the route as
-  a hop of its own, the brand-accent ``+`` slot the next chosen node drops into — so a
+  a hop of its own, the ``cursor``-white ``+`` slot the next chosen node drops into — so a
   hop can be spliced in (at the slot) or removed (⌫, to its left) anywhere in the
   route, not just at the end. It opens at the end of the composed leg, where inserting
   is appending — the classic flow unchanged. The suggestion list follows: it always
@@ -496,7 +496,7 @@ class PathComposerScreen(Screen):
 
         The insertion cursor is *in* the route, not between two of its hops: the
         ``+`` slot (:data:`~meshterm.ui.pathline.CURSOR_GLYPH`) sits where the next
-        chosen node will, in the brand accent the row cursor below it wears. Drawing an
+        chosen node will, in the ``cursor`` white the row cursor below it wears. Drawing an
         insertion point as a position rather than as a gap is what lets the preview stay
         the picture the trace window paints — chips and all, rather than falling back to
         arrows for the sake of a seam to sit in — and lets a wrapped route carry the
@@ -610,10 +610,10 @@ class PathComposerScreen(Screen):
             if kind == "action" and (i == 0 or rows[i - 1][0] != "action"):
                 entries.append((None, ""))  # a spacer sets the action group apart
             is_sel = i == self._index
-            text = Text("❯ " if is_sel else "  ", style="brand" if is_sel else "")
+            text = Text("❯ " if is_sel else "  ", style="cursor" if is_sel else "")
             text.append_text(self._row_text(kind, payload))
             if is_sel:
-                text.style = "brand"
+                text.style = "cursor"
             text.no_wrap = True
             # A suggestion row names a node in the route's own vocabulary, so it is cut
             # like one: a chip that runs off the dialog cracks, prose keeps the ellipsis.

@@ -136,7 +136,7 @@ def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
     chips = PathLine(hops, mode="powerline").text()
     assert chips.plain == f" a {POWERLINE_SEP} {CURSOR_GLYPH} {POWERLINE_SEP} b {POWERLINE_SEP}"
     slot = next(s for s in chips.spans if chips.plain[s.start : s.end] == CURSOR_GLYPH)
-    assert str(slot.style).endswith(f"on {_style_hex('brand')}")  # the brand accent fill
+    assert str(slot.style).endswith(f"on {_style_hex('cursor')}")  # the cursor-white fill
 
 
 def test_ellipsized_elides_the_middle_and_keeps_both_endpoints() -> None:

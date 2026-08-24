@@ -319,7 +319,7 @@ class MessagePathsScreen(Screen):
         left_more = 1 if shift > 0 else 0
         right_more = 1 if shift + avail < full.cell_len else 0
         inner = max(1, avail - left_more - right_more)
-        line = Text("❯ ", style="brand", no_wrap=True)
+        line = Text("❯ ", style="cursor", no_wrap=True)
         # The marks stand for the cell just outside the window on their own side, so each
         # takes its colour from the nearest cell still drawn — the chip the reader can see
         # being the one that visibly runs on.
@@ -328,7 +328,7 @@ class MessagePathsScreen(Screen):
         line.append_text(crop_cells(full, shift + left_more, inner))
         if right_more:
             line.append_text(cut_mark(full, shift + left_more + inner - 1, ELIDE_TAIL))
-        line.style = "brand"
+        line.style = "cursor"
         return render_to_ansi(line, width, no_wrap=True)
 
     # -- the graph --

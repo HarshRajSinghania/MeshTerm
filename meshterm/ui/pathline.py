@@ -187,7 +187,7 @@ class PathHop:
             allowed) or theme name — for context colourings that outrank identity.
             Plain mode uses it as the label style; powerline as the chip fill.
         cursor: This hop is an editor's insertion slot rather than a node — the
-            :data:`CURSOR_GLYPH` in the app's brand accent, the same colour the list
+            :data:`CURSOR_GLYPH` in the app's ``cursor`` white, the same colour the list
             cursor (``❯``) below it wears, so the two halves of one gesture (the row
             you pick, the slot it lands in) read as one thing.
         gap: This hop is a mark standing *between* two nodes rather than being one — the
@@ -894,15 +894,16 @@ class PathLine:
         """A chip's fill: cursor accent, override, dim slate, our grey, hue, keyless grey.
 
         The insertion slot outranks everything — it is the one chip that isn't a node,
-        and it wears the brand accent so it reads as chrome among identities rather than
-        as a hop with an unlucky hue. The fade comes next, outranking identity including
+        and it wears the ``cursor`` white so it reads as chrome among identities rather
+        than as a hop with an unlucky hue (white sits outside the node spectrum, and the
+        chip ink is already picked to stay readable on it). The fade comes next, outranking identity including
         our own: a dimmed hop is one nobody composed (an automatic landing back home, a
         mirrored return leg), and our end must recede with the rest of that automatic
         half rather than keep its yellow among the greys. Plain mode says the same thing
         by fading the name.
         """
         if hop.cursor:
-            return _style_hex("brand") or _KEYLESS_BG
+            return _style_hex("cursor") or _KEYLESS_BG
         if hop.style:
             resolved = _style_hex(hop.style)
             if resolved:

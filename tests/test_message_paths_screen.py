@@ -113,7 +113,7 @@ def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
     row = next(ln for ln in lines if "e839f2" in _plain([ln]))
     assert "(e8)" not in _plain([row])  # the mode-width identity stands alone
     assert "38;2;148;163;184" in row  # muted grey over the hash
-    assert "38;2;94;234;212" not in row  # never the brand highlight
+    assert not _plain([row]).startswith("❯")  # unselected, so no cursor highlight over it
     graph = _plain(lines).split("origin →")[0]
     assert "e8" in graph  # the row's byte still cross-references the graph label
 

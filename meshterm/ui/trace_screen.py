@@ -890,7 +890,7 @@ class TraceScreen(Screen):
 
     def _action_text(self, key: str, selected: bool) -> Text:
         """One action row: pointer, glyph, and label (current value inlined)."""
-        text = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        text = Text("❯ " if selected else "  ", style="cursor" if selected else "")
         if key == "compose":
             _icon(text, "✎", "brand")
             text.append("Compose path")
@@ -924,7 +924,7 @@ class TraceScreen(Screen):
         else:
             text.append("Back")
         if selected:
-            text.style = "brand"
+            text.style = "cursor"
         return text
 
     def _route_value(self, current: Optional[TraceResult], width: int) -> list[Text]:

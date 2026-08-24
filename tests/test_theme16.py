@@ -102,7 +102,7 @@ def test_unknown_node_grey_survives_a_selected_row() -> None:
         theme=MESH_THEME_16, width=20, file=StringIO(),
         force_terminal=True, color_system="standard", highlight=False,
     )
-    for base in (None, "brand"):  # unselected row, then the bold cursor row
+    for base in (None, "cursor"):  # unselected row, then the bold cursor row
         row = Text("  ")
         row.append("3d", style="node.unknown")
         if base:

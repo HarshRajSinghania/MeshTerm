@@ -975,7 +975,7 @@ class NodeDetailScreen(Screen):
 
         The route keeps its per-node colours even when selected (the pointer, and the white
         line in the graph above, carry the selection) — unlike the plain action rows, which
-        go fully brand, since here the colour *is* the content. The trailing ``…`` is the
+        take the highlight, since here the colour *is* the content. The trailing ``…`` is the
         app-wide opens-further-prompts mark: Enter on the row arms a trace on it. It rides
         *outside* the lane (:func:`~meshterm.ui.pathline.with_action_mark`) — chrome buys no
         cells off the route, so a chain that fits stays whole and closes on its rounded cap
@@ -999,7 +999,7 @@ class NodeDetailScreen(Screen):
         """
         indent = _ROUTE_INDENT
         avail = max(1, width - indent)
-        pointer = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        pointer = Text("❯ " if selected else "  ", style="cursor" if selected else "")
         marked = route.path
         if selected and self._hshift:
             total = cell_len(marked.plain)
@@ -1042,8 +1042,8 @@ class NodeDetailScreen(Screen):
         return lines
 
     def _action_line(self, action: _Action, selected: bool, width: int) -> str:
-        """One action row: ``❯`` + icon + label, the whole row brand when it is the cursor's."""
-        text = Text("❯ " if selected else "  ", style="brand" if selected else "")
+        """One action row: ``❯`` + icon + label, the whole row lit when it is the cursor's."""
+        text = Text("❯ " if selected else "  ", style="cursor" if selected else "")
         # The icon lane is decoration a platform may drop whole (command_icon); the label
         # is what names the action, so an emptied lane simply gives it the cells.
         mark = command_icon(action.glyph) if action.glyph else ""
@@ -1051,7 +1051,7 @@ class NodeDetailScreen(Screen):
             text.append(f"{mark} ", style=action.glyph_style)
         text.append(action.label)
         if selected:
-            text.style = "brand"
+            text.style = "cursor"
         text.no_wrap = True
         text.truncate(width, overflow="ellipsis")
         return render_to_ansi(text, width)

@@ -180,6 +180,15 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   characters. `node.unknown` is deliberately not `muted`: muted is chrome and may sit a
   step darker, while an unidentified node is content you can still act on. Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
+- The cursor row — the row `❯` points at, in a select list or in a screen drawing its own
+  rows — wears `cursor` (white), never `brand`: the wordmark's teal is the app's identity,
+  not a selection, and teal/cyan is itself a node hue, so a cyan-keyed node used to vanish
+  into its own highlight. White is outside the node spectrum, so it can never collide with
+  an identity. It rides *under* the row's spans, so every lane keeps its own colour and
+  only the gaps take the tint; the path composer's insertion-slot chip takes the same white
+  so the row you pick and the slot it lands in read as one gesture. Reverse-video chips
+  (dialog buttons, the editor cursor) keep their own `selected` fill — on the VT a reversed
+  white lands on the light grey the F-key lane already owns.
   Recency heat colours heard/first-heard ages, never names — seven steps on plain human
   boundaries (`widgets._HEAT_STEPS`), each `heat.*` style named for how old the node it
   colours is: white under 5 minutes, then yellow, light red, brown, red, light grey, and

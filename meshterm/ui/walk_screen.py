@@ -1230,7 +1230,7 @@ class WalkScreen(Screen):
         """One neighbour row: glyph, name, hash, SNR + bar, evidence, onward count."""
         glyph, glyph_style = self._glyph(other)
         row = Text()
-        row.append("❯ " if selected else "  ", style="brand" if selected else "")
+        row.append("❯ " if selected else "  ", style="cursor" if selected else "")
         row.append(glyph, style=glyph_style)
         row.append(" ")
         name_style_ = self._list_name_style(other)
@@ -1258,7 +1258,7 @@ class WalkScreen(Screen):
         if onward:
             row.append(f"  ⋯ {onward}", style="faint")
         if selected:
-            row.style = "brand"
+            row.style = "cursor"
         return row
 
     def _match_row(
@@ -1267,7 +1267,7 @@ class WalkScreen(Screen):
         """One find match: glyph, name, hash, and how far out it sits."""
         glyph, glyph_style = self._glyph(node)
         row = Text()
-        row.append("❯ " if selected else "  ", style="brand" if selected else "")
+        row.append("❯ " if selected else "  ", style="cursor" if selected else "")
         row.append(glyph, style=glyph_style)
         row.append(" ")
         row.append(fit_cells(self._label(node), name_w), style=self._list_name_style(node))
@@ -1283,7 +1283,7 @@ class WalkScreen(Screen):
             ring = depths[node]
             row.append(f"{ring} hop{'s' if ring != 1 else ''} out", style="muted")
         if selected:
-            row.style = "brand"
+            row.style = "cursor"
         return row
 
     def _list_name_style(self, node: str) -> str:
