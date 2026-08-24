@@ -594,14 +594,19 @@ async def _startup(ctx: AppContext) -> bool:
         async def verify(device: DiscoveredDevice, pin: Optional[str] = None):
             # ``pin`` is what the picker's PIN dialog collected on a retry; fall back to any
             # ``--ble-pin`` supplied on the CLI for the first attempt.
-            result = await probe_device(
-                device, baudrate=baudrate, pin=pin if pin is not None else ctx.ble_pin
-            )
+            used = pin if pin is not None else ctx.ble_pin
+            result = await probe_device(device, baudrate=baudrate, pin=used)
             if result is None:
                 return None
             connection, info = result
             probed["device_id"] = device.stable_id
             probed["device"] = connection
+            # Remember the PIN that actually worked. The adopted connection carries its own
+            # copy, but a mid-session reconnect builds a *fresh* device from the context's
+            # resolved endpoint — which, without this, would go back unarmed and re-run the
+            # whole "needs a PIN" dance against a companion we already authenticated to.
+            # Session-lifetime only: nothing writes a pairing code to disk.
+            probed["pin"] = used
             return info
 
         chosen = await prompt_device(
@@ -624,6 +629,8 @@ async def _startup(ctx: AppContext) -> bool:
             ctx.tcp_override = None
         if probed.get("device_id") == chosen.stable_id:
             ctx.adopt_device(probed["device"])
+            if probed.get("pin"):
+                ctx.ble_pin = probed["pin"]
     # Between the device splash and the first menu paint, resuming background listening opens
     # the radio — a slow, silent step that would otherwise leave the screen blank for a beat.
     # Float the skeleton card across that gap on any real link (see _busy_over_link).

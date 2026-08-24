@@ -998,21 +998,21 @@ def test_pin_dialog_shows_six_slots_with_dots_for_blanks() -> None:
     """The PIN field is six fixed slots: bullets for typed digits, centre dots for blanks."""
     from meshterm.ui.tui.prompt import PinDialog
 
-    dialog = PinDialog("MeshCore-Homestead")
+    dialog = PinDialog("MeshCore-Testbench")
     # Empty: six blank centre dots, no bullets yet.
     field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
     assert field.count("·") == 6
     assert "•" not in field
 
     # After three digits: three bullets, three remaining centre dots.
-    for ch in "701":
+    for ch in "123":
         dialog.handle("text", ch)
     field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
     assert field.count("•") == 3
     assert field.count("·") == 3
 
     # A full six-digit PIN fills every slot; typing more is capped at six.
-    for ch in "307999":
+    for ch in "456999":
         dialog.handle("text", ch)
     assert dialog._editor.text == "123456"
     field = dialog._editor.render(slots=PinDialog.PIN_LENGTH).plain
@@ -1605,7 +1605,7 @@ def test_device_picker_prompts_and_retries_ble_pin(tmp_path) -> None:
     from meshterm.ui.device_picker import prompt_device
 
     devices = [
-        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Pinned")
+        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Testbench")
     ]
     store = DeviceStore(tmp_path / "devices.json")
 
@@ -1652,7 +1652,7 @@ def test_device_picker_pin_cancel_returns_to_list(tmp_path) -> None:
     from meshterm.ui.device_picker import _QUIT, prompt_device
 
     devices = [
-        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Pinned")
+        DiscoveredDevice(transport="ble", address="00:11:22:33:44:55", name="MeshCore-Testbench")
     ]
     store = DeviceStore(tmp_path / "devices.json")
     picks = iter([0, "quit"])  # pick the device once, then quit the re-opened list

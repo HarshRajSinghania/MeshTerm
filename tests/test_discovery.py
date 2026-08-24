@@ -298,7 +298,7 @@ def test_remember_keeps_known_node_name_when_none_supplied(tmp_path: Path) -> No
 def test_device_store_round_trips_hardware_model(tmp_path: Path) -> None:
     """The firmware model learned at connect time writes and reads back."""
     store = DeviceStore(tmp_path / "devices.json")
-    dev = DiscoveredDevice(transport="ble", address="AA:BB:CC:DD:EE:FF", name="MeshCore-Waymarker")
+    dev = DiscoveredDevice(transport="ble", address="AA:BB:CC:DD:EE:FF", name="MeshCore-Testbench")
     store.remember(dev, node_name="Waymarker", hardware_model="Seeed Tracker T1000-E")
 
     loaded = store.load()

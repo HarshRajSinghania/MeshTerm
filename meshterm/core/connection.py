@@ -116,6 +116,11 @@ _DISCONNECT_TIMEOUT_S = 2.0
 #: ``_DISCONNECT_TIMEOUT_S + _FORCE_DISCONNECT_TIMEOUT_S`` stays under the exit watchdog.
 _FORCE_DISCONNECT_TIMEOUT_S = 1.5
 
+#: Bound on closing a meshcore client whose own ``connect`` failed (seconds). Deliberately
+#: short: this runs on a failure path the user is waiting through — the startup probe that is
+#: about to raise "needs a PIN" — and a half-open client has no session state worth draining.
+_DISCARD_TIMEOUT_S = 3.0
+
 #: Total attempts at opening the BLE link before its failure is surfaced. Opening a BLE
 #: connection on Windows is intermittently flaky (a slow-advertising peripheral is missed by
 #: bleak's internal lookup, or the link-layer connect races the just-finished discovery scan);
@@ -1001,7 +1006,7 @@ class MeshCoreDevice(Device):
             raise DeviceAuthenticationError(self._ble_auth_message()) from exc
 
     async def _create_ble_with_retry(self, mesh_core):  # type: ignore[no-untyped-def]
-        """Call ``create_ble``, retrying the transport-level failures that are transient.
+        """Open the owned BLE client, retrying the transport-level failures that are transient.
 
         The meshcore client raises a bare ``ConnectionError`` when the *link itself* could
         not be opened — the peripheral wasn't found during bleak's internal lookup, or the
@@ -1015,7 +1020,9 @@ class MeshCoreDevice(Device):
 
         Only ``ConnectionError`` is retried: a PIN/bond rejection or any other GATT failure
         propagates unchanged on the first attempt so the auth handling in :meth:`_open_ble`
-        (and a genuine wrong-PIN) is never looped.
+        (and a genuine wrong-PIN) is never looped. Each attempt builds its own client through
+        :meth:`_connect_owned_ble`, which closes it before letting any failure out — a
+        retried attempt therefore starts from a released link, never a leaked one.
 
         Args:
             mesh_core: The imported ``meshcore.MeshCore`` class.
@@ -1032,13 +1039,7 @@ class MeshCoreDevice(Device):
             if attempt:
                 await asyncio.sleep(_BLE_CONNECT_RETRY_DELAY_S)
             try:
-                return await mesh_core.create_ble(
-                    address=self._address,
-                    device=self._ble_device,
-                    pin=self._pin,
-                    default_timeout=self._connect_timeout,
-                    auto_reconnect=False,
-                )
+                return await self._connect_owned_ble(mesh_core)
             except ConnectionError as exc:
                 _log.debug(
                     "BLE link to %s failed to open (attempt %d/%d): %s",
@@ -1050,6 +1051,79 @@ class MeshCoreDevice(Device):
                 last_exc = exc
         assert last_exc is not None  # the loop always runs; only ConnectionError falls through
         raise last_exc
+
+    async def _connect_owned_ble(self, mesh_core):  # type: ignore[no-untyped-def]
+        """Build the meshcore BLE client here and connect it, so we own its teardown.
+
+        ``MeshCore.create_ble`` assembles a client, calls ``connect()`` on it, and hands it
+        back *only on success* — so a connect that **raises** leaves that client, and the
+        bleak link it has already opened, orphaned inside the library with no reference we
+        could close. That is not a hypothetical: a PIN-protected companion answers the
+        unbonded notify-subscribe with a GATT authentication error, which is raised from
+        deep inside ``connect()`` after bleak has brought the link up. Our own
+        :meth:`disconnect` then does nothing (``_mc`` was never assigned), Windows holds the
+        ACL link for the life of the process, and the peripheral — still believing it has a
+        peer — **stops advertising**. The PIN dialog that opens next therefore asks for a
+        code it can no longer deliver: the retry can't find the device, and the user reads a
+        correct PIN being refused. Assembling the same two objects here costs three lines and
+        keeps the handle, so every exit puts the link back down.
+
+        Both public failure shapes are covered, matching what ``create_ble`` does on the one
+        it bothers to handle: a raise (closed, then re-raised) and a ``None`` from the
+        identity handshake (closed, then reported as "not a companion").
+
+        Args:
+            mesh_core: The imported ``meshcore.MeshCore`` class.
+
+        Returns:
+            The connected ``MeshCore`` client, or ``None`` if the transport opened but the
+            peripheral never answered the identity handshake.
+
+        Raises:
+            Exception: Whatever ``connect`` raised — but not before the link is closed.
+        """
+        from meshcore import BLEConnection
+
+        connection = BLEConnection(
+            address=self._address, device=self._ble_device, pin=self._pin
+        )
+        mc = mesh_core(
+            connection,
+            default_timeout=self._connect_timeout,
+            auto_reconnect=False,
+        )
+        try:
+            started = await mc.connect()
+        except BaseException:
+            await MeshCoreDevice._discard_meshcore(mc)
+            raise
+        if started is None:
+            await MeshCoreDevice._discard_meshcore(mc)
+            return None
+        return mc
+
+    @staticmethod
+    async def _discard_meshcore(mc) -> None:  # type: ignore[no-untyped-def]
+        """Close a client whose ``connect`` didn't complete. Bounded, and never raises.
+
+        Shielded on purpose. The other way into this method is a probe whose ``wait_for``
+        expired and cancelled the handshake mid-flight; a plain ``await`` would then be
+        cancelled itself the moment it suspended, abandoning the very teardown it was called
+        to perform and leaking exactly the link this exists to close. Shielding lets the
+        close finish on its own while the cancellation continues to propagate to our caller.
+
+        Args:
+            mc: A half-open ``meshcore.MeshCore`` client.
+        """
+        closing = asyncio.ensure_future(
+            asyncio.wait_for(mc.disconnect(), timeout=_DISCARD_TIMEOUT_S)
+        )
+        try:
+            await asyncio.shield(closing)
+        except BaseException as exc:  # noqa: BLE001 - teardown of a doomed client
+            # Includes CancelledError: swallowed here only so the caller's own exception
+            # (or cancellation) is the one that propagates. ``closing`` runs on regardless.
+            _log.debug("discarded a half-open BLE client: %s", exc)
 
     async def _pair_ble_windows(self, *, force: bool) -> bool:
         """Establish an authenticated BLE bond via the WinRT ProvidePin ceremony (Windows only).
