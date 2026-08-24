@@ -770,8 +770,9 @@ class PathLine:
         note_style = "faint" if hop.dim else "muted"
         text = Text()
         if hop.cursor:
-            # No chip fill to carry the accent, so the slot takes the app's reverse-video
-            # `selected` — the same block the editor's cursor has always been.
+            # No chip fill to carry the slot's white, so it takes the app's reverse-video
+            # `selected` grey — the same block a dialog's committing button is drawn as,
+            # and the same block the editor's cursor has always been.
             text.append(hop.label, style="selected")
         elif hop.dim:
             text.append(hop.label, style="faint")

@@ -27,22 +27,33 @@ MESH_THEME = Theme(
     {
         "brand": "bold #5eead4",
         "accent": "bold #818cf8",
-        # The highlighted-button fill (cyan block, dark text) shared by every popup dialog.
-        # It must be a *single* theme name: Rich silently drops a style string that mixes a
-        # theme name with an attribute (e.g. "reverse brand" renders as plain text), so the
-        # reverse is baked into the definition here rather than tacked on at the call site.
-        "selected": "reverse bold #5eead4",
-        # THE cursor row — the one row the ❯ points at, in every select list and in every
-        # screen that draws its own rows (feed, routes, records, walk, composer). White,
-        # and deliberately *not* ``brand``: the highlight used to borrow the wordmark's
-        # teal, which put the app's identity ink and "the row you're on" on the same hue,
-        # and worse, teal/cyan is itself a node hue — a cyan-keyed node's name vanished
-        # into its own highlight. White is outside the per-node spectrum (see node_style)
-        # so it can never collide with an identity. It does share ink with ``you``, which
-        # is the accepted cost: spans that set their own colour keep it over the base, so
-        # only *unstyled* text goes white, and only on the row already under the reader's
-        # eye. Bold like ``brand`` was, so the dim-slot ``not bold`` pins that protect a
-        # span inside a highlighted row (see MESH_THEME_16) go on meaning what they meant.
+        # THE reverse-video chip — a dialog's committing button, a running action's Abort,
+        # the composer's insertion slot where there is no chip fill to carry it. A *grey*
+        # block with the page's own ink showing through, because the cyan it used to be
+        # was the wordmark's teal doing a third job (identity, and a node hue, and now a
+        # selection), and a chip is chrome: it marks where a press lands, it does not
+        # claim a colour. The slate is ``muted``'s, light enough that the reversed ink —
+        # whatever the terminal's background happens to be — reads on it. It must be a
+        # *single* theme name: Rich silently drops a style string that mixes a theme name
+        # with an attribute (e.g. "reverse muted" renders as plain text), so the reverse is
+        # baked into the definition here rather than tacked on at the call site.
+        "selected": "reverse bold #94a3b8",
+        # THE ink of "this is the one you picked" — the row the ❯ points at, in every
+        # select list and in every screen that draws its own rows (feed, routes, records,
+        # walk, composer), and the lit column heading one axis over where a list is
+        # sorted. White, and deliberately *not* ``brand``: the highlight used to borrow
+        # the wordmark's teal, which put the app's identity ink and "the row you're on"
+        # on the same hue, and worse, teal/cyan is itself a node hue — a cyan-keyed
+        # node's name vanished into its own highlight. White is outside the per-node
+        # spectrum (see node_style) so it can never collide with an identity. It does
+        # share ink with ``you``, which is the accepted cost. Spans that set their own
+        # colour keep it over the base — the heat of an age, an SNR reading, a red badge
+        # — with the one exception the highlight is *for*: a node's own key-derived hue
+        # folds to this white on the cursor row (see theme.is_identity_style and
+        # ui.tui.render._whiten_identities), so the row the reader is on reads as one
+        # thing rather than as a name competing with its own selection. Bold like
+        # ``brand`` was, so the dim-slot ``not bold`` pins that protect a span inside a
+        # highlighted row (see MESH_THEME_16) go on meaning what they meant.
         "cursor": "bold #ffffff",
         # Reversed error (the text-editor cursor sitting on an over-budget character). Baked
         # in for the same reason as ``selected`` — "reverse err" would render as plain text.
@@ -257,7 +268,11 @@ MESH_THEME_16 = Theme(
     {
         "brand": "bold color(14)",
         "accent": "bold color(12)",
-        "selected": "reverse bold color(14)",
+        # Slot 7 is the only grey the VT can put *behind* a reverse: backgrounds stop at
+        # the dim bank, and slot 8's dark grey lands on black there. It is the same light
+        # grey the F-key lane already fills its chips with, which is the point — one chip
+        # look on the device. ``not bold`` because 7 is a dim slot (see the bold rule).
+        "selected": "reverse not bold color(7)",
         # Slot 15, the top of the bright bank — so the row's bold cannot promote it
         # further, and every dim-slot span inside it behaves exactly as it did under the
         # old bold slot-14 highlight.
@@ -526,6 +541,38 @@ def _node_style_quantized(key: str) -> str:
     """
     sector = round(_key_byte(key) / 256 * len(_NODE_SLOT_HEXES)) % len(_NODE_SLOT_HEXES)
     return f"bold {_NODE_SLOT_HEXES[sector]}"
+
+
+#: Every style string a node's key can mint, on *either* platform: the 256-hue spectrum
+#: and the console's six chromatic slots. A surface that has to *recognise* identity ink
+#: rather than produce it matches against this — today that is the cursor row, where a
+#: name gives way to the highlight's white. Both vocabularies live in the one set so the
+#: answer never depends on which platform happens to be bound, and they cannot collide:
+#: the spectrum's channels top out at ``0xf2`` (value 0.95) while every console slot
+#: spells ``0xff``.
+_IDENTITY_STYLES: frozenset[str] = frozenset(
+    [_node_style_spectrum(f"{byte:02x}") for byte in range(256)]
+    + [f"bold {hex_}" for hex_ in _NODE_SLOT_HEXES]
+)
+
+
+def is_identity_style(style: str) -> bool:
+    """Is ``style`` a hue some node's key minted — a *name's* ink rather than the page's?
+
+    :func:`node_style` read backwards, for the one surface that needs the vocabulary as a
+    question: the cursor row, whose node names are drawn in its white instead of their own
+    hue (see :func:`~meshterm.ui.tui.render.render_to_ansi`). Deliberately narrow — only a
+    key-derived hue answers yes, so ``node.unknown``'s grey (a node we *cannot* identify,
+    which the highlight has no business claiming to know), the ``you`` white, and every
+    context colouring keep exactly what they were given.
+
+    Args:
+        style: A style string as it appears on a span.
+
+    Returns:
+        ``True`` if it is one of the hues :func:`node_style` mints.
+    """
+    return style in _IDENTITY_STYLES
 
 
 def name_style(name: str, key: Optional[str] = None) -> str:

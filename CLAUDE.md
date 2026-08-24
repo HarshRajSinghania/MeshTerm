@@ -180,15 +180,26 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   characters. `node.unknown` is deliberately not `muted`: muted is chrome and may sit a
   step darker, while an unidentified node is content you can still act on. Our own node
   is the pure-white `you` style; a context colouring (chart quality) may still win.
-- The cursor row — the row `❯` points at, in a select list or in a screen drawing its own
-  rows — wears `cursor` (white), never `brand`: the wordmark's teal is the app's identity,
-  not a selection, and teal/cyan is itself a node hue, so a cyan-keyed node used to vanish
-  into its own highlight. White is outside the node spectrum, so it can never collide with
-  an identity. It rides *under* the row's spans, so every lane keeps its own colour and
-  only the gaps take the tint; the path composer's insertion-slot chip takes the same white
-  so the row you pick and the slot it lands in read as one gesture. Reverse-video chips
-  (dialog buttons, the editor cursor) keep their own `selected` fill — on the VT a reversed
-  white lands on the light grey the F-key lane already owns.
+- **White is what "you picked this" looks like**, and nothing else in the app is allowed
+  to say it. The cursor row — the row `❯` points at, in a select list or in a screen
+  drawing its own rows — wears `cursor` (white), never `brand`: the wordmark's teal is the
+  app's identity, not a selection, and teal/cyan is itself a node hue, so a cyan-keyed
+  node used to vanish into its own highlight. White is outside the node spectrum, so it
+  can never collide with an identity. The same white lights the **active sort column's**
+  heading and triangle (`contactlist._SORT_ACTIVE`, `widgets._sort_header`) — the same
+  claim one axis over — and the path composer's insertion-slot chip, so the row you pick
+  and the slot it lands in read as one gesture. It rides *under* the row's spans, so every
+  lane keeps the colour it set — an age's heat, an SNR reading, a red badge — with the one
+  exception the highlight exists for: **a node's key-derived hue folds to the cursor white
+  on the cursor row** (`theme.is_identity_style` → `render._whiten_identities`, applied
+  once at the render boundary for any Text whose *base* style is `cursor`), so the
+  highlighted row reads as one thing instead of as a name arguing with its own selection.
+  Only a keyed hue folds: `node.unknown`'s grey stays grey, because the highlight must not
+  claim to know a node we can't place. Reverse-video chips — a dialog's committing button,
+  a running action's Abort, the arrow-mode composer slot, the editor cursor — are the
+  `selected` fill, a **grey** block (`muted`'s slate; light grey slot 7 on the VT, the one
+  grey a reverse can put behind text there, and the same fill the F-key lane uses). A chip
+  marks where a press lands; it is chrome, and it does not get a hue.
   Recency heat colours heard/first-heard ages, never names — seven steps on plain human
   boundaries (`widgets._HEAT_STEPS`), each `heat.*` style named for how old the node it
   colours is: white under 5 minutes, then yellow, light red, brown, red, light grey, and

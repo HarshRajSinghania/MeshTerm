@@ -89,10 +89,13 @@ TRACE_SORT_OPENS_ASCENDING: dict[str, bool] = {
     "name": True, "traced": False, "heard": True, "packets": False, "hash": True,
 }
 
-#: The cyan the active sort column and its triangle are lit in, matching the static Contacts
+#: What the active sort column and its triangle are lit in, matching the static Contacts
 #: table's header (see :func:`~meshterm.ui.widgets._sort_header`) so sort cues read
-#: identically everywhere.
-_SORT_ACTIVE = "bold #22d3ee"
+#: identically everywhere. The app's ``cursor`` white — the same ink the highlighted row
+#: wears, because this is the same claim one lane over: *this* is the one you picked. It
+#: used to be a bare cyan, which put a selection cue back on the node spectrum (and, on
+#: the console, straight onto the wordmark's slot).
+_SORT_ACTIVE = "cursor"
 
 #: The default footer: navigation, the Ctrl+arrow sort, filtering, then Esc last.
 _HINT = "↑↓ move · ^←→↑↓ sort · type to filter · Enter open · Esc back"

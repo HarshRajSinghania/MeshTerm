@@ -1064,16 +1064,18 @@ def _ordered_contacts(
 
 
 def _sort_header(label: str, column: str, sort: ContactsSort) -> str:
-    """A column header: plain-muted, or cyan with a direction triangle when it's the sort key.
+    """A column header: plain-muted, or lit with a direction triangle when it's the sort key.
 
-    The active column's name and its triangle are lit cyan together (so the interactive
-    left/right selection is obvious) — ``▲`` for ascending, ``▼`` for descending. The column
-    reserves its width (see :func:`contacts_table`) so toggling the sort doesn't shift the row.
+    The active column's name and its triangle are lit together in the app's ``cursor`` white
+    (so the interactive left/right selection is obvious) — ``▲`` for ascending, ``▼`` for
+    descending. Same ink as the highlighted *row*, because it is the same claim one axis
+    over. The column reserves its width (see :func:`contacts_table`) so toggling the sort
+    doesn't shift the row.
     """
     if column != sort.column:
         return label
     triangle = "▲" if sort.ascending else "▼"
-    return f"[bold #22d3ee]{label} {triangle}[/]"
+    return f"[cursor]{label} {triangle}[/]"
 
 
 def node_type_legend(indent: str = "") -> Text:

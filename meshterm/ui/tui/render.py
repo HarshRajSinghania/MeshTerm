@@ -17,10 +17,10 @@ from typing import Optional
 
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
-from rich.text import Text
+from rich.text import Span, Text
 
 from ...platforms import Platform, on_platform
-from ..theme import active_theme, fold_text
+from ..theme import active_theme, fold_text, is_identity_style
 
 #: Cache one headless render console per width. Consoles are cheap but repaint happens on
 #: every keystroke and on the live-monitor timer, so caching avoids needless churn. Keyed
@@ -124,6 +124,47 @@ def _console(width: int) -> Console:
     return console
 
 
+def _whiten_identities(renderable: RenderableType) -> RenderableType:
+    """On the cursor row, a node's name is drawn in the highlight's white, not its hue.
+
+    A node's name is always coloured by its key, so a column of them reads as a column of
+    identities — but the row the ``❯`` points at is answering a different question, and a
+    keyed hue on it competes with the very highlight that says "this one". So the row that
+    declares itself the cursor (its *base* style is ``cursor``, which is how every list and
+    every screen drawing its own rows marks it) has its identity spans folded to that same
+    white, and the row reads as one thing.
+
+    Only :func:`~meshterm.ui.theme.is_identity_style` hues fold. Everything else on the row
+    is untouched — the heard-age heat, an SNR reading, a red badge, a path line's chip
+    fills, the grey of a node no key could place — because none of those are the identity
+    the highlight is standing in for.
+
+    Done here because this is where a row *is* a row: one boundary every screen's rows
+    already leave through, rather than a rule each of them has to remember. Callers hand us
+    read-only :class:`Text` (the ANSI cache keys on their content), so the rewrite is on a
+    copy.
+
+    Args:
+        renderable: Whatever is about to be rendered.
+
+    Returns:
+        The renderable, or a cursor row's copy with its name hues turned white.
+    """
+    if not isinstance(renderable, Text) or str(renderable.style) != "cursor":
+        return renderable
+    spans = renderable.spans
+    if not any(is_identity_style(str(span.style)) for span in spans):
+        return renderable
+    out = renderable.copy()
+    out.spans = [
+        Span(span.start, span.end, "cursor")
+        if is_identity_style(str(span.style))
+        else span
+        for span in spans
+    ]
+    return out
+
+
 def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> str:
     """Render a Rich renderable to an ANSI string at ``width`` columns.
 
@@ -143,6 +184,7 @@ def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = Fa
         if cached is not None:
             _ANSI_CACHE.move_to_end(key)
             return cached
+    renderable = _whiten_identities(renderable)
     console = _console(width)
     with console.capture() as capture:
         if no_wrap:
