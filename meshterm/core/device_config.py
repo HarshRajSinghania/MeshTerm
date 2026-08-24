@@ -227,10 +227,32 @@ async def build_snapshot(
         snapshot["flood_scope"] = await device.get_default_flood_scope()
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
+    # The device-query frame is a *different* payload from SELF_INFO, and some settings
+    # only exist there — the BLE pairing code among them, which real firmware reports as
+    # ``ble_pin`` and never puts in SELF_INFO. Without this the Device PIN row could only
+    # ever render "?" on hardware: writable, but with no way to read back what you wrote.
+    # Merged underneath, so a key SELF_INFO also carries keeps the SELF_INFO value (the
+    # same precedence ``probe_device`` uses when it folds the two together).
+    try:
+        snapshot = {**await device.get_device_info(), **snapshot}
+    except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+        pass
     return snapshot
 
 
 # --- coupled-command apply helpers -------------------------------------------
+
+
+# Several settings do not have a command of their own: the firmware takes latitude and
+# longitude together, and the four radio parameters together, so changing one means
+# re-sending its siblings unchanged. Those siblings are read from ``snapshot``, which is
+# the caller's picture of the device — and that picture is read *once*, before the first
+# write. So each of these appliers records what it just set, and the reason is a bug that
+# reached a real device: restoring a backup that differed in both latitude and longitude
+# applied ``adv_lat`` (preserving the stale longitude), then ``adv_lon`` (preserving the
+# stale *latitude*) — and the second write silently undid the first. Same for a restore
+# touching two radio fields. Writing back keeps every later sibling in the same batch
+# honest, whether the batch comes from ``config restore`` or the editor's staged changes.
 
 
 def _radio_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[None]]:
@@ -245,6 +267,7 @@ def _radio_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[Non
         }
         params[field_name] = value
         await device.set_radio(params["freq"], params["bw"], params["sf"], params["cr"])
+        snapshot[f"radio_{field_name}"] = value
 
     return apply
 
@@ -256,6 +279,7 @@ def _coords_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[No
         lat = value if field_name == "adv_lat" else snapshot.get("adv_lat", 0.0)
         lon = value if field_name == "adv_lon" else snapshot.get("adv_lon", 0.0)
         await device.set_coords(float(lat or 0.0), float(lon or 0.0))
+        snapshot[field_name] = value
 
     return apply
 
@@ -267,6 +291,7 @@ def _tuning_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[No
         rx = value if field_name == "rx_delay" else snapshot.get("rx_delay", 0.0)
         af = value if field_name == "airtime_factor" else snapshot.get("airtime_factor", 0.0)
         await device.set_tuning(float(rx or 0.0), float(af or 0.0))
+        snapshot[field_name] = value
 
     return apply
 
@@ -376,9 +401,16 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         getter=_get("adv_lon"), apply=_coords_apply("adv_lon"),
     ),
     SettingSpec(
+        # Written as ``device_pin`` (the name the CLI, the backup TOML and ``set_devicepin``
+        # all use) but *read* as ``ble_pin``, which is what the firmware calls it in the
+        # device-query frame — the only place it appears. Keeping the key means existing
+        # backups still restore; reading the firmware's own name means the row shows a
+        # value instead of "?" on real hardware. The fallback keeps the canonical key
+        # working for anything that reports it directly.
         "device_pin", "Device PIN", "BLE pairing PIN", "Identity", "int",
         minimum=0, maximum=999999,
-        getter=_get("device_pin"), apply=lambda d, v, s: d.set_device_pin(v),
+        getter=lambda snapshot: snapshot.get("ble_pin", snapshot.get("device_pin")),
+        apply=lambda d, v, s: d.set_device_pin(v),
     ),
     # Radio
     SettingSpec(

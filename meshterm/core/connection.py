@@ -2400,8 +2400,12 @@ class MockDevice(Device):
 
     async def get_device_info(self) -> dict:  # noqa: D102 - inherited docstring
         # The simulator reports a stable, obviously-synthetic model so the hardware column
-        # renders identically to a real board without pretending to be one.
-        return {"model": "MeshCore Simulator", "ver": "mock", "fw_build": "mock"}
+        # renders identically to a real board without pretending to be one. ``ble_pin``
+        # rides here rather than in SELF_INFO because that is where real firmware puts it.
+        return {
+            "model": "MeshCore Simulator", "ver": "mock", "fw_build": "mock",
+            "ble_pin": self._device_pin,
+        }
 
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
         return list(self._contacts)
