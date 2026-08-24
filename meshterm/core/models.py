@@ -9,6 +9,7 @@ from __future__ import annotations
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
+from enum import Enum
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -38,6 +39,35 @@ NODE_TYPE_LABELS = {
     NODE_TYPE_ROOM: "room",
     NODE_TYPE_SENSOR: "sensor",
 }
+
+
+class LoginResult(Enum):
+    """How an admin login ended — and, crucially, whether the node was there to end it.
+
+    "Rejected" and "never answered" used to be the same ``False``, and every caller read
+    that ``False`` as *wrong password* and dropped the remembered credential. Administering
+    a repeater while it happened to be down therefore erased its password: the node had said
+    nothing at all, and we took the silence as a denial.
+
+    They are not the same claim. A refusal is the node telling us the password is wrong, and
+    only that is grounds for forgetting it. Silence says nothing about the password —
+    the node may be asleep, out of range, or the reply lost on the way home — so the
+    credential must survive it. Truthy exactly when the session opened, so the long-standing
+    ``if not await device.admin_login(...)`` still reads "we are not logged in"; the two
+    failures are told apart by identity, which is what makes each call site say which one it
+    is handling.
+    """
+
+    #: The node accepted the password; an admin session is open.
+    ACCEPTED = "accepted"
+    #: The node answered and said no. The stored password is wrong — forget it.
+    REFUSED = "refused"
+    #: Nothing came back. Out of reach, asleep, or the reply was lost. Keep the password.
+    NO_REPLY = "no_reply"
+
+    def __bool__(self) -> bool:
+        """Truthy only when logged in, so the plain ``if not …`` idiom keeps its meaning."""
+        return self is LoginResult.ACCEPTED
 
 
 def is_direct_messageable(node_type: Optional[int]) -> bool:

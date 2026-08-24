@@ -531,14 +531,18 @@ async def _setup_link(optimal_remote_tx: int = 20):
 
 async def test_admin_login_rejects_wrong_password() -> None:
     """A wrong admin password is refused, and the node stays un-tunable."""
+    from meshterm.core.connection import LoginResult
+
     device = MockDevice(admin_password="secret")
     await device.connect()
     admin = (await device.get_contacts())[0]
 
-    assert await device.admin_login(admin, "nope") is False
+    refused = await device.admin_login(admin, "nope")
+    assert refused is LoginResult.REFUSED and not refused
     with pytest.raises(DeviceCommandError):
         await device.set_remote_tx_power(admin, 18)  # not logged in
-    assert await device.admin_login(admin, "secret") is True
+    accepted = await device.admin_login(admin, "secret")
+    assert accepted is LoginResult.ACCEPTED and accepted
     await device.set_remote_tx_power(admin, 18)  # now allowed
     assert await device.get_remote_tx_power(admin) == 18
 

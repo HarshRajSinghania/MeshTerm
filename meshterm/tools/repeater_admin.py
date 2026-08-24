@@ -20,6 +20,7 @@ import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
+from ..core.models import LoginResult
 from .base import Tool, ToolResult, register
 
 
@@ -75,13 +76,18 @@ class RepeaterAdminTool(Tool):
                 f"no admin password for {name!r}; pass --password or run the "
                 "interactive flow once to store it."
             )
-        if not await device.admin_login(node, str(password)):
-            ctx.admin_store.forget(node)
+        outcome = await device.admin_login(node, str(password))
+        ctx.admin_store.record(node, str(password), outcome)
+        if outcome is LoginResult.REFUSED:
             raise DeviceCommandError(
                 f"admin login to {name!r} failed (wrong password?). "
                 "The saved password was cleared."
             )
-        ctx.admin_store.remember(node, str(password))
+        if not outcome:
+            raise DeviceCommandError(
+                f"{name!r} did not answer the admin login — it may be out of reach, "
+                "asleep, or busy. Any saved password was kept; try again when it answers."
+            )
 
         command = str(params["command"])
         ctx.remote_store.append_history(node, command)

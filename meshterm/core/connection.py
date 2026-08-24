@@ -30,6 +30,7 @@ from .models import (
     Ack,
     Contact,
     Hop,
+    LoginResult,
     Message,
     NeighbourInfo,
     Observation,
@@ -417,7 +418,7 @@ class Device(ABC):
     # -- remote administration (tuning a node we have admin rights on) -----------
 
     @abstractmethod
-    async def admin_login(self, node: Contact, password: str) -> bool:
+    async def admin_login(self, node: Contact, password: str) -> LoginResult:
         """Authenticate as administrator on a remote node.
 
         Args:
@@ -425,8 +426,12 @@ class Device(ABC):
             password: The node's admin password.
 
         Returns:
-            ``True`` if the node accepted the login, ``False`` otherwise (e.g. a wrong
-            password or no response).
+            A :class:`LoginResult`. It is truthy only for
+            :attr:`~LoginResult.ACCEPTED`, so a caller that just needs "am I in?" can
+            still write ``if not await device.admin_login(...)``; one that acts on the
+            failure must tell :attr:`~LoginResult.REFUSED` (the node said no — the
+            password is wrong) from :attr:`~LoginResult.NO_REPLY` (nothing came back —
+            the password is unproven, not disproven).
         """
 
     @abstractmethod
@@ -1601,20 +1606,50 @@ class MeshCoreDevice(Device):
             )
         return pub
 
-    async def admin_login(self, node: Contact, password: str) -> bool:  # noqa: D102
+    async def admin_login(self, node: Contact, password: str) -> LoginResult:  # noqa: D102
         from meshcore import EventType
 
         mc = self._require()
         pub = self._node_pubkey(node)
-        event = await mc.commands.send_login_sync(pub, password)
-        # ``send_login_sync`` returns the LOGIN_SUCCESS event, or ``None``/an ERROR or
-        # LOGIN_FAILED event when the node refused (typically a wrong password).
-        if event is None:
-            return False
-        etype = getattr(event, "type", None)
-        if etype in (EventType.ERROR, EventType.LOGIN_FAILED):
-            return False
-        return True
+        # ``send_login_sync`` waits for LOGIN_SUCCESS and *only* LOGIN_SUCCESS, so its
+        # ``None`` covers both halves of failure: a node that refused the password and a
+        # node that was never there. The firmware does distinguish them — it answers a bad
+        # password with a LOGIN_FAILED frame, which the library parses and dispatches like
+        # any other event — so the distinction is recoverable by listening for that frame
+        # ourselves, alongside the library's own wait. Subscribed *before* the send, since
+        # the refusal can land the moment the request does.
+        refusals: list[object] = []
+        subscription = mc.subscribe(EventType.LOGIN_FAILED, refusals.append)
+        try:
+            event = await mc.commands.send_login_sync(pub, password)
+        finally:
+            mc.unsubscribe(subscription)
+
+        etype = getattr(event, "type", None) if event is not None else None
+        if event is not None and etype not in (EventType.ERROR, EventType.LOGIN_FAILED):
+            return LoginResult.ACCEPTED
+        if etype is EventType.LOGIN_FAILED or any(
+            self._refers_to(refusal, pub) for refusal in refusals
+        ):
+            return LoginResult.REFUSED
+        # Nothing came back — including the local-ERROR case, where the companion would not
+        # even send the request. Either way we never heard the node, so the password stands
+        # unproven rather than disproven and the caller must keep it.
+        return LoginResult.NO_REPLY
+
+    @staticmethod
+    def _refers_to(event: object, pubkey: str) -> bool:
+        """Is this login frame about the node we addressed?
+
+        The firmware stamps a login reply with the sender's 6-byte key prefix when the frame
+        is long enough to carry one; older/terser frames arrive bare. So this matches when
+        there is something to match on and accepts the frame otherwise — the alternative,
+        demanding a prefix, would silently downgrade every refusal from terse firmware into
+        a no-reply and put us back to keeping a password the node has already rejected.
+        """
+        payload = getattr(event, "payload", None) or {}
+        prefix = str(payload.get("pubkey_prefix") or "").lower().removeprefix("0x")
+        return not prefix or pubkey.lower().startswith(prefix)
 
     async def _send_admin_cmd(self, node: Contact, cmd: str, *, timeout: float = 8.0):
         """Send a CLI command to a logged-in remote node and await its reply.
@@ -2326,6 +2361,11 @@ class MockDevice(Device):
         # node's transmit power keyed by full public key. ``_default_remote_tx`` is the
         # assumed power before the optimizer first writes one.
         self._admin_sessions: set[str] = set()
+        # Nodes the simulator answers *nothing* for — the one failure a password cannot
+        # explain. Empty by default, so the simulated mesh is fully reachable as before;
+        # put a contact's name in here to walk the down-repeater path, where a login comes
+        # back NO_REPLY and the remembered credential has to survive it.
+        self._unreachable: set[str] = set()
         self._remote_tx: dict[str, int] = {}
         self._default_remote_tx = 20
         # Each simulated repeater's CLI-visible configuration, populated with the
@@ -2434,12 +2474,14 @@ class MockDevice(Device):
     ) -> None:
         await asyncio.sleep(0)
 
-    async def admin_login(self, node: Contact, password: str) -> bool:  # noqa: D102
+    async def admin_login(self, node: Contact, password: str) -> LoginResult:  # noqa: D102
         await asyncio.sleep(0)
+        if node.name in self._unreachable:
+            return LoginResult.NO_REPLY  # simulates a node that is down or out of range
         if password != self._admin_password:
-            return False
+            return LoginResult.REFUSED
         self._admin_sessions.add(self._mock_key(node))
-        return True
+        return LoginResult.ACCEPTED
 
     #: The simulated repeater CLI's configuration defaults (see send_remote_command).
     _REMOTE_CFG_DEFAULTS = {

@@ -117,9 +117,13 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
 async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
     """Log in to ``node``: remembered password silently, else one floating prompt.
 
-    A working password is remembered; a rejected one is forgotten so the next attempt
-    asks fresh (the app-wide remote-admin convention).
+    A working password is remembered. A *rejected* one is forgotten so the next attempt
+    asks fresh (the app-wide remote-admin convention) — but only rejected: a node that
+    never answered has said nothing about the password, so silence keeps it. Administering
+    a repeater that happened to be down used to erase its credential on the way past.
     """
+    from ..core.models import LoginResult
+
     session = ctx.ui.session
     password = ctx.admin_store.get(node)
     prompted = password is None
@@ -135,9 +139,9 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
         if not password:
             return False
     async with ctx.ui.busy_overlay():
-        accepted = await device.admin_login(node, password)
-    if not accepted:
-        ctx.admin_store.forget(node)
+        outcome = await device.admin_login(node, password)
+    ctx.admin_store.record(node, password, outcome)
+    if outcome is LoginResult.REFUSED:
         await session.message_dialog(
             Text(
                 f"{node.name!r} rejected the admin login (wrong password?). "
@@ -148,7 +152,17 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
             title="Admin login",
         )
         return False
-    ctx.admin_store.remember(node, password)
+    if not outcome:
+        await session.message_dialog(
+            Text(
+                f"No reply from {node.name} — it may be out of reach, asleep, or busy. "
+                + ("" if prompted else "The saved password was kept; ")
+                + "try again when it answers.",
+                style="warn",
+            ),
+            title="Admin login",
+        )
+        return False
     return True
 
 

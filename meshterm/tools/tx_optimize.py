@@ -23,6 +23,7 @@ import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
+from ..core.models import LoginResult
 from ..core.models import Contact
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
@@ -162,18 +163,24 @@ class TxOptimizeTool(Tool):
             params: Tool params (may carry an explicit ``password`` on the CLI).
 
         Raises:
-            DeviceCommandError: If the login is rejected (the stored password, now
-                known bad, is forgotten so the next run asks fresh).
+            DeviceCommandError: If the node rejected the login (the stored password, now
+                known bad, is forgotten so the next run asks fresh) — or if it never
+                answered, in which case the password is untested and is kept.
         """
         device = await ctx.device()
         password = await self._resolve_password(ctx, admin_node, params)
-        if not await device.admin_login(admin_node, password):
-            ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
+        outcome = await device.admin_login(admin_node, password)
+        ctx.admin_store.record(admin_node, password, outcome)
+        if outcome is LoginResult.REFUSED:
             raise DeviceCommandError(
                 f"admin login to {admin_node.name!r} failed (wrong password?). "
                 "The saved password was cleared; re-run to enter a new one."
             )
-        ctx.admin_store.remember(admin_node, password)
+        if not outcome:
+            raise DeviceCommandError(
+                f"{admin_node.name!r} did not answer the admin login — it may be out of "
+                "reach or asleep. The saved password was kept; re-run when it answers."
+            )
 
     # -- scripted (CLI) ---------------------------------------------------------------
 

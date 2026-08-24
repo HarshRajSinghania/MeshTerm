@@ -1434,8 +1434,13 @@ async def _open_session(
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from ..core.connection import DeviceAuthenticationError
-    from ..core.models import LOCAL_DEVICE_LABEL, Contact, NeighbourInfo
+    from ..core.connection import DeviceAuthenticationError, DeviceCommandError
+    from ..core.models import (
+        LOCAL_DEVICE_LABEL,
+        Contact,
+        LoginResult,
+        NeighbourInfo,
+    )
     from ..services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
     from ..services.topology import MeshTopology, _is_hex, build_topology, collapse_width
     from .path_composer import FetchNeighbours, PathComposerScreen
@@ -1616,12 +1621,18 @@ async def _open_session(
         dialog.status = f"logging in to {repeater.name}…"
 
         async def work() -> list[NeighbourInfo]:
-            if not await device.admin_login(repeater, password):
+            outcome = await device.admin_login(repeater, password)
+            ctx.admin_store.record(repeater, password, outcome)
+            if outcome is LoginResult.REFUSED:
                 raise DeviceAuthenticationError(
                     f"{repeater.name!r} rejected the admin login (wrong password?). "
                     "The saved password was cleared; retry to enter a new one."
                 )
-            ctx.admin_store.remember(repeater, password)
+            if not outcome:
+                raise DeviceCommandError(
+                    f"No reply from {repeater.name} — it may be out of reach, asleep, or "
+                    "busy. The saved password was kept; retry when it answers."
+                )
             dialog.status = "fetching the neighbour table…"
             session.invalidate()
             return await device.fetch_neighbours(repeater)
@@ -1659,8 +1670,8 @@ async def _open_session(
             ctx.repo.finish_run(run_id, "error", {"error": "aborted"})
             return False
         if error is not None:
-            if isinstance(error, DeviceAuthenticationError):
-                ctx.admin_store.forget(repeater)  # bad password: don't keep reusing it
+            # The credential was already settled where the outcome was known (see ``work``
+            # and AdminStore.record); an exception here is only ever a message to show.
             ctx.repo.finish_run(
                 run_id, "error", {"error": str(error) or type(error).__name__}
             )

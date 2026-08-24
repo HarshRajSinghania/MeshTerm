@@ -39,7 +39,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN
-from ..core.models import Contact, TraceResult, TxLevelResult, TxOptResult
+from ..core.models import Contact, LoginResult, TraceResult, TxLevelResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..services.topology import build_topology, render_custom_spec
 from .menus import command_icon
@@ -816,9 +816,9 @@ async def open_tx_optimize(
             if not password:
                 return False
         async with ctx.ui.busy_overlay():
-            accepted = await device.admin_login(admin_node, password)
-        if not accepted:
-            ctx.admin_store.forget(admin_node)  # bad password: don't keep reusing it
+            outcome = await device.admin_login(admin_node, password)
+        ctx.admin_store.record(admin_node, password, outcome)
+        if outcome is LoginResult.REFUSED:
             screen.login_text = login_text()
             await session.message_dialog(
                 Text(
@@ -829,7 +829,18 @@ async def open_tx_optimize(
                 title="Admin login",
             )
             return False
-        ctx.admin_store.remember(admin_node, password)
+        if not outcome:
+            # Silence is not a denial: the password stays put for the next attempt.
+            screen.login_text = login_text()
+            await session.message_dialog(
+                Text(
+                    f"No reply from {admin_node.name} — it may be out of reach, asleep, "
+                    "or busy. The saved password was kept; sweep again when it answers.",
+                    style="warn",
+                ),
+                title="Admin login",
+            )
+            return False
         logged_in = True
         screen.login_text = login_text()
         return True

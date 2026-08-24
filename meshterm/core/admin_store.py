@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .models import Contact, utcnow
+from .models import Contact, LoginResult, utcnow
 
 
 def admin_key(node: Contact) -> str:
@@ -104,6 +104,29 @@ class AdminStore:
             "last_used": utcnow().isoformat(),
         }
         self._write(records)
+
+    def record(self, node: Contact, password: str, outcome: LoginResult) -> None:
+        """Update what we remember about ``node`` from how a login attempt ended.
+
+        THE credential policy, in one place because it was wrong in five: a password is
+        remembered when the node accepts it and forgotten when the node *rejects* it — and
+        left exactly as it is when nothing came back. Silence is not a denial. Every caller
+        used to collapse "refused" and "no reply" into one ``False`` and forget on both, so
+        opening the admin flow on a repeater that happened to be down erased its password;
+        the node had said nothing at all, and we took the silence as a verdict.
+
+        Callers still phrase their own message (the sweep says "sweep again", the CLI says
+        "re-run"), but none of them decides this.
+
+        Args:
+            node: The contact the attempt addressed.
+            password: The password that was tried.
+            outcome: What the device reported.
+        """
+        if outcome is LoginResult.ACCEPTED:
+            self.remember(node, password)
+        elif outcome is LoginResult.REFUSED:
+            self.forget(node)
 
     def forget(self, node: Contact) -> None:
         """Remove any remembered password for ``node`` (e.g. after it stops working).
