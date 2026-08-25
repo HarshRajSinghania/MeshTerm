@@ -29,6 +29,14 @@ from .screen import Screen
 #: point at the pin counts screens actually use (a column header and a section heading).
 _PIN_SETTLE_PASSES = 3
 
+#: Rows the splash may shear off the *top* of the wordmark when the terminal is too short
+#: to hold the whole block. Both marks are drawn as a globe standing over the lettering, and
+#: the globe is decoration: on a short screen the box below it — the device list, the PIN
+#: prompt — is what the user came for. Cropping from the top keeps the lettering and its
+#: copyright sitting exactly where they were, so the mark thins rather than moves. The art's
+#: own height bounds this, so a mark drawn without a globe is never sheared into its letters.
+_BANNER_CROP_ROWS = 9
+
 
 def _window_start(scroll: int, total: int, viewport: int, pinned: int) -> int:
     """The body line the visible window starts at, given ``pinned`` reserved top rows.
@@ -377,6 +385,27 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     inner_w = max(measured, cell_len(screen.title), cell_len(sizing_footer))
     inner_w = max(10, min(inner_w, cols - 6))
 
+    # The probe render is the answer whenever it was already made at the width we settled
+    # on — the common case, since a body narrower than the probe *is* what set inner_w.
+    # The splash repaints on every tick while the device list sits there, and rendering
+    # the same body twice was a measured third of that paint on the PicoCalc.
+    body_lines = probe_lines if inner_w == probe else screen.render_body(inner_w)
+    footnote_h = 1 if screen.footnote else 0  # the note sits directly under the logo
+
+    # A terminal too short for the whole block gives rows back in a fixed order, cheapest
+    # first: the blank line under the mark (breathing room, and nothing else), then the top
+    # of the mark itself — the globe over the lettering, up to _BANNER_CROP_ROWS of it. The
+    # lettering and its copyright are the part that says what this is, so they are the part
+    # that never moves: the mark thins from above while the box below keeps its rows. Past
+    # that the block is simply taller than the screen and the trailing clip still applies.
+    short = banner_h + footnote_h + gap + len(body_lines) + 2 - rows
+    if short > 0 and gap:
+        gap = 0
+        short -= 1
+    if short > 0 and banner:
+        banner = banner[min(short, _BANNER_CROP_ROWS, banner_h) :]
+        banner_h = len(banner)
+
     # Pin the banner to a fixed vertical anchor that depends only on the terminal height and
     # the banner's own (constant) height, so the wordmark never moves as the box below it
     # swaps contents between splash states (device list → spinner → message). The box hangs
@@ -385,14 +414,8 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     # once the device list has populated (the box only ever grows downward); the brief small
     # states sit slightly high, the conventional optical placement for dialogs.
     top = max(0, rows * 2 // 5 - banner_h - gap)
-    footnote_h = 1 if screen.footnote else 0  # the note sits directly under the logo
     # Rows left for the box below the fixed banner block: the panel border is 2 rows.
     below = rows - top - banner_h - footnote_h - gap
-    # The probe render is the answer whenever it was already made at the width we settled
-    # on — the common case, since a body narrower than the probe *is* what set inner_w.
-    # The splash repaints on every tick while the device list sits there, and rendering
-    # the same body twice was a measured third of that paint on the PicoCalc.
-    body_lines = probe_lines if inner_w == probe else screen.render_body(inner_w)
     budget = below - 2
     vpad = _breathing_room(len(body_lines), budget)
     viewport = max(1, min(len(body_lines), budget - 2 * vpad))

@@ -760,6 +760,52 @@ def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
 
 
+def test_startup_splash_gives_rows_back_in_order_when_short() -> None:
+    """A short terminal sheds the blank line first, then the top of the mark — never the box.
+
+    The lettering says what the app is and the box is what the user came to use; the globe
+    over the lettering is decoration, so it is what pays. Cropping from the *top* means the
+    lettering holds its place while the mark thins above it.
+    """
+    marks = [f"MARK{i:02d}" for i in range(16)]  # a stand-in with the real mark's height
+
+    def splash(rows: int) -> list[str]:
+        screen = SelectScreen("pick", [Choice("alpha", 1), Choice("beta", 2)])
+        screen.chrome = False
+        screen.banner = list(marks)
+        return Text.from_ansi(frame.compose_startup(screen, 80, rows)).plain.split("\n")
+
+    tall = splash(40)
+    # Roomy: every row of the mark, and a blank line between it and the box.
+    assert all(m in "\n".join(tall) for m in marks)
+    mark_end = max(i for i, line in enumerate(tall) if marks[-1] in line)
+    assert tall[mark_end + 1].strip() == ""
+
+    # Walk the terminal down a row at a time and note when each concession is made. The
+    # exact heights depend on how tall the box below happens to be, so pin the order.
+    gap_lost = cropped = None
+    for rows in range(40, 8, -1):
+        lines = splash(rows)
+        end = max((i for i, ln in enumerate(lines) if marks[-1] in ln), default=None)
+        has_gap = end is not None and end + 1 < len(lines) and lines[end + 1].strip() == ""
+        if gap_lost is None and not has_gap:
+            gap_lost = rows
+        if cropped is None and marks[0] not in "\n".join(lines):
+            cropped = rows
+        if end is not None:  # while any of the mark is drawn, its last row is drawn
+            assert marks[-1] in "\n".join(lines), f"{rows} rows: lost the mark's last row"
+    assert gap_lost is not None, "the blank line was never given back"
+    assert cropped is not None, "the mark was never cropped"
+    assert gap_lost > cropped, "the blank line must go before the mark is cropped"
+
+    # The crop is bounded: the first row past _BANNER_CROP_ROWS is never sheared, however
+    # short the terminal gets. (Below a certain height the block simply outgrows the screen
+    # and the trailing clip takes the bottom — a different mechanism, not the crop.)
+    keeper = marks[frame._BANNER_CROP_ROWS]
+    for rows in range(20, 5, -1):
+        assert keeper in "\n".join(splash(rows)), f"{rows} rows: cropped past the bound"
+
+
 def test_startup_splash_fits_every_platform_width() -> None:
     """The real wordmark, drawn at each platform's own width, never overruns it.
 
