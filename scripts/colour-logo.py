@@ -2,7 +2,7 @@
 """Colour a plain-text wordmark into the pre-coloured ANSI the splash draws.
 
 The art itself is hand-drawn and lives in ``meshterm/assets`` as a ``.txt``; this paints
-it and writes the matching ``.ansi`` beside it, so the colour scheme is stated once here
+it and writes the matching ``.ans`` beside it, so the colour scheme is stated once here
 rather than re-typed into every escape sequence by hand.
 
     python scripts/colour-logo.py                 # repaint every asset/*.txt
@@ -64,7 +64,7 @@ def main() -> None:
     names = sys.argv[1:] or sorted(p.stem for p in ASSETS.glob("*.txt"))
     for name in names:
         source = ASSETS / f"{name}.txt"
-        target = ASSETS / f"{name}.ansi"
+        target = ASSETS / f"{name}.ans"
         target.write_text(colour(source.read_text(encoding="utf-8")), encoding="utf-8")
         print(f"{source.name} -> {target.name}")
 
