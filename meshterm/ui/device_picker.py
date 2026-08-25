@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Mapping, Optional
 from rich.cells import cell_len
 from rich.text import Text
 
-from .. import copyright_notice
 from ..core.config import DeviceProfile
 from ..core.connection import DeviceAuthenticationError, DeviceCommandError
 from ..core.device_store import DeviceStore, RememberedDevice
@@ -204,7 +203,6 @@ async def _smoke_test(
                 verify(chosen, pin),
                 title="Checking companion",
                 banner=load_logo(),
-                footnote=copyright_notice(),
             )
         except DeviceAuthenticationError:
             # The device answered the scan but won't connect until it's bonded (or the last PIN
@@ -214,7 +212,6 @@ async def _smoke_test(
                 error=pin_error,
                 help_text="The 6-digit code shown on the device or in the MeshCore app",
                 banner=load_logo(),
-                footnote=copyright_notice(),
             )
             if entered is None:
                 return None  # the user gave up → back to the device list
@@ -228,7 +225,7 @@ async def _smoke_test(
             notice.append(str(exc), style="warn")
             notice.append("\nChoose another device.")
             await ui.notify_startup(
-                notice, title="Can't connect yet", banner=load_logo(), footnote=copyright_notice()
+                notice, title="Can't connect yet", banner=load_logo()
             )
             return None
 
@@ -252,7 +249,6 @@ async def _smoke_test(
                 ),
                 title="Not a MeshCore device",
                 banner=load_logo(),
-                footnote=copyright_notice(),
             )
             return None
 
@@ -317,7 +313,6 @@ async def prompt_device(
             items,
             default=default,
             banner=load_logo(),
-            footnote=copyright_notice(),
         )
         # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
         # caller as ``None`` so it can exit the program instead of continuing device-less.
@@ -500,7 +495,6 @@ async def _add_network_device(
         validate=_validate,
         help_text=f"host or host:port — the port defaults to {DEFAULT_TCP_PORT}",
         banner=load_logo(),
-        footnote=copyright_notice(),
     )
     if entered is None:
         return None  # cancelled → back to the device list
@@ -550,7 +544,6 @@ async def _remove_network_device(
         title="Remove network device",
         confirm_label="Remove",
         banner=load_logo(),
-        footnote=copyright_notice(),
         backdrop_items=backdrop_items,
         backdrop_default=device,
     )

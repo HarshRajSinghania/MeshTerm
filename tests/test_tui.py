@@ -1140,8 +1140,8 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     asyncio.run(prompt_device(_Ui(), devices, store, _never))
     # The banner (wordmark) is passed through so the splash can draw it.
     assert captured["banner"] and any("█" in row for row in captured["banner"])
-    # A copyright footnote rides along for the splash to render beside the logo.
-    assert captured["footnote"] == copyright_notice()
+    # No footnote: the wordmark carries its own copyright, so the splash adds none.
+    assert captured["footnote"] is None
     # Each device row's port sits at the same column, proving the name column is padded.
     rows = [
         it.label.plain if hasattr(it.label, "plain") else it.label
@@ -1562,8 +1562,8 @@ def test_device_picker_smoke_tests_and_reprompts(tmp_path) -> None:
     assert store.is_known(devices[0])
 
 
-def test_device_picker_shows_copyright_on_every_splash(tmp_path) -> None:
-    """The copyright rides along the logo on every splash — picker, spinner, and notices."""
+def test_device_picker_leaves_the_copyright_to_the_wordmark(tmp_path) -> None:
+    """No splash states the copyright itself — the wordmark's own art already carries it."""
     from meshterm.core.device_store import DeviceStore
     from meshterm.core.discovery import DiscoveredDevice
     from meshterm.ui.device_picker import prompt_device
@@ -1591,10 +1591,11 @@ def test_device_picker_shows_copyright_on_every_splash(tmp_path) -> None:
         return results.pop(0)
 
     asyncio.run(prompt_device(_Ui(), devices, store, verify))
-    # Every splash draws the logo, so every splash carries the copyright beside it — the
-    # opening picker, the smoke-test spinner, the failure notice, and the re-opened picker.
+    # Every splash draws the logo, and the logo is where the copyright lives now — so none
+    # of them adds a line of its own: not the opening picker, the smoke-test spinner, the
+    # failure notice, nor the re-opened picker.
     assert len(footnotes) > 1
-    assert all(footnote == copyright_notice() for _kind, footnote in footnotes)
+    assert all(footnote is None for _kind, footnote in footnotes)
 
 
 def test_device_picker_prompts_and_retries_ble_pin(tmp_path) -> None:

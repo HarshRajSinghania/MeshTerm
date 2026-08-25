@@ -11,3 +11,9 @@
 # Patch files are fed to `git apply` against LF sources; a CR sneaking into a context line
 # is how a patch that applied yesterday stops applying on somebody else's checkout.
 *.patch text eol=lf
+
+# ANSI art is bytes, not text: codepage 437 rather than UTF-8, a SAUCE record on the end
+# whose FileSize counts them, and CRLFs that are part of the canvas. Git guessed "binary"
+# only because the art carried NULs for its blank cells; those are spaces now, so say it
+# outright before core.autocrlf starts rewriting a wordmark's line endings.
+*.ans -text

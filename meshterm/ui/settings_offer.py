@@ -122,7 +122,6 @@ async def offer_remembered_settings(ctx: AppContext) -> None:
 
 async def _prompt(ctx: AppContext, drifted: list[SettingDrift]) -> object:
     """Show the startup offer and return the chosen action, or ``None`` if dismissed."""
-    from .. import copyright_notice
     from .logo import load_logo
 
     count = len(drifted)
@@ -160,7 +159,6 @@ async def _prompt(ctx: AppContext, drifted: list[SettingDrift]) -> object:
         items,
         default=_RESTORE,
         banner=load_logo(),
-        footnote=copyright_notice(),
     )
 
 

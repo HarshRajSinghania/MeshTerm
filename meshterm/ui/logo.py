@@ -8,8 +8,8 @@ an ANSI-art editor arrives already finished and has no source but itself. Files 
 fresh on every call, so the wordmark can be re-styled by editing the art alone: no code
 change and no restart of the design loop.
 
-Two things separate a real ``.ans`` from a text file with colour in it, and :func:`_rows`
-handles both so the art stays authorable in the tools that drew it:
+Three things separate a real ``.ans`` from a text file with colour in it, and :func:`_rows`
+handles them all so the art stays authorable in the tools that drew it:
 
 * **Codepage 437.** The blocks and box-drawing (``█▓▒░`` and ``╔═╗``) are single bytes in
   DOS's codepage, not UTF-8. We try UTF-8 first and fall back, so a mark we generated
@@ -18,6 +18,9 @@ handles both so the art stays authorable in the tools that drew it:
   lets the terminal wrap it, so the file's newlines are *not* the picture's rows. The
   canvas width comes from the SAUCE record on the end of the file — which has to be
   trimmed off in the same breath, being metadata rather than art.
+* **Blank cells that aren't spaces.** An editor writes an untouched cell as a NUL, and a
+  DOS console dutifully leaves it blank. Rich measures it as nothing at all, so every one
+  swallowed a column and slid the rest of its row leftwards.
 
 There is more than one mark, at different widths, and the *screen* picks — not the
 platform. A 53-column PicoCalc console and a desktop terminal dragged narrow have the same
@@ -50,6 +53,11 @@ _SGR = re.compile(r"\x1b\[[0-9;]*m")
 #: the author, the canvas and the font. None of it is meant to reach the screen.
 _EOF_MARK = b"\x1a"
 _SAUCE_LEN = 128
+
+#: Cells a DOS console draws blank but a modern renderer would swallow or mis-measure: NUL
+#: is how an art editor spells "nothing here", and codepage 437's 0xff is a hard space.
+#: Both become a plain space, so the column they hold survives into the frame.
+_BLANK_CELLS = {0x00: " ", 0xA0: " "}
 
 
 def _split_sauce(raw: bytes) -> tuple[bytes, Optional[int]]:
@@ -121,7 +129,8 @@ def _rows(name: str) -> list[str]:
     except OSError:
         return []
     art, width = _split_sauce(raw)
-    lines = [line.rstrip("\r") for line in _decode(art).split("\n")]
+    text = _decode(art).translate(_BLANK_CELLS)
+    lines = [line.rstrip("\r") for line in text.split("\n")]
     if lines and lines[-1] == "":  # drop the trailing newline's empty row
         lines.pop()
     if width:
