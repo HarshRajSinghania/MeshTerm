@@ -18,6 +18,7 @@ import logging
 import random
 import sys
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -158,6 +159,37 @@ class DeviceCommandError(RuntimeError):
     """
 
 
+class ContactNotOnDeviceError(DeviceCommandError):
+    """The companion has no contact matching the recipient, so it cannot address it.
+
+    Firmware addresses a direct message by looking the recipient up in *its own* contact
+    table (by a prefix of the public key) and answers ``ERR_CODE_NOT_FOUND`` when nothing
+    matches — the one send rejection with an obvious fix: put the contact back on the
+    device. A distinct :class:`DeviceCommandError` subclass so the chat screen can offer
+    exactly that (see :func:`~meshterm.ui.chat.open_chat`) while every other caller keeps
+    treating it as an ordinary command failure.
+
+    This is reachable for a contact MeshTerm itself listed, because the contact list a
+    screen sees is the union of the device's live table and the ones MeshTerm remembers
+    for it (see :mod:`meshterm.core.contact_store`): a contact the firmware has since
+    dropped still lists, and only the send finds out it is gone.
+
+    Attributes:
+        contact: The recipient the device could not find.
+    """
+
+    def __init__(self, contact: Contact) -> None:
+        """Explain the rejection in terms of the contact the device could not find.
+
+        Args:
+            contact: The recipient the companion has no entry for.
+        """
+        super().__init__(
+            f"{contact.name} isn't in this device's contacts — add it back to send."
+        )
+        self.contact = contact
+
+
 class DeviceAuthenticationError(DeviceCommandError):
     """A Bluetooth companion refused the connection because it needs a pairing PIN/bond.
 
@@ -167,6 +199,84 @@ class DeviceAuthenticationError(DeviceCommandError):
     class) prints the message and bails, since it can't prompt. The message already names the
     fix (``--ble-pin`` and OS pairing).
     """
+
+
+#: ``ERR_CODE_NOT_FOUND`` — the companion has no entry matching what a command addressed.
+_ERR_NOT_FOUND = 2
+
+#: What each companion error code means, in a sentence that finishes "the device …".
+#: The wire carries only the number and the library's ``ERR_CODE_*`` spelling (see
+#: ``meshcore.events.ErrorMessages``), which is diagnostic text, not something to put in
+#: front of a user — :func:`reject_reason` turns it into the sentence below.
+_ERROR_REASONS = {
+    1: "the firmware doesn't support that command",
+    2: "the device has no contact with that key",
+    3: "the device's table is full",
+    4: "the device isn't in a state to do that",
+    5: "the device hit a storage error",
+    6: "the device rejected the request as malformed",
+}
+
+
+def _clip_utf8(text: str, limit: int) -> str:
+    """Trim ``text`` to at most ``limit`` UTF-8 bytes, never splitting a character.
+
+    Firmware fields are byte-sized, not character-sized, so a name with an accent in it can
+    overrun a field it looks short enough for.
+
+    Args:
+        text: The value to fit.
+        limit: The field's size in bytes.
+
+    Returns:
+        ``text`` itself when it fits, else its longest whole-character prefix that does.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return encoded[:limit].decode("utf-8", "ignore")
+
+
+def error_code(result) -> Optional[int]:  # noqa: ANN001
+    """Return the companion error code carried by a rejected command's event, if any.
+
+    Args:
+        result: The :class:`meshcore.events.Event` a command returned (or ``None``).
+
+    Returns:
+        The ``error_code`` from the event's payload, or ``None`` when the rejection carried
+        no code (an absent reply, or a payload shaped some other way).
+    """
+    payload = getattr(result, "payload", {}) or {}
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return int(payload["error_code"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def reject_reason(result) -> str:  # noqa: ANN001
+    """Explain a rejected command in one clause, for the end of a user-facing sentence.
+
+    A rejection reaches us as ``{'error_code': 2, 'code_string': 'ERR_CODE_NOT_FOUND'}``;
+    pasting that dict into a status line (which is what every raise site used to do) shows
+    the user a wire constant and leaves them no wiser. This maps the code to plain words,
+    falling back to the raw payload only for a rejection with no code we know.
+
+    Args:
+        result: The :class:`meshcore.events.Event` a command returned (or ``None``).
+
+    Returns:
+        A lowercase clause naming the cause, e.g. ``"the device's table is full"``.
+    """
+    code = error_code(result)
+    if code in _ERROR_REASONS:
+        return _ERROR_REASONS[code]
+    if result is None:
+        return "the device didn't answer"
+    payload = getattr(result, "payload", {}) or {}
+    return f"the device rejected it ({payload})"
 
 
 #: Exception class names that signal the link to the companion has dropped — the device was
@@ -390,6 +500,26 @@ class Device(ABC):
 
         Returns:
             The list of :class:`Contact` records currently stored on the device.
+        """
+
+    @abstractmethod
+    async def add_contact(self, node: Contact) -> None:
+        """Add (or update) a contact in the device's contact table.
+
+        The inverse of :meth:`remove_contact`, and the fix for a node MeshTerm knows but the
+        firmware has forgotten: a direct message is addressed by the *device's* own contact
+        entry, so a contact missing from its table can't be messaged at all
+        (:class:`ContactNotOnDeviceError`) until it is written back. Everything the entry
+        needs travels on the contact — its public key, name, type and last advertised
+        position — and it is added with no learned route, so the first message floods
+        exactly as it would for a freshly-heard node.
+
+        Args:
+            node: The contact to write; must carry a full public key.
+
+        Raises:
+            DeviceCommandError: If the contact carries no public key to address it by, or
+                the device rejected the write (a full contact table, most often).
         """
 
     @abstractmethod
@@ -1576,6 +1706,39 @@ class MeshCoreDevice(Device):
             )
         return contacts
 
+    #: How many bytes of a name the firmware's contact record holds (a 32-byte field).
+    _CONTACT_NAME_BYTES = 32
+
+    async def add_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
+        mc = self._require()
+        pub = self._node_pubkey(node)  # raises DeviceCommandError if it has no key
+        if len(pub) != 64:
+            raise DeviceCommandError(
+                f"{node.name} is known only by a key prefix, so it can't be added to the "
+                "device — receive an advert from it first."
+            )
+        # The library writes contacts through one add-or-update frame, from a record shaped
+        # exactly like the one a contacts read yields; a flood route (``out_path_len`` -1) is
+        # what a freshly-heard contact carries, and the device relearns a path from received
+        # traffic as usual.
+        record = {
+            "public_key": pub,
+            "type": int(node.node_type if node.node_type is not None else NODE_TYPE_CHAT),
+            "flags": 0,
+            "out_path": "",
+            "out_path_len": -1,
+            "out_path_hash_mode": 0,
+            "adv_name": _clip_utf8(node.name, self._CONTACT_NAME_BYTES),
+            "last_advert": int(node.last_seen.timestamp()) if node.last_seen else 0,
+            "adv_lat": float(node.lat or 0.0),
+            "adv_lon": float(node.lon or 0.0),
+        }
+        result = await mc.commands.add_contact(record)
+        if result is None or getattr(result, "is_error", lambda: False)():
+            raise DeviceCommandError(
+                f"couldn't add {node.name} to the device: {reject_reason(result)}"
+            )
+
     async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
         mc = self._require()
         pub = self._node_pubkey(node)  # raises DeviceCommandError if it has no key
@@ -1784,8 +1947,8 @@ class MeshCoreDevice(Device):
         sent = await mc.commands.send_cmd(pub, cmd)
         if sent is not None and getattr(sent, "is_error", lambda: False)():
             raise DeviceCommandError(
-                f"failed to send admin command {cmd!r} to {node.name!r}: "
-                f"{getattr(sent, 'payload', {})}"
+                f"couldn't send admin command {cmd!r} to {node.name}: "
+                f"{reject_reason(sent)}"
             )
         reply = await mc.wait_for_event(EventType.CONTACT_MSG_RECV, timeout=timeout)
         if reply is None:
@@ -2190,9 +2353,13 @@ class MeshCoreDevice(Device):
         pub = self._node_pubkey(contact)
         result = await mc.commands.send_msg(pub, text)
         if result is None or getattr(result, "is_error", lambda: False)():
+            # A recipient the firmware has no entry for is the one rejection with an obvious
+            # fix, so it gets its own class for the chat screen to offer that fix on; see
+            # :class:`ContactNotOnDeviceError` for how a listed contact can be missing here.
+            if error_code(result) == _ERR_NOT_FOUND:
+                raise ContactNotOnDeviceError(contact)
             raise DeviceCommandError(
-                f"failed to send message to {contact.name!r}: "
-                f"{getattr(result, 'payload', {})}"
+                f"couldn't send to {contact.name}: {reject_reason(result)}"
             )
         # The companion acknowledges the send immediately with an ``expected_ack`` code and
         # a suggested wait; the recipient's delivery ACK arrives later carrying that code.
@@ -2227,7 +2394,7 @@ class MeshCoreDevice(Device):
             RuntimeError: If the device reported an error.
         """
         if event is not None and getattr(event, "is_error", lambda: False)():
-            raise RuntimeError(f"device rejected command: {getattr(event, 'payload', {})}")
+            raise RuntimeError(f"device rejected the command: {reject_reason(event)}")
         return event
 
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
@@ -2558,6 +2725,14 @@ class MockDevice(Device):
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
         return list(self._contacts)
 
+    async def add_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
+        await asyncio.sleep(0)
+        key = self._mock_key(node)
+        self._contacts = [c for c in self._contacts if self._mock_key(c) != key]
+        # Added with no learned route, exactly as the firmware stores a contact it was
+        # handed rather than heard from.
+        self._contacts.append(replace(node, route_hops=None))
+
     async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
         await asyncio.sleep(0)
         key = self._mock_key(node)
@@ -2573,8 +2748,13 @@ class MockDevice(Device):
         self, contact: Contact, text: str
     ) -> Optional[Ack]:
         await asyncio.sleep(0)
-        # The simulator "delivers" instantly and always acknowledges, so outbound direct
-        # messages show as acked without a radio.
+        # Firmware can only address a contact it holds, so a recipient this simulated device
+        # doesn't have is refused exactly as hardware refuses one — which is what makes the
+        # chat screen's "add it back and send" offer walkable on the simulator.
+        if self._mock_key(contact) not in {self._mock_key(c) for c in self._contacts}:
+            raise ContactNotOnDeviceError(contact)
+        # Otherwise the simulator "delivers" instantly and always acknowledges, so outbound
+        # direct messages show as acked without a radio.
         return Ack(code="mock")
 
     async def send_channel_message(  # noqa: D102 - inherited docstring

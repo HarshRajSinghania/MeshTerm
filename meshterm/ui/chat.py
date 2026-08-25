@@ -23,6 +23,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from ..core.channels import split_channel_sender
+from ..core.connection import ContactNotOnDeviceError
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
 from .theme import name_style, snr_style
@@ -1002,14 +1003,18 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
                 conversation.channel_idx, text, label=conversation.label
             )
         assert conversation.contact is not None
-        return await ctx.chat.send_direct(conversation.contact, text)
+        return await _with_restore(
+            ctx, lambda: ctx.chat.send_direct(conversation.contact, text)
+        )
 
     resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None
     if not conversation.is_channel:
 
         async def resend(message: ChatMessage) -> ChatMessage:
             assert conversation.contact is not None
-            return await ctx.chat.resend_direct(conversation.contact, message)
+            return await _with_restore(
+                ctx, lambda: ctx.chat.resend_direct(conversation.contact, message)
+            )
 
     paths = await _make_paths_presenter(ctx, conversation, device)
     screen = ChatScreen(
@@ -1041,6 +1046,74 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         unsubscribe()
         ctx.chat.set_active(None)
     return len(screen._messages)
+
+
+async def _with_restore(ctx: "AppContext", attempt: Callable[[], Awaitable[Any]]) -> Any:
+    """Run a direct send, offering to restore a contact the device has forgotten, then retry.
+
+    The one rejection a send can recover from: the firmware has no contact for the recipient
+    (see :class:`~meshterm.core.connection.ContactNotOnDeviceError`), which one write puts
+    right. The user is asked first (:func:`_restore_contact`); declining re-raises, so the
+    chat reports the refusal exactly as it reports any other failed send.
+
+    Args:
+        ctx: The shared application context.
+        attempt: The send to run — called a second time, unchanged, once the contact is back.
+
+    Returns:
+        Whatever ``attempt`` returns.
+
+    Raises:
+        Exception: Anything ``attempt`` raises; a forgotten-contact rejection is re-raised
+            only when the offer to add it back was declined.
+    """
+    try:
+        return await attempt()
+    except ContactNotOnDeviceError as missing:
+        if not await _restore_contact(ctx, missing):
+            raise
+        return await attempt()
+
+
+async def _restore_contact(ctx: "AppContext", missing: ContactNotOnDeviceError) -> bool:
+    """Offer to write a forgotten contact back to the device; ``True`` if it now holds it.
+
+    A direct message is addressed by the *device's* own contact entry, so a contact the
+    firmware has dropped can't be messaged even though MeshTerm still lists it (the list a
+    screen sees is the union of the device's table and the ones MeshTerm remembers for it —
+    see :mod:`meshterm.core.contact_store`). Everything the entry needs is on the contact we
+    already hold, so the fix is one write; the send that hit the rejection retries after it.
+
+    The write is offered rather than done silently: it changes what the device stores, and a
+    full contact table refuses it (which is worth seeing, not swallowing).
+
+    Args:
+        ctx: The shared application context.
+        missing: The rejection, carrying the contact the device couldn't find.
+
+    Returns:
+        ``True`` once the contact is on the device (retry the send), ``False`` if the user
+        declined — in which case the caller re-raises, so the chat reports the refusal.
+
+    Raises:
+        DeviceCommandError: If the device refused the write (a full table, most often).
+    """
+    contact = missing.contact
+    add = await ctx.ui.dialog(
+        f"{contact.name} isn't in this device's contacts, so the radio can't address it. "
+        "Add it back and send?",
+        [("Cancel", False), ("Add & send", True)],
+        title="Contact not on device",
+        default=1,
+    )
+    if not add:
+        return False
+    device = await ctx.device()
+    await device.add_contact(contact)
+    # The device's table just changed under the session cache; the next read re-fetches it
+    # (with the route the firmware learns for the contact from here on).
+    ctx.devstate.invalidate_contacts()
+    return True
 
 
 def _contact_names(contacts: list[Contact]) -> dict[str, str]:

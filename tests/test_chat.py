@@ -111,6 +111,171 @@ async def test_mock_send_direct_returns_ack() -> None:
     await device.disconnect()
 
 
+async def test_sending_to_a_contact_the_device_forgot_is_refused_by_name() -> None:
+    """A recipient the radio has no entry for is refused in words, naming the contact.
+
+    MeshTerm lists the union of the device's contacts and the ones it remembers for that
+    device, so a contact the firmware dropped still appears and only the send finds out.
+    The rejection has to carry the contact, so the chat can offer to write it back.
+    """
+    from meshterm.core.connection import ContactNotOnDeviceError
+
+    device = MockDevice()
+    await device.connect()
+    stranger = Contact(name="bob_caribou", public_key="a3" * 32, key_prefix="a3a3a3a3")
+    with pytest.raises(ContactNotOnDeviceError) as caught:
+        await device.send_direct_message(stranger, "hello")
+    assert caught.value.contact is stranger
+    assert "bob_caribou" in str(caught.value)
+    assert "error_code" not in str(caught.value)  # never the wire payload
+    await device.disconnect()
+
+
+async def test_adding_a_forgotten_contact_back_makes_it_messageable() -> None:
+    """Writing the contact to the device is the whole fix — the same send then lands."""
+    device = MockDevice()
+    await device.connect()
+    stranger = Contact(name="bob_caribou", public_key="a3" * 32, key_prefix="a3a3a3a3")
+    await device.add_contact(stranger)
+    assert "bob_caribou" in {c.name for c in await device.get_contacts()}
+    assert await device.send_direct_message(stranger, "hello") is not None
+    await device.disconnect()
+
+
+async def test_restore_contact_writes_only_when_the_dialog_is_accepted() -> None:
+    """The device write is offered, not silent — declining leaves the table untouched."""
+    from meshterm.core.connection import ContactNotOnDeviceError
+    from meshterm.ui.chat import _restore_contact
+
+    class _Ui:
+        def __init__(self, answer: bool) -> None:
+            self.answer = answer
+            self.prompt = ""
+
+        async def dialog(self, prompt, buttons, **kwargs):  # noqa: ANN001, ANN003
+            self.prompt = prompt
+            return self.answer
+
+    class _Devstate:
+        def __init__(self) -> None:
+            self.invalidated = 0
+
+        def invalidate_contacts(self) -> None:
+            self.invalidated += 1
+
+    class _Ctx:
+        def __init__(self, device: MockDevice, answer: bool) -> None:
+            self._device = device
+            self.ui = _Ui(answer)
+            self.devstate = _Devstate()
+
+        async def device(self) -> MockDevice:
+            return self._device
+
+    stranger = Contact(name="bob_caribou", public_key="a3" * 32, key_prefix="a3a3a3a3")
+    missing = ContactNotOnDeviceError(stranger)
+
+    device = MockDevice()
+    await device.connect()
+    before = len(await device.get_contacts())
+
+    declined = _Ctx(device, answer=False)
+    assert await _restore_contact(declined, missing) is False
+    assert len(await device.get_contacts()) == before
+    assert declined.devstate.invalidated == 0
+    assert "bob_caribou" in declined.ui.prompt
+
+    accepted = _Ctx(device, answer=True)
+    assert await _restore_contact(accepted, missing) is True
+    assert len(await device.get_contacts()) == before + 1
+    assert accepted.devstate.invalidated == 1
+    await device.disconnect()
+
+
+async def test_a_declined_restore_lets_the_rejection_stand() -> None:
+    """The send retries once the contact is back, and reports the refusal when it isn't."""
+    from meshterm.core.connection import ContactNotOnDeviceError
+    from meshterm.ui.chat import _with_restore
+
+    stranger = Contact(name="bob_caribou", public_key="a3" * 32)
+    tries = 0
+
+    async def attempt() -> str:
+        nonlocal tries
+        tries += 1
+        if tries == 1:
+            raise ContactNotOnDeviceError(stranger)
+        return "sent"
+
+    class _Ctx:
+        def __init__(self, restored: bool) -> None:
+            self.restored = restored
+
+    async def restore(ctx, missing) -> bool:  # noqa: ANN001
+        return ctx.restored
+
+    import meshterm.ui.chat as chat_module
+
+    original = chat_module._restore_contact
+    chat_module._restore_contact = restore
+    try:
+        with pytest.raises(ContactNotOnDeviceError):
+            await _with_restore(_Ctx(restored=False), attempt)
+        assert tries == 1  # declined: no second transmission
+        tries = 0
+        assert await _with_restore(_Ctx(restored=True), attempt) == "sent"
+        assert tries == 2  # the same send, run again once the contact was written back
+    finally:
+        chat_module._restore_contact = original
+
+
+def test_a_rejected_command_is_explained_in_words_not_wire_codes() -> None:
+    """Error codes become sentences; only an unrecognised rejection shows its payload."""
+    from meshterm.core.connection import reject_reason
+
+    class _Ev:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+    assert reject_reason(_Ev({"error_code": 2})) == "the device has no contact with that key"
+    assert reject_reason(_Ev({"error_code": 3})) == "the device's table is full"
+    assert reject_reason(None) == "the device didn't answer"
+    assert "97" in reject_reason(_Ev({"error_code": 97}))
+
+
+async def test_add_contact_writes_a_flood_record_with_the_name_the_field_fits() -> None:
+    """The record the firmware gets carries no learned route and a byte-clipped name."""
+    from meshterm.core.connection import MeshCoreDevice
+
+    class _Ok:
+        payload: dict = {}
+
+        def is_error(self) -> bool:
+            return False
+
+    class _FakeContacts:
+        def __init__(self) -> None:
+            self.record = None
+
+        async def add_contact(self, record):  # noqa: ANN001
+            self.record = record
+            return _Ok()
+
+    class _FakeMc:
+        def __init__(self) -> None:
+            self.commands = _FakeContacts()
+
+    device = MeshCoreDevice.__new__(MeshCoreDevice)
+    mc = _FakeMc()
+    device._require = lambda: mc  # type: ignore[method-assign]
+    long_name = "é" * 40  # 80 bytes: twice what the firmware's name field holds
+    await device.add_contact(Contact(name=long_name, public_key="a3" * 32, node_type=1))
+    record = mc.commands.record
+    assert record["out_path_len"] == -1 and record["out_path"] == ""
+    assert len(record["adv_name"].encode("utf-8")) == 32
+    assert record["public_key"] == "a3" * 32
+
+
 async def test_message_pump_drains_until_empty() -> None:
     """The RX pump pulls get_msg() until the queue is empty (the pull model).
 
