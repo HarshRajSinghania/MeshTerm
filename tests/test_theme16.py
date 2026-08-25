@@ -375,14 +375,16 @@ def test_specimen_renders_clean_on_picocalc() -> None:
             assert ord(ch) in FONT_CODEPOINTS, f"line {i} char {ch!r} outside the font"
 
 
-def test_narrow_wordmark_keeps_its_dim_row_off_the_bright_bank() -> None:
-    """Every span of the wordmark's dim-slot row states its intensity.
+def test_narrow_wordmark_keeps_its_dim_rows_off_the_bright_bank() -> None:
+    """Every dim-bank span of the wordmark states its own intensity.
 
-    The mark alternates letter blocks with slate bevels, so a row painted on the dim bank
-    is a run of ``3N`` spans each following a ``90``. Bare, they inherit the console's
-    intensity bit and half the row renders a bank too bright — the narrow mark's fourth
-    row came out part red (slot 1), part light red (slot 9), split at every span that
-    followed a bevel.
+    An art editor spells brightness the DOS way — a ``1m`` lifts the bank and every span
+    after it inherits that — which only reads correctly while the escapes stay one unbroken
+    stream. A row reaches the console on its own, and bold *is* the bright bank there, so a
+    span that never mentions intensity is read against whatever happened to be set: the
+    narrow mark's letter row came out part red (slot 1), part light red (slot 9), splitting
+    at every span that followed a bevel. The art is redrawn from time to time, so this
+    pins the rule rather than the picture — no row index, no particular colour.
     """
     from meshterm.ui.logo import load_logo
     from meshterm.ui.tui.frame import _banner_lines
@@ -390,12 +392,17 @@ def test_narrow_wordmark_keeps_its_dim_row_off_the_bright_bank() -> None:
     set_platform(PICOCALC)
     rows = _banner_lines(load_logo(53), 53)
     assert rows, "the 53-column mark should fit a 53-column console"
-    for i, row in enumerate(rows):
-        for sgr in re.findall(r"\x1b\[([0-9;]*)m", row):
-            assert not re.fullmatch(r"3[0-7]", sgr), f"bare dim-bank SGR on row {i}: {row!r}"
-    # The fourth row is the mark's only dim-slot row, and it is one colour throughout.
-    reds = set(re.findall(r"\x1b\[([0-9;]+)m(?=█)", rows[3]))
-    assert reds == {"22;31"}, reds
+    dim = [
+        sgr
+        for row in rows
+        for sgr in re.findall(r"\x1b\[([0-9;]*)m", row)
+        if any(re.fullmatch(r"3[0-7]", part) for part in sgr.split(";"))
+    ]
+    # Without this the loop below would pass on a mark that never touches the dim bank.
+    assert dim, "the mark paints on the dim bank somewhere, or this check says nothing"
+    for sgr in dim:
+        parts = sgr.split(";")
+        assert any(p in {"0", "1", "2", "22"} for p in parts), f"unstated intensity: {sgr!r}"
 
 
 # -- relocated marks stay importable from their old homes -----------------------------

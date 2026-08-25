@@ -48,6 +48,15 @@ _VARIANTS: tuple[str, ...] = ("logo.ans", "logo_53.ans")
 #: a row only ever has to carry a *colour* across the seam — never a cursor move.
 _SGR = re.compile(r"\x1b\[[0-9;]*m")
 
+#: A foreground on the dim bank, said without a word about intensity. Bold *is* brightness
+#: on the PicoCalc console, so a bare one inherits whatever the span before it left set and
+#: lands a bank too high — the theme's own styles state their intent for the same reason.
+_DIM_FG = re.compile(r"3[0-7]")
+
+#: Parameters that settle the intensity question themselves, so a span carrying one needs
+#: no help: a reset, bold, faint, or an explicit return to normal.
+_SAYS_INTENSITY = frozenset({"", "0", "1", "2", "22"})
+
 #: SAUCE rides on the end of an art file behind DOS's end-of-file mark: 128 bytes naming
 #: the author, the canvas and the font. None of it is meant to reach the screen.
 _EOF_MARK = b"\x1a"
@@ -121,6 +130,39 @@ def _rewrap(line: str, width: int) -> list[str]:
     return rows
 
 
+def _state_intensity(row: str) -> str:
+    """Rewrite the row's colour changes so every one says whether it is bright.
+
+    An art editor spells brightness the DOS way — ``1m`` lifts the bank and each span after
+    it inherits that — which reads correctly only while the escapes stay one unbroken
+    stream. They don't here: a row is handed to Rich on its own, and the console draws bold
+    *as* the bright bank, so a span that never mentions intensity is read against whatever
+    happened to be set. Saying it outright changes no colour; it just stops one drifting.
+    """
+    out: list[str] = []
+    bright = False
+    at = 0
+    while at < len(row):
+        found = _SGR.match(row, at)
+        if not found:
+            out.append(row[at])
+            at += 1
+            continue
+        params = found.group()[2:-1]
+        parts = params.split(";") if params else [""]
+        for part in parts:  # what this sequence leaves the intensity set to
+            if part in ("", "0", "22"):
+                bright = False
+            elif part == "1":
+                bright = True
+        if any(_DIM_FG.fullmatch(p) for p in parts) and not any(p in _SAYS_INTENSITY for p in parts):
+            out.append("\x1b[" + ";".join(["1" if bright else "22"] + parts) + "m")
+        else:
+            out.append(found.group())
+        at = found.end()
+    return "".join(out)
+
+
 def _rows(name: str) -> list[str]:
     """The named mark's rows, or ``[]`` when it can't be read."""
     try:
@@ -133,8 +175,8 @@ def _rows(name: str) -> list[str]:
     if lines and lines[-1] == "":  # drop the trailing newline's empty row
         lines.pop()
     if width:
-        return [row for line in lines for row in _rewrap(line, width)]
-    return lines
+        lines = [row for line in lines for row in _rewrap(line, width)]
+    return [_state_intensity(row) for row in lines]
 
 
 def logo_width(rows: list[str]) -> int:
