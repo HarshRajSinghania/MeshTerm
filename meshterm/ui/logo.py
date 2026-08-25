@@ -2,18 +2,17 @@
 
 The art itself lives in ``meshterm/assets`` as pre-coloured ``.ans`` files — the classic
 ANSI-art extension, kept short because the editors that draw this stuff are old and
-particular about 8.3 names. A ``.txt`` beside one is its hand-drawn source for marks we
-colour ourselves (``scripts/colour-logo.py`` paints one into the other); a mark drawn in
-an ANSI-art editor arrives already finished and has no source but itself. Files are read
-fresh on every call, so the wordmark can be re-styled by editing the art alone: no code
-change and no restart of the design loop.
+particular about 8.3 names. Each mark is drawn by hand in one of those editors and needs
+no source but itself: there is nothing here that generates a wordmark, and nothing to
+re-run after editing one. Files are read fresh on every call, so the mark can be re-styled
+by editing the art alone: no code change and no restart of the design loop.
 
 Three things separate a real ``.ans`` from a text file with colour in it, and :func:`_rows`
 handles them all so the art stays authorable in the tools that drew it:
 
 * **Codepage 437.** The blocks and box-drawing (``█▓▒░`` and ``╔═╗``) are single bytes in
-  DOS's codepage, not UTF-8. We try UTF-8 first and fall back, so a mark we generated
-  ourselves and a mark exported from an art editor both read.
+  DOS's codepage, not UTF-8. We try UTF-8 first and fall back, so an older mark stored as
+  UTF-8 (the 53-column one still is) and one exported from an art editor both read.
 * **Auto-wrap.** An art editor omits the line break on a row that fills the canvas and
   lets the terminal wrap it, so the file's newlines are *not* the picture's rows. The
   canvas width comes from the SAUCE record on the end of the file — which has to be
