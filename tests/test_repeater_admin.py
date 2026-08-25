@@ -179,6 +179,43 @@ async def _step_until(predicate, *, limit: int = 200):
     return value
 
 
+def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
+    """Picker rows lead with the type glyph in *its* colour and hue the name by the key.
+
+    Regression: the row was built as ``Text(glyph, style=type_style)``, which made the
+    node-type colour the whole row's *base* style — so every repeater's name came out the
+    repeater violet and a section of them read as one node. The glyph now carries its type
+    style as a span and the name takes :func:`~meshterm.ui.theme.name_style`, like every
+    other list of nodes in the app.
+    """
+    from meshterm.ui.admin_picker import admin_picker_rows
+    from meshterm.ui.theme import name_style
+    from meshterm.ui.widgets import _NODE_GLYPHS
+
+    contacts = [
+        Contact(name="YUL-North", public_key="a1" * 32, key_prefix="a1b2c3d4", node_type=2),
+        Contact(name="YUL-South", public_key="d4" * 32, key_prefix="d4c3b2a1", node_type=2),
+    ]
+    rows, candidates = admin_picker_rows(tui_ctx, contacts)
+    assert [c.name for c in candidates] == ["YUL-North", "YUL-South"]
+
+    glyph, glyph_style = _NODE_GLYPHS[2]
+    titles = {
+        str(row.value): row.title for row in rows if getattr(row, "value", None) is not None
+    }
+    hues = set()
+    for contact in contacts:
+        title = titles[contact.name]
+        assert str(title.style) == ""  # no base style to paint the whole row one colour
+        assert title.plain == f"{glyph} {contact.name}"
+        assert any(s.style == glyph_style and s.start == 0 for s in title.spans)
+        hue = name_style(contact.name, contact.public_key)
+        at = title.plain.index(contact.name)
+        assert any(s.style == hue and s.start <= at < s.end for s in title.spans)
+        hues.add(hue)
+    assert len(hues) == 2  # two repeaters, two identities — not one violet block
+
+
 async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
     """The admin-login password prompt floats over the picker, not an erased background.
 

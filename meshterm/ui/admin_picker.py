@@ -41,6 +41,7 @@ def admin_picker_rows(
         offerable; ``rows`` is then just the exit group.
     """
     from .menus import back_rows, section_heading
+    from .theme import name_style
     from .tui import Choice
     from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
@@ -49,9 +50,16 @@ def admin_picker_rows(
         return list(back_rows()), candidates
 
     def row(contact: Contact) -> Choice:
-        glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
-        label = Text(glyph, style=style)
-        label.append(f" {contact.name}")
+        # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
+        # colour like every other list of nodes (a style on the Text itself would be the
+        # row's base and would paint the name the type's colour too).
+        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        label = Text()
+        label.append(f"{glyph} ", style=glyph_style)
+        label.append(
+            contact.name,
+            style=name_style(contact.name, contact.public_key or contact.key_prefix),
+        )
         return Choice(title=label, value=contact.name)
 
     def recency(contact: Contact) -> float:

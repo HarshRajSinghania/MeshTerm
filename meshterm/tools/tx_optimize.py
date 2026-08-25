@@ -417,6 +417,7 @@ async def _pick_target(
         falls back to a free-text prompt so a hex key prefix can be typed.
     """
     from ..ui.menus import back_rows
+    from ..ui.theme import name_style
     from ..ui.tui import Choice
     from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
@@ -431,9 +432,16 @@ async def _pick_target(
     from rich.text import Text
 
     def row(contact: Contact) -> Any:
-        glyph, style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
-        label = Text(glyph, style=style)
-        label.append(f" {contact.name}")
+        # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
+        # colour like every other list of nodes (a style on the Text itself would be the
+        # row's base and would paint the name the type's colour too).
+        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        label = Text()
+        label.append(f"{glyph} ", style=glyph_style)
+        label.append(
+            contact.name,
+            style=name_style(contact.name, contact.public_key or contact.key_prefix),
+        )
         return Choice(title=label, value=contact.name)
 
     items: list = [
