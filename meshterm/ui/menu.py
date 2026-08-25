@@ -957,7 +957,9 @@ async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
         # ``create_ble``/``create_tcp`` connect by address/endpoint and fail fast when absent.
         if ctx.active_transport == "serial":
             port = ctx.active_port
-            if port is not None and not serial_port_present(port):
+            # Off the loop: the probe enumerates ports, which blocks long enough to stall
+            # the very spinner this dialog is showing while it waits.
+            if port is not None and not await asyncio.to_thread(serial_port_present, port):
                 await asyncio.sleep(_LIVENESS_POLL_S)
                 continue
         try:

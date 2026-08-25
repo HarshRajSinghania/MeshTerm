@@ -669,14 +669,11 @@ def _action_rows() -> list:
     """The trailing splash rows: name a network device by hand, then quit.
 
     A network (TCP) companion doesn't advertise and isn't attached, so it can't be scanned
-    for — the "add a network device" row opens a host:port prompt to name one. It's flagged
-    experimental (TCP companion support is still settling), with the tag in the cautionary
-    hue so it reads as a caveat rather than a description. The Quit row mirrors the main menu.
-    The leading spaces line both up under the device-name column.
+    for — the "add a network device" row opens a host:port prompt to name one. The Quit row
+    mirrors the main menu. The leading spaces line both up under the device-name column.
     """
     add_row = Text()
     add_row.append(f"  {_TCP_ICON} Add a network device…")
-    add_row.append("  · experimental", style="warn")
     return [
         Separator(" "),
         Choice(title=add_row, value=_ADD_TCP),

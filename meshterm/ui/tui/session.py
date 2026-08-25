@@ -44,6 +44,7 @@ from .prompt import (
     Validator,
 )
 from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
+from .spinner import spinner_interval
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
 #: Every Ctrl-letter chord the app binds, keyed by the bare lowercase letter — the single
@@ -695,7 +696,7 @@ class TuiSession:
         title: str = "",
         banner: Optional[Any] = None,
         footnote: Optional[str] = None,
-        interval: float = 0.12,
+        interval: Optional[float] = None,
     ) -> Any:
         """Await ``coro`` while showing an animated spinner on the chromeless splash.
 
@@ -710,11 +711,15 @@ class TuiSession:
             title: Optional panel title for the splash box.
             banner: Wordmark rows drawn above the box (as on the other startup splashes).
             footnote: Muted line drawn below the box.
-            interval: Seconds between spinner frames.
+            interval: Seconds between spinner frames. Defaults to the platform's cadence,
+                which is the point on a slow console: a repaint there costs more than this
+                loop used to wait between them, so a hardcoded rate spent the whole event
+                loop redrawing the spinner and starved the very work it was reporting on.
 
         Returns:
             Whatever ``coro`` resolves to.
         """
+        tick = spinner_interval() if interval is None else interval
         screen = BusyScreen(message, title=title)
         screen.chrome = False
         screen.banner = banner
@@ -723,7 +728,7 @@ class TuiSession:
 
         async def animate() -> None:
             while True:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(tick)
                 screen.tick()
                 self.invalidate()
 
@@ -997,7 +1002,7 @@ class TuiSession:
         message: str = "",
         *,
         title: str = "",
-        interval: float = 0.06,
+        interval: Optional[float] = None,
     ) -> AsyncIterator[BusyOverlay]:
         """Float a skeleton card on top of everything for the duration of a block.
 
@@ -1020,10 +1025,14 @@ class TuiSession:
             message: An optional caption drawn beside the working chip.
             title: An optional heading naming the screen being fetched.
             interval: Seconds between animation frames (also the fade's repaint cadence).
+                Defaults to the platform's cadence — see :meth:`busy_startup`, which this
+                shares a hazard with: the card animates *over* a device read, so a rate the
+                console can't sustain steals the loop from the read it is covering for.
 
         Yields:
             The live :class:`BusyOverlay`, in case the caller wants to update its caption.
         """
+        tick = spinner_interval() if interval is None else interval
         # A nested busy_overlay keeps the outer one (the outermost wait owns the screen); its
         # own body still runs, it just doesn't install a second card.
         if self._overlay is not None:
@@ -1036,7 +1045,7 @@ class TuiSession:
 
         async def animate() -> None:
             while True:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(tick)
                 overlay.tick()
                 # Only repaint when the card is actually on screen, so an overlay waiting
                 # behind a live prompt doesn't churn that prompt's repaints for nothing.

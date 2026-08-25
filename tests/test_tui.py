@@ -33,6 +33,7 @@ from meshterm.ui.tui.prompt import (
 )
 from meshterm.ui.tui.render import render_lines, render_to_ansi
 from meshterm.ui.tui.screen import CANCEL, Screen, ScrollScreen
+from meshterm.ui.tui.spinner import spinner_interval
 from meshterm.ui.tui.select import Choice, ReorderScreen, SelectScreen, Separator
 from meshterm.ui.tui.session import TuiSession
 
@@ -1150,8 +1151,7 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     ]
     # Two devices plus the trailing action rows (add a network device, then Quit).
     assert len(rows) == 4
-    assert "Add a network device…" in rows[-2]
-    assert rows[-2].strip().endswith("· experimental")  # the row is flagged experimental
+    assert rows[-2].strip().endswith("Add a network device…")  # no caveat tag trailing it
     assert rows[-1].strip().endswith("Quit")
     device_rows = rows[:2]
     assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows))
@@ -1847,6 +1847,51 @@ async def test_session_busy_startup_animates_and_returns() -> None:
         await asyncio.wait_for(session.run(main()), timeout=5)
     assert captured["value"] == "ok"
     assert session.top is None  # the splash was popped when the task finished
+
+
+async def test_busy_screens_spin_at_the_platform_cadence() -> None:
+    """Neither busy screen carries a spin rate of its own.
+
+    A repaint on the PicoCalc console costs more than these loops used to wait between
+    them, so a hardcoded cadence spent the event loop redrawing the spinner and starved
+    the device read it was covering for — the wait got *slower* for being animated. Both
+    default to the one platform decision, like every other animated wait in the app.
+    """
+    import inspect
+
+    from meshterm.ui.tui.session import TuiSession as _Session
+
+    for name in ("busy_startup", "busy_overlay"):
+        interval = inspect.signature(getattr(_Session, name)).parameters["interval"]
+        assert interval.default is None, f"{name} pins its own spin rate: {interval.default!r}"
+
+
+async def test_busy_startup_keeps_ticking_through_a_slow_await() -> None:
+    """The spinner animates while the awaited work runs, not just before and after.
+
+    The animation shares the event loop with the request it reports on, so anything that
+    blocks the loop stops it dead — which is the whole reason the slow parts of a device
+    read (enumerating serial ports, reading history) are handed to a thread.
+    """
+    from meshterm.ui.tui.screen import BusyScreen
+
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+        frames: list[str] = []
+
+        async def work() -> str:
+            screen = session.top
+            assert isinstance(screen, BusyScreen)
+            for _ in range(6):  # span several spins without blocking the loop
+                await asyncio.sleep(spinner_interval())
+                frames.append(screen._spinner.frame)
+            return "ok"
+
+        async def main() -> None:
+            await session.busy_startup("checking…", work(), interval=spinner_interval() / 4)
+
+        await asyncio.wait_for(session.run(main()), timeout=15)
+    assert len(set(frames)) > 1, f"the spinner never advanced: {frames}"
 
 
 async def test_session_text_dispatches_typed_keys() -> None:

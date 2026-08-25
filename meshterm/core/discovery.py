@@ -25,6 +25,7 @@ in range. The companion connection itself still goes through
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -421,7 +422,10 @@ async def discover_all(
     Returns:
         All discovered devices: serial (likely-LoRa first), then BLE companions.
     """
-    serial = discover_devices()
+    # ``comports()`` is a blocking SetupAPI/sysfs walk — hundreds of milliseconds on
+    # Windows, and long enough on a slow console to freeze whatever spinner is covering
+    # this call. Off the event loop, so the animation reporting the wait keeps running.
+    serial = await asyncio.to_thread(discover_devices)
     if not ble:
         return serial
     # A device paired over both USB and BLE is vanishingly unlikely to collide by stable_id
