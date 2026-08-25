@@ -104,6 +104,12 @@ def charging_from_battery_level_status(data: bytes) -> Optional[bool]:
 #: drain loop (seconds).
 _MESSAGE_GET_TIMEOUT_S = 5.0
 
+#: How many uncorrelated frames one :meth:`MeshCoreDevice.admin_login` may quote in its log
+#: line. They are evidence for reading a failure afterwards, not a record to keep, and a busy
+#: mesh can push a great many through the window — a handful names the fault, and the rest
+#: would only bury the outcome they sit beside.
+_LOGIN_STRAY_LOG_CAP = 4
+
 #: How long a graceful ``meshcore`` client teardown may take before it is abandoned and the
 #: transport is force-closed instead (seconds). A healthy disconnect completes in well under a
 #: second; the bound exists because the library's dispatcher shutdown can deadlock — its
@@ -1638,33 +1644,71 @@ class MeshCoreDevice(Device):
         # Both go away by owning the wait. ``send_login_sync`` is still what transmits (it is
         # the library's supported path, and its own listener is harmless — the dispatcher
         # delivers to every matching subscription), but ours is armed first and outlives it:
-        # when it gives up early we keep waiting for the rest of a budget sized to the route,
-        # the way a trace to the same node would be.
+        # when it gives up early, the node still gets a full budget of its own, sized to the
+        # route the way a trace to the same node would be, and counted from the send rather
+        # than from the queuing — see the wait below for why that distinction is the fix.
         answer: asyncio.Future = loop.create_future()
+        # Frames that landed during the exchange but are not our verdict. Kept only to be
+        # logged beside the outcome: a "no reply" with one of these next to it is a
+        # different fault from a node that stayed silent, and nothing else would show it.
+        stray: list[str] = []
+
+        def note(what: str, event) -> None:  # noqa: ANN001 - meshcore Event
+            if len(stray) < _LOGIN_STRAY_LOG_CAP:
+                stray.append(f"{what} {getattr(event, 'payload', None)!r}")
 
         def on_answer(event) -> None:  # noqa: ANN001 - meshcore Event
-            if not answer.done() and self._refers_to(event, pub):
+            if answer.done():
+                return
+            if self._refers_to(event, pub):
                 answer.set_result(event)
+            else:
+                # An answer naming some other node — two admin flows can overlap. Not ours
+                # to act on, but worth saying we heard it: a login that reports silence with
+                # one of these logged is a key prefix that did not match, not a quiet node.
+                note("login frame for another node:", event)
+
+        def on_local_error(event) -> None:  # noqa: ANN001 - meshcore Event
+            # The one failure that never reaches the mesh: the companion refusing to send.
+            # ``send_login_sync`` erases it — it turns its own ERROR into a bare ``None``,
+            # indistinguishable from an acknowledgement that was merely slow — so the reason
+            # is only recoverable by listening for the frame. Uncorrelated (an ERROR carries
+            # no request id and may belong to another command in flight), so it is evidence
+            # for the log and never a verdict.
+            note("companion error:", event)
 
         subscriptions = [
             mc.subscribe(EventType.LOGIN_SUCCESS, on_answer),
             mc.subscribe(EventType.LOGIN_FAILED, on_answer),
+            mc.subscribe(EventType.ERROR, on_local_error),
         ]
         # A login is a round trip along the contact's route and back, which is the shape a
         # trace budget already describes; the stored route is one-way, so the wire carries
-        # twice its hops. A contact we hold no route for floods, and takes the flood budget.
-        budget = trace_timeout(2 * len(node.route_hops or ()))
+        # twice its hops. Knowing the route only ever buys *more* patience, never less: an
+        # admin exchange is heavier than a trace's single small packet, so a contact we hold
+        # a short route for must not be given a narrower window than the routeless one
+        # beside it — which is exactly what ``trace_timeout(0)``, the flood budget, is.
+        hops = 2 * len(node.route_hops or ())
+        budget = max(trace_timeout(hops), trace_timeout(0))
         started = loop.time()
         try:
             sent = await mc.commands.send_login_sync(pub, password)
+            # The budget times the *node's* answer, so it is spent from the moment the
+            # request is on the air — not from the moment we began queuing it. Everything
+            # before that belongs to the companion, and it can be most of a minute:
+            # ``send_login_sync`` first waits its turn on the library's mesh-request lock,
+            # which every telemetry poll and courier retry holds for a whole round trip, and
+            # then blocks until a MSG_SENT it correlates by event type alone arrives. Timing
+            # the repeater from before all that is what made the last fix a longer way of
+            # failing at the same ten seconds: the wait was widened, then handed a window
+            # some other command had already spent.
+            sent_at = loop.time()
             if not answer.done():
-                remaining = budget - (loop.time() - started)
-                if remaining > 0:
-                    # Shielded: a timeout here must leave the future readable, not cancel it.
-                    try:
-                        await asyncio.wait_for(asyncio.shield(answer), remaining)
-                    except asyncio.TimeoutError:
-                        pass
+                # Shielded: a timeout here must leave the future readable, not cancel it.
+                try:
+                    await asyncio.wait_for(asyncio.shield(answer), budget)
+                except asyncio.TimeoutError:
+                    pass
         finally:
             for subscription in subscriptions:
                 subscription.unsubscribe()
@@ -1677,9 +1721,20 @@ class MeshCoreDevice(Device):
             # the direction this whole method is trying to fail in.
             event = sent
         etype = getattr(event, "type", None)
+        # Three numbers, because a no-reply has three different causes and they are told
+        # apart only by where the time went: a send that took seconds means the request sat
+        # behind another command, a send that returned at once with no acknowledgement means
+        # the companion never put it on the air, and a full budget spent after a clean send
+        # means the node really did stay silent.
         _log.debug(
-            "admin login to %s: budget=%.1fs -> %s after %.0fms",
-            node.name, budget, etype, (loop.time() - started) * 1000.0,
+            "admin login to %s: send %s in %.0fms, budget=%.1fs -> %s after %.0fms%s",
+            node.name,
+            "acknowledged" if sent is not None else "unacknowledged",
+            (sent_at - started) * 1000.0,
+            budget,
+            etype,
+            (loop.time() - sent_at) * 1000.0,
+            f" [also heard: {'; '.join(stray)}]" if stray else "",
         )
         if etype is EventType.LOGIN_SUCCESS:
             return LoginResult.ACCEPTED

@@ -139,18 +139,23 @@ class _FakeCommands:
     listener outliving it can catch.
     """
 
-    def __init__(self, mc, *, answer=None, late=None, late_delay: float = 0.0) -> None:  # noqa: ANN001
+    def __init__(  # noqa: ANN003
+        self, mc, *, answer=None, late=None, late_delay: float = 0.0, send_delay: float = 0.0
+    ) -> None:  # noqa: ANN001
         self._mc = mc
         self._answer = answer
         self._late = late
         self._late_delay = late_delay
+        # How long the send takes to return — the library's mesh-request lock, then a
+        # MSG_SENT it correlates by event type alone. None of it is the node's time.
+        self._send_delay = send_delay
 
     async def send_login_sync(self, pubkey, password):  # noqa: ANN001
         from meshcore import EventType
 
         self._mc.sent.append((pubkey, password))
-        self._mc.armed_before_send = len(self._mc.subscriptions)
-        await asyncio.sleep(0)
+        self._mc.armed = [sub.event_type for sub in self._mc.subscriptions]
+        await asyncio.sleep(self._send_delay)
         if self._answer is not None:
             self._mc.dispatch(self._answer)
             if self._answer.type is EventType.LOGIN_SUCCESS:
@@ -167,7 +172,7 @@ class _FakeMeshCore:
     def __init__(self, **commands) -> None:  # noqa: ANN003
         self.subscriptions: list[_Subscription] = []
         self.sent: list[tuple] = []
-        self.armed_before_send = 0
+        self.armed: list = []  # the event types subscribed by the time the send went out
         self.commands = _FakeCommands(self, **commands)
 
     def subscribe(self, event_type, callback, attribute_filters=None):  # noqa: ANN001
@@ -273,12 +278,46 @@ def test_an_answer_meant_for_a_different_node_is_not_ours(quick_budget) -> None:
 
 
 def test_the_listener_is_armed_before_the_request_goes_out(quick_budget) -> None:  # noqa: ANN001
-    """Both frames, both subscribed — an answer landing mid-send has somewhere to go."""
+    """Both answers subscribed before the send — one landing mid-send has somewhere to go."""
+    from meshcore import EventType
+
     mc = _FakeMeshCore(answer=_login_success())
 
     asyncio.run(_device(mc).admin_login(_NODE, "hunter2"))
 
-    assert mc.armed_before_send == 2  # LOGIN_SUCCESS and LOGIN_FAILED
+    assert EventType.LOGIN_SUCCESS in mc.armed
+    assert EventType.LOGIN_FAILED in mc.armed
+
+
+def test_a_companion_error_is_watched_for_because_the_library_erases_it() -> None:
+    """``send_login_sync`` turns its own ERROR into a bare ``None``, so the reason is lost.
+
+    A companion that refuses to send and a node that never answers are the same
+    :attr:`LoginResult.NO_REPLY` — correctly, since neither says anything about the
+    password — but they are opposite faults to go and fix, and only the frame tells them
+    apart. It is uncorrelated, so it is logged and never read as a verdict.
+    """
+    from meshcore import EventType
+
+    mc = _FakeMeshCore(answer=_login_success())
+
+    asyncio.run(_device(mc).admin_login(_NODE, "hunter2"))
+
+    assert EventType.ERROR in mc.armed
+
+
+def test_the_node_gets_its_whole_budget_even_when_the_send_was_slow(quick_budget) -> None:  # noqa: ANN001
+    """THE regression this fix is for: the repeater was charged for the queue ahead of it.
+
+    The budget times the *node's* answer, but it used to be counted from before
+    ``send_login_sync`` — which waits its turn on the library's mesh-request lock (held by
+    every telemetry poll and courier retry for a whole round trip) before it transmits at
+    all. A send that outlasted the budget therefore left the node no window whatsoever, and
+    a repeater that was up, listening and about to answer was recorded as silent.
+    """
+    mc = _FakeMeshCore(late=_login_success(), late_delay=0.01, send_delay=0.2)
+
+    assert asyncio.run(_device(mc).admin_login(_NODE, "hunter2")) is LoginResult.ACCEPTED
 
 
 def test_the_listeners_are_released_even_when_the_send_blows_up() -> None:
@@ -335,8 +374,41 @@ def test_the_reply_budget_is_sized_to_the_route_the_login_has_to_walk() -> None:
     finally:
         trace_runner.trace_timeout = real
 
-    assert asked == [4, 0]  # out and back over two hops; then a contact with no route
+    # Each login asks twice: for its own walk, and for the routeless floor (hops ``0``)
+    # it may never be given less than.
+    assert asked == [4, 0, 0, 0]
     assert real(4) > real(2) > real(1)  # and the budget grows with the walk
+
+
+def test_a_known_short_route_never_buys_less_patience_than_no_route_at_all() -> None:
+    """Knowing where a node is must not make us give up on it sooner.
+
+    A trace budget is sized for one small packet on an explicit path; a login is an admin
+    exchange out and back. Sized literally, a contact with a one-hop route would be given a
+    narrower window than the routeless contact beside it that floods — so the flood budget
+    is the floor, and the route only ever widens it.
+    """
+    import meshterm.services.trace_runner as trace_runner
+
+    budgets: list[float] = []
+    real = trace_runner.trace_timeout
+
+    def spy(hops):  # noqa: ANN001
+        # The real shape, scaled down so the no-reply this provokes is not a real wait.
+        budget = real(hops) / 1000
+        budgets.append(budget)
+        return budget
+
+    trace_runner.trace_timeout = spy
+    try:
+        near = Contact(name="YUL-Near", public_key="a1b2c3d4" * 8, route_hops=("3d",))
+        asyncio.run(_device(_FakeMeshCore()).admin_login(near, "hunter2"))
+    finally:
+        trace_runner.trace_timeout = real
+
+    walked, floor = budgets
+    assert walked < floor  # the literal trace sizing really is the narrower of the two
+    assert real(2) < real(0) == trace_runner.TRACE_TIMEOUT_FLOOD_S  # and so at full scale
 
 
 # --- the simulator speaks the same three answers --------------------------------------
