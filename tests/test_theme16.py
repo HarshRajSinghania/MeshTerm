@@ -375,6 +375,56 @@ def test_specimen_renders_clean_on_picocalc() -> None:
             assert ord(ch) in FONT_CODEPOINTS, f"line {i} char {ch!r} outside the font"
 
 
+def test_every_wordmark_draws_one_cell_per_cell() -> None:
+    """No mark holds a byte the terminal won't draw as a glyph.
+
+    An art editor writes straight to video memory, where codepage 437's first 32 bytes are
+    pictures (►, ◄, ‼) rather than commands. Nothing downstream reads them that way: the
+    codecs decode them as the control characters they nominally are, Rich measures each as
+    no cells at all — so every one swallows a column and slides the rest of its row, the
+    same wound NUL cells leave (see :mod:`meshterm.ui.logo`) — and one of them, ``0x13``,
+    is XOFF on a real console. So this asks the question that catches all of it at once:
+    does every character the mark draws occupy exactly the one cell it was drawn in?
+    """
+    from rich.text import Text
+
+    from meshterm.ui.logo import _VARIANTS, _rows
+
+    for name in _VARIANTS:
+        rows = _rows(name)
+        assert rows, f"{name} should be readable"
+        for i, row in enumerate(rows):
+            plain = Text.from_ansi(row).plain
+            odd = [ch for ch in plain if cell_len(ch) != 1 and ch != ""]
+            assert not odd, (
+                f"{name} row {i} holds {[hex(ord(c)) for c in odd]}, which the terminal "
+                "draws in something other than the one cell it was drawn in"
+            )
+
+
+def test_the_mark_the_console_picks_stays_inside_its_font() -> None:
+    """The wordmark obeys the glyph contract every other screen does.
+
+    The PicoCalc's console font is a 512-glyph inventory, and a character outside it is a
+    test failure rather than a tofu box found on-device. The mark is art rather than
+    chrome, so it never passed through the gallery's sweep — and it is the very first thing
+    the device draws.
+    """
+    from rich.text import Text
+
+    from meshterm.ui.logo import load_logo
+
+    set_platform(PICOCALC)
+    rows = load_logo(53)
+    assert rows, "the 53-column mark should fit a 53-column console"
+    for i, row in enumerate(rows):
+        for ch in Text.from_ansi(row).plain:
+            assert ord(ch) in FONT_CODEPOINTS, (
+                f"mark row {i} draws {ch!r} (U+{ord(ch):04X}), which the console font "
+                "has no glyph for"
+            )
+
+
 def test_narrow_wordmark_keeps_its_dim_rows_off_the_bright_bank() -> None:
     """Every dim-bank span of the wordmark states its own intensity.
 
