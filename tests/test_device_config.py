@@ -418,6 +418,145 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     assert removed_from_device == ["Old0", "Old1", "Old2"]
 
 
+async def test_removing_one_contact_drops_it_from_the_device_and_the_store() -> None:
+    """The single-contact delete: a red confirm, then both halves of the union forgotten.
+
+    The list a screen shows is the device's contact table *unioned* with the contacts
+    MeshTerm remembers for that device, so a removal that only reached the radio would be
+    merged straight back on the next read and read as a screen that did nothing. It also
+    drops the cached contacts so the list it returns to actually re-reads.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _remove_contact
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    hub = Contact(name="Hub", public_key="3d" * 32, key_prefix="3d" * 6)
+    removed: list[str] = []
+    forgotten: list[tuple[str, str]] = []
+    invalidated: list[bool] = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            removed.append(contact.name)
+
+    ui = TuiUi(TuiSession())
+    asked: list[dict] = []
+
+    async def _dialog(prompt, buttons, **kw):  # noqa: ANN001
+        asked.append({"prompt": prompt, "buttons": buttons, **kw})
+        return True  # the committing button
+
+    ui.dialog = _dialog  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.remove"),
+        contact_store=SimpleNamespace(
+            forget=lambda dev, key: forgotten.append((dev, key))
+        ),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
+        device=lambda: _device(_Device()),
+    )
+
+    assert await _remove_contact(ctx, hub, "cc" * 32, "Hub") is True
+    # The confirm is the app's single-record delete: red, Cancel on the left, the
+    # committing verb on the right and default, and it names what survives the deletion.
+    assert asked[0]["destructive"] is True
+    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Remove"]
+    assert asked[0]["default"] == 1
+    assert "Hub" in asked[0]["prompt"] and "history" in asked[0]["prompt"]
+    # Both halves of the union, then the cache the list re-reads through.
+    assert removed == ["Hub"]
+    assert forgotten == [("cc" * 32, "3d" * 32)]
+    assert invalidated == [True]
+
+
+async def test_cancelling_the_remove_confirm_touches_nothing() -> None:
+    """Esc/Cancel on the confirm leaves the contact on the device and the caller's list."""
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _remove_contact
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    touched: list[str] = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            touched.append(contact.name)
+
+    ui = TuiUi(TuiSession())
+
+    async def _declined(*a, **k):  # noqa: ANN001, ANN002, ANN003
+        return None  # what Esc resolves a button dialog to
+
+    ui.dialog = _declined  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.remove"),
+        contact_store=SimpleNamespace(forget=lambda *a: touched.append("forgot")),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: touched.append("invalidated")),
+        device=lambda: _device(_Device()),
+    )
+
+    assert await _remove_contact(ctx, Contact(name="Hub", public_key="3d" * 32), "cc" * 32,
+                                 "Hub") is False
+    assert touched == []
+
+
+async def test_a_refused_removal_is_shown_and_the_contact_stays() -> None:
+    """A device that refuses is reported in a dialog — the row must not vanish on a lie.
+
+    Only the *device* can drop a contact from its table; if it refuses, forgetting our own
+    half of the union would hide a contact the radio still holds. So nothing is forgotten,
+    the failure is put in front of the reader, and the page stays open on the node.
+    """
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _remove_contact
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    forgotten: list = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            await asyncio.sleep(0)
+            raise RuntimeError("contact table is busy")
+
+    session = TuiSession()
+    ui = TuiUi(session)
+
+    async def _accepted(*a, **k):  # noqa: ANN001, ANN002, ANN003
+        return True
+
+    ui.dialog = _accepted  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.remove"),
+        contact_store=SimpleNamespace(forget=lambda *a: forgotten.append(a)),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: forgotten.append("cache")),
+        device=lambda: _device(_Device()),
+    )
+
+    task = asyncio.ensure_future(
+        _remove_contact(ctx, Contact(name="Hub", public_key="3d" * 32), "cc" * 32, "Hub")
+    )
+    failed = await _step_until_screen(session, lambda s: "couldn't remove" in _screen_text(s))
+    assert "contact table is busy" in _screen_text(failed)
+    failed.handle("escape")
+    assert await task is False
+    assert forgotten == []  # the device still holds it, so neither do we forget it
+
+
 async def _true() -> bool:
     return True
 
@@ -450,6 +589,69 @@ async def _step_until_screen(session, predicate, *, limit: int = 500):  # noqa: 
             return top
         await asyncio.sleep(0)
     raise AssertionError("the expected screen never reached the top of the stack")
+
+
+async def test_the_list_rebuilds_when_the_detail_page_deletes_the_contact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A contact removed on its own page is gone from the list you come back to.
+
+    The detail page is where a single contact is deleted, so the list has to be told: it
+    hands the page a contact and takes back whether that contact survived, re-reading the
+    device and rebuilding when it didn't. Without the rebuild the reader returns to a row
+    for a contact the radio no longer holds.
+    """
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact
+    from meshterm.ui import node_detail_screen
+    from meshterm.ui.contacts_screen import ContactsScreen, open_contacts
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    alice = Contact(name="Alice", public_key="aa" * 32)
+    bob = Contact(name="Bob", public_key="bb" * 32)
+    remaining = [alice, bob]
+
+    detailed: list = []
+
+    async def _fake_detail(ctx, contact):  # noqa: ANN001
+        """Stand in for the page: report that it deleted whichever contact it was handed."""
+        detailed.append(contact)
+        remaining.remove(contact)
+        return True
+
+    monkeypatch.setattr(node_detail_screen, "open_node_detail", _fake_detail)
+
+    session = TuiSession()
+    ctx = SimpleNamespace(
+        ui=TuiUi(session),
+        log=logging.getLogger("test.contacts"),
+        contact_store=None,
+        devstate=SimpleNamespace(contacts=lambda: _contacts(remaining)),
+    )
+    task = asyncio.ensure_future(
+        open_contacts(ctx, "Us", "cc" * 32, list(remaining), 1, {}, _contacts_sort())
+    )
+
+    listed = await _step_until_screen(session, lambda s: isinstance(s, ContactsScreen))
+    assert "2 known" in listed.title
+    listed.handle("down")  # off our own node, onto the first contact
+    listed.handle("enter")
+
+    # The page deleted it, so the list that comes back is a *new* one, re-read without it.
+    rebuilt = await _step_until_screen(
+        session, lambda s: isinstance(s, ContactsScreen) and "1 known" in s.title
+    )
+    assert rebuilt is not listed
+    assert detailed == [alice]
+    assert "Alice" not in _screen_text(rebuilt)
+    assert "Bob" in _screen_text(rebuilt)
+
+    rebuilt.handle("escape")
+    await task
 
 
 def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:

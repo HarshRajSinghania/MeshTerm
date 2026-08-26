@@ -21,9 +21,14 @@ the node itself, in full:
     static basemap preview (see :class:`~meshterm.ui.minimap.MiniMap`) centred on the node,
     grown to whatever rows the viewport spares. Its actions: ``Open full map`` (the full
     map opens centred here with its find filter seeded to this node, so it lights among
-    the rest), ``Time machine``, and ``Share contact`` — a popup contact card (QR code +
+    the rest), ``Time machine``, ``Share contact`` — a popup contact card (QR code +
     ``meshcore://`` link, see :func:`~meshterm.ui.config_editor.show_contact_card`),
-    offered whenever the node's full key is known.
+    offered whenever the node's full key is known — and, last, ``Remove contact``: the
+    single-contact counterpart to the Contacts list's bulk purge (see
+    :mod:`~meshterm.ui.contacts_screen`), dropping *this* node from the device's contact
+    table behind a red confirm. It is the one thing on the page that changes anything, so
+    it sits at the foot of the actions, and committing it closes the page — the contact it
+    details no longer exists to detail.
   * **Routes** — the routes we've actually heard the node arrive over, drawn on the shared
     route graph (:mod:`~meshterm.ui.pathgraph`) node→us (the inbound direction the packets
     travelled, contact on the left, us on the right), each relay tagged by its first hash
@@ -1045,11 +1050,15 @@ class NodeDetailScreen(Screen):
         """One action row: ``❯`` + icon + label, the whole row lit when it is the cursor's."""
         text = Text("❯ " if selected else "  ", style="cursor" if selected else "")
         # The icon lane is decoration a platform may drop whole (command_icon); the label
-        # is what names the action, so an emptied lane simply gives it the cells.
+        # is what names the action, so an emptied lane simply gives it the cells. A tinted
+        # icon carries a claim the decoration can't take with it, though — a red 🗑 is how a
+        # destructive row announces itself — so where the lane goes, the tint lands on the
+        # label instead. Same move as :func:`~meshterm.ui.menus.marked_label` makes for a
+        # menu row, for the same reason: a delete must not read like any other action.
         mark = command_icon(action.glyph) if action.glyph else ""
         if mark:
             text.append(f"{mark} ", style=action.glyph_style)
-        text.append(action.label)
+        text.append(action.label, style="" if mark else action.glyph_style)
         if selected:
             text.style = "cursor"
         text.no_wrap = True
@@ -1126,19 +1135,24 @@ def _located(lat: Optional[float], lon: Optional[float]) -> bool:
 # -- data gathering + the action loop -----------------------------------------
 
 
-async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> None:
+async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> bool:
     """Open the Node detail page for a contact (or our own node) and run its action loop.
 
     Assembles the page from stored history, the device's contacts, and the observed
     topology — identity, reception stats, a location preview, and the observed routes — then
     loops: show the page, run whatever action the user commits (trace, full map, time
     machine), and show it again, until Esc backs out. This is the same show/act/reshow loop
-    the Time Machine and Contacts list use.
+    the Time Machine and Contacts list use. One action ends the loop instead of returning to
+    it — removing the contact, which leaves nothing to show.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
         contact: The contact to detail, or ``None`` for our own node (an identity-and-ledger
             page — we never overhear ourselves, so there is no reception history to show).
+
+    Returns:
+        ``True`` if the visit ended by removing the contact from the device (the caller's
+        cue to re-read and rebuild the list it came from), ``False`` on any ordinary exit.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
@@ -1344,6 +1358,11 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
     full_key = key.lower().removeprefix("0x")
     if len(full_key) == 64 and _is_hex(full_key):
         info_actions.append(_Action("share", "📱", "", "Share contact — QR / link"))
+    # The page's one destructive action, and so its last row: drop this single contact from
+    # the device's table. Offered only for a contact we can actually address by key — our own
+    # node is no contact, and a node with neither key nor prefix has nothing to delete by.
+    if not you and contact is not None and (contact.public_key or contact.key_prefix):
+        info_actions.append(_Action("remove", "🗑", "err", "Remove contact…"))
     try:
         adv_type = int(node_type) if node_type is not None else 1
     except (TypeError, ValueError):
@@ -1356,6 +1375,8 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
     tail_actions = [_Action("back", "", "", "Back")]
 
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
+    # Whether the visit ended by deleting the contact — the caller's cue to rebuild its list.
+    contact_removed = False
     while True:
         screen = NodeDetailScreen(
             title=title,
@@ -1395,11 +1416,97 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> N
                 await open_timemachine_self(ctx)
             else:
                 await open_timemachine_node(ctx, node_id, label)
+        elif action == "remove":
+            # The confirm floats over this page (run_screen just popped it), so re-push it
+            # as the backdrop for the dialog's lifetime — the reader confirms against the
+            # node they are looking at. A removal ends the visit: there is no contact left
+            # to detail, and the list we return to rebuilds without it.
+            assert contact is not None  # the row only exists for a real contact
+            session.push(screen)
+            try:
+                contact_removed = await _remove_contact(ctx, contact, self_key, label)
+            finally:
+                session.pop(screen)
+            if contact_removed:
+                break
     if minimap is not None:
         # The preview's braille may have smeared the terminal (double-width fallback
         # glyphs prompt_toolkit's diff can't see); force one clean repaint of the list
         # underneath, exactly as the full map does on the way out.
         session.request_full_repaint()
+    return contact_removed
+
+
+async def _remove_contact(
+    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+) -> bool:
+    """Confirm and drop one contact from the device; ``True`` once it is gone.
+
+    The single-contact counterpart to the Contacts list's bulk purge (see
+    :func:`~meshterm.ui.contacts_screen._purge_stale`), and it removes the contact in the
+    same two places, because the list a screen sees is the *union* of the two: the device's
+    own contact table, and the contacts MeshTerm remembers for that device (see
+    :mod:`meshterm.core.contact_store`). Forget only the first and the store merges the
+    contact straight back on the next read, so the deletion would look like a screen that
+    did nothing.
+
+    Only the *contact* goes. The node's reception history, its overheard traffic and the
+    chat messages exchanged with it are all MeshTerm's own and are untouched — what is lost
+    is the device's ability to address it, which is why a chat send to a contact the
+    firmware no longer holds offers to write it back rather than failing (see
+    :func:`~meshterm.ui.chat._restore_contact`).
+
+    Irreversible from this device's point of view — nothing here can re-derive a key the
+    store has forgotten — so the confirm wears the reserved red: Cancel on the left, the
+    committing Remove on the right and default.
+
+    Args:
+        ctx: The shared application context (interactive menu; the page is pushed as the
+            confirm's backdrop by the caller).
+        contact: The contact to delete, addressed by the key it carries.
+        self_key: The device's own public key (hex) — how the contact store scopes this
+            device's remembered contacts.
+        label: How the node is named on the page, for the prompt and the failure notice.
+
+    Returns:
+        ``True`` if the contact was removed, ``False`` if the user cancelled or the device
+        refused (the refusal is shown, never swallowed — a contact still on the radio must
+        not vanish from the list).
+    """
+    from .surface import TuiUi
+
+    assert isinstance(ctx.ui, TuiUi)  # guaranteed by open_node_detail
+    session = ctx.ui.session
+
+    if not await ctx.ui.dialog(
+        f"Remove {label} from this device's contacts? It can't be messaged again until "
+        "it's added back. Its reception history and chat messages in MeshTerm are kept.",
+        [("Cancel", False), ("Remove", True)],
+        title="Remove contact",
+        default=1,
+        destructive=True,
+    ):
+        return False
+
+    device = await ctx.device()
+    try:
+        await device.remove_contact(contact)
+    except Exception as exc:  # noqa: BLE001 - a refused removal is reported, not raised
+        ctx.log.debug("contacts: remove failed for %s: %s", contact.name, exc)
+        await session.message_dialog(
+            Text(f"✗ couldn't remove {label} — {exc}", style="err"), title="Remove contact"
+        )
+        return False
+
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if ctx.contact_store is not None and dev_pub and contact.public_key:
+        ctx.contact_store.forget(dev_pub, contact.public_key)
+    # The device's table just changed under the session cache; the list we return to re-reads.
+    ctx.devstate.invalidate_contacts()
+    # No success notice: unlike the purge — whose outcome is a count nobody could predict —
+    # this one is self-evident. The page closes on the contact it detailed and the list
+    # behind it comes back without the row, which says it better than a dialog to dismiss.
+    return True
 
 
 def _signal_row(hn) -> Optional[Text]:  # noqa: ANN001 - Optional[HeardNode]

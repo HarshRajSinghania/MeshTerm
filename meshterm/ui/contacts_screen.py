@@ -10,13 +10,18 @@ and backing out of that page returns to the list right where it stood. The one-s
 (``meshterm contacts --sort …``) still renders the static
 :func:`~meshterm.ui.widgets.contacts_table`; only the menu gets the live list.
 
-Below the contacts sits one maintenance action — **Purge stale contacts** — that sweeps out
-the contacts a device has accumulated but no longer hears. It offers an age ladder (a day up
-to a year, plus a *never heard* bucket), each rung showing a live count of how many contacts
-it would remove, so the impact is visible before anything is chosen; the pick is then gated
-behind a typed ``delete`` confirm. A purge deletes the contacts from the device's table and
-forgets them from the cross-session store (see :mod:`~meshterm.core.contact_store`) so a
-firmware-less bridge doesn't merge them back — but only the *contact* is dropped: each node's
+Removing *one* named contact belongs to that contact, not to the list: it is the last
+action on its Node detail page (see :mod:`~meshterm.ui.node_detail_screen`), where the
+reader is already looking at the node they mean to drop. The list only rebuilds afterwards.
+
+Below the contacts sits the list's own maintenance action — **Purge stale contacts** — the
+bulk counterpart, sweeping out the contacts a device has accumulated but no longer hears. It
+offers an age ladder (a day up to a year, plus a *never heard* bucket), each rung showing a
+live count of how many contacts it would remove, so the impact is visible before anything is
+chosen; the pick is then gated behind a typed ``delete`` confirm. Either way — one contact
+or a sweep — the removal lands in both halves of what the list shows: the device's own
+table, and the cross-session store (see :mod:`~meshterm.core.contact_store`), so a
+firmware-less bridge doesn't merge them back. Only the *contact* is dropped: each node's
 reception history and overheard traffic in MeshTerm are untouched. Our own node, pinned above
 the list, is never a purge candidate (it isn't in the device's contact table).
 """
@@ -174,8 +179,9 @@ async def open_contacts(
     Runs the show/open/reshow loop: the sortable list, then whichever node's detail page
     Enter commits (or the purge flow the tail action opens), then the list again (same sort,
     the highlight kept on its row) — until Esc, or the ``Back`` row, backs out of the list
-    itself. A purge that removes anything re-reads the device and rebuilds the list so the
-    swept contacts are gone from it.
+    itself. Anything that removes a contact — a purge here, or the detail page's own
+    single-contact ``Remove contact…`` — re-reads the device and rebuilds the list, so the
+    contacts that went are gone from it.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -219,7 +225,12 @@ async def open_contacts(
                 )
             continue
         # The own-node sentinel opens our own node's page; any other value is a Contact.
-        await open_node_detail(ctx, None if chosen == YOU else chosen)
+        # The page can also *delete* the contact it details (its ``Remove contact…`` row);
+        # when it does, it says so on the way out and the list rebuilds without the row —
+        # the same re-read the purge does, one contact at a time.
+        if await open_node_detail(ctx, None if chosen == YOU else chosen):
+            contacts = await ctx.devstate.contacts()
+            screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
 
 
 async def _purge_stale(ctx: "AppContext", self_key: str) -> int:

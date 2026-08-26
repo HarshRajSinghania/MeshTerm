@@ -546,6 +546,50 @@ def test_node_detail_screen_renders_its_sections() -> None:
     assert len(screen.footer_hint) <= 72
 
 
+def test_the_remove_row_is_tinted_and_keeps_its_tint_where_the_icon_lane_goes() -> None:
+    """The destructive action announces itself in ``err`` on both platforms.
+
+    On the desktop that is the red 🗑 leading the row. On the PicoCalc the icon lane is
+    dropped whole (``command_icon`` returns ``""``), and a tint that left with the
+    decoration would leave a delete row reading like any other — so it lands on the label,
+    exactly as :func:`~meshterm.ui.menus.marked_label` does for a menu row.
+    """
+    import re
+
+    from meshterm.platforms import PICOCALC, set_platform
+
+    remove = _Action("remove", "🗑", "err", "Remove contact…")
+    screen = _screen(info_actions=[remove])
+    screen.note_viewport(30)
+    line = screen._action_line(remove, selected=False, width=40)
+    assert "🗑" in line and "Remove contact…" in _plain([line])
+
+    set_platform(PICOCALC)
+    screen = _screen(info_actions=[remove])
+    screen.note_viewport(30)
+    folded = screen._action_line(remove, selected=False, width=40)
+    assert "🗑" not in folded  # the icon lane is gone...
+    assert "Remove contact" in _plain([folded])
+    # ...and the tint it carried is now on the words: the label is opened by a colour
+    # sequence, where an untinted action's label is opened by nothing at all.
+    assert re.search(r"\[[0-9;]*m *Remove contact", folded)
+    plain_row = screen._action_line(
+        _Action("timemachine", "⏳", "", "Time machine — 42 receptions"), False, 40
+    )
+    assert not re.search(r"\[[0-9;]*m *Time machine", plain_row)
+
+
+def test_the_remove_row_resolves_its_own_token() -> None:
+    """Enter on the remove row hands ``open_node_detail`` the token it deletes on."""
+    screen = _screen(info_actions=[_Action("remove", "🗑", "err", "Remove contact…")])
+    resolved: list = []
+    screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    screen.note_viewport(30)
+    screen.render_body(72)
+    screen.handle("enter")
+    assert resolved == ["remove"]
+
+
 def test_node_detail_screen_cursor_and_commit() -> None:
     """↑/↓ move the cursor (kept in view); Enter resolves its key, Esc cancels."""
     screen = _screen()

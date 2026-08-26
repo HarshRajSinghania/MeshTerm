@@ -175,7 +175,13 @@ def _node_detail(cols: int, rows: int) -> Screen:
         minimap=None,
         map_caption=None,
         routes=_RoutesView(note="no route observed yet — trace to discover one"),
-        info_actions=[_Action("timemachine", "⏳", "", "Time machine — 42 receptions")],
+        info_actions=[
+            _Action("timemachine", "⏳", "", "Time machine — 42 receptions"),
+            # The page's destructive row: here so the specimen shows how a delete reads
+            # on each platform — a red 🗑 on the desktop, the tint on the words where
+            # the PicoCalc drops the icon lane.
+            _Action("remove", "🗑", "err", "Remove contact…"),
+        ],
         trace_action=_Action("trace", "\U0001f3af", "", "Trace — auto route …"),
         tail_actions=[_Action("back", "", "", "Back")],
     )
