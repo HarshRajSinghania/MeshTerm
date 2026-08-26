@@ -388,9 +388,9 @@ def test_every_wordmark_draws_one_cell_per_cell() -> None:
     """
     from rich.text import Text
 
-    from meshterm.ui.logo import _VARIANTS, _rows
+    from meshterm.ui.logo import _rows, _variants
 
-    for name in _VARIANTS:
+    for name in _variants():
         rows = _rows(name)
         assert rows, f"{name} should be readable"
         for i, row in enumerate(rows):
@@ -400,6 +400,23 @@ def test_every_wordmark_draws_one_cell_per_cell() -> None:
                 f"{name} row {i} holds {[hex(ord(c)) for c in odd]}, which the terminal "
                 "draws in something other than the one cell it was drawn in"
             )
+
+
+def test_every_mark_is_as_wide_as_its_name_says() -> None:
+    """A mark's file is named for its canvas, and that name orders the size ladder.
+
+    :func:`~meshterm.ui.logo.load_logo` walks the marks widest-first by the width in the
+    name and takes the first that *measures* small enough to fit, so a name that overstates
+    its art doesn't draw a torn mark — it just sends a mark that would have fitted to the
+    back of the queue, and the splash quietly steps down a size. Cheaper to catch here.
+    """
+    from meshterm.ui.logo import _NAMED_WIDTH, _rows, _variants, logo_width
+
+    marks = _variants()
+    assert marks, "the splash folder should hold at least one mark"
+    for name in marks:
+        declared = int(_NAMED_WIDTH.search(name).group(1))
+        assert logo_width(_rows(name)) == declared, f"{name} is not {declared} cells wide"
 
 
 def test_the_mark_the_console_picks_stays_inside_its_font() -> None:

@@ -1,18 +1,20 @@
 """The MeshTerm wordmark for the startup splash, loaded from the assets folder.
 
-The art itself lives in ``meshterm/assets`` as pre-coloured ``.ans`` files — the classic
-ANSI-art extension, kept short because the editors that draw this stuff are old and
-particular about 8.3 names. Each mark is drawn by hand in one of those editors and needs
+The art itself lives in ``meshterm/assets/splash`` as pre-coloured ``.ans`` files — the
+classic ANSI-art extension — one per canvas width, each named for the width it was drawn
+at: ``logo.71.ans``, ``logo.53.ans``. Each mark is drawn by hand in an art editor and needs
 no source but itself: there is nothing here that generates a wordmark, and nothing to
 re-run after editing one. Files are read fresh on every call, so the mark can be re-styled
-by editing the art alone: no code change and no restart of the design loop.
+by editing the art alone: no code change and no restart of the design loop — and a new size
+is a file dropped in the folder, since the ladder is read from the names (:func:`_variants`)
+rather than listed here.
 
 Three things separate a real ``.ans`` from a text file with colour in it, and :func:`_rows`
 handles them all so the art stays authorable in the tools that drew it:
 
 * **Codepage 437.** The blocks and box-drawing (``█▓▒░`` and ``╔═╗``) are single bytes in
-  DOS's codepage, not UTF-8. We try UTF-8 first and fall back, so an older mark stored as
-  UTF-8 (the 53-column one still is) and one exported from an art editor both read.
+  DOS's codepage, not UTF-8. We try UTF-8 first and fall back, so a mark saved as UTF-8 and
+  one exported from an art editor both read.
 * **Auto-wrap.** An art editor omits the line break on a row that fills the canvas and
   lets the terminal wrap it, so the file's newlines are *not* the picture's rows. The
   canvas width comes from the SAUCE record on the end of the file — which has to be
@@ -20,6 +22,13 @@ handles them all so the art stays authorable in the tools that drew it:
 * **Blank cells that aren't spaces.** An editor writes an untouched cell as a NUL, and a
   DOS console dutifully leaves it blank. Rich measures it as nothing at all, so every one
   swallowed a column and slid the rest of its row leftwards.
+
+A fourth trap belongs to the *art* rather than the loader: codepage 437's first 32 bytes
+are pictures on a DOS console (``►◄‼``) and control characters everywhere else, so a mark
+that draws with them measures short here and, at ``0x13``, sends XOFF to a real console.
+There is nothing to decode there — the byte has to become a glyph in the file — so it is
+held by a test instead (``test_theme16``), alongside the one that keeps the narrow mark
+inside the console font.
 
 There is more than one mark, at different widths, and the *screen* picks — not the
 platform. A 53-column PicoCalc console and a desktop terminal dragged narrow have the same
@@ -38,11 +47,13 @@ from rich.text import Text
 
 #: Where the art lives — a sibling of the code, not mixed into it, and inside the package
 #: so it ships with an installed wheel.
-_ASSETS = Path(__file__).resolve().parent.parent / "assets"
+_ASSETS = Path(__file__).resolve().parent.parent / "assets" / "splash"
 
-#: Every wordmark, widest first. :func:`load_logo` walks this and takes the first that
-#: fits, so adding a size is dropping a file in and naming it here.
-_VARIANTS: tuple[str, ...] = ("logo.ans", "logo_53.ans")
+#: ``logo.<width>.ans`` — a mark's file is named for the canvas it was drawn on, so the
+#: folder listing *is* the size ladder and :func:`_variants` needs to read nothing else.
+#: (The old 8.3 spelling is gone with it: the editors that draw this stuff manage a second
+#: dot, and a name that states its width is worth more than a name DOS could have opened.)
+_NAMED_WIDTH = re.compile(r"logo\.(\d+)\.ans$")
 
 #: A colour change and nothing else. Every escape these marks use is an SGR, so re-breaking
 #: a row only ever has to carry a *colour* across the seam — never a cursor move.
@@ -66,6 +77,22 @@ _SAUCE_LEN = 128
 #: is how an art editor spells "nothing here", and codepage 437's 0xff is a hard space.
 #: Both become a plain space, so the column they hold survives into the frame.
 _BLANK_CELLS = {0x00: " ", 0xA0: " "}
+
+
+def _variants() -> list[str]:
+    """Every mark in the folder, widest first.
+
+    Adding a size is dropping the file in — nothing here lists them. The width in the name
+    only *orders* the ladder; which mark fits is still settled by measuring the art itself
+    (see :func:`load_logo`), so a mark whose name overstates it is caught rather than
+    trusted. A file that doesn't spell a width is not a mark and is passed over.
+    """
+    named = []
+    for path in _ASSETS.glob("logo.*.ans"):
+        found = _NAMED_WIDTH.search(path.name)
+        if found:
+            named.append((int(found.group(1)), path.name))
+    return [name for _, name in sorted(named, reverse=True)]
 
 
 def _split_sauce(raw: bytes) -> tuple[bytes, Optional[int]]:
@@ -198,7 +225,7 @@ def load_logo(max_cols: Optional[int] = None) -> list[str]:
         draws no banner at all rather than a torn one, and a missing file degrades the
         same way rather than raising.
     """
-    for name in _VARIANTS:
+    for name in _variants():
         rows = _rows(name)
         if rows and (max_cols is None or logo_width(rows) <= max_cols):
             return rows
