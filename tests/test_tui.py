@@ -22,8 +22,7 @@ from meshterm import copyright_notice
 from tests.conftest import plain as _plain
 from meshterm.ui.menus import section_heading
 from meshterm.ui.pathline import CRACK_TAIL, PathHop, PathLine
-from meshterm.ui.tui import frame, glow
-from meshterm.ui.tui.glow import apply_corner_glow
+from meshterm.ui.tui import frame
 from meshterm.ui.tui.progress import ProgressScreen
 from meshterm.ui.tui.prompt import (
     AutocompleteScreen,
@@ -870,7 +869,7 @@ def test_compose_startup_box_is_horizontally_centered() -> None:
     assert box_lines and all(ln.startswith("  ") for ln in box_lines)  # centered inset
 
 
-# --- glow --------------------------------------------------------------------
+# --- frames ------------------------------------------------------------------
 
 
 def _cell_color(line: str, idx: int) -> tuple[int, int, int]:
@@ -892,54 +891,35 @@ def _find(plain: str, glyphs: frozenset[str]) -> int:
     return next(i for i, ch in enumerate(plain) if ch in glyphs)
 
 
-def test_corner_glow_brightens_top_left_and_fades_along_top_edge() -> None:
-    """The ╭ corner is lifted toward white and the glow decays rightward to the base color."""
-    lines = apply_corner_glow(render_lines(Panel(Text("x"), border_style="accent", width=60), 60))
-    plain = Text.from_ansi(lines[0]).plain
-    corner = sum(_cell_color(lines[0], _find(plain, glow._TOP_LEFT)))
-    middle = sum(_cell_color(lines[0], len(plain) // 2))
-    far = sum(_cell_color(lines[0], _find(plain, glow._TOP_RIGHT) - 1))
-    assert far == sum(_ACCENT)  # the glow has fully melted into the border color
-    assert corner > middle > far  # brightest at the corner, fading rightward
+_CORNERS = frozenset("╭┌╮┐╰└╯┘")
+_EDGES = frozenset("─│")
 
 
-def test_corner_glow_fades_down_left_edge_only() -> None:
-    """The left border fades downward; the right edge and bottom corner stay untouched."""
-    body = Text("\n".join("row" for _ in range(8)))
-    lines = apply_corner_glow(render_lines(Panel(body, border_style="accent", width=30), 30))
-    upper = sum(_cell_color(lines[1], 0))
-    lower = sum(_cell_color(lines[7], 0))
-    assert upper > lower >= sum(_ACCENT)  # vertical fade toward the base color
-    right = Text.from_ansi(lines[1]).plain.rindex("│")
-    assert _cell_color(lines[1], right) == _ACCENT  # right edge keeps the plain border
-    bottom = Text.from_ansi(lines[-1]).plain
-    assert _cell_color(lines[-1], _find(bottom, glow._BOTTOM_LEFT)) == _ACCENT  # weight is 0 here
+def _border_colours(lines: list[str]) -> set[tuple[int, int, int]]:
+    """Every distinct colour the box-drawing glyphs in ``lines`` are painted in."""
+    return {
+        _cell_color(line, i)
+        for line in lines
+        for i, ch in enumerate(Text.from_ansi(line).plain)
+        if ch in _CORNERS or ch in _EDGES
+    }
 
 
-def test_corner_glow_leaves_titles_and_text_alone() -> None:
-    """Only border glyphs are recoloured: the title keeps its style, the text its content."""
-    panel = Panel(Text("body"), title="Hello", border_style="accent", width=40)
-    raw = render_lines(panel, 40)
-    lines = apply_corner_glow(raw)
-    assert [Text.from_ansi(ln).plain for ln in lines] == [Text.from_ansi(ln).plain for ln in raw]
-    idx = Text.from_ansi(raw[0]).plain.index("H")
-    assert _cell_color(lines[0], idx) == _cell_color(raw[0], idx)  # title untouched
+def test_a_frame_draws_in_one_colour() -> None:
+    """A border is its own colour the whole way round — no corner lit, no edge fading.
 
-
-def test_corner_glow_lights_nested_panels_from_their_own_corners() -> None:
-    """A tool panel nested inside a screen body glows too, blended from its own border color."""
-    inner = Panel(Text("body"), border_style="muted", width=20)
+    The frames were lit from the top-left for a while: the corner blended toward white and
+    the highlight decayed along the top and left edges. It read as a gradient laid over the
+    chrome rather than as the box being a box, so the pass is gone and the border draws flat.
+    Nested panels are checked with the outer frame, because the pass lit those too.
+    """
+    inner = Panel(Text("body"), border_style="accent", width=20)
     screen = ScrollScreen(Group(Text("above"), inner), title="outer")
     lines = frame.compose_base(Text("h"), screen, "hint", 60, 20).split("\n")
-    row, plain = next(
-        (i, p)
-        for i, p in ((i, Text.from_ansi(ln).plain) for i, ln in enumerate(lines))
-        # The inner box's top edge: a corner glyph on a row already inside the outer border.
-        if any(ch in glow._TOP_LEFT for ch in p) and p.lstrip()[0] in glow._VERTICAL
-    )
-    muted = (148, 163, 184)  # #94a3b8
-    corner = _cell_color(lines[row], _find(plain, glow._TOP_LEFT))
-    assert corner != muted and all(c > b for c, b in zip(corner, muted))  # lifted toward white
+    assert _border_colours(lines) == {_ACCENT}, "the base frame draws in more than one colour"
+
+    dialog = frame.compose_dialog(ScrollScreen(Text("body"), title="d"), 80, 20)
+    assert _border_colours(dialog.split("\n")) == {_ACCENT}, "so does a dialog's"
 
 
 # --- prompts -----------------------------------------------------------------

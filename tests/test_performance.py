@@ -3,8 +3,9 @@
 These are behaviour tests, not benchmarks — a wall-clock assertion would be flaky on CI and
 would say nothing about *why* a regression happened. Each test instead pins the structural
 property the optimisation rests on: the database opens in the mode that makes small writes
-cheap, the frame skips the passes that cannot change its pixels, and the startup import graph
-stays clear of the three subtrees that were dragging a fifth of a second each onto every run.
+cheap, the per-frame scans that cannot change a picture are skipped, and the startup import
+graph stays clear of the three subtrees that were dragging a fifth of a second each onto every
+run.
 
 The numbers behind these choices were measured on the PicoCalc (Luckfox Lyra, ~1 GHz
 Cortex-A7, SD card) and are recorded in the plan's Measurements appendix.
@@ -18,12 +19,9 @@ from pathlib import Path
 
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.output import DummyOutput
-from rich.text import Text
 
 from meshterm.persistence import db
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
-from meshterm.ui.tui.frame import compose_base
-from meshterm.ui.tui.screen import Screen
 from meshterm.ui.tui.session import _has_wide_glyph
 from meshterm.ui.tui.spinner import Spinner
 
@@ -131,46 +129,6 @@ def test_widgets_does_not_drag_the_spatial_modules() -> None:
 
 
 # --- per-frame work the platform can skip -------------------------------------------
-
-
-class _Body(Screen):
-    """A minimal screen, just enough for ``compose_base`` to frame something."""
-
-    title = "Perf"
-
-    def render_body(self, width: int) -> list[str]:  # noqa: D102 - inherited docstring
-        return ["body"]
-
-
-def _glow_calls(cols: int = 60, rows: int = 20) -> int:
-    """Compose one frame, counting how many times the corner-glow pass ran."""
-    import meshterm.ui.tui.frame as frame_mod
-
-    original = frame_mod.apply_corner_glow
-    calls = 0
-
-    def counting(lines: list[str]) -> list[str]:
-        nonlocal calls
-        calls += 1
-        return original(lines)
-
-    frame_mod.apply_corner_glow = counting
-    try:
-        compose_base(Text("hdr"), _Body(), "Esc back", cols, rows)
-    finally:
-        frame_mod.apply_corner_glow = original
-    return calls
-
-
-def test_glow_runs_on_regular() -> None:
-    """The desktop frame keeps its lit corners."""
-    assert _glow_calls() == 1
-
-
-def test_glow_is_skipped_where_effects_are_off() -> None:
-    """The pass only recolours truecolor foregrounds, so on PicoCalc it is pure scan cost."""
-    set_platform(PICOCALC)
-    assert _glow_calls() == 0
 
 
 def test_wide_glyph_scan_short_circuits_without_emoji() -> None:

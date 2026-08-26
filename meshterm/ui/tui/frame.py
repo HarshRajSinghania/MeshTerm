@@ -18,7 +18,6 @@ from rich.text import Text
 from ...platforms import Platform, get_platform, on_platform
 from ..logo import load_logo, logo_width
 from ..theme import fold_text, hint_style, title_style
-from .glow import apply_corner_glow
 from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
 
@@ -194,10 +193,7 @@ def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) ->
     real border draws in — rather than :func:`~meshterm.ui.theme.hint_style`'s muted
     variant, which is for auxiliary text riding *alongside* a border (a footer hint, the
     subtitle's own "more" label below), not the border's own glyphs. The ``↑↓`` clip
-    arrows keep that muted hint style, matching a bordered panel's own subtitle. There
-    is no corner to light the way :func:`~meshterm.ui.tui.glow.apply_corner_glow` lights
-    a real frame's top-left — that pass needs a truecolor blend this platform's 16-slot
-    palette can't render, so the rule is uniformly bold rather than fading from one.
+    arrows keep that muted hint style, matching a bordered panel's own subtitle.
     """
     border = "accent"
     tail = ""
@@ -296,13 +292,7 @@ def compose_base(
             + visible
             + render_lines(footer_row(), cols, no_wrap=True)
         )
-    # The glow pass lights the outer frame *and* any tool panels nested in the body. It only
-    # ever recolours truecolor foregrounds (see glow._advance_fg), so on a platform without
-    # effects — which is also a platform without truecolor — it would scan every line of
-    # every frame and hand back the identical list. Skipping it outright is the same picture
-    # for none of the work. Read live rather than bound at import: set_platform() runs in the
-    # CLI callback, long after this module is imported (see meshterm.platforms).
-    lines = header_lines + (apply_corner_glow(body) if platform.effects else body)
+    lines = header_lines + body
     # Guarantee we never exceed the terminal height (pt would otherwise clip unpredictably).
     if len(lines) > rows:
         lines = lines[:rows]
@@ -435,14 +425,7 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=inner_w + 4,
     )
-    # Glow before centering, while the box still starts at column 0 of its own lines. Gated
-    # on the platform exactly as compose_base gates it: the pass only ever recolours
-    # truecolor foregrounds, so on the 16-slot console it walked every line of the splash
-    # to hand back the identical list, on every tick.
-    panel_lines = render_lines(panel, inner_w + 4)
-    if get_platform().effects:
-        panel_lines = apply_corner_glow(panel_lines)
-    panel_lines = _center(panel_lines, cols)
+    panel_lines = _center(render_lines(panel, inner_w + 4), cols)
 
     # A small muted line (e.g. a copyright notice) sits immediately under the logo, its right
     # edge hung off the logo's right edge so the two read as one signed block.
@@ -535,10 +518,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         padding=(vpad, 1),
         width=max_w,
     )
-    dialog_lines = render_lines(panel, max_w)
-    if get_platform().effects:
-        dialog_lines = apply_corner_glow(dialog_lines)
-    out = "\n".join(dialog_lines)
+    out = "\n".join(render_lines(panel, max_w))
     _DIALOG_CACHE[key] = out
     if len(_DIALOG_CACHE) > _DIALOG_CACHE_MAX:
         _DIALOG_CACHE.popitem(last=False)
