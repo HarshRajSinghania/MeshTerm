@@ -237,7 +237,9 @@ class ChatScreen(Screen):
             # Both direct and channel threads use the same grouped, Discord/Slack-style
             # transcript: consecutive messages from one sender share a colored header, with
             # day dividers between them. Rendering per-message also lets us record where the
-            # picked reply target lands (channels only; see _selected_line / cursor_line).
+            # picked message lands (see _selected_line / cursor_line). Both thread kinds
+            # pick; what differs is only what Enter then does with the pick — a reply in a
+            # channel, the delivery paths in a direct thread.
             if self._selected is not None:
                 self._selected = max(0, min(self._selected, len(self._messages) - 1))
             lines = self._render_grouped(width)
@@ -318,8 +320,8 @@ class ChatScreen(Screen):
         the same day share one colored header, with each message body indented below. A muted
         divider marks each new day, and a blank line separates distinct sender groups.
         Rendering message-by-message (rather than as one Group) lets us record the body line
-        of the selected reply target in :attr:`_selected_line` so the frame can scroll it into
-        view (channels only; direct threads never select).
+        of the picked message in :attr:`_selected_line` so the frame can scroll it into
+        view. Both thread kinds pick — see :meth:`handle`.
 
         A repaint is triggered constantly by things that touch nothing here — the idle
         tick, a keystroke, the ack spinner — so this memoizes each message's rendered lines
