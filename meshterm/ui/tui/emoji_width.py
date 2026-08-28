@@ -62,6 +62,17 @@ lone-narrow allowlist, curated for the same reason: which glyph a terminal draws
 business, not the codepoint's, and a cursor probe reads the PTY, not the renderer. Keyed on the
 *base* codepoint (the trailing ``U+FE0F`` is skipped regardless).
 
+An emoji **ZWJ sequence** (``🤷‍♂️``, ``👨‍👩‍👧``, ``🏳️‍🌈``) is a different failure and
+needs no curation at all, because it has a structural tell of its own: the zero-width joiner says
+the codepoints around it are *one glyph*, and a terminal draws it in the width of its base. Rich's
+stock measurement already knows this; prompt_toolkit's does not — it sums the parts, so it reserves
+three cells for the shrug and **six** for the family, and every one of them pulls the row's right
+border in. Both authorities are corrected the same way here (:func:`_joined_out`), and — because
+prompt_toolkit builds its screen one *codepoint* at a time — the sequence is also handed to it as a
+single fragment (:class:`ClusterTextControl`) so it becomes one ``Char`` rather than four. The
+cluster measures whatever its base measures, so the two curated sets above still reach it: listing a
+base in the wide set widens the whole sequence with it.
+
 A **bare** codepoint the authorities *already agree* measures one is not a candidate for that set,
 however wide the glyph looks in a font book: without a variation selector asking for emoji
 presentation, an emoji outside Emoji_Presentation (``🛣`` U+1F6E3, ``🕸`` U+1F578) draws as a
@@ -76,10 +87,19 @@ import os
 import sys
 from typing import Callable
 
+from prompt_toolkit.layout.controls import FormattedTextControl
+
+#: The zero-width joiner: the tell that the codepoints it sits between are **one glyph**
+#: (``🤷‍♂️``, ``👨‍👩‍👧``), which a terminal draws in the width of the sequence's base.
+_ZWJ = "‍"
+
+#: Variation selector 16, the request for emoji presentation.
+_VS16 = "️"
+
 #: Codepoints that never occupy a cell on their own: zero-width joiner and the
 #: emoji-presentation variation selector. Skipping them means a base glyph is
 #: measured at its own East-Asian width, with no VS16 "promote to 2" step.
-_ZERO_WIDTH = ("‍", "️")
+_ZERO_WIDTH = (_ZWJ, _VS16)
 
 #: The probe: a sun. Its base (U+2600) is East-Asian *narrow* (1), and Rich
 #: promotes the U+2600+U+FE0F pair to 2. So a terminal that reports 1 for this is
@@ -121,6 +141,12 @@ _DEFAULT_WIDE_BASE = "\U0001f6e9"  # 🛩 airplane, drawn two-wide with its VS16
 #: Set once :func:`calibrate` has run so repeated calls are cheap no-ops.
 _CALIBRATED = False
 
+#: Whether the width authorities have been redirected through this module. Gates
+#: :class:`ClusterTextControl`: handing prompt_toolkit a joined sequence as one character is
+#: only right once something measures that character as one glyph, so the delivery and the
+#: measurement are switched on together or not at all.
+_CLUSTERS = False
+
 
 def _is_regional_indicator(char: str) -> bool:
     """Whether ``char`` is a single Regional Indicator Symbol — a country flag's building block.
@@ -134,6 +160,31 @@ def _is_regional_indicator(char: str) -> bool:
     handled as a block — listing one flag would half-fix its neighbours and skip the rest.
     """
     return len(char) == 1 and 0x1F1E6 <= ord(char) <= 0x1F1FF
+
+
+def _joined_out(text: str) -> str:
+    """Drop every codepoint a ZWJ folds into the glyph before it, leaving the bases behind.
+
+    An emoji ZWJ sequence is one grapheme and the terminal draws it in one glyph's worth of
+    cells — its base's. ``"🤷‍♂️"`` is a shrug, not a shrug beside a male sign, so measuring it
+    means measuring ``"🤷"`` and ignoring what the joiner attached. Removing the joined
+    codepoints (and the joiners) leaves a string the ordinary per-codepoint rules — the wide
+    set, the narrow allowlist, the flag category — measure correctly, so a cluster inherits
+    whatever its base is worth and every existing lever still reaches it.
+
+    Variation selectors are left in place: both authorities already give them zero.
+    """
+    kept = []
+    joined = False  # the previous codepoint was a joiner, so this one is part of that glyph
+    for char in text:
+        if char == _ZWJ:
+            joined = True
+            continue
+        if joined:
+            joined = False
+            continue
+        kept.append(char)
+    return "".join(kept)
 
 
 def _narrow_lone_set() -> frozenset[str]:
@@ -182,10 +233,15 @@ def calibrate(*, force_width: int | None = None) -> None:
     width = force_width if force_width is not None else _decide_vs16_width()
     # width 1 -> the renderer draws emoji narrow: stop Rich promoting VS16 sequences and
     # narrow the curated lone-codepoint emoji this terminal also draws in one cell.
-    # width 2 (or unknown/None) -> Rich's default already matches; leave everything alone
-    # (narrowing here would instead pull a correctly-wide emoji's border a column short).
+    # width 2 -> Rich's default already matches, so its table is left alone (narrowing here
+    # would instead pull a correctly-wide emoji's border a column short) — but prompt_toolkit
+    # still sums a ZWJ sequence's parts at either width, and that is wrong on every terminal,
+    # so the cluster rule is installed on its own.
+    # unknown/None -> no terminal to be aligned with; touch nothing.
     if width == 1:
         _install_terminal_widths(_narrow_lone_set(), _wide_base_set())
+    elif width == 2:
+        _install_cluster_widths()
 
 
 def _decide_vs16_width() -> int | None:
@@ -345,6 +401,10 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
       it pads to a flush right border instead of a column-short notch.
     * **Flag indicators** — a Regional Indicator (:func:`_is_regional_indicator`) counts as one,
       so a country flag sums to two (Rich already agrees here; this keeps the two loops in step).
+    * **ZWJ sequences** — the codepoints a joiner folds in are dropped first
+      (:func:`_joined_out`), so ``"🤷‍♂️"`` is measured as the one glyph it is. Rich's stock
+      loop does this and the selector-skipping replacement above would otherwise lose it,
+      counting the male sign as a cell of its own and pulling the row's border a column in.
 
     Everything else keeps its ``get_character_cell_size`` value, so a lone emoji the terminal
     *does* draw two wide (a menu icon like ``📡``, never placed in ``narrow``) is left alone.
@@ -355,7 +415,7 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
 
     def _cell_len(text: str, unicode_version: str = "auto") -> int:
         total = 0
-        for char in text:
+        for char in _joined_out(text) if _ZWJ in text else text:
             if char in _ZERO_WIDTH:
                 continue
             if char in wide:
@@ -369,7 +429,9 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
     return _cell_len
 
 
-def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str]) -> "object":
+def _make_pt_cache(
+    narrow: frozenset[str], wide: frozenset[str], *, flags: bool = True
+) -> "object":
     """Build a prompt_toolkit char-width cache that measures every ``narrow`` glyph as one.
 
     prompt_toolkit is the authority that *places the panel's right border*: it lays the
@@ -381,11 +443,25 @@ def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str]) -> "object":
     sums per character through the cache, a whole chat line ``"Bob 👋 hi"`` inherits the one-cell
     ``👋`` for free, and a flag ``"🇨🇦"`` sums its two one-cell indicators to a flush two.
 
+    A **ZWJ sequence** is measured as the single glyph it is, by summing only the bases the
+    joiner left behind (:func:`_joined_out`) — so ``"🤷‍♂️"`` is two rather than three and
+    ``"👨‍👩‍👧"`` two rather than six. It runs through this same cache, so a base in ``wide`` or
+    ``narrow`` still sets the sequence's width. Delivering it is the other half of the job:
+    prompt_toolkit lays out one codepoint at a time, so the sequence also has to reach it as a
+    single fragment — see :class:`ClusterTextControl`.
+
     A ``wide`` base codepoint (``🛩``) is the reverse case and matters most here: prompt_toolkit's
     wcwidth already calls a VS16 base one on its own (it never promoted the pair), so without this
     the airplane's border lands a column short of where the terminal paints its two-cell glyph. The
     subclass forces such a base to two; the same per-character summation then gives ``"🛩️ hi"`` its
     correct width, the trailing selector staying zero.
+
+    Args:
+        narrow: lone codepoints to measure as one cell.
+        wide: base codepoints to measure as two.
+        flags: whether to narrow Regional Indicators so a country flag sums to two. Off on the
+            width-2 path, where the terminal's own flag rendering has not been confirmed and a
+            renderer without flag glyphs draws the two indicators as four cells of its own.
     """
     import prompt_toolkit.utils as ptu
 
@@ -393,10 +469,20 @@ def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str]) -> "object":
 
     class _NarrowLoneCache(base_cache_cls):  # type: ignore[valid-type, misc]
         def __missing__(self, string: str) -> int:
+            if _ZWJ in string:
+                # One glyph, however many codepoints: measure the bases the joiner left
+                # behind, through this same cache so every rule above still applies. Only
+                # a short result is kept — a whole *line* holding a sequence is cheap to
+                # recompute and would otherwise slip past the base class's long-string
+                # rotation and grow the cache without bound.
+                total = sum(self[char] for char in _joined_out(string))
+                if len(string) <= self.LONG_STRING_MIN_LEN:
+                    self[string] = total
+                return total
             if string in wide:
                 self[string] = 2
                 return 2
-            if string in narrow or _is_regional_indicator(string):
+            if string in narrow or (flags and _is_regional_indicator(string)):
                 self[string] = 1
                 return 1
             return super().__missing__(string)
@@ -414,7 +500,12 @@ def _install_terminal_widths(narrow: frozenset[str], wide: frozenset[str]) -> No
     it, and even empty ``narrow``/``wide`` sets still leave the flag-indicator category to
     correct, so the cache is always swapped. Both run at :func:`calibrate` time, before a frame is
     drawn, so no stale measurement or ``Char`` is ever painted.
+
+    Measuring a ZWJ sequence as one glyph is half of that job, so this is also what arms the
+    other half — :class:`ClusterTextControl` only merges once something is measuring what it
+    merges.
     """
+    global _CLUSTERS
     import prompt_toolkit.utils as ptu
     import rich.cells as cells
 
@@ -423,9 +514,126 @@ def _install_terminal_widths(narrow: frozenset[str], wide: frozenset[str]) -> No
     cells.cached_cell_len.cache_clear()
     cells._cell_len = _make_cell_len(narrow, wide)
     ptu._CHAR_SIZES_CACHE = _make_pt_cache(narrow, wide)
+    _CLUSTERS = True
     # The measurement just changed under every renderable, so anything rasterized before
     # calibration (nothing, in the normal boot order — but never trust that) is stale.
     _ANSI_CACHE.clear()
 
 
-__all__ = ["calibrate"]
+def _install_cluster_widths() -> None:
+    """Correct the one thing that is wrong at *either* emoji width: a ZWJ sequence.
+
+    A terminal that draws ``☀️`` in two cells needs none of the narrowing above — Rich's table
+    already matches what it paints, and so does prompt_toolkit's for everything that stands on
+    its own. A joined sequence is the exception: prompt_toolkit adds up its codepoints wherever
+    it runs, so ``👨‍👩‍👧`` reserves six cells for a two-cell glyph on the widest terminal as
+    surely as on the narrowest. Only prompt_toolkit's cache is swapped (with both curated sets
+    empty and the flag category left alone, since neither has been confirmed here), and Rich is
+    not touched at all: its stock measurement handles a cluster correctly on its own.
+    """
+    global _CLUSTERS
+    import prompt_toolkit.utils as ptu
+
+    from .render import _ANSI_CACHE
+
+    ptu._CHAR_SIZES_CACHE = _make_pt_cache(frozenset(), frozenset(), flags=False)
+    _CLUSTERS = True
+    _ANSI_CACHE.clear()
+
+
+class _Cluster(str):
+    """An emoji ZWJ sequence that must reach the screen buffer as **one** character.
+
+    prompt_toolkit builds its screen a codepoint at a time — ``for c in text`` in
+    ``Window._copy_body`` — and gives each one its own cell-occupying ``Char``. A joined
+    sequence measured correctly at two cells is therefore still laid out as a two-cell shrug
+    followed by a one-cell male sign, and the border lands three columns along from a glyph the
+    terminal drew in two. Iterating a cluster yields the whole sequence instead of its parts, so
+    that loop makes a single ``Char`` of it: one cell pair in prompt_toolkit's arithmetic, every
+    codepoint written to the terminal back to back, and one composed glyph on the screen.
+
+    It is a ``str`` subclass rather than a wrapper because it has to survive as ordinary text
+    through everything else prompt_toolkit does with a fragment — joining, slicing, comparing.
+    ``str`` methods return plain ``str``, so the marking is lost on the first ``split``; that is
+    why :class:`ClusterTextControl` applies it to the finished lines and nothing earlier.
+    """
+
+    __slots__ = ()
+
+    def __iter__(self):  # type: ignore[override]
+        yield str(self)
+
+
+def _join_zwj_clusters(line: list) -> list:
+    """Merge each emoji ZWJ sequence in one screen line into a single :class:`_Cluster` fragment.
+
+    The line arrives one codepoint per fragment (that is what
+    :class:`~prompt_toolkit.formatted_text.ANSI` produces), so a sequence is a run to be
+    gathered: a base, its optional variation selector, then any number of *joiner + component +
+    optional selector* groups. A run with no joiner in it is handed back untouched — including a
+    lone VS16 pair, which prompt_toolkit already folds into the preceding cell on its own, and a
+    trailing joiner with nothing after it, which is not a sequence at all.
+
+    The whole line is handed back unchanged when it holds no joiner, which is almost every line;
+    the scan is one comparison per cell and runs only when a control's content actually changes.
+    """
+    if not any(item[1] == _ZWJ for item in line):
+        return line
+    merged: list = []
+    index = 0
+    count = len(line)
+    while index < count:
+        end = index + 1
+        while end < count and line[end][1] == _VS16:
+            end += 1
+        joined = False
+        while end + 1 < count and line[end][1] == _ZWJ:
+            joined = True
+            end += 2  # the joiner and the codepoint it joins
+            while end < count and line[end][1] == _VS16:
+                end += 1
+        if joined:
+            text = "".join(item[1] for item in line[index:end])
+            merged.append((line[index][0], _Cluster(text)))
+            index = end
+        else:
+            merged.append(line[index])
+            index += 1
+    return merged
+
+
+class ClusterTextControl(FormattedTextControl):
+    """A :class:`~prompt_toolkit.layout.controls.FormattedTextControl` that keeps emoji whole.
+
+    The control is the last place a screen's text is still arranged in lines and still ours to
+    touch, which is exactly what merging a ZWJ sequence needs: ``split_lines`` runs before this
+    point and returns plain ``str`` parts, so a :class:`_Cluster` marked any earlier would not
+    survive to be laid out. Everything downstream — the width lookup, the wrapping, the screen
+    buffer — reads the merged lines.
+
+    Merging is gated on :func:`calibrate` having run, because handing prompt_toolkit a sequence
+    as one character is only right once its cache measures that character as one glyph. Off that
+    path (a test, a piped run, a terminal we could not measure) this is its base class exactly.
+    """
+
+    def create_content(self, width: int, height: "int | None"):  # type: ignore[override]
+        content = super().create_content(width, height)
+        # The base class caches its ``UIContent`` per (fragments, width, cursor), so the same
+        # object comes back paint after paint: wrap its line lookup once, and memoise the merge
+        # behind it, rather than re-walking every line of every frame.
+        if _CLUSTERS and not getattr(content, "_zwj_merged", False):
+            content._zwj_merged = True  # type: ignore[attr-defined]
+            source = content.get_line
+            cache: dict[int, list] = {}
+
+            def get_line(i: int, _source=source, _cache=cache) -> list:
+                line = _cache.get(i)
+                if line is None:
+                    line = _cache[i] = _join_zwj_clusters(_source(i))
+                return line
+
+            content.get_line = get_line
+        return content
+
+
+__all__ = ["ClusterTextControl", "calibrate"]

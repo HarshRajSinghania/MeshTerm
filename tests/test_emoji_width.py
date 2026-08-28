@@ -27,6 +27,9 @@ _PLANE = "🛩️"  # a VS16 sequence this terminal draws two wide despite the n
 _PLANE_BASE = "\U0001f6e9"  # its base codepoint (no selector) — what the wide set is keyed on
 _ROAD = "\U0001f6e3"  # 🛣 a bare text-default emoji: one cell, and both authorities agree
 _WEB = "\U0001f578"  # 🕸 its untouched sibling one Trophy board down — the control
+_SHRUG = "\U0001f937‍♂️"  # 🤷‍♂️ a ZWJ sequence: base, joiner, male sign, selector — one glyph
+_FAMILY = "\U0001f468‍\U0001f469‍\U0001f467"  # 👨‍👩‍👧 three joined people, still one glyph
+_ZWJ = "‍"  # the joiner itself: the tell that its neighbours are a single glyph
 
 
 def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
@@ -79,6 +82,13 @@ def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
     # frames flush instead of collapsing to one and smearing the row.
     assert cell_len(_PLANE) == 2
     assert cell_len("hi 🛩️") == len("hi ") + 2
+    # A ZWJ sequence is one glyph, measured as its base: the codepoints the joiner folds in
+    # cost nothing, however many of them there are. Rich's stock loop already does this, and
+    # the selector-skipping replacement must not lose it — counting the male sign as a cell
+    # of its own is what pulls the row's right border a column in.
+    assert cell_len(_SHRUG) == 2
+    assert cell_len(_FAMILY) == 2
+    assert cell_len(f"Bob {_FAMILY} hi") == len("Bob  hi") + 2
 
 
 def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
@@ -94,6 +104,15 @@ def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
     # zero, so the whole glyph (and any line holding it) keeps the terminal's two cells.
     assert cache[_PLANE] == 2
     assert cache["🛩️ hi"] == 2 + len(" hi")
+    # The sequences prompt_toolkit added up part by part: three cells for the shrug and six
+    # for the family, each of them one two-cell glyph, each pulling a border in by the excess.
+    assert cache[_SHRUG] == 2
+    assert cache[_FAMILY] == 2
+    assert cache[f"Bob {_FAMILY} hi"] == len("Bob  hi") + 2
+    # A lone joiner is still zero, and a codepoint a sequence joins keeps its own width when
+    # it stands alone — ``↕`` is the reorder icon, not part of anything.
+    assert cache[_ZWJ] == 0
+    assert cache["↕"] == 1
 
 
 def test_bare_text_default_emoji_are_left_exactly_as_measured() -> None:
@@ -134,12 +153,12 @@ def test_flags_measure_two_cells_in_both_authorities() -> None:
 
 def _snapshot() -> tuple:
     """Capture the mutable width state :func:`calibrate` patches, to restore afterwards."""
-    return (cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED)
+    return (cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED, ew._CLUSTERS)
 
 
 def _restore(snap: tuple) -> None:
     """Put the width authorities (and the once-only flag) back, clearing Rich's memo cache."""
-    cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED = snap
+    cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED, ew._CLUSTERS = snap
     cells.cached_cell_len.cache_clear()
 
 
@@ -164,12 +183,21 @@ def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> N
         assert get_cwidth(_CA) == 2  # was 4 unpatched
         assert get_cwidth(_PLANE) == 2  # was 1 unpatched: the airplane smeared a cell short
         assert get_cwidth(_ROAD) == 1 and get_cwidth(_WEB) == 1  # untouched, in both authorities
+        assert cells.cell_len(_SHRUG) == 2 and get_cwidth(_SHRUG) == 2  # pt counted three
+        assert cells.cell_len(_FAMILY) == 2 and get_cwidth(_FAMILY) == 2  # pt counted six
     finally:
         _restore(snap)
 
 
-def test_calibrate_width2_leaves_both_authorities_untouched(monkeypatch) -> None:
-    """On a terminal that draws emoji two wide, narrowing would itself break the border."""
+def test_calibrate_width2_narrows_nothing_but_still_joins_clusters(monkeypatch) -> None:
+    """On a terminal that draws emoji two wide, narrowing would itself break the border — but
+    a joined sequence is over-measured at *every* width, so that one correction still lands.
+
+    prompt_toolkit sums a ZWJ sequence's codepoints wherever it runs, which no terminal draws:
+    the family is one two-cell glyph on the widest terminal as surely as on the narrowest. So
+    the cluster rule is installed on its own here, and nothing else is — the curated sets and
+    the flag category stay unconfirmed on this renderer, and Rich is not touched at all.
+    """
     monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
     from prompt_toolkit.utils import get_cwidth
 
@@ -179,5 +207,98 @@ def test_calibrate_width2_leaves_both_authorities_untouched(monkeypatch) -> None
         ew.calibrate(force_width=2)
         assert cells.cell_len(_WAVE) == 2
         assert get_cwidth(_WAVE) == 2
+        # Rich untouched: it still promotes a VS16 sequence to the two cells this terminal draws.
+        assert cells.cell_len(_PLANE) == 2 and cells.cell_len("☀️") == 2
+        # Neither curated set nor the flag category applies here — pt keeps its stock answers.
+        assert get_cwidth("☀️") == 1
+        assert get_cwidth(_CA) == 4
+        # The one correction that holds at either width.
+        assert get_cwidth(_SHRUG) == 2  # was 3
+        assert get_cwidth(_FAMILY) == 2  # was 6
+    finally:
+        _restore(snap)
+
+
+def test_join_zwj_clusters_merges_only_joined_runs() -> None:
+    """The fragment merge gathers a whole sequence and leaves everything else alone.
+
+    prompt_toolkit's ANSI text arrives one codepoint per fragment, so a sequence is a run:
+    a base, an optional selector, then *joiner + component + optional selector* groups.
+    """
+    def line(text: str) -> list:
+        return [("", char) for char in text]
+
+    def texts(fragments: list) -> list:
+        return [text for _style, text in fragments]
+
+    # A line with no joiner is handed straight back — the same object, not a copy.
+    plain = line("hi 📡")
+    assert ew._join_zwj_clusters(plain) is plain
+
+    # The shrug's four fragments become one; the bars around it are untouched.
+    assert texts(ew._join_zwj_clusters(line(f"|{_SHRUG}|"))) == ["|", _SHRUG, "|"]
+    # Three joined people, five fragments, still one glyph.
+    assert texts(ew._join_zwj_clusters(line(_FAMILY))) == [_FAMILY]
+    # A selector on the *base*, before the joiner, belongs to the run: ❤️‍🔥.
+    burning = "❤️‍\U0001f525"
+    assert texts(ew._join_zwj_clusters(line(burning))) == [burning]
+    # A bare VS16 pair is not a sequence — prompt_toolkit already folds it into the cell
+    # before it, so those fragments are left exactly as they came.
+    assert texts(ew._join_zwj_clusters(line(f"☀️{_SHRUG}"))) == ["☀", "️", _SHRUG]
+    # A trailing joiner with nothing to join is not a sequence either.
+    assert texts(ew._join_zwj_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
+
+    # A merged fragment iterates as the whole sequence, which is what makes prompt_toolkit
+    # build one Char of it instead of one per codepoint.
+    (merged,) = texts(ew._join_zwj_clusters(line(_SHRUG)))
+    assert list(merged) == [_SHRUG] and merged == _SHRUG
+
+
+def test_cluster_control_lays_a_sequence_into_a_single_screen_cell(monkeypatch) -> None:
+    """The delivery half: one ``Char`` per glyph, with every codepoint still written out.
+
+    Measuring the sequence right is not enough on its own — prompt_toolkit lays out one
+    codepoint at a time, so an uncorrected screen puts the male sign in a cell of its own and
+    everything after it a column late. The control merges the run, so the window makes a
+    single two-cell ``Char`` of it and the text after lands where the terminal draws it. The
+    codepoints themselves are untouched: all four still reach the screen, in order, so the
+    terminal composes the same glyph.
+    """
+    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
+    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.application.current import set_app
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.input import DummyInput
+    from prompt_toolkit.layout import Layout, Window
+    from prompt_toolkit.layout.mouse_handlers import MouseHandlers
+    from prompt_toolkit.layout.screen import Screen, WritePosition
+    from prompt_toolkit.output import DummyOutput
+
+    text = f"|{_SHRUG}|{_FAMILY}|end"
+
+    def paint() -> list:
+        window = Window(ew.ClusterTextControl(lambda: ANSI(text)), always_hide_cursor=True)
+        app = Application(layout=Layout(window), input=DummyInput(), output=DummyOutput())
+        with set_app(app):
+            screen = Screen(default_char=None, initial_width=40, initial_height=1)
+            window.write_to_screen(
+                screen, MouseHandlers(), WritePosition(0, 0, 40, 1), "", False, None
+            )
+        return screen.data_buffer[0]
+
+    snap = _snapshot()
+    try:
+        ew._CALIBRATED = False
+        ew.calibrate(force_width=1)
+        row = paint()
+        # Each sequence is one cell-occupying Char, two cells wide, exactly as drawn.
+        assert (row[1].char, row[1].width) == (_SHRUG, 2)
+        assert (row[4].char, row[4].width) == (_FAMILY, 2)
+        # So the text after them starts at column 6 rather than 13 — seven cells of border
+        # drift removed (one for the shrug, four for the family, two from the second bar).
+        assert "".join(row[x].char for x in range(6, 10)) == "|end"
+        # Nothing was dropped on the way: the row still spells the source exactly.
+        assert "".join(row[x].char for x in range(40)).rstrip() == text
     finally:
         _restore(snap)

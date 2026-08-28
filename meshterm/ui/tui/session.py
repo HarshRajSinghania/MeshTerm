@@ -24,7 +24,6 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, Float, FloatContainer, Layout, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
 from rich.text import Text
@@ -32,6 +31,7 @@ from rich.text import Text
 from ...platforms import get_platform
 from ...services import modifier_watch
 from . import fastrender, fkeys, frame
+from .emoji_width import ClusterTextControl
 from .overlay import BusyOverlay
 from .progress import TuiProgress
 from .prompt import (
@@ -1111,7 +1111,7 @@ class TuiSession:
 
     def _build_app(self) -> Application:
         """Construct the prompt_toolkit application, layout, and key bindings."""
-        base_control = FormattedTextControl(self._render_base, focusable=True)
+        base_control = ClusterTextControl(self._render_base, focusable=True)
         base_window = Window(base_control, always_hide_cursor=True)
         # One centered-box float per stacked dialog layer, bottom-to-top: each renders the
         # k-th screen floating above the background (see :meth:`_float_layers`), so a dialog
@@ -1122,7 +1122,7 @@ class TuiSession:
             Float(
                 ConditionalContainer(
                     Window(
-                        FormattedTextControl(
+                        ClusterTextControl(
                             lambda i=i: self._render_float_layer(i)
                         ),
                         always_hide_cursor=True,
@@ -1136,7 +1136,7 @@ class TuiSession:
         # top of the z-order. It is a content-sized window (dont_extend_*) with no anchors, so
         # the FloatContainer centres just its skeleton card over the screen rather than blanking it.
         overlay_window = Window(
-            FormattedTextControl(self._render_overlay),
+            ClusterTextControl(self._render_overlay),
             always_hide_cursor=True,
             dont_extend_width=True,
             dont_extend_height=True,
