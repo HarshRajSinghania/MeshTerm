@@ -11,7 +11,6 @@ from rich.text import Text
 
 from meshterm.ui.menus import (
     Lane,
-    back_rows,
     changes_phrase,
     column_header,
     exit_rows,
@@ -23,21 +22,13 @@ from meshterm.ui.menus import (
 from meshterm.ui.tui import Choice, Separator
 
 
-def test_back_rows_are_one_blank_line_then_bare_back() -> None:
-    """The exit group is exactly: a blank separator, then the unadorned word Back."""
-    rows = back_rows("sentinel")
-    assert len(rows) == 2
-    assert isinstance(rows[0], Separator) and rows[0].title == " "
-    assert isinstance(rows[1], Choice)
-    assert rows[1].title == "Back"  # no arrow, no icon — the app-wide exit word
-    assert rows[1].value == "sentinel"
+def test_exit_rows_clean_state_is_nothing_at_all() -> None:
+    """A list never advertises its own exit: with nothing staged there are no rows.
 
-
-def test_exit_rows_clean_state_is_plain_back() -> None:
-    """With nothing staged the editor exit group collapses to the plain Back group."""
-    rows = exit_rows(0, apply_value="A", back_value="B")
-    assert [type(r) for r in rows] == [Separator, Choice]
-    assert rows[1].title == "Back" and rows[1].value == "B"
+    Esc leaves, on both platforms, so the app-wide ``Back`` row was retired — what
+    survives is the staged-changes pair below, which is a choice rather than an exit.
+    """
+    assert exit_rows(0, apply_value="A", back_value="B") == []
 
 
 def test_exit_rows_staged_state_spells_out_the_consequence() -> None:

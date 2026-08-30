@@ -47,7 +47,7 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
-from .menus import back_rows, command_icon, fit_cells, marked_label, section_heading
+from .menus import command_icon, fit_cells, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
 from .pathline import path_line
 from .theme import name_style, snr_style
@@ -209,7 +209,7 @@ class RecordDialog(Screen):
         self._shape = list(shape) if shape else None
         self._reliability = reliability
         self._type_of = type_of
-        self._actions = ("trace", "delete", "back")
+        self._actions = ("trace", "delete")
         self._index = 0
         self._cursor: Optional[int] = None
         # The composed card above the action rows, per width (see render_body).
@@ -244,8 +244,7 @@ class RecordDialog(Screen):
             self._follow = False
             self.scroll_to_bottom()
         elif action == "enter":
-            key = self._actions[self._index]
-            self.resolve(None if key == "back" else key)
+            self.resolve(self._actions[self._index])
         elif action == "escape":
             self.resolve(None)
 
@@ -468,18 +467,14 @@ class RecordDialog(Screen):
         lines.append("")
         self._cursor = None
         for i, key in enumerate(self._actions):
-            if key == "back":
-                lines.append("")
             selected = i == self._index
             row = Text("❯ " if selected else "  ", style="cursor" if selected else "")
             if key == "trace":
                 row.append_text(marked_label(
                     "👣", "Trace this path — reopen in Trace path", "accent"
                 ))
-            elif key == "delete":
-                row.append_text(marked_label("🗑", "Delete record…", "err"))
             else:
-                row.append("Back")
+                row.append_text(marked_label("🗑", "Delete record…", "err"))
             if selected:
                 row.style = "cursor"
                 self._cursor = len(lines)
@@ -787,7 +782,6 @@ async def open_records(ctx: "AppContext") -> dict:
                 ),
                 value=category.id,
             ))
-        rows.extend(back_rows("__back__"))
         picked = await session.run_screen(
             SelectScreen(
                 "Delete a discipline's records",
@@ -797,7 +791,7 @@ async def open_records(ctx: "AppContext") -> dict:
                 wrap=False,
             )
         )
-        if picked in (CANCEL, None, "__back__"):
+        if picked is CANCEL or picked is None:  # Esc
             return None
         category = CATEGORY_BY_ID[str(picked)]
         count = len(ctx.repo.discoveries(category.id))
@@ -837,8 +831,8 @@ async def open_records(ctx: "AppContext") -> dict:
                     hscroll_from=lanes.cell_len,
                 ))
         total = len(ctx.repo.discoveries())
-        items.append(Separator(" "))
         if total:
+            items.append(Separator(" "))
             items.append(Choice(
                 title=marked_label("🗑", "Delete a discipline's records…", "err"),
                 value=("del_cat", None, 0, None),
@@ -847,7 +841,6 @@ async def open_records(ctx: "AppContext") -> dict:
                 title=marked_label("🗑", "Delete all records…", "err"),
                 value=("del_all", None, 0, None),
             ))
-        items.extend(back_rows(("back", None, 0, None)))
         browser = SelectScreen(
             "Trophy case",
             items,
@@ -856,7 +849,7 @@ async def open_records(ctx: "AppContext") -> dict:
             hscroll=True,  # a long walk slides under ←→ instead of dying at the fold
         )
         picked = await session.run_screen(browser)
-        if picked is CANCEL or picked is None or picked[0] == "back":
+        if picked is CANCEL or picked is None:  # Esc
             return {"records": total}
         # Every pick opens a dialog that belongs *over* the trophy case — the discipline
         # picker, the delete confirms, a record's floating story. run_screen just popped the

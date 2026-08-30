@@ -29,7 +29,7 @@ from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
-from .menus import back_rows, command_label, marked_label, section_heading
+from .menus import command_label, marked_label, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import glyph
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
@@ -239,7 +239,6 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
             items.append(Choice(lambda m=message: _done_row(m), ("msg", message.ident)))
         items.append(Choice(f"{glyph('🗑')} Clear finished", _CLEAR))
 
-    items.extend(back_rows())  # a visible exit beside Esc
     return items
 
 

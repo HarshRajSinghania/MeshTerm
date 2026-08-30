@@ -413,7 +413,6 @@ class NodeDetailScreen(Screen):
         routes: Optional[_RoutesView] = None,
         info_actions: Optional[list[_Action]] = None,
         trace_action: Optional[_Action] = None,
-        tail_actions: Optional[list[_Action]] = None,
     ) -> None:
         """Build the page over resolved display data.
 
@@ -435,7 +434,6 @@ class NodeDetailScreen(Screen):
             trace_action: The Routes tab's ``Trace — auto route …`` action, shown only when
                 there are no routes to list (with routes listed, Enter on a route row is the
                 trace entry point), or ``None``.
-            tail_actions: The always-available actions closing every tab (Back).
         """
         super().__init__()
         self.title = title
@@ -447,7 +445,6 @@ class NodeDetailScreen(Screen):
         self._routes = routes
         self._info_actions = info_actions or []
         self._trace_action = trace_action
-        self._tail_actions = tail_actions or []
         self._tab_index = 0
         self._row_index = 0
         #: The highlighted route on the Routes tab (drives the graph); tracks the cursor as
@@ -592,10 +589,7 @@ class NodeDetailScreen(Screen):
                     self.resolve("trace")
                 else:
                     assert isinstance(payload, _Action)
-                    # Back leaves the page exactly as Esc does — it resolves the same
-                    # CANCEL the opener's loop breaks on, not a "back" token the loop would
-                    # ignore and re-show the page over.
-                    self.resolve(CANCEL if payload.key == "back" else payload.key)
+                    self.resolve(payload.key)
         elif action == "tab":
             self._switch_tab(1)
         elif action == "shift_tab":
@@ -686,7 +680,6 @@ class NodeDetailScreen(Screen):
                 focus.append(("action", self._trace_action))
         elif tab is not None and tab.kind == "info":
             focus.extend(("action", a) for a in self._info_actions)
-        focus.extend(("action", a) for a in self._tail_actions)
         return focus
 
     # --- rendering -------------------------------------------------------------
@@ -724,16 +717,10 @@ class NodeDetailScreen(Screen):
                 )
             )
 
-        # The action rows are fixed chrome too — a leading blank, one line per row, a blank
-        # setting Back apart when rows precede it — struck before the stage draws so it can
-        # size against them.
+        # The action rows are fixed chrome too — a leading blank, one line per row —
+        # struck before the stage draws so it can size against them.
         actions = [payload for _kind, payload in focus if _kind == "action"]
-        action_lines = 1 + len(actions) + (
-            1
-            if len(actions) > 1
-            and any(a.key == "back" for a in actions if isinstance(a, _Action))
-            else 0
-        )
+        action_lines = (1 + len(actions)) if actions else 0
 
         # -- the stage, sized to what the viewport leaves, closed by a faint rule.
         route_blocks: list[list[str]] = []
@@ -776,12 +763,11 @@ class NodeDetailScreen(Screen):
             self._list_hidden = top > 0 or below > 0
 
         # -- the pinned action rows (the route rows precede them in focus order).
-        lines.append("")
+        if actions:
+            lines.append("")
         base = len(route_blocks)
         for j, payload in enumerate(actions):
             assert isinstance(payload, _Action)
-            if payload.key == "back" and j > 0:
-                lines.append("")  # set the exit row apart, as the menus do
             selected = base + j == self._row_index
             if selected:
                 self._cursor = len(lines)
@@ -1372,8 +1358,6 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
     trace_action: Optional[_Action] = None
     if not you and node_id and not (routes_view is not None and routes_view.routes):
         trace_action = _Action("trace", "🎯", "", "Trace — auto route …")
-    tail_actions = [_Action("back", "", "", "Back")]
-
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
     # Whether the visit ended by deleting the contact — the caller's cue to rebuild its list.
     contact_removed = False
@@ -1388,7 +1372,6 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
             routes=routes_view,
             info_actions=info_actions,
             trace_action=trace_action,
-            tail_actions=tail_actions,
         )
         action = await session.run_screen(screen)
         if action is CANCEL or action is None:

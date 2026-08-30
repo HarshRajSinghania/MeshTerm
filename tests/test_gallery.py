@@ -118,10 +118,6 @@ class _Entry:
 
     name: str
     factory: Callable[[int, int], Screen]
-    #: Whether this screen ends in the app's standard exit group (a blank line then the
-    #: bare word "Back") — true only for the ``SelectScreen``-family list screens; the rest
-    #: exit via Esc (their ``footer_hint`` says so) with no dedicated exit row to find.
-    has_exit_group: bool = False
 
 
 # --- factories: one per screen the interactive menu can open ---------------------------
@@ -183,7 +179,6 @@ def _node_detail(cols: int, rows: int) -> Screen:
             _Action("remove", "🗑", "err", "Remove contact…"),
         ],
         trace_action=_Action("trace", "\U0001f3af", "", "Trace — auto route …"),
-        tail_actions=[_Action("back", "", "", "Back")],
     )
 
 
@@ -420,7 +415,7 @@ def _support_project(cols: int, rows: int) -> Screen:
 
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
-    _Entry("contacts", _contacts, has_exit_group=True),
+    _Entry("contacts", _contacts),
     _Entry("node_detail", _node_detail),
     _Entry("map", _map),
     _Entry("chat", _chat),
@@ -430,7 +425,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("message_paths", _message_paths),
     _Entry("remote_cli", _remote_cli),
     _Entry("path_composer", _path_composer),
-    _Entry("courier_outbox", _courier_outbox, has_exit_group=True),
+    _Entry("courier_outbox", _courier_outbox),
     _Entry("record_dialog", _record_dialog),
     _Entry("packet_viewer", _packet_viewer),
     _Entry("trace", _trace),
@@ -530,10 +525,13 @@ def test_gallery_screen_fits_its_platform(
     composed = frame.compose_base(Text(""), screen, screen.footer_hint, cols, rows)
     _assert_fits(composed.split("\n"), cols, "compose_base")
 
-    if entry.has_exit_group:
-        lines = _plain(screen.render_body(cols)).splitlines()
-        assert lines[-1].strip() == "Back", f"{entry.name}: exit row missing, got {lines[-1]!r}"
-        assert lines[-2].strip() == "", f"{entry.name}: no blank separator before Back"
+    # No screen carries an exit row. Esc leaves — it is on both platforms' keyboards and
+    # every footer_hint says so — and a row repeating it cost two lines of every screen,
+    # which on the PicoCalc's 26 is a row in thirteen. The one surviving "Back" is the
+    # staged-changes discard half ("✗ Back — discard …"), which is a choice rather than an
+    # exit and never reads as a bare word.
+    for line in _plain(screen.render_body(cols)).splitlines():
+        assert line.strip() != "Back", f"{entry.name}: an exit row came back: {line!r}"
 
     # P3 assertions, on the *rendered ANSI* (the theme/fold contracts, not the config):
     # picocalc output may carry no truecolor or 256-colour SGR (the console has 16 slots,

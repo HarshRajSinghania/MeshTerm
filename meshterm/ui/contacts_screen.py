@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from .contactlist import ContactListScreen, ContactRow
-from .menus import back_rows, marked_label, menu_rows
+from .menus import marked_label, menu_rows
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
 from .widgets import ContactsSort, _age_seconds, _contact_pkts
@@ -49,7 +49,6 @@ YOU = ("you",)
 #: The contact-list tail sentinels (distinct from any :class:`~meshterm.core.models.Contact`
 #: and from :data:`YOU`): the purge action row and the bare ``Back`` exit row.
 _PURGE = ("purge",)
-_BACK = ("back",)
 
 #: A day in seconds, for the purge age ladder.
 _DAY = 86400
@@ -144,8 +143,8 @@ class ContactsScreen(ContactListScreen):
                 )
             )
         # The maintenance action closes the list, past every contact whatever the sort: a
-        # blank spacer, the err-tinted purge row (a `…` — it opens further prompts), then the
-        # standard exit group. Offered only when there are contacts to purge.
+        # blank spacer, then the err-tinted purge row (a `…` — it opens further prompts).
+        # Offered only when there are contacts to purge.
         tail: list = []
         if contacts:
             tail = [
@@ -154,7 +153,6 @@ class ContactsScreen(ContactListScreen):
                     title=marked_label("🗑", "Purge stale contacts…", "err"),
                     value=_PURGE,
                 ),
-                *back_rows(_BACK),
             ]
         super().__init__(
             f"Contacts · {len(contacts)} known",
@@ -207,7 +205,7 @@ async def open_contacts(
     screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
     while True:
         chosen = await session.run_screen(screen)
-        if chosen is CANCEL or chosen is None or chosen == _BACK:
+        if chosen is CANCEL or chosen is None:  # Esc
             return
         if chosen == _PURGE:
             # The purge picker and its confirm float over the list, so re-push it as the
@@ -271,7 +269,6 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
     from .tui import SelectScreen
 
     items = menu_rows(rows)
-    items.extend(back_rows(None))
     picked = await session.run_screen(
         SelectScreen(
             f"Purge stale contacts — {len(contacts)} known",

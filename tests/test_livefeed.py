@@ -72,8 +72,8 @@ def _stripped(lines: list[str]) -> list[str]:
 
 
 def _rows(screen: LiveFeedScreen, width: int) -> list[str]:
-    """Just the packet rows — the body past its chrome, above the pinned exit group."""
-    return _stripped(screen.render_body(width))[2:-2]
+    """Just the packet rows — the body past its heading and column header."""
+    return _stripped(screen.render_body(width))[2:]
 
 
 def _col(line: str, needle: str) -> int:
@@ -335,7 +335,7 @@ def test_livefeed_home_resumes_following_from_deep_in_the_history() -> None:
     """Home lands on the pin, not merely on whichever packet is newest right now."""
     screen = _screen(seed=[_obs(node=f"n{i}", age_s=i) for i in range(10)])
     screen.handle("end")
-    assert screen._selected is None and not screen._pinned
+    assert screen._selected == 9 and not screen._pinned  # the oldest packet
     screen.handle("home")
     assert screen._pinned and screen._selected == 0
     screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
@@ -368,59 +368,64 @@ def test_livefeed_page_keys_move_the_feed_selection() -> None:
     screen.handle("pageup")
     assert screen._selected == 0  # …and stops at the pin rather than wrapping
 
-    for _ in range(5):  # paged past the oldest packet, the cursor lands on Back and stays
+    for _ in range(5):  # paged past the oldest packet, the cursor clamps on it
         screen.handle("pagedown")
-    assert screen._selected is None
+    assert screen._selected == 19
 
 
-def test_livefeed_ends_in_the_apps_exit_group() -> None:
-    """The screen closes with the standard exit group, pinned to the foot of the body."""
+def test_livefeed_carries_no_exit_row() -> None:
+    """The screen ends on the feed itself: Esc leaves, so no row is spent saying so.
+
+    The window still fits the viewport with the chrome struck off it — losing the exit
+    group gave its two lines back to the packets rather than to a gap.
+    """
     seed = [_obs(node=f"n{i}", age_s=i) for i in range(40)]
     screen = _screen(seed=seed)
     screen.note_viewport(24)
     lines = _stripped(screen.render_body(100))
-    assert len(lines) <= 24                 # the group is chrome: it fits, it doesn't grow
-    assert lines[-2].strip() == ""          # exactly one blank separator above it…
-    assert lines[-1].strip() == "Back"      # …then the bare word, no arrow and no icon
-    assert "↓" in lines[-3] and "more" in lines[-3]  # the feed windows above it
+    assert len(lines) <= 24                          # the body fits, it doesn't grow
+    assert "Back" not in " ".join(lines)
+    assert lines[-1].strip()                          # the last line is content, not a gap
+    assert "↓" in lines[-1] and "more" in lines[-1]   # …the marker counting what's below
 
-    # It stays put as the feed scrolls: the packets travel under it, it does not.
+    # The heading and column header stay put as the feed scrolls under them.
     screen.handle("end")
-    screen.handle("up")  # onto the oldest packet, so the window really has scrolled
     after = _stripped(screen.render_body(100))
     assert "↑" in after[2] and "more" in after[2]
-    assert after[-1].strip() == "Back" and after[-2].strip() == ""
+    assert "Back" not in " ".join(after)
 
 
-def test_livefeed_back_row_is_the_cursors_last_stop() -> None:
-    """↓ off the oldest packet lands on Back, End jumps to it, and Enter there leaves."""
+def test_livefeed_cursor_stops_on_the_oldest_packet() -> None:
+    """↓ clamps on the oldest packet and End jumps to it — there is no row past it."""
     screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
     screen.future = _Fut()
 
     screen.handle("down")                                 # off the pin, onto the newest
     screen.handle("down")
+    assert screen._selected == 1                          # the oldest packet
     screen.handle("down")
-    assert screen._selected is None                       # past the oldest packet: Back
-    assert _stripped(screen.render_body(100))[-1].startswith("❯ Back")
-    screen.handle("down")
-    assert screen._selected is None                       # …and the cursor stops there
+    assert screen._selected == 1                          # …and the cursor stops there
     screen.handle("up")
-    assert screen._selected == 1                          # back onto the oldest packet
+    assert screen._selected == 0
     screen.handle("end")
-    assert screen._selected is None                       # End is the list's last row
+    assert screen._selected == 1                          # End is the oldest packet
 
-    screen.handle("enter")                                # Enter on Back leaves…
-    assert screen.future.done() and screen.future.value is None  # …exactly as Esc does
+    screen.handle("escape")                               # …and Esc is the way out
+    assert screen.future.done() and screen.future.value is None
 
 
-def test_livefeed_empty_feed_still_offers_a_way_out() -> None:
-    """With nothing heard, Back is the only stop there is — and it is already the cursor's."""
+def test_livefeed_empty_feed_draws_its_note_and_nothing_else() -> None:
+    """With nothing heard there is no cursor at all — just the note, and Esc to leave."""
     screen = _screen()
+    screen.future = _Fut()
     lines = _stripped(screen.render_body(100))
     assert "nothing heard yet" in lines[1]
-    assert lines[-1].startswith("❯ Back")
-    screen.handle("up")  # nowhere else to go
-    assert screen._selected is None and _stripped(screen.render_body(100))[-1].startswith("❯ ")
+    assert "Back" not in " ".join(lines)
+    assert not any(line.startswith("❯") for line in lines)  # nothing to point at
+    screen.handle("up")  # nowhere to go, and no crash on the way
+    assert screen._selected is None and not screen._pinned
+    screen.handle("enter")  # …and Enter opens nothing rather than leaving by accident
+    assert not screen.future.done()
 
 
 def test_livefeed_windows_inside_the_fixed_screen() -> None:

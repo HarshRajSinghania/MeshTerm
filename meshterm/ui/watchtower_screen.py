@@ -23,7 +23,7 @@ from rich.text import Text
 from ..core.models import Contact
 from ..core.watch_store import OFF, SILENCE_CHOICES_H, Alert, WatchedNode
 from ..services.trace_runner import make_name_key_resolver
-from .menus import back_rows, command_label, marked_label, section_heading
+from .menus import command_label, marked_label, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age
@@ -222,7 +222,6 @@ def _menu_items(
         )
     )
 
-    items.extend(back_rows())  # a visible exit beside Esc
     return items
 
 
@@ -359,13 +358,12 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             ), "snr"),
             Separator(" "),
             Choice(marked_label("✗", "Stop watching this node", "err"), "unwatch"),
-            *back_rows(),
         ]
         picked = await session.select(
             f"Rules — {entry.name}", items, filterable=False,
             footer_hint="↑↓ move · Enter change · Esc back",
         )
-        if picked is None:  # Close, or Esc
+        if picked is None:  # Esc
             return
         if picked == "silence":
             await _pick_silence(ctx, key, entry)

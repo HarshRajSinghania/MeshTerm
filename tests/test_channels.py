@@ -392,7 +392,7 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
     from meshterm.core.channels import channel_identity
     from meshterm.core.events import MeshEvent
     from meshterm.core.models import Message
-    from meshterm.ui.channels import _BACK, _CLEAR, _CREATE, manage_channels
+    from meshterm.ui.channels import _CLEAR, _CREATE, manage_channels
 
     device = await ctx.device()
     await device.set_channel(0, "Public", DEFAULT_PUBLIC_SECRET)
@@ -409,9 +409,9 @@ async def test_recreating_a_slot_refiles_messages_to_the_new_channel(ctx: AppCon
         await ctx.chat._queue.join()
 
         # Drive the manager: open Public's detail → clear it, then create a new private
-        # channel (which reuses freed slot 0), then back out.
+        # channel (which reuses freed slot 0), then leave with Esc.
         ctx.ui = _ScriptedUi(
-            selects=[0, _CLEAR, _CREATE, _BACK],
+            selects=[0, _CLEAR, _CREATE, None],
             texts=["Ops"],  # the new channel's name
             dialogs=["clear"],  # confirm the clear on its Cancel/Clear dialog
         )

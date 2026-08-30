@@ -1,7 +1,14 @@
 # Navigation survey — every exception to "Esc pops the stack"
 
-Written 2026-08-22 against `main` @ `4b29248`. A catalogue, not a change: nothing here has
-been fixed. Each finding says where it is, what it does, and what makes it a question.
+Written 2026-08-22 against `main` @ `4b29248`. A catalogue, not a change: nothing here had
+been fixed at the time of writing. Each finding says where it is, what it does, and what
+makes it a question.
+
+**Resolved since:** findings **E** and **§10** — 2026-08-29. Exit rows were retired
+app-wide: `back_rows()` is gone, `exit_rows()` draws nothing while clean, and every
+caller's three-way Back test collapsed to `is CANCEL` / `is None`. What is kept is stated
+in CLAUDE.md. Everything else below still stands, **D included** — Esc's peel/leave split
+is now the only thing left telling a user what Esc does.
 
 The point of the survey is that MeshTerm's navigation is *almost* uniform. The exceptions
 are few enough to list exhaustively, which means they can be decided one at a time rather
@@ -255,7 +262,11 @@ dialogs, used here for a row that says "Back".
 > tuple-shaped ones exist only because their screens type their values as tuples; those could
 > take `CANCEL` too.
 
-This ties directly into the exit-row question — see §10.
+**Resolved 2026-08-29** — by removal rather than by defaulting: with no Back row there is
+no Back value, and every caller now tests `is CANCEL` / `is None` alone. All six spellings
+are gone, `channels._BACK` and `contacts_screen._BACK` with them.
+
+This tied directly into the exit-row question — see §10.
 
 ---
 
@@ -294,6 +305,15 @@ per tool and one measured from the content.
 ---
 
 ## 10. Where the exit-row question actually lands
+
+> **Resolved 2026-08-29.** Acted on in full, along the middle position this section
+> proposed — wider, in the end, than the 19 `back_rows()` sites: the four hand-drawn Back
+> rows went too (`ReorderScreen`'s clean-state row, the live feed's pinned foot row, node
+> detail's tail action, and the `trace`/`tx` screens' action-list rows). Kept: the
+> `exit_rows` discard pair, `ReorderScreen`'s dirty-state pair, the two **Quit** rows, and
+> the new-record dialog's `Close` button — each for the reason named below. The gallery
+> now asserts the *absence* of an exit row on every screen, on both platforms. What
+> follows is the survey as written.
 
 JP's note — *"remove the cancel and close actions at the bottom of pages; Esc is quicker and
 available on all platforms; keep it where there is a confirm or cancel situation"* — was

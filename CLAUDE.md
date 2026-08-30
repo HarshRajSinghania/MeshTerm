@@ -22,7 +22,7 @@ These are binding. Every new screen, dialog, row, or hint follows them; when you
 old one that doesn't, bring it along. The enforcement points live in code — build through
 them instead of hand-rolling:
 
-- `ui/menus.py` — `back_rows`, `exit_rows`, `menu_rows`, `lane_row`, `section_heading`,
+- `ui/menus.py` — `exit_rows`, `menu_rows`, `lane_row`, `section_heading`,
   `confirm_discard`, `fit_cells`.
 - `ui/markdown.py` — `render_markdown` (THE prose renderer: a page of writing, drawn in
   the language below).
@@ -44,7 +44,7 @@ them instead of hand-rolling:
 | path | an ordered hop spec you compose or force (`a1,3d,…`) |
 | route | the concrete node sequence a trace walked or will walk |
 | via | prefix for a packet/message's relay chain |
-| Back | leave the current screen/list (the only exit word on rows) |
+| Back | leave the current screen/list — Esc's word, and a row's only where leaving is a *choice* (see below) |
 | Quit | leave the app (main menu, device splash) — nowhere else |
 
 Node vs contact — the boundary: **node** is the hardware/participant sense — the map,
@@ -60,10 +60,21 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
 
 ### Screens and lists
 
-- Every select list ends with the exit group from `back_rows()` / `exit_rows()`: exactly
-  one blank `Separator(" ")` line, then the bare word **Back** (no arrow, no icon).
-  Editors with staged changes show `✓ Apply n staged changes` over
-  `✗ Back — discard staged changes`.
+- **No screen carries an exit row.** Esc leaves — it is on both platforms' keyboards and
+  every footer hint says so — so a row that only repeated it was two lines out of every
+  screen (a row in thirteen on the PicoCalc's 26) buying nothing. Lists end on their last
+  content row; a hand-drawn action list ends on its last verb. The gallery enforces it:
+  no rendered line may be the bare word **Back**.
+- The exception is where leaving is a **choice** rather than an exit, which is the same
+  rule that keeps a dialog's Cancel button. `exit_rows(staged, …)` draws nothing while
+  clean and, once changes are staged, one blank `Separator(" ")` line then
+  `✓ Apply n staged changes` over `✗ Back — discard staged changes` — Apply has no key of
+  its own, so it needs a visible counterpart naming what the other way out costs. Same
+  shape in `ReorderScreen`. A **Quit** row is likewise kept (main menu, device splash):
+  it *initiates* the app's terminal action behind a confirm, and on the splash it is the
+  only statement that the app can be left at all.
+- A caller therefore tests one thing for "the user left": `CANCEL` (or the `None` that
+  `ui.select` folds it to) — never a `_BACK`/`"__back__"` sentinel of its own.
 - Grouped-list section headings use `section_heading("Label")` → `── Label ──` accent.
   That is also what makes a heading *sticky* (it pins to the top row while its section
   scrolls, and the ^PgUp/^PgDn jumps step by it), so build them through it — a hand-rolled

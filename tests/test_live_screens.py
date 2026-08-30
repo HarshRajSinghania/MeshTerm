@@ -360,8 +360,7 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
         return "3d,f2,3d"  # one forced hop: outbound, target, then the mirrored return
 
     screen, _ = _trace_screen(compose_path=compose)
-    screen.handle("down")  # Trace → Back…
-    screen.handle("down")  # …wrapping onto Compose path, the first row
+    screen.handle("down")  # Trace is the last row, so ↓ wraps onto Compose path
     screen.handle("enter")
     await asyncio.sleep(0)
     assert asked == [""]
@@ -437,7 +436,11 @@ async def test_trace_screen_action_labels_share_one_column() -> None:
 
 
 async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
-    """↑↓ move over the action rows; Enter commits the one under the cursor."""
+    """↑↓ move over the action rows; Enter commits the one under the cursor.
+
+    The rows are the screen's own verbs and nothing else — no exit row closes them, so
+    Trace is the last stop and ↓ from it wraps straight back to Compose path.
+    """
     opened: list[str] = []
 
     async def width_flow(current):  # noqa: ANN001
@@ -446,9 +449,9 @@ async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
 
     screen, _ = _trace_screen(pick_width=width_flow)
     body = _plain(screen.render_body(100))
-    # The menu order the actions read in: build first, tune, then transmit, then out.
+    # The menu order the actions read in: build first, tune, then transmit.
     labels = ["Compose path", "Explore paths", "Path width — 2 bytes per hop",
-              "Sample count — 1 trace", "Trace — one transmission", "Back"]
+              "Sample count — 1 trace", "Trace — one transmission"]
     positions = [body.index(label) for label in labels]
     assert positions == sorted(positions)
     screen.handle("up")  # Trace → Sample count
@@ -493,12 +496,14 @@ async def test_trace_screen_hotkeys_are_retired() -> None:
     assert not screen._running
 
 
-async def test_trace_screen_back_row_resolves_like_escape() -> None:
-    """The Back row leaves the screen exactly as Esc does."""
+async def test_trace_screen_carries_no_exit_row() -> None:
+    """The screen offers only its own verbs; Esc is the way out, and Enter never is."""
     screen, _ = _trace_screen()
     screen.future = asyncio.get_running_loop().create_future()
-    screen.handle("down")  # Trace → Back
-    screen.handle("enter")
+    assert "Back" not in _plain(screen.render_body(100))
+    screen.handle("down")  # Trace wraps to Compose path, not onto an exit row
+    assert not screen.future.done()
+    screen.handle("escape")
     assert screen.future.result() is None
 
 

@@ -37,7 +37,7 @@ from ..core.models import (
 )
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui.chat import _MENTION, _split_channel_sender
-from ..ui.menus import Lane, back_rows, column_header, fit_cells, section_heading
+from ..ui.menus import Lane, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
 from ..ui.tui import Choice, DeleteRequest, Separator
 from ..ui.widgets import _NODE_GLYPHS, _age_seconds, _format_age, channel_glyph
@@ -184,8 +184,6 @@ class ChatTool(Tool):
             else:
                 items.append(Separator("  no contacts yet — receive an advert first"))
 
-            items.extend(back_rows("__back__"))
-
             default = next(
                 (
                     it.value
@@ -210,7 +208,7 @@ class ChatTool(Tool):
                 # demotes to the uncontacted (alphabetical) tail; keep the cursor on it.
                 default_key = conversation.key
                 continue
-            if choice in (None, "__back__"):
+            if choice is None:  # Esc
                 return None
             return choice
 

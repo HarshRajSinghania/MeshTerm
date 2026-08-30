@@ -201,7 +201,6 @@ class TxSweepScreen(Screen):
         rows = ["route", "range", "step", "samples", "sweep"]
         if self._can_apply():
             rows.append("apply")
-        rows.append("back")
         return tuple(rows)
 
     @property
@@ -341,9 +340,6 @@ class TxSweepScreen(Screen):
             self._open_flow(self._pick_step)
         elif key == "samples":
             self._open_flow(self._pick_samples)
-        elif key == "back":
-            self.cancel()
-            self.resolve(None)
 
     def _open_flow(self, flow: Callable[[], None]) -> None:
         """Float a parameter flow over the screen (one at a time, never mid-sweep)."""
@@ -370,8 +366,6 @@ class TxSweepScreen(Screen):
         actions = self._actions
         self._index = min(self._index, len(actions) - 1)
         for i, key in enumerate(actions):
-            if key == "back":
-                lines.append("")  # Back is its own group, set apart like the menus do
             selected = i == self._index
             text = self._action_text(key, selected)
             text.no_wrap = True
@@ -423,12 +417,10 @@ class TxSweepScreen(Screen):
         elif key == "sweep":
             _icon(text, "▶", "ok")
             text.append(f"Sweep — up to {self.estimated_traces()} paced transmissions")
-        elif key == "apply":
+        else:  # apply — present only once there is a winner to set
             _icon(text, "★", "ok")
             best = self._result.best_tx if self._result is not None else "?"
             text.append(f"Apply winner — set TX {best} on {self._admin_label}")
-        else:
-            text.append("Back")
         if selected:
             text.style = "cursor"
         return text

@@ -518,7 +518,6 @@ def _screen(**over) -> NodeDetailScreen:
         routes=_RoutesView(note="no route observed yet — trace to discover one"),
         info_actions=[_Action("timemachine", "⏳", "", "Time machine — 42 receptions")],
         trace_action=_Action("trace", "🎯", "", "Trace — auto route …"),
-        tail_actions=[_Action("back", "", "", "Back")],
     )
     kwargs.update(over)
     return NodeDetailScreen(**kwargs)
@@ -531,14 +530,15 @@ def test_node_detail_screen_renders_its_sections() -> None:
     body = _plain(screen.render_body(72))
     assert "Hub" in body and "repeater" in body  # the pinned identity header
     assert "│  Info  │" in body and "42" in body  # the vitals moved into the boxed Info tab
-    assert "Time machine" in body and "Back" in body  # the Info actions + shared tail
+    assert "Time machine" in body  # the Info tab's own action
+    assert "Back" not in body  # no exit row anywhere: Esc leaves
     assert "────────" in body  # the faint rule closing the stage
     assert "no route observed yet" not in body  # the Routes stage waits on its own tab
 
     screen.handle("tab")
     body = _plain(screen.render_body(72))
     assert "│  Routes  │" in body and "no route observed yet" in body
-    assert "Trace" in body and "Back" in body
+    assert "Trace" in body and "Back" not in body
     assert "packets" not in body  # the vitals stay on the Info tab
     # Every rendered line fits the 72-column standard.
     for line in screen.render_body(72):
@@ -602,8 +602,6 @@ def test_node_detail_screen_cursor_and_commit() -> None:
     # The cursor opens on the Info tab's first row (Time machine) and is always reported,
     # so the frame can keep it visible on a terminal too short for the pinned layout.
     assert screen.cursor_line() is not None
-    screen.handle("down")  # onto Back
-    screen.handle("up")  # and back onto Time machine
     screen.render_body(72)
     screen.handle("enter")
     assert resolved == ["timemachine"]
@@ -612,16 +610,19 @@ def test_node_detail_screen_cursor_and_commit() -> None:
     assert resolved == ["timemachine", CANCEL]
 
 
-def test_node_detail_back_row_leaves_like_escape() -> None:
-    """Committing the Back row resolves CANCEL — the same leave Esc does — not a stray token
-    the opener's loop would ignore and re-show the page over."""
+def test_node_detail_carries_no_exit_row() -> None:
+    """The page offers no Back row: Esc leaves, and a row repeating it was retired.
+
+    What the page *does* offer is only its own verbs, so the action cursor never has a
+    do-nothing stop to arrow past on the way to them.
+    """
     screen = _screen()
     resolved: list = []
     screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
 
-    screen.render_body(72)
-    screen.handle("down")  # Time machine -> Back
-    screen.handle("enter")
+    screen.note_viewport(30)
+    assert "Back" not in _plain(screen.render_body(72))
+    screen.handle("escape")
     assert resolved == [CANCEL]
 
 
@@ -641,13 +642,11 @@ def _two_routes() -> _RoutesView:
 def test_node_detail_screen_route_selection_arms_the_trace() -> None:
     """↑/↓ over the route rows moves the graph highlight and the spec a trace would arm on."""
     screen = _screen(routes=_two_routes(), tabs=[_Tab("Routes", "routes")])
-    # Focusables: route 0, route 1, Time machine, Back — with routes listed, the rows are
-    # the trace entry points, so no dedicated Trace action row renders.
+    # Focusables: route 0, route 1 — with routes listed, the rows are the trace entry
+    # points, so no dedicated Trace action row renders, and the tab carries no other row.
     assert screen.selected_spec() == "3d,f2,3d"
     screen.handle("down")  # onto route 1
     assert screen._route_sel == 1 and screen.selected_spec() == "a1,f2,a1"
-    screen.handle("down")  # onto Time machine — the pick holds
-    assert screen.selected_spec() == "a1,f2,a1"
     screen.note_viewport(30)
     body = _plain(screen.render_body(72))
     assert "via Hub …" in body and "via Alt …" in body  # both rows drew, …-marked as openers
@@ -738,9 +737,10 @@ def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() ->
     screen.note_viewport(30)
     lines = screen.render_body(72)
     path_idx = next(i for i, l in enumerate(lines) if "f2 aa" in _plain([l]))
-    # The very next line is already the next chunk of chrome (the rule/actions), not a blank
-    # or muted context line — nothing hangs under a route that earned no context.
-    assert not _plain([lines[path_idx + 1]]).strip().startswith("weakest")
+    # Nothing at all hangs under a route that earned no context: the pathline is the last
+    # thing the page draws (the tab carries no action rows), not a muted context line.
+    rest = _plain(lines[path_idx + 1:]).strip()
+    assert not rest.startswith("weakest") and not rest
 
 
 def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
@@ -978,8 +978,8 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
 
 
 def test_node_detail_route_list_windows_inside_the_page() -> None:
-    """With more routes than fit, the list windows with edge markers — the graph and the
-    action rows never leave the screen, however many routes a busy node has."""
+    """With more routes than fit, the list windows with edge markers — the pinned chrome
+    never leaves the screen, however many routes a busy node has."""
     routes = _RoutesView(
         routes=[
             _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
@@ -995,7 +995,7 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
     assert len(lines) <= 30  # the body fits the viewport — nothing scrolls off
     body = _plain(lines)
     assert "↓" in body and "more" in body  # the edge marker counts the hidden routes
-    assert "Back" in body  # the pinned tail never leaves
+    assert "── Routes ──" in body  # the pinned chrome above the list never leaves
     assert "PgUp/PgDn scroll" in screen.footer_hint  # paging advertised only when needed
 
     # Walking the cursor to the last route slides the window down to keep it visible.

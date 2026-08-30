@@ -63,7 +63,7 @@ from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
 from .braillechart import activity_peak, activity_sparkline
-from .menus import back_rows, command_label, fit_cells, menu_rows, section_heading
+from .menus import command_label, fit_cells, menu_rows, section_heading
 from .qr import share_popup
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
@@ -79,7 +79,6 @@ _DEFAULT_PUBLIC = "__default_public__"
 _JOIN = "__join__"
 _IMPORT = "__import__"
 _REORDER = "__reorder__"
-_BACK = "__back__"
 
 # Channel-detail action sentinels.
 _QR = "qr"
@@ -178,7 +177,7 @@ async def manage_channels(ctx: "AppContext") -> int:
         async def handle(choice: object) -> bool:
             """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
             nonlocal changes, highlight
-            if choice in (None, _BACK):
+            if choice is None:  # Esc
                 return False
             highlight = choice
             before = changes
@@ -616,7 +615,6 @@ def _menu_items(
         ]
     )
     items.extend(menu_rows(rows))
-    items.extend(back_rows(_BACK))
 
     return f"Channels — {len(slots)}/{capacity} slots", items
 
@@ -680,7 +678,6 @@ def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
             ),
         ]
     )
-    items.extend(back_rows(_BACK))
     return items
 
 
@@ -701,7 +698,7 @@ async def _channel_detail(
     async def handle(choice: object) -> Optional[int]:
         """Run one action; an int closes the detail with that many changes, ``None`` stays."""
         nonlocal cursor
-        if choice in (None, _BACK):
+        if choice is None:  # Esc
             return 0
         cursor = choice
         if choice == _QR:

@@ -275,7 +275,7 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     import re
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.contacts_screen import _BACK, _PURGE, YOU, ContactsScreen
+    from meshterm.ui.contacts_screen import _PURGE, YOU, ContactsScreen
     from meshterm.ui.tui.screen import CANCEL
 
     contacts = [
@@ -297,9 +297,9 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert f"{7:>5}" in body  # Alice's overheard packets, right-aligned in its lane
     assert "never" in body  # Bob has no last_seen
     # Each contact row carries the Contact itself, so Enter hands the whole record on; the
-    # tail closes the list with the purge action and the Back exit row.
-    assert [c.value for c in choices[-2:]] == [_PURGE, _BACK]
-    assert all(isinstance(c.value, Contact) for c in choices[1:-2])
+    # tail closes the list with the purge action (there is no exit row — Esc leaves).
+    assert choices[-1].value == _PURGE
+    assert all(isinstance(c.value, Contact) for c in choices[1:-1])
 
     # Plain arrows move the highlight without touching the sort.
     before = (screen._sort.column, screen._sort.ascending)
@@ -655,15 +655,14 @@ async def test_the_list_rebuilds_when_the_detail_page_deletes_the_contact(
 
 
 def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:
-    """A populated list closes with the purge action + Back; an empty one has no tail action."""
+    """A populated list closes with the purge action; an empty one has no tail at all."""
     from meshterm.core.models import Contact
-    from meshterm.ui.contacts_screen import _BACK, _PURGE, ContactsScreen
+    from meshterm.ui.contacts_screen import _PURGE, ContactsScreen
 
     populated = ContactsScreen(
         "Us", "cc" * 32, [Contact(name="Alice", public_key="aa" * 32)], 1, {}, _contacts_sort()
     )
-    tail_values = [c.value for c in populated._choices()][-2:]
-    assert tail_values == [_PURGE, _BACK]
+    assert populated._choices()[-1].value == _PURGE
 
     empty = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort())
     values = [c.value for c in empty._choices()]

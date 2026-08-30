@@ -55,7 +55,6 @@ from ..core.device_config import (
     settings_by_category,
 )
 from .menus import (
-    back_rows,
     confirm_discard,
     exit_rows,
     lane_header,
@@ -378,9 +377,9 @@ def _menu_items(
                 Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
-    # The backtracking rows sit together below one blank line, like every other screen's
-    # Back (the main menu's Quit included); with changes staged, Apply joins the group and
-    # Back spells out the consequence of leaving (see menus.exit_rows).
+    # Nothing at all while the editor is clean — Esc leaves, and a row saying so was
+    # retired app-wide. With changes staged the pair appears below one blank line: Apply
+    # has no key of its own, and Back spells out what leaving costs (see menus.exit_rows).
     items.extend(exit_rows(staged, apply_value=_APPLY, back_value=_CANCEL))
 
     title = "Device config" + (f" — {staged} staged" if staged else "")
@@ -614,7 +613,6 @@ async def _stage_preset(ctx: "AppContext", pending: dict[str, Any]) -> None:
         )
         for i, p in enumerate(RADIO_PRESETS)
     ]
-    items.extend(back_rows())
     idx = await ctx.ui.select(
         "Radio presets",
         items,
@@ -690,7 +688,7 @@ async def device_actions(ctx: "AppContext") -> None:
         session.push(menu)
         try:
             choice = await menu.future
-            if choice is CANCEL or choice in (None, _CANCEL):
+            if choice is CANCEL or choice is None:  # Esc
                 return
             cursor = choice
             if choice == _SYNC_CLOCK:
@@ -733,7 +731,6 @@ def _action_items() -> list:
             ),
         ]
     )
-    items.extend(back_rows(_CANCEL))
     return items
 
 
@@ -787,7 +784,6 @@ async def send_advert(ctx: "AppContext") -> None:
                     ("Share QR / URI", "Show this node's contact card", "share"),
                 ]
             ),
-            *back_rows(),
         ],
         prompt="Announce this node to the mesh:",
         filterable=False,
@@ -1022,7 +1018,6 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
                     ("Import a key…", "Replace this device's identity", "import"),
                 ]
             ),
-            *back_rows(),
         ],
         prompt="Manage this node's private identity key:",
     )

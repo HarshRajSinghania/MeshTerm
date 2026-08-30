@@ -96,7 +96,7 @@ from ..services import trace_runner
 from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
-from .menus import back_rows, command_icon, marked_label, section_heading
+from .menus import command_icon, marked_label, section_heading
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -484,7 +484,7 @@ class TraceScreen(Screen):
         # walk is asymmetric enough to flip end-for-end, so only it offers Reverse.
         # The cursor opens on Trace either way.
         actions = ["compose", "explore"] if mode == "target" else ["compose", "reverse"]
-        actions += ["width", "samples", "trace", "back"]
+        actions += ["width", "samples", "trace"]
         self._actions: tuple[str, ...] = tuple(actions)
         self._index = self._actions.index("trace")
         self._pin_cursor = False  # only pin the view while ↑/↓ are actually in use
@@ -717,9 +717,6 @@ class TraceScreen(Screen):
             self._reverse_path()
         elif key == "explore" and self._explore is not None:
             self._open_flow(self._explore)
-        elif key == "back":
-            self.cancel()
-            self.resolve(None)
 
     def _open_flow(
         self, flow: PathFlow, seed: Optional[str] = None, focus_trace: bool = False
@@ -820,8 +817,6 @@ class TraceScreen(Screen):
         lines.append("")
         self._cursor: Optional[int] = None
         for i, key in enumerate(self._actions):
-            if key == "back":
-                lines.append("")  # Back is its own group, set apart like the menus do
             selected = i == self._index
             text = self._action_text(key, selected)
             text.no_wrap = True
@@ -911,7 +906,7 @@ class TraceScreen(Screen):
             n = self._sample_count()
             _icon(text, "#", "accent")
             text.append(f"Sample count — {n} trace{'s' if n != 1 else ''}")
-        elif key == "trace":
+        else:  # trace — the row the cursor opens on
             _icon(text, "▶", "ok")
             if self._mode == "path" and not self._effective_spec()[0]:
                 text.append("Trace — compose a path first", style="muted")
@@ -921,8 +916,6 @@ class TraceScreen(Screen):
                     text.append(f"Trace — {n} paced transmissions")
                 else:
                     text.append("Trace — one transmission")
-        else:
-            text.append("Back")
         if selected:
             text.style = "cursor"
         return text
@@ -2020,7 +2013,6 @@ async def _open_session(
                 value=("probe", None),
             )
         )
-        items.extend(back_rows(("back", None)))
         picked = await session.run_screen(
             SelectScreen(
                 f"Explore paths — {target_label}",
@@ -2031,7 +2023,7 @@ async def _open_session(
                 hscroll=True,  # a long candidate row slides under ←→ instead of truncating
             )
         )
-        if picked is CANCEL or picked is None or picked[0] == "back":
+        if picked is CANCEL or picked is None:  # Esc
             return None
         if picked[0] == "use":
             return picked[1].spec(target_hash, width_bytes)

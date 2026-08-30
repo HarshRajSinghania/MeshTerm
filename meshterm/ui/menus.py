@@ -1,16 +1,14 @@
 """Shared select-menu chrome: the pieces every list screen builds the same way.
 
 MeshTerm's list screens (the config editors, the channel manager, Watchtower, Courier,
-the pickers) all end in the same furniture: label-and-description rows padded into
-aligned lanes, a blank line, then the exit group — a plain ``Back`` row, or the
-``✓ Apply / ✗ Back — discard`` pair once changes are staged. Before this module each
-screen hand-rolled its own copy, and they drifted (``← Back``, ``← Close``, missing
-blank lines, ``✖`` for ``✗``). These helpers are now the one way to build that
-furniture, so the app's exit language and row alignment stay uniform by construction:
+the pickers) all share the same furniture: label-and-description rows padded into
+aligned lanes. Before this module each screen hand-rolled its own copy, and they drifted
+(``← Back``, ``← Close``, missing blank lines, ``✖`` for ``✗``). These helpers are now
+the one way to build it, so the app's row language and alignment stay uniform by
+construction:
 
-* :func:`back_rows` — the standard exit group: one blank separator, then ``Back``.
-* :func:`exit_rows` — the staged-changes variant: ``✓ Apply n staged changes`` above an
-  err-tinted ``✗ Back — discard staged changes`` (or the plain group when clean).
+* :func:`exit_rows` — the staged-changes exit group: ``✓ Apply n staged changes`` above
+  an err-tinted ``✗ Back — discard staged changes``, and *nothing at all* when clean.
 * :func:`menu_rows` — label + muted description :class:`Choice` rows in two aligned
   lanes, padded in display cells so double-width emoji can't skew the description
   column (the Device actions presentation).
@@ -21,9 +19,11 @@ furniture, so the app's exit language and row alignment stay uniform by construc
 * :func:`changes_phrase` — ``"1 staged change"`` / ``"3 staged changes"``.
 * :func:`confirm_discard` — the shared are-you-sure dialog for leaving staged changes.
 
-House rules the helpers encode (see the UX standards in ``CLAUDE.md``): the exit row is
-always the bare word ``Back`` — no arrow, no icon — with exactly one blank separator
-line above it; ``✓``/``✗`` (U+2713/U+2717) are THE status marks, styled ``ok``/``err``.
+House rules the helpers encode (see the UX standards in ``CLAUDE.md``): a list carries
+no exit row — Esc leaves, and a row repeating it earned nothing for its two lines; the
+one survivor is the staged-changes pair, which is a choice rather than an exit and keeps
+its blank separator line above it. ``✓``/``✗`` (U+2713/U+2717) are THE status marks,
+styled ``ok``/``err``.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def command_label(label: LabelT) -> LabelT:
     :data:`~meshterm.platforms.Platform.menu_icons`). The icon is taken to be everything
     before the label's first space, and only when that head starts with a non-alphanumeric
     character — so ``"🗑 Clear this slot…"`` and ``"↻ Read settings"`` both lose their
-    head while ``"Back"`` and ``"Trace target"`` pass through untouched.
+    head while ``"Reorder"`` and ``"Trace target"`` pass through untouched.
 
     What must *not* come through here: a glyph carrying data (a channel's openness, a
     packet's class, a node's type) or a status mark on an outcome or commit row
@@ -129,37 +129,29 @@ def command_label(label: LabelT) -> LabelT:
     return label[cut:]
 
 
-def back_rows(value: Any = None) -> list:
-    """The standard exit group closing a select list: a blank line, then ``Back``.
-
-    Args:
-        value: The value the Back row resolves with (``None`` reads as cancel for
-            most callers; the config editors pass their own sentinel).
-
-    Returns:
-        ``[Separator(" "), Choice("Back", value)]`` — append to the end of the items.
-    """
-    return [Separator(" "), Choice(title="Back", value=value)]
-
-
 def exit_rows(staged: int, *, apply_value: Any, back_value: Any) -> list:
-    """The editor exit group: Apply joins Back once there is something staged.
+    """The editor exit group — nothing at all until there is something staged.
 
-    With nothing staged this is exactly :func:`back_rows`. With changes staged, an
-    ok-marked ``✓ Apply …`` row sits above an err-marked ``✗ Back — discard staged
-    changes`` so the consequence of leaving is spelled out (the config editor's
-    long-standing presentation, now shared).
+    A list does not advertise its own exit: Esc leaves, on both platforms, and a row
+    that only repeated it cost two lines of every screen to say what Esc already said
+    (the app-wide ``Back`` row, retired 2026-08-29). What survives here is the case
+    where leaving is not merely leaving: with changes staged, an ok-marked
+    ``✓ Apply …`` row sits above an err-marked ``✗ Back — discard staged changes``.
+    That pair is a *choice*, not an exit — ``Apply`` has no key of its own, so it needs
+    a visible counterpart naming what the other way out costs — and a choice keeps its
+    rows for the same reason a confirm dialog keeps its Cancel button.
 
     Args:
-        staged: How many changes are staged (0 = the plain Back group).
+        staged: How many changes are staged (0 = no rows at all).
         apply_value: The value the Apply row resolves with.
-        back_value: The value the Back row resolves with.
+        back_value: The value the Back row resolves with — identical to what Esc
+            resolves, since both run the caller's discard confirm.
 
     Returns:
-        The rows to append: a blank separator, then the one- or two-row exit group.
+        The rows to append: nothing when clean, else a blank separator and the pair.
     """
     if not staged:
-        return back_rows(back_value)
+        return []
     return [
         Separator(" "),
         Choice(
@@ -393,7 +385,6 @@ def fit_cells(text: str, width: int, *, align: str = "left") -> str:
 
 __all__ = [
     "Lane",
-    "back_rows",
     "changes_phrase",
     "column_header",
     "confirm_discard",

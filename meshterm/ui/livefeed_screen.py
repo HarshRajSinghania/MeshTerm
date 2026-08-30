@@ -37,11 +37,6 @@ Enter opens the highlighted packet in the shared
 itself with the same ``↑``/``↓``, and, for an overheard channel-text packet naming a
 channel we hold the key for, decrypts it.
 
-The cursor's last stop, past the oldest packet, is the app's own exit group — a blank
-line and the bare word ``Back``, pinned to the foot of the screen so it is there to be
-seen and pressed however far the feed has scrolled. Enter on it leaves exactly as Esc
-does.
-
 The screen holds no subscriptions of its own — the opener (:func:`open_livefeed`)
 wires the hub subscription and the once-a-second repaint, and tears them down when
 the screen resolves. The newest packet is highlighted from the moment the screen
@@ -123,12 +118,6 @@ _FEED_LABEL_MIN_WIDTH = (
     + _FEED_SUBJECT_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
 )
 
-#: Body lines the pinned exit group costs: the blank separator, then the ``Back`` row —
-#: the exact shape :func:`~meshterm.ui.menus.back_rows` gives a select list, struck from
-#: the feed's window so the group stays at the foot of the screen instead of scrolling
-#: with the packets.
-_EXIT_LINES = 2
-
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
 #: step (:attr:`~meshterm.ui.tui.select.SelectScreen._HSCROLL_STEP`), so a row here
 #: scrolls at the rate a row anywhere else does.
@@ -179,13 +168,13 @@ class LiveFeedScreen(Screen):
         Every nav key here moves the *cursor* over the feed rather than a scroll offset,
         but the vocabulary is the same either way — the window follows the highlight — so
         the shared labels stand. ``Top`` and ``Bottom`` stay literal on purpose: the top of
-        this list is the pin riding the newest packet, and its bottom is the ``Back`` row
-        one past the oldest, which is where End actually lands. ``Top`` is how the pin is
-        reached where there is no hint line to name it — a feed read down into history
-        resumes following in one chip.
+        this list is the pin riding the newest packet and its bottom is the oldest one,
+        which is where End actually lands. ``Top`` is how the pin is reached where there is
+        no hint line to name it — a feed read down into history resumes following in one
+        chip.
 
-        A feed with nothing in it still has that ``Back`` row, and nowhere to move to, so
-        all four chips go dim until the first packet arrives.
+        A feed with nothing in it has no cursor and nowhere to move to, so all four chips
+        go dim until the first packet arrives.
         """
         from .tui.fkeys import default_lane
 
@@ -245,16 +234,15 @@ class LiveFeedScreen(Screen):
         self._feed: deque[PacketEntry] = deque(maxlen=_FEED_CAP)
         for obs in list(seed)[-_FEED_CAP:][::-1]:
             self._feed.append(PacketEntry.from_observation(obs))
-        #: The highlighted feed row, or ``None`` when the cursor rests on the ``Back``
-        #: row past the oldest packet — the screen's other cursor stop, and the only one
-        #: an empty feed offers. Starts on the newest packet.
+        #: The highlighted feed row, or ``None`` when there is no row to highlight —
+        #: an empty feed, which offers no cursor stop at all. Starts on the newest packet.
         self._selected: Optional[int] = 0 if self._feed else None
         #: Whether the cursor is on the *pin* — the stop above row 0, which holds the
         #: topmost position rather than a packet (see the module docstring). Implies
         #: ``_selected == 0``: the pin is a mode on the newest row, so everything that
         #: reads the highlight (the window fit, the viewer, the ``←→`` scroll) needs no
         #: special case; only the cursor mark drawn in the pointer lane differs. A feed
-        #: with nothing in it has no row to pin to, so it opens on ``Back`` instead.
+        #: with nothing in it has no row to pin to, and no cursor at all.
         self._pinned: bool = bool(self._feed)
         #: The feed's window within the fixed screen (its rows scroll under the heading).
         self._feed_window = ListWindow()
@@ -339,11 +327,10 @@ class LiveFeedScreen(Screen):
         elif action in ("home", "ctrl_home"):
             # Home jumps to the pin — the top of a live feed is the *following* state, so
             # "take me back to the top" resumes the stream rather than parking on whichever
-            # packet happens to be newest this instant. End goes to the list's last row,
-            # which — as on every list in the app — is ``Back`` (the oldest packet is one ↑).
+            # packet happens to be newest this instant. End goes to the oldest packet.
             self._select_stop(0)
         elif action in ("end", "ctrl_end"):
-            self._select_stop(len(self._feed) + 1)
+            self._select_stop(len(self._feed))
         elif action == "left":
             self._scroll_line(-_HSCROLL_STEP)
         elif action == "right":
@@ -360,42 +347,39 @@ class LiveFeedScreen(Screen):
 
     @property
     def _cursor(self) -> int:
-        """The cursor as one index over the screen's stops, from the pin down to ``Back``.
+        """The cursor as one index over the screen's stops: the pin, then the feed's rows.
 
-        The stops are the pin (0), then the feed's rows (``1 .. len(feed)``), then the exit
-        row one past them — so every move stays a clamp on this one number, the pin
-        included. That the pin and row 0 draw on the *same line* is a rendering detail;
-        as cursor positions they are two, which is exactly what makes ``↓`` off the pin
-        land on the newest packet rather than the second one.
+        The stops are the pin (0), then the feed's rows (``1 .. len(feed)``) — so every
+        move stays a clamp on this one number, the pin included. That the pin and row 0
+        draw on the *same line* is a rendering detail; as cursor positions they are two,
+        which is exactly what makes ``↓`` off the pin land on the newest packet rather
+        than the second one.
 
-        An empty feed has no row to pin to, so it leaves ``Back`` as the only stop there is.
+        An empty feed has no row to pin to, and so no stops at all.
         """
-        if self._pinned:
+        if self._pinned or self._selected is None:
             return 0
-        return len(self._feed) + 1 if self._selected is None else self._selected + 1
+        return self._selected + 1
 
     def _move_selection(self, delta: int) -> None:
-        """Step the cursor by ``delta`` stops (off the oldest packet lands it on ``Back``)."""
+        """Step the cursor by ``delta`` stops (both ends clamp on a packet)."""
         self._select_stop(self._cursor + delta)
 
     def _select_stop(self, index: int) -> None:
-        """Move the cursor to one stop — the pin, a feed row, or ``Back`` — and repaint.
+        """Move the cursor to one stop — the pin or a feed row — and repaint.
 
         Args:
             index: The stop to land on, clamped into range (see :attr:`_cursor`). Both ends
                 clamp rather than wrap, so a key held down settles at an end.
         """
-        if not self._feed:  # nothing to pin or select: Back is the whole cursor space
+        if not self._feed:  # nothing to pin or select: the screen has no cursor
             self._pinned = False
             self._selected = None
             self._session.invalidate()
             return
-        index = max(0, min(index, len(self._feed) + 1))
+        index = max(0, min(index, len(self._feed)))
         self._pinned = index == 0
-        if index <= len(self._feed):
-            self._selected = max(0, index - 1)
-        else:
-            self._selected = None
+        self._selected = max(0, index - 1)
         self._session.invalidate()
 
     def _select_row(self, row: int) -> None:
@@ -409,11 +393,8 @@ class LiveFeedScreen(Screen):
         self._select_stop(row + 1)
 
     def _commit(self) -> None:
-        """Enter: open the highlighted packet, or leave when the cursor is on ``Back``."""
-        if self._selected is None:
-            self.resolve(None)  # the exit row leaves exactly as Esc does
-        else:
-            self._open_packet()
+        """Enter: open the highlighted packet (an empty feed has none to open)."""
+        self._open_packet()
 
     def _open_packet(self) -> None:
         """Float the packet viewer over the highlighted feed row.
@@ -455,7 +436,7 @@ class LiveFeedScreen(Screen):
         screen's sticky-header machinery: the chrome above and below is struck from the
         viewport first and the feed windows *inside* what is left (see
         :meth:`_feed_lines`), so the body never scrolls — the header can't travel off the
-        top of it, and ``Back`` can't sink past the bottom.
+        top of it, and the oldest packet can't sink past the bottom.
         """
         if self._selected is not None:
             self._selected = min(self._selected, len(self._feed) - 1) if self._feed else None
@@ -466,26 +447,10 @@ class LiveFeedScreen(Screen):
         lines = [render_to_ansi(self._heading(), width, no_wrap=True)]
         if self._feed:  # a header over nothing is noise; the empty note speaks for itself
             lines.append(render_to_ansi(self._column_header(show_label), width, no_wrap=True))
-        win = max(1, self._scroll_viewport - len(lines) - _EXIT_LINES)
+        win = max(1, self._scroll_viewport - len(lines))
         lines.extend(self._feed_lines(width, win, show_label))
-        lines.extend(self._exit_lines(width))
         self._scroll_total = max(1, len(lines))
         return lines
-
-    def _exit_lines(self, width: int) -> list[str]:
-        """The pinned exit group: one blank separator, then the bare word ``Back``.
-
-        The very rows :func:`~meshterm.ui.menus.back_rows` gives a select list, drawn here
-        by hand because the feed is a rendered screen rather than a list of choices — same
-        blank line, same bare word, no arrow and no icon, and the same ``❯`` cursor over a
-        highlighted row when it is the stop the cursor rests on.
-        """
-        selected = self._selected is None
-        row = Text(_CURSOR if selected else "  ", style="cursor" if selected else "")
-        row.append("Back")
-        if selected:
-            row.style = "cursor"
-        return ["", render_to_ansi(row, width, no_wrap=True)]
 
     def _heading(self) -> Text:
         """The feed's pinned status line, with a live-light for the hub."""

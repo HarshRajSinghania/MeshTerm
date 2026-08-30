@@ -36,18 +36,18 @@ def admin_picker_rows(
         contacts: The device's known contacts.
 
     Returns:
-        ``(rows, candidates)`` — the select rows (grouped, with the exit group) and the
-        offerable contacts (those holding a key). ``candidates`` is empty when nothing is
-        offerable; ``rows`` is then just the exit group.
+        ``(rows, candidates)`` — the grouped select rows and the offerable contacts
+        (those holding a key). Both are empty when nothing is offerable; the caller
+        notes that and never opens a list at all.
     """
-    from .menus import back_rows, section_heading
+    from .menus import section_heading
     from .theme import name_style
     from .tui import Choice
     from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
     candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
     if not candidates:
-        return list(back_rows()), candidates
+        return [], candidates
 
     def row(contact: Contact) -> Choice:
         # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
@@ -82,7 +82,6 @@ def admin_picker_rows(
     if others:
         items.append(section_heading("Other contacts"))
         items.extend(row(c) for c in sorted(others, key=recency))
-    items.extend(back_rows())
     return items, candidates
 
 

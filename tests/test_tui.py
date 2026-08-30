@@ -606,14 +606,18 @@ def test_reorder_apply_row_commits_new_order() -> None:
 
 
 def test_reorder_actions_follow_the_dirty_state() -> None:
-    """Untouched order offers a lone Back; a change swaps in Apply plus discard-Back."""
+    """Untouched order offers no action row at all; a change brings Apply plus discard-Back.
+
+    Esc leaves either way, so an untouched list spends nothing on saying so — the pair
+    appears only once there is something to apply, and Apply has no key of its own.
+    """
     screen = ReorderScreen("order", ["a", "b", "c"])
-    assert [key for key, _ in screen._actions()] == ["back"]
+    assert screen._actions() == []
     screen.handle("enter")
     screen.handle("down")  # dirty now
     assert [key for key, _ in screen._actions()] == ["apply", "back"]
     screen.handle("up")  # moved back home — clean again
-    assert [key for key, _ in screen._actions()] == ["back"]
+    assert screen._actions() == []
 
 
 def test_reorder_back_row_and_escape_cancel_discarding_moves() -> None:
@@ -633,11 +637,24 @@ def test_reorder_back_row_and_escape_cancel_discarding_moves() -> None:
 
 
 def test_reorder_cursor_wraps_through_the_action_rows() -> None:
-    """↑ from the first row lands on the last action row; ↓ from there wraps back to the top."""
+    """↑ from the first row lands on the last row; ↓ from there wraps back to the top.
+
+    Clean, the list is the whole cursor space; once dirty the two action rows join it and
+    the wrap runs through them.
+    """
     screen = ReorderScreen("order", ["a", "b"])
-    screen.handle("up")  # wrap: onto the lone Back row
-    assert screen._index == 2
+    screen.handle("up")  # wrap: onto the last list row, there being no action rows
+    assert screen._index == 1
     screen.handle("down")  # wrap forward to the first list row
+    assert screen._index == 0
+
+    screen.handle("enter")  # grab row 0…
+    screen.handle("down")   # …and carry it down: dirty, so Apply and Back join the space
+    screen.handle("enter")  # drop it — the cursor rode it to the last list row
+    screen.handle("down")   # off the list, onto Apply
+    screen.handle("down")   # …then the discard-Back row below it
+    assert screen._index == 3
+    screen.handle("down")   # and round to the top again
     assert screen._index == 0
 
 

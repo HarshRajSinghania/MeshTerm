@@ -84,7 +84,7 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     assert "Trace this path" in body    # the renamed action (was "Walk again")
     assert "Walk again" not in body
     assert "Delete record" in body
-    assert "Back" in body
+    assert "Back" not in body  # no exit row: Esc closes the story
 
 
 def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
@@ -349,7 +349,7 @@ async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
         confirm.resolve(CANCEL)  # Esc — back out without deleting
         again = await _step_until(lambda: _trophy_case(session, other_than=browser))
         assert again is not None, "the browser never reopened after the confirm"
-        again.resolve(("back", None, 0, None))  # leave the trophy case
+        again.resolve(None)  # Esc leaves the trophy case
         result = await task
     finally:
         if not task.done():
@@ -388,7 +388,7 @@ async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx)
         picker.resolve(CANCEL)  # Esc — abandon the pick
         again = await _step_until(lambda: _trophy_case(session, other_than=browser))
         assert again is not None
-        again.resolve(("back", None, 0, None))
+        again.resolve(None)  # Esc
         result = await task
     finally:
         if not task.done():
@@ -477,7 +477,7 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
         assert _plain([visible[0]]).strip() == f"── {board.icon} {board.title} ──"
         assert _plain([visible[1]]).strip().startswith(board.description[:20])
         assert above is True
-        browser.resolve(("back", None, 0, None))
+        browser.resolve(None)  # Esc
         await task
     finally:
         if not task.done():
@@ -557,7 +557,7 @@ async def test_browser_cuts_every_row_the_way_it_cuts_the_highlighted_one(tui_ct
         assert all(re.search(r"#\d+ .*nodes  ★ → ", row) for row in walks), walks
         # …and runs on past the lane rather than closing on a rescued second endpoint.
         assert all(row.rstrip().endswith("…") for row in walks), walks
-        browser.resolve(("back", None, 0, None))
+        browser.resolve(None)  # Esc
         await task
     finally:
         if not task.done():

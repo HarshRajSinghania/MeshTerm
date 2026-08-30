@@ -792,11 +792,11 @@ class ReorderScreen(Screen):
     Move the cursor with ↑/↓; press Enter on a row to *grab* it, then ↑/↓ carry it up and
     down the list; press Enter again to *drop* it. Below the list sit the action rows,
     following the config editor's pattern: once the order has actually changed, an
-    ok-tinted *Apply* joins an err-tinted *Back — discard*; while it is untouched there is
-    only a plain *Back*. Enter on Apply commits, resolving with the final order as a list
-    of the original row indices (so ``[2, 0, 1]`` means "the row that started third is now
-    first"); Enter on Back — like Esc anywhere — resolves :data:`CANCEL` so the caller
-    keeps the original order.
+    ok-tinted *Apply* joins an err-tinted *Back — discard*; while it is untouched there
+    are no action rows at all, because Esc already leaves. Enter on Apply commits,
+    resolving with the final order as a list of the original row indices (so ``[2, 0, 1]``
+    means "the row that started third is now first"); Enter on Back — like Esc anywhere —
+    resolves :data:`CANCEL` so the caller keeps the original order.
     """
 
     #: Action-row sentinels (kept distinct from list positions, which are ints).
@@ -861,13 +861,13 @@ class ReorderScreen(Screen):
         ]
 
     def _actions(self) -> list[tuple[str, Text]]:
-        """The action rows below the list, matching the config editor's exit group:
-        Apply joins Back only once there is a change to apply, and Back then spells
-        out the consequence of leaving.
+        """The action rows below the list, matching the config editor's exit group.
+
+        An untouched order offers none: Esc leaves, and a row saying so was retired
+        app-wide. A changed one offers the pair, because Apply has no key of its own and
+        its counterpart names what leaving costs.
         """
-        if self._dirty():
-            return self._dirty_actions()
-        return [(self._BACK, Text("Back"))]
+        return self._dirty_actions() if self._dirty() else []
 
     def render_body(self, width: int) -> list[str]:
         """Render the rows, a blank spacer, then the action group, marking the cursor."""
@@ -885,8 +885,10 @@ class ReorderScreen(Screen):
                         overflow="ellipsis")
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
-        lines.append("")
-        for i, (_key, label) in enumerate(self._actions()):
+        actions = self._actions()
+        if actions:
+            lines.append("")
+        for i, (_key, label) in enumerate(actions):
             if n + i == self._index:
                 # The cursor row takes the highlight like the list rows above it,
                 # trading the ✓/✗ tint for the highlight.
@@ -907,7 +909,11 @@ class ReorderScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Move the cursor, carry a grabbed row, grab/drop, run an action, or cancel on Esc."""
         n = len(self._order)
-        total = n + len(self._actions())
+        actions = self._actions()
+        total = n + len(actions)
+        # A change undone while the cursor sat on an action row would strand it past the
+        # end; clamp before anything reads it.
+        self._index = min(self._index, max(0, total - 1))
         if action == "up":
             if self._grabbed and self._index > 0:
                 self._order[self._index - 1], self._order[self._index] = (
@@ -925,7 +931,7 @@ class ReorderScreen(Screen):
         elif action == "enter":
             if self._index < n:
                 self._grabbed = not self._grabbed  # Enter grabs a row, Enter again drops it
-            elif self._actions()[self._index - n][0] == self._APPLY:
+            elif actions[self._index - n][0] == self._APPLY:
                 self.resolve(list(self._order))
             else:
                 super().handle("escape")  # Back resolves CANCEL, same as Esc
