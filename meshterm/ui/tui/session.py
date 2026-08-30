@@ -1709,6 +1709,18 @@ class TuiSession:
             self.invalidate()
             return
         if action == "quit":
+            # Straight out (^Q/^C), with no confirmation — deliberately, and not an
+            # oversight to be tidied up later. The quit dialog exists to catch *one Esc too
+            # many* at the main menu, where a single reflexive keystroke on the way out of
+            # something would otherwise end the session (JP, 2026-08-30). Neither of these
+            # chords can be pressed by accident, so there is nothing for a confirm to catch
+            # — and both are the escape hatch: a screen that is wedged, or a device read
+            # that is hanging, is exactly when a confirm dialog (itself a screen, which has
+            # to paint and take a key) would be the thing in the way. Leaving is still
+            # clean: ``run`` cancels the coroutine driving the app and waits for its unwind,
+            # so the history and chat runs close, the services stop, and the exit watchdog
+            # is armed, the same as quitting from the menu. What this route does *not* offer
+            # is the dialog's "Unpair & quit" — that stays a deliberate, menu-only choice.
             if self._app is not None:
                 self._app.exit()
             return
