@@ -1362,57 +1362,67 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
     # Whether the visit ended by deleting the contact — the caller's cue to rebuild its list.
     contact_removed = False
-    while True:
-        screen = NodeDetailScreen(
-            title=title,
-            header=header,
-            info_rows=info_rows,
-            tabs=tabs,
-            minimap=minimap,
-            map_caption=map_caption,
-            routes=routes_view,
-            info_actions=info_actions,
-            trace_action=trace_action,
-        )
-        action = await session.run_screen(screen)
-        if action is CANCEL or action is None:
-            break
-        if action == "trace":
-            await open_trace(ctx, name or key, initial_spec=screen.selected_spec())
-        elif action == "map":
-            if markers:
-                # Open centred on this node — the very spot the inline preview showed —
-                # not wherever the global map was last left — with the find filter seeded
-                # to it, so this node lights among the rest. Seed only when its label
-                # actually matches a marker; a needle nothing matches would dim everything.
-                # (The map action only exists when the node has a fix, so lat/lon are set.)
-                needle = label.casefold()
-                await open_map(
-                    ctx,
-                    markers,
-                    focus=(lat, lon),
-                    find=label if any(needle in m.label.casefold() for m in markers) else None,
-                )
-        elif action == "share":
-            await show_contact_card(ctx, label, full_key, adv_type)
-        elif action == "timemachine":
-            if you:
-                await open_timemachine_self(ctx)
-            else:
-                await open_timemachine_node(ctx, node_id, label)
-        elif action == "remove":
-            # The confirm floats over this page (run_screen just popped it), so re-push it
-            # as the backdrop for the dialog's lifetime — the reader confirms against the
-            # node they are looking at. A removal ends the visit: there is no contact left
-            # to detail, and the list we return to rebuilds without it.
-            assert contact is not None  # the row only exists for a real contact
-            session.push(screen)
-            try:
-                contact_removed = await _remove_contact(ctx, contact, self_key, label)
-            finally:
-                session.pop(screen)
-            if contact_removed:
+    # One screen for the whole visit. The page is a *hub* — every action on it opens
+    # something else and comes back — so it stays pushed while each of them runs
+    # (``session.stay``) instead of being rebuilt per round. Rebuilding cost the open tab
+    # and the cursor every time: Tab to Routes, pick a route, trace it, come back, and you
+    # were on Info at the top again, two keypresses from the route you were working
+    # through. Keeping the object keeps all of it. It also means the peers below *nest*
+    # above this page rather than replacing it, so Esc from a trace lands back here; ^W is
+    # what leaves the whole excursion at once.
+    screen = NodeDetailScreen(
+        title=title,
+        header=header,
+        info_rows=info_rows,
+        tabs=tabs,
+        minimap=minimap,
+        map_caption=map_caption,
+        routes=routes_view,
+        info_actions=info_actions,
+        trace_action=trace_action,
+    )
+    async with session.stay(screen) as visit:
+        while True:
+            action = await visit.result()
+            if action is CANCEL or action is None:
                 break
+            if action == "trace":
+                await open_trace(ctx, name or key, initial_spec=screen.selected_spec())
+            elif action == "map":
+                if markers:
+                    # Open centred on this node — the very spot the inline preview showed —
+                    # not wherever the global map was last left — with the find filter seeded
+                    # to it, so this node lights among the rest. Seed only when its label
+                    # actually matches a marker; a needle nothing matches would dim
+                    # everything. (The map action only exists when the node has a fix, so
+                    # lat/lon are set.)
+                    needle = label.casefold()
+                    await open_map(
+                        ctx,
+                        markers,
+                        focus=(lat, lon),
+                        find=(
+                            label
+                            if any(needle in m.label.casefold() for m in markers)
+                            else None
+                        ),
+                    )
+            elif action == "share":
+                await show_contact_card(ctx, label, full_key, adv_type)
+            elif action == "timemachine":
+                if you:
+                    await open_timemachine_self(ctx)
+                else:
+                    await open_timemachine_node(ctx, node_id, label)
+            elif action == "remove":
+                # The confirm floats over this page, which is already the backdrop — the
+                # reader confirms against the node they are looking at. A removal ends the
+                # visit: there is no contact left to detail, and the list we return to
+                # rebuilds without it.
+                assert contact is not None  # the row only exists for a real contact
+                contact_removed = await _remove_contact(ctx, contact, self_key, label)
+                if contact_removed:
+                    break
     if minimap is not None:
         # The preview's braille may have smeared the terminal (double-width fallback
         # glyphs prompt_toolkit's diff can't see); force one clean repaint of the list

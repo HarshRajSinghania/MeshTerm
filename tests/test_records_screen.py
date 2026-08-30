@@ -324,8 +324,10 @@ async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
     """The trophy case stays drawn full-frame behind the "Delete all records" confirm.
 
     Regression: the browser was run *then popped* before the confirm opened, so the confirm
-    floated over a blank frame — the background "cleared". Re-pushing the browser as the
-    backdrop keeps it the full-frame base while the red typed-delete gate floats over it.
+    floated over a blank frame — the background "cleared". The browser never leaves the stack
+    now (``session.stay``), so it is the full-frame base while the red typed-delete gate
+    floats over it, and backing out returns to the very same screen — cursor included —
+    rather than to a rebuilt one.
     """
     ctx = tui_ctx
     session = ctx.ui.session
@@ -347,9 +349,9 @@ async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
         assert session._base_screen() is browser  # the browser is still the full-frame base
 
         confirm.resolve(CANCEL)  # Esc — back out without deleting
-        again = await _step_until(lambda: _trophy_case(session, other_than=browser))
-        assert again is not None, "the browser never reopened after the confirm"
-        again.resolve(None)  # Esc leaves the trophy case
+        again = await _step_until(lambda: _trophy_case(session))
+        assert again is browser, "nothing was deleted, so the same screen carries on"
+        again.handle("escape")  # Esc leaves the trophy case
         result = await task
     finally:
         if not task.done():
@@ -386,9 +388,9 @@ async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx)
         assert session._base_screen() is browser  # the browser stays behind it
 
         picker.resolve(CANCEL)  # Esc — abandon the pick
-        again = await _step_until(lambda: _trophy_case(session, other_than=browser))
-        assert again is not None
-        again.resolve(None)  # Esc
+        again = await _step_until(lambda: _trophy_case(session))
+        assert again is browser, "the pick was abandoned, so the same screen carries on"
+        again.handle("escape")  # Esc
         result = await task
     finally:
         if not task.done():
@@ -484,14 +486,15 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
             task.cancel()
 
 
-async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(
+async def test_trace_this_path_nests_above_the_browser_and_comes_back_to_it(
     tui_ctx, monkeypatch
 ) -> None:
-    """After the Trace path hand-off, ``open_records`` returns instead of reopening.
+    """Trace this path opens *over* the trophy case, and Esc from it lands back on the record.
 
-    The anti-deep-stack rule: trophy case → Trace this path → (trace screen closes)
-    must land on the main menu, not back in the browser — otherwise bouncing between
-    the boards and the trace screens piles up states the user has to Esc through.
+    This used to flatten: the browser came down first and the whole flow returned when the
+    trace closed, landing the reader on the main menu — a hand-built escape from a stack that
+    had no other way out. Navigation is a strict stack now, so a sub-view nests like any
+    other and ^W is what leaves the whole excursion at once.
     """
     ctx = tui_ctx
     session = ctx.ui.session
@@ -503,6 +506,10 @@ async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(
 
     async def fake_trace_path(ctx_, spec=""):  # noqa: ANN001
         walked.append(spec)
+        # The browser is still on the stack underneath while the trace runs.
+        assert any(
+            isinstance(s, SelectScreen) and s.title == "Trophy case" for s in session._stack
+        )
         return 0
 
     monkeypatch.setattr("meshterm.ui.trace_screen.open_trace_path", fake_trace_path)
@@ -518,7 +525,11 @@ async def test_trace_this_path_unwinds_to_the_menu_not_the_browser(
         )
         assert isinstance(dialog, RecordDialog)
         dialog.resolve("trace")  # "Trace this path"
-        result = await task  # …and the flow returns; no browser re-entry to unwind
+        # The trace ran and the browser is back on top — the same object, not a rebuild.
+        again = await _step_until(lambda: _trophy_case(session))
+        assert again is browser
+        again.handle("escape")  # only Esc leaves the trophy case
+        result = await task
     finally:
         if not task.done():
             task.cancel()

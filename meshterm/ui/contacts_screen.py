@@ -175,12 +175,13 @@ async def open_contacts(
 ) -> None:
     """Open the interactive contacts list; Enter opens Node detail, Esc leaves.
 
-    Runs the show/open/reshow loop: the sortable list, then whichever node's detail page
-    Enter commits (or the purge flow the tail action opens), then the list again (same sort,
-    the highlight kept on its row) — until Esc, or the ``Back`` row, backs out of the list
-    itself. Anything that removes a contact — a purge here, or the detail page's own
-    single-contact ``Remove contact…`` — re-reads the device and rebuilds the list, so the
-    contacts that went are gone from it.
+    The list stays pushed for the whole visit, so whichever node's detail page Enter commits
+    (or the purge flow the tail action opens) nests *above* it and Esc from there is one pop
+    back onto the row it was opened from — same sort, same filter, same scroll. Anything that
+    removes a contact — a purge here, or the detail page's own single-contact
+    ``Remove contact…`` — ends the visit, re-reads the device and starts a fresh one, so the
+    contacts that went are gone from the list. That rebuild is the deliberate exception to
+    keeping the screen: the rows it was holding a place in no longer exist.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -201,35 +202,35 @@ async def open_contacts(
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the interactive contacts list is only available in the menu")
     session = ctx.ui.session
-    # One screen for the whole visit: re-running it keeps the highlight (and any sort or
-    # filter) on the row the user just opened a detail for, rather than snapping to the top.
     screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
     while True:
-        chosen = await session.run_screen(screen)
-        if chosen is CANCEL or chosen is None:  # Esc
+        rebuild = False
+        async with session.stay(screen) as visit:
+            while True:
+                chosen = await visit.result()
+                if chosen is CANCEL or chosen is None:  # Esc
+                    return
+                if chosen == _PURGE:
+                    # The purge picker and its confirm float over the list, which is already
+                    # the backdrop. A purge that removed anything invalidates the contacts
+                    # cache, so the list is re-read and rebuilt — the one deliberate reset in
+                    # this screen's life, because the rows it was keeping a place in are gone.
+                    if await _purge_stale(ctx, self_key):
+                        rebuild = True
+                        break
+                    continue
+                # The own-node sentinel opens our own node's page; any other value is a
+                # Contact. The page nests above this list and can also *delete* the contact
+                # it details (its ``Remove contact…`` row); when it does, it says so on the
+                # way out and the list rebuilds without the row — the same re-read the purge
+                # does, one contact at a time.
+                if await open_node_detail(ctx, None if chosen == YOU else chosen):
+                    rebuild = True
+                    break
+        if not rebuild:
             return
-        if chosen == _PURGE:
-            # The purge picker and its confirm float over the list, so re-push it as the
-            # backdrop while they run (run_screen just popped it). A purge that removed
-            # anything invalidates the contacts cache, so re-read and rebuild the list.
-            session.push(screen)
-            try:
-                removed = await _purge_stale(ctx, self_key)
-            finally:
-                session.pop(screen)
-            if removed:
-                contacts = await ctx.devstate.contacts()
-                screen = ContactsScreen(
-                    self_name, self_key, contacts, prefix_bytes, counts, sort
-                )
-            continue
-        # The own-node sentinel opens our own node's page; any other value is a Contact.
-        # The page can also *delete* the contact it details (its ``Remove contact…`` row);
-        # when it does, it says so on the way out and the list rebuilds without the row —
-        # the same re-read the purge does, one contact at a time.
-        if await open_node_detail(ctx, None if chosen == YOU else chosen):
-            contacts = await ctx.devstate.contacts()
-            screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
+        contacts = await ctx.devstate.contacts()
+        screen = ContactsScreen(self_name, self_key, contacts, prefix_bytes, counts, sort)
 
 
 async def _purge_stale(ctx: "AppContext", self_key: str) -> int:

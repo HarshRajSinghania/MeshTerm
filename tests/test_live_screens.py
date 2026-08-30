@@ -206,6 +206,7 @@ def test_previous_walk_rejects_unusable_history() -> None:
 def _trace_screen(
     trace=None, compose_path=None, explore=None, pick_width=None, pick_samples=None,
     previous=None, mode="target", samples=1, auto_spec=None, auto_source="",
+    open_trophy_case=None,
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
 
@@ -233,6 +234,7 @@ def _trace_screen(
         previous=previous,
         auto_spec=auto_spec or (lambda: ""),
         auto_source=auto_source,
+        open_trophy_case=open_trophy_case,
     )
     screen.note_viewport(40)  # the frame records this before every real paint
     return screen, session
@@ -614,13 +616,25 @@ async def test_record_run_floats_the_new_record_dialog() -> None:
     assert screen._run_placed == {}  # announced once, not again on the next run
 
 
-async def test_record_dialog_trophy_case_hands_the_screen_off() -> None:
-    """Choosing Trophy case resolves the screen with the hand-off sentinel."""
+async def test_record_dialog_trophy_case_opens_over_the_trace_it_was_earned_on() -> None:
+    """Choosing Trophy case opens it *above* the trace screen, which stays up underneath.
+
+    It used to resolve the whole screen with a sentinel so the trace unwound away first and
+    the reader landed on the main menu. Navigation is a strict stack now: a sub-view nests,
+    Esc from the trophy case is one pop back onto the trace that earned the record, and ^W is
+    what leaves the whole excursion.
+    """
+    opened: list[str] = []
 
     async def trace(path_spec, on_trace):  # noqa: ANN001
         on_trace(_trace(5.0), ["Most nodes — 4 nodes", "Longest distance — 12.4 km"])
 
-    screen, session = _trace_screen(trace=trace, samples=2)
+    async def open_trophy_case() -> None:
+        opened.append("trophy case")
+
+    screen, session = _trace_screen(
+        trace=trace, samples=2, open_trophy_case=open_trophy_case
+    )
     session.dialog_answer = OPEN_TROPHY_CASE
     screen.future = asyncio.get_running_loop().create_future()
     screen.start_trace()
@@ -629,7 +643,8 @@ async def test_record_dialog_trophy_case_hands_the_screen_off() -> None:
     _prompt, _buttons, kwargs = session.dialogs[0]
     assert kwargs["title"] == "2 new records"  # one dialog for the whole run
     assert len(session.dialogs) == 1  # however many samples scored
-    assert screen.future.result() == OPEN_TROPHY_CASE
+    assert opened == ["trophy case"]
+    assert not screen.future.done(), "the trace screen stays up under the trophy case"
 
 
 async def test_escaping_mid_run_skips_the_record_dialog() -> None:

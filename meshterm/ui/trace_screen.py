@@ -121,11 +121,26 @@ _BAR_SNR_MAX = 10.0
 #: runs, paced between transmissions.
 SAMPLE_CHOICES = (1, 2, 3, 5, 8)
 
-#: What the trace screen resolves with when the new-record dialog's *Trophy case*
-#: button is chosen. The session opener catches it and opens the trophy case only
-#: after the screen has fully unwound, so leaving the trophy case afterwards lands
-#: on the main menu instead of re-entering a stack of trace screens.
+#: The new-record dialog's *Trophy case* button value. Choosing it opens the trophy case
+#: over the trace screen, which stays pushed underneath — Esc from the trophy case is one
+#: pop back onto the trace that earned the record.
 OPEN_TROPHY_CASE = "records"
+
+
+def _trophy_case_opener(ctx: "AppContext") -> Callable[[], Awaitable[None]]:
+    """A zero-argument opener for the trophy case, for the new-record dialog's left button.
+
+    Imported inside the closure because the trophy case imports *this* module back (its
+    records offer a *Trace this path* of their own) — the two screens open each other, which
+    is exactly the cycle a strict stack allows and ^W exists to climb out of.
+    """
+
+    async def open_it() -> None:
+        from .records_screen import open_records
+
+        await open_records(ctx)
+
+    return open_it
 
 #: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
 #: the result — plus any trophy-case disciplines the walk just placed in, as short
@@ -386,6 +401,7 @@ class TraceScreen(Screen):
         auto_spec: Callable[[], str] = lambda: "",
         auto_source: str = "",
         initial_spec: str = "",
+        open_trophy_case: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         """Create the screen (nothing transmits until the user commits Trace).
 
@@ -427,6 +443,9 @@ class TraceScreen(Screen):
             initial_spec: A forced path to open armed on, instead of idle on the auto
                 route — how *Trace this path* from the trophy case reopens a record's
                 exact route, ready to walk again. Empty (the default) opens on auto.
+            open_trophy_case: Opens the trophy case over this screen — what the new-record
+                dialog's left button does. ``None`` leaves the dialog with nothing but
+                *Close* to do, which is what a screen run outside the menu gets.
         """
         super().__init__()
         self.title = f"Trace — {target}" if mode == "target" else "Trace path"
@@ -449,6 +468,7 @@ class TraceScreen(Screen):
         self._auto_spec = auto_spec
         self._auto_source = auto_source
         self._path_spec = initial_spec.strip()
+        self._open_trophy_case = open_trophy_case
         #: The trophy-case disciplines the current run has placed in, keyed by
         #: discipline title so an improving multi-sample run keeps only its latest
         #: ``"Title — score"`` label per board. Cleared when a run starts; drained
@@ -617,10 +637,13 @@ class TraceScreen(Screen):
         One dialog per run, however many samples scored: each placed discipline reads
         as its own ``★ Title — score`` line. Platform-dialog shape — *Trophy case* on
         the left, *Close* on the right and default — so Enter simply dismisses and Esc
-        closes. Choosing Trophy case resolves the whole screen with
-        :data:`OPEN_TROPHY_CASE`: the session opener then opens the trophy case only
-        *after* this screen (and everything stacked over it) has unwound, so backing
-        out of the trophy case lands on the main menu, never a pile of trace screens.
+        closes. Choosing Trophy case opens it *over* this screen, like any other
+        sub-view: Esc from the trophy case is one pop back onto the trace that earned
+        the record, and ^W is what leaves the whole excursion at once. (It used to
+        resolve the whole screen instead, unwinding the trace away first and landing the
+        reader on the main menu — a hand-built escape from a stack that had no other way
+        out.) The re-entrancy guard is held across the trophy case too, so a record
+        landing while it is open cannot stack a second dialog behind it.
         """
         if self._dialog_open:
             return
@@ -641,12 +664,11 @@ class TraceScreen(Screen):
                 default=1,
                 footer_hint="←→ choose · Enter select · Esc close",
             )
+            if choice == OPEN_TROPHY_CASE and self._open_trophy_case is not None:
+                await self._open_trophy_case()
         finally:
             self._dialog_open = False
             self._session.invalidate()
-        if choice == OPEN_TROPHY_CASE:
-            self.cancel()
-            self.resolve(OPEN_TROPHY_CASE)
 
     def cancel(self) -> None:
         """Cancel any in-flight trace run (already-recorded traces are kept)."""
@@ -2188,16 +2210,10 @@ async def _open_session(
         # detail screen's suggested best path handed to a target trace. In target mode it
         # only arms when the target is addressable — a forced path must end at a real hash.
         initial_spec=initial_spec if (mode == "path" or target_hash is not None) else "",
+        open_trophy_case=_trophy_case_opener(ctx),
     )
     try:
-        result = await session.run_screen(screen)
+        await session.run_screen(screen)
     finally:
         screen.cancel()
-    if result == OPEN_TROPHY_CASE:
-        # The new-record dialog's hand-off: the trace screen (and every prompt over
-        # it) is already down, so the trophy case opens over a clean stack and Esc
-        # from it unwinds straight to the main menu — never back into this session.
-        from .records_screen import open_records
-
-        await open_records(ctx)
     return screen._total_traces

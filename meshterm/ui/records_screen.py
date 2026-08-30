@@ -848,58 +848,57 @@ async def open_records(ctx: "AppContext") -> dict:
             wrap=False,
             hscroll=True,  # a long walk slides under ←→ instead of dying at the fold
         )
-        picked = await session.run_screen(browser)
-        if picked is CANCEL or picked is None:  # Esc
-            return {"records": total}
-        # Every pick opens a dialog that belongs *over* the trophy case — the discipline
-        # picker, the delete confirms, a record's floating story. run_screen just popped the
-        # browser, so re-push it as the static backdrop: it stays drawn full-frame behind the
-        # dialog (which, run over the bare stack, would otherwise draw over a blank frame — or,
-        # alone and floating, become the frame). This is the device picker's trick
-        # (confirm_startup) and what RecordDialog's "floating over the screen beneath" assumes.
-        session.push(browser)
-        trace_spec: Optional[str] = None
-        try:
-            verb = picked[0]
-            if verb == "del_cat":
-                await delete_category_flow()
-            elif verb == "del_all":
-                if total and await session.typed_confirm(
-                    f"This deletes all {total} records — every discipline, every width. "
-                    "They can only be re-earned by walking them again.",
-                    "delete",
-                    title="Delete all records",
-                ):
-                    ctx.repo.delete_discoveries()
-            else:
-                _verb, category, rank, record = picked
-                far_label, far_id, shape = walk_drawing(record)
-                action = await session.run_screen(RecordDialog(
-                    record, category, rank,
-                    resolve=resolve, device_label=device_label, device_hash=device_hash,
-                    far_label=far_label, far_id=far_id, shape=shape,
-                    reliability=walk_reliability(far_id, far_label),
-                    type_of=lambda node_id: node_geo(node_id)[1],
-                ))
-                if action == "trace":
-                    trace_spec = record.spec
-                elif action == "delete":
-                    sure = await ctx.ui.dialog(
-                        f"Delete this {category.title} record?",
-                        [("Cancel", False), ("Delete", True)],
-                        title="Delete record",
-                        default=1,
-                        destructive=True,
-                    )
-                    if sure:
-                        ctx.repo.delete_discovery(record.id)
-        finally:
-            session.pop(browser)
-        # Tracing a path is a full hand-off to the Trace screen, not a dialog over the
-        # trophy case, so it runs only once the browser backdrop is down — and the
-        # browser does not reopen behind it: when the trace screen closes, this whole
-        # flow returns, landing the user on the main menu instead of a trophy-case →
-        # trace → trophy-case stack that takes many Escs to climb out of.
-        if trace_spec is not None:
-            await open_trace_path(ctx, spec=trace_spec)
-            return {"records": len(ctx.repo.discoveries())}
+        # The browser stays pushed for the whole visit, so every dialog that belongs *over*
+        # the trophy case — the discipline picker, the delete confirms, a record's floating
+        # story — already has it drawn full-frame behind them, and the cursor is still on the
+        # record just read when they close. The loop only leaves (and the list only rebuilds,
+        # losing that place) when the record set itself has changed under it.
+        async with session.stay(browser) as visit:
+            while True:
+                picked = await visit.result()
+                if picked is CANCEL or picked is None:  # Esc
+                    return {"records": total}
+                verb = picked[0]
+                if verb == "del_cat":
+                    await delete_category_flow()
+                elif verb == "del_all":
+                    if total and await session.typed_confirm(
+                        f"This deletes all {total} records — every discipline, every width. "
+                        "They can only be re-earned by walking them again.",
+                        "delete",
+                        title="Delete all records",
+                    ):
+                        ctx.repo.delete_discoveries()
+                else:
+                    _verb, category, rank, record = picked
+                    far_label, far_id, shape = walk_drawing(record)
+                    action = await session.run_screen(RecordDialog(
+                        record, category, rank,
+                        resolve=resolve, device_label=device_label, device_hash=device_hash,
+                        far_label=far_label, far_id=far_id, shape=shape,
+                        reliability=walk_reliability(far_id, far_label),
+                        type_of=lambda node_id: node_geo(node_id)[1],
+                    ))
+                    if action == "trace":
+                        # Walking a record's path opens the Trace screen *above* the trophy
+                        # case, like any other sub-view: Esc from the trace is one pop back
+                        # onto the record it was armed from, and ^W is what leaves the whole
+                        # excursion. (It used to flatten the stack first and land the reader
+                        # on the main menu, because there was no key that could climb out of
+                        # a deep stack in one press. Now there is.)
+                        await open_trace_path(ctx, spec=record.spec)
+                    elif action == "delete":
+                        sure = await ctx.ui.dialog(
+                            f"Delete this {category.title} record?",
+                            [("Cancel", False), ("Delete", True)],
+                            title="Delete record",
+                            default=1,
+                            destructive=True,
+                        )
+                        if sure:
+                            ctx.repo.delete_discovery(record.id)
+                # A trace can set a record and any of the deletes can drop several, so the
+                # board is rebuilt only when the record count actually moved — the one thing
+                # worth losing the cursor over.
+                if len(ctx.repo.discoveries()) != total:
+                    break
