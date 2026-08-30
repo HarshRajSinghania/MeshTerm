@@ -29,7 +29,7 @@ from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
-from .menus import command_label, marked_label, section_heading
+from .menus import command_label, marked_label, run_steps, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
 from .theme import glyph
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
@@ -352,7 +352,14 @@ class CourierRecipientScreen(ContactListScreen):
 
 
 async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
-    """Float the queueing flow: recipient, message, schedule."""
+    """Float the queueing flow: recipient, message, schedule — as a stack.
+
+    Three prompts, so Esc means "back one step", not "throw the whole thing away": from the
+    schedule to the message with what was written still in the field, from the message to
+    the recipient list (which stays pushed the whole time, so it is still on the row the
+    message was being written to), and from there out to the outbox. Nothing typed is lost
+    to a single keypress — see :func:`~meshterm.ui.menus.run_steps`.
+    """
     from .timemachine_screen import _routing_prefix_bytes
 
     session = ctx.ui.session
@@ -381,19 +388,23 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         counts=counts,
         sort=ContactsSort.from_name("name", SORT_COLUMNS, SORT_OPENS_ASCENDING),
     )
-    contact = await session.run_screen(picker)
-    if not isinstance(contact, Contact):  # Esc (CANCEL) or anything else backs out
+    async with session.stay(picker) as visit:
+        answers = await run_steps(
+            [
+                lambda vals: _next_recipient(visit),
+                lambda vals: session.text(
+                    f"Message for {vals[0].name}",
+                    prompt="Delivered as a normal direct message when its moment comes.",
+                    byte_limit=DM_BYTE_LIMIT,
+                    default=vals[1] or "",
+                ),
+                lambda vals: _schedule_step(ctx, vals[0].name),
+            ]
+        )
+    if answers is None:  # Esc off the recipient list — out to the outbox
         return
-    text = await session.text(
-        f"Message for {contact.name}",
-        prompt="Delivered as a normal direct message when its moment comes.",
-        byte_limit=DM_BYTE_LIMIT,
-    )
-    if not text:
-        return
-    not_before = await _pick_schedule(ctx, contact.name)
-    if not_before is CANCEL_SCHEDULE:
-        return
+    contact, text, when = answers
+    not_before = None if when is WHEN_HEARD else when
     key = contact_watch_key(contact)
     if key is None:
         await session.message_dialog(
@@ -402,6 +413,26 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
         )
         return
     ctx.courier_store.queue(key, contact.name, text, not_before=not_before)
+
+
+async def _next_recipient(visit: Any) -> Optional[Contact]:
+    """One round of the visited recipient list: the picked contact, or ``None`` on Esc."""
+    chosen = await visit.result()
+    return chosen if isinstance(chosen, Contact) else None
+
+
+async def _schedule_step(ctx: "AppContext", name: str) -> Optional[object]:
+    """The schedule step, in the shape :func:`~meshterm.ui.menus.run_steps` reads.
+
+    A chain step signals *step back* with ``None``, which is exactly what
+    :func:`_pick_schedule` returns for the real answer "no schedule — send on the next sign
+    of life". So the two are swapped here: that answer travels as :data:`WHEN_HEARD` (its
+    own row's value) and the cancel becomes the ``None``.
+    """
+    picked = await _pick_schedule(ctx, name)
+    if picked is CANCEL_SCHEDULE:
+        return None
+    return WHEN_HEARD if picked is None else picked
 
 
 #: Sentinel: the schedule picker was cancelled (distinct from "no schedule").
@@ -420,40 +451,45 @@ async def _pick_schedule(ctx: "AppContext", name: str):
     ``None`` means "no schedule — send on the next sign of life" (the explicit
     *When it's next heard* row); an aware UTC datetime holds until then;
     :data:`CANCEL_SCHEDULE` means the user backed out and nothing should queue.
+
+    The *At a time…* row opens a second prompt, and Esc there steps back to these rungs
+    rather than out of the queueing flow — the chain rule one level down (see
+    :func:`~meshterm.ui.menus.run_steps`).
     """
     session = ctx.ui.session
-    now = utcnow()
-    tomorrow_7 = parse_clock("07:00", now)
-    items = [
-        Choice("When it's next heard  (recommended)", WHEN_HEARD),
-        Choice("In 1 h", now + timedelta(hours=1)),
-        Choice("In 3 h", now + timedelta(hours=3)),
-        Choice("In 8 h", now + timedelta(hours=8)),
-        Choice(f"Next 07:00  ({_local_stamp(tomorrow_7)})", tomorrow_7),
-        Choice("At a time… (HH:MM, next occurrence)", "custom"),
-    ]
-    picked = await session.select(
-        f"When should {name} get it?", items, filterable=False,
-        footer_hint="↑↓ move · Enter select · Esc cancel",
-    )
-    if picked is None:
-        # Esc on the picker cancels the queueing; "when next heard" is its own explicit
-        # row (WHEN_HEARD below), so backing out never silently queues something.
-        return CANCEL_SCHEDULE
-    if picked is WHEN_HEARD:
-        return None  # no schedule constraint — delivered on the next pass
-    if picked == "custom":
+    while True:
+        now = utcnow()
+        tomorrow_7 = parse_clock("07:00", now)
+        items = [
+            Choice("When it's next heard  (recommended)", WHEN_HEARD),
+            Choice("In 1 h", now + timedelta(hours=1)),
+            Choice("In 3 h", now + timedelta(hours=3)),
+            Choice("In 8 h", now + timedelta(hours=8)),
+            Choice(f"Next 07:00  ({_local_stamp(tomorrow_7)})", tomorrow_7),
+            Choice("At a time… (HH:MM, next occurrence)", "custom"),
+        ]
+        picked = await session.select(
+            f"When should {name} get it?", items, filterable=False,
+            footer_hint="↑↓ move · Enter select · Esc cancel",
+        )
+        if picked is None:
+            # Esc on the picker steps back out of the schedule; "when next heard" is its
+            # own explicit row (WHEN_HEARD), so backing out never silently queues anything.
+            return CANCEL_SCHEDULE
+        if picked is WHEN_HEARD:
+            return None  # no schedule constraint — delivered on the next pass
+        if picked != "custom":
+            return picked
         while True:
             typed = await session.text(
                 "Send at (local HH:MM)",
                 prompt="A time already past today means tomorrow.",
             )
             if not typed:
-                return CANCEL_SCHEDULE
+                break  # Esc on the time: back to the rungs it was reached from
             when = parse_clock(typed)
             if when is not None:
                 return when
-    return picked
 
 
 async def _entry_actions(ctx: "AppContext", ident: int) -> None:

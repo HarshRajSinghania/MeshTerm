@@ -423,6 +423,66 @@ async def test_the_path_composer_peels_its_typed_entry_first() -> None:
     assert screen.future.result() is CANCEL
 
 
+# --- entry chains step back --------------------------------------------------
+
+
+async def test_a_cancelled_step_goes_back_to_the_one_before_it() -> None:
+    """Esc in a multi-prompt flow undoes one step, keeping what earlier steps hold.
+
+    A chain of prompts used to be a straight run of awaits, so Esc anywhere abandoned the
+    whole flow — a mistyped 32-hex channel key cost the name typed before it too.
+    """
+    from meshterm.ui.menus import run_steps
+
+    asked: list[str] = []
+    key_attempts = iter([None, "cafe"])  # first Esc, then a good key on the way forward
+
+    async def name_step(values: list):
+        asked.append("name")
+        return values[0] or "Backyard"  # opens on what it last returned
+
+    async def key_step(values: list):
+        asked.append("key")
+        return next(key_attempts)
+
+    answers = await run_steps([name_step, key_step])
+
+    assert answers == ["Backyard", "cafe"]
+    assert asked == ["name", "key", "name", "key"], "the name was asked again, not skipped"
+
+
+async def test_backing_out_of_the_first_step_ends_the_flow() -> None:
+    """There is nothing behind step one, so Esc there leaves — as it always did."""
+    from meshterm.ui.menus import run_steps
+
+    async def only_step(values: list):
+        return None
+
+    assert await run_steps([only_step]) is None
+
+
+async def test_a_step_keeps_its_own_answer_to_offer_as_a_default() -> None:
+    """Coming back to a step, it is handed what it returned last time (its field's value)."""
+    from meshterm.ui.menus import run_steps
+
+    seen: list = []
+
+    async def first(values: list):
+        return "one"
+
+    async def second(values: list):
+        seen.append(list(values))
+        return "two"
+
+    async def third(values: list):
+        return None if len(seen) == 1 else "three"  # Esc the first time through
+
+    assert await run_steps([first, second, third]) == ["one", "two", "three"]
+    # Asked again after the third step backed out, the second step is handed what it
+    # answered before — which is how a re-opened field comes back already filled in.
+    assert seen == [["one", None, None], ["one", "two", None]]
+
+
 # --- ^W, the pop-all ---------------------------------------------------------
 
 

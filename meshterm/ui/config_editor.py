@@ -60,6 +60,7 @@ from .menus import (
     lane_header,
     lane_row,
     menu_rows,
+    run_steps,
     section_heading,
 )
 from .tui import Choice, Separator
@@ -628,26 +629,49 @@ async def _stage_custom_var(
 
     Known variable names are offered as suggestions so an existing one can be recalled
     without retyping it; any new name is accepted as free text.
+
+    Name then value, as a stack (:func:`~meshterm.ui.menus.run_steps`): Esc on the value
+    steps back to the name it is for, rather than dropping both and starting over.
     """
+    answers = await run_steps(
+        [
+            lambda vals: _ask_custom_name(ctx, custom, vals[0]),
+            lambda vals: ctx.ui.text(
+                "Custom variable",
+                prompt=f"Value for {vals[0]}:",
+                default=custom.get(vals[0], "") if vals[1] is None else vals[1],
+            ),
+        ]
+    )
+    if answers is None:
+        return
+    key, value = answers
+    extra_ops.append(("set_custom", key, value))
+
+
+async def _ask_custom_name(
+    ctx: "AppContext", custom: dict[str, str], previous: Optional[str]
+) -> Optional[str]:
+    """The variable-name step: suggestions where there are any, free text otherwise.
+
+    Args:
+        ctx: Shared application context.
+        custom: The variables the device already reports, offered for recall.
+        previous: What this step last returned, so coming back to it opens on it.
+
+    Returns:
+        The trimmed name, or ``None`` if it was left blank or cancelled.
+    """
+    prompt = "Name of the firmware variable to set:"
     if custom:
-        key = await ctx.ui.autocomplete(
-            "Custom variable",
-            sorted(custom),
-            prompt="Name of the firmware variable to set:",
+        typed = await ctx.ui.autocomplete(
+            "Custom variable", sorted(custom), prompt=prompt, default=previous or ""
         )
     else:
-        key = await ctx.ui.text(
-            "Custom variable", prompt="Name of the firmware variable to set:"
+        typed = await ctx.ui.text(
+            "Custom variable", prompt=prompt, default=previous or ""
         )
-    if not key or not key.strip():
-        return
-    key = key.strip()
-    value = await ctx.ui.text(
-        "Custom variable", prompt=f"Value for {key}:", default=custom.get(key, "")
-    )
-    if value is None:
-        return
-    extra_ops.append(("set_custom", key, value))
+    return typed.strip() if typed and typed.strip() else None
 
 
 # --- device actions (run immediately) -----------------------------------------

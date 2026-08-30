@@ -62,7 +62,7 @@ from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
 from .braillechart import activity_peak, activity_sparkline
-from .menus import command_label, fit_cells, menu_rows, section_heading
+from .menus import command_label, fit_cells, menu_rows, run_steps, section_heading
 from .qr import share_popup
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
@@ -815,18 +815,30 @@ async def _add_public(
 async def _join_with_key(
     ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
-    """Join an existing private channel by entering its name and 16-byte key."""
+    """Join an existing private channel by entering its name and 16-byte key.
+
+    The two prompts are a stack (:func:`~meshterm.ui.menus.run_steps`): Esc on the key
+    steps back to the name with what was typed still in the field, rather than throwing
+    both away — a 32-hex key is a long thing to mistype.
+    """
     idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
-    name = await ctx.ui.text("Channel name:", validate=_nonblank)
-    if not name:
-        return 0
-    key = await ctx.ui.text(
-        "Channel key (32 hex characters / 16 bytes):", validate=_valid_secret
+    answers = await run_steps(
+        [
+            lambda vals: ctx.ui.text(
+                "Channel name:", default=vals[0] or "", validate=_nonblank
+            ),
+            lambda vals: ctx.ui.text(
+                "Channel key (32 hex characters / 16 bytes):",
+                default=vals[1] or "",
+                validate=_valid_secret,
+            ),
+        ]
     )
-    if not key:
+    if answers is None:
         return 0
+    name, key = answers
     secret = normalize_secret(key)
     await write_channel(ctx, device, idx, name.strip(), secret)
     ctx.ui.note(f"[ok]✓[/ok] joined [brand]{name.strip()}[/brand]")
@@ -856,18 +868,36 @@ async def _import_link(
 
 
 async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
-    """Rename and/or re-key an existing channel; return whether it changed."""
-    name = await ctx.ui.text("Channel name:", default=slot.name, validate=_nonblank)
-    if name is None:
-        return False
-    name = name.strip()
-    key = await ctx.ui.text(
-        "Channel key (32 hex chars; blank to derive from the name):",
-        default="" if slot.is_name_derived else slot.secret.hex(),
-        validate=_optional_secret,
+    """Rename and/or re-key an existing channel; return whether it changed.
+
+    Name then key, as a stack (:func:`~meshterm.ui.menus.run_steps`): Esc on the key steps
+    back to the name rather than dropping the rename with it. Each step opens on what it
+    was last given — the slot's current value the first time through, whatever was typed
+    when it is come back to (a committed blank key included, since blank means *derive it
+    from the name*).
+    """
+    answers = await run_steps(
+        [
+            lambda vals: ctx.ui.text(
+                "Channel name:",
+                default=slot.name if vals[0] is None else vals[0],
+                validate=_nonblank,
+            ),
+            lambda vals: ctx.ui.text(
+                "Channel key (32 hex chars; blank to derive from the name):",
+                default=(
+                    ("" if slot.is_name_derived else slot.secret.hex())
+                    if vals[1] is None
+                    else vals[1]
+                ),
+                validate=_optional_secret,
+            ),
+        ]
     )
-    if key is None:
+    if answers is None:
         return False
+    name, key = answers
+    name = name.strip()
     secret = normalize_secret(key) if key.strip() else None
     await write_channel(ctx, device, slot.idx, name, secret)
     ctx.ui.note(f"[ok]✓[/ok] updated channel [brand]{name}[/brand]")

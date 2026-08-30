@@ -18,6 +18,8 @@ construction:
   :func:`lane_header`, the ready-made header for :func:`lane_row`'s lanes.
 * :func:`changes_phrase` — ``"1 staged change"`` / ``"3 staged changes"``.
 * :func:`confirm_discard` — the shared are-you-sure dialog for leaving staged changes.
+* :func:`run_steps` — an entry flow of two or more prompts, run as a stack: Esc on one
+  step goes back to the step before it, with what was answered there still in hand.
 
 House rules the helpers encode (see the UX standards in ``CLAUDE.md``): a list carries
 no exit row — Esc leaves, and a row repeating it earned nothing for its two lines; the
@@ -29,7 +31,16 @@ styled ``ok``/``err``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Iterable,
+    Optional,
+    Sequence,
+    Union,
+)
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -335,6 +346,42 @@ async def confirm_discard(
         danger=True,
     )
     return choice == "discard"
+
+
+async def run_steps(steps: "Sequence[Callable[[list], Awaitable[Any]]]") -> "Optional[list]":
+    """Run a chain of prompts as a stack — Esc on a step goes back to the one before it.
+
+    An entry flow that asks two or more things in a row (pick a slot, then name the
+    channel; pick a recipient, write the message, choose when it goes) is a stack like any
+    other: Esc undoes the last thing you did, not the whole flow. Gathering the answers as
+    one straight run of awaits instead made every Esc abandon everything, so a mistyped
+    32-hex channel key also cost the name typed before it.
+
+    Each step is awaited with the answers gathered so far — the same list each time, so a
+    step can label itself with an earlier answer *and* offer its own previous answer as its
+    default when it is come back to — and returns its value, or ``None`` to step back.
+    ``None`` from the first step ends the flow: there is nothing behind it. A step whose
+    real answer can be ``None`` (Courier's "when it's next heard") returns a sentinel
+    instead and the caller reads it back.
+
+    Args:
+        steps: The prompts, in order. Index ``i`` reads and writes ``values[i]``.
+
+    Returns:
+        The answers, positionally, or ``None`` if the flow was abandoned.
+    """
+    values: list = [None] * len(steps)
+    index = 0
+    while index < len(steps):
+        answer = await steps[index](values)
+        if answer is None:
+            index -= 1
+            if index < 0:
+                return None
+            continue
+        values[index] = answer
+        index += 1
+    return values
 
 
 def section_heading(label: str) -> Separator:

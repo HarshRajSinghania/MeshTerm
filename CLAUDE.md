@@ -76,6 +76,11 @@ deliberately, one at a time, and say why in the code.
   refreshes in place with `SelectScreen.replace_items`, which follows the highlighted row
   by value and keeps the filter. Rebuilding the screen is for when the rows it was holding
   a place in are genuinely gone (a purge, a delete) — and then say so.
+- **An entry chain is a stack too.** A flow that asks two or more things in a row runs
+  through `menus.run_steps`: each step gets the answers so far (to label itself, and to
+  offer its own previous answer as its default) and returns `None` to step back, so Esc
+  undoes one step instead of the whole flow. A trailing Cancel/verb confirm is still a
+  decision, not a step — its Cancel abandons.
 - **Esc peels before it leaves.** A screen carrying a find-as-you-type filter treats the
   typed query as the most recent thing the reader entered: the first Esc clears it and the
   screen stays, the second leaves. One rule on all four (`SelectScreen` and everything
