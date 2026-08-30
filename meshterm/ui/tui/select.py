@@ -138,6 +138,25 @@ def _splice_hint(base: str, segment: str) -> str:
     return f"{base[:idx]} · {segment}{base[idx:]}"
 
 
+def _esc_verb(base: str, verb: str) -> str:
+    """Rewrite a footer hint's trailing ``Esc`` clause to ``Esc <verb>``.
+
+    Esc's verb is fixed per surface (``back``, ``cancel``, ``keep`` …) — except while a
+    find-as-you-type filter is standing, where the press peels the filter instead of
+    leaving, and the line has to say so. The map and the mesh walk have always spelled that
+    ``Esc clear``; this is the same swap for a list, which keeps the rest of its atoms
+    rather than giving the whole line over to the query.
+
+    A hint with no ``Esc`` clause is returned unchanged: there is nothing being claimed to
+    correct.
+    """
+    marker = " · Esc "
+    idx = base.rfind(marker)
+    if idx == -1:
+        return base
+    return f"{base[:idx]}{marker}{verb}"
+
+
 def _insert_atom(base: str, atom: str, index: int = 1) -> str:
     """Insert ``atom`` as the ``index``-th ` · `-separated atom of a footer hint.
 
@@ -485,6 +504,9 @@ class SelectScreen(Screen):
         * the :attr:`_hscroll_hint` atom (``hscroll`` lists only), inserted right after the
           move atom (see :func:`_insert_atom`) while the highlighted row overflows the width
           — a short row scrolls nowhere, so ←→ stays hidden on it.
+
+        And the trailing ``Esc`` clause turns into ``Esc clear`` while a filter is typed,
+        because that is what the press does then (see :meth:`handle`).
         """
         base = self._footer_base
         current = self._current_choice()
@@ -492,6 +514,8 @@ class SelectScreen(Screen):
             base = _splice_hint(base, self._delete_hint)
         if self._hscroll and self._hscroll_hint and self._selected_overflows():
             base = _insert_atom(base, self._hscroll_hint)
+        if self._filter:
+            base = _esc_verb(base, "clear")
         return base
 
     def _selected_overflows(self) -> bool:
@@ -814,7 +838,15 @@ class SelectScreen(Screen):
         elif action == "right" and self._hscroll:
             self._hshift += self._HSCROLL_STEP  # clamped to the highlighted row's tail at render
         elif action == "escape":
-            super().handle("escape")
+            # A typed filter is the most recent thing the reader entered, so Esc peels that
+            # before it leaves — the map and the mesh walk's rule, now every filtering
+            # screen's. Leaving a narrowed list is the second Esc.
+            if self._filterable and self._filter:
+                self._filter = ""
+                self._index = 0
+                self._hshift = 0
+            else:
+                super().handle("escape")
         elif action == "backspace" and self._filterable:
             self._filter = self._filter[:-1]
             self._index = 0

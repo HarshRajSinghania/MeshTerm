@@ -357,6 +357,72 @@ def test_update_rows_resorts_the_lanes_and_keeps_the_highlight_on_its_contact() 
     assert [c.value for c in screen._choices()] == ["beta", "alpha"]
 
 
+# --- Esc peels the filter before it leaves -----------------------------------
+
+
+async def test_a_typed_filter_is_peeled_before_the_list_is_left() -> None:
+    """Esc clears a standing filter and stays; the next Esc leaves.
+
+    The map and the mesh walk always did this. The select list and the path composer did
+    not — the same keys on the same affordance, opposite outcomes — so typing three letters
+    on a contact list and pressing Esc dropped you at the main menu.
+    """
+    screen = SelectScreen("Contacts", [Choice(n, n) for n in ("alpha", "beta", "gamma")])
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.handle("text", "b")
+    assert [c.value for c in screen._choices()] == ["beta"]
+
+    screen.handle("escape")
+    assert screen._filter == "", "the filter is what the first Esc peels"
+    assert not screen.future.done(), "…and the screen is still here"
+    assert [c.value for c in screen._choices()] == ["alpha", "beta", "gamma"]
+
+    screen.handle("escape")
+    assert screen.future.result() is CANCEL, "the second Esc leaves"
+
+
+def test_the_footer_says_clear_while_a_filter_is_standing() -> None:
+    """Esc's verb follows what the press will actually do — the map and walk's wording."""
+    screen = SelectScreen(
+        "Contacts",
+        [Choice("alpha", "a")],
+        footer_hint="↑↓ move · Enter open · type to filter · Esc back",
+    )
+    assert screen.footer_hint.endswith("Esc back")
+    screen.handle("text", "a")
+    assert screen.footer_hint.endswith("Esc clear")
+    screen.handle("backspace")
+    assert screen.footer_hint.endswith("Esc back")
+
+
+async def test_the_path_composer_peels_its_typed_entry_first() -> None:
+    """Esc unwinds the composer the way ⌫ already did: the entry, then the screen."""
+    from meshterm.services.topology import build_topology
+    from meshterm.ui.path_composer import PathComposerScreen
+
+    self_id = "aa" * 6 + "0" * 52
+    screen = PathComposerScreen(
+        device_label="Homestead",
+        device_hash=self_id,
+        topology=build_topology(
+            self_id=self_id, contacts=[], trace_paths=[], packet_paths=[],
+            neighbour_links=[],
+        ),
+        width_bytes=1,
+    )
+    screen.future = asyncio.get_running_loop().create_future()
+    screen.handle("text", "a")
+    screen.handle("text", "1")
+    assert screen.footer_hint.endswith("Esc clear")
+
+    screen.handle("escape")
+    assert not screen.future.done(), "the entry is peeled, the composer stays"
+    assert screen.footer_hint.endswith("Esc cancel")
+
+    screen.handle("escape")
+    assert screen.future.result() is CANCEL
+
+
 # --- ^W, the pop-all ---------------------------------------------------------
 
 

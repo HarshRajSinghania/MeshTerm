@@ -76,6 +76,13 @@ deliberately, one at a time, and say why in the code.
   refreshes in place with `SelectScreen.replace_items`, which follows the highlighted row
   by value and keeps the filter. Rebuilding the screen is for when the rows it was holding
   a place in are genuinely gone (a purge, a delete) — and then say so.
+- **Esc peels before it leaves.** A screen carrying a find-as-you-type filter treats the
+  typed query as the most recent thing the reader entered: the first Esc clears it and the
+  screen stays, the second leaves. One rule on all four (`SelectScreen` and everything
+  built on it, the path composer, the map, the mesh walk), and the footer says `Esc clear`
+  for as long as it is true. Chat is the same shape with a different peelable thing — its
+  first Esc unpicks a selected message. It used to be a 2–2 split, which put opposite
+  outcomes behind the same keystroke on the same affordance.
 - **^W** unwinds every frame back to the main menu, **^Q** quits from anywhere. Both are
   answered in `TuiSession._dispatch` and neither is ever advertised — a global verb has no
   screen to belong to, and the F-key lane has only three free slots per screen. They are
@@ -151,7 +158,8 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 - ≤72 cells. Sentence shape: navigation keys, then action keys, **Esc last**.
 - Esc verb by surface: `Esc back` leaves a screen · `Esc close` dismisses a read-only
   floating view · `Esc cancel` abandons a prompt/dialog · `Esc keep` leaves a value
-  picker unchanged · `Esc quit` only at the main menu.
+  picker unchanged · `Esc quit` only at the main menu. While a find-as-you-type filter
+  is standing the verb becomes `Esc clear`, because that is what the press does then.
 - Enter verb by action: `Enter open` when the row pushes a screen or dialog ·
   `Enter select` when it picks a value or action row · `Enter set` in a value picker.
   A more specific committing verb (`Enter adopt path`, `Enter add`) is fine; a synonym

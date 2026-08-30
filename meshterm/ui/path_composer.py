@@ -139,7 +139,22 @@ class PathComposerScreen(Screen):
     """
 
     grow_only = True
-    footer_hint = "↑↓ move · ←→ cursor · Enter add · type to filter · ⌫ remove · Esc cancel"
+
+    #: The composing keys, in the hint grammar's navigation-then-actions-then-Esc order.
+    #: Esc's verb is the only part that moves — see :attr:`footer_hint`.
+    _HINT = "↑↓ move · ←→ cursor · Enter add · type to filter · ⌫ remove · Esc cancel"
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The composing keys, with ``Esc clear`` standing in while an entry is typed.
+
+        Esc peels the typed entry before it abandons the composer, exactly as ⌫ peels it
+        before it removes a hop, so the line says which of the two the press will do (the
+        app-wide filter rule — the map, the mesh walk and every select list read the same).
+        """
+        if not self._entry:
+            return self._HINT
+        return self._HINT.replace("Esc cancel", "Esc clear")
 
     def __init__(
         self,
@@ -715,4 +730,11 @@ class PathComposerScreen(Screen):
                 self._entry += data
                 self._index = 0
         elif action == "escape":
-            super().handle("escape")
+            # The typed entry is the most recent thing the reader entered, so Esc peels it
+            # first — the same layering ⌫ already has here (entry, then a hop) and the
+            # app-wide rule for a find-as-you-type screen.
+            if self._entry:
+                self._entry = ""
+                self._index = 0
+            else:
+                super().handle("escape")
