@@ -46,6 +46,52 @@ def test_borderless_frame_swaps_the_panel_for_a_title_bar() -> None:
     assert plain[2].startswith("row 0")
 
 
+def _bar(title: str, hint: str, cols: int = 53, *, below: bool = True) -> str:
+    """The borderless title bar's plain text for a screen with ``title`` and ``hint``."""
+    screen = ScrollScreen(Text("x"), title=title, floating=False)
+    screen._footer_hint = hint
+    return frame._title_bar(screen, cols, False, below).plain
+
+
+def test_the_title_bar_says_how_to_leave_the_screen() -> None:
+    """This platform has no footer hint line, so the way out rides the bar's tail.
+
+    The F-key lane stands where the footer would be and only advertises what its slots do,
+    which left Esc — the key every screen answers to, and the reason no screen carries a
+    *Back* row — completely unadvertised (JP, 2026-08-30). It lands last, after the clip
+    arrows, in the ``↑↓ · hint`` shape a floating dialog's subtitle already uses.
+    """
+    bar = _bar("Chrome probe", "↑↓ move · Enter open · Esc back")
+
+    assert bar.rstrip().endswith("↓ · Esc back")
+    assert "Chrome probe" in bar
+
+
+def test_the_bar_speaks_the_screen_s_own_esc_verb() -> None:
+    """Lifted off the screen's own footer hint, so each surface keeps its true verb."""
+    assert _bar("MeshTerm", "↑↓ move · Enter open · Esc quit").endswith("Esc quit")
+    assert _bar("Path width", "↑↓ move · Enter set · Esc keep").endswith("Esc keep")
+    # A hint that names no way out advertises none — the lane's rule, one row up.
+    assert "Esc" not in _bar("Working", "↑↓ move")
+
+
+def test_the_esc_hint_gives_way_before_it_crowds_the_title() -> None:
+    """Compact by construction: the verb goes first, then the atom, and the title stays.
+
+    Two rungs down, in order — a long title keeps the key without its verb, a longer one
+    takes the cells back altogether. The title is what the reader came for.
+    """
+    verbless = _bar("Trace — YUL-Cartierville over a spec", "↑↓ move · Esc back")
+    assert verbless.rstrip().endswith("· Esc")  # the verb went, the key stayed
+    assert "Esc back" not in verbless
+
+    crowded = _bar("Trace — YUL-Cartierville over a longer spec", "↑↓ move · Esc back")
+    assert "Esc" not in crowded
+
+    for bar in (verbless, crowded):
+        assert "YUL-Cartierville" in bar and cell_len(bar) <= 53
+
+
 def test_bordered_frame_is_unchanged_on_regular() -> None:
     set_platform(REGULAR)
     composed = frame.compose_base(Text("hdr"), _screen(), "hint", 72, 24).split("\n")

@@ -7,6 +7,7 @@ header and footer so the whole view fits the terminal exactly (never overflowing
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
 from typing import Callable, Optional, Sequence
 
@@ -178,13 +179,30 @@ def _panel_box(
 _BASE_BOX_CACHE: Optional[tuple[tuple, list[str]]] = None
 
 
+#: The screen's own way out, lifted off the end of its footer hint. The grammar is
+#: mandated — "navigation keys, then action keys, **Esc last**" — so the last atom is the
+#: Esc clause wherever a screen has one, and its verb is the true one for that surface
+#: (``back`` on a screen, ``quit`` at the main menu, ``keep`` in a value picker).
+_ESC_ATOM = re.compile(r"(?:^|·\s*)(Esc\s+\S+)\s*$")
+
+#: Rule cells the title keeps on each side before the bar gives the Esc hint back. Below
+#: this the title is being crowded, which is the one thing the hint must not do.
+_MIN_RULE = 2
+
+
+def _esc_hint(hint: str) -> str:
+    """The ``Esc …`` atom a screen's footer hint ends on, or ``""`` where it has none."""
+    found = _ESC_ATOM.search(hint or "")
+    return found.group(1) if found else ""
+
+
 def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) -> Text:
     """The borderless frame's one-row title bar: a centered title on a bold rule, clip arrows.
 
     The Panel border's whole vocabulary — where you are (title) and whether the list
     continues (the ``↑↓ more`` subtitle) — compressed into a single row so the body wins
     back three rows and four columns on the PicoCalc. Shape:
-    ``──── Title ──────────── ↑↓``, echoing
+    ``──── Title ─────── ↑↓ · Esc back``, echoing
     :func:`~meshterm.ui.menus.section_heading`'s heading language.
 
     The title is centered in the rule exactly as Rich's ``Panel`` centers its own
@@ -194,12 +212,30 @@ def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) ->
     variant, which is for auxiliary text riding *alongside* a border (a footer hint, the
     subtitle's own "more" label below), not the border's own glyphs. The ``↑↓`` clip
     arrows keep that muted hint style, matching a bordered panel's own subtitle.
+
+    The bar's tail also carries **the way out** (JP, 2026-08-30). This platform has no
+    footer hint line — the F-key lane stands where it would be, and the lane advertises
+    only what its five slots do — so nothing on the screen said that Esc leaves, which is
+    the one key every screen answers to and the reason no screen spends a row on a *Back*
+    item. It rides here in the same muted hint style as the arrows, in the same
+    ``↑↓ · hint`` shape a floating dialog's subtitle already uses, and it is **last** on
+    the row because that is where the footer's grammar puts it. The verb is the screen's
+    own (:func:`_esc_hint` lifts the atom off its footer hint, so a value picker says
+    ``keep`` and the main menu says ``quit``); a screen whose hint names no Esc gets
+    nothing. Compact by construction: where a long title would be crowded, the atom drops
+    to a bare ``Esc`` and then out altogether — the title is what the reader came for.
     """
     border = "accent"
-    tail = ""
+    arrows = ""
     if more_above or more_below:
-        tail = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-    tail_span = len(tail) + 1 if tail else 0  # the space in front of the arrows
+        arrows = ("↑" if more_above else " ") + ("↓" if more_below else " ")
+    label_w = cell_len(screen.title) + 2 if screen.title else 0  # a space either side
+    atom = _esc_hint(screen.footer_hint)
+    for esc in (atom, "Esc" if atom else "", ""):
+        tail = " · ".join(part for part in (arrows, esc) if part)
+        tail_span = cell_len(tail) + 1 if tail else 0  # the space in front of the tail
+        if not esc or cols - tail_span - label_w >= 2 * _MIN_RULE:
+            break
     rule_span = max(0, cols - tail_span)
 
     bar = Text()
