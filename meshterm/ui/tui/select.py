@@ -343,7 +343,9 @@ class SelectScreen(Screen):
                     self._index = i
                     break
 
-    def replace_items(self, items: list, *, title: Optional[str] = None) -> None:
+    def replace_items(
+        self, items: list, *, title: Optional[str] = None, prompt: Optional[str] = None
+    ) -> None:
         """Swap the list's rows (and optionally its title) in place, keeping the reader's place.
 
         The counterpart to :meth:`~meshterm.ui.tui.session.TuiSession.stay` for a list whose
@@ -362,6 +364,9 @@ class SelectScreen(Screen):
         Args:
             items: The new rows, in display order.
             title: A new heading, or ``None`` to keep the current one.
+            prompt: A new instruction/summary line above the rows, or ``None`` to keep the
+                current one — the channel detail's vital signs, which age and count unread
+                alongside the rows they head.
         """
         current = self._current_choice()
         was = current.value if current is not None else None
@@ -372,6 +377,8 @@ class SelectScreen(Screen):
         )
         if title is not None:
             self.title = title
+        if prompt is not None:
+            self._prompt = prompt
         selectable = [it for it in self._rows() if isinstance(it, Choice)]
         index = next((i for i, c in enumerate(selectable) if c.value == was), None)
         if index is None:

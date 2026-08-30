@@ -34,7 +34,6 @@ depend on the context and services; it owns no persistence of its own.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -245,16 +244,15 @@ async def _menu_round(
     *,
     handle: Callable[[object], Awaitable],
     default: object = None,
-    prompt: str = "",
 ) -> object:
-    """Show one round of a channels menu and dispatch the choice over it.
+    """Select once and dispatch the choice — what a surface with no screen stack does.
 
-    In the full-screen session the menu stays *pushed* while ``handle`` runs, so every
-    sub-prompt floats over the list as a modal popup with its own border — the config
-    editor's persistent-backdrop pattern (see
-    :func:`~meshterm.ui.config_editor.edit_config`) — instead of replacing the screen. A
-    surface without a session (the plain CLI surface, scripted tests) simply selects and
-    then dispatches; ``prompt`` is a session-only nicety and is dropped there.
+    Both channel menus keep one screen for the whole visit in the full-screen session
+    (``session.stay``, rows swapped in place), which is the only way the cursor, the sort
+    and a typed filter survive an action. A surface without a stack — the plain CLI, a
+    scripted test — has nothing to keep, so it selects, dispatches, and is called again;
+    ``default`` is all it can carry between rounds, and the summary line has nowhere to be
+    drawn at all.
 
     Args:
         ctx: Shared application context.
@@ -262,22 +260,11 @@ async def _menu_round(
         items: The menu's :class:`Choice`/:class:`Separator` rows.
         handle: Async dispatcher awaited with the chosen value (``None`` for Esc).
         default: A choice value to re-highlight, so the menu reopens where it was left.
-        prompt: An optional summary line drawn inside the box above the rows.
 
     Returns:
         Whatever ``handle`` returns.
     """
-    session = getattr(ctx.ui, "session", None)
-    if session is None:
-        return await handle(await ctx.ui.select(title, items, default=default))
-    menu = SelectScreen(title, items, prompt=prompt, default=default, wrap=False)
-    menu.future = asyncio.get_running_loop().create_future()
-    session.push(menu)
-    try:
-        choice = await menu.future
-        return await handle(None if choice is CANCEL else choice)
-    finally:
-        session.pop(menu)
+    return await handle(await ctx.ui.select(title, items, default=default))
 
 
 async def _refresh_chat_channels(ctx: "AppContext") -> None:
@@ -710,20 +697,21 @@ async def _channel_detail(
     """Show one channel's actions (QR, key, chat, rename, clear); return changes made.
 
     The screen leads with the channel's vital signs (see :func:`_detail_summary`) above the
-    action rows, and — like the main list — stays pushed while each action's prompts float
-    over it. A rename/re-key or clear closes the detail (the slot's occupant changed, so
-    the caller re-reads the device); the read-only actions loop back here.
+    action rows, and — like the main list — is one screen for the whole visit: it stays
+    pushed while each action's prompts float over it, and the rows and the vital-signs line
+    are swapped in place afterwards rather than the screen being drawn again. Both are live
+    (the mute row is a toggle; the summary counts unread and ages the last message), so both
+    are re-read each round, and the highlight stays on the row that was just used. A
+    rename/re-key or clear closes the detail (the slot's occupant changed, so the caller
+    re-reads the device); the read-only actions loop back here.
     """
     kind = "public" if slot.is_public else "private"
     title = f"{slot.name}  ({kind}, hash {slot.hash})"
-    cursor: object = None
 
     async def handle(choice: object) -> Optional[int]:
         """Run one action; an int closes the detail with that many changes, ``None`` stays."""
-        nonlocal cursor
         if choice is None:  # Esc
             return 0
-        cursor = choice
         if choice == _QR:
             await _show_share(ctx, slot.name, slot.secret)
         elif choice == _KEY:
@@ -740,17 +728,32 @@ async def _channel_detail(
             return 1
         return None
 
-    while True:
-        result = await _menu_round(
-            ctx,
-            title,
-            _detail_items(ctx, slot),
-            default=cursor,
-            prompt=_detail_summary(ctx, slot, stats),
-            handle=handle,
-        )
-        if result is not None:
-            return result
+    # A surface with no session (the plain CLI, scripted tests) has no stack to stay on and
+    # runs the same dispatcher a round at a time, as the manager above does.
+    session = getattr(ctx.ui, "session", None)
+    if session is None:
+        while True:
+            result = await _menu_round(
+                ctx, title, _detail_items(ctx, slot), handle=handle
+            )
+            if result is not None:
+                return result
+
+    menu = SelectScreen(
+        title,
+        _detail_items(ctx, slot),
+        prompt=_detail_summary(ctx, slot, stats),
+        wrap=False,
+    )
+    async with session.stay(menu) as visit:
+        while True:
+            choice = await visit.result()
+            result = await handle(None if choice is CANCEL else choice)
+            if result is not None:
+                return result
+            menu.replace_items(
+                _detail_items(ctx, slot), prompt=_detail_summary(ctx, slot, stats)
+            )
 
 
 # --- create / join flows -----------------------------------------------------
