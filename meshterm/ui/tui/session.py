@@ -1012,8 +1012,8 @@ class TuiSession:
             async with session.busy_overlay("reading…", title="Nodes"):
                 await slow_work()
 
-        The card stands in for the screen being fetched: a title, the one-cell working chip
-        beside the caption, and a Knight-Rider scanning-light bar. A background timer advances the chip,
+        The card stands in for the screen being fetched: a title and the one-cell working
+        chip beside the caption. A background timer advances the chip,
         fades the card in, and repaints while the block runs; it is always cleared and the
         timer cancelled on exit, even on error. The card fades in from black rather than
         popping in (see :attr:`BusyOverlay.brightness`), so a quick operation only paints a

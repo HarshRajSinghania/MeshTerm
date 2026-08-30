@@ -1,23 +1,22 @@
-"""The busy skeleton: a titled placeholder card floated between screens while a load runs.
+"""The busy skeleton: a titled card floated between screens while a load runs.
 
 A :class:`BusyOverlay` is the model behind :meth:`~meshterm.ui.tui.session.TuiSession.
 busy_overlay` — a small *skeleton card* standing in for a screen the device is still
-fetching: a title, the one-cell working :class:`~meshterm.ui.tui.spinner.Spinner` beside a
-caption, and a Knight-Rider scanning-light bar standing in for the content still loading. Unlike a
-:class:`~meshterm.ui.tui.screen.Screen` it is *not* part of the screen stack: the session
-draws it as the top-most float, so it hovers over the gap between screens that a slow device
-operation (Bluetooth most of all) opens — the caller shows it while the fetch runs and drops
-it when that fetch returns.
+fetching: a title and the one-cell working :class:`~meshterm.ui.tui.spinner.Spinner`
+beside a caption. Unlike a :class:`~meshterm.ui.tui.screen.Screen` it is *not* part of the
+screen stack: the session draws it as the top-most float, so it hovers over the gap between
+screens that a slow device operation (Bluetooth most of all) opens — the caller shows it
+while the fetch runs and drops it when that fetch returns.
 
 Rather than pop in, it stays fully black for a short *hold* and then *fades in from black*
 over its next fraction of a second (see :attr:`brightness`): an operation that finishes within
 the hold shows nothing at all, and a longer one eases up out of the black rather than appearing
 suddenly — so the card never flashes and never pops in.
 
-Once up, it does not sit still. Beside the spinning chip a Knight-Rider scanning light sweeps
-a two-row braille LED bar left→right and back, advanced on each :meth:`BusyOverlay.tick`: a red
-head with a persistence-of-vision trail comet-tailing behind it over a dark-gray track. That
-travelling light is what reads the card as *working* rather than as a frozen, broken bar.
+The spinning chip is the whole animation, and says everything the card has to say: the app is
+working. It once shared the card with a scanning-light LED bar (JP, 2026-08-29) — eighteen
+cells of travelling red that drew the eye harder than the words did, for a screen the reader
+is only ever passing through.
 """
 
 from __future__ import annotations
@@ -39,37 +38,9 @@ _CHIP_COLOR = "bold #818cf8"
 #: The caption colour (the theme's ``muted``, as a hex so it can be dimmed for the fade).
 _CAPTION_COLOR = "#94a3b8"
 
-#: The scanner's unlit-LED colour (the theme's ``track`` — a step below ``faint``, a dark
-#: slate gray). Every lamp of the bar rests here; the moving light lifts lamps off it toward
-#: red and they fade back as the trail decays, so an idle lamp reads as an unlit LED, not data.
-_SCAN_TRACK = "#334155"
-
-#: The lit-LED colours the moving light drives lamps toward: a vivid red (the theme's
-#: ``hint.err``) for the body of the head, and a pale "highlighted" red at its very hottest
-#: heart, so the core reads as white-hot the way a real LED bar's brightest lamp does.
-_SCAN_RED = "#ef4444"
-_SCAN_HOT = "#fca5a5"
-
-#: The braille cell drawn for every lamp — dots 2,3,5,6, i.e. *two rows* of dots centred in the
-#: cell, so the sweep reads as a slim two-row LED strip rather than a solid block.
-_SCAN_GLYPH = "⠶"
-
-#: How many lamps (terminal cells) wide the scanning bar is.
-_SCAN_CELLS = 18
-
-#: The per-tick persistence-of-vision fade: on each tick every lamp dims to this fraction of
-#: its last brightness, so the head drags a comet trail that lags a few lamps behind it.
-_SCAN_DECAY = 0.68
-
-#: How many lamps the head advances per tick (its sweep speed) and the head's half-width in
-#: lamps (the bright core lit around it before the trail takes over). Tuned so one pass across
-#: the bar takes roughly a second at the session's ~0.06 s tick.
-_SCAN_SPEED = 0.85
-_SCAN_CORE = 1.2
-
 
 class BusyOverlay:
-    """A skeleton card (title, working chip + caption, placeholder rows) drawn as the top float.
+    """A skeleton card (title, working chip + caption) drawn as the session's top-most float.
 
     Attributes:
         spinner: The animated one-cell :class:`~meshterm.ui.tui.spinner.Spinner` — the same
@@ -104,15 +75,6 @@ class BusyOverlay:
         self.started_at = time.monotonic()
         self.hold = max(0.0, hold)
         self.fade = max(0.0, fade)
-        #: The scanning-light state driving the Knight-Rider bar: the head's fractional lamp
-        #: position, its travel direction (``+1`` right / ``-1`` left, bouncing off each end),
-        #: and the per-lamp brightness buffer whose slow decay on each :meth:`tick` is the
-        #: persistence-of-vision trail. Seeded with the head already stamped so the first
-        #: painted frame shows the light rather than a bare track.
-        self._pos = 0.0
-        self._dir = 1
-        self._glow = [0.0] * _SCAN_CELLS
-        self._stamp_core()
 
     @property
     def brightness(self) -> float:
@@ -131,38 +93,8 @@ class BusyOverlay:
         return t * t * (3 - 2 * t)  # smoothstep
 
     def tick(self) -> None:
-        """Advance the working chip one frame and step the scanning light along its sweep."""
+        """Advance the working chip one frame — the card's only animation."""
         self.spinner.tick()
-        self._advance()
-
-    def _advance(self) -> None:
-        """Fade the whole trail one notch, move the head, and re-light the core around it.
-
-        The decay is the persistence-of-vision effect: every lamp dims toward the track, so the
-        lamps the head has already passed glow on for a few frames as a comet tail. The head then
-        steps :data:`_SCAN_SPEED` lamps along, reversing when it reaches either end (the
-        Knight-Rider bounce), and a fresh bright core is stamped at its new position.
-        """
-        self._glow = [g * _SCAN_DECAY for g in self._glow]
-        self._pos += self._dir * _SCAN_SPEED
-        if self._pos >= _SCAN_CELLS - 1:
-            self._pos = float(_SCAN_CELLS - 1)
-            self._dir = -1
-        elif self._pos <= 0:
-            self._pos = 0.0
-            self._dir = 1
-        self._stamp_core()
-
-    def _stamp_core(self) -> None:
-        """Light the lamps around the head to full, tapering off over :data:`_SCAN_CORE` lamps.
-
-        Combined with ``max`` so a freshly-lit core never dims a lamp the decaying trail has
-        left brighter — the head is always at least as bright as its own tail.
-        """
-        for i in range(_SCAN_CELLS):
-            core = 1.0 - abs(i - self._pos) / _SCAN_CORE
-            if core > self._glow[i]:
-                self._glow[i] = core
 
     def restart(self) -> None:
         """Restart the intro from scratch: rewind the fade ramp and the chip to their starts.
@@ -173,17 +105,13 @@ class BusyOverlay:
         """
         self.started_at = time.monotonic()
         self.spinner.reset()
-        self._pos = 0.0
-        self._dir = 1
-        self._glow = [0.0] * _SCAN_CELLS
-        self._stamp_core()
 
     def render(self) -> str:
         """Render the skeleton card as a centred ANSI block, at the current fade level.
 
-        The title, the chip + caption line, a spacer, and the placeholder rows are each padded
-        to a common width and joined into one multi-line :class:`~rich.text.Text`, so the
-        session's content-sized float centres a clean rectangle over the gap between screens.
+        The title and the chip + caption line are each padded to a common width and joined
+        into one multi-line :class:`~rich.text.Text`, so the session's content-sized float
+        centres a clean rectangle over the gap between screens.
 
         Returns:
             An ANSI string of the card's rows.
@@ -197,24 +125,9 @@ class BusyOverlay:
             status.append("  ")
             status.append(self.message, style=dim_color(_CAPTION_COLOR, level))
         lines.append(status)
-        lines.append(Text(""))  # a blank row between the caption and the scanning bar
-        lines.append(self._scanner_row(level))
         width = max((cell_len(line.plain) for line in lines), default=0)
         block = Text("\n").join(_center_text(line, width) for line in lines)
         return render_to_ansi(block, width)
-
-    def _scanner_row(self, level: float) -> Text:
-        """The scanning-light bar: one braille lamp per cell, coloured by its glow, then dimmed.
-
-        Every lamp is the same two-row braille glyph; only its colour moves. A lamp interpolates
-        from the unlit ``track`` gray up through vivid red to a pale hot core by its brightness
-        in :attr:`_glow` (the moving head plus its persistence-of-vision trail), and the whole
-        row is finally dimmed by ``level`` so the light eases in with the card's fade-from-black.
-        """
-        row = Text()
-        for glow in self._glow:
-            row.append(_SCAN_GLYPH, style=dim_color(_scan_color(glow), level))
-        return row
 
 
 def _center_text(text: Text, width: int) -> Text:
@@ -225,33 +138,6 @@ def _center_text(text: Text, width: int) -> Text:
     out.append_text(text)
     out.append(" " * (pad - left))
     return out
-
-
-def _scan_color(glow: float) -> str:
-    """Map a lamp's ``[0, 1]`` brightness to its colour: track gray → vivid red → hot core.
-
-    Two stops so the head reads as white-hot: the bottom three-quarters of the range walks the
-    unlit ``track`` up to full red, and the last quarter pushes red on toward the pale
-    ``_SCAN_HOT`` so only the brightest heart of the head lightens past red.
-    """
-    if glow <= 0.0:
-        return _SCAN_TRACK
-    if glow >= 1.0:
-        return _SCAN_HOT
-    if glow < 0.75:
-        return _lerp_hex(_SCAN_TRACK, _SCAN_RED, glow / 0.75)
-    return _lerp_hex(_SCAN_RED, _SCAN_HOT, (glow - 0.75) / 0.25)
-
-
-def _lerp_hex(start: str, end: str, t: float) -> str:
-    """Blend two ``#rrggbb`` colours: ``t=0`` returns ``start``, ``t=1`` returns ``end``."""
-    t = max(0.0, min(1.0, t))
-    channels = []
-    for lo, hi in ((1, 3), (3, 5), (5, 7)):
-        a = int(start[lo:hi], 16)
-        b = int(end[lo:hi], 16)
-        channels.append(round(a + (b - a) * t))
-    return "#{:02x}{:02x}{:02x}".format(*channels)
 
 
 def dim_color(style: str, factor: float) -> str:

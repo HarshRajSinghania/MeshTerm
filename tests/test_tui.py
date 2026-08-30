@@ -2313,21 +2313,26 @@ def test_default_text_prompt_is_the_full_frame_base() -> None:
 # --- busy skeleton card ------------------------------------------------------
 
 
-def test_busy_overlay_renders_title_chip_caption_and_scanner_row() -> None:
-    """A titled, captioned card shows its heading, the working chip + caption, and the LED bar."""
+def test_busy_overlay_renders_only_its_title_chip_and_caption() -> None:
+    """A titled, captioned card shows its heading and the working chip + caption — no more.
+
+    The card used to carry a Knight-Rider scanning bar under the caption (JP, 2026-08-29);
+    the chip is the whole animation now, so the card is two lines and nothing travels
+    across it.
+    """
     import re
 
-    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_CELLS, _SCAN_GLYPH
+    from meshterm.ui.tui.overlay import BusyOverlay
 
     overlay = BusyOverlay("reading from Waymarker…", title="Nodes", fade=0.0)  # full bright at once
     ansi = overlay.render()
     assert "Nodes" in ansi  # the heading naming the screen being fetched
     assert "reading from Waymarker" in ansi  # the caption beside the chip
     assert overlay.spinner.frame in ansi  # the one-cell working chip
-    # The scanning bar stands in for the content to come: one braille lamp per cell, each styled
-    # on its own, so strip ANSI before counting the run of lamps.
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", ansi)
-    assert _SCAN_GLYPH * _SCAN_CELLS in plain
+    plain = re.sub(r"\[[0-9;]*m", "", ansi)
+    rows = [line for line in plain.splitlines() if line.strip()]
+    assert len(rows) == 2  # the title and the chip line; no bar, no spacer row
+    assert "⠶" not in plain  # the LED lamps are gone, not merely unlit
 
 
 def test_busy_overlay_chip_ticks_with_the_animation() -> None:
@@ -2340,66 +2345,6 @@ def test_busy_overlay_chip_ticks_with_the_animation() -> None:
     first = overlay.spinner.frame
     overlay.tick()
     assert overlay.spinner.frame != first
-
-
-def test_busy_overlay_scanner_recolours_on_tick_without_reshaping() -> None:
-    """The bar isn't static: the light moves, so ticking recolours it — but its shape holds.
-
-    Regression guard for the frozen-looking card — the chip spun but the bar sat dead-still.
-    The braille layout must stay put while the colouring (the moving light) shifts each tick.
-    """
-    import re
-
-    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_GLYPH
-
-    overlay = BusyOverlay("reading…", title="Nodes", fade=0.0)  # full bright, no fade to wait out
-
-    def lamp_rows(ansi: str) -> list[str]:
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", ansi)
-        return [line for line in plain.splitlines() if _SCAN_GLYPH in line]
-
-    before = overlay.render()
-    for _ in range(3):
-        overlay.tick()
-    after = overlay.render()
-    assert after != before  # the light moved: the ANSI colouring differs
-    assert lamp_rows(after) == lamp_rows(before)  # …but the lamps never shift shape
-
-
-def _scanner_head(overlay) -> int:  # type: ignore[no-untyped-def]
-    """The index of the brightest lamp — where the scanning light's head currently sits."""
-    glow = overlay._glow
-    return max(range(len(glow)), key=lambda i: glow[i])
-
-
-def test_busy_overlay_scanner_leaves_a_persistence_of_vision_trail() -> None:
-    """Lamps the head has passed keep glowing, fading — a comet tail, not a lone bright lamp."""
-    from meshterm.ui.tui.overlay import BusyOverlay
-
-    overlay = BusyOverlay("reading…", title="Nodes", fade=0.0)
-    for _ in range(5):  # sweep in off the left edge so a head and a tail both exist
-        overlay.tick()
-
-    head = _scanner_head(overlay)
-    glow = overlay._glow
-    assert glow[head] > 0.0  # a lit head
-    trail = [g for i, g in enumerate(glow) if i < head and g > 0.0]  # lamps behind the head
-    assert trail  # the head dragged a trail rather than leaving black behind it
-    assert max(trail) < glow[head]  # and the trail is dimmer than the head it follows
-
-
-def test_busy_overlay_scanner_bounces_off_both_ends() -> None:
-    """The head sweeps to the right edge and back to the left — the Knight-Rider ping-pong."""
-    from meshterm.ui.tui.overlay import BusyOverlay, _SCAN_CELLS
-
-    overlay = BusyOverlay(fade=0.0)
-    heads = [_scanner_head(overlay)]
-    for _ in range(80):  # long enough for at least one full there-and-back sweep
-        overlay.tick()
-        heads.append(_scanner_head(overlay))
-
-    assert max(heads) >= _SCAN_CELLS - 2  # reached the right end
-    assert min(heads) <= 1  # …and came back to the left end
 
 
 def test_busy_overlay_holds_black_then_fades_in() -> None:
