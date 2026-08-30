@@ -15,7 +15,6 @@ is opened before that ever happened). Nothing transmits.
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from rich.text import Text

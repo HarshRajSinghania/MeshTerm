@@ -7,8 +7,36 @@ makes it a question.
 **Resolved since:** findings **E** and **§10** — 2026-08-29. Exit rows were retired
 app-wide: `back_rows()` is gone, `exit_rows()` draws nothing while clean, and every
 caller's three-way Back test collapsed to `is CANCEL` / `is None`. What is kept is stated
-in CLAUDE.md. Everything else below still stands, **D included** — Esc's peel/leave split
-is now the only thing left telling a user what Esc does.
+in CLAUDE.md.
+
+**Resolved 2026-08-30 — A, B, C, and the shortcut that made B possible.** Navigation is
+a strict stack now; the rules are in CLAUDE.md under *Navigation — the stack*.
+
+- **A1/A2/A3.** A2 is the rule, and it grew a second half. A hub stays pushed for the
+  whole visit (`session.stay` / `Visit.result`), so the *object* — not a `default=`
+  restore — carries the cursor, the sort, the scroll and the filter. Where the rows are
+  genuinely data (the editors, the outbox, the watchtower) they are swapped in place with
+  `SelectScreen.replace_items`, which follows the highlighted row by value and clamps to
+  its position when that row is gone. A1's vanishing-row problem is answered by that
+  clamp, everywhere, rather than by watchtower's one hand-written case. A screen is
+  rebuilt only when the rows it was holding a place in no longer exist — a purge, a
+  removal, a record count that moved — and each such site says so.
+- **B1/B2/B3.** They no longer flatten. Both hand-built escapes existed because a deep
+  stack had no way out; **^W** is the way out, so trace ↔ trophy case and node detail's
+  peers all nest, and Esc from any of them is one pop back onto the screen that opened
+  them. The trace screen takes an `open_trophy_case` callback instead of resolving a
+  sentinel its opener had to interpret, which is also what lets the two open each other.
+- **C.** All five backdrop re-pushes are gone, and so are the six hand-rolled
+  push/await/pop loops the survey paired them with — the same need, spelled one way.
+  Repeater admin's was the worst of them: a second, identical `SelectScreen` drawn as a
+  static stand-in for the real one. `admin_node_visit` keeps the real list up instead.
+- **F.** Still the one place the stack is cleared rather than unwound, and it now also
+  disarms a pending ^W: a disconnect has already abandoned the flow that unwind was for.
+
+**Still open: D** (Esc's peel/leave split) and **G** (`popup` declared by hand). D is now
+the only thing left telling a reader what Esc does, and it is the reason `Esc Esc` was
+rejected as the pop-all key — on the map, the mesh walk and chat, Esc-Esc is already an
+ordinary peel-then-leave.
 
 The point of the survey is that MeshTerm's navigation is *almost* uniform. The exceptions
 are few enough to list exhaustively, which means they can be decided one at a time rather
@@ -358,13 +386,13 @@ Every other `Cancel` in the app is one half of a real two-way choice.
 
 ## 11. Summary — the shortlist
 
-| # | Finding | Sites | Weight |
-|---|---|---|---|
-| A3 | Screen rebuilt per round, losing cursor (and node detail's tab) | 3 | **high** — felt on every visit |
-| D | Esc peels the filter on 3 screens, leaves on 2 | 5 | **high** — same keys, opposite result |
-| E | Six spellings of the Back value; callers test three at once | 19 | medium — invisible to users, costly in code |
-| C | Pop-then-re-push backdrop workaround | 5 | medium — an API gap, repeated |
-| B | Peer hand-offs all flatten, but the rule is unwritten and node detail pays for it | 3 | medium |
-| G | `popup` declared once by hand while the result presenter infers it | 1 | low |
-| A1 | Cursor restore doesn't handle a vanishing row (except watchtower) | 7 | low |
-| F | `session.reset()` on disconnect — correct, noted for completeness | 1 | none |
+| # | Finding | Sites | Weight | Status |
+|---|---|---|---|---|
+| A3 | Screen rebuilt per round, losing cursor (and node detail's tab) | 3 | **high** — felt on every visit | **done** 08-30 |
+| D | Esc peels the filter on 3 screens, leaves on 2 | 5 | **high** — same keys, opposite result | open |
+| E | Six spellings of the Back value; callers test three at once | 19 | medium — invisible to users, costly in code | done 08-29 |
+| C | Pop-then-re-push backdrop workaround | 5 | medium — an API gap, repeated | **done** 08-30 |
+| B | Peer hand-offs all flatten, but the rule is unwritten and node detail pays for it | 3 | medium | **done** 08-30 |
+| G | `popup` declared once by hand while the result presenter infers it | 1 | low | open |
+| A1 | Cursor restore doesn't handle a vanishing row (except watchtower) | 7 | low | **done** 08-30 |
+| F | `session.reset()` on disconnect — correct, noted for completeness | 1 | none | kept |

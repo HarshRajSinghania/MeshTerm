@@ -58,6 +58,37 @@ sortable list you pick from is `contactlist.py` (`ContactListScreen`/`ContactRow
 Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now ago"),
 `_format_age` for aligned columns ("now", "5m").
 
+### Navigation — the stack
+
+Navigation is a **strict stack**: entering a screen or a dialog pushes one frame, Esc pops
+exactly one, and the frame you land back on is the one you left — same object, so its
+cursor, sort, scroll and typed filter are simply still there. Exceptions are added
+deliberately, one at a time, and say why in the code.
+
+- A screen that **owns a loop** is a hub, and a hub *stays pushed* for the whole visit:
+  `async with session.stay(screen) as visit:` / `while True: x = await visit.result()`.
+  One push, one pop, however many rounds. Never pop-and-re-push a screen to give a dialog
+  a backdrop — a screen that never left the stack already is one. `run_screen` remains the
+  one-shot form: push, await, pop, for a dialog or a prompt.
+- A **sub-view nests**; nothing flattens the stack to spare the reader a climb. Two peers
+  may open each other (trace ↔ trophy case) and that cycle is fine — ^W is the climb.
+- A list whose **content is data** (an editor's staged values, a queue that lost a row)
+  refreshes in place with `SelectScreen.replace_items`, which follows the highlighted row
+  by value and keeps the filter. Rebuilding the screen is for when the rows it was holding
+  a place in are genuinely gone (a purge, a delete) — and then say so.
+- **^W** unwinds every frame back to the main menu, **^Q** quits from anywhere. Both are
+  answered in `TuiSession._dispatch` and neither is ever advertised — a global verb has no
+  screen to belong to, and the F-key lane has only three free slots per screen. They are
+  stated once, on the About page. `test_navigation` walks every string literal in the
+  package to keep them out of the UI.
+- `modal` is *owning the keyboard* (a prompt, progress, a busy splash); `floating` is only
+  *drawn as a box*. They are not the same flag: a select list floats and is not modal, the
+  busy splash is modal and does not float. ^W declines to unwind past anything modal.
+- A caller tests one thing for "the user left": `CANCEL` (or the `None` that `ui.select`
+  folds it to). `POP_ALL` never reaches a caller — the navigation boundary turns it into
+  `PopToMenu`, which derives from `BaseException` so it crosses the app's `except Exception`
+  tool guards; only the menu loop catches it.
+
 ### Screens and lists
 
 - **No screen carries an exit row.** Esc leaves — it is on both platforms' keyboards and
@@ -73,8 +104,6 @@ Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now a
   shape in `ReorderScreen`. A **Quit** row is likewise kept (main menu, device splash):
   it *initiates* the app's terminal action behind a confirm, and on the splash it is the
   only statement that the app can be left at all.
-- A caller therefore tests one thing for "the user left": `CANCEL` (or the `None` that
-  `ui.select` folds it to) — never a `_BACK`/`"__back__"` sentinel of its own.
 - Grouped-list section headings use `section_heading("Label")` → `── Label ──` accent.
   That is also what makes a heading *sticky* (it pins to the top row while its section
   scrolls, and the ^PgUp/^PgDn jumps step by it), so build them through it — a hand-rolled

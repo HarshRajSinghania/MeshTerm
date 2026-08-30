@@ -35,9 +35,9 @@ POP_ALL = object()
 class PopToMenu(BaseException):
     """Raised through every awaiting navigation frame to unwind to the main menu.
 
-    The whole realized path is a stack of ``await``\ s — a screen's caller awaiting its
-    result, that caller's caller awaiting *it* — so the one way to leave every frame at
-    once is to raise through them all. Each frame pops its own screen in a ``finally`` on
+    The whole realized path is a stack of pending ``await`` expressions — a screen's caller
+    awaiting its result, that caller's caller awaiting *it* — so the one way to leave every
+    frame at once is to raise through them all. Each frame pops its own screen in a ``finally`` on
     the way out, which is exactly the strict single-pop discipline applied N times: no
     screen is ever dropped without its owner unwinding.
 
