@@ -1696,21 +1696,11 @@ async def test_picker_lists_companions_only(repo: Repository) -> None:
         Contact(name="Tower", public_key="a1" + "0" * 62, node_type=NODE_TYPE_REPEATER),
     ]
 
-    class _Ui:
-        def __init__(self) -> None:
-            self.items = None
-
-        async def select(self, title, items, **kw):
-            self.items = items
-            return None
-
-    ctx = SimpleNamespace(
-        devstate=_PickerDevstate(contacts), repo=repo, ui=_Ui(), chat=_PickerChat()
-    )
-    assert await ChatTool()._pick_conversation(ctx) is None
+    ctx = SimpleNamespace(devstate=_PickerDevstate(contacts), repo=repo, chat=_PickerChat())
+    items = await ChatTool()._picker_items(ctx)
     direct = [
         it.value.label
-        for it in ctx.ui.items
+        for it in items
         if isinstance(it, Choice)
         and isinstance(it.value, Conversation)
         and not it.value.is_channel
@@ -1734,22 +1724,12 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
         for i in range(12)
     ]
 
-    class _Ui:
-        def __init__(self) -> None:
-            self.items = None
+    ctx = SimpleNamespace(devstate=_PickerDevstate(contacts), repo=repo, chat=_PickerChat())
+    items = await ChatTool()._picker_items(ctx)
 
-        async def select(self, title, items, **kw):
-            self.items = items
-            return None
-
-    ctx = SimpleNamespace(
-        devstate=_PickerDevstate(contacts), repo=repo, ui=_Ui(), chat=_PickerChat()
-    )
-    await ChatTool()._pick_conversation(ctx)
-
-    header = ctx.ui.items[0]
+    header = items[0]
     assert header.pinned  # the lanes mean the same in both groups — pinned for the list
-    screen = SelectScreen("Chat", ctx.ui.items, wrap=False)
+    screen = SelectScreen("Chat", items, wrap=False)
     for _ in range(8):  # down past the Direct heading
         screen.handle("down")
     visible, above, _below = frame._visible_slice(screen, screen.render_body(72), 8)
@@ -1764,11 +1744,11 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
 
 async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:
     """Del on a contacted thread: red destructive confirm, history gone, unread cleared,
-    and the re-entered picker's row is hollow (no longer deletable)."""
+    and the rebuilt rows show the thread hollow (no longer deletable)."""
     from types import SimpleNamespace
 
     from meshterm.tools.chat import ChatTool
-    from meshterm.ui.tui import Choice, DeleteRequest
+    from meshterm.ui.tui import Choice
 
     ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
     conv = Conversation(label="Ally", is_channel=False, contact=ally)
@@ -1777,24 +1757,7 @@ async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) 
 
     class _Ui:
         def __init__(self) -> None:
-            self.selects = 0
             self.dialogs: list[dict] = []
-
-        async def select(self, title, items, **kw):
-            self.selects += 1
-            assert kw.get("delete_hint") == "Del delete history"
-            row = next(
-                it
-                for it in items
-                if isinstance(it, Choice)
-                and isinstance(it.value, Conversation)
-                and not it.value.is_channel
-            )
-            if self.selects == 1:
-                assert row.deletable  # there is history to delete
-                return DeleteRequest(row.value)
-            assert not row.deletable  # history gone: the row demoted to uncontacted
-            return None
 
         async def dialog(self, prompt, buttons, **kw):
             self.dialogs.append({"prompt": prompt, "buttons": buttons, **kw})
@@ -1804,8 +1767,10 @@ async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) 
     ctx = SimpleNamespace(
         devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
     )
-    assert await ChatTool()._pick_conversation(ctx) is None
-    assert ctx.ui.selects == 2  # the picker re-entered after the delete
+    tool = ChatTool()
+    assert _direct_row(await tool._picker_items(ctx)).deletable  # there is history to delete
+
+    await tool._delete_history(ctx, conv)
 
     confirm = ctx.ui.dialogs[0]
     assert confirm["destructive"] is True  # the reserved red, data loss
@@ -1816,6 +1781,8 @@ async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) 
         m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")
     ] == ["chan"]  # channel history survives
     assert chat.cleared == [conv.key]
+    # The swapped-in rows show it: history gone, so the row demotes to uncontacted.
+    assert not _direct_row(await tool._picker_items(ctx)).deletable
 
 
 async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
@@ -1823,29 +1790,12 @@ async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
     from types import SimpleNamespace
 
     from meshterm.tools.chat import ChatTool
-    from meshterm.ui.tui import Choice, DeleteRequest
 
     ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
     conv = Conversation(label="Ally", is_channel=False, contact=ally)
     repo.record_chat_message(ChatMessage(text="hi", peer=conv.peer))
 
     class _Ui:
-        def __init__(self) -> None:
-            self.selects = 0
-
-        async def select(self, title, items, **kw):
-            self.selects += 1
-            if self.selects == 1:
-                row = next(
-                    it
-                    for it in items
-                    if isinstance(it, Choice)
-                    and isinstance(it.value, Conversation)
-                    and not it.value.is_channel
-                )
-                return DeleteRequest(row.value)
-            return None
-
         async def dialog(self, prompt, buttons, **kw):
             return False  # Cancel backs out
 
@@ -1853,9 +1803,81 @@ async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
     ctx = SimpleNamespace(
         devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
     )
-    assert await ChatTool()._pick_conversation(ctx) is None
+    await ChatTool()._delete_history(ctx, conv)
     assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer=conv.peer)] == ["hi"]
     assert chat.cleared == []
+
+
+def _direct_row(items: list):
+    """The one Direct row in a built picker list (the tests above list a single contact)."""
+    from meshterm.ui.tui import Choice
+
+    return next(
+        it
+        for it in items
+        if isinstance(it, Choice)
+        and isinstance(it.value, Conversation)
+        and not it.value.is_channel
+    )
+
+
+async def test_the_conversation_picker_stays_pushed_under_an_open_chat(
+    repo: Repository, monkeypatch
+) -> None:
+    """Esc out of a chat is one pop, back onto the row it was opened from.
+
+    The picker used to be gathered in ``prompt_params`` and rebuilt on every round, with the
+    cursor put back by a ``default=`` restore; keeping the one screen keeps the typed filter
+    and the scroll with it, and the rows are swapped in place so a thread that just gained
+    messages sits where its recency puts it.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from prompt_toolkit.input.defaults import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.screen import CANCEL
+    from meshterm.ui.tui.session import TuiSession
+
+    ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
+    ctx = SimpleNamespace(
+        devstate=_PickerDevstate([ally]), repo=repo, chat=_PickerChat()
+    )
+    depths: list[int] = []
+
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+        ctx.ui = TuiUi(session)
+
+        async def fake_open_chat(_ctx, conversation) -> int:
+            """Stand in for the chat screen: note the stack under it, then leave it."""
+            depths.append(len(session._stack))
+            return 3
+
+        monkeypatch.setattr("meshterm.ui.chat.open_chat", fake_open_chat)
+
+        async def main() -> None:
+            run = asyncio.ensure_future(ChatTool()._run_live(ctx))
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 2
+            while not session._stack:
+                assert loop.time() < deadline, "the picker never opened"
+                await asyncio.sleep(0)
+            picker = session._stack[-1]
+            picker.resolve(Conversation(label="Ally", is_channel=False, contact=ally))
+            while not depths:
+                await asyncio.sleep(0)
+            picker.resolve(CANCEL)  # Esc from the picker leaves for the menu
+            result = await asyncio.wait_for(run, timeout=2)
+            assert result.summary == {"conversations": 1, "messages": 3}
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert depths == [1], "the picker is still on the stack while the chat runs"
+    assert session._stack == [], "and the visit pops it on the way out"
 
 
 # -- the badge rule: what raises the header's unread count --------------------

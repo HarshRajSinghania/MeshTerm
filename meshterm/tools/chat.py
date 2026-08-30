@@ -62,19 +62,19 @@ class ChatTool(Tool):
     order = 10
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Show the conversation picker and return the chosen thread to open.
+        """Nothing to gather here — the conversation picker lives inside :meth:`run`.
+
+        The picker has to *stay pushed* while a chat runs, so backing out of a thread lands
+        on the very list it was opened from — same cursor, same typed filter. A prompt
+        gathered here would resolve, and pop, before the tool ran.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"conversation": Conversation}`` for the chosen thread, or ``None`` if the
-            user backed out.
+            ``{"live": True}`` — the menu's marker for the interactive path.
         """
-        conversation = await self._pick_conversation(ctx)
-        if conversation is None:
-            return None
-        return {"conversation": conversation}
+        return {"live": True}
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Open a live chat (menu) or perform a scripted messaging action (CLI).
@@ -89,128 +89,130 @@ class ChatTool(Tool):
         action = params.get("cli_action")
         if action is not None:
             return await self._run_cli(ctx, action, params)
-
-        conversation: Optional[Conversation] = params.get("conversation")
-        if conversation is None:  # pragma: no cover - prompt_params returns None to cancel
-            return ToolResult(summary={})
-
-        from ..ui.chat import open_chat
-
-        # Loop picker ↔ chat so backing out of a conversation (Esc) steps back to the
-        # picker rather than all the way to the main menu; Esc from the picker ends the
-        # loop and returns to the menu. The just-closed conversation is pre-selected in
-        # the picker so the cursor lands where the user left.
-        opened = 0
-        shown = 0
-        while conversation is not None:
-            shown = await open_chat(ctx, conversation)
-            opened += 1
-            conversation = await self._pick_conversation(ctx, default_key=conversation.key)
-        return ToolResult(summary={"conversations": opened, "messages": shown})
+        return await self._run_live(ctx)
 
     # -- interactive picker -----------------------------------------------------
 
-    async def _pick_conversation(
-        self, ctx: AppContext, *, default_key: Optional[str] = None
-    ) -> Optional[Conversation]:
-        """Let the user pick a channel or contact to chat with.
+    async def _run_live(self, ctx: AppContext) -> ToolResult:
+        """Keep the conversation picker pushed and open chats above it until it is left.
+
+        One screen for the whole visit, so backing out of a thread lands on the row it was
+        opened from with the typed filter still narrowing the list. The picker used to be
+        rebuilt from scratch each round and the cursor put back by a ``default=`` restore,
+        which recovers the cursor alone — and only while the row it names still exists.
+
+        The rows *are* data: an exchange moves its thread up the recency order, and deleting
+        a history hollows its dot and demotes the row to the alphabetical tail. So they are
+        re-read and swapped in place after each chat and each delete, which follows the
+        highlighted thread wherever it moved to.
 
         Args:
             ctx: Shared application context.
-            default_key: Conversation key to pre-highlight (e.g. the one just backed out
-                of), so the cursor lands there rather than at the top.
 
         Returns:
-            The chosen :class:`~meshterm.core.models.Conversation`, or ``None`` if
-            cancelled.
+            A :class:`ToolResult` counting the conversations opened and the messages the
+            last one showed.
         """
-        while True:
-            # Through the session cache: this picker runs on every Chat open, and its two
-            # reads — the channel-slot probe and the contacts table — are the two slowest
-            # round-trips on a companion. Reading them from the device each time is what made
-            # opening Chat stall for seconds (the cached chat screen behind it never got the
-            # chance to help). The cache holds channels until the channel editor writes a
-            # slot and refreshes contacts in the background (see
-            # :class:`~meshterm.services.device_state.DeviceState`).
-            channels = _channels_from_slots(await ctx.devstate.channel_slots())
-            contacts = await ctx.devstate.contacts()
-            # Only companion nodes are listed — we don't DM repeaters, rooms, or sensors;
-            # a contact whose type was never advertised gets the benefit of the doubt (the
-            # app-wide DM rule, see is_direct_messageable).
-            companions = [c for c in contacts if is_direct_messageable(c.node_type)]
-            # A stable snapshot orders the rows (so the list doesn't reshuffle under the
-            # cursor), while a self-refreshing view feeds each row's live preview
-            # (see _LiveLasts).
-            lasts = ctx.repo.last_chat_messages()
-            live = _LiveLasts(ctx, seed=lasts)
-            # Names in previews/mentions resolve back to keys for their hue (the app-wide
-            # colour rule); a name no contact or stored advert carries stays muted.
-            key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
+        from ..ui.chat import open_chat
+        from ..ui.tui import SelectScreen
+        from ..ui.tui.screen import CANCEL
 
-            # The lane names pin for the whole picker (they mean the same in both groups),
-            # so scrolling into Direct keeps them overhead with that group's heading under
-            # them, instead of the header vanishing one row in — see Screen.sticky_rows.
-            items: list = [
-                Separator(_picker_header, pinned=True),
-                section_heading("📡 Channels"),
+        picker = SelectScreen(
+            "Chat — pick a conversation",
+            await self._picker_items(ctx),
+            wrap=False,
+            delete_hint="Del delete history",
+        )
+        opened = 0
+        shown = 0
+        async with ctx.ui.session.stay(picker) as visit:
+            while True:
+                choice = await visit.result()
+                if isinstance(choice, DeleteRequest):
+                    await self._delete_history(ctx, choice.value)
+                elif choice is CANCEL or choice is None:  # Esc — out to the menu
+                    return ToolResult(
+                        summary={"conversations": opened, "messages": shown}
+                    )
+                else:
+                    shown = await open_chat(ctx, choice)
+                    opened += 1
+                picker.replace_items(await self._picker_items(ctx))
+
+    async def _picker_items(self, ctx: AppContext) -> list:
+        """Build the picker's rows: the pinned lane names, the Channels group, then Direct.
+
+        Read fresh every time the list is built or swapped, so a thread that just gained
+        messages sits where its recency puts it. Cheap enough to redo after each chat: the
+        two device reads go through the session cache and the rest is stored history.
+
+        Args:
+            ctx: Shared application context.
+
+        Returns:
+            The :class:`~meshterm.ui.tui.select.Choice` / ``Separator`` rows, in display
+            order.
+        """
+        # Through the session cache: this picker runs on every Chat open, and its two
+        # reads — the channel-slot probe and the contacts table — are the two slowest
+        # round-trips on a companion. Reading them from the device each time is what made
+        # opening Chat stall for seconds (the cached chat screen behind it never got the
+        # chance to help). The cache holds channels until the channel editor writes a
+        # slot and refreshes contacts in the background (see
+        # :class:`~meshterm.services.device_state.DeviceState`).
+        channels = _channels_from_slots(await ctx.devstate.channel_slots())
+        contacts = await ctx.devstate.contacts()
+        # Only companion nodes are listed — we don't DM repeaters, rooms, or sensors;
+        # a contact whose type was never advertised gets the benefit of the doubt (the
+        # app-wide DM rule, see is_direct_messageable).
+        companions = [c for c in contacts if is_direct_messageable(c.node_type)]
+        # A stable snapshot orders the rows (so the list doesn't reshuffle under the
+        # cursor), while a self-refreshing view feeds each row's live preview
+        # (see _LiveLasts).
+        lasts = ctx.repo.last_chat_messages()
+        live = _LiveLasts(ctx, seed=lasts)
+        # Names in previews/mentions resolve back to keys for their hue (the app-wide
+        # colour rule); a name no contact or stored advert carries stays muted.
+        key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
+
+        # The lane names pin for the whole picker (they mean the same in both groups),
+        # so scrolling into Direct keeps them overhead with that group's heading under
+        # them, instead of the header vanishing one row in — see Screen.sticky_rows.
+        items: list = [
+            Separator(_picker_header, pinned=True),
+            section_heading("📡 Channels"),
+        ]
+        for conversation in channels:
+            items.append(
+                Choice(
+                    title=_row_title(ctx, conversation, live, key_of),
+                    value=conversation,
+                )
+            )
+
+        items.append(section_heading("👤 Direct"))
+        if companions:
+            # List contacts by recency — those with messages first, newest exchange at
+            # the top — then the never-contacted ones alphabetically (see _recency_key).
+            direct = [
+                Conversation(label=c.name, is_channel=False, contact=c)
+                for c in companions
             ]
-            for conversation in channels:
+            direct.sort(key=lambda conv: _recency_key(conv, lasts))
+            for conversation in direct:
                 items.append(
                     Choice(
                         title=_row_title(ctx, conversation, live, key_of),
                         value=conversation,
+                        # Del offers to delete this thread's stored history —
+                        # only where there is history to delete.
+                        deletable=lasts.get(conversation.key) is not None,
                     )
                 )
+        else:
+            items.append(Separator("  no contacts yet — receive an advert first"))
 
-            items.append(section_heading("👤 Direct"))
-            if companions:
-                # List contacts by recency — those with messages first, newest exchange at
-                # the top — then the never-contacted ones alphabetically (see _recency_key).
-                direct = [
-                    Conversation(label=c.name, is_channel=False, contact=c)
-                    for c in companions
-                ]
-                direct.sort(key=lambda conv: _recency_key(conv, lasts))
-                for conversation in direct:
-                    items.append(
-                        Choice(
-                            title=_row_title(ctx, conversation, live, key_of),
-                            value=conversation,
-                            # Del offers to delete this thread's stored history —
-                            # only where there is history to delete.
-                            deletable=lasts.get(conversation.key) is not None,
-                        )
-                    )
-            else:
-                items.append(Separator("  no contacts yet — receive an advert first"))
-
-            default = next(
-                (
-                    it.value
-                    for it in items
-                    if isinstance(it, Choice)
-                    and isinstance(it.value, Conversation)
-                    and it.value.key == default_key
-                ),
-                None,
-            )
-            choice = await ctx.ui.select(
-                "Chat — pick a conversation",
-                items,
-                default=default,
-                wrap=False,
-                delete_hint="Del delete history",
-            )
-            if isinstance(choice, DeleteRequest):
-                conversation = choice.value
-                await self._delete_history(ctx, conversation)
-                # Re-enter with fresh rows: a deleted thread's dot hollows and the row
-                # demotes to the uncontacted (alphabetical) tail; keep the cursor on it.
-                default_key = conversation.key
-                continue
-            if choice is None:  # Esc
-                return None
-            return choice
+        return items
 
     @staticmethod
     async def _delete_history(ctx: AppContext, conversation: Conversation) -> None:
