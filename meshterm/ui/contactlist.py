@@ -461,6 +461,26 @@ class ContactListScreen(SelectScreen):
         items.extend(self._tail)
         return items
 
+    def update_rows(self, rows: list[ContactRow]) -> None:
+        """Swap the contact lanes in place, keeping the reader's place.
+
+        The :meth:`~meshterm.ui.tui.select.SelectScreen.replace_items` counterpart for a
+        list whose *lanes* are data: the Trace-target picker's ``TRACED`` column ages the
+        moment a trace it launched comes back, and the list is sorted by that column. The
+        rows are recomposed and re-sorted, and the highlight lands back on the same contact
+        wherever the new order put it — so the node just traced rises to the top with the
+        cursor riding it. The typed filter and the sort ride along untouched.
+
+        Use it for a lane that changed; a contact that is *gone* is the rebuild case (see
+        :func:`~meshterm.ui.contacts_screen.open_contacts`), because the row the list was
+        holding a place in no longer exists.
+
+        Args:
+            rows: Every contact's lane data, as :meth:`__init__` takes it.
+        """
+        self._contact_rows = rows
+        self._rebuild()
+
     def _rebuild(self) -> None:
         """Recompose the rows for the current sort/width, keeping the highlight on its contact."""
         current = self._current_choice()

@@ -29,6 +29,11 @@ from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS, TuiSessio
 POP_ALL_KEY = "\x17"  # ^W
 QUIT_KEY = "\x11"  # ^Q
 
+#: The two keys the picker/live-screen flow is driven by, spelled out so no raw
+#: control byte has to sit in the source.
+ESC = "\x1b"
+ENTER = "\r"
+
 
 def _session(inp) -> TuiSession:
     """A headless session driven by a pipe, rendering nowhere."""
@@ -119,6 +124,66 @@ async def test_a_visited_screen_is_armed_from_the_moment_it_is_pushed() -> None:
         await asyncio.wait_for(session.run(main()), timeout=5)
 
 
+async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkeypatch) -> None:
+    """Esc out of a trace is one pop, back onto the picker — not a drop to the menu.
+
+    The picker used to be a one-shot prompt gathered in ``prompt_params``: it resolved and
+    popped *before* the live screen opened, so the trace screen sat straight on the menu and
+    a single Esc skipped the list it was launched from. Now the tool keeps the picker for the
+    whole visit and the live screen nests above it.
+    """
+    from meshterm.core.models import Contact
+    from meshterm.tools.trace import TraceTool
+    from meshterm.ui.surface import TuiUi
+
+    contacts = [
+        Contact(name="YUL-Poly", public_key="a1" + "0" * 62, key_prefix="a1"),
+        Contact(name="YUL-Cartierville", public_key="3d" + "0" * 62, key_prefix="3d"),
+    ]
+
+    class _Repo:
+        def target_last_traced(self):
+            return {}
+
+        def heard_nodes(self):
+            return []
+
+    class _Devstate:
+        async def contacts(self):
+            return list(contacts)
+
+    class _Ctx:
+        repo = _Repo()
+        devstate = _Devstate()
+        is_connected = False  # keeps the best-effort path-hash read off the radio
+        settings = type("S", (), {"connect_on_start": False})()
+
+    ctx = _Ctx()
+    depths: list[int] = []
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        ctx.ui = TuiUi(session)
+
+        async def fake_open_trace(_ctx, target: str, *, initial_spec: str = "") -> int:
+            """Stand in for the live screen: note the stack under it, then Esc out of it."""
+            depths.append(len(session._stack))
+            inp.send_text(ESC)  # the Esc that used to land on the main menu
+            return 2
+
+        monkeypatch.setattr("meshterm.ui.trace_screen.open_trace", fake_open_trace)
+
+        async def main() -> None:
+            inp.send_text(ENTER)  # Enter on the leading row commits it as the target
+            result = await TraceTool()._run_live(ctx)
+            assert result.summary == {"sessions": 1, "traces": 2}
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert depths == [1], "the picker is still on the stack while the trace screen runs"
+    assert session._stack == [], "and the visit pops it on the way out"
+
+
 # --- refreshing a visited list's rows ----------------------------------------
 
 
@@ -161,6 +226,54 @@ def test_replace_items_clamps_to_the_position_when_the_row_is_gone() -> None:
     # And a swap that empties the list entirely must not leave a stale index behind.
     screen.replace_items([])
     assert screen._current_choice() is None
+
+
+def test_update_rows_resorts_the_lanes_and_keeps_the_highlight_on_its_contact() -> None:
+    """The Trace picker's TRACED lane ages under the reader without moving them.
+
+    The list is sorted by the very column a returning trace changes, so the node just
+    walked jumps to the top — and the cursor has to ride it there, or the reader would be
+    put back on whatever row inherited their position.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from meshterm.ui.contactlist import (
+        TRACE_SORT_COLUMNS,
+        TRACE_SORT_OPENS_ASCENDING,
+        ContactListScreen,
+        ContactRow,
+    )
+    from meshterm.ui.widgets import ContactsSort
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        ContactRow(value="alpha", name="alpha", last_traced=now - timedelta(hours=2)),
+        ContactRow(value="beta", name="beta", last_traced=None),  # never traced
+    ]
+    screen = ContactListScreen(
+        "Trace target — pick a target",
+        rows=rows,
+        prefix_bytes=1,
+        sort=ContactsSort.from_name(
+            "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
+        ),
+        show_traced=True,
+    )
+    screen.handle("text", "bet")  # find-as-you-type down to the never-traced node
+    assert screen._current_choice().value == "beta"
+
+    # beta is traced: it now leads the TRACED sort, where alpha was.
+    screen.update_rows(
+        [
+            ContactRow(value="alpha", name="alpha", last_traced=now - timedelta(hours=2)),
+            ContactRow(value="beta", name="beta", last_traced=now),
+        ]
+    )
+    assert screen._filter == "bet", "the typed filter survives the swap"
+    assert screen._current_choice().value == "beta", "the highlight followed its contact"
+    for _ in range(3):  # ⌫ back out of the filter: the whole, re-sorted list is there
+        screen.handle("backspace")
+    assert [c.value for c in screen._choices()] == ["beta", "alpha"]
 
 
 # --- ^W, the pop-all ---------------------------------------------------------

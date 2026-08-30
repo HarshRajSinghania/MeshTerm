@@ -5,7 +5,9 @@ purely a UX notion — and the menu splits the feature along exactly that line:
 
 * **Trace target** (``trace``): *can I reach this node?* Pick a target from a
   recency-ordered list; the live screen composes/explores symmetric routes that turn
-  at the target and come home over the mirrored hops.
+  at the target and come home over the mirrored hops. The list stays pushed underneath
+  for the whole visit, so Esc from a walk lands back on the row that launched it —
+  freshly re-sorted by what was just traced — and the next node is one Enter away.
 * **Trace path** (``trace-path``): *how far can a route I build carry?* No target and
   no picker — the whole walk is composed hop by hop and only has to end within our
   own earshot. Traces record under the ``(path)`` sentinel, keeping composed walks
@@ -25,7 +27,7 @@ stored history reads the same no matter where it came from.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from rich.text import Text
@@ -35,6 +37,9 @@ from ..core.models import LOCAL_DEVICE_LABEL, PATH_TRACE_TARGET, Contact, TraceS
 from ..services import trace_runner
 from ..ui.widgets import stats_panel
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.contactlist import ContactListScreen, ContactRow
 
 #: The characters a stored trace target must consist of to be treated as a hex key
 #: prefix when folding it back to a contact name in the target picker.
@@ -53,18 +58,20 @@ class TraceTool(Tool):
     order = 30  # see a node above, walk to it here
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Pick the first target for the live screen.
+        """Nothing to gather here — the target picker lives inside :meth:`run`.
+
+        The picker has to *stay pushed* while the live screen it opens runs: that is what
+        makes Esc out of a trace one pop back onto the row it was launched from. A prompt
+        gathered here would have to resolve — and pop — before the tool runs, so the picker
+        moved into :meth:`_run_live` along with the loop that owns it.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"live": True, "target": name}``, or ``None`` if the user backed out.
+            ``{"live": True}`` — the menu's marker for the interactive path.
         """
-        target = await self._pick_target(ctx)
-        if target is None:
-            return None
-        return {"live": True, "target": target}
+        return {"live": True}
 
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run — without the outer run row on the live path.
@@ -89,35 +96,87 @@ class TraceTool(Tool):
 
         Args:
             ctx: Shared application context.
-            params: ``live`` + ``target`` from the menu picker; or ``target`` (str),
-                optional ``path``, and the injected ``_run_id`` from the CLI.
+            params: ``live`` from the menu (the target is picked on the screen); or
+                ``target`` (str), optional ``path``, and the injected ``_run_id``
+                from the CLI.
 
         Returns:
             A :class:`ToolResult` with the trace's outcome.
         """
         if params.get("live"):
-            return await self._run_live(ctx, str(params["target"]))
+            return await self._run_live(ctx)
         return await self._run_cli(ctx, params)
 
     # -- interactive (menu) -------------------------------------------------------
 
-    async def _run_live(self, ctx: AppContext, target: str) -> ToolResult:
-        """Open the live screen for one target; backing out drops to the main menu.
+    async def _run_live(self, ctx: AppContext) -> ToolResult:
+        """Loop the target picker and the live screen until the picker itself is left.
+
+        The picker **stays pushed** for the whole visit (the app's hub idiom), so the live
+        trace screen nests *above* it: Esc out of a trace is one pop, landing back on the
+        row it was launched from with the cursor, the sort and any typed filter intact, and
+        Esc from the picker is the second pop, out to the menu. The picker used to be a
+        one-shot prompt that resolved and popped before the screen opened, which left the
+        trace screen sitting directly on the menu — so a single Esc skipped the picker
+        entirely and there was no way back to the list except reopening the tool.
+
+        Every returning trace ages the row it walked, and the list is *sorted* by that
+        column, so the lanes are re-read and swapped in place afterwards: the node just
+        traced rises to the top of the ``TRACED`` sort with the highlight riding it. The
+        ages come from stored history alone, so coming back costs no device round-trip.
 
         Args:
             ctx: Shared application context.
-            target: The target to open.
 
         Returns:
-            A :class:`ToolResult` counting the traces run.
+            A :class:`ToolResult` counting the screens opened and the traces run.
         """
         from ..ui.trace_screen import open_trace
+        from ..ui.tui.screen import CANCEL
 
-        traces = await open_trace(ctx, target)
-        return ToolResult(summary={"sessions": 1, "traces": traces})
+        built = await self._build_picker(ctx)
+        if built is None:
+            # Nothing to list (or no full-screen session): the free-text prompt is a
+            # one-shot, with no list underneath to come back to.
+            target = await self._prompt_target(ctx)
+            if target is None:
+                return ToolResult(summary={})
+            return ToolResult(
+                summary={"sessions": 1, "traces": await open_trace(ctx, target)}
+            )
 
-    async def _pick_target(self, ctx: AppContext) -> Optional[str]:
-        """Pick a trace target from the shared sortable contact list.
+        picker, contacts = built
+        sessions = 0
+        traces = 0
+        async with ctx.ui.session.stay(picker) as visit:
+            while True:
+                chosen = await visit.result()
+                if chosen is CANCEL or chosen is None:  # Esc — the pop out to the menu
+                    return ToolResult(summary={"sessions": sessions, "traces": traces})
+                traces += await open_trace(ctx, chosen.name)
+                sessions += 1
+                picker.update_rows(self._picker_rows(ctx, contacts))
+
+    async def _prompt_target(self, ctx: AppContext) -> Optional[str]:
+        """Ask for a target by hand — the way in when there is no list to pick from.
+
+        Reached with no known contacts at all (an empty list would be nothing to pick from)
+        and on any surface without a full-screen session. It is also the only way to trace a
+        bare key prefix for a node the device doesn't carry as a contact.
+
+        Args:
+            ctx: Shared application context.
+
+        Returns:
+            The typed target, or ``None`` if it was left blank or cancelled.
+        """
+        entered = await ctx.ui.text("Target node (name or key prefix):")
+        return entered.strip() if entered else None
+
+    async def _build_picker(
+        self, ctx: AppContext
+    ) -> Optional[tuple[ContactListScreen, list[Contact]]]:
+        """Build the trace-target picker, or ``None`` when there is no list to draw.
 
         The same ``NAME · TRACED · HEARD · PKTS · KEY`` lanes, Ctrl+arrow sort ring, and
         type-to-filter the Contacts screen and the courier recipient draw — but with every
@@ -125,27 +184,24 @@ class TraceTool(Tool):
         just as for a companion) and an extra ``TRACED`` lane: how long ago each node was
         last traced. The list opens sorted by ``TRACED`` descending, so the most recently
         traced node leads and never-traced ones gather at the bottom. Enter commits the
-        highlighted node's name as the target.
-
-        With no known contacts at all the list would be empty, so a free-text prompt takes
-        over instead — also the only way to trace a bare key prefix for a node the device
-        doesn't carry as a contact.
+        highlighted node as the target.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            The chosen target name, or ``None`` if cancelled.
+            The screen paired with the contacts it lists (kept so the lanes can be
+            re-read after a trace), or ``None`` when there is nothing to list — see
+            :meth:`_prompt_target`.
         """
         from ..ui.contactlist import (
             TRACE_SORT_COLUMNS,
             TRACE_SORT_OPENS_ASCENDING,
             ContactListScreen,
-            ContactRow,
         )
         from ..ui.surface import TuiUi
         from ..ui.timemachine_screen import _routing_prefix_bytes
-        from ..ui.widgets import ContactsSort, _contact_pkts
+        from ..ui.widgets import ContactsSort
 
         # Through the session cache: this picker runs on every Trace open, and the contacts
         # table is a slow round-trip on a busy node — re-reading it here (in front of the
@@ -153,15 +209,42 @@ class TraceTool(Tool):
         # :class:`~meshterm.services.device_state.DeviceState`.
         contacts = await ctx.devstate.contacts()
         if not contacts or not isinstance(ctx.ui, TuiUi):
-            # No contacts to list (or no full-screen session): a free-text prompt is the
-            # only way in — and the only way to trace a bare key prefix off-list.
-            entered = await ctx.ui.text("Target node (name or key prefix):")
-            return entered.strip() if entered else None
+            return None
+
+        picker = ContactListScreen(
+            "Trace target — pick a target",
+            rows=self._picker_rows(ctx, contacts),
+            prefix_bytes=await _routing_prefix_bytes(ctx),
+            sort=ContactsSort.from_name(
+                "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
+            ),
+            footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
+            show_traced=True,
+        )
+        return picker, contacts
+
+    @staticmethod
+    def _picker_rows(ctx: AppContext, contacts: list[Contact]) -> list[ContactRow]:
+        """The picker's lane data for ``contacts``, read fresh from stored history.
+
+        Both the ``TRACED`` ages and the packet counts come from the repository, so this is
+        cheap enough to redo every time a trace hands the picker back — which is what keeps
+        the lane the list is *sorted* by honest about the walk that just happened.
+
+        Args:
+            ctx: Shared application context.
+            contacts: The device's contacts, as listed.
+
+        Returns:
+            One :class:`~meshterm.ui.contactlist.ContactRow` per contact, in the order
+            given (the screen sorts them).
+        """
+        from ..ui.contactlist import ContactRow
+        from ..ui.widgets import _contact_pkts
 
         traced = _last_traced_by_name(contacts, ctx.repo.target_last_traced())
         counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
-        prefix_bytes = await _routing_prefix_bytes(ctx)
-        rows = [
+        return [
             ContactRow(
                 value=c,
                 name=c.name,
@@ -173,18 +256,6 @@ class TraceTool(Tool):
             )
             for c in contacts
         ]
-        picker = ContactListScreen(
-            "Trace target — pick a target",
-            rows=rows,
-            prefix_bytes=prefix_bytes,
-            sort=ContactsSort.from_name(
-                "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
-            ),
-            footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
-            show_traced=True,
-        )
-        chosen = await ctx.ui.session.run_screen(picker)
-        return chosen.name if isinstance(chosen, Contact) else None
 
     # -- scripted (CLI) -------------------------------------------------------------
 
