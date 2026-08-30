@@ -69,9 +69,9 @@ def test_walk_opens_focused_on_us_with_the_link_list() -> None:
     assert "Links" in body and "strongest observed first" in body
     assert "YUL-Cartierville" in body  # our one neighbour, as a selectable row
     assert "edge = SNR" in body  # the canvas legend
-    # Status atoms only, like the map's: the focus is the trail's and the focus line's
-    # to name, and it is named there in colour, with its hash and its ring.
-    assert screen.title == "Mesh walk · 3 nodes · 2 links"
+    # The screen's name, and nothing else: the focus, and how big the neighbourhood is,
+    # are what the body under it is for.
+    assert screen.title == "Mesh walk"
 
 
 def test_walk_link_rows_carry_snr_evidence_and_onward_count() -> None:
@@ -563,7 +563,7 @@ def test_walk_find_lists_matches_and_teleports() -> None:
     body = _plain(screen.render_body(80))
     assert "Matches" in body and "Alice" in body
     assert "2 hops out" in body  # the match row says how far away it sits
-    assert screen.title == "Mesh walk · 1 of 3 match · 2 links"  # swapped for the count
+    assert screen.title == "Mesh walk"  # the title holds still; the list is the answer
 
     screen.handle("enter")
     alice = topo.canonical(ALICE.public_key)

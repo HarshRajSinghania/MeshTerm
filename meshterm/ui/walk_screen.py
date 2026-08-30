@@ -261,6 +261,14 @@ class WalkScreen(Screen):
             prefix_bytes: Path-hash width to light in the hash lane (0 = none).
         """
         super().__init__()
+        # The screen's name, and nothing else (JP, 2026-08-30). It carried the focus and
+        # the graph's size — ``Mesh walk — YUL-Cartierville · 42 nodes · 61 links`` — which
+        # ran past a 53-column title bar, and every atom of it was already on the screen
+        # below: the trail ends on the focus, the line under it names that node in colour
+        # with its hash and its ring, and how big the neighbourhood is, is what the canvas
+        # and the link list are *for*. Set once here rather than composed per render, so
+        # the top row never rewrites itself as the walk moves.
+        self.title = "Mesh walk"
         self._session = session
         self._topo = topo
         self._contacts = contacts
@@ -527,7 +535,6 @@ class WalkScreen(Screen):
         links = self._topo.links()
         rows = self._rows()
         self._index = max(0, min(self._index, len(rows) - 1)) if rows else 0
-        self.title = self._compose_title(links)
         if not links:
             return self._empty_state(width)
 
@@ -574,29 +581,6 @@ class WalkScreen(Screen):
         height = min(height, max(_CANVAS_MIN_H, 2 * crowd + 1))
         height = min(height, viewport - chrome - _LIST_MIN_ROWS)
         return max(4, height)
-
-    def _compose_title(self, links: list[Link]) -> str:
-        """``Mesh walk`` plus the graph's status atoms — the size of what is being walked.
-
-        The focus used to lead it (``Mesh walk — YUL-Cartierville · …``) and it was the
-        title's longest atom, its most changeable, and its only redundant one: the
-        breadcrumb trail ends on the focus and the line under it names the same node in
-        colour, with its hash, its ring and when it was last heard. Spending a fifth of a
-        53-column title bar on a third telling — and rewriting the top row at every step of
-        the walk — cost more than it said (JP, 2026-08-30). So the title reads like the
-        map's, the other spatial screen, whose centre is likewise the body's to name:
-        status atoms only.
-
-        The match count **swaps** for the node count rather than joining it, exactly as the
-        map's does, so a narrowed walk says how much of the mesh answered the query without
-        the title growing a fourth atom the bar would have to clip.
-        """
-        nodes = len(self._all_nodes())
-        if self._filter:
-            count = f"{len(self._matches())} of {nodes} match"
-        else:
-            count = f"{nodes} nodes"
-        return f"Mesh walk · {count} · {len(links)} links"
 
     def _header_lines(self, width: int, depths: dict[str, int]) -> list[str]:
         """The breadcrumb trail and the focus node's identity line.
