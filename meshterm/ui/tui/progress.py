@@ -39,6 +39,7 @@ class ProgressScreen(Screen):
 
     footer_hint = "working…"
     floating = True
+    modal = True  # work in flight owns the keyboard; ^W must not unwind out from under it
 
     @property
     def fkey_lane(self):

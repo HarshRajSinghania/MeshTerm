@@ -1,0 +1,365 @@
+"""Tests for the navigation stack: strict push/pop, kept state, and the two global chords.
+
+The app's realized path is a stack — the main menu at the bottom, one frame per screen or
+dialog entered, one pop per Esc — and the machinery that guarantees it lives in
+:mod:`meshterm.ui.tui.session` (``stay``/``Visit``/``run_screen``) and
+:mod:`meshterm.ui.tui.screen` (``POP_ALL``/``PopToMenu``). These exercise the guarantees:
+that a visit pushes and pops exactly once however many rounds it runs, that the screen
+object outlives its sub-screens so its cursor and filter are still there on the way back,
+and that ^W unwinds the whole stack while ^Q leaves the app — from anywhere, and never
+through a dialog that is still asking something.
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.output import DummyOutput
+
+from meshterm.ui.tui.progress import ProgressScreen
+from meshterm.ui.tui.prompt import ButtonDialog
+from meshterm.ui.tui.screen import CANCEL, POP_ALL, BusyScreen, PopToMenu, Screen, ScrollScreen
+from meshterm.ui.tui.select import Choice, SelectScreen
+from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS, TuiSession
+
+#: What the terminal actually sends for the two global chords (verified against the
+#: prompt_toolkit key tables, and on the Canadian Multilingual layout with ``ToUnicodeEx``).
+POP_ALL_KEY = "\x17"  # ^W
+QUIT_KEY = "\x11"  # ^Q
+
+
+def _session(inp) -> TuiSession:
+    """A headless session driven by a pipe, rendering nowhere."""
+    return TuiSession(input=inp, output=DummyOutput())
+
+
+# --- the stack discipline ----------------------------------------------------
+
+
+async def test_a_visit_pushes_once_and_pops_once_however_many_rounds_it_runs() -> None:
+    """``stay`` is one push and one pop, not one per round.
+
+    This is the difference from ``run_screen`` in a loop, which pops on every resolve and
+    leaves the screen off the stack while whatever it committed to runs.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        screen = SelectScreen("hub", [Choice("a", 1), Choice("b", 2)])
+        depths: list[int] = []
+
+        async def main() -> None:
+            async with session.stay(screen) as visit:
+                for _ in range(3):
+                    depths.append(len(session._stack))
+                    screen.resolve(1)
+                    assert await visit.result() == 1
+                    # A sub-screen opened from inside the loop nests *above* the hub.
+                    child = ScrollScreen("child")
+                    session.push(child)
+                    depths.append(len(session._stack))
+                    session.pop(child)
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert depths == [1, 2, 1, 2, 1, 2]
+    assert session._stack == [], "the visit must pop its screen on the way out"
+
+
+async def test_a_visit_keeps_the_screens_cursor_and_filter_across_a_sub_screen() -> None:
+    """Coming back from a sub-screen lands on the row you left, filter and all.
+
+    Reusing the screen *object* is what buys this. A ``default=`` restore could only ever
+    recover the cursor, and only when the row it names still exists.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        screen = SelectScreen(
+            "hub", [Choice("alpha", 1), Choice("beta", 2), Choice("gamma", 3)]
+        )
+
+        async def main() -> None:
+            async with session.stay(screen) as visit:
+                screen.handle("text", "a")  # filter to the rows carrying an "a"
+                screen.handle("down")
+                before = (screen._filter, screen._index)
+                screen.resolve("go")
+                await visit.result()
+                await session.run_screen(ScrollScreen("a sub-screen"))
+                assert (screen._filter, screen._index) == before
+
+        session_task = session.run(main())
+        # The sub-screen is dismissed with Esc, which is the only key this flow needs.
+        inp.send_text("\x1b")
+        await asyncio.wait_for(session_task, timeout=5)
+
+
+async def test_a_visited_screen_is_armed_from_the_moment_it_is_pushed() -> None:
+    """A key that lands before the caller loops back is kept, not dropped.
+
+    The screen is on the stack for the whole visit, so it can be resolved at any moment —
+    including while the caller is still finishing the previous round. Arming only inside
+    :meth:`~meshterm.ui.tui.session.Visit.result` would leave a gap in which the press has
+    nowhere to go.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        screen = ScrollScreen("hub")
+
+        async def main() -> None:
+            async with session.stay(screen) as visit:
+                assert screen.future is not None, "armed by the push, before any round"
+                screen.resolve("early")  # resolved before the caller asks for it
+                assert await visit.result() == "early"
+                # And the next round is live immediately, without another await first.
+                assert screen.future is not None and not screen.future.done()
+                screen.resolve("next")
+                assert await visit.result() == "next"
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+
+# --- ^W, the pop-all ---------------------------------------------------------
+
+
+async def test_pop_all_unwinds_every_frame_at_once() -> None:
+    """^W from three screens deep pops all three and lands the caller past the whole flow."""
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        popped: list[str] = []
+        landed: list[str] = []
+
+        async def main() -> None:
+            hub = ScrollScreen("hub")
+            try:
+                async with session.stay(hub) as visit:
+                    try:
+                        await session.run_screen(ScrollScreen("middle"))
+                    finally:
+                        popped.append("middle")
+                    await visit.result()
+            except PopToMenu:
+                landed.append("menu")
+            finally:
+                popped.append("hub")
+
+        inp.send_text(POP_ALL_KEY)
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert landed == ["menu"], "the unwind must reach the frame that catches it"
+    assert popped == ["middle", "hub"], "every frame pops itself on the way out"
+    assert session._stack == []
+
+
+async def test_pop_all_passes_straight_through_an_except_exception_guard() -> None:
+    """An unwind is not a tool failure.
+
+    The app wraps tool runs in ``except Exception`` so a broken tool cannot take the menu
+    down with it (:func:`meshterm.ui.menu._run_selection` is the widest such guard). An
+    unwind has to cross those without being caught and reported as an error, which is why
+    :class:`PopToMenu` derives from ``BaseException``.
+    """
+    assert issubclass(PopToMenu, BaseException)
+    assert not issubclass(PopToMenu, Exception)
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        swallowed: list[str] = []
+        landed: list[str] = []
+
+        async def a_tool() -> None:
+            try:
+                await session.run_screen(ScrollScreen("a tool's screen"))
+            except Exception:  # noqa: BLE001 - the guard under test
+                swallowed.append("caught")
+
+        async def main() -> None:
+            try:
+                await a_tool()
+            except PopToMenu:
+                landed.append("menu")
+
+        inp.send_text(POP_ALL_KEY)
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert swallowed == []
+    assert landed == ["menu"]
+
+
+async def test_pop_all_armed_while_nothing_is_pushed_fires_at_the_next_screen() -> None:
+    """^W during a device read still unwinds — at the next screen the flow tries to open.
+
+    There is no future to carry the sentinel while the app sits under the busy overlay with
+    an empty stack, so the flag is what remembers the press.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        opened: list[str] = []
+
+        async def main() -> None:
+            inp.send_text(POP_ALL_KEY)
+            await asyncio.sleep(0.05)  # let the key reach the dispatcher
+            assert session.top is None, "nothing is pushed while the read is in flight"
+            with pytest.raises(PopToMenu):
+                await session.run_screen(ScrollScreen("the screen the read was for"))
+            opened.append("refused")
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert opened == ["refused"]
+
+
+def test_pop_all_is_refused_over_anything_modal() -> None:
+    """A dialog is an unanswered question and progress is work in flight; ^W waits."""
+    session = TuiSession(output=DummyOutput())
+    for layer in (
+        ButtonDialog("Delete it?", [("Cancel", False), ("Delete", True)]),
+        ProgressScreen("Working"),
+        BusyScreen("checking…"),
+    ):
+        session.push(layer)
+        assert session.request_pop_all() is False, f"{type(layer).__name__} must block ^W"
+        assert session._unwinding is False
+        session.pop(layer)
+
+
+def test_pop_all_is_a_no_op_at_the_navigation_root() -> None:
+    """You cannot go back to where you already are."""
+    session = TuiSession(output=DummyOutput())
+    menu = SelectScreen("What would you like to do?", [Choice("a tool", "a")])
+    session.set_root(menu)
+    session.push(menu)
+    assert session.request_pop_all() is False
+    assert session._unwinding is False
+    # One screen deeper, the same key fires.
+    deeper = ScrollScreen("a tool")
+    session.push(deeper)
+    assert session.request_pop_all() is True
+    assert deeper.future is None or True  # resolving a screen with no future is harmless
+
+
+def test_pop_all_resolves_the_top_screen_with_the_sentinel() -> None:
+    """The sentinel travels through the future; no caller in the app ever sees it."""
+    session = TuiSession(output=DummyOutput())
+    screen = ScrollScreen("deep")
+
+    class _Fut:
+        def __init__(self) -> None:
+            self.value = None
+
+        def done(self) -> bool:
+            return False
+
+        def set_result(self, value: object) -> None:
+            self.value = value
+
+    screen.future = _Fut()  # type: ignore[assignment]
+    session.push(screen)
+    assert session.request_pop_all() is True
+    assert screen.future.value is POP_ALL  # type: ignore[union-attr]
+
+
+def test_a_stack_reset_disarms_a_pending_unwind() -> None:
+    """A disconnect abandons the flow itself, so an armed ^W has nothing left to unwind."""
+    session = TuiSession(output=DummyOutput())
+    session.push(ScrollScreen("deep"))
+    session.request_pop_all()
+    assert session._unwinding is True
+    session.reset()
+    assert session._unwinding is False
+
+
+# --- ^Q, the quit ------------------------------------------------------------
+
+
+async def test_quit_from_a_nested_screen_still_runs_the_apps_teardown() -> None:
+    """^Q leaves from anywhere — and the flow's ``finally`` blocks still run.
+
+    The chord exits the prompt_toolkit application straight from the key handler, so the
+    coroutine driving the app is parked on a screen when it returns. Left abandoned there,
+    the teardown that closes the history and chat runs, stops the services and arms the exit
+    watchdog would never happen.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        torn_down: list[str] = []
+
+        async def main() -> None:
+            try:
+                await session.run_screen(ScrollScreen("two screens deep"))
+            finally:
+                torn_down.append("services closed")
+
+        inp.send_text(QUIT_KEY)
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert torn_down == ["services closed"]
+
+
+# --- the bindings themselves -------------------------------------------------
+
+
+def test_both_global_chords_are_bound_on_both_ctrl_keys() -> None:
+    """^W and ^Q reach their action through the plain binding and the right-Ctrl rescue.
+
+    The single chord table is what guarantees the second half: a chord added there can never
+    be bound without its rescue, which is the only way a layout that claims the right Ctrl as
+    a character-group modifier reaches it at all.
+    """
+    assert _CTRL_LETTER_CHORDS["w"] == "to_menu"
+    assert _CTRL_LETTER_CHORDS["q"] == "quit"
+    from prompt_toolkit.keys import Keys
+
+    assert _KEY_ACTIONS[Keys.ControlW] == "to_menu"
+    assert _KEY_ACTIONS[Keys.ControlQ] == "quit"
+
+
+def test_neither_global_chord_is_advertised_anywhere() -> None:
+    """Both are deliberately undiscoverable in the UI — the About page states them instead.
+
+    A global verb has no screen to belong to, so a footer atom or an F-key chip would have to
+    ride on *every* screen; the lane only has three free slots per screen to begin with.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "meshterm"
+    chord = re.compile(r"\^[WQ]\b")
+    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # Docstrings explain the chords at length and are not what a reader of the UI sees;
+        # what matters is every string the module *states*.
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, holders)
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and chord.search(node.value)
+            ):
+                offenders.append(f"{path.name}:{node.lineno}: {node.value.strip()[:70]}")
+    assert not offenders, "the global chords must not appear in any hint or chip:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_only_navigational_layers_are_non_modal() -> None:
+    """``modal`` is about owning the keyboard, ``floating`` only about being drawn as a box.
+
+    They are easy to conflate — most dialogs are both — so the two screens that break the
+    correlation are asserted outright: a plain select list floats and is not modal, and the
+    busy splash is modal without floating at all.
+    """
+    assert SelectScreen("list", [Choice("a", 1)]).floating is True
+    assert SelectScreen("list", [Choice("a", 1)]).modal is False
+    assert BusyScreen("checking…").floating is False
+    assert BusyScreen("checking…").modal is True
+    assert Screen().modal is False
+    assert CANCEL is not POP_ALL

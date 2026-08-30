@@ -43,7 +43,7 @@ from .prompt import (
     TypedConfirmDialog,
     Validator,
 )
-from .screen import CANCEL, BusyScreen, Screen, ScrollScreen
+from .screen import CANCEL, POP_ALL, BusyScreen, PopToMenu, Screen, ScrollScreen
 from .spinner import spinner_interval
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 
@@ -62,12 +62,23 @@ from .select import Choice, ReorderScreen, SelectScreen, Separator
 #: A chord's letter is the mnemonic of the *action*, not of one screen's word for it —
 #: ``locate`` is ^U for **you** (JP, 2026-08-09), the same key on the map and in the mesh
 #: walk, because what it names on both is our own node.
+#:
+#: Two of these are app-wide rather than a screen's: ``to_menu`` (^W) unwinds the whole
+#: navigation stack back to the main menu, and ``quit`` (^Q, alongside the older ^C) leaves
+#: the app from anywhere. Neither is advertised in a footer hint or an F-key chip — the lane
+#: has three free slots per screen and a global verb would claim one on every screen forever,
+#: so both are stated once on the About page's key list instead (JP, 2026-08-30). ^W was
+#: picked for the close-this-whole-thing reflex; both were verified deliverable on the
+#: Canadian Multilingual layout (^W ``U+0017``, ^Q ``U+0011``) and neither is eaten by the
+#: terminal — prompt_toolkit's raw mode clears ``IXON``/``IXOFF``, so ^Q is not XON here.
 _CTRL_LETTER_CHORDS: dict[str, str] = {
     "c": "quit",
     "p": "paths",
+    "q": "quit",
     "r": "retry",
     "u": "locate",
     "v": "paste_clipboard",
+    "w": "to_menu",
 }
 
 #: Maps prompt_toolkit keys to the normalized action names screens understand.
@@ -316,6 +327,58 @@ def _message_border(message: "Text | str") -> str:
     return "accent"
 
 
+class Visit:
+    """One screen's stay on the stack, handed out by :meth:`TuiSession.stay`.
+
+    Holds nothing but the session and the screen; :meth:`result` arms a fresh future on that
+    screen and awaits it, leaving the screen exactly where it is. Calling it again is the
+    next round of the same visit — the loop shape a hub screen wants.
+    """
+
+    __slots__ = ("_session", "_screen")
+
+    def __init__(self, session: "TuiSession", screen: Screen) -> None:
+        """Bind a visit to its session and screen, and arm the screen's first round."""
+        self._session = session
+        self._screen = screen
+        self._arm()
+
+    @property
+    def screen(self) -> Screen:
+        """The screen being visited (the same object for the whole stay)."""
+        return self._screen
+
+    def _arm(self) -> None:
+        """Give the screen a fresh future to resolve into.
+
+        A visited screen is *always* armed — from the moment it is pushed until the visit
+        ends — because it is on the stack the whole time and a key can reach it whenever it
+        is on top. Arming only inside :meth:`result` would leave a gap between rounds in
+        which :meth:`~meshterm.ui.tui.screen.Screen.resolve` has nowhere to put its value
+        and the press is silently dropped.
+        """
+        self._screen.future = asyncio.get_running_loop().create_future()
+
+    async def result(self) -> Any:
+        """Await one round of the visited screen: its resolved value, or ``CANCEL`` on Esc.
+
+        A round already resolved — because the screen was armed while the caller was still
+        busy with the last one — is returned immediately rather than waited for again.
+
+        Raises:
+            PopToMenu: If the pop-all key was pressed, here or while the caller was busy.
+        """
+        self._session._check_unwind()
+        future = self._screen.future
+        if future is None:
+            self._arm()
+            future = self._screen.future
+        try:
+            return self._session._unpack(await future)
+        finally:
+            self._arm()  # the next round is live the moment this one is read
+
+
 class TuiSession:
     """A running full-screen TUI: screen stack, frame, input loop, and async prompts."""
 
@@ -353,6 +416,13 @@ class TuiSession:
         # full-repaint treatment. Reconciled against the layers actually drawn on every paint
         # (see :meth:`_reconcile_layers`).
         self._layers: dict[str, tuple[str, bool]] = {}
+        # Armed by the pop-all key (^W) and disarmed by the menu loop once it has caught the
+        # unwind. While armed, every navigation boundary raises PopToMenu rather than showing
+        # another screen — see :meth:`request_pop_all`.
+        self._unwinding = False
+        # The screen the unwind lands on (the main menu), so ^W can no-op when it is already
+        # the top rather than pointlessly rebuilding it. ``None`` until the menu declares it.
+        self._root: Optional[Screen] = None
 
     # --- stack ---------------------------------------------------------------
 
@@ -395,6 +465,10 @@ class TuiSession:
         (their callers pop them in ``finally``), so dropping any stragglers here is safe.
         """
         self._stack.clear()
+        # A reset is its own unwind — the caller has already abandoned whatever was running
+        # (see :func:`~meshterm.ui.menu._session_loop`), so an armed ^W has nothing left to
+        # unwind and would otherwise fire into the reconnect flow that replaces it.
+        self._unwinding = False
         self._expose_overlay()
         self.invalidate()
 
@@ -408,6 +482,111 @@ class TuiSession:
         """
         if self._overlay is not None and not self._stack:
             self._overlay.restart()
+
+    # --- navigation ----------------------------------------------------------
+
+    def set_root(self, screen: Optional[Screen]) -> None:
+        """Declare ``screen`` the navigation root — where an unwind lands.
+
+        The main menu calls this with its own list. Only two things depend on it: ^W is a
+        no-op while the root is already the top screen (you cannot go back to where you
+        are), and nothing else in the app needs to know which screen is the menu.
+
+        Args:
+            screen: The root screen, or ``None`` to forget it (the menu on its way out).
+        """
+        self._root = screen
+
+    def request_pop_all(self) -> bool:
+        """Arm the unwind to the navigation root (the ^W key). Returns whether it fired.
+
+        Two refusals, both deliberate:
+
+        * **A modal layer is on top.** A dialog is an unanswered question and a progress or
+          busy screen is work in flight (:attr:`~meshterm.ui.tui.screen.Screen.modal`);
+          unwinding past either would discard something the user is in the middle of, so ^W
+          simply does nothing there and they answer or wait first.
+        * **The root is already the top.** There is nowhere to go.
+
+        Otherwise it sets the unwind flag and resolves the top screen's future with
+        :data:`~meshterm.ui.tui.screen.POP_ALL`, which the frame awaiting it turns into
+        :class:`~meshterm.ui.tui.screen.PopToMenu`. The flag matters independently of the
+        future: a key can arrive while *no* screen is awaiting anything (mid device read,
+        under the busy overlay), and then the unwind is raised by the next navigation
+        boundary instead — see :meth:`_check_unwind`.
+
+        Returns:
+            ``True`` if the unwind was armed, ``False`` if it was refused.
+        """
+        top = self.top
+        if top is not None and (top.modal or top is self._root):
+            return False
+        self._unwinding = True
+        if top is not None:
+            top.resolve(POP_ALL)
+        return True
+
+    def unwound(self) -> None:
+        """Disarm the unwind — called by the menu loop once it has caught :class:`PopToMenu`."""
+        self._unwinding = False
+
+    def _check_unwind(self) -> None:
+        """Raise :class:`PopToMenu` if an unwind is armed, before showing another screen.
+
+        Every navigation boundary calls this on the way *in* as well as reading the result on
+        the way out, which is what makes ^W work during a device read: the key arms the flag
+        while no future is armed to carry :data:`POP_ALL`, and the very next screen the flow
+        tries to open refuses to open and unwinds instead.
+        """
+        if self._unwinding:
+            raise PopToMenu()
+
+    @staticmethod
+    def _unpack(result: Any) -> Any:
+        """Return a screen's result, turning :data:`POP_ALL` into :class:`PopToMenu`.
+
+        The sentinel exists only to travel through an ``asyncio.Future``; no caller in the
+        app ever sees it, so it is converted at the one boundary that reads a future.
+        """
+        if result is POP_ALL:
+            raise PopToMenu()
+        return result
+
+    @asynccontextmanager
+    async def stay(self, screen: Screen) -> AsyncIterator["Visit"]:
+        """Keep ``screen`` pushed for a whole visit while its sub-screens come and go.
+
+        The counterpart to :meth:`run_screen`, and the shape every screen that *owns a loop*
+        should use::
+
+            screen = ContactsScreen(...)
+            async with session.stay(screen) as visit:
+                while True:
+                    chosen = await visit.result()
+                    if chosen is CANCEL:
+                        return
+                    await open_node_detail(ctx, chosen)   # nests above the list
+
+        One push, one pop, and the object survives the whole visit — so the cursor, the sort,
+        the scroll offset and any live filter are simply still there when a sub-screen closes,
+        without a ``default=`` restore that can only ever recover the cursor. Because the
+        screen never leaves the stack, a dialog raised from inside the loop already has it as
+        a backdrop, and a full-frame sub-screen pushed above it draws over it (see
+        :meth:`_base_index`) — the two things callers used to arrange by popping and
+        re-pushing the same screen by hand.
+
+        Args:
+            screen: The screen to keep pushed for the duration of the block.
+
+        Yields:
+            A :class:`Visit` whose :meth:`~Visit.result` awaits one round of the screen.
+        """
+        self._check_unwind()
+        self.push(screen)
+        try:
+            yield Visit(self, screen)
+        finally:
+            self.pop(screen)
 
     def invalidate(self) -> None:
         """Request a repaint if the application is running."""
@@ -514,14 +693,20 @@ class TuiSession:
 
         Returns:
             The screen's resolved value, or :data:`~meshterm.ui.tui.screen.CANCEL`.
+
+        Raises:
+            PopToMenu: If the pop-all key was pressed — on this screen, or while the caller
+                was busy and had nothing pushed at all.
         """
+        self._check_unwind()
         loop = asyncio.get_running_loop()
         screen.future = loop.create_future()
         self.push(screen)
         try:
-            return await screen.future
+            result = await screen.future
         finally:
             self.pop(screen)
+        return self._unpack(result)
 
     async def select(
         self,
@@ -1086,18 +1271,27 @@ class TuiSession:
             loop = asyncio.get_running_loop()
             modifier_watch.start(lambda: loop.call_soon_threadsafe(self.invalidate))
         box: dict[str, BaseException] = {}
+        task: dict[str, asyncio.Future] = {}
 
         async def driver() -> None:
             try:
                 await main
+            except asyncio.CancelledError:
+                raise
             except BaseException as exc:  # noqa: BLE001 - re-raised after the app unwinds
                 box["exc"] = exc
             finally:
-                if self._app is not None and not self._app.is_done:
+                # ``is_running`` rather than ``not is_done``: prompt_toolkit clears its
+                # future on the way out, which makes ``is_done`` read False again once the
+                # app has already finished — and ``exit()`` on a finished app raises. This
+                # ``finally`` now also runs *after* the app is gone (the quit chords exit it
+                # from under us and ``run`` then cancels this task), so it has to tell "still
+                # up" from "already down" rather than "not yet finished".
+                if self._app is not None and self._app.is_running:
                     self._app.exit()
 
         def pre_run() -> None:
-            asyncio.ensure_future(driver())
+            task["driver"] = asyncio.ensure_future(driver())
 
         # Don't let prompt_toolkit install its own loop exception handler: on any stray
         # background-task error it prints a traceback and a "Press ENTER to continue..."
@@ -1106,6 +1300,20 @@ class TuiSession:
         # file log (see :func:`meshterm.persistence.logging.configure_logging`) and never
         # touches the screen. Errors from ``main`` still propagate via ``driver``/``box``.
         await self._app.run_async(pre_run=pre_run, set_exception_handler=False)
+        # The app can also exit from *under* the driver: the quit chords (^Q/^C) call
+        # ``Application.exit`` straight from the key handler, so ``run_async`` returns while
+        # ``main`` is still parked on whatever screen was up. Left alone, that coroutine is
+        # simply abandoned mid-await and its ``finally`` never runs — which is where the
+        # history and chat runs are closed, the background services stopped, and the exit
+        # watchdog armed. Cancel it and wait for the unwind so quitting from anywhere tears
+        # down exactly as much as quitting from the menu does.
+        driver_task = task.get("driver")
+        if driver_task is not None and not driver_task.done():
+            driver_task.cancel()
+            try:
+                await driver_task
+            except asyncio.CancelledError:
+                pass
         if "exc" in box:
             raise box["exc"]
 
@@ -1465,8 +1673,8 @@ class TuiSession:
         just the screen actions: right Ctrl-V pastes into a compose line instead of typing a
         ``v``, right Ctrl-C quits.
 
-        The two session-level actions are answered here rather than forwarded — no screen ever
-        sees ``quit`` or ``paste_clipboard``.
+        The three session-level actions are answered here rather than forwarded — no screen
+        ever sees ``to_menu``, ``quit`` or ``paste_clipboard``.
 
         The repaint keeps prompt_toolkit's fast differential paint; a frame carrying a glyph
         the terminal may draw narrower than pt reserves for it (an emoji) upgrades itself to a
@@ -1493,6 +1701,13 @@ class TuiSession:
             action = _CTRL_CHORDS[action]
         elif action == "text" and data.lower() in _CTRL_LETTER_CHORDS and _right_ctrl_down():
             action, data = _CTRL_LETTER_CHORDS[data.lower()], ""
+        if action == "to_menu":
+            # Pop every frame at once (^W). Refused over a dialog or work in flight; see
+            # request_pop_all. The repaint below is still wanted either way — a refusal
+            # changes nothing, and an armed unwind is about to change everything.
+            self.request_pop_all()
+            self.invalidate()
+            return
         if action == "quit":
             if self._app is not None:
                 self._app.exit()

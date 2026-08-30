@@ -233,7 +233,13 @@ class _KeylessDialog(Screen):
     **empty** rather than dim when the action is not a thing on this screen *at all* —
     dim is for a thing that just isn't available this paint — so these dialogs draw the
     bare key numbers (see :mod:`~meshterm.ui.tui.fkeys`).
+
+    Every one of them is also :attr:`~meshterm.ui.tui.screen.Screen.modal`: a prompt is an
+    unanswered question, so the pop-all key (^W) declines to unwind past it and the reader
+    answers or Escs out first.
     """
+
+    modal = True
 
     @property
     def fkey_lane(self):

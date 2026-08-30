@@ -26,6 +26,31 @@ from .spinner import Spinner
 #: legitimately selected ``None`` value.
 CANCEL = object()
 
+#: Sentinel the session resolves the top screen's future with when the pop-all key is
+#: pressed (^W). It is never a legitimate result: every navigation boundary that sees it
+#: turns it straight into :class:`PopToMenu`, so no caller ever has to test for it.
+POP_ALL = object()
+
+
+class PopToMenu(BaseException):
+    """Raised through every awaiting navigation frame to unwind to the main menu.
+
+    The whole realized path is a stack of ``await``\ s — a screen's caller awaiting its
+    result, that caller's caller awaiting *it* — so the one way to leave every frame at
+    once is to raise through them all. Each frame pops its own screen in a ``finally`` on
+    the way out, which is exactly the strict single-pop discipline applied N times: no
+    screen is ever dropped without its owner unwinding.
+
+    It derives from :class:`BaseException`, not :class:`Exception`, for the same reason
+    :class:`asyncio.CancelledError` does: the app is full of ``except Exception`` guards
+    that stop a misbehaving tool from taking down the menu
+    (:func:`~meshterm.ui.menu._run_selection` is the widest), and an unwind must pass
+    through them rather than be swallowed and reported as a tool failure. ``finally``
+    blocks still run, so nothing leaks.
+
+    Caught in exactly one place — the main menu loop, which is the unwind's destination.
+    """
+
 
 class Screen:
     """Base class for every TUI layer.
@@ -37,6 +62,14 @@ class Screen:
         future: Resolved with the screen's result (or :data:`CANCEL`) when it commits.
         floating: Whether the session should draw this screen as a centered dialog over
             the dimmed screen beneath it (deeper layers float; the base does not).
+        modal: Whether this layer is a *dialog* — a prompt or a running operation that
+            owns the keyboard until it is answered or finishes. Distinct from
+            :attr:`floating`, which is only about how the layer is drawn: an ordinary
+            select list floats as a box and is not modal, while a progress dialog is
+            modal and a full-frame busy splash is modal without floating at all. The
+            pop-all key (^W) refuses to fire while a modal layer is on top, so an unwind
+            can never blow past an unanswered question or yank the stack out from under
+            work in flight.
         grow_only: Whether a floating dialog may only ever grow. Its box is sized to the
             tallest body — and, for a natural-width dialog, the widest — it has shown, not
             the current one, so a screen whose content swings as it changes (the packet
@@ -55,6 +88,7 @@ class Screen:
     title: str = ""
     footer_hint: str = "Esc back"
     floating: bool = True
+    modal: bool = False
     grow_only: bool = False
     chrome: bool = True
     banner: Optional[Sequence[str]] = None
@@ -587,6 +621,7 @@ class BusyScreen(Screen):
 
     footer_hint = "working…"
     floating = False
+    modal = True  # work in flight owns the keyboard; ^W must not unwind out from under it
 
     @property
     def fkey_lane(self):

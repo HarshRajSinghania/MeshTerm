@@ -35,6 +35,7 @@ from .widgets import battery_cell
 from .tui import (
     CANCEL,
     Choice,
+    PopToMenu,
     ReconnectDialog,
     ScrollScreen,
     SelectScreen,
@@ -459,104 +460,161 @@ async def _unpair_on_exit(ctx: AppContext) -> None:
 async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     """Show the tool menu and run selections until the user quits.
 
+    The menu is the app's navigation **root**: it is built once and kept for the whole
+    session, so the cursor, any typed filter and the scroll offset are simply still there
+    when a tool closes — no ``default=`` restore, which could only ever recover the cursor.
+    It is also where the pop-all key lands: ^W raises
+    :class:`~meshterm.ui.tui.screen.PopToMenu` through every frame the user had opened, and
+    this is the one place that catches it.
+
+    The menu is still *popped* while a full-screen tool runs (only a ``popup`` tool floats
+    over it). That is presentation, not navigation — the tool would hide it anyway — and the
+    screen object outliving the pop is what makes returning feel like a pop rather than a
+    rebuild.
+
     Args:
         ctx: The shared application context.
         session: The running TUI session.
     """
-    last_selection: str | None = None
+    # Two aligned columns — tool name, then its muted description — with no header
+    # line: these are commands, not tabular data, so the alignment alone carries it.
+    tools = [tool for tool in all_tools() if tool.menu_visible]
+
+    def _label(tool) -> str:  # noqa: ANN001 - registry Tool; typed at the source
+        title = tool.title or tool.name
+        icon = command_icon(tool.icon)
+        return f"{icon} {title}" if icon else title
+
+    name_w = max((cell_len(_label(tool)) for tool in tools), default=0)
+    items: list = []
+    current_category: str | None = None
+    for tool in tools:
+        if tool.category != current_category:
+            current_category = tool.category
+            items.append(section_heading(current_category))
+        label = _label(tool)
+        row = Text(label)
+        row.append(" " * (name_w - cell_len(label) + 2))
+        row.append(tool.help, style="muted")
+        # The tool's name is the row's identity and always fits; only the description
+        # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).
+        items.append(Choice(title=row, value=tool.name, hscroll_from=name_w + 2))
+    items.append(Separator(" "))
+    items.append(Choice(title=command_label("🚪 Quit"), value="__quit__"))
+
+    # Drive the menu list ourselves (rather than via session.select) so it stays on the
+    # stack while the quit dialog floats over it: the confirm is drawn as a centered box
+    # on top of the still-visible menu, not as a screen that replaces it.
+    menu = SelectScreen(
+        "What would you like to do?",
+        items,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc quit",
+    )
+    session.set_root(menu)
     loop = asyncio.get_running_loop()
-    while True:
-        # Two aligned columns — tool name, then its muted description — with no header
-        # line: these are commands, not tabular data, so the alignment alone carries it.
-        tools = [tool for tool in all_tools() if tool.menu_visible]
+    try:
+        while True:
+            try:
+                await _menu_round(ctx, session, menu, tools, loop)
+            except _Quit as chosen:
+                ctx.unpair_on_exit = chosen.unpair
+                return
+            except PopToMenu:
+                # ^W from somewhere deep. Every frame between there and here has already
+                # popped itself on the way out; nothing is left to do but disarm and redraw
+                # the menu the user asked for.
+                session.unwound()
+    finally:
+        session.set_root(None)
 
-        def _label(tool) -> str:  # noqa: ANN001 - registry Tool; typed at the source
-            title = tool.title or tool.name
-            icon = command_icon(tool.icon)
-            return f"{icon} {title}" if icon else title
 
-        name_w = max((cell_len(_label(tool)) for tool in tools), default=0)
-        items: list = []
-        current_category: str | None = None
-        for tool in tools:
-            if tool.category != current_category:
-                current_category = tool.category
-                items.append(section_heading(current_category))
-            label = _label(tool)
-            row = Text(label)
-            row.append(" " * (name_w - cell_len(label) + 2))
-            row.append(tool.help, style="muted")
-            # The tool's name is the row's identity and always fits; only the description
-            # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).
-            items.append(Choice(title=row, value=tool.name, hscroll_from=name_w + 2))
-        items.append(Separator(" "))
-        items.append(Choice(title=command_label("🚪 Quit"), value="__quit__"))
+class _Quit(Exception):
+    """The user confirmed the quit dialog; ``unpair`` says whether to drop the OS bond too.
 
-        # Drive the menu list ourselves (rather than via session.select) so it stays on the
-        # stack while the quit dialog floats over it: the confirm is drawn as a centered box
-        # on top of the still-visible menu, not as a screen that replaces it. Re-highlight the
-        # tool the user just backed out of so returning lands the cursor where they left.
-        menu = SelectScreen(
-            "What would you like to do?",
-            items,
-            default=last_selection,
-            footer_hint="↑↓ move · type to filter · Enter select · Esc quit",
-        )
-        menu.future = loop.create_future()
-        session.push(menu)
-        ran_over_menu = False
-        try:
-            selection = await menu.future
-            if selection is CANCEL:  # Esc at the top level
-                selection = None
-            # Both picking "quit" and pressing Esc ask to leave; confirm on a dialog floating
-            # over the (still-pushed) menu so a stray key doesn't drop the user out. Cancel
-            # (Esc) sits left of Quit (Enter); Quit starts highlighted so Enter commits it.
-            if selection in (None, "__quit__"):
-                # Offer to drop the OS pairing on the way out, but only when there is a live
-                # Bluetooth bond to drop — never on serial, an open (PIN-less) companion, or a
-                # platform we can't unpair. The extra button sits between Cancel and Quit and is
-                # never the default, so it takes a deliberate choice, not a stray Enter.
-                unpairable = await _can_unpair(ctx)
-                buttons = [("Cancel", "cancel")]
-                if unpairable:
-                    buttons.append(("Unpair & quit", "unpair"))
-                buttons.append(("Quit", "quit"))
-                choice = await session.button_dialog(
-                    "Are you sure you want to quit?",
-                    buttons,
-                    title="Quit MeshTerm",
-                    default=len(buttons) - 1,  # highlight Quit
-                    footer_hint="Enter quit · Esc cancel",
-                    prompt_style="warn",
-                    button_style="selected",
-                    button_idle_style="muted",
-                    border_style="warn",
-                )
-                if choice == "unpair":
-                    # Forget the OS bond as we leave; the disconnect must happen first, so the
-                    # actual unpair is deferred to teardown (see run_menu). The remembered-device
-                    # record is intentionally kept — the device just asks for its PIN again.
-                    ctx.unpair_on_exit = True
-                    return
-                if choice == "quit":
-                    return
-                # Cancel (button or Esc → None). Keep the cursor on "quit" when that is what
-                # they chose, so a follow-up attempt lands where they expect.
-                if selection == "__quit__":
-                    last_selection = "__quit__"
-                continue
-            last_selection = selection
-            # A popup tool runs while the menu is still pushed, so its prompts and
-            # result float over it as modal dialogs instead of replacing the screen.
-            tool = next((t for t in tools if t.name == selection), None)
-            if tool is not None and tool.popup:
-                ran_over_menu = True
-                await _run_selection(ctx, selection)
-        finally:
-            session.pop(menu)
-        if not ran_over_menu:
+    A menu round runs a whole tool inside itself, so "the user chose Quit" cannot be spelled
+    as a ``return`` — the loop would just show the menu again. It is raised instead, and
+    caught in the one frame that owns the decision to leave.
+    """
+
+    def __init__(self, *, unpair: bool) -> None:
+        """Record whether the OS pairing should be dropped on the way out."""
+        super().__init__("quit")
+        self.unpair = unpair
+
+
+async def _menu_round(
+    ctx: AppContext,
+    session: TuiSession,
+    menu: SelectScreen,
+    tools: list,
+    loop: "asyncio.AbstractEventLoop",
+) -> None:
+    """Show the menu once, then run whatever it committed to.
+
+    Split out of :func:`_menu_loop` so the whole of a round — the tool run included — sits
+    inside one ``try``, and an unwind raised anywhere in it lands on the menu rather than
+    escaping past the loop.
+
+    Args:
+        ctx: The shared application context.
+        session: The running TUI session.
+        menu: The session-long menu screen (pushed here, popped before the tool runs).
+        tools: The menu-visible tools, in the order their rows were built.
+        loop: The running event loop, for the menu's per-round future.
+
+    Raises:
+        _Quit: If the user confirmed the quit dialog.
+        PopToMenu: If ^W was pressed inside whatever this round ran.
+    """
+    menu.future = loop.create_future()
+    session.push(menu)
+    ran_over_menu = False
+    try:
+        selection = await menu.future
+        if selection is CANCEL:  # Esc at the top level
+            selection = None
+        # Both picking "quit" and pressing Esc ask to leave; confirm on a dialog floating
+        # over the (still-pushed) menu so a stray key doesn't drop the user out. Cancel
+        # (Esc) sits left of Quit (Enter); Quit starts highlighted so Enter commits it.
+        if selection in (None, "__quit__"):
+            # Offer to drop the OS pairing on the way out, but only when there is a live
+            # Bluetooth bond to drop — never on serial, an open (PIN-less) companion, or a
+            # platform we can't unpair. The extra button sits between Cancel and Quit and is
+            # never the default, so it takes a deliberate choice, not a stray Enter.
+            unpairable = await _can_unpair(ctx)
+            buttons = [("Cancel", "cancel")]
+            if unpairable:
+                buttons.append(("Unpair & quit", "unpair"))
+            buttons.append(("Quit", "quit"))
+            choice = await session.button_dialog(
+                "Are you sure you want to quit?",
+                buttons,
+                title="Quit MeshTerm",
+                default=len(buttons) - 1,  # highlight Quit
+                footer_hint="Enter quit · Esc cancel",
+                prompt_style="warn",
+                button_style="selected",
+                button_idle_style="muted",
+                border_style="warn",
+            )
+            # "Unpair & quit" forgets the OS bond as we leave; the disconnect must happen
+            # first, so the actual unpair is deferred to teardown (see run_menu). The
+            # remembered-device record is intentionally kept — the device just asks for its
+            # PIN again. Cancel (button or Esc → None) ends the round and redraws the menu,
+            # whose cursor never moved off the row they came from.
+            if choice in ("unpair", "quit"):
+                raise _Quit(unpair=choice == "unpair")
+            return
+        # A popup tool runs while the menu is still pushed, so its prompts and
+        # result float over it as modal dialogs instead of replacing the screen.
+        tool = next((t for t in tools if t.name == selection), None)
+        if tool is not None and tool.popup:
+            ran_over_menu = True
             await _run_selection(ctx, selection)
+    finally:
+        session.pop(menu)
+    if not ran_over_menu:
+        await _run_selection(ctx, selection)
 
 
 async def _startup(ctx: AppContext) -> bool:
