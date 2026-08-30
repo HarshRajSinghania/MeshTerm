@@ -35,6 +35,15 @@ ESC = "\x1b"
 ENTER = "\r"
 
 
+def _async_list(items):
+    """A zero-argument async stub returning a fresh copy of ``items`` (a devstate read)."""
+
+    async def read():
+        return list(items)
+
+    return read
+
+
 def _session(inp) -> TuiSession:
     """A headless session driven by a pipe, rendering nowhere."""
     return TuiSession(input=inp, output=DummyOutput())
@@ -182,6 +191,78 @@ async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkey
 
     assert depths == [1], "the picker is still on the stack while the trace screen runs"
     assert session._stack == [], "and the visit pops it on the way out"
+
+
+async def _screen_at(session: TuiSession, depth: int, timeout: float = 2.0):
+    """Spin the loop until the stack is exactly ``depth`` deep, then return its top screen.
+
+    Lets a test drive a nested flow by resolving each screen in turn, without depending on
+    when a piped keystroke happens to be read.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while len(session._stack) != depth:
+        if loop.time() > deadline:  # pragma: no cover - only on a regression
+            raise AssertionError(f"stack never reached depth {depth}: {session._stack}")
+        await asyncio.sleep(0)
+    return session._stack[-1]
+
+
+async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) -> None:
+    """The two-picker entry flow is a stack: sweep over target list over node list.
+
+    Both pickers used to be gathered in ``prompt_params`` and popped before the sweep
+    opened, so Esc from anywhere in the flow landed on the main menu — and picking a second
+    target meant reopening the tool and re-picking the node to tune.
+    """
+    from meshterm.core.models import NODE_TYPE_REPEATER, Contact
+    from meshterm.tools.tx_optimize import TxOptimizeTool
+    from meshterm.ui.surface import TuiUi
+
+    contacts = [
+        Contact(
+            name="YUL-Cartierville", public_key="3d" + "0" * 62, key_prefix="3d",
+            node_type=NODE_TYPE_REPEATER,
+        ),
+        Contact(name="YUL-Poly", public_key="a1" + "0" * 62, key_prefix="a1"),
+    ]
+
+    class _Ctx:
+        admin_store = type("A", (), {"get": staticmethod(lambda _c: None)})()
+        devstate = type("D", (), {"contacts": staticmethod(_async_list(contacts))})()
+
+    ctx = _Ctx()
+    swept: list[tuple[str, str, int]] = []
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        ctx.ui = TuiUi(session)
+
+        async def fake_sweep(_ctx, *, admin_node, target_label, target_hash):
+            """Stand in for the sweep screen: note who it tunes and what is under it."""
+            swept.append((admin_node.name, target_label, len(session._stack)))
+            return {"best": 20}
+
+        monkeypatch.setattr("meshterm.ui.tx_screen.open_tx_optimize", fake_sweep)
+
+        async def main() -> None:
+            run = asyncio.ensure_future(TxOptimizeTool()._run_live(ctx))
+            node_list = await _screen_at(session, 1)
+            node_list.resolve("YUL-Cartierville")
+            target_list = await _screen_at(session, 2)
+            target_list.resolve("YUL-Poly")
+            while not swept:
+                await asyncio.sleep(0)
+            # Esc from the sweep leaves the target list up; Esc there, the node list.
+            target_list.resolve(CANCEL)
+            node_list.resolve(CANCEL)
+            result = await asyncio.wait_for(run, timeout=2)
+            assert result.summary == {"best": 20}, "the last sweep's summary comes back"
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert swept == [("YUL-Cartierville", "YUL-Poly", 2)], "both pickers under the sweep"
+    assert session._stack == [], "and both visits pop on the way out"
 
 
 # --- refreshing a visited list's rows ----------------------------------------

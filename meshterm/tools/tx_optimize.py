@@ -46,35 +46,20 @@ class TxOptimizeTool(Tool):
     order = 20  # like Repeater admin: a remote radio, changed over the mesh
 
     async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
-        """Pick the tuned link for the live sweep: the admin node, then the target.
+        """Nothing to gather here — both pickers live inside :meth:`run`.
 
-        Everything else — route, range, step, samples — is adjusted on the armed-idle
-        sweep screen itself, so the entry flow is two quick pickers, not a typed path.
+        Each has to *stay pushed* while what it opens runs, so that Esc walks back down the
+        entry flow one list at a time instead of dropping to the menu from wherever it is
+        pressed. A prompt gathered here would resolve — and pop — before the tool ran, so
+        the two pickers moved into :meth:`_run_live` with the loops that own them.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"live": True, "admin": name, "target": name}``, or ``None`` on cancel.
+            ``{"live": True}`` — the menu's marker for the interactive path.
         """
-        from ..ui.admin_picker import pick_admin_node
-
-        # Through the session cache: this two-picker entry flow runs on every open, and the
-        # contacts table is a slow read on a busy node (see
-        # :class:`~meshterm.services.device_state.DeviceState`).
-        contacts = await ctx.devstate.contacts()
-        admin = await pick_admin_node(
-            ctx,
-            contacts,
-            title="TX optimize — node to tune",
-            prompt="Whose transmit power gets tuned (you need its admin password):",
-        )
-        if admin is None:
-            return None
-        target = await _pick_target(ctx, contacts, admin)
-        if target is None:
-            return None
-        return {"live": True, "admin": admin.name, "target": target}
+        return {"live": True}
 
     async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run — without the outer run row on the live path.
@@ -99,7 +84,8 @@ class TxOptimizeTool(Tool):
 
         Args:
             ctx: Shared application context.
-            params: ``live`` + ``admin``/``target`` from the menu pickers; or ``path``,
+            params: ``live`` from the menu (both nodes are picked on their own
+                screens); or ``path``,
                 ``samples``, ``tx_min``, ``tx_max``, ``step``, ``apply``, optional
                 ``password``/``viz``, and the injected ``_run_id`` from the CLI.
 
@@ -107,35 +93,116 @@ class TxOptimizeTool(Tool):
             A :class:`ToolResult` with the optimum and any chart path.
         """
         if params.get("live"):
-            return await self._run_live(ctx, params)
+            return await self._run_live(ctx)
         return await self._run_cli(ctx, params)
 
     # -- interactive (menu) ---------------------------------------------------------
 
-    async def _run_live(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Resolve the picked link and hand off to the armed-idle sweep screen.
+    async def _run_live(self, ctx: AppContext) -> ToolResult:
+        """Walk the entry flow as a stack: node list, target list, then the sweep screen.
+
+        Both pickers **stay pushed** for the whole visit, so the flow reads back the way it
+        was entered: Esc from the sweep lands on the *measure at* list it was launched from,
+        Esc there lands on the node list, and Esc there leaves for the menu. Each list keeps
+        its cursor, its filter and its scroll, because it is the same screen object
+        throughout. They used to be one-shot prompts gathered in ``prompt_params``, both
+        popped before the sweep opened — so a single Esc from anywhere in the flow landed on
+        the main menu, and tuning a second target meant reopening the tool and re-picking
+        the node.
 
         No login here: the screen logs in inside the first Sweep commit, so backing
         out of an idle screen never touched the radio beyond the contact reads.
 
         Args:
             ctx: Shared application context.
-            params: ``admin`` and ``target`` — the picker's contact names (the target
-                may also be a typed hex prefix).
 
         Returns:
             A :class:`ToolResult` echoing the last sweep's recorded summary.
         """
+        from ..ui.admin_picker import admin_node_visit
+
+        # Through the session cache: this entry flow runs on every open, and the contacts
+        # table is a slow read on a busy node (see
+        # :class:`~meshterm.services.device_state.DeviceState`).
+        contacts = await ctx.devstate.contacts()
+        summary: dict[str, Any] = {}
+        async with admin_node_visit(
+            ctx,
+            contacts,
+            title="TX optimize — node to tune",
+            prompt="Whose transmit power gets tuned (you need its admin password):",
+        ) as picker:
+            if picker is None:  # nothing offerable — the visit has already said so
+                return ToolResult(summary={})
+            while True:
+                admin_node = await picker.pick()
+                if admin_node is None:  # Esc — out to the menu
+                    return ToolResult(summary=summary)
+                summary = await self._measure_visit(ctx, contacts, admin_node) or summary
+
+    async def _measure_visit(
+        self, ctx: AppContext, contacts: list[Contact], admin_node: Contact
+    ) -> dict[str, Any]:
+        """Keep the *measure at* list pushed while sweeps run above it.
+
+        The middle frame of the entry flow: one round per target, so sweeping the same tuned
+        node against a second target is a pick, not a re-entry. Esc closes the list and hands
+        back to the node picker underneath.
+
+        Args:
+            ctx: Shared application context.
+            contacts: The device's known contacts.
+            admin_node: The already-picked node whose power gets swept.
+
+        Returns:
+            The last sweep's summary, or an empty dict if none ran.
+        """
+        from ..ui.surface import TuiUi
+        from ..ui.tui import SelectScreen
+        from ..ui.tui.screen import CANCEL
+
+        items = _target_items(contacts, admin_node)
+        if not items or not isinstance(ctx.ui, TuiUi):
+            # No other contact to measure at: a typed hex key prefix is the only way in, and
+            # a one-shot prompt has no list under it to come back to.
+            entered = await ctx.ui.text(
+                "Target node",
+                prompt=f"Name or hex key prefix of the node that hears {admin_node.name}:",
+            )
+            target = entered.strip() if entered else ""
+            return await self._sweep(ctx, contacts, admin_node, target) if target else {}
+
+        screen = SelectScreen(
+            "TX optimize — measure at",
+            items,
+            prompt=f"The node whose reception of {admin_node.name} gets optimized:",
+            wrap=False,
+        )
+        summary: dict[str, Any] = {}
+        async with ctx.ui.session.stay(screen) as visit:
+            while True:
+                chosen = await visit.result()
+                if chosen is CANCEL or chosen is None:  # Esc — back to the node list
+                    return summary
+                summary = await self._sweep(ctx, contacts, admin_node, str(chosen)) or summary
+
+    @staticmethod
+    async def _sweep(
+        ctx: AppContext, contacts: list[Contact], admin_node: Contact, target: str
+    ) -> dict[str, Any]:
+        """Open the armed-idle sweep screen for one picked link and return its summary.
+
+        Args:
+            ctx: Shared application context.
+            contacts: The device's known contacts (to resolve the target's key).
+            admin_node: The node whose transmit power gets swept.
+            target: The target's contact name, or a typed hex key prefix.
+
+        Returns:
+            The sweep screen's recorded summary (empty if nothing was swept).
+        """
         from ..ui.tx_screen import open_tx_optimize
 
-        device = await ctx.device()
-        contacts = await ctx.devstate.contacts()  # the session cache; no re-read
-        admin_node = next(
-            (c for c in contacts if c.name == str(params["admin"])), None
-        )
-        if admin_node is None:
-            raise DeviceCommandError(f"unknown contact: {params['admin']!r}")
-        target = str(params["target"])
         target_contact = next((c for c in contacts if c.name == target), None)
         if target_contact is not None:
             target_label = target_contact.name
@@ -144,13 +211,12 @@ class TxOptimizeTool(Tool):
             target_label = target
             target_hash = target  # a typed hex prefix stands for itself
 
-        summary = await open_tx_optimize(
+        return await open_tx_optimize(
             ctx,
             admin_node=admin_node,
             target_label=target_label,
             target_hash=target_hash,
         )
-        return ToolResult(summary=summary)
 
     async def _login(
         self, ctx: AppContext, admin_node: Contact, params: dict[str, Any]
@@ -402,33 +468,25 @@ def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Optional[Contac
     return None
 
 
-async def _pick_target(
-    ctx: AppContext, contacts: list[Contact], admin: Contact
-) -> Optional[str]:
-    """Pick the target the tuned node's signal is measured at, by recency heard.
+def _target_items(contacts: list[Contact], admin: Contact) -> list:
+    """The *measure at* list's rows, ordered by how recently each node was heard.
+
+    Rows carry the contact's **name** as their value, since a typed hex prefix stands in the
+    same place (see :meth:`TxOptimizeTool._sweep`). Empty when the tuned node is the only
+    contact there is — the caller falls back to a typed prefix.
 
     Args:
-        ctx: Shared application context (for the UI surface).
         contacts: The device's known contacts.
         admin: The already-picked tuned node (excluded — it can't measure itself).
 
     Returns:
-        The chosen contact name, or ``None`` if cancelled. With no other contacts,
-        falls back to a free-text prompt so a hex key prefix can be typed.
+        One :class:`~meshterm.ui.tui.select.Choice` per other contact, freshest first.
     """
+    from rich.text import Text
+
     from ..ui.theme import name_style
     from ..ui.tui import Choice
     from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
-
-    candidates = [c for c in contacts if c.name != admin.name]
-    if not candidates:
-        entered = await ctx.ui.text(
-            "Target node",
-            prompt=f"Name or hex key prefix of the node that hears {admin.name}:",
-        )
-        return entered.strip() if entered else None
-
-    from rich.text import Text
 
     def row(contact: Contact) -> Any:
         # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
@@ -443,20 +501,13 @@ async def _pick_target(
         )
         return Choice(title=label, value=contact.name)
 
-    items: list = [
+    return [
         row(c)
         for c in sorted(
-            candidates,
+            (c for c in contacts if c.name != admin.name),
             key=lambda c: -(c.last_seen.timestamp() if c.last_seen else 0.0),
         )
     ]
-    choice = await ctx.ui.select(
-        "TX optimize — measure at",
-        items,
-        prompt=f"The node whose reception of {admin.name} gets optimized:",
-        wrap=False,
-    )
-    return str(choice) if choice is not None else None
 
 
 def _fmt_snr(snr: Optional[float]) -> str:
