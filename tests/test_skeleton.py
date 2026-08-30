@@ -320,6 +320,8 @@ async def test_mock_device_honors_forced_path() -> None:
 
 async def test_mock_device_remove_contact_drops_it_from_the_table() -> None:
     """Removing a contact deletes it from the device's table (matched by public key)."""
+    from meshterm.core.connection import ContactNotOnDeviceError
+
     device = MockDevice()
     await device.connect()
     before = await device.get_contacts()
@@ -328,8 +330,10 @@ async def test_mock_device_remove_contact_drops_it_from_the_table() -> None:
     after = await device.get_contacts()
     assert "Alice" not in {c.name for c in after}
     assert len(after) == len(before) - 1
-    # Removing one already gone is a no-op, not an error.
-    await device.remove_contact(alice)
+    # Removing one it no longer holds is refused the way firmware refuses it, so the
+    # screen's "wasn't on the device, removed here anyway" path is walkable on --mock.
+    with pytest.raises(ContactNotOnDeviceError):
+        await device.remove_contact(alice)
     assert len(await device.get_contacts()) == len(after)
 
 

@@ -82,6 +82,7 @@ from typing import TYPE_CHECKING, Optional
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..core.connection import ContactNotOnDeviceError
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
@@ -1454,7 +1455,9 @@ async def _remove_contact(
     Returns:
         ``True`` if the contact was removed, ``False`` if the user cancelled or the device
         refused (the refusal is shown, never swallowed — a contact still on the radio must
-        not vanish from the list).
+        not vanish from the list). A device that has no such contact is not a refusal: the
+        removal finishes on our side and says so
+        (:class:`~meshterm.core.connection.ContactNotOnDeviceError`).
     """
     from .surface import TuiUi
 
@@ -1474,6 +1477,21 @@ async def _remove_contact(
     device = await ctx.device()
     try:
         await device.remove_contact(contact)
+    except ContactNotOnDeviceError:
+        # Nothing to delete on the radio — the entry only ever existed in what MeshTerm
+        # remembers for this device (or the firmware dropped it since we read the table).
+        # That is not a failed removal: the contact still goes, and the reader is told why
+        # the device had no part in it, because "removed" would otherwise be a claim about
+        # a radio that never held it.
+        ctx.log.debug("contacts: %s was not on the device; removing ours", contact.name)
+        await session.message_dialog(
+            Text(
+                f"⚠ {label} wasn't in this device's contacts — removed from the ones "
+                "MeshTerm remembers for it.",
+                style="warn",
+            ),
+            title="Remove contact",
+        )
     except Exception as exc:  # noqa: BLE001 - a refused removal is reported, not raised
         ctx.log.debug("contacts: remove failed for %s: %s", contact.name, exc)
         await session.message_dialog(

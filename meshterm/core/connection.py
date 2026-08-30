@@ -174,6 +174,11 @@ class ContactNotOnDeviceError(DeviceCommandError):
     for it (see :mod:`meshterm.core.contact_store`): a contact the firmware has since
     dropped still lists, and only the send finds out it is gone.
 
+    :meth:`Device.remove_contact` raises it for the same lookup against the same table,
+    where it means the opposite thing: nothing left to delete on the radio. A removal
+    therefore *reports* it and carries on dropping the contact from what MeshTerm
+    remembers, rather than failing and leaving a row the reader cannot get rid of.
+
     Attributes:
         contact: The recipient the device could not find.
     """
@@ -535,8 +540,11 @@ class Device(ABC):
             node: The contact to remove.
 
         Raises:
+            ContactNotOnDeviceError: If the device holds no contact with that key — which
+                is not a failed removal but a removal with nothing left to do, so callers
+                drop it from what MeshTerm remembers and say so.
             DeviceCommandError: If the contact carries no public key to address it by, or
-                the device rejected the removal.
+                the device rejected the removal for any other reason.
         """
 
     @abstractmethod
@@ -1742,7 +1750,18 @@ class MeshCoreDevice(Device):
     async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
         mc = self._require()
         pub = self._node_pubkey(node)  # raises DeviceCommandError if it has no key
-        self._ok(await mc.commands.remove_contact(pub))
+        result = await mc.commands.remove_contact(pub)
+        if result is not None and getattr(result, "is_error", lambda: False)():
+            # A contact the firmware doesn't hold is the one rejection that isn't a
+            # failure: the list a screen removes from is the union of this table and the
+            # contacts MeshTerm remembers for the device, so the entry the reader is
+            # deleting may only ever have existed on our side. Same class the send path
+            # raises, for the same reason — the caller can finish the job.
+            if error_code(result) == _ERR_NOT_FOUND:
+                raise ContactNotOnDeviceError(node)
+            raise DeviceCommandError(
+                f"couldn't remove {node.name} from the device: {reject_reason(result)}"
+            )
 
     async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring
         info = await self.get_self_info()
@@ -2736,6 +2755,11 @@ class MockDevice(Device):
     async def remove_contact(self, node: Contact) -> None:  # noqa: D102 - inherited docstring
         await asyncio.sleep(0)
         key = self._mock_key(node)
+        # Firmware can only delete a contact it holds, and answers ERR_CODE_NOT_FOUND for
+        # one it doesn't; the simulator refuses the same way so the "wasn't on the device,
+        # removed here anyway" path is walkable without a radio.
+        if key not in {self._mock_key(c) for c in self._contacts}:
+            raise ContactNotOnDeviceError(node)
         self._contacts = [c for c in self._contacts if self._mock_key(c) != key]
 
     async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring

@@ -557,6 +557,61 @@ async def test_a_refused_removal_is_shown_and_the_contact_stays() -> None:
     assert forgotten == []  # the device still holds it, so neither do we forget it
 
 
+async def test_a_contact_the_device_never_held_is_still_removed_here() -> None:
+    """"Not on the device" is not a refusal — the removal finishes on our side, and says so.
+
+    The list a screen removes from is the union of the device's table and the contacts
+    MeshTerm remembers for it, so the entry may only ever have existed on our side (or the
+    firmware dropped it since we read). Failing there left a row the reader could not get
+    rid of. Instead the reader is told the device had no part in it, our half is forgotten,
+    and the visit ends on the contact like any other removal.
+    """
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.connection import ContactNotOnDeviceError
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _remove_contact
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    hub = Contact(name="Hub", public_key="3d" * 32, key_prefix="3d" * 6)
+    forgotten: list[tuple[str, str]] = []
+    invalidated: list[bool] = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            await asyncio.sleep(0)
+            raise ContactNotOnDeviceError(contact)
+
+    session = TuiSession()
+    ui = TuiUi(session)
+
+    async def _accepted(*a, **k):  # noqa: ANN001, ANN002, ANN003
+        return True
+
+    ui.dialog = _accepted  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.remove"),
+        contact_store=SimpleNamespace(
+            forget=lambda dev, key: forgotten.append((dev, key))
+        ),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
+        device=lambda: _device(_Device()),
+    )
+
+    task = asyncio.ensure_future(_remove_contact(ctx, hub, "cc" * 32, "Hub"))
+    told = await _step_until_screen(session, lambda s: "wasn't in this device" in _screen_text(s))
+    text = _screen_text(told)
+    assert "Hub" in text and "⚠" in text  # a warning, not the ✗ of a failed command
+    told.handle("escape")
+    assert await task is True
+    assert forgotten == [("cc" * 32, "3d" * 32)]
+    assert invalidated == [True]
+
+
 async def _true() -> bool:
     return True
 

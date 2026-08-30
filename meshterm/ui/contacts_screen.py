@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from ..core.connection import ContactNotOnDeviceError
 from .contactlist import ContactListScreen, ContactRow
 from .menus import marked_label, menu_rows
 from .tui import Choice, Separator
@@ -321,6 +322,12 @@ async def _purge_stale(ctx: "AppContext", self_key: str) -> int:
         for contact in victims:
             try:
                 await device.remove_contact(contact)
+            except ContactNotOnDeviceError:
+                # The device has no such contact, so the sweep's work for it is already
+                # done: this one is listed only because MeshTerm remembers it for the
+                # device. It still counts as purged — forgetting it below is what makes
+                # the row go away — and there is nothing here for the reader to fix.
+                ctx.log.debug("contacts: %s was not on the device; purging ours", contact.name)
             except Exception as exc:  # noqa: BLE001 - one bad removal shouldn't abort the sweep
                 failed += 1
                 ctx.log.debug("contacts: purge failed for %s: %s", contact.name, exc)
