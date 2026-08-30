@@ -33,14 +33,53 @@ a strict stack now; the rules are in CLAUDE.md under *Navigation — the stack*.
 - **F.** Still the one place the stack is cleared rather than unwound, and it now also
   disarms a pending ^W: a disconnect has already abandoned the flow that unwind was for.
 
-**Still open: D** (Esc's peel/leave split) and **G** (`popup` declared by hand). D is now
-the only thing left telling a reader what Esc does, and it is the reason `Esc Esc` was
-rejected as the pop-all key — on the map, the mesh walk and chat, Esc-Esc is already an
-ordinary peel-then-leave.
+**Resolved 2026-08-30 (second pass) — D, plus H and I, found by re-running the survey.**
+D is closed by peeling *everywhere*: the select list and the path composer now clear a
+standing filter on the first Esc and leave on the second, as the map and the walk always
+did, and the footer swaps its trailing verb to `Esc clear` while that is true. Two
+exceptions the first survey missed are closed with it — see **H** and **I** below.
+
+**Still open: G** (`popup` declared by hand). It is not navigation-visible: one tool
+floats over the menu, the rest replace it, and the result presenter separately infers the
+same thing from content.
 
 The point of the survey is that MeshTerm's navigation is *almost* uniform. The exceptions
 are few enough to list exhaustively, which means they can be decided one at a time rather
 than discovered one at a time.
+
+---
+
+## 0. Exceptions H and I — found 2026-08-30
+
+Two more shapes, neither in the original catalogue, both closed the day they were found.
+
+**H. A picker gathered in `prompt_params` pops before the screen it feeds.** A tool's
+`prompt_params` is a *one-shot*: whatever it opens resolves and pops before `run` is
+called. Three tools picked something there and then opened a screen, so the screen sat
+directly on the main menu and Esc from it skipped the list it had just been chosen from.
+
+| Site | What Esc did | Now |
+|---|---|---|
+| Trace target | sweep → **main menu**, skipping the target list | picker stays; Esc lands on the row it was launched from |
+| TX optimize | sweep → **main menu**; and the target list → **main menu**, not the node list | both pickers stay, nested; Esc walks the flow back one list at a time |
+| Chat | landed on a picker, but a rebuilt one (filter lost, cursor by `default=`) | one picker for the visit, rows swapped in place |
+
+The fix is A2's rule applied one level up: the loop that owns the picker moves into `run`,
+and `prompt_params` returns only the marker for the interactive path. Trace's picker also
+re-reads its `TRACED` lane after each walk (`ContactListScreen.update_rows`), because that
+is the column the list is sorted by and a returning trace changes it.
+
+**I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
+row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
+mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a
+chain as a stack; a trailing Cancel/verb confirm is deliberately left as a decision rather
+than a step. Sites: `channels._join_with_key`, `channels._edit`,
+`config_editor._stage_custom_var`, `courier._queue_flow`, `courier._pick_schedule`.
+
+Also closed in the same pass: the channel detail was the last screen rebuilt per round
+(A1's `default=cursor`, now `stay` + `replace_items`), which left `_menu_round` with no
+session path at all and shrank it to the sessionless select-and-dispatch it always was
+underneath — the last of §5's hand-rolled loops.
 
 ---
 
@@ -388,8 +427,10 @@ Every other `Cancel` in the app is one half of a real two-way choice.
 
 | # | Finding | Sites | Weight | Status |
 |---|---|---|---|---|
+| H | A picker gathered in `prompt_params` pops before the screen it feeds | 3 | **high** — Esc skipped a whole list | **done** 08-30 |
+| I | An entry chain of prompts abandons instead of stepping back | 5 | medium — loses typing, never surprises | **done** 08-30 |
 | A3 | Screen rebuilt per round, losing cursor (and node detail's tab) | 3 | **high** — felt on every visit | **done** 08-30 |
-| D | Esc peels the filter on 3 screens, leaves on 2 | 5 | **high** — same keys, opposite result | open |
+| D | Esc peels the filter on 3 screens, leaves on 2 | 5 | **high** — same keys, opposite result | **done** 08-30 |
 | E | Six spellings of the Back value; callers test three at once | 19 | medium — invisible to users, costly in code | done 08-29 |
 | C | Pop-then-re-push backdrop workaround | 5 | medium — an API gap, repeated | **done** 08-30 |
 | B | Peer hand-offs all flatten, but the rule is unwritten and node detail pays for it | 3 | medium | **done** 08-30 |
