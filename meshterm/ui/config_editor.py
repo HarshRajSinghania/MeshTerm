@@ -147,33 +147,28 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
     session = getattr(ctx.ui, "session", None)
     if session is None:  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the config editor is only available in the menu")
-    loop = asyncio.get_running_loop()
-
     pending: dict[str, Any] = {}  # setting key -> staged new value
     extra_ops: list[tuple] = []  # staged custom-variable ops, in order
-    cursor: Any = None  # the row to re-highlight, so the menu reopens where you left it
 
-    while True:
-        staged = len(pending) + len(extra_ops)
-        title, items = _menu_items(snapshot, pending, staged, policy)
-        menu = SelectScreen(
-            title, items, default=cursor, wrap=False,
-            footer_hint="↑↓ move · type to filter · Enter select · Esc back",
-        )
-        menu.future = loop.create_future()
-        session.push(menu)
-        # Dispatch the choice while the menu is still pushed, so a sub-prompt floats over
-        # it; the menu is always popped in the finally, even on an early return.
-        try:
-            choice = await menu.future
+    # The editor's rows *are* its data — each carries its staged ``current → new`` value and
+    # the title counts what is staged — so they are refreshed in place after every round
+    # (``replace_items``) rather than rebuilt as a new screen. One screen for the whole
+    # session means the typed filter survives editing a setting, not just the cursor.
+    title, items = _menu_items(snapshot, pending, 0, policy)
+    menu = SelectScreen(
+        title, items, wrap=False,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+    )
+    async with session.stay(menu) as visit:
+        while True:
+            staged = len(pending) + len(extra_ops)
+            choice = await visit.result()
             if choice is CANCEL:  # Esc at the menu
                 choice = _CANCEL
-            if choice not in (None, _CANCEL):
-                cursor = choice
 
             if choice in (None, _CANCEL):
                 if staged and not await confirm_discard(ctx, staged, verb="applying"):
-                    continue  # keep editing — the same menu is rebuilt next loop
+                    continue  # keep editing — the same menu, the same place in it
                 return None
             if choice == _APPLY:
                 ops: list[tuple] = []
@@ -194,8 +189,10 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                 await _stage_custom_var(ctx, custom, extra_ops)
             else:  # a setting key
                 await _stage_setting(ctx, choice, snapshot, pending)
-        finally:
-            session.pop(menu)
+            title, items = _menu_items(
+                snapshot, pending, len(pending) + len(extra_ops), policy
+            )
+            menu.replace_items(items, title=title)
 
 
 # --- rendering ---------------------------------------------------------------
@@ -679,18 +676,15 @@ async def device_actions(ctx: "AppContext") -> None:
     session = getattr(ctx.ui, "session", None)
     if session is None:  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("device actions are only available in the menu")
-    loop = asyncio.get_running_loop()
-    cursor: Any = None  # the row to re-highlight, so the menu reopens where you left it
-
-    while True:
-        menu = SelectScreen("Device actions", _action_items(), default=cursor, wrap=False)
-        menu.future = loop.create_future()
-        session.push(menu)
-        try:
-            choice = await menu.future
+    # One screen for the whole visit: the action rows are fixed, so nothing here needs
+    # rebuilding — and the cursor and any typed filter simply stay where the reader left them
+    # while each action's prompts float over the list.
+    menu = SelectScreen("Device actions", _action_items(), wrap=False)
+    async with session.stay(menu) as visit:
+        while True:
+            choice = await visit.result()
             if choice is CANCEL or choice is None:  # Esc
                 return
-            cursor = choice
             if choice == _SYNC_CLOCK:
                 await _sync_clock(ctx, device, snapshot)
             elif choice == _BACKUP:
@@ -707,8 +701,6 @@ async def device_actions(ctx: "AppContext") -> None:
             elif choice == _RESET:
                 if await _factory_reset(ctx, device, snapshot):
                     snapshot = await build_snapshot(device)
-        finally:
-            session.pop(menu)
 
 
 def _action_items() -> list:

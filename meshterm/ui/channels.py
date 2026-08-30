@@ -165,54 +165,77 @@ async def manage_channels(ctx: "AppContext") -> int:
     changes = 0
     highlight: Optional[object] = None
 
-    while True:
-        # Through the session cache — the slot probe walks every index and is one of the
-        # slowest reads on a screen open, so a screen opened after this one (or this one after
-        # another) reuses the one probe. A local copy so the mutation helpers below can work a
-        # working list; each mutation invalidates the cache (see below), so the next loop
-        # re-probes the fresh layout rather than trusting the stale copy.
+    slots: list = []
+
+    async def reload() -> tuple[str, list]:
+        """Re-probe the slot layout and rebuild the list's title and rows.
+
+        Through the session cache — the slot probe walks every index and is one of the
+        slowest reads on a screen open, so a screen opened after this one (or this one after
+        another) reuses the one probe. A local copy so the mutation helpers below can work a
+        working list; each mutation invalidates the cache (see ``handle``), so this re-probes
+        the fresh layout rather than trusting the stale copy.
+        """
+        nonlocal slots
         slots = list(await ctx.devstate.channel_slots())
-        title, items = _menu_items(ctx, slots, capacity, stats)
+        return _menu_items(ctx, slots, capacity, stats)
 
-        async def handle(choice: object) -> bool:
-            """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
-            nonlocal changes, highlight
-            if choice is None:  # Esc
-                return False
-            highlight = choice
-            before = changes
-            if choice == _CREATE:
-                changes += await _create_private(ctx, device, slots, capacity)
-            elif choice == _DEFAULT_PUBLIC:
-                changes += await _add_default_public(ctx, device, slots, capacity)
-            elif choice == _PUBLIC:
-                changes += await _add_public(ctx, device, slots, capacity)
-            elif choice == _JOIN:
-                changes += await _join_with_key(ctx, device, slots, capacity)
-            elif choice == _IMPORT:
-                changes += await _import_link(ctx, device, slots, capacity)
-            elif choice == _REORDER:
-                changes += await _reorder_channels(ctx, device, slots)
-            else:  # an existing slot index
-                slot = next((s for s in slots if s.idx == choice), None)
-                if slot is not None:
-                    changes += await _channel_detail(ctx, device, slot, stats)
-            if changes > before:
-                # A slot's occupant changed (created, re-keyed, cleared, or moved). Drop the
-                # session cache's channel list so the dashboard (and anything else reading it)
-                # re-reads the new layout instead of a stale copy.
-                ctx.devstate.invalidate_channels()
-                # Inbound messages carry only a slot index, which the chat service maps to a
-                # channel identity through a cache keyed by slot; refresh it now so a message
-                # on a reused/re-keyed slot is filed under the channel that's actually there
-                # and not the one that used to be — otherwise its transcript surfaces in the
-                # wrong chat.
-                await _refresh_chat_channels(ctx)
-            return True
+    async def handle(choice: object) -> bool:
+        """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
+        nonlocal changes, highlight
+        if choice is None:  # Esc
+            return False
+        highlight = choice
+        before = changes
+        if choice == _CREATE:
+            changes += await _create_private(ctx, device, slots, capacity)
+        elif choice == _DEFAULT_PUBLIC:
+            changes += await _add_default_public(ctx, device, slots, capacity)
+        elif choice == _PUBLIC:
+            changes += await _add_public(ctx, device, slots, capacity)
+        elif choice == _JOIN:
+            changes += await _join_with_key(ctx, device, slots, capacity)
+        elif choice == _IMPORT:
+            changes += await _import_link(ctx, device, slots, capacity)
+        elif choice == _REORDER:
+            changes += await _reorder_channels(ctx, device, slots)
+        else:  # an existing slot index
+            slot = next((s for s in slots if s.idx == choice), None)
+            if slot is not None:
+                changes += await _channel_detail(ctx, device, slot, stats)
+        if changes > before:
+            # A slot's occupant changed (created, re-keyed, cleared, or moved). Drop the
+            # session cache's channel list so the dashboard (and anything else reading it)
+            # re-reads the new layout instead of a stale copy.
+            ctx.devstate.invalidate_channels()
+            # Inbound messages carry only a slot index, which the chat service maps to a
+            # channel identity through a cache keyed by slot; refresh it now so a message
+            # on a reused/re-keyed slot is filed under the channel that's actually there
+            # and not the one that used to be — otherwise its transcript surfaces in the
+            # wrong chat.
+            await _refresh_chat_channels(ctx)
+        return True
 
-        if not await _menu_round(ctx, title, items, default=highlight, handle=handle):
-            return changes
-    # unreachable
+    # The list stays pushed for the whole visit: every sub-flow — creating a channel,
+    # importing a link, a slot's detail page — floats over it, and the rows are re-probed and
+    # swapped in place afterwards, so the highlight (and any typed filter) survives a layout
+    # that changed under it. A surface with no session — the plain CLI, scripted tests — has
+    # no stack to stay on and runs the same dispatcher a round at a time.
+    title, items = await reload()
+    session = getattr(ctx.ui, "session", None)
+    if session is None:
+        while True:
+            if not await _menu_round(ctx, title, items, default=highlight, handle=handle):
+                return changes
+            title, items = await reload()
+    menu = SelectScreen(title, items, wrap=False)
+    async with session.stay(menu) as visit:
+        while True:
+            choice = await visit.result()
+            if not await handle(None if choice is CANCEL else choice):
+                return changes
+            title, items = await reload()
+            menu.replace_items(items, title=title)
 
 
 async def _menu_round(

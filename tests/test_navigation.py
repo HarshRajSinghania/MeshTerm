@@ -119,6 +119,50 @@ async def test_a_visited_screen_is_armed_from_the_moment_it_is_pushed() -> None:
         await asyncio.wait_for(session.run(main()), timeout=5)
 
 
+# --- refreshing a visited list's rows ----------------------------------------
+
+
+def test_replace_items_keeps_the_filter_and_follows_the_highlighted_row() -> None:
+    """A list whose content is data can change under a reader without moving them.
+
+    The editors' rows carry live values and their titles count what is staged, so they have
+    to be rebuilt after every action. Rebuilding them as a whole new *screen* threw away the
+    typed filter and left the cursor to a ``default=`` restore; swapping the rows in place
+    keeps both, and follows the highlighted row by value wherever it moved to.
+    """
+    screen = SelectScreen(
+        "Editor · nothing staged",
+        [Choice("alpha", "a"), Choice("beta", "b"), Choice("gamma", "g")],
+    )
+    screen.handle("text", "a")  # filters to alpha / beta / gamma — all carry an "a"
+    screen.handle("down")  # …onto beta
+    assert screen._current_choice().value == "b"
+
+    # beta moves to the front and its label gains a staged value; the title recounts.
+    screen.replace_items(
+        [Choice("beta → 12", "b"), Choice("alpha", "a"), Choice("gamma", "g")],
+        title="Editor · 1 staged",
+    )
+    assert screen.title == "Editor · 1 staged"
+    assert screen._filter == "a", "the typed filter survives the swap"
+    assert screen._current_choice().value == "b", "the highlight followed its row"
+
+
+def test_replace_items_clamps_to_the_position_when_the_row_is_gone() -> None:
+    """Deleting the row you were on leaves you where it was, not back at the top."""
+    screen = SelectScreen("Queue", [Choice(name, name) for name in ("a", "b", "c", "d")])
+    for _ in range(2):
+        screen.handle("down")
+    assert screen._current_choice().value == "c"
+
+    screen.replace_items([Choice(name, name) for name in ("a", "b", "d")])
+    assert screen._current_choice().value == "d", "the row that slid into the gap"
+
+    # And a swap that empties the list entirely must not leave a stale index behind.
+    screen.replace_items([])
+    assert screen._current_choice() is None
+
+
 # --- ^W, the pop-all ---------------------------------------------------------
 
 

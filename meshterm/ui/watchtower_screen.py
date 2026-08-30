@@ -92,12 +92,14 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
         if (key := contact_watch_key(c)) is not None and c.node_type is not None
     }
     contact_key_of = make_name_key_resolver(contacts)
-    loop = asyncio.get_running_loop()
-    cursor: Any = None
-    while True:
-        # An alert's node type, by its label — the contact table's advertised type wins
-        # (freshest), a watched entry's stored type backfills, so an alert's name gets its
-        # glyph even for a node no longer in the device's contacts.
+
+    def rows() -> list:
+        """The current alert log and watch list, as menu rows.
+
+        An alert's node type comes by its label — the contact table's advertised type wins
+        (freshest), a watched entry's stored type backfills — so an alert's name gets its
+        glyph even for a node no longer in the device's contacts.
+        """
         type_by_name: dict[str, int] = {
             entry.name.casefold(): entry.node_type
             for entry in store.watched().values()
@@ -106,7 +108,7 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
         type_by_name.update(
             {c.name.casefold(): c.node_type for c in contacts if c.node_type is not None}
         )
-        items = _menu_items(
+        return _menu_items(
             store.alerts(),
             store.watched(),
             store.new_node_alerts,
@@ -114,27 +116,28 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
             key_of=contact_key_of,
             alert_type_of=lambda label: type_by_name.get(label.casefold()),
         )
-        menu = SelectScreen(
-            "Watchtower — alerts & watched nodes",
-            items,
-            default=cursor,
-            wrap=False,
-            hscroll=True,
-            # ←→ scroll is surfaced by the list itself, but only while the highlighted
-            # alert actually overflows the width (see SelectScreen.hscroll_hint) — and it
-            # slides the *message* alone: each row pins its own lanes (see _alert_lanes).
-            # The two section headings below earn the list its ^PgUp/^PgDn jumps and their
-            # F1/F2 chips for free (SelectScreen.fkey_lane); the hint has no room to name
-            # them beside the ←→ atom, and no other grouped list spells them out either.
-            footer_hint="↑↓ move · Enter select/acknowledge · Esc back",
-        )
-        menu.future = loop.create_future()
-        session.push(menu)
-        try:
-            choice = await menu.future
+
+    # One screen for the whole visit, its rows refreshed in place after each action — every
+    # one of them changes the list it was chosen from (an ack rewrites its row, a star adds
+    # one, Clear takes several away), and the highlight rides along to wherever its row went.
+    menu = SelectScreen(
+        "Watchtower — alerts & watched nodes",
+        rows(),
+        wrap=False,
+        hscroll=True,
+        # ←→ scroll is surfaced by the list itself, but only while the highlighted
+        # alert actually overflows the width (see SelectScreen.hscroll_hint) — and it
+        # slides the *message* alone: each row pins its own lanes (see _alert_lanes).
+        # The two section headings below earn the list its ^PgUp/^PgDn jumps and their
+        # F1/F2 chips for free (SelectScreen.fkey_lane); the hint has no room to name
+        # them beside the ←→ atom, and no other grouped list spells them out either.
+        footer_hint="↑↓ move · Enter select/acknowledge · Esc back",
+    )
+    async with session.stay(menu) as visit:
+        while True:
+            choice = await visit.result()
             if choice in (None, CANCEL):
                 return {"watched": len(store.watched()), "unacked": store.unacked_count()}
-            cursor = choice
             if choice == _WATCH:
                 await _pick_node(ctx, contacts)
             elif choice == _TOGGLE_NEW:
@@ -143,13 +146,11 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
                 store.ack_all()
             elif choice == _CLEAR:
                 store.clear_acked()
-                cursor = None  # the row itself disappears
             elif isinstance(choice, tuple) and choice[0] == "ack":
                 store.ack(int(choice[1]))
             elif isinstance(choice, tuple) and choice[0] == "node":
                 await _node_rules(ctx, str(choice[1]))
-        finally:
-            session.pop(menu)
+            menu.replace_items(rows())
 
 
 # --- the menu ---------------------------------------------------------------------------

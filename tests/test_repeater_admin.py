@@ -217,13 +217,14 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
 
 
 async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
-    """The admin-login password prompt floats over the picker, not an erased background.
+    """The admin-login password prompt floats over the picker itself, not a lookalike.
 
     Regression: ``_login`` ran on an empty stack (the picker was popped when it returned),
     so ``session.text`` pushed a *blank* base and the password box floated over an erased
-    frame. ``open_repeater_admin`` now redraws the node picker as a static backdrop and keeps
-    it pushed across the login, so the base under the floating prompt is the picker — the
-    picked node still highlighted — never a blank frame.
+    frame. That was patched by redrawing a second, identical ``SelectScreen`` as a static
+    backdrop; the picker now simply never leaves the stack, so the base under the prompt is
+    the list the pick came from — the same object, still highlighted on the row the reader
+    chose — and Esc out of the prompt is one pop back onto it rather than out of the flow.
     """
     ctx = tui_ctx
     session = ctx.ui.session
@@ -238,25 +239,32 @@ async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
         )
         assert picker is not None, "the node picker never opened"
 
-        picker.resolve("Yagi-Repeater")  # pick the repeater to administer
+        # Walk to the repeater's row and commit it, the way a reader does.
+        for _ in range(len(picker._items)):
+            current = picker._current_choice()
+            if current is not None and current.value == "Yagi-Repeater":
+                break
+            picker.handle("down")
+        picker.handle("enter")
         prompt = await _step_until(
             lambda: session._float_layers()[0] if session._has_float() else None
         )
         assert isinstance(prompt, TextScreen)  # the password box floats
 
-        base = session._base_screen()
-        assert isinstance(base, SelectScreen) and base.title == pick_title  # the picker backdrop
-        assert base is not picker  # a fresh redraw kept as the backdrop, not the popped picker
-        current = base._current_choice()  # the picked node stays highlighted behind the prompt
+        assert session._base_screen() is picker  # the very list, not a redrawn stand-in
+        current = picker._current_choice()  # still highlighted on the node being logged into
         assert current is not None and current.value == "Yagi-Repeater"
 
-        prompt.resolve(CANCEL)  # Esc — abandon the login
+        prompt.resolve(CANCEL)  # Esc — abandon the login…
+        again = await _step_until(lambda: session.top if session.top is picker else None)
+        assert again is picker, "…and land back on the list, one pop, place kept"
+        picker.handle("escape")  # Esc again leaves the flow
         result = await task
     finally:
         if not task.done():
             task.cancel()
 
-    assert result is None  # cancelling the password bows the flow out
+    assert result is None  # no node was ever administered
 
 
 # --- the command-line screen -----------------------------------------------------------

@@ -114,42 +114,46 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
         contacts = []
 
     store = ctx.courier_store
-    loop = asyncio.get_running_loop()
-    cursor: Any = None
-    while True:
-        menu = CourierOutboxScreen(ctx, default=cursor)
-        menu.future = loop.create_future()
-        session.push(menu)
+    # One screen for the whole visit, refreshed in place: the outbox already knows how to
+    # recompose its sections around the highlight (:meth:`CourierOutboxScreen.refresh`), which
+    # is what the once-a-second ticker calls while the list is open. Driving it through a
+    # visit means every sub-flow — queueing a message, an entry's actions, the clear confirm —
+    # floats over the list and lands back on the row it was opened from, and the ticker is
+    # started once rather than per round.
+    menu = CourierOutboxScreen(ctx)
 
-        async def tick(screen: "CourierOutboxScreen" = menu) -> None:
-            """Fold store changes in and repaint, once a second, while the list is open."""
-            while True:
-                await asyncio.sleep(_REFRESH_S)
-                screen.refresh()
-                session.invalidate()
+    async def tick() -> None:
+        """Fold store changes in and repaint, once a second, while the list is open."""
+        while True:
+            await asyncio.sleep(_REFRESH_S)
+            menu.refresh()
+            session.invalidate()
 
+    async with session.stay(menu) as visit:
         ticker = asyncio.ensure_future(tick())
         try:
-            choice = await menu.future
-            if choice in (None, CANCEL):
-                return {"queued": store.pending_count()}
-            cursor = choice
-            if choice == _QUEUE:
-                await _queue_flow(ctx, contacts)
-            elif choice == _CLEAR:
-                done = store.done_count()
-                if await ctx.ui.dialog(
-                    f"Clear {done} finished "
-                    f"{'entry' if done == 1 else 'entries'} from the history?",
-                    [("Cancel", False), ("Clear", True)],
-                    title="Clear finished",
-                    default=1,
-                    destructive=True,
-                ):
-                    store.clear_done()
-                    cursor = None  # the row itself disappears
-            elif isinstance(choice, tuple) and choice[0] == "msg":
-                await _entry_actions(ctx, int(choice[1]))
+            while True:
+                choice = await visit.result()
+                if choice in (None, CANCEL):
+                    return {"queued": store.pending_count()}
+                if choice == _QUEUE:
+                    await _queue_flow(ctx, contacts)
+                elif choice == _CLEAR:
+                    done = store.done_count()
+                    if await ctx.ui.dialog(
+                        f"Clear {done} finished "
+                        f"{'entry' if done == 1 else 'entries'} from the history?",
+                        [("Cancel", False), ("Clear", True)],
+                        title="Clear finished",
+                        default=1,
+                        destructive=True,
+                    ):
+                        store.clear_done()
+                elif isinstance(choice, tuple) and choice[0] == "msg":
+                    await _entry_actions(ctx, int(choice[1]))
+                # Fold the flow's effect in straight away rather than waiting for a tick,
+                # so the list the reader lands back on already shows what they just did.
+                menu.refresh()
         finally:
             ticker.cancel()
             try:
@@ -158,7 +162,6 @@ async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
                 pass
             except Exception:  # noqa: BLE001 - teardown must never surface a tick hiccup
                 pass
-            session.pop(menu)
 
 
 # --- the menu ---------------------------------------------------------------------------

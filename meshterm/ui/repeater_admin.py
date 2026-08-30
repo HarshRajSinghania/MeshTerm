@@ -71,22 +71,25 @@ _CANCEL = "__cancel__"
 async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     """Run the repeater-admin flow: pick a node, log in, and administer it.
 
+    The picker stays up for the whole flow, so leaving a node's admin session lands back on
+    the list rather than on the main menu — administering two repeaters in a row is one Esc
+    and a pick, not a round trip through the menu.
+
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
 
     Returns:
-        A summary of what happened (for the tool's log), or ``None`` on cancel.
+        A summary of the last node administered (for the tool's log), or ``None`` if the
+        reader left the picker without ever getting into a session.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from .admin_picker import admin_picker_rows, pick_admin_node
+    from .admin_picker import admin_node_visit
     from .surface import TuiUi
-    from .tui import SelectScreen
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("repeater admin is only available in the menu")
-    session = ctx.ui.session
 
     device = await ctx.device()
     # Through the session cache — opening this screen shouldn't re-read the (slow) contacts
@@ -94,24 +97,27 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     # :class:`~meshterm.services.device_state.DeviceState`); the device handle below is still
     # needed for the admin login and the CLI session that follow.
     contacts = await ctx.devstate.contacts()
-    pick_title = "Repeater admin — node to manage"
-    pick_prompt = "The remote node to set up (you need its admin password):"
-    node = await pick_admin_node(ctx, contacts, title=pick_title, prompt=pick_prompt)
-    if node is None:
-        return None
-    # The picker was popped when it returned. Redraw it as a static backdrop and keep it
-    # pushed across the login, so the password prompt (and any rejection) floats over the
-    # node list the pick came from — the picked node still highlighted — rather than over a
-    # blank frame. The backdrop takes no input; the dialog above it owns the keyboard.
-    items, _candidates = admin_picker_rows(ctx, contacts)
-    backdrop = SelectScreen(pick_title, items, prompt=pick_prompt, default=node.name, wrap=False)
-    session.push(backdrop)
-    try:
-        if not await _login(ctx, device, node):
+    # The node list stays pushed for the whole flow, so the password prompt (and any
+    # rejection) floats over the very list the pick came from, and the admin session opens
+    # above it: Esc out of the session lands back on the list, ready to manage another node,
+    # and Esc again leaves. It used to draw a second, identical SelectScreen as a static
+    # backdrop for the login and then drop the list entirely before the session.
+    async with admin_node_visit(
+        ctx,
+        contacts,
+        title="Repeater admin — node to manage",
+        prompt="The remote node to set up (you need its admin password):",
+    ) as picker:
+        if picker is None:  # nothing offerable; the reader has been told
             return None
-    finally:
-        session.pop(backdrop)
-    return await _admin_session(ctx, device, node)
+        summary: Optional[dict[str, Any]] = None
+        while True:
+            node = await picker.pick()
+            if node is None:
+                return summary
+            if not await _login(ctx, device, node):
+                continue
+            summary = await _admin_session(ctx, device, node)
 
 
 async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
@@ -169,31 +175,31 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
 async def _admin_session(
     ctx: "AppContext", device: "Device", node: Contact
 ) -> dict[str, Any]:
-    """Run the editor loop for one logged-in node (the persistent-backdrop pattern)."""
+    """Run the editor loop for one logged-in node.
+
+    One screen for the whole session, its rows refreshed in place after every action: they
+    carry the cache's ``current → new`` values and their ages, and the title counts what is
+    staged, so the content moves under a highlight that stays where the reader put it —
+    typed filter included. Every sub-prompt floats over it, and Esc leaves the node.
+    """
     from .tui import CANCEL, SelectScreen
 
     session = ctx.ui.session
-    loop = asyncio.get_running_loop()
 
     pending: dict[str, str] = {}  # setting key -> staged new value
     applied = 0
-    cursor: Any = None  # the row to re-highlight, so the menu reopens where you left it
 
-    while True:
-        cache = ctx.remote_store.settings(node)
-        title, items = _menu_items(node, cache, pending)
-        menu = SelectScreen(
-            title, items, default=cursor, wrap=False,
-            footer_hint="↑↓ move · type to filter · Enter select · Esc back",
-        )
-        menu.future = loop.create_future()
-        session.push(menu)
-        try:
-            choice = await menu.future
+    cache = ctx.remote_store.settings(node)
+    title, items = _menu_items(node, cache, pending)
+    menu = SelectScreen(
+        title, items, wrap=False,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+    )
+    async with session.stay(menu) as visit:
+        while True:
+            choice = await visit.result()
             if choice is CANCEL:
                 choice = _CANCEL
-            if choice not in (None, _CANCEL):
-                cursor = choice
 
             if choice in (None, _CANCEL):
                 if pending and not await confirm_discard(ctx, len(pending), verb="sending"):
@@ -231,8 +237,11 @@ async def _admin_session(
                 )
             else:  # a setting key
                 await _stage_setting(ctx, str(choice), cache, pending)
-        finally:
-            session.pop(menu)
+            # A read or an apply rewrites the cache the rows are drawn from; re-read it so
+            # the values and their ages are the ones the action just produced.
+            cache = ctx.remote_store.settings(node)
+            title, items = _menu_items(node, cache, pending)
+            menu.replace_items(items, title=title)
 
 
 # --- the menu ------------------------------------------------------------------------

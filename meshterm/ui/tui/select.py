@@ -343,6 +343,42 @@ class SelectScreen(Screen):
                     self._index = i
                     break
 
+    def replace_items(self, items: list, *, title: Optional[str] = None) -> None:
+        """Swap the list's rows (and optionally its title) in place, keeping the reader's place.
+
+        The counterpart to :meth:`~meshterm.ui.tui.session.TuiSession.stay` for a list whose
+        *content* is data: an editor's rows carrying a staged ``current → new`` value, a
+        title counting what is staged, a queue that just lost the message it sent. Those
+        lists used to be rebuilt as a whole new screen every round, which threw away the
+        typed filter and left the cursor to be approximated by a ``default=`` restore.
+
+        The place is kept by *value*, not by index: the highlight lands back on the row it
+        was on wherever that row moved to, and falls back to the same position in the list
+        (clamped) when the row is gone entirely — which is what a reader expects after
+        deleting the row they were sitting on. The filter and the horizontal shift ride
+        along; the shift resets when the highlighted row changes, exactly as it does when
+        the highlight is moved by hand.
+
+        Args:
+            items: The new rows, in display order.
+            title: A new heading, or ``None`` to keep the current one.
+        """
+        current = self._current_choice()
+        was = current.value if current is not None else None
+        position = self._index
+        self._items = items
+        self._hscroll = self._hscroll or any(
+            getattr(item, "hscroll_from", 0) > 0 for item in items
+        )
+        if title is not None:
+            self.title = title
+        selectable = [it for it in self._rows() if isinstance(it, Choice)]
+        index = next((i for i, c in enumerate(selectable) if c.value == was), None)
+        if index is None:
+            index = max(0, min(position, len(selectable) - 1))
+            self._hshift = 0  # a different row is highlighted now
+        self._index = index
+
     # --- filtering -----------------------------------------------------------
 
     def _rows(self) -> list:

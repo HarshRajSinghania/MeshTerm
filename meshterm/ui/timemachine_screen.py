@@ -1330,29 +1330,40 @@ async def open_timemachine(ctx: "AppContext") -> None:
             type_of=type_of,
             resolve_key=resolve_key,
         )
-        result = await session.run_screen(picker)
-        picked = None if result is CANCEL else result
-        if picked is None:
-            return
-        if picked == SELF:
-            label = self_name or "you"
-            build = lambda window, width: _self_sections(ctx, window, width)  # noqa: E731
-        elif picked == MESH:
-            label = "the whole mesh"
-            build = (  # noqa: E731
-                lambda window, width, _pb=prefix_bytes: _mesh_sections(
-                    ctx, window, width, _pb, resolve, resolve_key
-                )
-            )
-        else:
-            node_id, label = picked
-            build = (  # noqa: E731 - a tiny binding closure reads better than a def here
-                lambda window, width, _id=node_id, _lb=label: _node_sections(
-                    ctx, _id, _lb, window, width
-                )
-            )
-        screen = TimeMachineScreen(session=session, label=label, build=build)
-        await session.run_screen(screen)
+        # The picker stays pushed for the whole visit, so a subject page nests above it and
+        # Esc lands back on the row it was opened from — cursor, sort and filter intact. The
+        # recorder keeps listening the whole time, though, so the subjects it knows can grow
+        # while a page is open; the list is rebuilt (and the place lost) only when it has.
+        subjects = {node.node for node, _ in listed}
+        async with session.stay(picker) as visit:
+            while True:
+                result = await visit.result()
+                picked = None if result is CANCEL else result
+                if picked is None:
+                    return
+                if picked == SELF:
+                    label = self_name or "you"
+                    build = lambda window, width: _self_sections(  # noqa: E731
+                        ctx, window, width
+                    )
+                elif picked == MESH:
+                    label = "the whole mesh"
+                    build = (  # noqa: E731
+                        lambda window, width, _pb=prefix_bytes: _mesh_sections(
+                            ctx, window, width, _pb, resolve, resolve_key
+                        )
+                    )
+                else:
+                    node_id, label = picked
+                    build = (  # noqa: E731 - a tiny binding closure beats a def here
+                        lambda window, width, _id=node_id, _lb=label: _node_sections(
+                            ctx, _id, _lb, window, width
+                        )
+                    )
+                screen = TimeMachineScreen(session=session, label=label, build=build)
+                await session.run_screen(screen)
+                if {n.node for n in ctx.repo.heard_nodes() if n.node} != subjects:
+                    break  # the mesh spoke while the page was open; relist
 
 
 async def open_timemachine_node(ctx: "AppContext", node_id: str, label: str) -> None:

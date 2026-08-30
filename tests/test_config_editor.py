@@ -9,6 +9,7 @@ each prompt from a queue.
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -290,10 +291,11 @@ def test_location_picker_without_nodes_or_initial_shows_the_world() -> None:
 class _FakeSession:
     """A minimal stand-in for the TUI session behind the editor's persistent menu.
 
-    The editor keeps its main menu *pushed on the session stack* (so sub-prompts float
-    over it as modal popups). Here, pushing the menu resolves its future straight from the
-    script's next ``select`` answer — the same FIFO the sub-prompts draw from — so the
-    modal-backdrop control flow is exercised without a real full-screen session.
+    The editor keeps its menu *pushed on the session stack* for the whole visit (so its
+    sub-prompts float over it as modal popups), driving it one round at a time through
+    ``stay``/``Visit``. Here each round answers straight from the script's next ``select``
+    entry — the same FIFO the sub-prompts draw from — so the visit's control flow is
+    exercised without a real full-screen session.
     """
 
     def __init__(self, ui: "_ScriptedUi") -> None:
@@ -309,6 +311,29 @@ class _FakeSession:
 
     def pop(self, screen: Any = None) -> None:
         pass
+
+    @asynccontextmanager
+    async def stay(self, screen: Any) -> Any:
+        """Keep ``screen`` pushed and hand out a visit answering from the script."""
+        self.pushed.append(screen)
+        try:
+            yield _FakeVisit(self, screen)
+        finally:
+            pass
+
+
+class _FakeVisit:
+    """One round of a visited screen: the script's next ``select`` answer."""
+
+    def __init__(self, session: "_FakeSession", screen: Any) -> None:
+        self._session = session
+        self.screen = screen
+
+    async def result(self) -> Any:
+        from meshterm.ui.tui.screen import CANCEL
+
+        value = self._session.ui._answer("select")
+        return CANCEL if value is None else value
 
 
 class _ScriptedUi:

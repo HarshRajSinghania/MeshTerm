@@ -10,7 +10,8 @@ key is offerable, since holding a password is a fact about the *user*, not the n
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from rich.text import Text
 
@@ -94,6 +95,10 @@ async def pick_admin_node(
 ) -> Optional[Contact]:
     """Pick a remote node to administer, credentialed and infrastructure nodes first.
 
+    The one-shot form: the list comes down as soon as a node is picked. A caller whose next
+    step belongs *over* the list — the admin login, which asks about the node just picked —
+    wants :func:`admin_node_visit` instead.
+
     Args:
         ctx: Shared application context (for the UI surface and the admin store).
         contacts: The device's known contacts.
@@ -105,11 +110,77 @@ async def pick_admin_node(
     """
     items, candidates = admin_picker_rows(ctx, contacts)
     if not candidates:
-        ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
-        await ctx.ui.present(title=title)
+        await _note_nothing_to_pick(ctx, title)
         return None
 
     choice = await ctx.ui.select(title, items, prompt=prompt, wrap=False)
+    return _resolve(candidates, choice)
+
+
+@asynccontextmanager
+async def admin_node_visit(
+    ctx: "AppContext",
+    contacts: list[Contact],
+    *,
+    title: str,
+    prompt: str,
+) -> "AsyncIterator[Optional[_AdminNodePicker]]":
+    """Keep the node picker pushed for a whole visit, yielding a picker to draw from.
+
+    The list stays on the stack for the duration of the block, so everything the caller does
+    with a picked node — the password prompt, a rejection, the admin session itself — nests
+    *above* the very list the pick came from, with the picked node still highlighted, instead
+    of floating over a blank frame or being drawn again as a lookalike backdrop. Esc from any
+    of it is one pop back onto the list.
+
+    Yields ``None`` when there is nothing to pick (the caller has already been told).
+
+    Args:
+        ctx: Shared application context (for the UI surface and the admin store).
+        contacts: The device's known contacts.
+        title: The select screen's heading (names the calling feature).
+        prompt: One line above the list saying what the pick is for.
+    """
+    from .surface import TuiUi
+    from .tui import SelectScreen
+
+    items, candidates = admin_picker_rows(ctx, contacts)
+    if not candidates or not isinstance(ctx.ui, TuiUi):
+        if not candidates:
+            await _note_nothing_to_pick(ctx, title)
+        yield None
+        return
+    screen = SelectScreen(title, items, prompt=prompt, wrap=False)
+    async with ctx.ui.session.stay(screen) as visit:
+        yield _AdminNodePicker(visit, candidates)
+
+
+class _AdminNodePicker:
+    """The visited node list: :meth:`pick` is one round of it, resolved to a contact."""
+
+    __slots__ = ("_visit", "_candidates")
+
+    def __init__(self, visit: Any, candidates: list[Contact]) -> None:
+        """Bind the picker to the list's visit and the contacts its rows stand for."""
+        self._visit = visit
+        self._candidates = candidates
+
+    async def pick(self) -> Optional[Contact]:
+        """Await one pick: the chosen contact, or ``None`` on Esc."""
+        from .tui.screen import CANCEL
+
+        choice = await self._visit.result()
+        return _resolve(self._candidates, None if choice is CANCEL else choice)
+
+
+async def _note_nothing_to_pick(ctx: "AppContext", title: str) -> None:
+    """Say there is no offerable node and show it — no list is opened at all."""
+    ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
+    await ctx.ui.present(title=title)
+
+
+def _resolve(candidates: list[Contact], choice: Any) -> Optional[Contact]:
+    """The contact a picked row's name stands for, or ``None`` when nothing was picked."""
     if choice is None:
         return None
     return next((c for c in candidates if c.name == choice), None)
