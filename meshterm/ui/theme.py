@@ -55,6 +55,18 @@ MESH_THEME = Theme(
         # ``brand`` was, so the dim-slot ``not bold`` pins that protect a span inside a
         # highlighted row (see MESH_THEME_16) go on meaning what they meant.
         "cursor": "bold #ffffff",
+        # THE mark a path line puts around its own hops (PathLine._render), so the cursor
+        # row's identity fold can see where a route starts and stops
+        # (ui.tui.render._whiten_identities): inside a path line a node's hue is not
+        # decoration on a name, it is what tells one hop from the next — and what the
+        # graph drawn above the row cross-references, since a graph label is only a
+        # marker and one byte of hash. Folding those to white made a picked route read as
+        # one long white smear with no way back to the picture. Chips were never affected
+        # (their fills sit outside the fold's vocabulary); this is what makes the arrow
+        # form — every path line on the PicoCalc, and on any terminal without the
+        # powerline glyphs — say the same thing. Renders as nothing: it exists to be read
+        # at the render boundary, not seen.
+        "pathline": "none",
         # Reversed error (the text-editor cursor sitting on an over-budget character). Baked
         # in for the same reason as ``selected`` — "reverse err" would render as plain text.
         "err.reverse": "reverse bold #f87171",
@@ -277,6 +289,9 @@ MESH_THEME_16 = Theme(
         # further, and every dim-slot span inside it behaves exactly as it did under the
         # old bold slot-14 highlight.
         "cursor": "bold color(15)",
+        # The path line's extent mark — see the regular theme. Nothing to draw, but both
+        # themes name the same styles, and the fold that reads it runs on both.
+        "pathline": "none",
         "err.reverse": "reverse bold color(9)",
         "you": "bold color(15)",
         "device.known": "bold color(15)",

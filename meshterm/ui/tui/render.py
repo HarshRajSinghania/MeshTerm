@@ -20,6 +20,7 @@ from rich.console import Console, RenderableType
 from rich.text import Span, Text
 
 from ...platforms import Platform, on_platform
+from ..pathline import PATH_INK
 from ..theme import active_theme, fold_text, is_identity_style
 
 #: Cache one headless render console per width. Consoles are cheap but repaint happens on
@@ -139,6 +140,17 @@ def _whiten_identities(renderable: RenderableType) -> RenderableType:
     fills, the grey of a node no key could place — because none of those are the identity
     the highlight is standing in for.
 
+    **A path line is spared**, wherever it sits on the row. There the hue is not decoration
+    on a name: it is what tells one hop from the next, and what a route graph drawn above
+    the row is cross-referenced by — its labels are a marker and one byte of hash, and the
+    colour is what says *which node*. So a picked route kept its hops' colours in chip form
+    (the fills were never in this vocabulary) and lost them in arrow form, which is every
+    path line on the PicoCalc and on any terminal without the powerline glyphs (JP,
+    2026-08-30). The widget stamps its own extent with
+    :data:`~meshterm.ui.pathline.PATH_INK` and the stamp arrives here as a span over the
+    hops (``Text.append_text`` keeps a child's base style as one), so the route is spared
+    by name rather than by each screen remembering to ask.
+
     Done here because this is where a row *is* a row: one boundary every screen's rows
     already leave through, rather than a rule each of them has to remember. Callers hand us
     read-only :class:`Text` (the ANSI cache keys on their content), so the rewrite is on a
@@ -155,14 +167,22 @@ def _whiten_identities(renderable: RenderableType) -> RenderableType:
     spans = renderable.spans
     if not any(is_identity_style(str(span.style)) for span in spans):
         return renderable
+    routes = [
+        (span.start, span.end) for span in spans if str(span.style) == PATH_INK
+    ]
     out = renderable.copy()
     out.spans = [
         Span(span.start, span.end, "cursor")
-        if is_identity_style(str(span.style))
+        if is_identity_style(str(span.style)) and not _within(span, routes)
         else span
         for span in spans
     ]
     return out
+
+
+def _within(span: Span, runs: list[tuple[int, int]]) -> bool:
+    """Does ``span`` lie inside one of ``runs`` — a hop inside a marked path line?"""
+    return any(start <= span.start and span.end <= end for start, end in runs)
 
 
 def render_to_ansi(renderable: RenderableType, width: int, *, no_wrap: bool = False) -> str:

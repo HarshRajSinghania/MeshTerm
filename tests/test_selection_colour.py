@@ -21,6 +21,7 @@ from rich.text import Text
 
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.contactlist import _SORT_ACTIVE
+from meshterm.ui.pathline import PathHop, PathLine
 from meshterm.ui.theme import (
     MESH_THEME,
     MESH_THEME_16,
@@ -143,6 +144,77 @@ def test_a_path_line_s_chips_keep_their_fills_on_the_cursor_row() -> None:
     row.style = "cursor"
 
     assert f"48;2;{int(fill[1:3], 16)};" in render_to_ansi(row, 40)
+
+
+def test_a_path_line_keeps_every_hop_s_hue_on_the_cursor_row() -> None:
+    """A route's hues are content: they are how one hop is told from the next.
+
+    The chip form was never folded (its fills are outside the vocabulary), so an
+    arrow-drawn route — every path line on the PicoCalc, and on any terminal without the
+    powerline glyphs — has to survive the same way, or the same picked row says two
+    different things on the two platforms. The widget stamps its own extent and the fold
+    spares what lies inside it.
+    """
+    hops = [PathHop("YUL-Poly", key=_KEY), PathHop("Waymarker", key="77" * 6)]
+    row = Text("❯ ", style="cursor")
+    row.append_text(PathLine(hops, mode="plain").text())
+    row.style = "cursor"
+
+    hues = _hues(render_to_ansi(row, 60))
+
+    assert node_style(_KEY).removeprefix("bold ") in hues
+    assert node_style("77").removeprefix("bold ") in hues
+
+
+def test_a_name_beside_a_path_line_still_folds() -> None:
+    """The exception is the route, not the row: a name lane next to one is still a name."""
+    row = Text("  ")
+    row.append("YUL-Poly", style=name_style("YUL-Poly", _KEY))
+    row.append("  ")
+    row.append_text(PathLine([PathHop("Waymarker", key="77" * 6)], mode="plain").text())
+    row.style = "cursor"
+
+    hues = _hues(render_to_ansi(row, 60))
+
+    assert name_style("YUL-Poly", _KEY).removeprefix("bold ") not in hues  # the lane folded
+    assert node_style("77").removeprefix("bold ") in hues  # …the route did not
+
+
+@pytest.mark.parametrize("platform", [REGULAR, PICOCALC])
+def test_the_message_paths_dialog_colours_its_picked_route_like_its_graph(platform) -> None:  # noqa: ANN001
+    """The end JP asked for: the picked row and the graph above it agree on each node.
+
+    The graph labels a relay with a marker and one byte of hash — the colour is what says
+    *which node* — so a row whitened hop by hop left the reader nothing to match them by.
+    """
+    set_platform(platform)
+    from datetime import timedelta
+
+    from meshterm.core.models import ChatMessage, utcnow
+    from meshterm.services.message_paths import Arrival
+    from meshterm.ui.message_paths_screen import MessagePathsScreen
+
+    now = utcnow()
+    arrivals = [
+        Arrival(when=now, hops=("3d63", "a1b2"), snr=4.0),
+        Arrival(when=now + timedelta(seconds=2), hops=("a1b2",), snr=-2.0),
+    ]
+    screen = MessagePathsScreen(
+        ChatMessage(text="on my way", is_channel=True, created_at=now),
+        arrivals,
+        matched=True,
+        resolve=lambda hop: {"3d63": "YUL-Cartierville", "a1b2": "Waymarker"}.get(hop, hop),
+        prefix_bytes=1, self_name="Homestead", summary="heard twice", source="Alice",
+    )
+    picked = next(line for line in screen.render_body(72) if "❯" in line)
+
+    for hop in ("3d63", "a1b2"):
+        assert _ink(node_style(hop)) in picked, f"the picked route lost {hop}'s hue"
+
+
+def _ink(style: str) -> str:
+    """The escape a style emits before its text, as it appears on the bound platform."""
+    return render_to_ansi(Text("x", style=style), 3).split("x")[0]
 
 
 def test_the_fold_never_touches_the_row_it_was_handed() -> None:

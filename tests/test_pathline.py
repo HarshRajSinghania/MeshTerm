@@ -14,7 +14,8 @@ import pytest
 
 import meshterm.ui.pathline as pathline
 from meshterm.ui.pathline import (
-    CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, POWERLINE_ROUND_CLOSE,
+    CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, PATH_INK,
+    POWERLINE_ROUND_CLOSE,
     POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine,
     _SELF_INK, _YOU_BG, _style_hex, cut_mark, cut_to, elision_hop, hops_atom,
     path_line, with_action_mark,
@@ -441,7 +442,11 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     assert lines[0].plain.startswith(" AAAA")  # the square edge: this is the start
     step = 2 + WRAP_OFFSET
     assert lines[1].plain[:step].isspace() and lines[1].plain[step] == POWERLINE_SEP
-    carried = next(s for s in lines[1].spans if s.start == step)
+    # …past the line's own PATH_INK stamp, which covers the whole body from the same cell
+    # (it marks the run as a path line for the cursor fold and draws nothing).
+    carried = next(
+        s for s in lines[1].spans if s.start == step and str(s.style) != PATH_INK
+    )
     assert str(carried.style) == f"{_style_hex(node_style('3d'))} reverse"
     assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
     assert all(line.cell_len <= 20 for line in lines)

@@ -206,7 +206,12 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   once at the render boundary for any Text whose *base* style is `cursor`), so the
   highlighted row reads as one thing instead of as a name arguing with its own selection.
   Only a keyed hue folds: `node.unknown`'s grey stays grey, because the highlight must not
-  claim to know a node we can't place. Reverse-video chips — a dialog's committing button,
+  claim to know a node we can't place. A **path line is spared** wherever it sits on the
+  row — there a hue is not decoration on a name, it is what tells one hop from the next and
+  what a route graph's one-byte labels are matched by — so `pathline` stamps its own extent
+  (`PATH_INK`, a style that draws nothing) and the fold skips what lies inside it. That is
+  what makes the arrow form say what the chip form always said, its fills having never been
+  in the fold's vocabulary. Reverse-video chips — a dialog's committing button,
   a running action's Abort, the arrow-mode composer slot, the editor cursor — are the
   `selected` fill, a **grey** block (`muted`'s slate; light grey slot 7 on the VT, the one
   grey a reverse can put behind text there, and the same fill the F-key lane uses). A chip

@@ -109,6 +109,13 @@ CURSOR_GLYPH = "+"
 #: The plain-mode joining arrow, exactly as ``path_text`` draws it today.
 _ARROW = " → "
 
+#: The theme name a rendered path line wears as its base style: it draws *nothing* and
+#: exists to be recognised. Every shape this widget mints is stamped with it (see
+#: :meth:`PathLine._render`), so a row that appends a path carries a span saying where the
+#: route lies — which is how the cursor row's identity fold knows to spare the hop hues
+#: (:func:`~meshterm.ui.tui.render._whiten_identities`) instead of whitening a whole route.
+PATH_INK = "pathline"
+
 #: Chip ink: near-black slate for readable text on every spectrum hue and on white.
 _CHIP_FG = "#0f172a"
 #: Chip ink, softened — annotations and a hash label's unlit tail (the two-tone).
@@ -747,14 +754,25 @@ class PathLine:
         carry_in: bool = False,
         carry_on: bool = False,
     ) -> Text:
-        """Join ``hops`` in the effective mode.
+        """Join ``hops`` in the effective mode, marked as a path line.
 
         The two carry flags mark a wrapped line's ends and only mean anything to
         chips; arrow mode says the same thing with the trailing cue.
+
+        Every shape leaves through here, so this is where the line stamps its own extent:
+        the returned text's base style is :data:`PATH_INK`, which draws nothing and says
+        "these cells are a route". A row that appends it (``Text.append_text``) carries
+        that stamp along as a span over the hops, and the cursor row's identity fold reads
+        it there — see :func:`~meshterm.ui.tui.render._whiten_identities`. Inside a path
+        line the hue is not decoration on a name, it is what tells one hop from the next,
+        so the highlight lights the row without eating it.
         """
         if not force_plain and self._resolved_mode() == "powerline":
-            return self._render_chips(hops, carry_in=carry_in, carry_on=carry_on)
-        return self._render_plain(hops)
+            line = self._render_chips(hops, carry_in=carry_in, carry_on=carry_on)
+        else:
+            line = self._render_plain(hops)
+        line.style = PATH_INK
+        return line
 
     def _render_plain(self, hops: list[PathHop]) -> Text:
         """Arrow-joined hops — ``path_text``'s presentation, hop by hop."""
