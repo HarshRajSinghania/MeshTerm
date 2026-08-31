@@ -198,50 +198,56 @@ def _esc_hint(hint: str) -> str:
 
 
 def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) -> Text:
-    """The borderless frame's one-row title bar: a centered title on a bold rule, clip arrows.
+    """The borderless frame's one-row title bar: clip arrows, a centered title, the way out.
 
-    The Panel border's whole vocabulary — where you are (title) and whether the list
+    The Panel border's whole vocabulary — where you are (title) and whether the body
     continues (the ``↑↓ more`` subtitle) — compressed into a single row so the body wins
     back three rows and four columns on the PicoCalc. Shape:
-    ``──── Title ─────── ↑↓ · Esc back``, echoing
+    ``↑↓ ──── Title ─────── Esc back``, echoing
     :func:`~meshterm.ui.menus.section_heading`'s heading language.
 
-    The title is centered in the rule exactly as Rich's ``Panel`` centers its own
-    ``title`` by default — the desktop's bordered frame this one stands in for. The
-    rule itself takes ``border_style`` (``"accent"``) directly — the same bold weight a
-    real border draws in — rather than :func:`~meshterm.ui.theme.hint_style`'s muted
-    variant, which is for auxiliary text riding *alongside* a border (a footer hint, the
-    subtitle's own "more" label below), not the border's own glyphs. The ``↑↓`` clip
-    arrows keep that muted hint style, matching a bordered panel's own subtitle.
+    **The clip arrows lead the row, and both are always drawn** (JP, 2026-08-31). A pair
+    that appeared and vanished — and, half-shown, left a blank cell standing in for the
+    arrow that wasn't there — made the reader compare the row against a memory of itself
+    to learn something the row could simply state. So the pair is fixed furniture at the
+    left edge, where the eye starts, and **colour** carries the reading: an arrow whose
+    direction has more takes the border's own ``accent``, so it reads as part of the
+    frame; one with nothing that way drops to ``muted``. That is the same live/dim
+    language the F-key lane draws one row below (a dim chip keeps its label and loses its
+    fill), and the two are the platform's only two indicators.
 
-    The bar's tail also carries **the way out** (JP, 2026-08-30). This platform has no
-    footer hint line — the F-key lane stands where it would be, and the lane advertises
-    only what its five slots do — so nothing on the screen said that Esc leaves, which is
-    the one key every screen answers to and the reason no screen spends a row on a *Back*
-    item. It rides here in the same muted hint style as the arrows, in the same
-    ``↑↓ · hint`` shape a floating dialog's subtitle already uses, and it is **last** on
-    the row because that is where the footer's grammar puts it. The verb is the screen's
-    own (:func:`_esc_hint` lifts the atom off its footer hint, so a value picker says
-    ``keep`` and the main menu says ``quit``); a screen whose hint names no Esc gets
-    nothing. Compact by construction: where a long title would be crowded, the atom drops
-    to a bare ``Esc`` and then out altogether — the title is what the reader came for.
+    The title is centered in the rule between the arrows and the tail, exactly as Rich's
+    ``Panel`` centers its own ``title`` — the desktop's bordered frame this one stands in
+    for. The rule itself takes ``border_style`` (``"accent"``) directly, the same bold
+    weight a real border draws in, rather than :func:`~meshterm.ui.theme.hint_style`'s
+    muted variant, which is for auxiliary text riding *alongside* a border (the Esc atom
+    below, a footer hint on the other platform).
+
+    The bar's tail carries **the way out** (JP, 2026-08-30). This platform has no footer
+    hint line — the F-key lane stands where it would be, and the lane advertises only what
+    its five slots do — so nothing on the screen said that Esc leaves, which is the one key
+    every screen answers to and the reason no screen spends a row on a *Back* item. The
+    verb is the screen's own (:func:`_esc_hint` lifts the atom off its footer hint, so a
+    value picker says ``keep`` and the main menu says ``quit``); a screen whose hint names
+    no Esc gets nothing. Compact by construction: where a long title would be crowded, the
+    atom drops to a bare ``Esc`` and then out altogether — the title is what the reader
+    came for, and the arrows are two cells nothing else can spend.
     """
     border = "accent"
-    arrows = ""
-    if more_above or more_below:
-        arrows = ("↑" if more_above else " ") + ("↓" if more_below else " ")
+    head_span = 3  # the arrow pair, plus the space parting it from the rule
     label_w = cell_len(screen.title) + 2 if screen.title else 0  # a space either side
     atom = _esc_hint(screen.footer_hint)
     for esc in (atom, "Esc" if atom else "", ""):
-        tail = " · ".join(part for part in (arrows, esc) if part)
-        tail_span = cell_len(tail) + 1 if tail else 0  # the space in front of the tail
-        if not esc or cols - tail_span - label_w >= 2 * _MIN_RULE:
+        tail_span = cell_len(esc) + 1 if esc else 0  # the space in front of the tail
+        if not esc or cols - head_span - tail_span - label_w >= 2 * _MIN_RULE:
             break
-    rule_span = max(0, cols - tail_span)
+    rule_span = max(0, cols - head_span - tail_span)
 
     bar = Text()
+    bar.append("↑", style=border if more_above else "muted")
+    bar.append("↓", style=border if more_below else "muted")
+    bar.append(" ")
     if screen.title:
-        label_w = cell_len(screen.title) + 2  # a space padding it on either side
         left = max(1, (rule_span - label_w) // 2)
         right = max(1, rule_span - label_w - left)
         bar.append("─" * left, style=border)
@@ -251,8 +257,8 @@ def _title_bar(screen: Screen, cols: int, more_above: bool, more_below: bool) ->
         bar.append("─" * right, style=border)
     else:
         bar.append("─" * rule_span, style=border)
-    if tail:
-        bar.append(" " + tail, style=hint_style(border))
+    if esc:
+        bar.append(" " + esc, style=hint_style(border))
     bar.truncate(cols)
     return bar
 

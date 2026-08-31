@@ -47,11 +47,26 @@ def test_borderless_frame_swaps_the_panel_for_a_title_bar() -> None:
     assert plain[2].startswith("row 0")
 
 
-def _bar(title: str, hint: str, cols: int = 53, *, below: bool = True) -> str:
-    """The borderless title bar's plain text for a screen with ``title`` and ``hint``."""
+def _bar_text(title: str, hint: str, cols: int = 53, *, above: bool = False,
+              below: bool = True) -> Text:
+    """The borderless title bar for a screen with ``title`` and ``hint``, as styled Text."""
     screen = ScrollScreen(Text("x"), title=title, floating=False)
     screen._footer_hint = hint
-    return frame._title_bar(screen, cols, False, below).plain
+    return frame._title_bar(screen, cols, above, below)
+
+
+def _bar(title: str, hint: str, cols: int = 53, *, below: bool = True) -> str:
+    """The borderless title bar's plain text for a screen with ``title`` and ``hint``."""
+    return _bar_text(title, hint, cols, below=below).plain
+
+
+def _arrow_styles(bar: Text) -> tuple[str, str]:
+    """The styles the bar painted on its two clip arrows, ``(up, down)``."""
+    return tuple(
+        next(str(span.style) for span in bar.spans
+             if span.start <= index < span.end and span.end - span.start == 1)
+        for index in (0, 1)
+    )
 
 
 def test_the_title_bar_says_how_to_leave_the_screen() -> None:
@@ -59,13 +74,41 @@ def test_the_title_bar_says_how_to_leave_the_screen() -> None:
 
     The F-key lane stands where the footer would be and only advertises what its slots do,
     which left Esc — the key every screen answers to, and the reason no screen carries a
-    *Back* row — completely unadvertised (JP, 2026-08-30). It lands last, after the clip
-    arrows, in the ``↑↓ · hint`` shape a floating dialog's subtitle already uses.
+    *Back* row — completely unadvertised (JP, 2026-08-30). It lands last, past the title,
+    with the clip arrows holding the row's other end.
     """
     bar = _bar("Chrome probe", "↑↓ move · Enter open · Esc back")
 
-    assert bar.rstrip().endswith("↓ · Esc back")
+    assert bar.startswith("↑↓ ")
+    assert bar.rstrip().endswith("Esc back")
     assert "Chrome probe" in bar
+
+
+def test_the_clip_arrows_are_always_drawn_and_say_it_in_colour() -> None:
+    """Both arrows are fixed furniture at the row's left edge; colour reads the scroll.
+
+    They used to appear and vanish, and a half-shown pair left a blank cell standing in
+    for the missing one — the reader had to compare the row against a memory of itself
+    (JP, 2026-08-31). Now the pair never moves and never changes width, and an arrow
+    whose direction has more takes the border's own accent while one with nothing that way
+    drops to muted: the F-key lane's live/dim language, one row up.
+    """
+    hint = "↑↓ move · Esc back"
+    assert _arrow_styles(_bar_text("Contacts", hint, above=True, below=True)) == (
+        "accent", "accent")
+    assert _arrow_styles(_bar_text("Contacts", hint, above=False, below=True)) == (
+        "muted", "accent")
+    assert _arrow_styles(_bar_text("Contacts", hint, above=True, below=False)) == (
+        "accent", "muted")
+    # A body that fits whole keeps the pair, both dim — nothing appears or disappears.
+    assert _arrow_styles(_bar_text("Contacts", hint, above=False, below=False)) == (
+        "muted", "muted")
+
+    widths = {
+        _bar_text("Contacts", hint, above=a, below=b).plain
+        for a in (False, True) for b in (False, True)
+    }
+    assert len(widths) == 1, "the bar's text must not shift as the body scrolls"
 
 
 def test_the_bar_speaks_the_screen_s_own_esc_verb() -> None:
@@ -83,7 +126,7 @@ def test_the_esc_hint_gives_way_before_it_crowds_the_title() -> None:
     takes the cells back altogether. The title is what the reader came for.
     """
     verbless = _bar("Trace — YUL-Cartierville over a spec", "↑↓ move · Esc back")
-    assert verbless.rstrip().endswith("· Esc")  # the verb went, the key stayed
+    assert verbless.rstrip().endswith(" Esc")  # the verb went, the key stayed
     assert "Esc back" not in verbless
 
     crowded = _bar("Trace — YUL-Cartierville over a longer spec", "↑↓ move · Esc back")

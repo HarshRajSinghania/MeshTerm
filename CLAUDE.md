@@ -313,6 +313,13 @@ One codebase, two flavours: **regular** (desktop/ssh, 72 cols, truecolor, emoji)
 once at boot; consumers bind at platform-switch time via `platforms.on_platform` — never
 branch on the platform per frame, and never `from meshterm.platforms import PLATFORM`.
 
+- The borderless title bar (`frame._title_bar`) is this platform's whole panel border:
+  `↑↓ ──── Title ─────── Esc back`. The **clip arrows lead the row and are always both
+  drawn** — colour reads the scroll (the border's `accent` where that direction has more,
+  `muted` where it doesn't), the same live/dim language the lane draws one row below. A
+  pair that appeared and vanished, half of it a blank cell, asked the reader to compare
+  the row against a memory of itself; fixed furniture means the bar never changes width
+  as the body scrolls either.
 - **Never emit a raw emoji or bare hex colour into picocalc output.** Icons go through
   `theme.glyph()` (the compact map); everything else is caught by the render-boundary
   fold (`theme.fold_text`, applied in `tui/render.render_to_ansi` and
