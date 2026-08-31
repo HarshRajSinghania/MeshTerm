@@ -922,6 +922,31 @@ def _border_colours(lines: list[str]) -> set[tuple[int, int, int]]:
     }
 
 
+def test_a_dialog_leaves_its_hint_to_the_footer_line() -> None:
+    """On the desktop the box says nothing about keys — the footer row below already does.
+
+    The frame draws the *top* screen's hint on its footer line, so a dialog that also
+    carried the hint in its own border put the same sentence on one frame twice (JP,
+    2026-08-31). The border falls silent and the footer is the single place hints live.
+    """
+    hint = "←→ choose · Enter select · Esc cancel"
+    screen = ScrollScreen(Text("Delete this contact?"), title="Delete contact")
+    screen._footer_hint = hint
+    box = _plain(frame.compose_dialog(screen, 72, 20))
+    assert "Esc cancel" not in box and "Enter select" not in box
+
+    base = ScrollScreen(Text("row"), title="Contacts", floating=False)
+    footer = _plain(frame.compose_base(Text("h"), base, hint, 72, 20).split("\n")[-1])
+    assert footer.strip() == hint
+
+
+def test_a_silent_dialog_border_still_says_there_is_more() -> None:
+    """With no hint to carry, the clip arrows keep the base frame's own ``more`` wording."""
+    tall = ScrollScreen(Text("\n".join(f"line {i}" for i in range(40))), title="Packet")
+    tall._footer_hint = "↑↓ newer/older · Esc close"
+    assert "↓ more" in _plain(frame.compose_dialog(tall, 72, 16))
+
+
 def test_a_frame_draws_in_one_colour() -> None:
     """A border is its own colour the whole way round — no corner lit, no edge fading.
 

@@ -13,6 +13,7 @@ from meshterm.ui.tui.fkeys import (
     action_for,
     default_lane,
     lane_text,
+    strip_lane_atoms,
 )
 from meshterm.ui.tui.screen import ScrollScreen
 
@@ -301,3 +302,66 @@ def test_dialog_gate_shrinks_on_picocalc() -> None:
     assert _dialog_max_cells() == 43
     set_platform(REGULAR)
     assert _dialog_max_cells() == 76
+
+
+# --- the dialog border's hint, against the lane one row below it ------------------------
+
+
+def _dialog(hint: str) -> ScrollScreen:
+    """A floating screen carrying ``hint``, on the shared pager lane."""
+    screen = ScrollScreen(Text("body"), title="Probe")
+    screen._footer_hint = hint
+    return screen
+
+
+def test_a_dialog_keeps_its_hint_where_the_lane_is_the_footer() -> None:
+    """There is no hint line here, so a floating box's border is the only place keys read.
+
+    The desktop drops the border hint entirely (the footer row below repeats it word for
+    word); this platform's footer row is the lane, which speaks only for its five chips,
+    so Enter, Esc and the arrows have nowhere else to be said.
+    """
+    screen = _dialog("↑↓ move · Enter select · Esc back")
+    set_platform(REGULAR)
+    assert frame._dialog_hint(screen) == ""
+    set_platform(PICOCALC)
+    assert "Esc back" in _plain(frame.compose_dialog(screen, 53, 26))
+
+
+def test_the_dialog_hint_drops_what_the_lane_already_says() -> None:
+    """An atom whose every key is a chip on the very next row is the same claim twice."""
+    set_platform(PICOCALC)
+    screen = _dialog("↑↓ move · PgUp/PgDn scroll · Home/End ends · Enter select · Esc back")
+    # The shared lane pages on F4/F5 and jumps to either end behind their Shift halves.
+    assert frame._dialog_hint(screen) == "↑↓ move · Enter select · Esc back"
+    assert "PgUp" not in _plain(frame.compose_dialog(screen, 53, 26))
+
+
+def test_the_dialog_hint_is_resolved_on_every_paint() -> None:
+    """Never folded into a screen's hint once: both halves move while the screen is up.
+
+    The packet viewer rewrites its own hint as the list it pages through grows past one
+    entry (JP, 2026-08-31), and every screen reads its lane fresh each frame.
+    """
+    set_platform(PICOCALC)
+    screen = _dialog("Esc close")
+    assert frame._dialog_hint(screen) == "Esc close"
+    screen._footer_hint = "↑↓ newer/older · PgUp/PgDn scroll · Home/End ends · Esc close"
+    assert frame._dialog_hint(screen) == "↑↓ newer/older · Esc close"
+
+
+def test_an_atom_the_lane_only_half_covers_stands() -> None:
+    """Half a truth is worse than the whole atom: it survives unless every key is a chip."""
+    pager_only = (None, None, None, FPair("Page ↓", "pagedown"), FPair("Page ↑", "pageup"))
+    assert strip_lane_atoms("PgUp/PgDn scroll", pager_only) == ""
+    # No Shift bank here, so Home/End are nowhere on the lane.
+    assert strip_lane_atoms("Home/End ends", pager_only) == "Home/End ends"
+    # The atom documents the arrows too, and no slot ever claims those.
+    assert strip_lane_atoms("↑↓ PgUp/PgDn scroll", DEFAULT_LANE) == "↑↓ PgUp/PgDn scroll"
+    # A second key riding in the verb half keeps the atom whole (the map's region/you).
+    assert strip_lane_atoms("Home/^U region/you", DEFAULT_LANE) == "Home/^U region/you"
+
+
+def test_a_dimmed_chip_still_covers_its_atom() -> None:
+    """Dim says *a thing here, just not right now* — the reader has been told where it is."""
+    assert strip_lane_atoms("PgUp/PgDn scroll", default_lane(nav=False)) == ""

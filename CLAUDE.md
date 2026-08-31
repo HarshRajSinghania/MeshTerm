@@ -170,6 +170,17 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   A more specific committing verb (`Enter adopt path`, `Enter add`) is fine; a synonym
   of the generic three (`pick`, `choose`, `commit`) is not. The filter atom is always
   `type to filter`.
+- A hint is drawn **once per frame**, and which surface draws it is the footer's call.
+  Where the footer is the hint line (regular) it carries the *top* screen's hint, so a
+  floating dialog's border stays silent — the same sentence in the border and at the
+  bottom of the terminal was one of them wasted — and its clip arrows fall back to the
+  base frame's `↑↓ more`. Where the footer is the F-key lane (picocalc) there is no hint
+  line, so the border is the only place Enter/Esc/the arrows can be named and it keeps
+  the hint, less every atom whose keys are all chips on the lane one row below
+  (`fkeys.strip_lane_atoms` via `frame._dialog_hint`, resolved **per paint** — a screen
+  rewrites its hint as its content changes and reads its lane fresh every frame). The
+  chromeless splash has no footer row of any kind and keeps its hint in its own border on
+  both platforms.
 - Key notation: `↑↓ move` (include the verb), `^R`/`^End` for Ctrl chords, `⌫` for
   backspace, `⇧` for shift.
 

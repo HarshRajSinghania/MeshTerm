@@ -208,3 +208,97 @@ def lane_text(lane: Lane, *, shifted: bool = False) -> Text:
         # key is for once it becomes available.
         row.append(_chip(number, label), style=fill if live else "muted")
     return row
+
+
+#: The screen action each key notation in a footer hint dispatches — the vocabulary the
+#: hint line and the lane have in common, and the only place the two can say the same
+#: thing twice. Arrows, Enter, Esc and the letter chords are absent deliberately: no lane
+#: slot ever claims them (Enter and Esc are barred outright), so an atom naming one can
+#: never be a duplicate of a chip.
+_HINT_KEY_ACTIONS: dict[str, str] = {
+    "PgUp": "pageup",
+    "PgDn": "pagedown",
+    "Home": "home",
+    "End": "end",
+    "^PgUp": "ctrl_pageup",
+    "^PgDn": "ctrl_pagedown",
+    "^Home": "ctrl_home",
+    "^End": "ctrl_end",
+    "Tab": "tab",
+}
+
+#: Marks a word as *some* key notation even where it isn't one this module can map: a
+#: chord (``^U``), a shifted key (``⇧Tab``), or a bare glyph key (``⌫``). An atom whose
+#: verb half carries one of these names more than the keys it opened with, so it is never
+#: dropped on the strength of the ones it did name (the map's ``Home/^U region/you``).
+_KEYISH = ("^", "⇧", "⌫", "↑", "↓", "←", "→")
+
+
+def _hint_keys(atom: str) -> tuple[str, ...]:
+    """The key notations ``atom`` opens with, or ``()`` where it names something else too.
+
+    A hint atom is *keys then verb* — ``PgUp/PgDn scroll``, ``Home/End ends`` — so the
+    keys are the leading run of words whose every ``/``-separated part this module knows.
+    The run stops at the verb, and the answer is empty (meaning "keep this atom") both
+    when the atom opens with a key we can't map (``↑↓ PgUp/PgDn scroll`` documents the
+    arrows too) and when anything after the run still looks like a key notation
+    (:data:`_KEYISH`) — dropping such an atom would take an unrepresented key with it.
+    """
+    keys: list[str] = []
+    verb = False  # past the leading key run: everything from here is the atom's verb half
+    for word in atom.split():
+        parts = word.split("/")
+        mappable = all(part in _HINT_KEY_ACTIONS for part in parts)
+        if not verb and mappable:
+            keys.extend(parts)
+            continue
+        verb = True
+        if mappable or any(mark in word for mark in _KEYISH):
+            return ()  # a second key rides in the verb half — the atom says more than these
+    return tuple(keys)
+
+
+def strip_lane_atoms(hint: str, lane: Lane) -> str:
+    """``hint`` with every atom the lane already advertises removed.
+
+    Where both a hint line and the lane are drawn at once — a floating dialog on the
+    PicoCalc, whose box carries the hint in its border while the frame's footer row below
+    carries *its* lane — an atom whose keys are all chips is the same statement twice, in
+    two notations, and the cells are the dialog's to spend on what the lane doesn't say.
+    An atom survives unless **every** key it names is a slot's action: a lane covering
+    only half of ``Home/End ends`` leaves the whole atom standing rather than telling half
+    a truth.
+
+    Dimmed slots count as covering. A dim chip keeps its label and means *a thing here,
+    just not right now* (see the module docstring) — the reader has been told where the
+    action lives either way, which is all the hint atom was for.
+
+    Runs per paint, never once at construction: a screen rewrites its hint as its content
+    changes (the packet viewer drops to a bare ``Esc close`` on a single packet) and reads
+    its lane fresh on every frame, so the overlap between the two is a property of *this*
+    paint.
+
+    Args:
+        hint: The screen's footer hint, in the standard ``a · b · Esc x`` grammar.
+        lane: The lane drawn on the same frame.
+
+    Returns:
+        The kept atoms, rejoined in order; ``""`` when the lane says all of it.
+    """
+    covered = {
+        action
+        for pair in lane
+        if pair is not None
+        for action in (pair.action, pair.opp_action)
+        if action
+    }
+    kept = []
+    for raw in hint.split("·"):
+        atom = raw.strip()
+        if not atom:
+            continue
+        keys = _hint_keys(atom)
+        if keys and all(_HINT_KEY_ACTIONS[key] in covered for key in keys):
+            continue
+        kept.append(atom)
+    return " · ".join(kept)

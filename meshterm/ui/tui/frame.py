@@ -19,6 +19,7 @@ from rich.text import Text
 from ...platforms import Platform, get_platform, on_platform
 from ..logo import load_logo, logo_width
 from ..theme import fold_text, hint_style, title_style
+from . import fkeys
 from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
 
@@ -518,6 +519,56 @@ _DIALOG_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
 _DIALOG_CACHE_MAX = 12
 
 
+def _dialog_hint(screen: Screen) -> str:
+    """The hint a floating dialog's own border carries — often none at all.
+
+    A dialog is drawn over a frame that already has a footer row, and *what that row is*
+    decides whether the box needs to speak at all:
+
+    - Where the footer is the **hint line** (the desktop), it draws the top screen's hint
+      — this dialog's — in full, on the row every screen's keys have always been read
+      from. A subtitle repeating it was the same sentence twice on one frame, once in the
+      border and once at the bottom of the terminal (JP, 2026-08-31), so the border says
+      nothing and the box leaves the reader's eye on the one place hints live.
+    - Where the footer is the **F-key lane** (the PicoCalc), there is no hint line at all
+      and the lane speaks only for its five chips, so the border is the only thing that
+      can name Enter, Esc or the arrows — it keeps the hint. What the lane *does* say it
+      says already, one row below: :func:`~meshterm.ui.tui.fkeys.strip_lane_atoms` lifts
+      out the atoms whose every key is a chip on that row.
+
+    Resolved on each paint rather than folded into a screen's hint once, because both
+    halves move: a screen rewrites its hint as its content changes (the packet viewer
+    drops to a bare ``Esc close`` on a single packet) and its lane is read fresh every
+    frame.
+
+    The chromeless startup splash is not this case and never passes through here — it has
+    no footer row of any kind, so :func:`compose_startup` keeps drawing the hint in its
+    own panel's subtitle on both platforms.
+    """
+    if not get_platform().footer_fkeys:
+        return ""
+    return fkeys.strip_lane_atoms(screen.footer_hint, screen.fkey_lane)
+
+
+def _dialog_subtitle(
+    hint: str, more_above: bool, more_below: bool, border: str
+) -> Optional[str]:
+    """A floating box's bottom-border legend: the clip arrows, the hint, or both.
+
+    With no hint to carry (the desktop — see :func:`_dialog_hint`) the arrows keep the
+    base frame's own wording, ``↑↓ more``, exactly as :func:`_panel_box` labels them: a
+    border that has fallen silent still says the one thing every border here says, in the
+    vocabulary the frame around it uses.
+    """
+    arrow = ""
+    if more_above or more_below:
+        arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
+    if not hint:
+        return f"[{hint_style(border)}]{arrow} more[/]" if arrow else None
+    legend = f"{arrow} · {hint}" if arrow else hint
+    return f"[{hint_style(border)}]{legend}[/]"
+
+
 def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     """Compose a centered dialog panel for a floating screen, bounded to the terminal.
 
@@ -532,8 +583,11 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     max_w, vpad, viewport, body_lines = _dialog_layout(screen, cols, rows)
     visible, more_above, more_below = _visible_slice(screen, body_lines, viewport)
     border = getattr(screen, "border_style", "accent")
+    # The resolved hint, not the screen's own: it is what the border actually draws, and
+    # it moves with the lane below as well as with the screen's hint (see _dialog_hint).
+    hint = _dialog_hint(screen)
     key = (
-        max_w, vpad, screen.title, screen.footer_hint, border,
+        max_w, vpad, screen.title, hint, border,
         more_above, more_below, *visible,
     )
     cached = _DIALOG_CACHE.get(key)
@@ -541,11 +595,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
         _DIALOG_CACHE.move_to_end(key)
         return cached
     body = Text.from_ansi("\n".join(visible))
-    hint = hint_style(border)
-    subtitle = f"[{hint}]{screen.footer_hint}[/]"
-    if more_above or more_below:
-        arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[{hint}]{arrow} · {screen.footer_hint}[/]"
+    subtitle = _dialog_subtitle(hint, more_above, more_below, border)
     panel = Panel(
         body,
         title=f"[{title_style(border)}]{screen.title}[/]" if screen.title else None,
