@@ -92,7 +92,13 @@ deliberately, one at a time, and say why in the code.
   answered in `TuiSession._dispatch` and neither is ever advertised — a global verb has no
   screen to belong to, and the F-key lane has only three free slots per screen. They are
   stated once, on the About page. `test_navigation` walks every string literal in the
-  package to keep them out of the UI.
+  package to keep them out of the UI. ^W arms **every frame on the stack**, not just the
+  top (`request_pop_all`), stopping at anything modal: a screen opened from a key handler
+  — the packet viewer, the chat's delivery paths, a trace path flow — runs in a task no
+  navigation frame awaits, so an unwind sent only to the top died there while the hub
+  below sat on a `visit.result()` nothing would resolve. Such a flow is launched through
+  `session.run_detached`, which absorbs the duplicate `PopToMenu` its task cannot carry;
+  the stack is what the unwind actually travels down.
 - `modal` is *owning the keyboard* (a prompt, progress, a busy splash); `floating` is only
   *drawn as a box*. They are not the same flag: a select list floats and is not modal, the
   busy splash is modal and does not float. ^W declines to unwind past anything modal.

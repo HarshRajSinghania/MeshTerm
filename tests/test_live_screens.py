@@ -54,6 +54,10 @@ class _FakeSession:
         self.dialogs.append((prompt, buttons, kwargs))
         return self.dialog_answer
 
+    def run_detached(self, work):  # noqa: ANN001, ANN201
+        """Start a key handler's flow as a task, as ``TuiSession.run_detached`` does."""
+        return asyncio.ensure_future(work)
+
 
 def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceResult:
     """Build a trace with one hop per SNR reading."""

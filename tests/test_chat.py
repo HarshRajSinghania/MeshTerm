@@ -43,6 +43,10 @@ class _StubSession:
     def invalidate(self) -> None:
         self.invalidations += 1
 
+    def run_detached(self, work):  # noqa: ANN001, ANN201
+        """Start a key handler's flow as a task, as ``TuiSession.run_detached`` does."""
+        return asyncio.ensure_future(work)
+
 
 class _StubContext:
     """Minimal :class:`~meshterm.context.AppContext` stand-in for chat tests."""

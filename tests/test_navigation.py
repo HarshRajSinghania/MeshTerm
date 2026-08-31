@@ -727,3 +727,77 @@ def test_only_navigational_layers_are_non_modal() -> None:
     assert BusyScreen("checking…").modal is True
     assert Screen().modal is False
     assert CANCEL is not POP_ALL
+
+
+async def test_pop_all_unwinds_from_a_screen_a_key_handler_opened() -> None:
+    """^W in the packet viewer unwinds, though nothing awaits the frame that opened it.
+
+    A screen opened from a key handler cannot be awaited by its opener — a handler is
+    sync, so the live feed floats the viewer with ``ensure_future(run_screen(...))`` and
+    the call chain that would have carried the unwind ends in a detached task. The hub
+    below is meanwhile parked on ``visit.result()``, which no press resolves. ^W used to
+    close the viewer and stop there, leaving the flag armed to fire on some later
+    keystroke — the unwind arrived at the next thing the reader did instead of at the
+    key they pressed (JP, 2026-08-31).
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        landed: list[str] = []
+        popped: list[str] = []
+
+        async def main() -> None:
+            hub = ScrollScreen("the live feed", floating=False)
+            try:
+                async with session.stay(hub) as visit:
+                    viewer = ScrollScreen("a packet")
+                    # Exactly how a key handler opens one: detached, never awaited.
+                    asyncio.ensure_future(session.run_screen(viewer))
+                    await asyncio.sleep(0.05)  # let it push
+                    assert session.top is viewer
+                    inp.send_text(POP_ALL_KEY)
+                    await visit.result()
+            except PopToMenu:
+                landed.append("menu")
+            finally:
+                popped.append("hub")
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+    assert landed == ["menu"], "^W must reach the menu, not stop at the screen it was pressed on"
+    assert popped == ["hub"]
+    assert session._stack == []
+
+
+async def test_a_detached_flow_absorbs_the_unwind_it_cannot_carry() -> None:
+    """The task a key handler starts is off the navigation chain, so the copy stops there.
+
+    ``request_pop_all`` arms every frame, so the unwind is already travelling out through
+    the screen that opened this one. Left to propagate here as well it would reach nothing
+    but the event loop's exception handler, logged as an unretrieved task error. The
+    flow's own cleanup still runs on the way through.
+    """
+    session = TuiSession(output=DummyOutput())
+    steps: list[str] = []
+
+    async def work() -> None:
+        try:
+            steps.append("opened")
+            raise PopToMenu()
+        finally:
+            steps.append("cleaned up")
+
+    task = session.run_detached(work())
+    await task
+    assert task.exception() is None, "an unwind must not become an unretrieved task error"
+    assert steps == ["opened", "cleaned up"]
+
+
+async def test_a_detached_flow_still_reports_a_real_failure() -> None:
+    """Only the unwind is absorbed — a broken flow still surfaces as a task error."""
+    session = TuiSession(output=DummyOutput())
+
+    async def work() -> None:
+        raise RuntimeError("the flow broke")
+
+    task = session.run_detached(work())
+    with pytest.raises(RuntimeError):
+        await task

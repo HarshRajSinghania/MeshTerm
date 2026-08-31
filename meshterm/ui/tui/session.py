@@ -508,12 +508,32 @@ class TuiSession:
           simply does nothing there and they answer or wait first.
         * **The root is already the top.** There is nowhere to go.
 
-        Otherwise it sets the unwind flag and resolves the top screen's future with
-        :data:`~meshterm.ui.tui.screen.POP_ALL`, which the frame awaiting it turns into
-        :class:`~meshterm.ui.tui.screen.PopToMenu`. The flag matters independently of the
-        future: a key can arrive while *no* screen is awaiting anything (mid device read,
-        under the busy overlay), and then the unwind is raised by the next navigation
-        boundary instead — see :meth:`_check_unwind`.
+        Otherwise it sets the unwind flag and resolves **every** frame's future with
+        :data:`~meshterm.ui.tui.screen.POP_ALL` — top first, down to but never including
+        the root — which each frame awaiting one turns into
+        :class:`~meshterm.ui.tui.screen.PopToMenu`.
+
+        Arming the whole stack, not just the top, is what makes ^W a *stack* verb rather
+        than a *call chain* one. A screen opened from a key handler cannot be awaited by
+        its opener — a handler is sync, so the live feed floats the packet viewer with
+        ``ensure_future(run_screen(...))`` and the chain that would have carried an unwind
+        ends in a detached task. Sending the sentinel only to the top left that unwind to
+        die there while the hub below sat on a ``visit.result()`` nothing would resolve:
+        ^W closed the viewer and stopped, and the still-armed flag fired at whatever the
+        reader pressed next instead (JP, 2026-08-31). Every frame is on the stack whether
+        or not anything awaits it, so the stack is the reliable path down.
+
+        The walk stops at a **modal** frame for the reason the top-of-stack refusal above
+        gives: work in flight is not to be discarded out from under itself. The flag stays
+        armed, so the unwind still fires at the next navigation boundary past it. Resolving
+        a frame that is not being awaited is inert — the value is simply never read, and
+        :meth:`~meshterm.ui.tui.screen.Screen.resolve` no-ops on a screen with no future
+        at all.
+
+        The flag matters independently of the futures: a key can arrive while *no* screen
+        is awaiting anything (mid device read, under the busy overlay), and then the
+        unwind is raised by the next navigation boundary instead — see
+        :meth:`_check_unwind`.
 
         Returns:
             ``True`` if the unwind was armed, ``False`` if it was refused.
@@ -522,8 +542,12 @@ class TuiSession:
         if top is not None and (top.modal or top is self._root):
             return False
         self._unwinding = True
-        if top is not None:
-            top.resolve(POP_ALL)
+        for screen in reversed(self._stack):
+            if screen is self._root:
+                break  # the root is where the unwind lands; it is not unwound itself
+            if screen is not top and screen.modal:
+                break
+            screen.resolve(POP_ALL)
         return True
 
     def unwound(self) -> None:
@@ -684,6 +708,40 @@ class TuiSession:
         return True
 
     # --- async prompt helpers ------------------------------------------------
+
+    def run_detached(self, work: Any) -> "asyncio.Future":
+        """Run ``work`` — a flow that opens a screen — off a key handler, unawaited.
+
+        A screen's ``handle`` is synchronous, so a key that opens something over the
+        current screen (the live feed's packet viewer, the chat's delivery paths, the
+        trace screen's path flows) can only *start* the flow, as a task. That task sits
+        outside the navigation call chain: nothing awaits it, so a
+        :class:`~meshterm.ui.tui.screen.PopToMenu` raised inside it has nowhere to
+        propagate and lands in the event loop's exception handler as an unretrieved
+        error.
+
+        Absorbing it here is safe because the unwind never travelled this way to begin
+        with: ^W arms every frame on the stack (see :meth:`request_pop_all`), so the
+        screen that opened this one carries the unwind out on its own awaited frame. What
+        this catch drops is a duplicate of an unwind already in flight — and the flow's
+        own ``finally`` blocks still run on the way through it.
+
+        Args:
+            work: The coroutine to run, usually a :meth:`run_screen` call.
+
+        Returns:
+            The task, for a caller that wants to cancel or await it. The app's own
+            callers are key handlers and ignore it; the screen they opened is on the
+            stack, which is how everything else finds it.
+        """
+
+        async def guarded() -> None:
+            try:
+                await work
+            except PopToMenu:
+                pass  # the stack carries the unwind; this task was never on its path
+
+        return asyncio.ensure_future(guarded())
 
     async def run_screen(self, screen: Screen) -> Any:
         """Push a screen, await its result, then pop it.

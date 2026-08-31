@@ -783,7 +783,7 @@ class TraceScreen(Screen):
                 self._dialog_open = False
                 self._session.invalidate()
 
-        asyncio.ensure_future(run())
+        self._session.run_detached(run())
 
     def _reverse_path(self) -> None:
         """Flip the walked path end-for-end and re-arm on the reversed direction.

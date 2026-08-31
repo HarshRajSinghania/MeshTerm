@@ -425,7 +425,7 @@ class LiveFeedScreen(Screen):
             # that arrive while it is open instead of freezing at this snapshot.
             source=lambda: list(self._feed),
         )
-        asyncio.ensure_future(self._session.run_screen(viewer))
+        self._session.run_detached(self._session.run_screen(viewer))
 
     # --- rendering ---------------------------------------------------------------------
 

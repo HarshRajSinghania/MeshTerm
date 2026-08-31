@@ -675,7 +675,7 @@ class ChatScreen(Screen):
                 self._paths_open = False
                 self._session.invalidate()
 
-        asyncio.ensure_future(run())
+        self._session.run_detached(run())
 
     def _begin_paste(self, data: str) -> None:
         """Confirm a clipboard paste on an amber dialog, then insert it into the compose line.
