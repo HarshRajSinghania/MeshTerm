@@ -193,6 +193,15 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   both platforms.
 - Key notation: `↑↓ move` (include the verb), `^R`/`^End` for Ctrl chords, `⌫` for
   backspace, `⇧` for shift.
+- An **arrow atom** leads the hint and names only the arrows: what they do (`↑↓ move`,
+  `←→ choose`, `↑↓ newer/older`) or what they move (`←→ slot`). Several keys share one
+  atom only when they do the same thing — `↑↓ PgUp/PgDn scroll`, `Home/End ends`; a key
+  that does something *else* gets its own, which is what `←→/Y/N choose` and `↑↓ Tab
+  complete` had wrong (Y/N answers, Tab completes, neither is what those arrows do). The
+  subject must be the right one, too: *cursor* is the row `❯` points at, so the composer's
+  ←→ moves its `slot`. Every button dialog carries the same hint,
+  `←→ choose · Enter select · Esc cancel` — a yes/no prompt is a button row like any
+  other, so its y/n accelerators ride its `Yes`/`No` labels rather than the line.
 
 ### Dialogs
 

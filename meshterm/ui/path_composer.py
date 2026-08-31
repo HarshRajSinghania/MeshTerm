@@ -142,7 +142,11 @@ class PathComposerScreen(Screen):
 
     #: The composing keys, in the hint grammar's navigation-then-actions-then-Esc order.
     #: Esc's verb is the only part that moves — see :attr:`footer_hint`.
-    _HINT = "↑↓ move · ←→ cursor · Enter add · type to filter · ⌫ remove · Esc cancel"
+    #: ``←→ slot``, not ``←→ cursor``: this app's *cursor* is the row the ❯ points at,
+    #: which is what ↑↓ moves here — the arrows move the **insertion slot** along the path
+    #: being built, the app's own word for it (and the one thing besides the row cursor
+    #: that wears the selection white).
+    _HINT = "↑↓ move · ←→ slot · Enter add · type to filter · ⌫ remove · Esc cancel"
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]

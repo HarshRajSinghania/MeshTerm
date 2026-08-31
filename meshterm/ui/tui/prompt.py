@@ -432,7 +432,11 @@ class ConfirmScreen(_KeylessDialog):
         title: str,
         *,
         default: bool = True,
-        footer_hint: str = "←→/Y/N choose · Enter select · Esc cancel",
+        # The ButtonDialog hint verbatim: a yes/no prompt is a button row like any other,
+        # and the row is what differs, not the keys. The y/n accelerators stay unwritten —
+        # the Yes/No labels are their own hint, and naming them cost the Esc verb its
+        # cells inside a PicoCalc-width box.
+        footer_hint: str = "←→ choose · Enter select · Esc cancel",
     ) -> None:
         """Build a confirm prompt.
 
@@ -757,7 +761,7 @@ class AutocompleteScreen(_KeylessDialog):
         prompt: str = "",
         default: str = "",
         validate: Optional[Validator] = None,
-        footer_hint: str = "type · ↑↓ Tab complete · Enter accept · Esc cancel",
+        footer_hint: str = "↑↓ move · Tab complete · Enter accept · Esc cancel",
     ) -> None:
         """Build an autocomplete prompt.
 
