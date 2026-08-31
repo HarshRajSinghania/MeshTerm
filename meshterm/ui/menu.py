@@ -591,7 +591,9 @@ async def _menu_round(
                 buttons,
                 title="Quit MeshTerm",
                 default=len(buttons) - 1,  # highlight Quit
-                footer_hint="Enter quit · Esc cancel",
+                # The hint stays the dialog default: Enter commits *the highlighted
+                # button*, which is Quit only until ←→ moves it — and with a third
+                # button in the row, naming the key that moves it is the point.
                 prompt_style="warn",
                 button_style="selected",
                 button_idle_style="muted",

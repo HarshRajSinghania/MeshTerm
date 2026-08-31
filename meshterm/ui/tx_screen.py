@@ -854,7 +854,8 @@ async def open_tx_optimize(
             [("Cancel", "cancel"), ("Apply", "apply")],
             title="Apply winner",
             default=1,
-            footer_hint="Enter apply · Esc cancel",
+            # The dialog default hint: Enter commits whichever button is highlighted,
+            # and ←→ is what moves it (see the quit confirm in ui/menu.py).
         )
         if choice != "apply":
             return

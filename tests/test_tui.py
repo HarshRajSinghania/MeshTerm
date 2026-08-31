@@ -2818,3 +2818,63 @@ def test_an_off_screen_rows_live_title_is_left_alone() -> None:
     lines = screen.render_body(53)
     lines[0:10]
     assert calls == ["top"]
+
+
+def _button_dialog_hints() -> list[tuple[str, int, int | None, str]]:
+    """Every literal ``footer_hint=`` on a button dialog: (file, line, buttons, hint).
+
+    ``buttons`` is the count when the call passes a list literal, else ``None`` — a
+    computed row (the quit confirm grows a third button on a bonded device) can hold any
+    number, so it is held to the many-button rule.
+    """
+    import ast
+    from pathlib import Path
+
+    found: list[tuple[str, int, int | None, str]] = []
+    root = Path(__file__).resolve().parent.parent / "meshterm"
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name not in ("button_dialog", "ButtonDialog"):
+                continue
+            hint = next(
+                (k.value.value for k in node.keywords
+                 if k.arg == "footer_hint" and isinstance(k.value, ast.Constant)),
+                None,
+            )
+            if hint is None:
+                continue  # the default hint, which is the generic one
+            row = node.args[1] if len(node.args) > 1 else None
+            count = len(row.elts) if isinstance(row, ast.List) else None
+            found.append((path.name, node.lineno, count, hint))
+    return found
+
+
+def test_a_button_dialogs_hint_never_names_the_verb_of_one_button() -> None:
+    """Enter commits *the highlighted* button, so a row of them may only say ``select``.
+
+    The quit confirm used to promise ``Enter quit · Esc cancel``, which was true only
+    while Quit happened to be highlighted — ←→ moves it, and on a bonded device a third
+    button sits between the two (JP, 2026-08-31). The same hint also left out the one key
+    that changes what Enter will do. A row-picking list may name its committing verb
+    (``Enter adopt path``) because every row commits the same way; a button row cannot.
+
+    A dialog with a single button is the exception the rule is shaped around: a lone
+    acknowledgement has nothing to choose between, so it names its verb (``Enter OK``)
+    and does not advertise an ←→ that would move nothing.
+    """
+    for where, line, buttons, hint in _button_dialog_hints():
+        if buttons == 1:
+            assert "←→" not in hint, f"{where}:{line} offers ←→ over a single button"
+            continue
+        assert "Enter select" in hint, (
+            f"{where}:{line} promises {hint!r} — Enter commits whichever button is "
+            "highlighted, so the atom stays 'Enter select'"
+        )
+        assert "←→" in hint, (
+            f"{where}:{line} hides ←→, the key that moves the highlight Enter commits"
+        )

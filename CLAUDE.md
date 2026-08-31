@@ -175,7 +175,11 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   `Enter select` when it picks a value or action row · `Enter set` in a value picker.
   A more specific committing verb (`Enter adopt path`, `Enter add`) is fine; a synonym
   of the generic three (`pick`, `choose`, `commit`) is not. The filter atom is always
-  `type to filter`.
+  `type to filter`. A **button row** is the one place the specific verb is barred: Enter
+  commits whichever chip is highlighted, so the hint stays `←→ choose · Enter select ·
+  Esc cancel` — `Enter quit` on the quit confirm was true only until ←→ moved, and hid
+  the key that moves it. A lone-button acknowledgement names its verb (`Enter OK`) and
+  offers no `←→`, having nothing to choose between.
 - A hint is drawn **once per frame**, and which surface draws it is the footer's call.
   Where the footer is the hint line (regular) it carries the *top* screen's hint, so a
   floating dialog's border stays silent — the same sentence in the border and at the
