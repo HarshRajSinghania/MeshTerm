@@ -62,6 +62,7 @@ _DAY = 86400
 PURGE_RUNGS: tuple[tuple[str, int], ...] = (
     ("Older than 1 day", _DAY),
     ("Older than 1 week", 7 * _DAY),
+    ("Older than 10 days", 10 * _DAY),
     ("Older than 2 weeks", 14 * _DAY),
     ("Older than 1 month", 30 * _DAY),
     ("Older than 3 months", 90 * _DAY),
