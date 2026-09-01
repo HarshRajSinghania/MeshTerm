@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 
 from .archived_screen import open_archived
 from .contactlist import ContactListScreen, ContactRow
-from .menus import marked_label
+from .menus import icon_lane, marked_label
 from .purge_screen import purge_contacts
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
@@ -58,6 +58,11 @@ YOU = ("you",)
 #: and from :data:`YOU`): the sweep, and the way in to what it has already taken.
 _PURGE = ("purge",)
 _ARCHIVED = ("archived",)
+
+#: Every mark the tail's maintenance rows lead with — the set the icon column is measured
+#: over (see :func:`~meshterm.ui.menus.icon_lane`). Declared rather than inferred so the
+#: column is one width for the whole tail whichever of the two rows a given visit draws.
+_TAIL_ICONS = ("🗑", "📂")
 
 
 class ContactsScreen(ContactListScreen):
@@ -114,17 +119,23 @@ class ContactsScreen(ContactListScreen):
         # the way in to what the sweep has already taken. The two sit together because they
         # are the two halves of one idea, and the archived row is *under* the purge for the
         # same reason: it is where the purge's output went.
+        # One icon column for both rows: 🗑 draws a single cell where 📂 draws two, so an
+        # unpadded mark would start the purge row's label a column left of the other's.
+        lane = icon_lane(_TAIL_ICONS)
         tail: list = []
         if contacts:
             tail = [
                 Separator(" "),
-                Choice(title=marked_label("🗑", "Purge contacts…", "err"), value=_PURGE),
+                Choice(
+                    title=marked_label("🗑", "Purge contacts…", "err", lane=lane),
+                    value=_PURGE,
+                ),
             ]
         if archived:
             tail = tail or [Separator(" ")]
             # The tally rides the row muted, as a status atom rather than as part of the
             # verb: it is what the row leads to, not what the row does.
-            label = marked_label("📂", "View archived contacts", "")
+            label = marked_label("📂", "View archived contacts", "", lane=lane)
             label.append(f"  ·  {archived}", style="muted")
             tail.append(Choice(title=label, value=_ARCHIVED))
         super().__init__(

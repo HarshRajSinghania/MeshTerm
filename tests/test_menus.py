@@ -7,6 +7,7 @@ regression here fails once rather than on every screen.
 
 from __future__ import annotations
 
+import pytest
 from rich.text import Text
 
 from meshterm.ui.menus import (
@@ -15,7 +16,10 @@ from meshterm.ui.menus import (
     column_header,
     exit_rows,
     fit_cells,
+    icon_lane,
+    icon_mark,
     lane_header,
+    marked_label,
     menu_rows,
     section_heading,
 )
@@ -168,3 +172,79 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
     # No section is so big it stops being a grouping (the old Mesh bucket held seven of
     # nineteen rows), and none is a bucket of one.
     assert all(2 <= len(names) <= 5 for names in sections.values())
+
+
+#: Two lexicon icons the terminal genuinely draws in different widths — the whole reason
+#: the icon column has to be measured. Of the app's icons, ten (``🗑 ✎ ⚙ ▶ ★ ↻ ↕ ⇄ ⌨ #``)
+#: draw one cell and the rest two.
+_NARROW, _WIDE = "🗑", "📂"
+
+
+def test_the_icon_column_is_the_widest_mark_a_list_can_draw() -> None:
+    """A list declares its icons and the column measures them; an empty set has no column."""
+    from rich.cells import cell_len
+
+    assert cell_len(_NARROW) == 1 and cell_len(_WIDE) == 2, "the premise of this whole lane"
+    assert icon_lane((_NARROW,)) == 1  # a list of only narrow marks keeps a narrow column
+    assert icon_lane((_WIDE,)) == 2
+    assert icon_lane((_NARROW, _WIDE)) == 2  # a mixed list pads up to its widest
+    assert icon_lane(()) == 0
+    assert icon_lane(("",)) == 0  # a row with no icon contributes no column
+
+
+def test_a_narrow_mark_pads_out_to_its_wider_siblings() -> None:
+    """THE fix for a row whose label started a column early (JP, 2026-09-01).
+
+    ``🗑 Delete contact…`` sat one cell left of ``💾 Archive contact`` because the row wrote
+    ``icon + " "`` and the terminal draws the two icons in different widths. Both marks now
+    occupy the same number of *cells*, which is the only measure the terminal cares about —
+    the character counts still differ, and asserting on those is what hid this.
+    """
+    from rich.cells import cell_len
+
+    lane = icon_lane((_NARROW, _WIDE))
+    narrow = icon_mark(_NARROW, "err", lane)
+    wide = icon_mark(_WIDE, "", lane)
+    assert cell_len(narrow.plain) == cell_len(wide.plain) == lane + 1
+    assert len(narrow.plain) != len(wide.plain), "cells, not characters, are the measure"
+
+
+def test_marked_label_lines_up_a_mixed_list_when_told_its_lane() -> None:
+    """Labels start in the same cell once the caller passes the list's measured column."""
+    from rich.cells import cell_len
+
+    lane = icon_lane((_NARROW, _WIDE))
+    rows = [
+        marked_label(_NARROW, "Purge contacts…", "err", lane=lane),
+        marked_label(_WIDE, "View archived contacts", "", lane=lane),
+    ]
+    starts = {cell_len(row.plain[: row.plain.index(word)])
+              for row, word in zip(rows, ("Purge", "View"))}
+    assert starts == {lane + 1}
+
+    # Without the lane each mark measures itself, which is right for a list whose rows all
+    # lead with the same icon — and is exactly what misaligns a mixed one.
+    solo = [marked_label(_NARROW, "A", "err"), marked_label(_WIDE, "B", "")]
+    assert len({cell_len(row.plain[: row.plain.index(letter)])
+                for row, letter in zip(solo, ("A", "B"))}) == 2
+
+
+def test_an_iconless_platform_collapses_the_column_and_keeps_the_tint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No icon lane means no cells spent and no separator — and the tint moves to the words.
+
+    A destructive row announces itself by its red mark; drop the mark and the claim has to
+    land somewhere, or a delete reads like any other action.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    set_platform(PICOCALC)
+    try:
+        assert icon_lane((_NARROW, _WIDE)) == 0
+        assert icon_mark(_NARROW, "err", 0).plain == ""
+        row = marked_label(_NARROW, "Delete contact…", "err", lane=0)
+        assert row.plain == "Delete contact…"
+        assert any(span.style == "err" for span in row.spans) or row.style == "err"
+    finally:
+        set_platform(REGULAR)

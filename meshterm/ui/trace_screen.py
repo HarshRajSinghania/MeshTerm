@@ -96,7 +96,7 @@ from ..services import trace_runner
 from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
-from .menus import command_icon, marked_label, section_heading
+from .menus import icon_lane, icon_mark, marked_label, section_heading
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
@@ -172,28 +172,13 @@ _ACTION_ICONS = ("✎", "⇄", "⚡", "⚙", "#", "▶")
 
 
 def _icon_lane() -> int:
-    """The action rows' icon column, in cells: the widest mark on this platform.
-
-    Measured rather than hard-coded because the marks themselves change with the
-    platform: PicoCalc draws no icon lane on a command row at all
-    (:func:`~meshterm.ui.menus.command_icon`), so the column measures zero and the labels
-    take the cells — the same alignment rule wherever the icons land.
-    """
-    return max(cell_len(command_icon(icon)) for icon in _ACTION_ICONS)
+    """The action rows' icon column, in cells — this screen's own marks, measured once."""
+    return icon_lane(_ACTION_ICONS)
 
 
 def _icon(text: Text, icon: str, style: str) -> None:
-    """Append an action row's mark in the icon column, its trailing space included.
-
-    A one-cell mark pads out to :func:`_icon_lane` so every label starts in the same
-    column; an emptied lane (see there) appends nothing, separator included.
-    """
-    lane = _icon_lane()
-    if not lane:
-        return
-    mark = command_icon(icon)
-    text.append(mark, style=style)
-    text.append(" " * (lane - cell_len(mark) + 1))
+    """Append an action row's mark in the icon column, its trailing space included."""
+    text.append_text(icon_mark(icon, style, _icon_lane()))
 
 
 def _lane_lines(label: str, value: list[Text], width: int) -> list[str]:

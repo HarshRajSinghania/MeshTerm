@@ -85,7 +85,55 @@ def command_icon(icon: str) -> str:
     return glyph(icon) if get_platform().menu_icons else ""
 
 
-def marked_label(icon: str, label: str, style: str) -> Text:
+def icon_lane(icons: Iterable[str]) -> int:
+    """THE icon column's width in cells: the widest mark among ``icons`` on this platform.
+
+    A list's icons are **not all the same width**, and the terminal is the authority on
+    which are which: of the app's lexicon, ten (``🗑 ✎ ⚙ ▶ ★ ↻ ↕ ⇄ ⌨ #``) draw one cell
+    and the rest two. A row that simply wrote ``icon + " "`` therefore started its label a
+    column left of its two-cell siblings — which is what put ``🗑 Delete contact…`` out of
+    line under ``💾 Archive contact`` on the node page (JP, 2026-09-01). So a list declares
+    the icons it uses, measures the column once, and pads every mark out to it.
+
+    Measured rather than hard-coded because the marks themselves change with the platform:
+    the PicoCalc draws no icon lane on a command row at all (see :func:`command_icon`), so
+    the column measures zero and the labels take back the cells — the same alignment rule
+    wherever the icons land.
+
+    Args:
+        icons: Every mark the list's rows can lead with, as written on the regular platform.
+
+    Returns:
+        The column width in cells, or ``0`` where this platform draws no icons (and for an
+        empty set, which is the same thing to a caller).
+    """
+    return max((cell_len(command_icon(icon)) for icon in icons if icon), default=0)
+
+
+def icon_mark(icon: str, style: str, lane: int) -> Text:
+    """One row's mark, tinted, padded to ``lane`` cells, its trailing space included.
+
+    The single place a command row's icon column is written, so a mark one cell narrower
+    than its neighbours cannot shift the label after it. An emptied lane (``lane`` of
+    ``0``) appends nothing at all, separator included — the cells belong to the label.
+
+    Args:
+        icon: The row's icon, as written on the regular platform.
+        style: The theme style the mark is drawn in.
+        lane: The column width from :func:`icon_lane`.
+
+    Returns:
+        The padded mark, or empty :class:`~rich.text.Text` where there is no lane.
+    """
+    mark = command_icon(icon) if icon else ""
+    if not lane or not mark:
+        return Text()
+    text = Text(mark, style=style)
+    text.append(" " * (lane - cell_len(mark) + 1))
+    return text
+
+
+def marked_label(icon: str, label: str, style: str, *, lane: Optional[int] = None) -> Text:
     """A command row whose icon carries a tint — the tint moving to the label if it goes.
 
     The app marks a destructive command by tinting its icon, not its words (``🗑`` in
@@ -98,12 +146,18 @@ def marked_label(icon: str, label: str, style: str) -> Text:
         icon: The row's icon, as written on the regular platform.
         label: The row's words, with no icon and no leading space.
         style: The theme style the mark (or, iconless, the label) is drawn in.
+        lane: The icon column's width in cells, from :func:`icon_lane` over every icon the
+            surrounding list uses. **Pass it whenever the list mixes icon widths**, or the
+            narrow ones start their labels a column early. ``None`` (the default) measures
+            this icon alone, which is right for a list whose rows all lead with the same
+            mark, and for the lone action row.
 
     Returns:
         The composed row label.
     """
-    mark = command_icon(icon)
-    return Text.assemble((f"{mark} ", style), label) if mark else Text(label, style=style)
+    width = icon_lane((icon,)) if lane is None else lane
+    mark = icon_mark(icon, style, width)
+    return Text.assemble(mark, label) if mark.plain else Text(label, style=style)
 
 
 def command_label(label: LabelT) -> LabelT:

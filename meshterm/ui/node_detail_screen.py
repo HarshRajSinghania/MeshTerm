@@ -88,7 +88,7 @@ from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
 from .mapcanvas import RGB
-from .menus import command_icon
+from . import menus
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -447,6 +447,13 @@ class NodeDetailScreen(Screen):
         self._routes = routes
         self._info_actions = info_actions or []
         self._trace_action = trace_action
+        #: The action rows' icon column, in cells — measured once over every mark this page
+        #: can draw, so a one-cell ``🗑`` pads out to its two-cell siblings and every label
+        #: starts in the same column. Zero on a platform that draws no icon lane at all.
+        self._icon_lane = menus.icon_lane(
+            action.glyph
+            for action in (*self._info_actions, *( [trace_action] if trace_action else [] ))
+        )
         self._tab_index = 0
         self._row_index = 0
         #: The highlighted route on the Routes tab (drives the graph); tracks the cursor as
@@ -1043,10 +1050,13 @@ class NodeDetailScreen(Screen):
         # destructive row announces itself — so where the lane goes, the tint lands on the
         # label instead. Same move as :func:`~meshterm.ui.menus.marked_label` makes for a
         # menu row, for the same reason: a delete must not read like any other action.
-        mark = command_icon(action.glyph) if action.glyph else ""
-        if mark:
-            text.append(f"{mark} ", style=action.glyph_style)
-        text.append(action.label, style="" if mark else action.glyph_style)
+        #
+        # Padded to the page's own lane rather than written as `icon + " "`: this page mixes
+        # a one-cell 🗑 with two-cell siblings, and the unpadded form started its label a
+        # column early (JP, 2026-09-01).
+        mark = menus.icon_mark(action.glyph, action.glyph_style, self._icon_lane)
+        text.append_text(mark)
+        text.append(action.label, style="" if mark.plain else action.glyph_style)
         if selected:
             text.style = "cursor"
         text.no_wrap = True

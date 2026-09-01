@@ -33,7 +33,6 @@ import asyncio
 import re
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
@@ -42,7 +41,7 @@ from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN
 from ..core.models import Contact, LoginResult, TraceResult, TxLevelResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..services.topology import build_topology, render_custom_spec
-from .menus import command_icon
+from .menus import icon_lane, icon_mark
 from .pathline import SELF_GLYPH, PathHop, PathLine, cut_to, path_line
 from .theme import name_style, snr_style
 from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
@@ -76,18 +75,13 @@ _ACTION_ICONS = ("✎", "⚙", "#", "▶", "★")
 
 
 def _icon_lane() -> int:
-    """The action rows' icon column, in cells: the widest mark on this platform."""
-    return max(cell_len(command_icon(icon)) for icon in _ACTION_ICONS)
+    """The action rows' icon column, in cells — this screen's own marks, measured once."""
+    return icon_lane(_ACTION_ICONS)
 
 
 def _icon(text: Text, icon: str, style: str) -> None:
     """Append an action row's mark in the icon column, its trailing space included."""
-    lane = _icon_lane()
-    if not lane:
-        return
-    mark = command_icon(icon)
-    text.append(mark, style=style)
-    text.append(" " * (lane - cell_len(mark) + 1))
+    text.append_text(icon_mark(icon, style, _icon_lane()))
 
 
 class TxSweepScreen(Screen):
