@@ -411,7 +411,12 @@ class ChatScreen(Screen):
                     header = self._group_header(sender, is_self=message.outbound)
                     lines += render_lines(header, width)
                 if selected:
-                    self._selected_line = len(lines)
+                    # The first message owns the head of the transcript: nothing precedes
+                    # its day divider, so its pick anchors at line 0 rather than at its own
+                    # body. Anchoring on the body left the view scrolled two lines in at the
+                    # very top — the divider only pinned, the sender chip gone, and the
+                    # title bar's ↑ lit over a transcript with nothing above it.
+                    self._selected_line = 0 if idx == 0 else len(lines)
                 lines += self._body_lines(body, message, width, selected=selected)
             prev_group, prev_day = group, day
             ids.append(id(message))

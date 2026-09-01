@@ -1229,6 +1229,26 @@ def test_chat_frame_pins_a_day_divider_when_stuck_to_the_newest() -> None:
     assert above is True  # and the frame flags there's more above the pin
 
 
+def test_chat_top_of_transcript_clears_the_more_above_flag() -> None:
+    """Picking the oldest message scrolls the head of the transcript into view.
+
+    The first message's pick anchors at line 0, so the frame lands on offset 0: its day
+    divider and sender chip are real rows again instead of a pin over a hidden line, and
+    the title bar's clip arrow goes dim because there genuinely is nothing above.
+    """
+    from meshterm.ui.tui import frame
+
+    screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
+    lines = screen.render_body(60)
+    screen.handle("ctrl_home")  # back to the oldest message
+    lines = screen.render_body(60)
+    visible, above, below = frame._visible_slice(screen, lines, 6)
+
+    assert screen.scroll == 0
+    assert above is False and below is True
+    assert _strip_ansi(visible[0]).strip().startswith("──")  # the head, drawn not pinned
+
+
 def test_chat_home_end_and_word_keys_move_the_compose_cursor() -> None:
     """In a chat, Home/End and Ctrl+←/→ act on the compose line, not the transcript scroll."""
     screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
