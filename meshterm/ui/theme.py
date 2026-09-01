@@ -121,13 +121,19 @@ MESH_THEME = Theme(
         "snr.good": "bold #4ade80",
         "snr.ok": "bold #fbbf24",
         "snr.bad": "bold #f87171",
-        # The status-bar battery gauge, as a fuel-gauge palette: green healthy, orange at
-        # a quarter, red near empty. ``batt.dim`` is the off-beat of the critically-low
-        # blink — a dark slate the red glyph flickers to, so it pulses without vanishing.
-        "batt.high": "bold #4ade80",
-        "batt.mid": "bold #fb923c",
-        "batt.low": "bold #f87171",
-        "batt.dim": "#475569",
+        # The status-bar battery gauge: a filled block, not four thin dots. Every cell is a
+        # lit foreground over its own darker ground of the same hue — light green on green
+        # over half, yellow on brown over a quarter, light red on red below — so the gauge
+        # reads as a *block* at a glance and the braille fill inside it says how much of the
+        # pack is left. ``batt.flash`` and ``batt.flash.off`` are the two beats of the
+        # last-percent alarm: black dots on red, alternating with the light red on the bare
+        # page. Losing the ground for a beat is a bigger change than any hue swap could be,
+        # which is what makes it read across a room.
+        "batt.full": "bold #4ade80 on #15803d",
+        "batt.mid": "bold #fbbf24 on #a16207",
+        "batt.low": "bold #f87171 on #991b1b",
+        "batt.flash": "not bold #000000 on #dc2626",
+        "batt.flash.off": "bold #f87171",
         # The node-type *marks* — THE colours behind ● ▲ ■ ◉ wherever a typed node is
         # drawn (see ui.widgets._NODE_GLYPHS), and the map's own marker language: clients
         # the loud pink, repeaters the calmer violet, rooms a white square, sensors an
@@ -323,10 +329,14 @@ MESH_THEME_16 = Theme(
         "snr.good": "bold color(10)",
         "snr.ok": "bold color(11)",
         "snr.bad": "bold color(9)",
-        "batt.high": "bold color(10)",
-        "batt.mid": "not bold color(3)",
-        "batt.low": "bold color(9)",
-        "batt.dim": "color(8)",
+        # Each band is its bright slot over its own dim one — the console has exactly one
+        # pair per hue, and backgrounds stop at the dim bank, so the block look is the
+        # palette's natural shape rather than a compromise with it.
+        "batt.full": "bold color(10) on color(2)",
+        "batt.mid": "bold color(11) on color(3)",
+        "batt.low": "bold color(9) on color(1)",
+        "batt.flash": "not bold color(0) on color(1)",
+        "batt.flash.off": "bold color(9)",
         "type.node": "color(13)",
         "type.repeater": "not bold color(5)",
         "type.room": "color(15)",

@@ -85,10 +85,11 @@ class Platform:
             and quantizes the two scales that would otherwise spend a gradient — the
             per-node key hue (:func:`~meshterm.ui.theme.node_style`) and the heard-age heat
             (:func:`~meshterm.ui.widgets._recency_style`). Wired in P3.
-        effects: Whether animated/decorative rendering runs at all: the header battery
-            blink, the braille spinner. ``False`` drops to static chrome and a ``LINE``
-            spinner fallback, which is cheaper on a console where a repaint is dear.
-            Wired in P2/P3.
+        effects: Whether animated/decorative rendering runs at all — the braille spinner,
+            which drops to a ``LINE`` fallback. Cheaper on a console where a repaint is
+            dear. The header battery gauge is deliberately *not* behind it: its sweep is
+            the charging state itself and its blink is the last warning before the pack
+            dies, and both ride the idle repaint that happens anyway. Wired in P2/P3.
         tick_s: The :class:`~prompt_toolkit.application.Application` refresh interval — the
             *idle* repaint cadence only, since every screen pushes its own repaint through
             ``TuiSession.invalidate`` when its data actually moves. Composing one frame was

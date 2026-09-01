@@ -241,18 +241,13 @@ def _battery_segment(ctx: AppContext) -> Text:
     reading = ctx.battery.reading()
     if reading is None:
         return Text()
-    platform = get_platform()
-    # The sweep is how the gauge says "charging" at all, so its clock runs on every platform;
-    # only the step widens to whatever that platform actually repaints at. The low-battery
-    # blink is decoration over a charge the cell already shows, so it stays behind `effects`
-    # — not worth a forced repaint, nor a colour swap on a 16-slot console.
-    frame = int(time.monotonic() / max(_BATTERY_ANIM_MIN_S, platform.tick_s))
-    return battery_cell(
-        reading.percent,
-        charging=reading.charging,
-        frame=frame,
-        animate=platform.effects,
-    )
+    # Both of the gauge's animations run on every platform; only the step widens to whatever
+    # that platform actually repaints at. Neither is behind `Platform.effects`: the header is
+    # rebuilt on the idle tick regardless, so an animation costs a colour swap in a frame
+    # already being painted — and the two things it animates are "power is coming in" and
+    # "this handheld is about to die", neither of which is decoration.
+    frame = int(time.monotonic() / max(_BATTERY_ANIM_MIN_S, get_platform().tick_s))
+    return battery_cell(reading.percent, charging=reading.charging, frame=frame)
 
 
 def _header_segments(ctx: AppContext, cache: dict) -> list[Text]:

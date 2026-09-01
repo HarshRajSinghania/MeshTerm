@@ -1345,63 +1345,107 @@ _BRAILLE_BASE = 0x2800
 #: into the canvas module for two constants.
 _BRAILLE_DOTS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
 
-#: Battery charge tiers: ``(percent floor, braille rows lit from the bottom, colour)``,
-#: highest first. The glyph is one braille cell (2×4 dots) filled from its bottom row up, so
-#: four coarse levels read as a shrinking fuel gauge: the whole cell above three-quarters,
-#: six dots above half, four above a quarter, two below it — green while healthy, orange at a
-#: quarter, red near empty (the app's ok/warn/err semantics as a gauge).
-_BATTERY_TIERS: tuple[tuple[int, int, str], ...] = (
-    (75, 4, "batt.high"),
-    (50, 3, "batt.high"),
-    (25, 2, "batt.mid"),
-    (0, 1, "batt.low"),
+#: The fuel-gauge bands: ``(percent floor, style)``, highest first. Colour answers *how much
+#: pack is left* in three broad steps — light green on green over half, yellow on brown over a
+#: quarter, light red on red below — while the eight-rung braille fill inside the block
+#: answers *how much more precisely*. Two questions, two channels: a band that stayed put
+#: while the dots climbed is what makes the cell readable at a glance and still exact on a
+#: second look.
+_BATTERY_BANDS: tuple[tuple[int, str], ...] = (
+    (50, "batt.full"),
+    (25, "batt.mid"),
+    (0, "batt.low"),
 )
 
-#: At or below this charge the red glyph blinks with a dim frame — a can't-miss low warning.
-_BATTERY_CRITICAL = 10
+#: Steps in the fill: one braille cell is 2×4 dots, and each dot row lights left-then-right,
+#: so the cell reads as an eight-rung ladder — one rung per 12.5% of charge.
+_BATTERY_STEPS = 8
+
+#: Halfway down the last rung the cell starts alarming, and it does it by dropping the ground
+#: rather than by changing hue: black dots on red one frame (``batt.flash``), the light red on
+#: the bare page the next (``batt.flash.off``). Every other cell in the app's gauge is a
+#: filled block, so a beat with no fill at all is the loudest thing the palette can say.
+#: A percentage rather than a rung because half a rung is not a rung: a rung is ``100 / 8`` =
+#: 12.5% of the pack, so its midpoint is 6.25% — the last dot half spent.
+#:
+#: The alternation is ours, drawn a frame at a time. The console's own blink attribute is no
+#: use even where a terminal honours it: SGR 5 toggles the *foreground* and leaves the ground
+#: alone, which is the half of this that matters (and the PicoCalc's framebuffer console
+#: ignores it outright — device-checked, along with its want of bright backgrounds).
+_BATTERY_FLASH_PCT = 100 / _BATTERY_STEPS / 2
 
 #: Frames in the charging sweep: empty → four fills → round again (bottom-to-full loop).
 _CHARGE_FRAMES = 5
 
 
-def _braille_fill(rows: int) -> str:
-    """A single braille cell with its bottom ``rows`` (0–4) dot rows lit."""
-    rows = max(0, min(4, rows))
+def _braille_fill(steps: int) -> str:
+    """A single braille cell filled from the bottom by ``steps`` (0–8) half-rows.
+
+    Each dot row is two steps: the left dot lights first, then the right one completes the
+    row, so the fill climbs in half-rows rather than whole ones and one cell carries eight
+    distinguishable levels.
+    """
+    steps = max(0, min(_BATTERY_STEPS, steps))
     bits = 0
-    for row in range(4 - rows, 4):
-        bits |= _BRAILLE_DOTS[0][row] | _BRAILLE_DOTS[1][row]
+    for step in range(steps):
+        row, col = 3 - step // 2, step % 2
+        bits |= _BRAILLE_DOTS[col][row]
     return chr(_BRAILLE_BASE + bits)
 
 
-def _battery_tier(percent: int) -> tuple[int, str]:
-    """The ``(rows lit, colour)`` a charge level draws at (see :data:`_BATTERY_TIERS`)."""
-    for floor, rows, color in _BATTERY_TIERS:
+def _battery_steps(percent: int) -> int:
+    """How many half-rows a charge lights: one rung per 12.5%, never fewer than one.
+
+    The bands are ``0–12.5`` → one rung … ``87.5–100`` → the full cell, each one taking its
+    lower bound. A pack on its last percent still lights a single dot, so the gauge is never
+    an empty cell while the pack is still running.
+    """
+    pct = max(0, min(100, int(percent)))
+    return max(1, min(_BATTERY_STEPS, int(pct * _BATTERY_STEPS / 100) + 1))
+
+
+def _battery_band(percent: int) -> str:
+    """The band a charge draws in (see :data:`_BATTERY_BANDS`) — always the *true* charge.
+
+    Read off the pack rather than off the cell, so the charging sweep keeps saying what the
+    pack holds while its fill climbs through frames that mean nothing on their own.
+    """
+    for floor, style in _BATTERY_BANDS:
         if percent >= floor:
-            return rows, color
-    return 1, "batt.low"
+            return style
+    return "batt.low"
 
 
-def battery_cell(
-    percent: int, *, charging: bool = False, frame: int = 0, animate: bool = True
-) -> Text:
-    """The status-bar battery gauge: one braille cell coloured by charge, then its ``%``.
+def battery_cell(percent: int, *, charging: bool = False, frame: int = 0) -> Text:
+    """The status-bar battery gauge: one filled braille block, then its ``%``.
 
-    The braille cell fills from the bottom up in four coarse steps (see
-    :data:`_BATTERY_TIERS`), coloured green while healthy, orange at a quarter, red near
-    empty. Two live states animate off the caller's ``frame`` counter (advanced one step per
-    repaint tick), so the gauge moves without any per-frame plumbing:
+    The cell is a lit foreground over its own darker ground — a *block*, coloured by band
+    (:data:`_BATTERY_BANDS`): light green on green over half, yellow on brown over a quarter,
+    light red on red below. Inside that block the braille fills from the bottom up in eight
+    half-row steps (see :func:`_braille_fill`), one rung per 12.5% of charge, the left dot of
+    a row lighting before the right. So the block answers *roughly how much* from across the
+    room and the dots answer *exactly how much* on a second look. Two live states animate off
+    the caller's ``frame`` counter (advanced one step per repaint tick), so the gauge moves
+    without any per-frame plumbing:
 
-    * **Charging** overrides the fill: the cell sweeps empty-to-full on a loop, the charge
-      colour held, so a plugged-in pack visibly climbs — while the number beside it stays the
-      *true* charge, never the animation's.
-    * **Critically low** (≤ :data:`_BATTERY_CRITICAL`%, not charging) blinks the red cell to a
-      dim slate on alternate frames — an unmissable pulse in the corner.
+    * **Charging** overrides the fill: the cell sweeps empty-to-full on a loop, so a
+      plugged-in pack visibly climbs. The band does *not* sweep with it — colour keeps
+      answering for the real charge, since a frame of the animation means nothing on its own
+      — and neither does the number beside it, which stays the true percent throughout. The
+      sweep climbs by whole dot rows, not by the fill's half-rows: it is a "power is coming
+      in" animation rather than a reading, and its tick is slow enough (a step per repaint)
+      that five frames say that better than nine.
+    * **Below :data:`_BATTERY_FLASH_PCT`** — half the last dot's worth of charge, and only
+      when nothing is charging it — the cell alternates between black dots on red and the
+      light red on the bare page. Dropping the ground for a beat is a bigger change than any
+      hue swap in a palette where every other cell is filled, which is the point: it is the
+      last warning a handheld gives before it dies.
 
-    The two differ in what they're *for*, which is what ``animate`` sorts out. The sweep is
-    the only thing that says charging at all, so it runs everywhere — a platform whose frames
-    are dear (the PicoCalc: see ``Platform.effects``) just steps it on that platform's own
-    slower repaint cadence. The blink is an alarm laid over a charge the gauge already shows,
-    so it is genuinely decorative and ``animate=False`` drops it, leaving the red cell steady.
+    Both run on every platform, stepping at whatever that platform repaints at — 2 s on the
+    PicoCalc, where the header is rebuilt on the idle tick anyway, so an animation costs a
+    colour swap in a frame already being painted and nothing else. Neither is behind
+    ``Platform.effects``: one *is* the charging state, and the other is the last warning a
+    handheld gives before it dies.
 
     A pack at 100% is drawn as **not charging** whichever way the flag reads: a full cell
     resting full is the honest picture, and a topped-off charger left plugged in shouldn't
@@ -1412,20 +1456,24 @@ def battery_cell(
         charging: Whether the pack is taking charge (drives the fill sweep). Ignored at 100%.
         frame: A monotonically advancing tick; only its phase is read, so any
             steadily-incrementing integer animates the two live states.
-        animate: Whether decorative animation runs. ``False`` holds the low-battery blink at
-            its resting frame; the charging sweep runs regardless, being the state itself.
 
     Returns:
-        A Rich :class:`Text`: the coloured glyph, a space, and ``NN%`` in muted text.
+        A Rich :class:`Text`: the coloured block, a space, and ``NN%`` in muted text — the
+        block's colours on the glyph's span alone, so the ground stops at the cell.
     """
     pct = max(0, min(100, int(percent)))
-    rows, color = _battery_tier(pct)
-    if charging and pct < 100:
-        # The charge colour is held; only the fill sweeps, so it reads as "filling", not
-        # as the charge itself jumping around.
-        rows = frame % _CHARGE_FRAMES
-    elif animate and pct <= _BATTERY_CRITICAL and frame % 2:
-        color = "batt.dim"
-    out = Text(_braille_fill(rows), style=color)
+    # The sweep climbs by whole rows, so the loop stays legible. Colour comes off the pack
+    # either way: a sweep frame is an animation, not a reading, and must not be coloured
+    # as though it were one.
+    sweeping = charging and pct < 100
+    steps = (frame % _CHARGE_FRAMES) * 2 if sweeping else _battery_steps(pct)
+    color = _battery_band(pct)
+    if not sweeping and pct < _BATTERY_FLASH_PCT:
+        color = "batt.flash.off" if frame % 2 else "batt.flash"
+    # The colours ride the *glyph's own span*, never the Text's base style: the block paints
+    # a background, and a base style merges into every span, so a base block would drag the
+    # muted percent onto the coloured ground alongside the cell.
+    out = Text()
+    out.append(_braille_fill(steps), style=color)
     out.append(f" {pct}%", style="muted")
     return out
