@@ -361,7 +361,7 @@ def test_purge_age_rungs_split_stale_from_never_heard() -> None:
 
 
 async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> None:
-    """The sweep counts down a real bar, then hands its outcome back in a dialog.
+    """The whole sweep, end to end: ladder → preview → amber confirm → bar → outcome dialog.
 
     Two things the busy overlay could not do (JP, 2026-08-10). It only ever said "working",
     and only in the gaps *between* screens — over the pushed contacts list it drew nothing
@@ -390,6 +390,7 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
         for i in range(3)
     ]
     removed_from_device: list[str] = []
+    archived: list[str] = []
 
     class _Device:
         async def remove_contact(self, contact) -> None:  # noqa: ANN001
@@ -413,12 +414,20 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
 
     session = TuiSession()
     ui = TuiUi(session)
-    ui.typed_confirm = lambda *a, **k: _true()  # the red gate is its own tested thing
+    asked: list[dict] = []
+
+    async def _dialog(prompt, buttons, **kw):  # noqa: ANN001
+        asked.append({"prompt": prompt, "buttons": buttons, **kw})
+        return True
+
+    ui.dialog = _dialog  # type: ignore[method-assign]
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.purge"),
         repo=_Repo(),
-        contact_store=None,
+        contact_store=SimpleNamespace(
+            archive=lambda dev, contact, when: archived.append(contact.name)
+        ),
         watch_store=None,
         admin_store=None,
         devstate=SimpleNamespace(
@@ -435,6 +444,9 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     # year", which catches all three — the standing rungs keep a share, so none of them
     # ever takes a whole table.
     ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge contacts"))
+    body = _screen_text(ladder)
+    # A rung is described by what it *keeps* — the number that has to fit the device.
+    assert "keeps" in body
     for _ in range(9):
         ladder.handle("down")
     ladder.handle("enter")
@@ -448,9 +460,16 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     assert all(v.name in body for v in victims)
     preview.handle("enter")
 
-    # The sweep now runs under the progress dialog, which is the frontmost screen for its
-    # whole lifetime — so the list underneath cannot be walked while it works.
+    # The confirm is amber and button-only: this is reversible, so it spends neither the
+    # reserved red nor a typed word.
     bar = await _step_until_screen(session, lambda s: isinstance(s, ProgressScreen))
+    assert asked and asked[0]["danger"] is True
+    assert "destructive" not in asked[0]
+    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Purge"]
+    assert "restored" in asked[0]["prompt"]
+
+    # The sweep runs under the progress dialog, which is the frontmost screen for its whole
+    # lifetime — so the list underneath cannot be walked while it works.
     assert bar.title == "Purge contacts"
     assert bar.render_body(60)  # a real bar, with a real total to count down
     bar.handle("down")  # every key is swallowed; nothing underneath moves
@@ -463,9 +482,112 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     done.handle("escape")
     assert await task == 3
     assert sorted(removed_from_device) == ["Old0", "Old1", "Old2"]
+    # Off the device, but kept: every victim landed in the store as archived.
+    assert sorted(archived) == ["Old0", "Old1", "Old2"]
 
 
-async def test_removing_one_contact_drops_it_from_the_device_and_the_store() -> None:
+async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> None:
+    """Delete on a preview row lifts that contact out of the sweep, in place.
+
+    The alternative was to back out and pick a shallower rung — which spares the one contact
+    you recognised by also sparing forty you did not care about. The list refreshes through
+    ``replace_items`` rather than being rebuilt, so the reader keeps their place instead of
+    being dropped at the top of a list they were halfway down, and the row that survives is
+    genuinely dropped from what the sweep goes on to archive.
+    """
+    import asyncio
+
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import Contact
+    from meshterm.ui.purge_screen import _preview
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+    from types import SimpleNamespace
+
+    def scored(name: str, pct: int) -> ScoredContact:
+        key = f"{ord(name[-1]):02x}" * 32
+        return ScoredContact(
+            contact=Contact(name=name, public_key=key, key_prefix=key[:12]),
+            signals=ContactSignals(node=key[:12]),
+            score=float(pct),
+            percentile=pct,
+        )
+
+    victims = [scored("Weak", 3), scored("Middling", 9), scored("Keeper", 14)]
+    session = TuiSession()
+    ctx = SimpleNamespace(ui=TuiUi(session))
+    task = asyncio.ensure_future(_preview(ctx, victims))
+
+    screen = await _step_until_screen(session, lambda s: "to archive" in getattr(s, "title", ""))
+    assert "3 contacts to archive" in screen.title
+    # Every contact row can be spared; the Apply/Back pair cannot — there is nothing to
+    # remove from a decision. And the percentile lane is pinned out of the ←→ scroll: it is
+    # the reader's place in a list ordered by it.
+    rows = [c for c in screen._choices() if isinstance(c.value, ScoredContact)]
+    assert len(rows) == 3 and all(c.deletable and c.hscroll_from > 0 for c in rows)
+    assert not any(
+        c.deletable for c in screen._choices() if not isinstance(c.value, ScoredContact)
+    )
+
+    # The cursor opens on Apply (the committing row is the default), so walk to the top of
+    # the contacts and down to "Keeper", then spare it. The screen stays up — this is an
+    # edit, not an exit.
+    screen.handle("home")
+    screen.handle("down")
+    screen.handle("down")
+    assert screen._current_choice().value.contact.name == "Keeper"
+    screen.handle("delete")
+    # Wait for the loop to take the delete — and prove the refresh landed on the *same*
+    # screen object rather than a rebuilt one, which is what keeps the reader's place.
+    same = await _step_until_screen(
+        session, lambda s: "2 contacts to archive" in getattr(s, "title", "")
+    )
+    assert same is screen, "the preview refreshed in place rather than being rebuilt"
+    body = _screen_text(screen)
+    assert "Keeper" not in body
+    assert "Weak" in body and "Middling" in body
+    assert "Archive 2 contacts" in body  # the Apply row re-counts what is left
+
+    # Committing now archives exactly the two that survived the edit: End lands on Back,
+    # one step up is Apply.
+    screen.handle("end")
+    screen.handle("up")
+    assert screen._current_choice().value == ("apply",)
+    screen.handle("enter")
+    assert await task is True
+    assert [v.contact.name for v in victims] == ["Weak", "Middling"]
+
+
+async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
+    """A preview emptied by the reader backs out rather than confirming an empty archive."""
+    import asyncio
+
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import Contact
+    from meshterm.ui.purge_screen import _preview
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+    from types import SimpleNamespace
+
+    key = "aa" * 32
+    only = ScoredContact(
+        contact=Contact(name="Solo", public_key=key, key_prefix=key[:12]),
+        signals=ContactSignals(node=key[:12]),
+        score=1.0,
+        percentile=1,
+    )
+    victims = [only]
+    session = TuiSession()
+    task = asyncio.ensure_future(_preview(SimpleNamespace(ui=TuiUi(session)), victims))
+    screen = await _step_until_screen(session, lambda s: "to archive" in getattr(s, "title", ""))
+    screen.handle("home")  # off the default Apply row and onto the only contact
+    screen.handle("delete")
+    assert await task is False
+    assert victims == []
+
+
+
+async def test_deleting_one_contact_drops_it_from_the_device_and_the_store() -> None:
     """The single-contact delete: a red confirm, then both halves of the union forgotten.
 
     The list a screen shows is the device's contact table *unioned* with the contacts
@@ -510,11 +632,14 @@ async def test_removing_one_contact_drops_it_from_the_device_and_the_store() -> 
 
     assert await _remove_contact(ctx, hub, "cc" * 32, "Hub") is True
     # The confirm is the app's single-record delete: red, Cancel on the left, the
-    # committing verb on the right and default, and it names what survives the deletion.
+    # committing verb on the right and default. It says plainly that this one is final —
+    # and points at the archive, which is the reversible way to free the same device slot.
     assert asked[0]["destructive"] is True
-    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Remove"]
+    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Delete"]
     assert asked[0]["default"] == 1
-    assert "Hub" in asked[0]["prompt"] and "history" in asked[0]["prompt"]
+    prompt = asked[0]["prompt"]
+    assert "Hub" in prompt and "for good" in prompt and "restored" in prompt
+    assert "archive it instead" in prompt
     # Both halves of the union, then the cache the list re-reads through.
     assert removed == ["Hub"]
     assert forgotten == [("cc" * 32, "3d" * 32)]
@@ -597,7 +722,7 @@ async def test_a_refused_removal_is_shown_and_the_contact_stays() -> None:
     task = asyncio.ensure_future(
         _remove_contact(ctx, Contact(name="Hub", public_key="3d" * 32), "cc" * 32, "Hub")
     )
-    failed = await _step_until_screen(session, lambda s: "couldn't remove" in _screen_text(s))
+    failed = await _step_until_screen(session, lambda s: "couldn't delete" in _screen_text(s))
     assert "contact table is busy" in _screen_text(failed)
     failed.handle("escape")
     assert await task is False
@@ -774,6 +899,124 @@ def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:
     empty = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort())
     values = [c.value for c in empty._choices()]
     assert _PURGE not in values  # nothing to purge — no action row
+
+
+def test_the_archived_row_appears_only_when_something_is_archived() -> None:
+    """The way in to the archived list is drawn, with its tally, exactly when there is one.
+
+    A screen should not offer a route into an empty list, and the tally rides the row so the
+    count is readable without opening it — the sweep's output being visible from the sweep's
+    own screen is what keeps archiving from being something you lose track of.
+    """
+    from meshterm.core.models import Contact
+    from meshterm.ui.contacts_screen import _ARCHIVED, _PURGE, ContactsScreen
+
+    contacts = [Contact(name="Alice", public_key="aa" * 32)]
+
+    none_yet = ContactsScreen("Us", "cc" * 32, contacts, 1, {}, _contacts_sort())
+    assert _ARCHIVED not in [c.value for c in none_yet._choices()]
+
+    some = ContactsScreen("Us", "cc" * 32, contacts, 1, {}, _contacts_sort(), archived=12)
+    values = [c.value for c in some._choices()]
+    # Under the purge, because it is where the purge's output went.
+    assert values[-2:] == [_PURGE, _ARCHIVED]
+    row = next(c for c in some._choices() if c.value == _ARCHIVED)
+    assert "View archived contacts" in row.label and "12" in row.label
+
+    # It stands on its own for a device whose whole table has been swept: there is nothing
+    # left to purge, but there is very much something to go and look at.
+    swept = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort(), archived=3)
+    values = [c.value for c in swept._choices()]
+    assert _PURGE not in values and values[-1] == _ARCHIVED
+
+
+async def test_archiving_one_contact_takes_it_off_the_device_and_keeps_it() -> None:
+    """The single-contact archive: an amber confirm, off the radio, stamped in the store.
+
+    The reversible half of the pair the detail page offers. It wears ``danger`` rather than
+    ``destructive`` and asks for no typed word, because everything it takes is recoverable —
+    which is the whole reason the app has two caution tiers.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _archive_contact
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    hub = Contact(name="Hub", public_key="3d" * 32, key_prefix="3d" * 6)
+    removed: list[str] = []
+    archived: list[tuple[str, str]] = []
+    invalidated: list[bool] = []
+
+    class _Device:
+        async def remove_contact(self, contact) -> None:  # noqa: ANN001
+            removed.append(contact.name)
+
+    ui = TuiUi(TuiSession())
+    asked: list[dict] = []
+
+    async def _dialog(prompt, buttons, **kw):  # noqa: ANN001
+        asked.append({"prompt": prompt, "buttons": buttons, **kw})
+        return True
+
+    ui.dialog = _dialog  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        ui=ui,
+        log=logging.getLogger("test.archive"),
+        contact_store=SimpleNamespace(
+            archive=lambda dev, contact, when: archived.append((dev, contact.public_key))
+        ),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
+        device=lambda: _device(_Device()),
+    )
+
+    assert await _archive_contact(ctx, hub, "cc" * 32, "Hub") is True
+    assert asked[0]["danger"] is True and "destructive" not in asked[0]
+    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Archive"]
+    assert asked[0]["default"] == 1
+    assert "restore it at any time" in asked[0]["prompt"]
+    # Off the radio, kept here, and the cached contact list dropped so the list re-reads.
+    assert removed == ["Hub"]
+    assert archived == [("cc" * 32, "3d" * 32)]
+    assert invalidated == [True]
+
+
+async def test_restoring_writes_the_contact_back_before_clearing_the_mark() -> None:
+    """A refused write leaves the contact archived — never listed as live on a radio without it."""
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.connection import DeviceCommandError
+    from meshterm.core.models import Contact
+    from meshterm.ui.node_detail_screen import _restore_archived
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    hub = Contact(name="Hub", public_key="3d" * 32, key_prefix="3d" * 6)
+    restored: list[str] = []
+
+    class _Refuses:
+        async def add_contact(self, contact) -> None:  # noqa: ANN001
+            raise DeviceCommandError("contact table full")
+
+    session = TuiSession()
+    ctx = SimpleNamespace(
+        ui=TuiUi(session),
+        log=logging.getLogger("test.restore"),
+        contact_store=SimpleNamespace(restore=lambda dev, key: restored.append(key)),
+        devstate=SimpleNamespace(invalidate_contacts=lambda: None),
+        device=lambda: _device(_Refuses()),
+    )
+
+    import asyncio
+
+    task = asyncio.ensure_future(_restore_archived(ctx, hub, "cc" * 32, "Hub"))
+    shown = await _step_until_screen(session, lambda s: "couldn't restore" in _screen_text(s))
+    shown.handle("escape")
+    assert await task is False
+    assert restored == [], "the archive mark survives a write the device refused"
 
 
 def test_non_strict_enum_accepts_unlisted_value() -> None:
@@ -1040,3 +1283,54 @@ async def _channels(device: MockDevice) -> list[dict]:
         if ch:
             channels.append(ch)
     return channels
+
+
+async def test_the_preview_opens_node_pages_with_no_management_verbs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enter on a purge candidate opens its page to *look* at, not to act on.
+
+    The rule (JP, 2026-09-01): management verbs belong to the list a contact actually lives
+    in, never to a page opened out of a list that is about to act on it wholesale. A preview
+    whose whole job is choosing what to archive should not also hand out a singular archive —
+    or a delete — from inside its own candidate list, which is two answers to one question.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    import meshterm.ui.node_detail_screen as nd
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import Contact
+    from meshterm.ui.purge_screen import _preview
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.session import TuiSession
+
+    opened: list[dict] = []
+
+    async def _fake_detail(ctx, contact, *, manage=True):  # noqa: ANN001
+        opened.append({"name": contact.name, "manage": manage})
+        return False
+
+    monkeypatch.setattr(nd, "open_node_detail", _fake_detail)
+
+    key = "aa" * 32
+    victims = [
+        ScoredContact(
+            contact=Contact(name="Solo", public_key=key, key_prefix=key[:12]),
+            signals=ContactSignals(node=key[:12]),
+            score=1.0,
+            percentile=1,
+        )
+    ]
+    session = TuiSession()
+    task = asyncio.ensure_future(_preview(SimpleNamespace(ui=TuiUi(session)), victims))
+    screen = await _step_until_screen(session, lambda s: "to archive" in getattr(s, "title", ""))
+    screen.handle("home")  # off the default Apply row and onto the contact
+    screen.handle("enter")
+    await _step_until_screen(session, lambda s: bool(opened))
+    assert opened == [{"name": "Solo", "manage": False}]
+
+    # The preview is still up underneath — looking at a candidate is not leaving the sweep.
+    assert session.top is screen
+    screen.handle("escape")
+    assert await task is False

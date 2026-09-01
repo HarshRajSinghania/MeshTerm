@@ -75,6 +75,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -1122,24 +1123,41 @@ def _located(lat: Optional[float], lon: Optional[float]) -> bool:
 # -- data gathering + the action loop -----------------------------------------
 
 
-async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> bool:
+async def open_node_detail(
+    ctx: "AppContext", contact: Optional["Contact"], *, manage: bool = True
+) -> bool:
     """Open the Node detail page for a contact (or our own node) and run its action loop.
 
     Assembles the page from stored history, the device's contacts, and the observed
     topology — identity, reception stats, a location preview, and the observed routes — then
     loops: show the page, run whatever action the user commits (trace, full map, time
     machine), and show it again, until Esc backs out. This is the same show/act/reshow loop
-    the Time Machine and Contacts list use. One action ends the loop instead of returning to
-    it — removing the contact, which leaves nothing to show.
+    the Time Machine and Contacts list use.
+
+    **Three actions end the loop instead of returning to it**, because each leaves a page
+    describing a state that no longer holds: archiving the contact off the device, restoring
+    it, and deleting it outright. All three are *contact management*, they are grouped last
+    on the Info tab, and the page offers exactly the ones that make sense — a live contact
+    can be archived or deleted, an archived one restored or deleted.
+
+    ``manage`` is how a caller says the page is being opened to *look*, not to act. The
+    purge preview passes ``False``: a screen whose whole job is choosing what to archive
+    should not also hand out a second, singular way to archive — or a delete — from inside
+    its own candidate list. The rule is that management verbs belong to the list a contact
+    actually lives in, never to a page opened out of a list that is about to act on it
+    wholesale.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI).
         contact: The contact to detail, or ``None`` for our own node (an identity-and-ledger
             page — we never overhear ourselves, so there is no reception history to show).
+        manage: Whether to offer the contact-management actions (archive, restore, delete).
+            ``False`` draws none of them, and the page can then only ever return ``False``.
 
     Returns:
-        ``True`` if the visit ended by removing the contact from the device (the caller's
-        cue to re-read and rebuild the list it came from), ``False`` on any ordinary exit.
+        ``True`` if the visit ended by archiving, restoring, or deleting the contact — the
+        caller's cue to re-read and rebuild the list it came from — ``False`` on any
+        ordinary exit.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
@@ -1345,18 +1363,27 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
     full_key = key.lower().removeprefix("0x")
     if len(full_key) == 64 and _is_hex(full_key):
         info_actions.append(_Action("share", "📱", "", "Share contact — QR / link"))
-    # An archived contact is off the device but remembered in full (see
-    # :mod:`~meshterm.ui.purge_screen`), so the page it opens from the Contacts list's
-    # ``Archived`` section offers the way back rather than the way out. Above the removal,
-    # because it is the constructive one of the pair.
-    archived = _is_archived(ctx, contact, self_key)
-    if archived:
-        info_actions.append(_Action("restore", "📂", "ok", "Restore to device"))
-    # The page's one destructive action, and so its last row: drop this single contact from
-    # the device's table. Offered only for a contact we can actually address by key — our own
-    # node is no contact, and a node with neither key nor prefix has nothing to delete by.
-    if not you and contact is not None and (contact.public_key or contact.key_prefix):
-        info_actions.append(_Action("remove", "🗑", "err", "Remove contact…"))
+    # -- contact management, the page's last group and the only actions that end the visit.
+    # Withheld entirely when the caller opened the page to look rather than to act (see
+    # ``manage``), and never offered for our own node or for a contact carrying no key at
+    # all — there would be nothing to address the write by.
+    archived = manage and _is_archived(ctx, contact, self_key)
+    manageable = (
+        manage and not you and contact is not None
+        and bool(contact.public_key or contact.key_prefix)
+    )
+    if manageable:
+        # The constructive verb first, then the destructive one, so the row a mistaken press
+        # is likeliest to land on is the recoverable one. Archive and restore are the two
+        # halves of one reversible move, and take the ``💾``/``📂`` pair the lexicon already
+        # gives put-it-away and bring-it-back; only a contact with a full key can be written
+        # back to the device, so a prefix-only contact is never offered the archive that
+        # would strand it.
+        if archived:
+            info_actions.append(_Action("restore", "📂", "ok", "Restore to device"))
+        elif len((contact.public_key or "").lower().removeprefix("0x")) == 64:
+            info_actions.append(_Action("archive", "💾", "", "Archive contact"))
+        info_actions.append(_Action("remove", "🗑", "err", "Delete contact…"))
     try:
         adv_type = int(node_type) if node_type is not None else 1
     except (TypeError, ValueError):
@@ -1423,10 +1450,15 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
                     await open_timemachine_node(ctx, node_id, label)
             elif action == "restore":
                 # A restore writes the contact back and ends the visit for the same reason a
-                # removal does: the page was opened from the Archived section, and the row it
+                # deletion does: the page was opened from the Archived list, and the row it
                 # was opened from is about to stop existing there.
                 assert contact is not None  # the row only exists for a real contact
                 if await _restore_archived(ctx, contact, self_key, label):
+                    contact_removed = True
+                    break
+            elif action == "archive":
+                assert contact is not None
+                if await _archive_contact(ctx, contact, self_key, label):
                     contact_removed = True
                     break
             elif action == "remove":
@@ -1461,6 +1493,72 @@ def _is_archived(
         return False
     key = contact.public_key.lower().removeprefix("0x")
     return any(c.public_key == key for c in store.archived(dev_pub))
+
+
+async def _archive_contact(
+    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+) -> bool:
+    """Confirm and archive one contact off the device; ``True`` once it is gone from the radio.
+
+    The single-contact counterpart to the bulk sweep (see
+    :func:`~meshterm.ui.purge_screen.purge_contacts`), doing exactly what the sweep does to
+    each of its victims: remove from the device, then record it in the cross-session store
+    with an archive stamp so nothing is actually lost.
+
+    The confirm is **amber, not red, and takes no typing**. Two escalating caution tiers
+    exist for two different costs, and this one is recoverable: the contact keeps its key,
+    its reception history and its transcripts, the Archived list is one row on the Contacts
+    screen away, and a restore is a single write. Red and a typed word are for
+    :func:`_remove_contact`, which is the one that cannot be undone.
+
+    Args:
+        ctx: The shared application context (interactive menu; the page is the backdrop).
+        contact: The contact to archive, addressed by the key it carries.
+        self_key: The device's own public key (hex) — how the contact store scopes this
+            device's remembered contacts.
+        label: How the node is named on the page, for the prompt and the failure notice.
+
+    Returns:
+        ``True`` if the contact was archived, ``False`` if the user cancelled or the device
+        refused. A device that has no such contact is not a refusal: the archive finishes on
+        our side, since being off the radio is the state it was asking for.
+    """
+    from .surface import TuiUi
+
+    assert isinstance(ctx.ui, TuiUi)  # guaranteed by open_node_detail
+    session = ctx.ui.session
+
+    if not await ctx.ui.dialog(
+        f"Archive {label}? It comes off this device's contact list, freeing a slot for a "
+        "new one. MeshTerm keeps it — with its key, reception history and messages — and "
+        "you can restore it at any time.",
+        [("Cancel", False), ("Archive", True)],
+        title="Archive contact",
+        default=1,
+        danger=True,
+    ):
+        return False
+
+    device = await ctx.device()
+    try:
+        await device.remove_contact(contact)
+    except ContactNotOnDeviceError:
+        # The radio doesn't hold it, which is where the archive was taking it anyway: the
+        # store write below is the whole of the remaining work.
+        ctx.log.debug("contacts: %s was not on the device; archiving ours", contact.name)
+    except Exception as exc:  # noqa: BLE001 - a refused removal is reported, not raised
+        ctx.log.debug("contacts: archive failed for %s: %s", contact.name, exc)
+        await session.message_dialog(
+            Text(f"✗ couldn't archive {label} — {exc}", style="err"),
+            title="Archive contact",
+        )
+        return False
+
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if ctx.contact_store is not None and dev_pub and contact.public_key:
+        ctx.contact_store.archive(dev_pub, contact, when=int(time.time()))
+    ctx.devstate.invalidate_contacts()
+    return True
 
 
 async def _restore_archived(
@@ -1530,9 +1628,11 @@ async def _remove_contact(
     firmware no longer holds offers to write it back rather than failing (see
     :func:`~meshterm.ui.chat._restore_contact`).
 
-    Irreversible from this device's point of view — nothing here can re-derive a key the
-    store has forgotten — so the confirm wears the reserved red: Cancel on the left, the
-    committing Remove on the right and default.
+    **Irreversible, and the confirm says so.** Nothing here can re-derive a key the store has
+    forgotten, so this is the one contact action with no way back — which is exactly what
+    separates it from :func:`_archive_contact`, whose amber confirm sits one row above it on
+    the same page. It wears the reserved red for data loss: Cancel on the left, the
+    committing Delete on the right and default.
 
     Args:
         ctx: The shared application context (interactive menu; the page is pushed as the
@@ -1555,10 +1655,11 @@ async def _remove_contact(
     session = ctx.ui.session
 
     if not await ctx.ui.dialog(
-        f"Remove {label} from this device's contacts? It can't be messaged again until "
-        "it's added back. Its reception history and chat messages in MeshTerm are kept.",
-        [("Cancel", False), ("Remove", True)],
-        title="Remove contact",
+        f"Delete {label} for good? Its key is forgotten by both this device and MeshTerm, "
+        "so it can't be messaged or restored — only heard again. To free the device slot "
+        "and keep the contact, archive it instead.",
+        [("Cancel", False), ("Delete", True)],
+        title="Delete contact",
         default=1,
         destructive=True,
     ):
@@ -1576,16 +1677,16 @@ async def _remove_contact(
         ctx.log.debug("contacts: %s was not on the device; removing ours", contact.name)
         await session.message_dialog(
             Text(
-                f"⚠ {label} wasn't in this device's contacts — removed from the ones "
+                f"⚠ {label} wasn't in this device's contacts — deleted from the ones "
                 "MeshTerm remembers for it.",
                 style="warn",
             ),
-            title="Remove contact",
+            title="Delete contact",
         )
     except Exception as exc:  # noqa: BLE001 - a refused removal is reported, not raised
         ctx.log.debug("contacts: remove failed for %s: %s", contact.name, exc)
         await session.message_dialog(
-            Text(f"✗ couldn't remove {label} — {exc}", style="err"), title="Remove contact"
+            Text(f"✗ couldn't delete {label} — {exc}", style="err"), title="Delete contact"
         )
         return False
 

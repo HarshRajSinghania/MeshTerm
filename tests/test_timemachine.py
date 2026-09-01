@@ -669,9 +669,19 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
     assert not any(any(other in seg for other in ("NAME", "HEARD", "KEY")) for seg in lit)
 
 
-def test_traced_lane_shows_only_when_enabled() -> None:
-    """The optional TRACED lane sits between NAME and HEARD — and only with show_traced."""
+def test_a_list_draws_exactly_the_lanes_it_declares() -> None:
+    """The lane set is the whole story — header, row and widths all read the same tuple.
+
+    Three sets in one assertion sweep, because what matters is that none of them is a
+    special case: the ordinary list, the Trace picker's extra ``TRACED``, and the Archived
+    list's ``NAME · ARCHIVED · KEY`` all come out of the same two builders.
+    """
     from meshterm.ui.contactlist import (
+        ARCHIVED_LANES,
+        ARCHIVED_SORT_COLUMNS,
+        ARCHIVED_SORT_OPENS_ASCENDING,
+        DEFAULT_LANES,
+        TRACE_LANES,
         TRACE_SORT_COLUMNS,
         TRACE_SORT_OPENS_ASCENDING,
         ContactRow,
@@ -680,29 +690,46 @@ def test_traced_lane_shows_only_when_enabled() -> None:
     )
     from meshterm.ui.widgets import ContactsSort
 
+    # The ordinary list: no TRACED column, lanes read NAME·HEARD·PKTS·KEY.
+    plain = _header(10, ContactsSort.from_name("heard"), DEFAULT_LANES).plain
+    assert "TRACED" not in plain and "ARCHIVED" not in plain
+    assert plain.index("NAME") < plain.index("HEARD") < plain.index("PKTS") < plain.index("KEY")
+
+    # The Trace picker: TRACED lands between NAME and HEARD and opens as the active sort.
     sort = ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING)
-    # Off (the default of every other list): no TRACED column, lanes read NAME·HEARD·PKTS·KEY.
-    assert "TRACED" not in _header(10, ContactsSort.from_name("heard")).plain
-    # On: TRACED lands between NAME and HEARD, and opens as the default sort (descending).
-    header = _header(10, sort, show_traced=True).plain
+    header = _header(10, sort, TRACE_LANES).plain
     assert header.index("NAME") < header.index("TRACED") < header.index("HEARD")
-    assert "TRACED ▼" in header
+    assert "TRACED ▲" in header  # an age lane opens ascending: freshest first
+
+    # The Archived list: one middle lane, and the two it drops are really gone.
+    arch_sort = ContactsSort.from_name(
+        "archived", ARCHIVED_SORT_COLUMNS, ARCHIVED_SORT_OPENS_ASCENDING
+    )
+    arch = _header(10, arch_sort, ARCHIVED_LANES).plain
+    assert arch.index("NAME") < arch.index("ARCHIVED") < arch.index("KEY")
+    assert "HEARD" not in arch and "PKTS" not in arch
 
     row = ContactRow(
         value="x", name="Poly", key="3d" * 6,
         last_seen=utcnow() - timedelta(minutes=90),
         last_traced=utcnow() - timedelta(minutes=2),
+        archived_at=utcnow() - timedelta(days=3),
     )
-    # The traced age ("2m") renders left of the heard age ("1h") in the shown lane.
-    traced_lane = _lane(row, 10, 1, 12, True).plain
+    # The traced age ("2m") renders left of the heard age ("1h") in the picker's lanes.
+    traced_lane = _lane(row, 10, 1, 12, TRACE_LANES).plain
     assert traced_lane.index("2m") < traced_lane.index("1h")
-    # With the lane off, only the heard age shows.
-    assert "2m" not in _lane(row, 10, 1, 12, False).plain
+    # Without the lane, only the heard age shows.
+    assert "2m" not in _lane(row, 10, 1, 12, DEFAULT_LANES).plain
+    # And the Archived row shows its archive age and neither of the dropped lanes.
+    archived_lane = _lane(row, 10, 1, 12, ARCHIVED_LANES).plain
+    assert "3d" in archived_lane
+    assert "1h" not in archived_lane and "2m" not in archived_lane
 
 
 def test_traced_sort_orders_most_recent_first_never_last() -> None:
     """The traced sort opens most-recently-traced first, never-traced gathered at the bottom."""
     from meshterm.ui.contactlist import (
+        TRACE_LANES,
         TRACE_SORT_COLUMNS,
         TRACE_SORT_OPENS_ASCENDING,
         ContactRow,
@@ -717,12 +744,13 @@ def test_traced_sort_orders_most_recent_first_never_last() -> None:
         ContactRow(value="fresh", name="Fresh", last_traced=now - timedelta(minutes=1)),
     ]
     sort = ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING)
-    assert sort.column == "traced" and sort.ascending is False  # opens descending
-    # Descending (the default): freshest trace on top, never-traced last.
-    assert [r.value for r in _ordered(rows, sort)] == ["fresh", "stale", "never"]
-    # Ascending flips the traced order but keeps never-traced out of the fresh block.
-    sort.ascending = True
-    assert [r.value for r in _ordered(rows, sort)] == ["never", "stale", "fresh"]
+    assert sort.column == "traced" and sort.ascending is True  # an age lane opens ascending
+    # Ascending (the default): freshest trace on top, never-traced last.
+    assert [r.value for r in _ordered(rows, sort, TRACE_LANES)] == ["fresh", "stale", "never"]
+    # Descending flips the traced order but keeps never-traced out of the fresh block: the
+    # metric is an age, so "never" carries +inf and stays at the far end either way.
+    sort.ascending = False
+    assert [r.value for r in _ordered(rows, sort, TRACE_LANES)] == ["never", "stale", "fresh"]
 
 
 def _picker(listed, *, prefix_bytes=0, sort=None, type_of=None, resolve_key=None, width=80):
@@ -875,17 +903,19 @@ def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
 def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
     """Columns anchor left: the name lane hugs its content and stays put as the window
     widens, and the freed width flows to the hash lane so more of each key shows."""
-    from meshterm.ui.contactlist import _LEAD
+    from meshterm.ui.contactlist import _GAP, _LEAD
 
     screen = _picker(_heard_nodes(), width=72)
+    # The fixed lead is the chrome plus every declared lane's own gapped width.
+    lead = _LEAD + sum(_GAP + lane.width for lane in screen._lanes)
     # The widest name here is the "unknown" fallback (7 cells); the lane sizes to it.
     name_w, hash_w = screen._name_w, screen._hash_w
     assert name_w == len("unknown")
-    assert hash_w == 72 - _LEAD - name_w
+    assert hash_w == 72 - lead - name_w
     # Widen the terminal: the name lane does not move, the hash lane takes the extra width.
     screen.render_body(120)
     assert screen._name_w == name_w
-    assert screen._hash_w == 120 - _LEAD - name_w
+    assert screen._hash_w == 120 - lead - name_w
     assert screen._hash_w > hash_w
 
 

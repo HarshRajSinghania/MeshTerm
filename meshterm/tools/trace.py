@@ -195,6 +195,7 @@ class TraceTool(Tool):
             :meth:`_prompt_target`.
         """
         from ..ui.contactlist import (
+            TRACE_LANES,
             TRACE_SORT_COLUMNS,
             TRACE_SORT_OPENS_ASCENDING,
             ContactListScreen,
@@ -219,7 +220,7 @@ class TraceTool(Tool):
                 "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
             ),
             footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
-            show_traced=True,
+            lanes=TRACE_LANES,
         )
         return picker, contacts
 

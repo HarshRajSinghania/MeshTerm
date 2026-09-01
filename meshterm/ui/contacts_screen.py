@@ -18,10 +18,12 @@ weakest off the device while MeshTerm keeps them; the flow, its ladder and its p
 in :mod:`~meshterm.ui.purge_screen`. Our own node, pinned above the list, is never a
 candidate — it isn't in the device's contact table.
 
-The contacts a sweep archived are listed under their own **Archived** section at the foot of
-this screen. They are shown rather than hidden because silent archiving is how a reader
-loses track of what they archived, and because the section is the route back: Enter opens
-the node's detail page, which offers to restore it.
+What a sweep took is never hidden: **View archived contacts** sits directly under the purge
+action and opens the archived list (see :mod:`~meshterm.ui.archived_screen`) — its own
+screen, in the same lane layout, sorted on its own ``NAME · ARCHIVED · KEY`` columns. It
+earns a screen rather than a section at the foot of this one because it is a different list
+with different columns: an archived contact has no live heard-age or packet tally worth a
+lane, and what it does have — when it left — has no column here to sit in.
 
 Removing *one* named contact for good still belongs to that contact rather than to the list:
 it is the last action on its Node detail page, where the reader is already looking at the
@@ -34,11 +36,12 @@ MeshTerm are untouched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
+from .archived_screen import open_archived
 from .contactlist import ContactListScreen, ContactRow
 from .menus import marked_label
-from .purge_screen import archived_rows, purge_contacts
+from .purge_screen import purge_contacts
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
 from .widgets import ContactsSort, _contact_pkts
@@ -52,8 +55,9 @@ if TYPE_CHECKING:
 YOU = ("you",)
 
 #: The contact-list tail sentinels (distinct from any :class:`~meshterm.core.models.Contact`
-#: and from :data:`YOU`): the purge action row and the bare ``Back`` exit row.
+#: and from :data:`YOU`): the sweep, and the way in to what it has already taken.
 _PURGE = ("purge",)
+_ARCHIVED = ("archived",)
 
 
 class ContactsScreen(ContactListScreen):
@@ -72,7 +76,7 @@ class ContactsScreen(ContactListScreen):
         prefix_bytes: int,
         counts: dict[str, int],
         sort: ContactsSort,
-        archived: Optional[list] = None,
+        archived: int = 0,
     ) -> None:
         """Create the contacts screen over already-fetched contact data.
 
@@ -86,11 +90,11 @@ class ContactsScreen(ContactListScreen):
             sort: The initial sort; mutated in place by the Ctrl+arrows. Its ring should
                 span :data:`~meshterm.ui.contactlist.SORT_COLUMNS` so the hash sort is
                 reachable.
-            archived: Pre-built rows for the ``Archived`` section (see
-                :func:`~meshterm.ui.purge_screen.archived_rows`), appended after the purge
-                action. ``None`` draws no section at all.
+            archived: How many contacts are archived off this device. Non-zero adds the
+                ``View archived contacts`` row and shows the count on it, so the tally is
+                visible without opening the list; zero draws no row, since a screen should
+                not offer a way into an empty list.
         """
-        archived = list(archived or [])
         rows = [ContactRow(value=YOU, name=self_name, key=self_key, you=True)]
         for c in contacts:
             rows.append(
@@ -105,21 +109,24 @@ class ContactsScreen(ContactListScreen):
                     count=_contact_pkts(c, counts),
                 )
             )
-        # The maintenance action closes the list, past every contact whatever the sort: a
-        # blank spacer, then the err-tinted purge row (a `…` — it opens further prompts).
-        # Offered only when there are contacts to purge. Anything already archived follows
-        # it in its own section, so the two halves of the sweep — what it can still take,
-        # and what it has taken — sit together at the foot of the list.
+        # The maintenance actions close the list, past every contact whatever the sort: a
+        # blank spacer, then the err-tinted sweep (a `…` — it opens further prompts), then
+        # the way in to what the sweep has already taken. The two sit together because they
+        # are the two halves of one idea, and the archived row is *under* the purge for the
+        # same reason: it is where the purge's output went.
         tail: list = []
         if contacts:
             tail = [
                 Separator(" "),
-                Choice(
-                    title=marked_label("🗑", "Purge contacts…", "err"),
-                    value=_PURGE,
-                ),
+                Choice(title=marked_label("🗑", "Purge contacts…", "err"), value=_PURGE),
             ]
-        tail += archived
+        if archived:
+            tail = tail or [Separator(" ")]
+            # The tally rides the row muted, as a status atom rather than as part of the
+            # verb: it is what the row leads to, not what the row does.
+            label = marked_label("📂", "View archived contacts", "")
+            label.append(f"  ·  {archived}", style="muted")
+            tail.append(Choice(title=label, value=_ARCHIVED))
         super().__init__(
             f"Contacts · {len(contacts)} known",
             rows=rows,
@@ -141,14 +148,13 @@ async def open_contacts(
     """Open the interactive contacts list; Enter opens Node detail, Esc leaves.
 
     The list stays pushed for the whole visit, so whichever node's detail page Enter commits
-    (or the purge flow the tail action opens) nests *above* it and Esc from there is one pop
-    back onto the row it was opened from — same sort, same filter, same scroll. Anything that
-    removes a contact — a purge here, or the detail page's own single-contact
-    ``Remove contact…`` — ends the visit, re-reads the device and starts a fresh one, so the
-    contacts that went are gone from the list. That rebuild is the deliberate exception to
-    keeping the screen: the rows it was holding a place in no longer exist. A row under the
-    ``Archived`` section is a rebuilt :class:`~meshterm.core.models.Contact` like any other,
-    so Enter on one opens the same detail page — where it can be restored to the device.
+    (or the purge flow, or the archived list, that the tail actions open) nests *above* it
+    and Esc from there is one pop back onto the row it was opened from — same sort, same
+    filter, same scroll. Anything that changes which contacts the device holds — a sweep
+    here, a single archive, restore or delete on a detail page, or a restore made from
+    inside the archived list — ends the visit, re-reads the device and starts a fresh one.
+    That rebuild is the deliberate exception to keeping the screen: the rows it was holding a
+    place in no longer exist.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -169,10 +175,15 @@ async def open_contacts(
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the interactive contacts list is only available in the menu")
     session = ctx.ui.session
-    screen = ContactsScreen(
-        self_name, self_key, contacts, prefix_bytes, counts, sort,
-        archived=archived_rows(ctx, self_key),
-    )
+
+    def build() -> ContactsScreen:
+        """The screen over the current contacts, with the live archived tally on its tail."""
+        return ContactsScreen(
+            self_name, self_key, contacts, prefix_bytes, counts, sort,
+            archived=_archived_count(ctx, self_key),
+        )
+
+    screen = build()
     while True:
         rebuild = False
         async with session.stay(screen) as visit:
@@ -190,18 +201,32 @@ async def open_contacts(
                         rebuild = True
                         break
                     continue
+                if chosen == _ARCHIVED:
+                    # The archived list is a screen, not a section: it nests above this one
+                    # and Esc comes back to this row. It rebuilds us only if something was
+                    # restored or deleted in there, since that is when this list is stale.
+                    if await open_archived(ctx, self_key, prefix_bytes):
+                        rebuild = True
+                        break
+                    continue
                 # The own-node sentinel opens our own node's page; any other value is a
-                # Contact. The page nests above this list and can also *delete* the contact
-                # it details (its ``Remove contact…`` row); when it does, it says so on the
-                # way out and the list rebuilds without the row — the same re-read the purge
-                # does, one contact at a time.
+                # Contact. The page nests above this list and carries the single-contact
+                # management verbs — archive, restore, delete; when one of them runs, the
+                # page says so on its way out and this list rebuilds without the row, the
+                # same re-read the sweep does, one contact at a time.
                 if await open_node_detail(ctx, None if chosen == YOU else chosen):
                     rebuild = True
                     break
         if not rebuild:
             return
         contacts = await ctx.devstate.contacts()
-        screen = ContactsScreen(
-            self_name, self_key, contacts, prefix_bytes, counts, sort,
-            archived=archived_rows(ctx, self_key),
-        )
+        screen = build()
+
+
+def _archived_count(ctx: "AppContext", self_key: str) -> int:
+    """How many contacts are archived off this device — the tail row's tally and its gate."""
+    store = getattr(ctx, "contact_store", None)
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if store is None or not dev_pub:
+        return 0
+    return len(store.archived(dev_pub))

@@ -473,7 +473,8 @@ def _reasons(
         phrases.append((0.0, "never heard"))
     else:
         phrases.append((contribution["recency"], _age_phrase(signals.heard_age_days)))
-    phrases.append((contribution["volume"], f"{signals.packets} pkts"))
+    packets = signals.packets
+    phrases.append((contribution["volume"], f"{packets} pkt{'' if packets == 1 else 's'}"))
     if signals.hops is not None:
         hops = signals.hops
         label = "direct" if hops < 0.5 else f"{hops:g} hops"

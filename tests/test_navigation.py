@@ -319,6 +319,7 @@ def test_update_rows_resorts_the_lanes_and_keeps_the_highlight_on_its_contact() 
     from datetime import datetime, timedelta, timezone
 
     from meshterm.ui.contactlist import (
+        TRACE_LANES,
         TRACE_SORT_COLUMNS,
         TRACE_SORT_OPENS_ASCENDING,
         ContactListScreen,
@@ -338,7 +339,7 @@ def test_update_rows_resorts_the_lanes_and_keeps_the_highlight_on_its_contact() 
         sort=ContactsSort.from_name(
             "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
         ),
-        show_traced=True,
+        lanes=TRACE_LANES,
     )
     screen.handle("text", "bet")  # find-as-you-type down to the never-traced node
     assert screen._current_choice().value == "beta"

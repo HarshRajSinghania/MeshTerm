@@ -11,13 +11,22 @@ the pushed Contacts list:
    haven't heard in a year"). Both carry the real number of contacts they would archive,
    computed from the actual ranking rather than from arithmetic on the table size, because
    protected contacts are never victims.
-2. **Read the list.** Every contact the sweep would take, weakest first, with its
-   percentile and the two or three facts that put it there — for the age rungs too, since
-   knowing how the contacts an age threshold caught actually *rank* is exactly the check
-   that threshold cannot do for itself. Ending in the Apply/Back pair that
+2. **Read the list, and edit it.** Every contact the sweep would take, weakest first, with
+   its percentile and the two or three facts that put it there — for the age rungs too,
+   since knowing how the contacts an age threshold caught actually *rank* is exactly the
+   check that threshold cannot do for itself. ``Delete`` drops a row from the list, so a
+   contact the reader wants to keep is spared without abandoning the whole sweep and picking
+   a shallower rung; ``←→`` scroll a row too wide for the terminal. Enter on a contact opens
+   its detail page to *look* at, with the page's own contact-management verbs withheld (see
+   :func:`~meshterm.ui.node_detail_screen.open_node_detail`) — a screen for choosing what to
+   archive should not also hand out a singular archive or delete from inside its own
+   candidate list. It ends in the Apply/Back pair that
    :func:`~meshterm.ui.menus.exit_rows` draws for staged changes, because that is what this
    is: a choice with a cost on both sides, not an exit.
-3. **Confirm by typing.** The bulk-deletion gate, red like every other.
+3. **Confirm.** An amber Cancel/Purge dialog, not the red typed gate a deletion gets: this
+   is reversible. Every contact keeps its key, its reception history and its transcripts,
+   the Archived list is one row away on the Contacts screen, and a restore is a single
+   write. Saving the red for what cannot be undone is what keeps the red meaning anything.
 
 **Only the percentile is ever shown.** A raw score means nothing without the distribution
 it came from, and would need a legend the moment the weights were ever retuned; a contact's
@@ -38,6 +47,7 @@ message anyway is restored in passing rather than being a dead end.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional
@@ -150,24 +160,19 @@ def _victim_row(scored: ScoredContact) -> Text:
     return row
 
 
-def _rung_desc(archived: int, cutoff: Optional[int]) -> str:
-    """A rung's description lane: what it archives, and how far up the ranking it reaches.
+def _rung_desc(kept: int, archived: int) -> str:
+    """A rung's description lane, in the number the reader is actually choosing.
 
-    The cutoff is the *highest* percentile among the contacts the rung would take — so an
-    age rung reaching into contacts that rank perfectly well says so on its own row, which
-    is the thing an age threshold can never tell the reader by itself.
-
-    Phrased as "the weakest *n*%" rather than as an ordinal percentile. Two reasons, and the
-    second is the one that settled it: the phrase means the same thing to a reader who has
-    never met a percentile, and — after the label lane — a 53-column console leaves this
-    lane 27 cells, which "up to the 11th percentile" overran by twenty. A rung whose only
-    interesting half is clipped away on the platform that needs it most is a rung that
-    doesn't say anything.
+    **How many contacts you keep**, not how many go. The device's contact table is the
+    scarce thing and the whole reason to sweep at all, so the useful number is the one that
+    has to fit in it — how many are archived is the arithmetic left over, and it follows in
+    the muted half rather than leading. A percentile cutoff led this lane for one round and
+    was the wrong unit twice over: it answered a question nobody asked at this step, and at
+    53 columns it did not fit anyway.
     """
     if not archived:
-        return "nothing to archive"
-    head = f"{archived} contact{'' if archived == 1 else 's'}"
-    return head if cutoff is None else f"{head} · weakest {cutoff}%"
+        return f"keeps all {kept}"
+    return f"keeps {kept} · archives {archived}"
 
 
 async def _rank(ctx: "AppContext", contacts: list[Contact]) -> list[ScoredContact]:
@@ -307,7 +312,13 @@ def victims_for(
     """
     route, value = picked
     if route == "keep":
-        return sweep_candidates(ranked, keep=round(len(sweepable) * int(value) / 100))
+        # Rounded *up*: "keep the strongest 90%" of five contacts keeps five, because you
+        # cannot keep four and a half and the safe direction on a keep is more. Python's
+        # ``round`` is banker's rounding, which quietly made the 90% and 75% rungs identical
+        # on a five-contact table by sending 4.5 and 3.75 to the same 4.
+        return sweep_candidates(
+            ranked, keep=math.ceil(len(sweepable) * int(value) / 100)
+        )
     matched = []
     for scored in sweepable:
         age = _age_seconds(scored)
@@ -333,8 +344,10 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
 
     def rung(label: str, value: tuple) -> tuple:
         victims = victims_for(ranked, sweepable, value)
-        cutoff = max((v.percentile for v in victims), default=None)
-        return (label, _rung_desc(len(victims), cutoff), value)
+        # What remains on the device: every protected contact, plus the sweepable ones this
+        # rung doesn't take. Counted from the ranking rather than from the rung's own
+        # percentage, because a protection is never a victim and the two would disagree.
+        return (label, _rung_desc(len(ranked) - len(victims), len(victims)), value)
 
     items: list = [section_heading("By standing")]
     items += menu_rows(
@@ -350,9 +363,8 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
         f"Purge contacts — {len(ranked)} known{held}",
         items,
         prompt=(
-            "Contacts are ranked on how lately and often you hear them, whether you have "
-            "messaged, how near they are, and how much they post. The weakest are archived "
-            "off the device and kept here."
+            "Archives the weakest off the device, keeping them here. Ranked on messages, "
+            "how lately and often heard, hops and distance."
         ),
         footer_hint="↑↓ move · Enter select · Esc back",
         filterable=False,
@@ -361,10 +373,21 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
 
 
 def _preview_items(victims: list[ScoredContact]) -> list:
-    """The preview's rows: a pinned column header, one line per victim, then Apply/Back."""
+    """The preview's rows: a pinned column header, one line per victim, then Apply/Back.
+
+    Each contact row is ``deletable``, so ``Delete`` lifts it out of the sweep, and pins its
+    percentile lane out of the ``←→`` scroll (``hscroll_from``): the number is the reader's
+    place in a list ordered by it, and sliding it away to read a long reasons lane would
+    cost the row its bearing to gain nothing — the percentile is the part that already fits.
+    """
     return [
         Separator(_preview_header, pinned=True),
-        *(Choice(title=_victim_row(v), value=v) for v in victims),
+        *(
+            Choice(
+                title=_victim_row(v), value=v, deletable=True, hscroll_from=_PCTL_W
+            )
+            for v in victims
+        ),
         # The same shape ``exit_rows`` draws, in this flow's own words: Apply has no key of
         # its own, so it needs a visible counterpart naming what the other way out costs.
         # Not ``exit_rows`` itself — these are not *staged changes* to a set of values, and
@@ -378,17 +401,25 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     ]
 
 
-def _preview_screen(items: list, count: int):
-    """The preview screen over already-built rows."""
+def _preview_screen(victims: list[ScoredContact]):
+    """The preview screen over a victim list, sized and worded to what it currently holds."""
     from .tui import SelectScreen
 
     return SelectScreen(
-        f"Purge contacts — {_count_desc(count)} to archive",
-        items,
+        f"Purge contacts — {_count_desc(len(victims))} to archive",
+        _preview_items(victims),
         prompt="Archived contacts leave the device but stay here, with their history.",
+        # Neither the scroll nor the keep atom is written into the base hint: the select
+        # list splices each in exactly when its key would act — ``←→`` only while the
+        # highlighted row actually overflows, ``Del keep`` only on a row that can be spared
+        # — which is the same "advertise a key only where it acts" rule the whole footer
+        # follows, and what keeps all three atoms inside 72 cells at once.
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+        delete_hint="Del keep",
         default=_APPLY,
         wrap=False,
+        hscroll=True,
+        hscroll_hint="←→ scroll",
     )
 
 
@@ -399,20 +430,59 @@ async def _preview(ctx: "AppContext", victims: list[ScoredContact]) -> bool:
     dozen contacts on a number nobody can check is precisely the operation that deserves to
     be looked at once. The list is filterable like any other — a reader who wants to know
     whether one particular node is in it should be able to type its name.
-    """
-    items = _preview_items(victims)
-    while True:
-        chosen = await ctx.ui.session.run_screen(_preview_screen(items, len(victims)))
-        if chosen is CANCEL or chosen is None or chosen == _BACK:
-            return False
-        if chosen == _APPLY:
-            return True
-        # Any other row is a contact: Enter opens its node detail page, so a reader who
-        # doesn't recognise a name can go and look before archiving it. The preview stays
-        # pushed underneath, so Esc from the page lands back on the row it was opened from.
-        from .node_detail_screen import open_node_detail
 
-        await open_node_detail(ctx, chosen.contact)
+    It is also **editable**. ``Delete`` drops a contact out of the sweep, because the
+    alternative was to back out and pick a shallower rung, which spares the one contact you
+    recognised by also sparing forty you didn't care about. The row list is *data* here, so
+    it refreshes through
+    :meth:`~meshterm.ui.tui.select.SelectScreen.replace_items` — the highlight follows by
+    value and the typed filter holds — rather than by rebuilding the screen and dropping the
+    reader back at the top of a list they were halfway down.
+
+    Args:
+        ctx: Shared application context.
+        victims: The candidates, weakest first. **Mutated** when the reader drops rows, so
+            the caller's list is what actually gets swept.
+
+    Returns:
+        Whether the reader committed to archiving whatever survived their edits.
+    """
+    from .node_detail_screen import open_node_detail
+    from .tui.select import DeleteRequest
+
+    screen = _preview_screen(victims)
+    # A hub: it owns a loop, so it is pushed once and stays for the whole visit. That is what
+    # lets a spared row refresh the rows underneath the reader's cursor, and a detail page
+    # nest above without this screen losing its place.
+    async with ctx.ui.session.stay(screen) as visit:
+        while True:
+            chosen = await visit.result()
+            if chosen is CANCEL or chosen is None or chosen == _BACK:
+                return False
+            if chosen == _APPLY:
+                return bool(victims)
+            if isinstance(chosen, DeleteRequest):
+                spared = chosen.value
+                if spared in victims:
+                    victims.remove(spared)
+                if not victims:
+                    # The reader spared every candidate: there is no sweep left to preview,
+                    # and an empty list under an "Archive no contacts" row would be a screen
+                    # asking them to confirm nothing.
+                    return False
+                # The title counts the victims, so it is content too and moves with them.
+                screen.replace_items(
+                    _preview_items(victims),
+                    title=f"Purge contacts — {_count_desc(len(victims))} to archive",
+                )
+                continue
+            # Any other row is a contact: Enter opens its node detail page, so a reader who
+            # doesn't recognise a name can go and look before archiving it. The page is
+            # opened with ``manage=False`` — this screen is already where archiving is being
+            # decided, and a second, singular archive or delete reachable from inside its own
+            # candidate list would be two answers to one question. The preview stays pushed
+            # underneath, so Esc from the page lands back on the row it was opened from.
+            await open_node_detail(ctx, chosen.contact, manage=False)
 
 
 def _count_desc(n: int) -> str:
@@ -427,17 +497,27 @@ async def _sweep(
 ) -> int:
     """Confirm, then remove each victim from the device and archive it here. Returns the count.
 
+    The confirm is **amber and takes no typing**, unlike the red typed gate a bulk deletion
+    wears. The two tiers exist for two different costs and this one is recoverable — every
+    contact keeps its key, its reception history and its transcripts, and a restore is one
+    write from the Archived list. A red typed confirm here would have spent the app's
+    loudest warning on its most reversible bulk action, which is how a warning stops meaning
+    anything.
+
     The removal is a companion-local command per contact — no LoRa traffic — so it runs
     straight through under the progress dialog rather than being paced. The store write
     follows each successful removal rather than being batched at the end, so an interrupted
     sweep leaves a consistent state: every contact off the device is recorded as archived.
     """
-    warning = (
-        f"This archives {_count_desc(len(victims))}, removing them from this device's "
-        "contact list to free space for new ones. MeshTerm keeps them — with their "
-        "reception history and message transcripts — and can put any of them back."
-    )
-    if not await ctx.ui.typed_confirm(warning, "archive", title="Purge contacts"):
+    if not await ctx.ui.dialog(
+        f"Archive {_count_desc(len(victims))}? They come off this device's contact list, "
+        "freeing space for new ones. MeshTerm keeps them — with their keys, reception "
+        "history and messages — under Archived contacts, and any of them can be restored.",
+        [("Cancel", False), ("Purge", True)],
+        title="Purge contacts",
+        default=1,
+        danger=True,
+    ):
         return 0
 
     device = await ctx.device()
@@ -476,45 +556,3 @@ async def _sweep(
         outcome = Text("no contacts could be archived", style="err")
     await ctx.ui.session.message_dialog(outcome, title="Purge contacts")
     return archived
-
-
-def archived_rows(ctx: "AppContext", self_key: str) -> list:
-    """The Contacts list's ``Archived`` section: the contacts swept off this device.
-
-    Drawn always rather than behind a toggle. Silent archiving is how a reader loses track
-    of what they archived — and the section is also the only route back: Enter on a row
-    opens the node's detail page, where ``Restore to device`` puts it back.
-
-    Args:
-        ctx: Shared application context.
-        self_key: The device's own public key (hex).
-
-    Returns:
-        The rows to append after the live contacts, or nothing when none are archived.
-    """
-    store = ctx.contact_store
-    dev_pub = (self_key or "").lower().removeprefix("0x")
-    if store is None or not dev_pub:
-        return []
-    archived = store.archived(dev_pub)
-    if not archived:
-        return []
-    rows: list = [section_heading("Archived")]
-    for remembered in archived:
-        contact = remembered.to_contact()
-        label = Text(
-            remembered.name,
-            style=name_style(remembered.name, remembered.public_key),
-        )
-        label.append(f"  ·  archived {_ago(remembered.archived_at)}", style="muted")
-        rows.append(Choice(title=label, value=contact))
-    return rows
-
-
-def _ago(stamp: Optional[int]) -> str:
-    """How long ago an archive stamp was, in the prose form ``format_ago`` speaks."""
-    from .widgets import format_ago
-
-    if not stamp:
-        return "some time ago"
-    return format_ago(max(0.0, time.time() - stamp))
