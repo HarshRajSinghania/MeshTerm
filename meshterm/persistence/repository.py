@@ -12,7 +12,7 @@ import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import (
@@ -28,6 +28,9 @@ from ..core.models import (
     utcnow,
 )
 from . import db
+
+if TYPE_CHECKING:
+    from ..core.contact_score import ContactSignals
 
 
 #: The trailing window the dashboard's live observation stats and packet feed prune to
@@ -53,6 +56,14 @@ ACTIVITY_BUCKETS = 72
 #: five minutes each, two columns per braille cell, so 24 buckets fill its twelve
 #: characters. The rest of :data:`ACTIVITY_BUCKETS` feeds the scaling peak but isn't shown.
 ACTIVITY_DRAWN_BUCKETS = 24
+
+#: How many recent packet frames the contact-scoring hop median is drawn from (see
+#: :meth:`Repository.contact_signals`). The same order of magnitude as
+#: :meth:`Repository.packet_paths`' own cap, and for the same reasons: it is the one scan
+#: there that materialises a row per packet, and old hops describe a topology that has since
+#: moved. Deep enough that every contact heard at all in the recent past gets several
+#: readings to take a median over.
+HOP_EVIDENCE_LIMIT = 20000
 
 
 def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
@@ -1627,6 +1638,152 @@ class Repository:
             for node, s in stats.items()
         ]
         return sorted(nodes, key=lambda n: n.last_seen, reverse=True)
+
+    def contact_signals(self, nodes: "Sequence[str]") -> "dict[str, ContactSignals]":
+        """Gather every scoring signal for a set of nodes, in a fixed number of scans.
+
+        The evidence behind the Contacts sweep (see
+        :mod:`~meshterm.core.contact_score`). Deliberately *set-based*: a table of several
+        hundred contacts is answered by five grouped passes over the history rather than by
+        five queries per contact, so the sweep's cost tracks the size of the database and
+        not the size of the table being swept.
+
+        Each pass fills one part of :class:`~meshterm.core.contact_score.ContactSignals`:
+
+        * **Reception** — first heard, last heard, and the transmission tally, from
+          ``observations``. ``packet`` rows are excluded exactly as :meth:`heard_nodes`
+          excludes them, so the tally means "heard *from* this node" and stays the same
+          number the contact list's ``PKTS`` lane shows.
+        * **Hops** — the median relay count of packets seen originating from the node, from
+          the ``packet`` rows this time, since those are the only ones carrying a path (see
+          :meth:`packet_paths`). Median rather than minimum: one lucky direct reception
+          shouldn't make a four-hop node read as a neighbour.
+        * **Direct messages** — totals, our own outbound share, and the age of the latest,
+          matched by *prefix*: ``messages.peer`` holds whatever width the wire addressed,
+          which is not always the 12 hex an observation keys on (see
+          :meth:`last_message_by_peer`).
+        * **Channel posts** — attributed by the ``Name: `` prefix a channel message
+          carries, because the wire gives a channel frame no sender key at all. A name held
+          by two contacts attributes to *neither*: the caller marks those unattributed so
+          the score reads them as unknown rather than as silence.
+
+        Args:
+            nodes: The 12-hex canonical node ids to gather for. Anything absent from the
+                history simply comes back with an empty record, which the score protects
+                rather than punishes.
+
+        Returns:
+            One :class:`~meshterm.core.contact_score.ContactSignals` per requested node,
+            keyed by that id. Name-keyed channel attribution is *not* filled in here (the
+            repository knows nothing about which name belongs to which contact) — see
+            :meth:`channel_post_counts`.
+        """
+        from ..core.contact_score import ContactSignals
+
+        wanted = {n for n in nodes if n}
+        if not wanted:
+            return {}
+        now = utcnow()
+
+        def age_days(iso: Optional[str]) -> Optional[float]:
+            """Days from a stored ISO stamp to now, or ``None`` for an unparseable one."""
+            if not iso:
+                return None
+            try:
+                when = datetime.fromisoformat(iso)
+            except (TypeError, ValueError):
+                return None
+            return max(0.0, (now - when).total_seconds() / 86400.0)
+
+        # -- reception: one grouped pass over the non-packet history ------------------
+        heard: dict[str, tuple[str, str, int]] = {}
+        for row in self._conn.execute(
+            "SELECT node, MIN(observed_at) AS first, MAX(observed_at) AS last, "
+            "COUNT(*) AS n FROM observations "
+            "WHERE node IS NOT NULL AND kind != 'packet' GROUP BY node"
+        ):
+            if row["node"] in wanted:
+                heard[row["node"]] = (row["first"], row["last"], int(row["n"] or 0))
+
+        # -- hops: the median relay count of packets originating from each node -------
+        # Bounded to the most recent frames, like :meth:`packet_paths`, and for the same
+        # two reasons: this is the one pass that builds a row object per packet rather than
+        # aggregating in SQL, and a year-old hop count is evidence about a topology that no
+        # longer exists. Newest first, so the cap keeps the readings worth having.
+        hop_counts: dict[str, list[int]] = {}
+        for row in self._conn.execute(
+            "SELECT node, path FROM observations "
+            "WHERE kind = 'packet' AND node IS NOT NULL AND path IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?",
+            (HOP_EVIDENCE_LIMIT,),
+        ):
+            if row["node"] not in wanted:
+                continue
+            hops = [h for h in (row["path"] or "").split(",") if h]
+            hop_counts.setdefault(row["node"], []).append(len(hops))
+
+        # -- direct messages: totals, our share, and the latest, matched by prefix ----
+        dm_rows = self._conn.execute(
+            "SELECT peer, COUNT(*) AS total, SUM(outbound) AS sent, "
+            "MAX(created_at) AS last FROM messages "
+            "WHERE is_channel = 0 AND peer IS NOT NULL GROUP BY peer"
+        ).fetchall()
+
+        signals: dict[str, ContactSignals] = {}
+        for node in sorted(wanted):
+            first, last, packets = heard.get(node, (None, None, 0))
+            hops = hop_counts.get(node)
+            total = sent = 0
+            latest: Optional[str] = None
+            for row in dm_rows:
+                peer = (row["peer"] or "").lower()
+                # Either side may be the shorter: the wire addresses at whatever width it
+                # likes, so a stored 6-hex peer and a 12-hex node id are the same node when
+                # one is a prefix of the other.
+                if not peer or not (peer.startswith(node) or node.startswith(peer)):
+                    continue
+                total += int(row["total"] or 0)
+                sent += int(row["sent"] or 0)
+                if latest is None or (row["last"] or "") > latest:
+                    latest = row["last"]
+            signals[node] = ContactSignals(
+                node=node,
+                heard_age_days=age_days(last),
+                packets=packets,
+                dm_total=total,
+                dm_outbound=sent,
+                dm_age_days=age_days(latest),
+                hops=statistics.median(hops) if hops else None,
+                known_days=age_days(first),
+            )
+        return signals
+
+    def channel_post_counts(self) -> "dict[str, int]":
+        """How many channel messages each *name* has posted, lowercased.
+
+        A channel frame carries no sender key — senders identify themselves by prefixing
+        the text with ``Name: `` (see
+        :func:`~meshterm.core.channels.split_channel_sender`), so this is the only
+        attribution available and it is by display name alone. The caller is responsible
+        for refusing to trust a name two contacts share; this method only counts.
+
+        Our own outbound posts are excluded: they say nothing about anyone else.
+
+        Returns:
+            Post counts keyed by lowercased sender name. Messages whose text carries no
+            usable name prefix contribute nothing.
+        """
+        from ..core.channels import split_channel_sender
+
+        counts: dict[str, int] = {}
+        for row in self._conn.execute(
+            "SELECT text FROM messages WHERE is_channel = 1 AND outbound = 0"
+        ):
+            name, _ = split_channel_sender(row["text"] or "")
+            if name:
+                key = name.strip().casefold()
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
     # -- chat messages ----------------------------------------------------------
 

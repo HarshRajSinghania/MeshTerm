@@ -71,7 +71,8 @@ from meshterm.ui.records_screen import RecordDialog
 from meshterm.ui.remote_cli import RemoteCliScreen
 from meshterm.ui.timemachine_screen import TimeMachineScreen
 from meshterm.ui.trace_screen import TraceScreen
-from meshterm.ui.tui import Screen, frame
+from meshterm.ui.menus import section_heading
+from meshterm.ui.tui import Choice, Screen, Separator, frame
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
 from meshterm.ui.theme import name_style
@@ -145,7 +146,59 @@ def _contacts(cols: int, rows: int) -> Screen:
         Contact(name="Alice", public_key="aa" * 32),
         Contact(name="A Rather Long Repeater Name For Width", public_key=_HUB_KEY),
     ]
-    return ContactsScreen("Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort)
+    # An archived row too: the sweep's section is part of this screen's populated state,
+    # and its "· archived 3d ago" suffix is the widest thing the tail ever draws.
+    archived = [
+        Separator(" "),
+        section_heading("Archived"),
+        Choice(title=Text("hop-9  · archived 3d ago", style="muted"), value=contacts[0]),
+    ]
+    return ContactsScreen(
+        "Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort, archived=archived
+    )
+
+
+def _purge_scored(name: str, key: str, percentile: int, **signals):  # noqa: ANN001, ANN201
+    """One ranked contact for the sweep's screens, built through the real dataclasses."""
+    from meshterm.core.contact_score import ContactSignals, ScoredContact, _reasons
+    from meshterm.core.contact_score import DEFAULT_WEIGHTS as w
+
+    sig = ContactSignals(node=key[:12], **signals)
+    terms = {"dm": 0.0, "recency": 0.1, "volume": 0.2, "channel": 0.5,
+             "hops": 0.3, "distance": 0.5}
+    return ScoredContact(
+        contact=Contact(name=name, public_key=key, key_prefix=key[:12]),
+        signals=sig,
+        score=float(percentile),
+        percentile=percentile,
+        reasons=_reasons(sig, terms, w),
+    )
+
+
+def _purge_victims():  # noqa: ANN201
+    """The sweep's victim list — a long name, a deep age, and a never-heard row."""
+    return [
+        _purge_scored("hop-9", "9a" * 32, 2, heard_age_days=400.0, packets=1,
+                      known_days=420.0, hops=4.0),
+        _purge_scored("A Rather Long Repeater Name For Width", _HUB_KEY, 7,
+                      heard_age_days=95.0, packets=3, known_days=200.0,
+                      hops=2.0),
+        _purge_scored("Alice", "aa" * 32, 11, packets=6, known_days=90.0),
+    ]
+
+
+def _purge_ladder(cols: int, rows: int) -> Screen:
+    from meshterm.ui.purge_screen import _target_screen
+
+    ranked = _purge_victims()
+    return _target_screen(ranked, ranked)
+
+
+def _purge_preview(cols: int, rows: int) -> Screen:
+    from meshterm.ui.purge_screen import _preview_items, _preview_screen
+
+    victims = _purge_victims()
+    return _preview_screen(_preview_items(victims), len(victims))
 
 
 def _node_detail_header() -> Text:
@@ -416,6 +469,8 @@ def _support_project(cols: int, rows: int) -> Screen:
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
     _Entry("contacts", _contacts),
+    _Entry("purge_ladder", _purge_ladder),
+    _Entry("purge_preview", _purge_preview),
     _Entry("node_detail", _node_detail),
     _Entry("map", _map),
     _Entry("chat", _chat),

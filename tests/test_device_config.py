@@ -318,36 +318,50 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert resolved == [highlighted, CANCEL]
 
 
-def test_purge_buckets_split_stale_from_never_heard() -> None:
-    """``stale_past`` counts heard-but-old contacts; never-heard falls only in its own bucket."""
-    from datetime import timedelta
+def test_purge_age_rungs_split_stale_from_never_heard() -> None:
+    """An age rung takes only contacts once heard and since gone quiet; never-heard has its own.
 
-    from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.contacts_screen import _DAY, never_heard, stale_past
+    The ladder's second section is the plain predictable operation a ranking cannot express,
+    and its one subtlety is that a contact with no advert time at all must not fall into it:
+    a freshly added contact that hasn't had time to advert yet reads as infinitely old, and
+    an age rung that swept it would be deleting nodes for being new.
+    """
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import Contact
+    from meshterm.ui.purge_screen import _DAY, _NEVER, victims_for
 
-    now = utcnow()
-    fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=now - timedelta(hours=1))
-    quiet = Contact(name="Quiet", public_key="ee" * 32, last_seen=now - timedelta(days=3))
-    old = Contact(name="Old", public_key="bb" * 32, last_seen=now - timedelta(days=45))
-    ancient = Contact(name="Ancient", public_key="cc" * 32, last_seen=now - timedelta(days=400))
-    unheard = Contact(name="Unheard", public_key="dd" * 32)  # no last_seen
-    contacts = [fresh, quiet, old, ancient, unheard]
+    def scored(name: str, days, score: float) -> ScoredContact:  # noqa: ANN001
+        contact = Contact(name=name, public_key=f"{ord(name[0]):02x}" * 32)
+        return ScoredContact(
+            contact=contact,
+            signals=ContactSignals(node="0" * 12, heard_age_days=days),
+            score=score,
+            percentile=int(score),
+        )
 
-    # A day catches everything heard but not heard *today* — the tightest rung the ladder
-    # offers (JP, 2026-08-10), so a contact three days quiet is swept where the week rung
-    # would still have kept it.
-    assert {c.name for c in stale_past(contacts, _DAY)} == {"Quiet", "Old", "Ancient"}
-    # A week catches the two aged ones but not the fresh — and never the never-heard one.
-    week = {c.name for c in stale_past(contacts, 7 * _DAY)}
-    assert week == {"Old", "Ancient"}
+    # Strongest first, as `rank_contacts` returns them.
+    ranked = [
+        scored("Fresh", 0.04, 90.0),
+        scored("Quiet", 3.0, 70.0),
+        scored("Old", 45.0, 50.0),
+        scored("Ancient", 400.0, 30.0),
+        scored("Unheard", None, 10.0),
+    ]
+    names = lambda picked: [v.contact.name for v in victims_for(ranked, ranked, picked)]  # noqa: E731
+
+    # A week catches the two aged ones — never the fresh, and never the never-heard.
+    assert set(names(("age", 7 * _DAY))) == {"Old", "Ancient"}
     # A year catches only the truly ancient.
-    assert {c.name for c in stale_past(contacts, 365 * _DAY)} == {"Ancient"}
+    assert names(("age", 365 * _DAY)) == ["Ancient"]
     # The never-heard bucket is exactly the contact with no advert time.
-    assert [c.name for c in never_heard(contacts)] == ["Unheard"]
+    assert names(("age", _NEVER)) == ["Unheard"]
+    # Weakest first on the age route too, so a reader skimming the preview's first screen
+    # sees what they are least likely to want back.
+    assert names(("age", 7 * _DAY)) == ["Ancient", "Old"]
 
 
 async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> None:
-    """The purge counts down a real bar, then hands its outcome back in a dialog.
+    """The sweep counts down a real bar, then hands its outcome back in a dialog.
 
     Two things the busy overlay could not do (JP, 2026-08-10). It only ever said "working",
     and only in the gaps *between* screens — over the pushed contacts list it drew nothing
@@ -359,15 +373,15 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     """
     import asyncio
     import logging
+    from datetime import timedelta
     from types import SimpleNamespace
 
+    from meshterm.core.contact_score import ContactSignals
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.contacts_screen import _purge_stale
+    from meshterm.ui.purge_screen import purge_contacts
     from meshterm.ui.surface import TuiUi
     from meshterm.ui.tui.progress import ProgressScreen
     from meshterm.ui.tui.session import TuiSession
-
-    from datetime import timedelta
 
     old = utcnow() - timedelta(days=400)
     victims = [
@@ -382,40 +396,73 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
             await asyncio.sleep(0)  # a real companion command takes a turn of the loop
             removed_from_device.append(contact.name)
 
+    class _Repo:
+        @staticmethod
+        def contact_signals(nodes):  # noqa: ANN001
+            # Long silent, never messaged, heard a handful of times — the shape of exactly
+            # what the sweep exists to clear out.
+            return {
+                node: ContactSignals(node=node, heard_age_days=400.0, packets=2,
+                                     known_days=420.0)
+                for node in nodes
+            }
+
+        @staticmethod
+        def channel_post_counts():
+            return {}
+
     session = TuiSession()
     ui = TuiUi(session)
     ui.typed_confirm = lambda *a, **k: _true()  # the red gate is its own tested thing
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.purge"),
+        repo=_Repo(),
         contact_store=None,
+        watch_store=None,
+        admin_store=None,
         devstate=SimpleNamespace(
-            contacts=lambda: _contacts(victims), invalidate_contacts=lambda: None
+            contacts=lambda: _contacts(victims),
+            self_info=lambda: _self_info({}),
+            invalidate_contacts=lambda: None,
         ),
         device=lambda: _device(_Device()),
     )
 
-    task = asyncio.ensure_future(_purge_stale(ctx, "cc" * 32))
+    task = asyncio.ensure_future(purge_contacts(ctx, "cc" * 32))
 
-    # The age ladder: Enter on its first rung (a week) sweeps every one of these.
-    ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge stale"))
+    # Walk past the five standing rungs into the second section and take "not heard in 1
+    # year", which catches all three — the standing rungs keep a share, so none of them
+    # ever takes a whole table.
+    ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge contacts"))
+    for _ in range(9):
+        ladder.handle("down")
     ladder.handle("enter")
+
+    # The preview lists exactly who would go, and commits on its Apply row (the default).
+    preview = await _step_until_screen(
+        session, lambda s: "to archive" in getattr(s, "title", "")
+    )
+    body = _screen_text(preview)
+    assert "PCTL" in body  # the standing lane is a percentile, never a raw score
+    assert all(v.name in body for v in victims)
+    preview.handle("enter")
 
     # The sweep now runs under the progress dialog, which is the frontmost screen for its
     # whole lifetime — so the list underneath cannot be walked while it works.
     bar = await _step_until_screen(session, lambda s: isinstance(s, ProgressScreen))
-    assert bar.title == "Purge stale contacts"
+    assert bar.title == "Purge contacts"
     assert bar.render_body(60)  # a real bar, with a real total to count down
     bar.handle("down")  # every key is swallowed; nothing underneath moves
 
     # …and the count lands in a dialog, not in a note read on the way out.
     done = await _step_until_screen(
-        session, lambda s: not isinstance(s, ProgressScreen) and "purged" in _screen_text(s)
+        session, lambda s: not isinstance(s, ProgressScreen) and "archived" in _screen_text(s)
     )
-    assert "purged 3 contacts" in _screen_text(done)
+    assert "archived 3 contacts" in _screen_text(done)
     done.handle("escape")
     assert await task == 3
-    assert removed_from_device == ["Old0", "Old1", "Old2"]
+    assert sorted(removed_from_device) == ["Old0", "Old1", "Old2"]
 
 
 async def test_removing_one_contact_drops_it_from_the_device_and_the_store() -> None:
@@ -610,6 +657,11 @@ async def test_a_contact_the_device_never_held_is_still_removed_here() -> None:
     assert await task is True
     assert forgotten == [("cc" * 32, "3d" * 32)]
     assert invalidated == [True]
+
+
+async def _self_info(info):  # noqa: ANN001, ANN201
+    """Await to the given self-info dict (the device read the ranking makes)."""
+    return info
 
 
 async def _true() -> bool:

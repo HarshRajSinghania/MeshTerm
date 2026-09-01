@@ -1345,6 +1345,13 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
     full_key = key.lower().removeprefix("0x")
     if len(full_key) == 64 and _is_hex(full_key):
         info_actions.append(_Action("share", "📱", "", "Share contact — QR / link"))
+    # An archived contact is off the device but remembered in full (see
+    # :mod:`~meshterm.ui.purge_screen`), so the page it opens from the Contacts list's
+    # ``Archived`` section offers the way back rather than the way out. Above the removal,
+    # because it is the constructive one of the pair.
+    archived = _is_archived(ctx, contact, self_key)
+    if archived:
+        info_actions.append(_Action("restore", "📂", "ok", "Restore to device"))
     # The page's one destructive action, and so its last row: drop this single contact from
     # the device's table. Offered only for a contact we can actually address by key — our own
     # node is no contact, and a node with neither key nor prefix has nothing to delete by.
@@ -1414,6 +1421,14 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
                     await open_timemachine_self(ctx)
                 else:
                     await open_timemachine_node(ctx, node_id, label)
+            elif action == "restore":
+                # A restore writes the contact back and ends the visit for the same reason a
+                # removal does: the page was opened from the Archived section, and the row it
+                # was opened from is about to stop existing there.
+                assert contact is not None  # the row only exists for a real contact
+                if await _restore_archived(ctx, contact, self_key, label):
+                    contact_removed = True
+                    break
             elif action == "remove":
                 # The confirm floats over this page, which is already the backdrop — the
                 # reader confirms against the node they are looking at. A removal ends the
@@ -1431,14 +1446,79 @@ async def open_node_detail(ctx: "AppContext", contact: Optional["Contact"]) -> b
     return contact_removed
 
 
+def _is_archived(
+    ctx: "AppContext", contact: "Optional[Contact]", self_key: str
+) -> bool:
+    """Whether this contact was swept off the device and is being kept by MeshTerm.
+
+    Read straight from the contact store rather than passed in, so the page answers for
+    itself wherever it was opened from — the Contacts list's ``Archived`` section, a map
+    marker, a route row — instead of only where the caller happened to know.
+    """
+    store = getattr(ctx, "contact_store", None)
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if store is None or contact is None or not dev_pub or not contact.public_key:
+        return False
+    key = contact.public_key.lower().removeprefix("0x")
+    return any(c.public_key == key for c in store.archived(dev_pub))
+
+
+async def _restore_archived(
+    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+) -> bool:
+    """Write an archived contact back onto the device; ``True`` once it is live again.
+
+    The inverse of the Contacts sweep, one contact at a time (see
+    :mod:`~meshterm.ui.purge_screen`). The device write comes **first** and the store's
+    archive mark is cleared only once it succeeded — a failed write must never leave a
+    contact listed as live on a radio that doesn't hold it, which would be a row you cannot
+    message and cannot restore.
+
+    No confirm: restoring is constructive, reversible by the sweep that archived it, and
+    costs one contact slot. The dialog is kept for the failures, which are the only part the
+    reader can't infer from the list coming back with the row in it.
+
+    Args:
+        ctx: The shared application context (interactive menu; the page is the backdrop).
+        contact: The archived contact to write back.
+        self_key: The device's own public key (hex).
+        label: How the node is named on the page, for the failure notice.
+
+    Returns:
+        ``True`` if the contact is back on the device, ``False`` if the write was refused.
+    """
+    from .surface import TuiUi
+
+    assert isinstance(ctx.ui, TuiUi)  # guaranteed by open_node_detail
+    session = ctx.ui.session
+
+    device = await ctx.device()
+    try:
+        await device.add_contact(contact)
+    except Exception as exc:  # noqa: BLE001 - a refused write is reported, not raised
+        ctx.log.debug("contacts: restore failed for %s: %s", contact.name, exc)
+        await session.message_dialog(
+            Text(f"✗ couldn't restore {label} — {exc}", style="err"),
+            title="Restore contact",
+        )
+        return False
+
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if ctx.contact_store is not None and dev_pub and contact.public_key:
+        ctx.contact_store.restore(dev_pub, contact.public_key)
+    ctx.devstate.invalidate_contacts()
+    return True
+
+
 async def _remove_contact(
     ctx: "AppContext", contact: "Contact", self_key: str, label: str
 ) -> bool:
     """Confirm and drop one contact from the device; ``True`` once it is gone.
 
-    The single-contact counterpart to the Contacts list's bulk purge (see
-    :func:`~meshterm.ui.contacts_screen._purge_stale`), and it removes the contact in the
-    same two places, because the list a screen sees is the *union* of the two: the device's
+    The single-contact counterpart to the Contacts list's bulk sweep (see
+    :func:`~meshterm.ui.purge_screen.purge_contacts`) — but a *deletion* where that one
+    archives: this is the way to make MeshTerm forget a node entirely, so it removes the
+    contact in both places, because the list a screen sees is the *union* of the two: the device's
     own contact table, and the contacts MeshTerm remembers for that device (see
     :mod:`meshterm.core.contact_store`). Forget only the first and the store merges the
     contact straight back on the next read, so the deletion would look like a screen that

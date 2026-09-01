@@ -19,6 +19,24 @@ every remembered contact is already present and nothing is added — no device-t
 Recording never *removes* a contact on a device's empty read, so a bridge that just restarted
 doesn't wipe the memory of what it knew.
 
+A contact can also be **archived**, which is the opposite arrangement and the one the
+Contacts sweep uses (see :mod:`~meshterm.core.contact_score`): the contact is deleted from
+the *device*, freeing a slot in a companion's finite contact table, and kept here with an
+:attr:`~RememberedContact.archived_at` stamp so nothing about it is actually lost.
+:func:`merge_contacts` skips an archived contact — without that the union above would put it
+straight back into every list, indistinguishable from a live one, and the sweep would appear
+to have done nothing. What survives an archive is everything except the device row: the
+node's whole reception history (untouched — it lives in the SQLite database, not here), its
+direct-message transcript (keyed by key prefix, not by a contact row), and its full public
+key, which is exactly what :meth:`~meshterm.core.connection.Device.add_contact` needs to put
+it back. So a restore is one write, and the chat screen already performs it on demand when a
+send is rejected for an unknown recipient (see
+:class:`~meshterm.core.connection.ContactNotOnDeviceError`).
+
+The one place to be careful is a firmware-less bridge, whose contact table is RAM-only and
+for which this store *is* the memory: archiving there removes the contact from the lists for
+real, and only a restore brings it back.
+
 Like the other operator state (mutes, remembered channels, saved settings), this is global
 machine state in a small JSON file (``<config_dir>/contacts.json``), not the per-invocation
 SQLite database. Reads are served from memory after the first load; a write happens only when the
@@ -74,6 +92,10 @@ class RememberedContact:
             list's last-heard column; ``None`` when unknown.
         lat: Last advertised latitude, if it shared one.
         lon: Last advertised longitude, if it shared one.
+        archived_at: Unix seconds when this contact was swept off the device, or ``None``
+            while it is a live contact. An archived contact is remembered in full but kept
+            *out* of :func:`merge_contacts`, so it stops occupying a device slot without
+            being forgotten — and the stamp is what lets a list say how long ago it went.
     """
 
     public_key: str
@@ -82,6 +104,12 @@ class RememberedContact:
     last_advert: Optional[int] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    archived_at: Optional[int] = None
+
+    @property
+    def archived(self) -> bool:
+        """Whether this contact has been swept off the device but kept here."""
+        return self.archived_at is not None
 
     @classmethod
     def from_contact(cls, contact: Contact) -> "RememberedContact":
@@ -197,6 +225,88 @@ class ContactStore:
             self._state[dev] = current
             self._save()
 
+    def archived(self, device_pubkey: str) -> list[RememberedContact]:
+        """The contacts archived off this device, most recently archived first.
+
+        The Contacts screen's ``Archived`` section. Ordered by when each was swept rather
+        than by name, because that is the question the section answers — *what did the last
+        sweep take?* — and a fresh sweep's work should be at the top of it.
+        """
+        remembered = self._state.get(_norm(device_pubkey), {}).values()
+        return sorted(
+            (c for c in remembered if c.archived),
+            key=lambda c: (-(c.archived_at or 0), c.name.lower()),
+        )
+
+    def archive(self, device_pubkey: str, contact: Contact, *, when: int) -> None:
+        """Mark one contact archived — remembered in full, but no longer merged into lists.
+
+        The store half of a sweep: the device half is
+        :meth:`~meshterm.core.connection.Device.remove_contact`, and this is what keeps the
+        removal from being a loss. The contact is *upserted* first, so archiving one the
+        store had never recorded (a live-only contact on a firmware radio, which is the
+        usual case) still remembers everything needed to put it back.
+
+        Args:
+            device_pubkey: The device's own public key.
+            contact: The contact being swept.
+            when: Unix seconds to stamp the archive with.
+        """
+        dev = _norm(device_pubkey)
+        if not dev or not contact.public_key:
+            return  # unaddressable — there would be nothing to restore it by
+        remembered = RememberedContact.from_contact(contact)
+        entry = RememberedContact(
+            public_key=remembered.public_key,
+            name=remembered.name,
+            node_type=remembered.node_type,
+            last_advert=remembered.last_advert,
+            lat=remembered.lat,
+            lon=remembered.lon,
+            archived_at=int(when),
+        )
+        current = dict(self._state.get(dev, {}))
+        if current.get(entry.public_key) == entry:
+            return
+        current[entry.public_key] = entry
+        self._state[dev] = current
+        self._save()
+
+    def restore(self, device_pubkey: str, contact_pubkey: str) -> Optional[RememberedContact]:
+        """Clear one contact's archived mark, returning what was archived.
+
+        Only the *store* side: the caller writes the contact back onto the device (see
+        :meth:`~meshterm.core.connection.Device.add_contact`) and calls this once that
+        succeeded, so a failed write never leaves a contact listed as live on a device that
+        doesn't hold it.
+
+        Args:
+            device_pubkey: The device's own public key.
+            contact_pubkey: The contact to un-archive.
+
+        Returns:
+            The record as it was archived, or ``None`` if no archived contact matched.
+        """
+        dev = _norm(device_pubkey)
+        key = _norm(contact_pubkey)
+        contacts = self._state.get(dev) or {}
+        entry = contacts.get(key)
+        if entry is None or not entry.archived:
+            return None
+        current = dict(contacts)
+        current[key] = RememberedContact(
+            public_key=entry.public_key,
+            name=entry.name,
+            node_type=entry.node_type,
+            last_advert=entry.last_advert,
+            lat=entry.lat,
+            lon=entry.lon,
+            archived_at=None,
+        )
+        self._state[dev] = current
+        self._save()
+        return entry
+
     def forget(self, device_pubkey: str, contact_pubkey: str) -> None:
         """Drop one remembered contact; persist only a real change."""
         dev = _norm(device_pubkey)
@@ -239,6 +349,8 @@ def _contact_to_json(contact: RememberedContact) -> dict:
         entry["lat"] = contact.lat
     if contact.lon is not None:
         entry["lon"] = contact.lon
+    if contact.archived_at is not None:
+        entry["archived_at"] = contact.archived_at
     return entry
 
 
@@ -257,6 +369,7 @@ def _contact_from_json(entry: object) -> Optional[RememberedContact]:
         last_advert=_opt_int(entry.get("last_advert")),
         lat=_opt_float(entry.get("lat")),
         lon=_opt_float(entry.get("lon")),
+        archived_at=_opt_int(entry.get("archived_at")),
     )
 
 
@@ -282,6 +395,10 @@ def merge_contacts(
     extra = [
         remembered.to_contact()
         for remembered in store.contacts(device_pubkey)
-        if remembered.public_key and remembered.public_key not in present
+        # An archived contact is deliberately withheld: it was swept off the device to free
+        # a slot, and merging it back would undo the sweep in the only place anyone looks.
+        if remembered.public_key
+        and not remembered.archived
+        and remembered.public_key not in present
     ]
     return list(live) + extra

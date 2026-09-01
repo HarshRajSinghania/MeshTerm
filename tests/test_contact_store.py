@@ -228,3 +228,82 @@ async def test_devstate_merge_keeps_a_repeater_a_repeater(ctx) -> None:
     repeater = next(c for c in restored if c.public_key == "ab" * 32)
     assert repeater.node_type == NODE_TYPE_REPEATER
     assert not is_direct_messageable(repeater.node_type)
+
+
+def test_an_archived_contact_is_remembered_but_kept_out_of_the_merge(tmp_path) -> None:  # noqa: ANN001
+    """Archiving frees a device slot without losing the contact — and without undoing itself.
+
+    The sweep's whole shape (see :mod:`meshterm.ui.purge_screen`): the contact is deleted
+    from the *device*, which is the scarce resource, and kept here in full. The subtlety is
+    the merge — this store's normal job is to union remembered contacts back into any list
+    the device isn't reporting, which would put an archived contact straight back and make
+    the sweep look like it did nothing.
+    """
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    alice = Contact(name="Alice", public_key="aa" * 32, key_prefix="aa" * 6)
+    bob = Contact(name="Bob", public_key="bb" * 32, key_prefix="bb" * 6)
+    store.remember_all(PUB_A, [alice, bob])
+
+    store.archive(PUB_A, alice, when=1_700_000_000)
+
+    # Remembered in full — the public key that makes a restore possible is still here.
+    archived = store.archived(PUB_A)
+    assert [c.name for c in archived] == ["Alice"]
+    assert archived[0].public_key == "aa" * 32
+    assert archived[0].archived_at == 1_700_000_000
+
+    # …but withheld from the union, so the device's slot really is free.
+    merged = merge_contacts(store, PUB_A, [])
+    assert [c.name for c in merged] == ["Bob"]
+
+    # Survives a reload: the mark is persisted, not just held in memory.
+    reloaded = ContactStore(tmp_path / "contacts.json")
+    assert [c.name for c in reloaded.archived(PUB_A)] == ["Alice"]
+    assert [c.name for c in merge_contacts(reloaded, PUB_A, [])] == ["Bob"]
+
+
+def test_restoring_clears_the_mark_and_the_contact_merges_again(tmp_path) -> None:  # noqa: ANN001
+    """A restore is the exact inverse — the contact rejoins every list it was withheld from."""
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    alice = Contact(name="Alice", public_key="aa" * 32, key_prefix="aa" * 6)
+    store.archive(PUB_A, alice, when=1_700_000_000)
+    assert merge_contacts(store, PUB_A, []) == []
+
+    was = store.restore(PUB_A, "aa" * 32)
+    assert was is not None and was.name == "Alice"
+    assert store.archived(PUB_A) == []
+    assert [c.name for c in merge_contacts(store, PUB_A, [])] == ["Alice"]
+
+    # Restoring one that isn't archived is a no-op, not an error.
+    assert store.restore(PUB_A, "aa" * 32) is None
+    assert store.restore(PUB_A, "ff" * 32) is None
+
+
+def test_archiving_a_contact_the_store_never_saw_still_remembers_it(tmp_path) -> None:  # noqa: ANN001
+    """The usual case: a firmware radio's contact is live-only until the sweep takes it.
+
+    Archiving upserts first, so the record that makes a restore possible exists precisely
+    because the sweep created it — there is no earlier read to depend on.
+    """
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    unseen = Contact(name="Carol", public_key="cc" * 32, key_prefix="cc" * 6, lat=45.5, lon=-73.6)
+    store.archive(PUB_A, unseen, when=1_700_000_000)
+
+    archived = store.archived(PUB_A)
+    assert [c.name for c in archived] == ["Carol"]
+    assert (archived[0].lat, archived[0].lon) == (45.5, -73.6)
+
+
+def test_a_keyless_contact_cannot_be_archived(tmp_path) -> None:  # noqa: ANN001
+    """Nothing to restore it by, so archiving it would be a silent deletion."""
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    store.archive(PUB_A, Contact(name="Ghost"), when=1_700_000_000)
+    assert store.archived(PUB_A) == []
