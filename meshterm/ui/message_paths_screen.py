@@ -286,10 +286,19 @@ class MessagePathsScreen(Screen):
         The hop count leads (:func:`~meshterm.ui.pathline.hops_atom`): it is the one fact
         about the route the line above encodes without stating, and the number two
         arrivals of the same message are compared on before anything else.
+
+        A row stands for a *path*, not a frame (see
+        :func:`~meshterm.services.message_paths.collapse`), so a path heard more than once
+        says how many times and the time reads as the first of them — a direct send is
+        retried and every retry is overheard off every repeater in earshot, which used to
+        fill the list with a dozen identical lines. The SNR is the best that path managed,
+        which is what it is capable of.
         """
         text = hops_atom(len(arrival.hops))
         text.append("  ")
         text.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
+        if arrival.copies > 1:
+            text.append(f"  ×{arrival.copies}", style="muted")
         if arrival.snr is not None:
             text.append("  ")
             text.append(f"{arrival.snr:+.1f} dB", style=snr_style(arrival.snr))

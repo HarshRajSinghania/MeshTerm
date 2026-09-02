@@ -29,13 +29,20 @@ def _frame(typename: str, body: bytes, **extra) -> dict:
     return {"payload_typename": typename, "pkt_payload": body, **extra}
 
 
-def test_addressed_classes_name_both_ends() -> None:
-    """A direct message, request, response or returned path opens with dest then src."""
+def test_addressed_classes_name_both_ends_and_their_mac() -> None:
+    """A direct message, request, response or returned path opens dest, src, then MAC.
+
+    The MAC is a tag over the encrypted body, so it fingerprints *which* message a frame
+    carries without the frame ever being read — which is how the message-paths view groups
+    a direct message's own retransmissions and tells them from the next message's (see
+    :mod:`~meshterm.services.message_paths`).
+    """
     body = bytes.fromhex("3da1") + b"\xab\xcd" + b"\x00" * 16
     for typename in ("TEXT_MSG", "REQ", "RESPONSE", "PATH"):
         assert frame_addressing(_frame(typename, body)) == {
-            "dest_hash": "3d", "src_hash": "a1",
+            "dest_hash": "3d", "src_hash": "a1", "cipher_mac": "abcd",
         }
+
 
 
 def test_anonymous_request_carries_its_senders_whole_key() -> None:

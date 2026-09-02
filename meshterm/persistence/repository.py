@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
-from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
+from ..core.frames import ADDRESSED_CLASSES, CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import (
     PATH_TRACE_TARGET,
     ChatMessage,
@@ -88,11 +88,12 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     """
     typename = _row_value(row, "payload_typename")
     chan_hash = row["chan_hash"]
+    cipher_mac = _row_value(row, "cipher_mac")
     dest = _row_value(row, "dest")
     src = _row_value(row, "src")
     tag = _row_value(row, "tag")
     trace_snrs = _row_value(row, "trace_snrs")
-    if not any((typename, chan_hash, dest, src, tag, trace_snrs)):
+    if not any((typename, chan_hash, cipher_mac, dest, src, tag, trace_snrs)):
         return None
     raw: dict = {}
     if typename:
@@ -102,6 +103,10 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
         raw["chan_hash"] = chan_hash
         raw["cipher_mac"] = row["cipher_mac"]
         raw["crypted"] = row["crypted"]
+    if cipher_mac and not chan_hash:
+        # An addressed frame keeps only its MAC (no channel envelope), so it is restored
+        # here rather than in the chan_hash branch above.
+        raw["cipher_mac"] = cipher_mac
     if dest:
         raw["dest_hash"] = dest
     if src:
@@ -112,6 +117,16 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     if trace_snrs:
         raw["trace_snrs"] = [float(v) for v in str(trace_snrs).split(",") if v]
     return raw
+
+
+def _as_when(iso: Any) -> Optional[datetime]:
+    """Parse a stored ISO timestamp, or ``None`` when absent/unparseable."""
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return None
 
 
 def _row_value(row: sqlite3.Row, key: str) -> Any:
@@ -992,6 +1007,13 @@ class Repository:
             chan_hash = raw.get("chan_hash")
             cipher_mac = raw.get("cipher_mac")
             crypted = raw.get("crypted")
+        elif typename in ADDRESSED_CLASSES:
+            # An addressed frame's MAC, in the same column its channel sibling uses: a tag
+            # over the encrypted body, so copies of one message share it and the next
+            # message's do not. The ciphertext itself is *not* kept — we could never read
+            # it, and only the fingerprint is needed to tell one message's frames apart
+            # from another's (see :mod:`~meshterm.services.message_paths`).
+            cipher_mac = raw.get("cipher_mac")
         # One column each for the three shapes of addressing: the sender is a hash or a
         # whole key (its length says which), the token an ack's checksum or a trace's tag
         # (the payload class says which) — so neither needs a column of its own.
@@ -1928,6 +1950,56 @@ class Repository:
             "WHERE is_channel = 0 AND outbound = 0 AND peer IS NOT NULL GROUP BY peer"
         ).fetchall()
         return {row["peer"]: datetime.fromisoformat(row["last"]) for row in rows}
+
+    def direct_message_bounds(
+        self, peer: Optional[str], when: datetime, *, outbound: bool
+    ) -> "tuple[Optional[datetime], Optional[datetime]]":
+        """The times of the direct messages either side of ``when`` in one conversation.
+
+        What bounds the message-paths search for a direct message (see
+        :mod:`~meshterm.services.message_paths`). A direct frame is encrypted, so the log
+        cannot say which message it carried; a fixed window around the message is therefore
+        the only bound available — and at conversational pace it is far too wide. Nine
+        messages of one real exchange fell inside a single ±90 s window, so every one of
+        them listed all nine messages' frames as its own.
+
+        The messages around it are the natural edges: a frame logged after the *next*
+        message was composed belongs to that one, not this one. The caller clamps its window
+        to the midpoint of each gap, so the bound tightens exactly as the conversation
+        speeds up.
+
+        Only messages travelling the **same way** count as neighbours, because the two
+        directions are stamped by two different clocks: our own sends carry ours, taken as
+        they leave, while a received message carries the *sender's*, which may drift from
+        ours by minutes. Ordering an inbound message against an outbound one therefore
+        compares two clocks and can bound a message by an edge that, in its own clock,
+        hasn't happened yet — which is exactly how the first cut of this clamp gave a
+        received message an empty window. Within one direction the stamps are consistent,
+        so the neighbours mean what they say.
+
+        Args:
+            peer: The contact's key prefix, as :meth:`record_chat_message` stores it.
+            when: The message's own time.
+            outbound: The direction to look along — the message's own.
+
+        Returns:
+            ``(previous, next)`` same-direction message times, either of which is ``None``
+            when this message is the first or last of its side of the conversation.
+        """
+        key = (peer or "").lower()
+        args = (key, int(outbound), when.isoformat())
+        row = self._conn.execute(
+            "SELECT MAX(created_at) AS edge FROM messages "
+            "WHERE is_channel = 0 AND peer = ? AND outbound = ? AND created_at < ?",
+            args,
+        ).fetchone()
+        prev = _as_when(row["edge"] if row else None)
+        row = self._conn.execute(
+            "SELECT MIN(created_at) AS edge FROM messages "
+            "WHERE is_channel = 0 AND peer = ? AND outbound = ? AND created_at > ?",
+            args,
+        ).fetchone()
+        return prev, _as_when(row["edge"] if row else None)
 
     def channel_stats(self) -> dict[str, ChannelStats]:
         """Aggregate stored channel messages into per-channel statistics.

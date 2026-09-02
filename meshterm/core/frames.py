@@ -97,6 +97,9 @@ def frame_addressing(payload: Mapping[str, Any]) -> dict[str, str]:
 
     * ``dest_hash`` — the recipient's one-byte key hash (every addressed class).
     * ``src_hash`` — the sender's one-byte key hash (the two-hash classes).
+    * ``cipher_mac`` — the two-byte MAC that follows them: a tag over the encrypted
+      message, and so a fingerprint identifying *which* message a frame carries without
+      being able to read it.
     * ``src_key`` — the sender's *whole* public key, which an anonymous request carries
       instead of a hash (it has no shared secret to be recognised by yet).
     * ``ack_crc`` — an ack's four-byte checksum of the message it acknowledges, hex in
@@ -137,6 +140,13 @@ def frame_addressing(payload: Mapping[str, Any]) -> dict[str, str]:
         return {
             "dest_hash": body[:hash_w].hex(),
             "src_hash": body[hash_w : hash_w * 2].hex(),
+            # The MAC an addressed frame carries is a tag over *this* message's plaintext,
+            # so two frames sharing one (between the same pair) are copies of the same
+            # message — a fingerprint that needs no key to compare. It is what lets the
+            # message-paths view group a direct message's own retransmissions and tell them
+            # from the next message's, which content-matching does for a channel frame we
+            # can decrypt (see :mod:`~meshterm.services.message_paths`).
+            "cipher_mac": body[hash_w * 2 : hash_w * 2 + _MAC].hex(),
         }
     if typename == "ANON_REQ":
         if len(body) < hash_w + _KEY + _MAC:

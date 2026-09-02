@@ -19,7 +19,8 @@ from meshterm.core.models import ChatMessage, Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.services.message_paths import (
     channel_arrivals,
-    direct_frames_near,
+    collapse,
+    direct_arrivals,
     distinct_paths,
 )
 
@@ -113,63 +114,169 @@ def test_channel_arrivals_ignore_frames_outside_the_window(tmp_path: Path) -> No
     repo.close()
 
 
-def _direct_raw(dest: str = "", src: str = "") -> dict:
+def _direct_raw(dest: str = "", src: str = "", mac: str = "") -> dict:
     """A direct-message frame's raw payload, spelled as the meshcore library reports it."""
     raw: dict = {"payload_typename": "TEXT_MSG"}
     if dest:
         raw["dest_hash"] = dest
     if src:
         raw["src_hash"] = src
+    if mac:
+        raw["cipher_mac"] = mac
     return raw
 
 
-def test_direct_frames_match_by_time_only(tmp_path: Path) -> None:
-    """With neither end named, every direct frame in the tight window is the evidence."""
+def test_direct_frames_without_a_mac_fall_back_to_address_and_time(tmp_path: Path) -> None:
+    """History recorded before the MAC was kept still correlates — and says that it did.
+
+    The fallback is honest evidence, not a claim: a frame between the right pair in the
+    right window is only *probably* this message, and ``exact`` comes back ``False`` so the
+    view can bill it that way.
+    """
     repo, run = _repo(tmp_path)
     now = utcnow()
-    _record_frame(repo, run, when=now + timedelta(seconds=3), path="3d63", raw=_direct_raw())
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=3), path="3d63",
+        raw=_direct_raw(dest="d4", src="a1"),
+    )
     _record_frame(  # a channel frame in the window is not direct-message evidence
         repo, run, when=now + timedelta(seconds=4), path="",
         raw=_grp_txt_raw(SECRET, "Alice: hi"),
     )
-    _record_frame(  # a direct frame far outside the tight window doesn't correlate
-        repo, run, when=now + timedelta(minutes=10), path="", raw=_direct_raw(),
-    )
-    message = ChatMessage(text="see you at 8", peer="d4e5", created_at=now)
-    arrivals = direct_frames_near(repo, message)
-    assert len(arrivals) == 1 and arrivals[0].hops == ("3d63",)
-    repo.close()
-
-
-def test_direct_frames_narrow_to_the_conversation_ends(tmp_path: Path) -> None:
-    """Naming both ends keeps only the frames that ran between them, either direction."""
-    repo, run = _repo(tmp_path)
-    now = utcnow()
-    # Us (a1…) and the peer (d4…), each way round: both are this conversation's traffic.
-    _record_frame(
-        repo, run, when=now + timedelta(seconds=1), path="3d63",
+    _record_frame(  # a direct frame far outside the window doesn't correlate
+        repo, run, when=now + timedelta(minutes=10), path="",
         raw=_direct_raw(dest="d4", src="a1"),
     )
-    _record_frame(
-        repo, run, when=now + timedelta(seconds=2), path="c0",
-        raw=_direct_raw(dest="a1", src="d4"),
+    message = ChatMessage(
+        text="see you at 8", outbound=True, peer="d4e5", created_at=now
     )
-    # Someone else's direct message, overheard in the same window.
-    _record_frame(
-        repo, run, when=now + timedelta(seconds=3), path="3d63",
-        raw=_direct_raw(dest="7f", src="c0"),
+    arrivals, exact = direct_arrivals(
+        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5"
     )
-    # Addressed to us, but by a third party — not this conversation.
-    _record_frame(
-        repo, run, when=now + timedelta(seconds=4), path="",
-        raw=_direct_raw(dest="a1", src="7f"),
-    )
-    # Its addressing was never recovered, so it can't be shown to belong.
-    _record_frame(repo, run, when=now + timedelta(seconds=5), path="", raw=_direct_raw())
-
-    message = ChatMessage(text="see you at 8", peer="d4e5f6a7", created_at=now)
-    arrivals = direct_frames_near(
-        repo, message, ends=("d4e5f6a7", "a1" + "0" * 62),
-    )
-    assert [a.hops for a in arrivals] == [("3d63",), ("c0",)]
+    assert [a.hops for a in arrivals] == [("3d63",)]
+    assert exact is False
     repo.close()
+
+
+def test_direct_frames_keep_only_the_direction_the_message_travelled(tmp_path: Path) -> None:
+    """A send shows our outgoing frames; a received message shows the incoming ones.
+
+    Both ends' hashes sit on every frame of a conversation whichever way it went, so
+    matching on the pair alone put our own sends into a received message's view. That is
+    where the implausible one-hop rows came from (JP, 2026-09-02): our transmissions heard
+    coming back off the repeaters in earshot, correctly one hop, shown as if they were an
+    inbound route to us.
+    """
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    ours = dict(dest="d4", src="a1", mac="beef")     # us -> peer
+    theirs = dict(dest="a1", src="d4", mac="f00d")   # peer -> us
+    _record_frame(repo, run, when=now + timedelta(seconds=1), path="3d63",
+                  raw=_direct_raw(**ours))
+    _record_frame(repo, run, when=now + timedelta(seconds=2), path="c0",
+                  raw=_direct_raw(**theirs))
+    # Someone else's traffic, overheard in the same window.
+    _record_frame(repo, run, when=now + timedelta(seconds=3), path="3d63",
+                  raw=_direct_raw(dest="7f", src="c0", mac="dead"))
+    _record_frame(repo, run, when=now + timedelta(seconds=4), path="",
+                  raw=_direct_raw(dest="a1", src="7f", mac="cafe"))
+
+    sent = ChatMessage(text="see you at 8", outbound=True, peer="d4e5f6a7", created_at=now)
+    got = ChatMessage(text="ok", outbound=False, peer="d4e5f6a7", created_at=now)
+    keys = dict(self_key="a1" + "0" * 62, peer_key="d4e5f6a7")
+
+    assert [a.hops for a in direct_arrivals(repo, sent, **keys)[0]] == [("3d63",)]
+    assert [a.hops for a in direct_arrivals(repo, got, **keys)[0]] == [("c0",)]
+    repo.close()
+
+
+def test_a_shared_mac_separates_one_message_from_the_next(tmp_path: Path) -> None:
+    """Two sends seconds apart keep their own frames — the MAC is the fingerprint.
+
+    This is the direct-message counterpart of the channel view's content match: the frames
+    cannot be read, but copies of one message carry the same MAC over its ciphertext and the
+    next message's carry a different one.
+    """
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    # First send, retried twice and heard off two repeaters.
+    for offset, path in ((1, "3d63"), (1, "27d4"), (6, "3d63"), (6, "27d4")):
+        _record_frame(repo, run, when=now + timedelta(seconds=offset), path=path,
+                      raw=_direct_raw(dest="d4", src="a1", mac="beef"))
+    # Second send, twelve seconds later, same pair and same paths.
+    for offset, path in ((13, "3d63"), (13, "27d4")):
+        _record_frame(repo, run, when=now + timedelta(seconds=offset), path=path,
+                      raw=_direct_raw(dest="d4", src="a1", mac="f00d"))
+
+    keys = dict(self_key="a1" + "0" * 62, peer_key="d4e5f6a7")
+    first = ChatMessage(text="one", outbound=True, peer="d4e5f6a7", created_at=now)
+    second = ChatMessage(
+        text="two", outbound=True, peer="d4e5f6a7",
+        created_at=now + timedelta(seconds=12),
+    )
+    got, exact = direct_arrivals(repo, first, **keys)
+    assert exact is True
+    assert len(got) == 4, "the first send's four frames, and not the second's"
+    assert len(direct_arrivals(repo, second, **keys)[0]) == 2
+    repo.close()
+
+
+def test_the_window_clamps_to_the_messages_going_the_same_way(tmp_path: Path) -> None:
+    """Each direction is bounded by its own neighbours, and bounded differently.
+
+    Without a clamp a fast exchange put every message's frames in every other's view — nine
+    messages of one real conversation fell inside a single flat window. With the wrong
+    clamp, a *received* message got an empty one: its stamp is the sender's clock, so
+    ordering it against our own sends compares two clocks and can bound it by an edge that,
+    in its own clock, hasn't happened yet (JP, 2026-09-02).
+    """
+    from meshterm.services.message_paths import _DIRECT_WINDOW, direct_window
+
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    sent = [now, now + timedelta(seconds=20)]
+    received = [now - timedelta(seconds=30), now + timedelta(seconds=50)]
+    for at in sent:
+        repo.record_chat_message(
+            ChatMessage(text="ours", outbound=True, peer="d4e5f6a7", created_at=at)
+        )
+    for at in received:
+        repo.record_chat_message(
+            ChatMessage(text="theirs", outbound=False, peer="d4e5f6a7", created_at=at)
+        )
+
+    # Our own send: our clock, so nothing of it predates it — the window opens at the
+    # message and runs forward to the next send, where retries actually live.
+    ours = ChatMessage(text="ours", outbound=True, peer="d4e5f6a7", created_at=now)
+    start, end = direct_window(repo, ours)
+    assert (now - start) < timedelta(seconds=5), "no room behind a send"
+    assert end == sent[1], "forward to the next send, not to the next received message"
+
+    # A received message keeps a centred window, reaching halfway to the received messages
+    # either side of it — and is untouched by our own sends in between.
+    theirs = ChatMessage(
+        text="theirs", outbound=False, peer="d4e5f6a7", created_at=now + timedelta(seconds=50)
+    )
+    start, end = direct_window(repo, theirs)
+    assert start == theirs.created_at - timedelta(seconds=40), "halfway back to the last one"
+    assert end == theirs.created_at + _DIRECT_WINDOW, "nothing follows, so that side stands"
+    repo.close()
+
+
+
+def test_collapse_folds_a_repeated_path_into_one_counted_row(tmp_path: Path) -> None:
+    """One row per path, carrying its copy count, first sighting and best SNR."""
+    from meshterm.services.message_paths import Arrival
+
+    base = utcnow()
+    arrivals = [
+        Arrival(when=base, hops=("3d63",), snr=10.0),
+        Arrival(when=base + timedelta(seconds=1), hops=("27d4",), snr=5.0),
+        Arrival(when=base + timedelta(seconds=5), hops=("3d63",), snr=13.5),
+    ]
+    folded = collapse(arrivals)
+    assert [a.hops for a in folded] == [("3d63",), ("27d4",)], "first-heard order"
+    assert folded[0].copies == 2 and folded[1].copies == 1
+    assert folded[0].when == base, "the first sighting is when the path first worked"
+    assert folded[0].snr == 13.5, "the best reading is what the path can do"
+

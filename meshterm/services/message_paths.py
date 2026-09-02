@@ -14,21 +14,28 @@ chat message so the chat screen can show, on demand, every way the message reach
   ``Name: `` sender prefix convention on either side) is one arrival of that message —
   our own broadcasts included, since a repeater's rebroadcast of us is overheard and
   logged like anything else.
-* **Direct messages** ride ECDH-encrypted ``TEXT_MSG`` frames that only the recipient
-  can decrypt, so no content match is possible from the log. What such a frame does
-  carry in the clear is its *addressing* — the one-byte key hash of each end
-  (:mod:`~meshterm.core.frames`) — so the window narrows to the frames travelling
-  between this conversation's two ends, in either direction, and what is left is billed
-  as matched by address and time. Honest evidence, not a claim: a one-byte hash
-  collides, and a frame between the right pair in the right ninety seconds is still
-  only *probably* this message.
+* **Direct messages** ride ECDH-encrypted ``TEXT_MSG`` frames that only the recipient can
+  decrypt, so no *content* match is possible from the log. What such a frame carries in
+  the clear is its **addressing and its MAC** (:mod:`~meshterm.core.frames`): the one-byte
+  key hash of each end, then a two-byte tag over the encrypted body. That MAC is a
+  fingerprint of the message itself — copies of one message share it and the next message's
+  do not — so direct frames group as exactly as channel frames do, without ever reading
+  them. Three filters, in order: the frame ran **between this conversation's two ends**,
+  in the **direction this message travelled** (our own sends are ``us → peer``; a received
+  message is ``peer → us``), and it carries **the same MAC** as the rest of its group.
+
+  A conversation's messages are then told apart by which MAC group sits nearest the
+  message's own time. That leaves one honest gap: history recorded before the MAC was kept
+  has none, and those messages fall back to matching by address, direction and time —
+  billed as such, because a frame between the right pair in the right window is only
+  *probably* this one.
 
 Nothing here transmits; it is a read-model over the repository.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional, Sequence
 
@@ -43,9 +50,16 @@ if TYPE_CHECKING:
 #: message is stamped with the *sender's* clock, which may drift from ours by minutes.
 _CHANNEL_WINDOW = timedelta(minutes=15)
 
-#: How far around a direct message the log is searched. Tight, because the frame's
-#: addressing and the clock are the only evidence tying it to the message.
+#: How far around a direct message the log is searched, before the conversation's own
+#: messages narrow it further (see :func:`direct_window`). Generous on its own: a send is
+#: retried for a while after it is composed, and an inbound message is stamped with the
+#: sender's clock.
 _DIRECT_WINDOW = timedelta(seconds=90)
+
+#: The least room left either side of a direct message once its neighbours clamp the
+#: window. Two messages composed a second apart still each need somewhere to look, and the
+#: midpoint between them would otherwise leave one of them nothing at all.
+_MIN_HALF_WINDOW = timedelta(seconds=2)
 
 #: Frame classes that carry a direct (addressed) text message — the payload class the
 #: meshcore library names, spelled exactly as it reports it (see
@@ -69,12 +83,19 @@ class Arrival:
         snr: Reception SNR in dB — of the *last relay*, as with every packet row.
         resend: The sender's resend counter for this copy (0 = the original send),
             recovered from a decrypted channel frame; always 0 for direct frames.
+        copies: How many logged frames this row stands for — always ``1`` as the matchers
+            produce them, and more once :func:`collapse` folds a path heard several times
+            into one row. A direct send is retried, and each retry is overheard off every
+            repeater in earshot, so one message routinely leaves a dozen frames on two
+            paths; listing them individually said "twelve arrivals" where the truth was
+            "two paths, six times each".
     """
 
     when: datetime
     hops: tuple[str, ...]
     snr: Optional[float]
     resend: int = 0
+    copies: int = 1
 
 
 def _frame_hops(observation: Observation) -> tuple[str, ...]:
@@ -154,51 +175,178 @@ def _endpoint_hash(key: Optional[str]) -> str:
     return text[:_HASH_CHARS] if len(text) >= _HASH_CHARS else ""
 
 
-def direct_frames_near(
+def direct_window(
+    repo: "Repository", message: ChatMessage
+) -> tuple[datetime, datetime]:
+    """The span of log to search for one direct message's frames.
+
+    :data:`_DIRECT_WINDOW` either side, then clamped by the conversation's own messages —
+    only those travelling the **same way**, because the two directions are stamped by two
+    different clocks (see :meth:`~meshterm.persistence.repository.Repository
+    .direct_message_bounds`). Without any clamp the flat window is wildly too wide at
+    conversational pace: nine messages of one real exchange fell inside a single ±90 s
+    window, so each of them claimed all nine messages' frames as its own.
+
+    The two directions are clamped differently, because we know very different things about
+    them:
+
+    * **Our own sends** are stamped as they leave, by our own clock, so no frame of one can
+      predate it — the window opens *at* the message (less a moment for jitter) and runs to
+      the next send. Retries follow the send, so all the room goes forward.
+    * **A received message** carries the sender's clock, which may sit either side of when
+      we actually heard it. Its window stays centred, reaching halfway to the messages
+      before and after it.
+
+    Never narrower than :data:`_MIN_HALF_WINDOW` either side, so two messages a second apart
+    still each have somewhere to look.
+
+    Args:
+        repo: The repository holding the messages.
+        message: The message to bound a search around.
+
+    Returns:
+        ``(start, end)`` for :meth:`~meshterm.persistence.repository.Repository
+        .packet_frames_between`.
+    """
+    at = message.created_at
+    start, end = at - _DIRECT_WINDOW, at + _DIRECT_WINDOW
+    previous, following = repo.direct_message_bounds(
+        message.peer, at, outbound=message.outbound
+    )
+    if message.outbound:
+        # Our clock, so nothing of this send predates it; the whole window goes forward,
+        # up to the next send.
+        start = at - _MIN_HALF_WINDOW
+        if following is not None:
+            end = min(end, max(at + _MIN_HALF_WINDOW, following))
+    else:
+        if previous is not None:
+            start = max(start, min(at - _MIN_HALF_WINDOW, previous + (at - previous) / 2))
+        if following is not None:
+            end = min(end, max(at + _MIN_HALF_WINDOW, at + (following - at) / 2))
+    return start, end
+
+
+def _addressed(raw: dict) -> tuple[str, str]:
+    """A frame's ``(source, destination)`` endpoint hashes, lowercased (empty when absent)."""
+    return (
+        str(raw.get("src_hash") or "").lower(),
+        str(raw.get("dest_hash") or "").lower(),
+    )
+
+
+def _pick_group(
+    groups: "dict[str, list[Arrival]]", message: ChatMessage
+) -> list[Arrival]:
+    """The MAC group that is this message, out of the ones in the window.
+
+    Each group is one message's frames — same MAC, so the same encrypted body. Which of
+    them is *this* message is the one thing the log cannot say, so the clock decides, and it
+    decides well: a send's frames start at the moment it was composed and run on through the
+    retries, so the group to take is the earliest one that did not start before the message
+    did. Falling back to the nearest group covers an inbound message, whose stamp is the
+    sender's clock and may sit slightly after the frame we heard.
+    """
+    if not groups:
+        return []
+    at = message.created_at
+    started = {mac: min(a.when for a in arrivals) for mac, arrivals in groups.items()}
+    after = [mac for mac, first in started.items() if first >= at]
+    if after:
+        return groups[min(after, key=lambda mac: started[mac])]
+    return groups[min(started, key=lambda mac: abs(started[mac] - at))]
+
+
+def direct_arrivals(
     repo: "Repository",
     message: ChatMessage,
     *,
-    ends: Sequence[Optional[str]] = (),
-) -> list[Arrival]:
-    """Direct-message frames logged around ``message``, matched by address and time.
+    self_key: Optional[str] = None,
+    peer_key: Optional[str] = None,
+) -> tuple[list[Arrival], bool]:
+    """Every logged frame of one direct message, and whether they were matched exactly.
 
-    Direct frames are encrypted to their recipient, so the log can't confirm which
-    message a frame carried — the caller must present these as correlated evidence, not
-    a claim (see the module docstring). Their *addressing* is in the clear, though, so
-    naming the conversation's two ends narrows the window to the frames that ran between
-    those two nodes, in either direction, instead of every direct frame the radio
-    happened to overhear. A frame whose addressing wasn't recovered can't be shown to
-    belong, so it drops out — evidence, not guesswork.
+    Three filters (see the module docstring): the frame ran between this conversation's two
+    ends, in the direction this message travelled, and — where the log kept it — it shares
+    a MAC with the rest of its group, which is what makes one message's frames separable
+    from the next message's without decrypting either.
+
+    **Direction matters more than it looks.** Both ends' hashes appear on every frame of a
+    conversation, whichever way it went, so matching on the pair alone put our own outgoing
+    frames into the view of a message we *received* and vice versa. That is where the
+    implausible one-hop rows came from: they were our own sends, overheard coming back off
+    the two repeaters in earshot, correctly showing one hop because one hop is all they had
+    travelled — but shown under an inbound message as if they were its route to us.
 
     Args:
         repo: The repository holding the packet log.
-        message: The chat message to search around.
-        ends: Keys (or key prefixes) of the conversation's two ends — the peer and our
-            own node. Each contributes its endpoint hash; whichever are given must
-            *both* appear on a frame for it to count. Empty falls back to every direct
-            frame in the window, matched by time alone.
+        message: The chat message whose frames to find.
+        self_key: Our own node's key (or prefix) — one end of every frame here.
+        peer_key: The conversation peer's key (or prefix) — the other end.
 
     Returns:
-        The matching frames as arrivals, oldest first.
+        ``(arrivals, exact)`` — the frames oldest first, and whether a MAC identified them
+        as one message rather than merely correlating them by address and time.
     """
-    wanted = {h for h in (_endpoint_hash(end) for end in ends) if h}
-    frames = repo.packet_frames_between(
-        message.created_at - _DIRECT_WINDOW, message.created_at + _DIRECT_WINDOW
-    )
-    arrivals: list[Arrival] = []
-    for frame in frames:
+    ours, theirs = _endpoint_hash(self_key), _endpoint_hash(peer_key)
+    # Which way this message travelled, so a send's own frames and a received message's
+    # never appear under each other.
+    if message.outbound:
+        want_src, want_dest = ours, theirs
+    else:
+        want_src, want_dest = theirs, ours
+
+    start, end = direct_window(repo, message)
+    groups: dict[str, list[Arrival]] = {}
+    loose: list[Arrival] = []
+    for frame in repo.packet_frames_between(start, end):
         raw = frame.raw if isinstance(frame.raw, dict) else {}
         if raw.get("payload_typename") not in _DIRECT_TYPENAMES:
             continue
-        if wanted:
-            addressed = {
-                str(raw.get("dest_hash") or "").lower(),
-                str(raw.get("src_hash") or "").lower(),
-            }
-            if not wanted <= addressed:
-                continue
-        arrivals.append(Arrival(when=frame.observed_at, hops=_frame_hops(frame), snr=frame.snr))
-    return arrivals
+        src, dest = _addressed(raw)
+        if (want_src and src != want_src) or (want_dest and dest != want_dest):
+            continue
+        arrival = Arrival(when=frame.observed_at, hops=_frame_hops(frame), snr=frame.snr)
+        mac = str(raw.get("cipher_mac") or "").lower()
+        if mac:
+            groups.setdefault(mac, []).append(arrival)
+        else:
+            loose.append(arrival)
+    if groups:
+        return _pick_group(groups, message), True
+    # History recorded before the MAC was kept: address, direction and time are all there
+    # is, and the caller says so rather than claiming more.
+    return loose, False
+
+
+def collapse(arrivals: Sequence[Arrival]) -> list[Arrival]:
+    """Fold arrivals that rode the same path into one row apiece, counting the copies.
+
+    A direct send is retried and each retry is overheard off every repeater in earshot, so
+    one message leaves a dozen frames on two paths. The graph has always drawn the *distinct*
+    paths; the row list showed every frame, which read as twelve arrivals where the truth was
+    two paths heard six times each. Each surviving row keeps its **first** sighting's time
+    and its **best** SNR — the earliest is when the path first worked, and the strongest is
+    what the path is capable of.
+
+    Args:
+        arrivals: The matched frames, oldest first.
+
+    Returns:
+        One :class:`Arrival` per distinct path, in first-heard order, each carrying its
+        :attr:`~Arrival.copies` count.
+    """
+    folded: dict[tuple[str, ...], Arrival] = {}
+    for arrival in arrivals:
+        seen = folded.get(arrival.hops)
+        if seen is None:
+            folded[arrival.hops] = replace(arrival, copies=1)
+            continue
+        best = seen.snr if arrival.snr is None else (
+            arrival.snr if seen.snr is None else max(seen.snr, arrival.snr)
+        )
+        folded[arrival.hops] = replace(seen, snr=best, copies=seen.copies + 1)
+    return list(folded.values())
 
 
 def distinct_paths(arrivals: list[Arrival]) -> int:
