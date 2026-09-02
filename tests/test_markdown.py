@@ -191,6 +191,26 @@ def test_a_fenced_block_keeps_its_own_lines() -> None:
     assert [line.rstrip() for line in lines] == ["  │ one", "  │ two"]
 
 
+def test_a_qr_fence_draws_the_code_rather_than_the_url_inside_it() -> None:
+    """The one fence that isn't quoted: its body is a link, and the page shows the code.
+
+    Drawn live from the fence, never pasted in as half-block art — art loses a row whose
+    first module is light, because that row starts with a space and markdown eats it.
+    """
+    source = """```qr
+https://example.com/x
+```
+"""
+    lines = [line for line in _lines(source) if line.strip()]
+
+    assert lines, "the fence rendered nothing"
+    assert not any("example.com" in line for line in lines), "the URL was printed as text"
+    assert all(set(line.strip()) <= set("█▀▄ ") for line in lines), lines
+    # Two of the three finder squares sit at either end of the code's first module row.
+    top = lines[0].strip()
+    assert top.startswith("█▀▀▀▀▀█") and top.endswith("█▀▀▀▀▀█"), top
+
+
 def test_a_rule_runs_the_full_width_of_the_page() -> None:
     """``---`` is a page rule, not an indented one — it separates, so it spans."""
     line = next(line for line in _lines("a\n\n---\n\nb\n", 40) if "─" in line)

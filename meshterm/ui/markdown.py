@@ -23,6 +23,8 @@ imported from somewhere else:
 * Lists hang on a bullet in a two-column grid, so a wrapped item aligns under its own
   text and a nested list steps in under its parent. Quotes and fenced code run behind a
   rail down the left, drawn on *every* line including the wrapped ones.
+* A fence tagged ``qr`` draws nothing of itself: its body is a URL, and the page shows
+  the app's scannable code for it (:func:`~meshterm.ui.qr.qr_text`).
 * Emphasis, code, links and struck-out runs take the ``md.*`` styles, which — like every
   style name here — mean something on both platforms (see :mod:`meshterm.ui.theme`). A
   link shows its target after the text unless the text already says it; nothing here
@@ -248,6 +250,8 @@ def _block(node: SyntaxTreeNode, *, indent: int, depth: int) -> list[RenderableT
     if kind == "blockquote":
         quoted = Group(*_blocks(node.children, indent=0, depth=depth))
         return [_pad(_Railed(Styled(quoted, "md.quote"), style="md.bullet"), indent)]
+    if kind == "fence" and node.info.strip() == "qr":
+        return [_pad(_qr(node.content.strip()), indent)]
     if kind in ("fence", "code_block"):
         code = Text(node.content.rstrip("\n"), style="md.code")
         return [_pad(_Railed(code, style="md.rail"), indent)]
@@ -274,6 +278,29 @@ def _blocks(
             rendered.append(Text())
         rendered.extend(_block(node, indent=indent, depth=depth))
     return rendered
+
+
+def _qr(data: str) -> RenderableType:
+    """A ``qr`` fence: the URL inside it, drawn as the app's scannable code.
+
+    The code is generated as the page opens rather than pasted into the ``.md`` as
+    half-block art. Art cannot survive markdown — a row that happens to open on a light
+    module opens on a *space*, and every parser in the world eats it, shearing that row
+    one module to the left — and a code nobody can scan is worse than no code. Drawing it
+    live also means the link is written once, in the fence, and the code can never drift
+    from it.
+
+    Args:
+        data: The fence's body — the URL to encode.
+
+    Returns:
+        The code, from :func:`~meshterm.ui.qr.qr_text` — the same black-on-white widget
+        the share popups draw, so a QR looks the same everywhere in MeshTerm and reads
+        the same whatever palette the terminal is running.
+    """
+    from .qr import qr_text
+
+    return qr_text(data)
 
 
 def _pad(renderable: RenderableType, indent: int) -> RenderableType:
