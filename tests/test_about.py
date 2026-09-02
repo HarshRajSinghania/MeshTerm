@@ -1,4 +1,4 @@
-"""About MeshTerm tests: the three pages, their placeholders, and their menu section.
+"""About MeshTerm tests: the four pages, their placeholders, and their menu section.
 
 The pages carry no state and no controls, so what is worth pinning is what they *say*
 and how they are framed: the live package facts they must never drift from, the
@@ -18,6 +18,7 @@ from meshterm.ui.about import (
     AboutPage,
     about_author,
     about_meshterm,
+    join_discord,
     support_project,
 )
 
@@ -126,18 +127,27 @@ def test_the_licence_section_states_the_terms_and_the_credit_it_owes() -> None:
         assert owed in prose, owed
 
 
+def test_the_discord_page_carries_the_invite_link_and_a_code_to_scan_it_with() -> None:
+    """The link is the whole page, and on a console with no clipboard the QR is how it
+    leaves the screen — so both have to survive the render."""
+    text = _page(join_discord)
+
+    assert "https://discord.gg/AZwe5Uvb3S" in text
+    assert "█" in text, "the scannable code didn't render"
+
+
 def test_pages_are_written_markdown_that_ships_with_the_package() -> None:
     """Filling a page in is editing its ``.md`` file — no Python has to follow."""
     from meshterm.ui.about import _PAGES
 
-    for name in ("about", "author", "support"):
+    for name in ("about", "author", "discord", "support"):
         source = (_PAGES / f"{name}.md").read_text(encoding="utf-8")
         assert source.lstrip().startswith("#"), f"{name}.md doesn't open with a heading"
 
 
 def test_no_package_placeholder_survives_into_the_rendered_page() -> None:
     """The live facts are filled in as the page opens, so none of the braces reach a reader."""
-    for builder in (about_meshterm, about_author, support_project):
+    for builder in (about_meshterm, about_author, join_discord, support_project):
         text = _page(builder)
         assert "{" not in text and "}" not in text, text
 
@@ -194,7 +204,7 @@ def test_menu_rows_carry_the_icon_and_the_titles_do_not() -> None:
     """Each page has a menu icon; none of it leaks into the title the screen draws."""
     from meshterm.tools import get_tool
 
-    for name in ("about", "about-author", "support"):
+    for name in ("about", "about-author", "discord", "support"):
         tool = get_tool(name)
         assert tool is not None
         assert tool.icon, f"{name} has no menu icon"
@@ -211,7 +221,7 @@ def test_every_page_icon_has_a_picocalc_glyph() -> None:
 
     set_platform(PICOCALC)
     try:
-        for name in ("about", "about-author", "support"):
+        for name in ("about", "about-author", "discord", "support"):
             tool = get_tool(name)
             assert tool is not None
             compact = glyph(tool.icon)

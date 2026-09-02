@@ -1,14 +1,15 @@
-"""The About MeshTerm tools: the three pages under the menu's last section.
+"""The About MeshTerm tools: the four pages under the menu's last section.
 
-*About MeshTerm*, *About the author*, *Support MeshTerm* — in that order, which is
-the order a stranger asks the questions in: what is this, who made it, how do I help.
+*About MeshTerm*, *About the author*, *Join Discord*, *Support MeshTerm* — in that
+order, which is the order a stranger asks the questions in: what is this, who made it,
+where is everyone, how do I help.
 Each is a page rather than a feature: it reads nothing, transmits nothing, and needs no
 device, so it opens straight to its screen (see :mod:`meshterm.ui.about`) instead of
 prompting for anything first.
 
 Each also keeps a CLI face — ``meshterm about``, ``meshterm about-author``,
-``meshterm support`` — printing the same page to the terminal, so the answers are
-reachable from a shell without launching the full-screen session.
+``meshterm discord``, ``meshterm support`` — printing the same page to the terminal, so
+the answers are reachable from a shell without launching the full-screen session.
 
 The pages themselves are written in markdown under ``meshterm/assets/pages`` (see
 :mod:`meshterm.ui.about`); nothing here knows what any of them say.
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class _AboutTool(Tool):
-    """Shared behaviour for the three About pages: open the screen, or print the page.
+    """Shared behaviour for the four About pages: open the screen, or print the page.
 
     The pages differ only in their title, icon, and content, so everything else — the
     menu-only screen open, the printing CLI face, the run row — lives here once. A
@@ -114,6 +115,24 @@ class AboutAuthorTool(_AboutTool):
 
 
 @register
+class JoinDiscordTool(_AboutTool):
+    """The community server: one invite link, and a QR of it for a phone to read."""
+
+    name = "discord"
+    title = "Join Discord"
+    icon = "🔗"
+    help = "The invite link to the MeshTerm community server"
+    order = 25  # where everyone else is, once you know what this is and who made it
+
+    @staticmethod
+    def page() -> "MarkdownDoc":
+        """The *Join Discord* page."""
+        from ..ui.about import join_discord
+
+        return join_discord()
+
+
+@register
 class SupportProjectTool(_AboutTool):
     """What keeps MeshTerm going, and the ways — paid and unpaid — to help it along."""
 
@@ -121,7 +140,7 @@ class SupportProjectTool(_AboutTool):
     title = "Support MeshTerm"
     icon = "💰"
     help = "What keeps MeshTerm going, and how to help"
-    order = 30  # the ask, and only once the first two have earned it
+    order = 30  # the ask, and only once the pages before it have earned it
 
     @staticmethod
     def page() -> "MarkdownDoc":

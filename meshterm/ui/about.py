@@ -1,6 +1,6 @@
 """The About MeshTerm pages: the app, the person who wrote it, and how to help it along.
 
-Three read-only pages hung under the main menu's *About MeshTerm* section — the one
+Four read-only pages hung under the main menu's *About MeshTerm* section — the one
 section that names a subject rather than a doing, because "what is this thing, and who
 made it" is a question the other five can't answer. Each opens as a full screen, scrolls
 if the terminal is short, and is left with Esc; nothing here touches the radio or the
@@ -70,6 +70,15 @@ def about_meshterm() -> MarkdownDoc:
 def about_author() -> MarkdownDoc:
     """The *About the author* page: the person behind MeshTerm, on the mesh and off it."""
     return _page("author")
+
+
+def join_discord() -> MarkdownDoc:
+    """The *Join Discord* page: the invite link, and a QR of it to point a phone at.
+
+    A page rather than a popup because there is nothing to decide — it is a link, and on
+    a headless console the QR *is* how the link gets off the screen.
+    """
+    return _page("discord")
 
 
 def support_project() -> MarkdownDoc:
@@ -166,6 +175,7 @@ __all__ = [
     "AboutPage",
     "about_author",
     "about_meshterm",
+    "join_discord",
     "open_about_page",
     "support_project",
 ]

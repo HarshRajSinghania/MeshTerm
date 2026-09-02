@@ -54,7 +54,13 @@ from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 from meshterm.services.records import CATEGORY_BY_ID
 from meshterm.services.topology import MeshTopology, build_topology
-from meshterm.ui.about import AboutPage, about_author, about_meshterm, support_project
+from meshterm.ui.about import (
+    AboutPage,
+    about_author,
+    about_meshterm,
+    join_discord,
+    support_project,
+)
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
 from meshterm.ui.contacts_screen import ContactsScreen
@@ -493,6 +499,10 @@ def _support_project(cols: int, rows: int) -> Screen:
     return AboutPage("Support MeshTerm", support_project())
 
 
+def _join_discord(cols: int, rows: int) -> Screen:
+    return AboutPage("Join Discord", join_discord())
+
+
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
     _Entry("contacts", _contacts),
@@ -515,6 +525,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("tx_sweep", _tx_sweep),
     _Entry("about_meshterm", _about_meshterm),
     _Entry("about_author", _about_author),
+    _Entry("join_discord", _join_discord),
     _Entry("support_project", _support_project),
 ]
 

@@ -167,7 +167,7 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
         "Explore": ["map", "walk", "trace", "trace-path", "records"],
         "This node": ["info", "config", "device-actions", "advert"],
         "Other nodes": ["repeater-admin", "tx-optimize"],
-        "About MeshTerm": ["about", "about-author", "support"],
+        "About MeshTerm": ["about", "about-author", "discord", "support"],
     }
     # No section is so big it stops being a grouping (the old Mesh bucket held seven of
     # nineteen rows), and none is a bucket of one.
