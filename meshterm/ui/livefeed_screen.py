@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from rich.text import Text
@@ -55,7 +56,6 @@ from ..core.channels import identify_channel, split_channel_sender
 from ..core.events import EventKind, MeshEvent
 from ..core.frames import CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import Observation, utcnow
-from ..persistence.repository import OBSERVATION_WINDOW
 from .menus import fit_cells
 from .packet_viewer import (
     KIND_STYLES,
@@ -78,8 +78,29 @@ if TYPE_CHECKING:
 _REFRESH_S = 1.0
 
 #: How many feed rows are kept (the feed windows within the screen, so this is
-#: history depth, not layout).
-_FEED_CAP = 100
+#: history depth, not layout) — and, being the feed's *only* bound, the one number that
+#: decides how far back the screen remembers. A busy hour on a real mesh runs to some
+#: hundreds of packets, so a hundred rows forgot the last ten minutes exactly when the
+#: feed was worth watching. Depth is nearly free here: the paint is windowed
+#: (:meth:`LiveFeedScreen._feed_lines` formats only the rows on screen), so the cap costs
+#: a pointer per entry and a few milliseconds of hydration at open, never anything per
+#: frame.
+_FEED_CAP = 500
+
+#: How far back the opening seed may reach: **no limit** — the cap alone says how much
+#: history the feed holds, and a clock has no business overruling it. A quiet mesh would
+#: otherwise open a half-empty screen not because nothing was ever heard but because
+#: nothing was heard *lately*, which is the one thing the reader can already see.
+#:
+#: The mechanics are unchanged — :meth:`~meshterm.persistence.repository.Repository
+#: .recent_observations` still takes a ``since``, and this is simply a floor no stored
+#: row predates. It stays cheap because ``observed_at`` is indexed: the query walks the
+#: index backwards and stops after :data:`_FEED_CAP` rows, so widening the window reads
+#: no more rows than narrowing it did. Deliberately *not*
+#: :data:`~meshterm.persistence.repository.OBSERVATION_WINDOW`, which the feed used to
+#: borrow: that one bounds the dashboard's rolling stats and is what its RF health card
+#: means by "reception over 2 h".
+_FEED_SEED_FLOOR = datetime.min.replace(tzinfo=timezone.utc)
 
 #: The feed's fixed subject-lane width; anything longer ellipsizes so the columns hold.
 #: Sized for a node name, which is what most classes put here — and wide enough that the
@@ -826,11 +847,9 @@ async def open_livefeed(ctx: "AppContext") -> None:
     key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
     prefix_bytes = await _routing_prefix_bytes(ctx)
 
-    # Only the newest screenful is kept (the deque caps at _FEED_CAP), so only that
-    # many are worth hydrating.
-    seed = ctx.repo.recent_observations(
-        since=utcnow() - OBSERVATION_WINDOW, limit=_FEED_CAP
-    )
+    # The cap is the only bound: the newest _FEED_CAP packets ever recorded, however
+    # long ago the quiet stretch before them began.
+    seed = ctx.repo.recent_observations(since=_FEED_SEED_FLOOR, limit=_FEED_CAP)
     screen = LiveFeedScreen(
         session=session,
         resolve=resolve,

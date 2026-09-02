@@ -33,10 +33,13 @@ if TYPE_CHECKING:
     from ..core.contact_score import ContactSignals
 
 
-#: The trailing window the dashboard's live observation stats and packet feed prune to
-#: — "what's happening right now" territory, labelled "reception over 2 h" on the RF
-#: health card. Distinct from the deeper channel-activity window below: this bounds a
-#: live view, that one only feeds a scaling peak.
+#: The trailing window the dashboard's live observation stats prune to — "what's
+#: happening right now" territory, labelled "reception over 2 h" on the RF health card.
+#: Distinct from the deeper channel-activity window below: this bounds a live view, that
+#: one only feeds a scaling peak. The Live feed screen once shared it and no longer does:
+#: its depth is a packet count, not a duration (see
+#: :data:`~meshterm.ui.livefeed_screen._FEED_SEED_FLOOR`), so this number means the
+#: dashboard's two hours and nothing else.
 OBSERVATION_WINDOW = timedelta(hours=2)
 
 #: The trailing window a channel's activity histogram is computed over. Six hours is
