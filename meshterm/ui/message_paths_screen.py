@@ -91,6 +91,7 @@ class MessagePathsScreen(Screen):
         self_name: Optional[str],
         summary: str,
         source: Optional[str] = None,
+        destination: Optional[str] = None,
         type_of: Optional[TypeOf] = None,
         key_of: Optional["NameKeyResolver"] = None,
     ) -> None:
@@ -110,6 +111,11 @@ class MessagePathsScreen(Screen):
             source: Display name of the message's origin — the sender parsed from a
                 channel message, us for an outbound one, the peer for a direct chat
                 (``None`` reads as an unknown ``?`` origin).
+            destination: Display name of the node the message was *addressed to* — the far
+                end for a message we sent, ourselves for one we received. It closes the
+                path line, so an outgoing message reads ``★ ▶ … ▶ Bob`` rather than
+                starting and ending on our own star, which is what made every send look
+                like a round trip (JP, 2026-09-02). ``None`` closes on our own ``★``.
             type_of: Maps a relay hash to its node type, so the graph marks a repeater
                 ``▲`` (etc.) instead of a generic dot; ``None`` keeps the plain dots.
             key_of: Maps the origin's display name back to its node's key, so the
@@ -126,6 +132,7 @@ class MessagePathsScreen(Screen):
         self._self_name = self_name
         self._summary = summary
         self._source = source
+        self._destination = destination
         self._type_of = type_of
         self._key_of = key_of
         self._index = 0
@@ -207,12 +214,17 @@ class MessagePathsScreen(Screen):
 
         # No blank line above the graph: its canvas already opens with air over the
         # topmost lane, so a spacer here would read as two rows of margin.
-        lines.extend(self._graph_lines(width))
-        caption = Text("origin → you · white = selected path · labels = hash byte",
-                       style="faint")
-        lines.append(render_to_ansi(caption, width, no_wrap=True))
-        lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
-        lines.extend(self._revisit_line(width))
+        graph = self._graph_lines(width)
+        if graph:
+            lines.extend(graph)
+            far = "you" if not self._destination else self._destination
+            caption = Text(
+                f"origin → {far} · white = selected path · labels = hash byte",
+                style="faint",
+            )
+            lines.append(render_to_ansi(caption, width, no_wrap=True))
+            lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+            lines.extend(self._revisit_line(width))
         lines.append("")
         for i, arrival in enumerate(self._arrivals):
             if i == self._index:
@@ -260,7 +272,25 @@ class MessagePathsScreen(Screen):
             prefix_bytes=self._prefix_bytes, self_name=self._self_name,
             hash_as_name=True,
         ).hops
-        return PathLine([self._origin_hop(), *relays, PathHop(SELF_GLYPH, you=True)]).text()
+        return PathLine([self._origin_hop(), *relays, self._far_hop()]).text()
+
+    def _far_hop(self) -> PathHop:
+        """The node the path ends on — where the message was addressed, not always us.
+
+        The line used to close on our own ``★`` unconditionally, which is right for a
+        message we *received* and wrong for one we sent: with our star opening the line too
+        (:meth:`_origin_hop`), every outgoing message drew ``★ ▶ … ▶ ★`` and read as a round
+        trip. It is the same rule the line already follows at its head — a path runs between
+        the nodes it went *between* — applied at last to its tail.
+        """
+        if not self._destination:
+            return PathHop(SELF_GLYPH, you=True)
+        if self._self_name and self._destination == self._self_name:
+            return PathHop(SELF_GLYPH, you=True)
+        return PathHop(
+            self._destination,
+            key=self._key_of(self._destination) if self._key_of else None,
+        )
 
     def _origin_hop(self) -> PathHop:
         """The node the message set out from — the route's true head.
@@ -294,7 +324,17 @@ class MessagePathsScreen(Screen):
         fill the list with a dozen identical lines. The SNR is the best that path managed,
         which is what it is capable of.
         """
-        text = hops_atom(len(arrival.hops))
+        # What the hop count *is* depends on the route type, so the lane says which: a
+        # flooded frame's path is where it has been, a direct-routed one's is where it was
+        # going, and a routed frame carrying none has had its route consumed — which is not
+        # the same as having arrived in zero hops, however much an empty field looks like it.
+        if not arrival.route_known:
+            text = Text("routed", style="warn")
+            text.append("  ·  route not carried", style="muted")
+        else:
+            text = hops_atom(len(arrival.hops))
+            if arrival.routed:
+                text.append("  routed", style="muted")
         text.append("  ")
         text.append(arrival.when.astimezone().strftime("%H:%M:%S"), style="muted")
         if arrival.copies > 1:
@@ -346,7 +386,9 @@ class MessagePathsScreen(Screen):
         """The distinct relay paths across the arrivals, in first-heard order."""
         seen: list[tuple[str, ...]] = []
         for arrival in self._arrivals:
-            if arrival.hops not in seen:
+            # A frame whose route was consumed has nothing to draw: an empty lane in the fan
+            # would be a claim of adjacency the frame never made.
+            if arrival.route_known and arrival.hops not in seen:
                 seen.append(arrival.hops)
         return seen
 
@@ -369,6 +411,8 @@ class MessagePathsScreen(Screen):
         """
         selected = self._arrivals[self._index].hops
         paths = self._paths()
+        if not paths:
+            return []
         layers = [
             PathLayer(
                 hops=path,
@@ -380,7 +424,7 @@ class MessagePathsScreen(Screen):
         ]
         glyph_of, label_of, label_rgb_of = route_graph_style(
             resolve=self._resolve, self_name=self._self_name, source=self._source,
-            type_of=self._type_of, key_of=self._key_of,
+            destination=self._destination, type_of=self._type_of, key_of=self._key_of,
         )
         return render_path_graph(
             layers, width,

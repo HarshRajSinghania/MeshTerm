@@ -1264,11 +1264,18 @@ async def _make_paths_presenter(
                     if peer_key and self_key
                     else "direct frames are encrypted — matched by time alone"
                 )
-        # The graph's left endpoint: who the message set out from. Our own sends are
-        # us; an inbound channel message names its sender on the wire; a direct chat's
-        # origin is the conversation's peer (billed as time-matched by the summary).
+        # The path's two ends: who the message set out from, and who it was addressed to.
+        # Our own sends leave us for the peer; an inbound channel message names its sender
+        # on the wire and is addressed to everyone, so it lands on us; a direct chat's
+        # inbound origin is the conversation's peer.
+        destination: Optional[str] = self_name
         if message.outbound:
             source = self_name
+            # A channel broadcast is addressed to nobody in particular, and the copies we
+            # log are its rebroadcasts coming back — so it really does end on us. A direct
+            # send does not: it was going to one node, and that is where its route ends.
+            if not conversation.is_channel:
+                destination = conversation.label
         elif conversation.is_channel:
             source, _body = _split_channel_sender(message.text)
         else:
@@ -1277,7 +1284,8 @@ async def _make_paths_presenter(
             MessagePathsScreen(
                 message, arrivals, matched=matched, resolve=resolve,
                 prefix_bytes=prefix_bytes, self_name=self_name, summary=summary,
-                source=source or None, type_of=type_of, key_of=key_of,
+                source=source or None, destination=destination or None,
+                type_of=type_of, key_of=key_of,
             )
         )
 

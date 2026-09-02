@@ -576,6 +576,7 @@ def route_graph_style(
     resolve: NodeResolver,
     self_name: Optional[str],
     source: Optional[str],
+    destination: Optional[str] = None,
     type_of: Optional[TypeOf] = None,
     key_of: Optional[NameKeyResolver] = None,
 ) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
@@ -586,8 +587,13 @@ def route_graph_style(
     plus the first byte of its hash, and each label takes its node's own name hue (us the
     pure-white ``you``) so a byte reads as the mesh name it stands for. It maps the graph's
     two endpoint sentinels — :data:`~meshterm.ui.pathgraph.SRC_NODE` on the left,
-    :data:`~meshterm.ui.pathgraph.DST_NODE` (always us) on the right — plus every relay
-    hash, to a glyph, a label, and a label colour.
+    :data:`~meshterm.ui.pathgraph.DST_NODE` on the right — plus every relay hash, to a
+    glyph, a label, and a label colour.
+
+    The right endpoint is *usually* us, and was once unconditionally so. That is right for
+    a route we walked or a message we received, and wrong for one we sent: with our own
+    name on both ends, every outgoing message's graph drew a round trip (JP, 2026-09-02).
+    ``destination`` names it when it is somebody else.
 
     Args:
         resolve: Maps a relay's hash to a friendly name when one is known.
@@ -595,6 +601,9 @@ def route_graph_style(
         source: The left endpoint's display name (a message's origin, or us for a walk
             that starts at home — pass ``self_name`` to draw both ends as us). ``None``
             reads as an unknown ``?`` origin.
+        destination: The right endpoint's display name, when the route does not end at us —
+            the recipient of a message we sent. ``None`` (the default) draws us, which is
+            what a walk and every received message want.
         type_of: Maps a relay's hash to its node type, so a relay draws its own map marker
             (``▲`` repeater, ``■`` room, ``◉`` sensor) in the shared palette instead of a
             generic dot. ``None``, or a hash whose type it can't resolve, keeps the old
@@ -609,11 +618,12 @@ def route_graph_style(
         :func:`~meshterm.ui.pathgraph.render_path_graph`.
     """
     src_is_self = bool(source) and source == self_name
+    dst_is_self = not destination or destination == self_name
 
     def glyph_of(node: str) -> tuple[str, str]:
         """Us a star, a typed relay its map marker, a named node a dot, else a ring."""
         if node == DST_NODE:
-            return SELF_MARK
+            return SELF_MARK if dst_is_self else NODE_MARK
         if node == SRC_NODE:
             return SELF_MARK if src_is_self else (NODE_MARK if source else UNKNOWN_MARK)
         if type_of is not None:
@@ -626,7 +636,7 @@ def route_graph_style(
     def label_of(node: str) -> Optional[str]:
         """Endpoints by name, relays by their first hash byte."""
         if node == DST_NODE:
-            return self_name or "you"
+            return (self_name or "you") if dst_is_self else destination
         if node == SRC_NODE:
             return source or "?"
         return node[:2]
@@ -639,7 +649,9 @@ def route_graph_style(
         resolves whatever ``glyph_of`` hands back, style name or hex alike.
         """
         if node == DST_NODE:
-            return _SELF_RGB
+            if dst_is_self:
+                return _SELF_RGB
+            return _name_rgb(destination, key_of(destination) if key_of else None)
         if node == SRC_NODE:
             if src_is_self:
                 return _SELF_RGB

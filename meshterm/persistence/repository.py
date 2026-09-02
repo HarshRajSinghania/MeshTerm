@@ -93,7 +93,8 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     src = _row_value(row, "src")
     tag = _row_value(row, "tag")
     trace_snrs = _row_value(row, "trace_snrs")
-    if not any((typename, chan_hash, cipher_mac, dest, src, tag, trace_snrs)):
+    route = _row_value(row, "route")
+    if not any((typename, chan_hash, cipher_mac, dest, src, tag, trace_snrs, route)):
         return None
     raw: dict = {}
     if typename:
@@ -116,6 +117,8 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
         raw["trace_tag" if typename == "TRACE" else "ack_crc"] = tag
     if trace_snrs:
         raw["trace_snrs"] = [float(v) for v in str(trace_snrs).split(",") if v]
+    if route:
+        raw["route_typename"] = route
     return raw
 
 
@@ -1024,12 +1027,14 @@ class Repository:
         # class keeps relay hashes — so they get their own column rather than `path`.
         readings = raw.get("trace_snrs") if typename == "TRACE" else None
         trace_snrs = ",".join(f"{v:g}" for v in readings) if readings else None
+        # What the frame's `path` means — see the v15 migration. Only a packet row has one.
+        route = raw.get("route_typename") if obs.kind == "packet" else None
         self._conn.execute(
             "INSERT INTO observations "
             "(run_id, node, public_key, name, kind, node_type, snr, rssi, lat, lon, path, "
             "observed_at, chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, "
-            "trace_snrs) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "trace_snrs, route) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 obs.node,
@@ -1051,6 +1056,7 @@ class Repository:
                 src,
                 tag,
                 trace_snrs,
+                route,
             ),
         )
         self._conn.commit()
@@ -1088,7 +1094,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs, route "
             "FROM observations WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT ?",
             (since.isoformat(), limit),
         ).fetchall()
@@ -1114,7 +1120,7 @@ class Repository:
         """
         rows = self._conn.execute(
             "SELECT node, name, kind, node_type, snr, rssi, lat, lon, path, observed_at, "
-            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs "
+            "chan_hash, cipher_mac, crypted, payload_typename, dest, src, tag, trace_snrs, route "
             "FROM observations WHERE kind = 'packet' AND observed_at >= ? "
             "AND observed_at <= ? ORDER BY observed_at ASC LIMIT ?",
             (start.isoformat(), end.isoformat(), limit),

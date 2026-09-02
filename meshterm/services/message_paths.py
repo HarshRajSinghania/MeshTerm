@@ -61,6 +61,12 @@ _DIRECT_WINDOW = timedelta(seconds=90)
 #: midpoint between them would otherwise leave one of them nothing at all.
 _MIN_HALF_WINDOW = timedelta(seconds=2)
 
+#: Route types whose ``path`` field is a routing *instruction* rather than a record of
+#: where the packet has been — the sender writes the route and the relays consume it. The
+#: library names the header's two route bits (see its ``ROUTE_TYPENAMES``); the flooded
+#: ones accumulate instead, which is the reading every path here used to get.
+_ROUTED_TYPES = frozenset({"DIRECT", "TC_DIRECT"})
+
 #: Frame classes that carry a direct (addressed) text message — the payload class the
 #: meshcore library names, spelled exactly as it reports it (see
 #: :data:`~meshterm.core.frames.ADDRESSED_CLASSES`, the packet viewer's lane, the
@@ -83,6 +89,13 @@ class Arrival:
         snr: Reception SNR in dB — of the *last relay*, as with every packet row.
         resend: The sender's resend counter for this copy (0 = the original send),
             recovered from a decrypted channel frame; always 0 for direct frames.
+        routed: Whether the frame was **direct-routed** rather than flooded, which decides
+            what :attr:`hops` even means. A flooded packet accumulates its path — every
+            relay appends itself — so the hops are the route it travelled to reach us. A
+            direct-routed packet carries a route its sender wrote and its relays consume,
+            so the hops are where it was *going*, and an empty one means the route was used
+            up rather than that the packet arrived in a single leap. ``None`` for history
+            recorded before the route type was kept.
         copies: How many logged frames this row stands for — always ``1`` as the matchers
             produce them, and more once :func:`collapse` folds a path heard several times
             into one row. A direct send is retried, and each retry is overheard off every
@@ -95,12 +108,30 @@ class Arrival:
     hops: tuple[str, ...]
     snr: Optional[float]
     resend: int = 0
+    routed: Optional[bool] = None
     copies: int = 1
+
+    @property
+    def route_known(self) -> bool:
+        """Whether :attr:`hops` says anything about how this copy actually travelled.
+
+        False for a direct-routed frame carrying no path: its route was consumed on the way
+        and the field is empty because there is nothing left of it, not because the packet
+        crossed no relays. Drawing that as a zero-hop arrival claimed a neighbour we do not
+        have — the "impossible direct path" (JP, 2026-09-02).
+        """
+        return bool(self.hops) or not self.routed
 
 
 def _frame_hops(observation: Observation) -> tuple[str, ...]:
-    """An observation's relay path as hop hashes (empty = direct)."""
+    """An observation's path field as hop hashes (see :attr:`Arrival.routed` for what it means)."""
     return tuple(h for h in (observation.path or "").split(",") if h)
+
+
+def _frame_routed(raw: dict) -> Optional[bool]:
+    """Whether a frame was direct-routed, or ``None`` where its route type wasn't kept."""
+    name = str(raw.get("route_typename") or "").upper()
+    return name in _ROUTED_TYPES if name and name != "UNK" else None
 
 
 def _texts_match(wire: str, stored: str) -> bool:
@@ -164,6 +195,7 @@ def channel_arrivals(
                 hops=_frame_hops(frame),
                 snr=frame.snr,
                 resend=decrypted.attempt,
+                routed=_frame_routed(raw),
             )
         )
     return arrivals
@@ -306,7 +338,10 @@ def direct_arrivals(
         src, dest = _addressed(raw)
         if (want_src and src != want_src) or (want_dest and dest != want_dest):
             continue
-        arrival = Arrival(when=frame.observed_at, hops=_frame_hops(frame), snr=frame.snr)
+        arrival = Arrival(
+            when=frame.observed_at, hops=_frame_hops(frame), snr=frame.snr,
+            routed=_frame_routed(raw),
+        )
         mac = str(raw.get("cipher_mac") or "").lower()
         if mac:
             groups.setdefault(mac, []).append(arrival)
@@ -336,16 +371,20 @@ def collapse(arrivals: Sequence[Arrival]) -> list[Arrival]:
         One :class:`Arrival` per distinct path, in first-heard order, each carrying its
         :attr:`~Arrival.copies` count.
     """
-    folded: dict[tuple[str, ...], Arrival] = {}
+    # Keyed on the route type as well as the hops: the same hashes mean two different
+    # things under the two types, so folding them together would merge a route travelled
+    # with a route intended.
+    folded: dict[tuple, Arrival] = {}
     for arrival in arrivals:
-        seen = folded.get(arrival.hops)
+        key = (arrival.hops, arrival.routed)
+        seen = folded.get(key)
         if seen is None:
-            folded[arrival.hops] = replace(arrival, copies=1)
+            folded[key] = replace(arrival, copies=1)
             continue
         best = seen.snr if arrival.snr is None else (
             arrival.snr if seen.snr is None else max(seen.snr, arrival.snr)
         )
-        folded[arrival.hops] = replace(seen, snr=best, copies=seen.copies + 1)
+        folded[key] = replace(seen, snr=best, copies=seen.copies + 1)
     return list(folded.values())
 
 

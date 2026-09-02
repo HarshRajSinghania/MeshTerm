@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS observations (
     dest        TEXT,             -- …the recipient's key hash, for an addressed class (hex)
     src         TEXT,             -- …the sender's key hash, or its whole key (anon request)
     tag         TEXT,             -- …the frame's own token: an ack's checksum, a trace's tag
-    trace_snrs  TEXT              -- TRACE rows: comma-separated per-hop SNR readings (dB)
+    trace_snrs  TEXT,             -- TRACE rows: comma-separated per-hop SNR readings (dB)
+    route       TEXT              -- 'packet' rows: FLOOD/DIRECT/… — what `path` MEANS here
 );
 
 -- One chat message, sent or received, on a channel or with a contact. Unlike the other
@@ -316,3 +317,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # them a replayed row would show a trace's links blank, the same gap the crypto
         # trio and the addressing columns above were added to close.
         conn.execute("ALTER TABLE observations ADD COLUMN trace_snrs TEXT")
+    if "route" not in observation_cols:
+        # v14 -> v15: a frame's route type, which says what its `path` field *means* — and
+        # without it the field was being read one way for packets that meant it two.
+        #
+        # A FLOOD packet accumulates: every relay appends its hash, so the path is the route
+        # the packet actually travelled to reach us. A DIRECT packet is the opposite — the
+        # path is a routing *instruction* the sender wrote and the relays consume, so it
+        # describes where the packet is going, not where it has been, and an empty one means
+        # "route used up", not "arrived in zero hops".
+        #
+        # Reading every path as a travelled route therefore drew a direct-routed message as
+        # having reached us out of nowhere, and drew our own outgoing route as if it were an
+        # inbound one (JP, 2026-09-02). Older rows carry NULL and are read as unknown rather
+        # than assumed flooded; the raw headers they arrived in were never persisted, so this
+        # cannot be filled in from history.
+        conn.execute("ALTER TABLE observations ADD COLUMN route TEXT")

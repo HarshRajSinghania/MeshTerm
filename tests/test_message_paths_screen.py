@@ -273,3 +273,59 @@ def test_paths_screen_direct_arrival_and_empty_state() -> None:
     body = _plain(empty.render_body(76))
     assert "No direct-message frames logged in the window." in body
     assert empty.footer_hint == "Esc close"
+
+
+def test_an_outgoing_message_ends_on_its_recipient_not_on_us() -> None:
+    """THE round-trip fix: our own sends stopped starting and ending on our own star.
+
+    The path line always closed on our ``★``, which is right for a message we received and
+    wrong for one we sent — with our star opening it too, every outgoing message drew
+    ``★ ▶ … ▶ ★`` and read as having gone out and come back (JP, 2026-09-02). It is the same
+    rule the head already followed: a path runs between the nodes it went *between*.
+    """
+    now = utcnow()
+    sent = ChatMessage(text="on my way", outbound=True, peer="d4e5", created_at=now)
+    screen = MessagePathsScreen(
+        sent, [Arrival(when=now, hops=("3d63",), snr=4.0)],
+        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
+        summary="heard once", source="Homestead", destination="Bob",
+    )
+    body = _plain(screen.render_body(72))
+    assert "YUL-Cartierville" in body
+    assert body.count("Homestead") == 1, "our name belongs at one end of a send, not both"
+    assert "Bob" in body, "the far end is the recipient"
+    # The caption names the same far end the line ends on.
+    assert "origin → Bob" in body
+
+
+def test_a_received_message_still_ends_on_us() -> None:
+    """The default is unchanged: what we receive does end at our own star."""
+    now = utcnow()
+    got = ChatMessage(text="on my way", outbound=False, peer="d4e5", created_at=now)
+    screen = MessagePathsScreen(
+        got, [Arrival(when=now, hops=("3d63",), snr=4.0)],
+        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
+        summary="heard once", source="Alice",
+    )
+    body = _plain(screen.render_body(72))
+    assert "Alice" in body and "Homestead" in body
+    assert "origin → you" in body
+
+
+def test_a_routed_frame_with_no_path_draws_no_graph_and_says_why() -> None:
+    """An empty routed path is not a zero-hop arrival, and must not be drawn as one.
+
+    Its route was consumed on the way, so there is nothing to put in the fan — an empty lane
+    would be a claim of adjacency the frame never made — and the row says so in words rather
+    than showing a confident ``0 hops``.
+    """
+    now = utcnow()
+    got = ChatMessage(text="on my way", outbound=False, peer="d4e5", created_at=now)
+    screen = MessagePathsScreen(
+        got, [Arrival(when=now, hops=(), snr=4.0, routed=True)],
+        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
+        summary="heard once", source="Alice",
+    )
+    body = _plain(screen.render_body(72))
+    assert "route not carried" in body
+    assert "origin →" not in body, "no graph, so nothing for the caption to label"

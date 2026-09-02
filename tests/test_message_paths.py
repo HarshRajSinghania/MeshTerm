@@ -114,7 +114,7 @@ def test_channel_arrivals_ignore_frames_outside_the_window(tmp_path: Path) -> No
     repo.close()
 
 
-def _direct_raw(dest: str = "", src: str = "", mac: str = "") -> dict:
+def _direct_raw(dest: str = "", src: str = "", mac: str = "", route: str = "") -> dict:
     """A direct-message frame's raw payload, spelled as the meshcore library reports it."""
     raw: dict = {"payload_typename": "TEXT_MSG"}
     if dest:
@@ -123,6 +123,8 @@ def _direct_raw(dest: str = "", src: str = "", mac: str = "") -> dict:
         raw["src_hash"] = src
     if mac:
         raw["cipher_mac"] = mac
+    if route:
+        raw["route_typename"] = route
     return raw
 
 
@@ -280,3 +282,66 @@ def test_collapse_folds_a_repeated_path_into_one_counted_row(tmp_path: Path) -> 
     assert folded[0].when == base, "the first sighting is when the path first worked"
     assert folded[0].snr == 13.5, "the best reading is what the path can do"
 
+
+
+def test_a_routed_frames_path_is_where_it_was_going_not_where_it_has_been(
+    tmp_path: Path,
+) -> None:
+    """The route type decides what ``path`` means, and an empty routed one means nothing.
+
+    A flooded packet accumulates its path — every relay appends itself — so the hops are the
+    route it travelled to us. A direct-routed packet carries a route its sender wrote and
+    its relays consume, so an empty path means the route was used up, not that the packet
+    crossed no relays. Read the second as the first and a message from five hops away is
+    drawn as having arrived out of thin air: the "impossible direct path" (JP, 2026-09-02).
+    """
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    _record_frame(  # flooded, one relay: it really did come to us that way
+        repo, run, when=now + timedelta(seconds=1), path="3d63",
+        raw=_direct_raw(dest="a1", src="d4", mac="beef", route="FLOOD"),
+    )
+    _record_frame(  # direct-routed, route consumed: says nothing about how it got here
+        repo, run, when=now + timedelta(seconds=2), path="",
+        raw=_direct_raw(dest="a1", src="d4", mac="beef", route="DIRECT"),
+    )
+    message = ChatMessage(text="hi", outbound=False, peer="d4e5f6a7", created_at=now)
+    arrivals, _exact = direct_arrivals(
+        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7"
+    )
+    flooded, routed = arrivals
+    assert flooded.routed is False and flooded.route_known is True
+    assert routed.routed is True and routed.route_known is False, (
+        "an empty routed path is not a zero-hop arrival"
+    )
+    repo.close()
+
+
+def test_history_without_a_route_type_is_unknown_rather_than_assumed(tmp_path: Path) -> None:
+    """Frames recorded before the route type was kept read as before, not as guesses."""
+    repo, run = _repo(tmp_path)
+    now = utcnow()
+    _record_frame(
+        repo, run, when=now + timedelta(seconds=1), path="",
+        raw=_direct_raw(dest="a1", src="d4", mac="beef"),
+    )
+    message = ChatMessage(text="hi", outbound=False, peer="d4e5f6a7", created_at=now)
+    arrivals, _exact = direct_arrivals(
+        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7"
+    )
+    assert arrivals[0].routed is None
+    assert arrivals[0].route_known is True, "unknown falls back to the old reading"
+    repo.close()
+
+
+def test_collapse_keeps_a_routed_path_apart_from_the_same_hops_flooded(tmp_path: Path) -> None:
+    """Identical hashes mean two different things under the two route types."""
+    from meshterm.services.message_paths import Arrival
+
+    base = utcnow()
+    folded = collapse([
+        Arrival(when=base, hops=("3d63",), snr=1.0, routed=False),
+        Arrival(when=base + timedelta(seconds=1), hops=("3d63",), snr=2.0, routed=True),
+    ])
+    assert len(folded) == 2, "a route travelled is not a route intended"
+    assert [a.routed for a in folded] == [False, True]
