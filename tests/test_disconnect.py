@@ -1108,3 +1108,109 @@ async def test_release_link_is_idempotent_and_holds_the_resume_intent(tmp_path: 
         assert ctx.events.active and ctx.monitor.active  # the held intent survived both
     finally:
         await ctx.aclose()
+
+
+
+class _AbandonedBleakClient:
+    """A ``bleak`` client whose peripheral vanished: already down, and never handed back.
+
+    Mirrors what the meshcore transport leaves behind on a dropped link — ``is_connected`` is
+    already ``False``, so every guarded teardown in the library declines to touch it.
+    """
+
+    def __init__(self) -> None:
+        self.is_connected = False
+        self.disconnect_calls = 0
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+
+class _DroppedBleConnection:
+    """meshcore's ``BLEConnection`` after its dropped-link callback ran: client reference gone."""
+
+    def __init__(self) -> None:
+        self.client = None  # handle_disconnect restored this to the constructor's value
+        self.disconnect_calls = 0
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1  # guards on self.client — reaches nothing
+
+
+class _DroppedMeshCore:
+    """A meshcore client whose connection manager also believes it is already disconnected."""
+
+    def __init__(self, connection: _DroppedBleConnection) -> None:
+        self.connection_manager = SimpleNamespace(connection=connection)
+        self.disconnected = False
+
+    async def disconnect(self) -> None:
+        self.disconnected = True  # guards on _is_connected — reaches nothing
+
+    def stop(self) -> None:
+        pass
+
+
+async def test_a_vanished_peripheral_still_gets_its_bleak_client_closed() -> None:
+    """The client is released even though every library guard says there is nothing to close."""
+    dev = connection.MeshCoreDevice(transport="ble", address="AA:BB:00:00:00:01")
+    dropped = _DroppedBleConnection()
+    dev._mc = _DroppedMeshCore(dropped)
+    abandoned = _AbandonedBleakClient()
+    dev._ble_client = abandoned  # what we kept hold of at connect
+
+    await dev.disconnect()
+
+    # The library's own teardown reached nothing — the connection had already let the client go.
+    assert dropped.client is None
+    # Ours closed it anyway, which is what frees the WinRT handles the next connect needs.
+    assert abandoned.disconnect_calls == 1
+    assert dev._ble_client is None  # and it is not closed twice
+    assert dev._mc is None
+
+
+async def test_releasing_the_bleak_client_is_idempotent_and_never_raises() -> None:
+    """A second disconnect finds nothing to do, and a failing close is swallowed."""
+    dev = connection.MeshCoreDevice(transport="ble", address="AA:BB:00:00:00:01")
+
+    await dev.disconnect()  # nothing connected at all
+    assert dev._ble_client is None
+
+    class _RefusesToClose:
+        is_connected = False
+
+        async def disconnect(self) -> None:
+            raise OSError("the handle is invalid")
+
+    dev._ble_client = _RefusesToClose()
+    await dev.disconnect()  # must not raise: teardown is best-effort
+    assert dev._ble_client is None
+
+
+async def test_a_healthy_bluetooth_teardown_still_releases_the_client() -> None:
+    """The graceful path runs as before, and the client is released after it."""
+    dev = connection.MeshCoreDevice(transport="ble", address="AA:BB:00:00:00:01")
+
+    class _HealthyMeshCore:
+        def __init__(self) -> None:
+            self.disconnected = False
+            self.force_stopped = False
+            self.connection_manager = SimpleNamespace(connection=self)
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+        def stop(self) -> None:
+            self.force_stopped = True
+
+    healthy = _HealthyMeshCore()
+    dev._mc = healthy
+    live = _AbandonedBleakClient()
+    live.is_connected = True
+    dev._ble_client = live
+
+    await dev.disconnect()
+
+    assert healthy.disconnected
+    assert not healthy.force_stopped  # the graceful path was enough, as it always was
+    assert live.disconnect_calls == 1  # and the client is released regardless

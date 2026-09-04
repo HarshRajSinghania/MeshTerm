@@ -1021,6 +1021,10 @@ class MeshCoreDevice(Device):
         self._host = host
         self._tcp_port = tcp_port
         self._mc = None  # type: ignore[var-annotated]  # meshcore.MeshCore
+        #: The ``bleak.BleakClient`` behind a BLE link, kept because ``meshcore`` lets go of
+        #: its own reference the moment the peripheral vanishes — see :meth:`_release_ble_client`
+        #: for why nothing else can close it, and what that costs when it stays open.
+        self._ble_client = None  # type: ignore[var-annotated]  # bleak.BleakClient
         # Serializes channel reads. The meshcore library's get_channel waits for "the next
         # CHANNEL_INFO event" with no correlation to the index it asked for, and the dispatcher
         # fans that event to *every* in-flight waiter — so two concurrent reads both resolve on
@@ -1245,10 +1249,17 @@ class MeshCoreDevice(Device):
         try:
             started = await mc.connect()
         except BaseException:
+            self._ble_client = getattr(connection, "client", None)
             await MeshCoreDevice._discard_meshcore(mc)
+            await self._release_ble_client()
             raise
+        # Take our own reference to the bleak client now, while ``BLEConnection`` still holds
+        # one. It drops it the instant the peripheral goes away, and by then nothing else can
+        # reach the object that needs closing (see :meth:`_release_ble_client`).
+        self._ble_client = getattr(connection, "client", None)
         if started is None:
             await MeshCoreDevice._discard_meshcore(mc)
+            await self._release_ble_client()
             return None
         return mc
 
@@ -1619,24 +1630,73 @@ class MeshCoreDevice(Device):
         process. When the graceful path doesn't return in time it is cancelled and the
         teardown is forced instead: the dispatcher task is cancelled synchronously and the
         raw transport is closed directly (also bounded), so the port/link is still released.
+
+        Over Bluetooth the ``bleak`` client is then closed directly as well, because none of
+        the above reaches it once the peripheral is the thing that went away — see
+        :meth:`_release_ble_client`.
         """
         if self._mc is None:
+            await self._release_ble_client()  # a link that dropped before we ever tore it down
             return
         mc, self._mc = self._mc, None
         disconnect = getattr(mc, "disconnect", None)
         if disconnect is None:
+            await self._release_ble_client()
             return
         try:
             await asyncio.wait_for(disconnect(), timeout=_DISCONNECT_TIMEOUT_S)
-            return
         except asyncio.TimeoutError:
             _log.debug("graceful disconnect timed out; forcing transport teardown")
+            # Forced teardown: cancel the (possibly wedged) dispatcher task without awaiting
+            # the deadlocked join, then close the underlying transport so the serial port /
+            # BLE link is actually released. Best-effort — nothing here may block the exit.
+            await MeshCoreDevice._force_close_transport(mc)
         except Exception as exc:  # noqa: BLE001 - teardown must not raise; fall to forced path
             _log.debug("graceful disconnect failed (%s); forcing transport teardown", exc)
-        # Forced teardown: cancel the (possibly wedged) dispatcher task without awaiting the
-        # deadlocked join, then close the underlying transport so the serial port / BLE link
-        # is actually released. Every step is best-effort — nothing here may block the exit.
-        await MeshCoreDevice._force_close_transport(mc)
+            await MeshCoreDevice._force_close_transport(mc)
+        await self._release_ble_client()
+
+    async def _release_ble_client(self) -> None:
+        """Close the ``bleak`` client itself, whatever the library believes about its state.
+
+        The one teardown step that cannot be delegated, and the reason a Bluetooth session
+        could not be rebuilt after the companion was switched off. Every layer above declines
+        to act once the *peripheral* is what went away, each for its own locally-sensible
+        reason:
+
+        * ``BLEConnection.handle_disconnect`` — bleak's own dropped-link callback — restores
+          the connection's fields to what the caller originally passed, which sets
+          ``self.client`` back to ``None``. The live client object is simply let go of.
+        * ``BLEConnection.disconnect`` then guards on ``self.client and
+          self.client.is_connected``, so it has nothing to close and does nothing.
+        * ``ConnectionManager.disconnect`` guards on ``self._is_connected``, which its own
+          drop handler already cleared, so it does nothing either.
+        * :meth:`_force_close_transport` reaches past both — but only as far as that same
+          ``BLEConnection``, whose ``disconnect`` is the no-op above.
+
+        So on a drop nobody ever calls ``BleakClient.disconnect()``, and on Windows the WinRT
+        ``BluetoothLEDevice`` and its GATT session stay open for the life of the process. The
+        next connect to that address is then served a broken service table: the link comes up,
+        and subscribing to the UART characteristic fails with *"Characteristic
+        6E400003-… was not found!"* — a device that is advertising, healthy, and unreachable
+        for as long as the app keeps running. A fresh process connects to it perfectly.
+
+        Hence our own reference, taken at connect (see :meth:`_connect_owned_ble`) while the
+        library still has one to give, and closed here **unconditionally** — never guarded on
+        ``is_connected``, since the case that matters is precisely the one where it is already
+        ``False``. Bounded and silent: the link is already gone, and a teardown may not raise
+        or hang. Idempotent, and a no-op on serial and TCP, which have no client to hold.
+        """
+        client, self._ble_client = self._ble_client, None
+        if client is None:
+            return
+        disconnect = getattr(client, "disconnect", None)
+        if disconnect is None:  # pragma: no cover - every bleak client has one
+            return
+        try:
+            await asyncio.wait_for(disconnect(), timeout=_FORCE_DISCONNECT_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - the link is already gone; best-effort
+            _log.debug("releasing the bleak client failed: %s", exc)
 
     def _require(self):  # type: ignore[no-untyped-def]
         """Return the live client or raise if not connected."""
