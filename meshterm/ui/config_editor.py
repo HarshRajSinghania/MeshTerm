@@ -185,7 +185,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
             elif choice == _LOCATION:
                 await _stage_location(ctx, snapshot, pending)
             elif choice == _PRESETS:
-                await _stage_preset(ctx, pending)
+                await _stage_preset(ctx, snapshot, pending)
             elif choice == _CUSTOM:
                 await _stage_custom_var(ctx, custom, extra_ops)
             else:  # a setting key
@@ -327,7 +327,7 @@ def _menu_items(
         if category == "Radio":
             rows.append((
                 "Radio presets…", Text(),
-                "Apply a standard regional or trade-off config", _PRESETS,
+                "Stage MeshCore's settings for a region", _PRESETS,
             ))
         elif category == "Experimental":
             rows.append((
@@ -600,26 +600,30 @@ def _valid_coords(text: str) -> bool | str:
         return str(exc)
 
 
-async def _stage_preset(ctx: "AppContext", pending: dict[str, Any]) -> None:
-    """Pick a standard radio preset and stage all of its fields for review/apply."""
-    from ..core.device_config import RADIO_PRESETS
+async def _stage_preset(ctx: "AppContext", snapshot: dict, pending: dict[str, Any]) -> None:
+    """Pick a MeshCore radio preset and stage every field it names for review/apply.
 
-    items: list = [
-        Choice(
-            title=f"{p.name}: {p.freq} MHz, BW {p.bw}, SF{p.sf}, CR{p.cr}  —  {p.help}",
-            value=i,
-        )
-        for i, p in enumerate(RADIO_PRESETS)
-    ]
+    The rows are MeshCore's own suggested settings (see
+    :data:`~meshterm.core.device_config.RADIO_PRESETS`), name in one lane and parameters
+    in the other, and the list opens on the preset the radio is already tuned to where
+    one matches — the "which of these am I on?" reading the phone app gives, so picking a
+    neighbour is a comparison rather than a guess. Staged values count: a preset picked
+    after a hand-edited frequency is read against what would be applied, not against what
+    the radio still holds.
+    """
+    from ..core.device_config import RADIO_PRESETS, current_preset
+
+    items = menu_rows([(p.name, p.summary, i) for i, p in enumerate(RADIO_PRESETS)])
+    active = current_preset({**snapshot, **pending})
     idx = await ctx.ui.select(
         "Radio presets",
         items,
         prompt="Stage a standard set of radio parameters:",
+        default=RADIO_PRESETS.index(active) if active is not None else None,
     )
     if idx is None:
         return
-    preset = RADIO_PRESETS[idx]
-    pending.update(preset.as_settings())
+    pending.update(RADIO_PRESETS[idx].as_settings())
 
 
 async def _stage_custom_var(

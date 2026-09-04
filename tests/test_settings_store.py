@@ -138,13 +138,13 @@ async def test_drift_reports_only_changed_settings(tmp_path: Path) -> None:
     """Drift lists remembered settings that differ from the device, in registry order."""
     device, pubkey = await _mock_device()
     store = SettingsStore(tmp_path / "settings.json")
-    store.remember(pubkey, "radio_freq", 915.0)  # device default is 869.525 — drifts
+    store.remember(pubkey, "radio_freq", 915.0)  # device default is 869.618 — drifts
     store.remember(pubkey, "name", "MockCompanion")  # equals the device default — no drift
 
     snapshot = await build_snapshot(device)
     drifted = settings_drift(store, pubkey, snapshot)
     assert [d.key for d in drifted] == ["radio_freq"]
-    assert drifted[0].remembered == 915.0 and drifted[0].current == 869.525
+    assert drifted[0].remembered == 915.0 and drifted[0].current == 869.618
 
 
 async def test_drift_empty_when_nothing_remembered(tmp_path: Path) -> None:
@@ -184,7 +184,7 @@ async def test_restore_writes_remembered_values_including_coupled(tmp_path: Path
     assert after["name"] == "Ops-Node"
     assert after["radio_freq"] == 915.0
     assert after["radio_sf"] == 12
-    assert after["radio_bw"] == 250.0  # untouched radio field preserved by the coupled rebuild
+    assert after["radio_bw"] == 62.5  # untouched radio field preserved by the coupled rebuild
     # Idempotent: with the device now matching, there is nothing left to restore.
     assert settings_drift(store, pubkey, after) == []
 
@@ -193,13 +193,13 @@ async def test_adopt_updates_store_to_device_values(tmp_path: Path) -> None:
     """Adopt takes the device's current values as the new saved truth, clearing the drift."""
     device, pubkey = await _mock_device()
     store = SettingsStore(tmp_path / "settings.json")
-    store.remember(pubkey, "radio_freq", 915.0)  # differs from the device's 869.525
+    store.remember(pubkey, "radio_freq", 915.0)  # differs from the device's 869.618
 
     snapshot = await build_snapshot(device)
     drifted = settings_drift(store, pubkey, snapshot)
     adopt(store, pubkey, snapshot, [d.key for d in drifted])
 
-    assert store.settings(pubkey)["radio_freq"] == 869.525  # now matches the device
+    assert store.settings(pubkey)["radio_freq"] == 869.618  # now matches the device
     assert settings_drift(store, pubkey, snapshot) == []
 
 

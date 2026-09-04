@@ -2755,9 +2755,13 @@ class MockDevice(Device):
             "telemetry_mode_loc": 0,
             "telemetry_mode_env": 0,
             "manual_add_contacts": False,
-            "radio_freq": 869.525,
-            "radio_bw": 250.0,
-            "radio_sf": 11,
+            # The firmware's own build defaults (MeshCore's platformio.ini: LORA_FREQ
+            # 869.618, BW 62.5, SF8; CR falls back to 5), so the simulator boots on the
+            # settings a freshly flashed companion does rather than on the 250 kHz /
+            # SF11 modulation the EU mesh left behind.
+            "radio_freq": 869.618,
+            "radio_bw": 62.5,
+            "radio_sf": 8,
             "radio_cr": 5,
             "simulated": True,
         }

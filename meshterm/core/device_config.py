@@ -345,41 +345,106 @@ class RadioPreset:
     """A named, standard set of radio parameters applied as one unit.
 
     Attributes:
-        name: Human-friendly preset name (region or trade-off).
-        help: One-line description of when to use it.
+        name: The preset's name, spelled exactly as MeshCore's own list spells it, so
+            this list can be read against the phone app or the web flasher.
         freq: Carrier frequency in MHz.
         bw: Channel bandwidth in kHz.
         sf: LoRa spreading factor.
         cr: LoRa coding-rate denominator (5-8 = 4/5-4/8).
+        path_hash_size: Per-hop path-hash size in bytes where the preset names one (a
+            few regions run 2-byte hashes); ``None`` leaves that setting where it is.
     """
 
     name: str
-    help: str
     freq: float
     bw: float
     sf: int
     cr: int
+    path_hash_size: Optional[int] = None
+
+    @property
+    def summary(self) -> str:
+        """The four parameters on one line, in the order MeshCore's own list prints."""
+        return f"{self.freq:.3f} SF{self.sf} BW{self.bw:g} CR{self.cr}"
 
     def as_settings(self) -> dict[str, Any]:
         """Return this preset as a ``{setting_key: value}`` mapping for staging."""
-        return {
+        values: dict[str, Any] = {
             "radio_freq": self.freq,
             "radio_bw": self.bw,
             "radio_sf": self.sf,
             "radio_cr": self.cr,
         }
+        if self.path_hash_size is not None:
+            # The firmware stores the *mode*, one less than the size it carries per hop
+            # (see _PATH_HASH_CHOICES); MeshCore's own config GUI converts it the same way.
+            values["path_hash_mode"] = self.path_hash_size - 1
+        return values
 
 
-# Standard MeshCore presets. The default modulation (250 kHz / SF11 / CR5) is shared
-# across regions; the region presets differ only in the default channel frequency. The
-# trade-off presets keep the EU frequency but trade airtime for range or speed.
+# MeshCore's suggested radio settings, mirrored verbatim — names, order and values — from
+# the list its apps, the web flasher and config.meshcore.dev all read at
+# ``https://api.meshcore.nz/api/v1/config`` (``config.suggested_radio_settings.entries``),
+# fetched 2026-09-04. The presets are community-maintained and they move: through 2025
+# most regions left the original 250 kHz / SF11 modulation for a "narrow" 62.5 kHz one,
+# which is why MeshCore still lists the settings it superseded under its own
+# "(Deprecated)" names — nodes that never re-tuned are still out there on them.
+#
+# Every node on a mesh must match all four parameters, so the only useful preset is the
+# one the local mesh actually runs. A handful of regions also name a path-hash size,
+# which the preset stages alongside the radio fields exactly as MeshCore's GUI does.
 RADIO_PRESETS: list[RadioPreset] = [
-    RadioPreset("EU / UK 868", "MeshCore default for the 868 MHz band", 869.525, 250.0, 11, 5),
-    RadioPreset("US 915", "MeshCore default for the US 915 MHz band", 910.525, 250.0, 11, 5),
-    RadioPreset("AU / NZ 915", "MeshCore default for the AU/NZ 915 MHz band", 915.525, 250.0, 11, 5),
-    RadioPreset("Long range (slow)", "Narrow bandwidth + high SF: max range, low data rate", 869.525, 125.0, 12, 8),
-    RadioPreset("Fast (short range)", "Wide bandwidth + low SF: short range, low airtime", 869.525, 500.0, 7, 5),
+    RadioPreset("Australia", 915.800, 250.0, 10, 5),
+    RadioPreset("Australia (Narrow)", 916.575, 62.5, 7, 8),
+    RadioPreset("Australia (Mid)", 915.075, 125.0, 9, 5),
+    RadioPreset("Australia: SA, WA", 923.125, 62.5, 8, 8),
+    RadioPreset("Australia: QLD", 923.125, 62.5, 8, 5),
+    RadioPreset("Brazil", 923.125, 62.5, 8, 8),
+    RadioPreset("Costa Rica", 910.525, 125.0, 11, 5),
+    RadioPreset("EU/UK (Narrow)", 869.618, 62.5, 8, 8),
+    RadioPreset("EU/UK (Deprecated)", 869.525, 250.0, 11, 5),
+    RadioPreset("Czech Republic (Narrow)", 869.432, 62.5, 7, 5),
+    RadioPreset("EU 433MHz (Long Range)", 433.650, 250.0, 11, 5),
+    RadioPreset("EU 433MHz (Narrow)", 433.650, 62.5, 8, 8),
+    RadioPreset("Hungary", 869.618, 62.5, 7, 5, 2),
+    RadioPreset("Netherlands", 869.618, 62.5, 7, 5),
+    RadioPreset("New Zealand (Narrow)", 917.375, 62.5, 7, 5, 2),
+    RadioPreset("New Zealand (Gisborne)", 917.375, 250.0, 11, 5, 1),
+    RadioPreset("Portugal 433", 433.375, 62.5, 9, 6),
+    RadioPreset("Portugal 868", 869.618, 62.5, 7, 6),
+    RadioPreset("Slovakia", 869.618, 62.5, 7, 5, 2),
+    RadioPreset("Switzerland", 869.618, 62.5, 8, 8),
+    RadioPreset("USA/Canada (Recommended)", 910.525, 62.5, 7, 5),
+    RadioPreset("Vietnam (Narrow)", 920.250, 62.5, 8, 5),
+    RadioPreset("Vietnam (Deprecated)", 920.250, 250.0, 11, 5),
 ]
+
+#: Frequencies are set in kHz steps, so a snapshot matches a preset within half of one.
+_FREQ_TOLERANCE_MHZ = 0.0005
+
+
+def current_preset(snapshot: dict[str, Any]) -> Optional[RadioPreset]:
+    """Return the preset the radio is tuned to, or ``None`` where it matches none.
+
+    Matched on the four radio parameters alone — the ones every node on the mesh has to
+    agree on — never on the path-hash size a few presets also carry, which is how
+    MeshCore's own config GUI reads "which of these am I on?".
+
+    Args:
+        snapshot: A device snapshot (or one with staged values merged over it).
+    """
+    for preset in RADIO_PRESETS:
+        freq, bw = snapshot.get("radio_freq"), snapshot.get("radio_bw")
+        if (
+            isinstance(freq, (int, float))
+            and isinstance(bw, (int, float))
+            and abs(float(freq) - preset.freq) < _FREQ_TOLERANCE_MHZ
+            and float(bw) == preset.bw
+            and snapshot.get("radio_sf") == preset.sf
+            and snapshot.get("radio_cr") == preset.cr
+        ):
+            return preset
+    return None
 
 
 # --- the registry ------------------------------------------------------------

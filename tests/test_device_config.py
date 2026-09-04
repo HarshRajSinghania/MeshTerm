@@ -16,6 +16,7 @@ from meshterm.core.device_config import (
     RADIO_PRESETS,
     DeviceConfigError,
     build_snapshot,
+    current_preset,
     effective_maximum,
     format_value,
     get_spec,
@@ -1033,10 +1034,55 @@ def test_radio_presets_map_to_radio_settings() -> None:
     assert RADIO_PRESETS, "expected at least one standard radio preset"
     for preset in RADIO_PRESETS:
         settings = preset.as_settings()
-        assert set(settings) == {"radio_freq", "radio_bw", "radio_sf", "radio_cr"}
+        assert {"radio_freq", "radio_bw", "radio_sf", "radio_cr"} <= set(settings)
         # Each value parses cleanly through its setting spec.
         for key, value in settings.items():
             assert parse_value(get_spec(key), value) == value
+
+
+def test_radio_presets_match_meshcore_list() -> None:
+    """Spot-check the presets against MeshCore's own suggested settings.
+
+    The values are MeshCore's, not ours: a mesh only hears a node whose four radio
+    parameters match, so a drifted table is a radio that talks to nobody. These are the
+    ones a MeshTerm user is most likely to pick, including the two regions MeshCore now
+    marks deprecated (still listed, because nodes that never re-tuned are on them).
+    """
+    by_name = {p.name: p for p in RADIO_PRESETS}
+    expected = {
+        "EU/UK (Narrow)": (869.618, 62.5, 8, 8),
+        "EU/UK (Deprecated)": (869.525, 250.0, 11, 5),
+        "USA/Canada (Recommended)": (910.525, 62.5, 7, 5),
+        "Australia": (915.800, 250.0, 10, 5),
+        "New Zealand (Narrow)": (917.375, 62.5, 7, 5),
+    }
+    for name, values in expected.items():
+        preset = by_name[name]
+        assert (preset.freq, preset.bw, preset.sf, preset.cr) == values
+    # A region that names a path-hash size stages it as the firmware's mode (size - 1).
+    assert by_name["New Zealand (Narrow)"].as_settings()["path_hash_mode"] == 1
+    assert "path_hash_mode" not in by_name["EU/UK (Narrow)"].as_settings()
+
+
+def test_radio_preset_summary_reads_as_meshcore_prints_it() -> None:
+    """The row's parameter lane is MeshCore's own order, at MeshCore's precision."""
+    by_name = {p.name: p for p in RADIO_PRESETS}
+    assert by_name["USA/Canada (Recommended)"].summary == "910.525 SF7 BW62.5 CR5"
+    assert by_name["Australia"].summary == "915.800 SF10 BW250 CR5"
+
+
+async def test_current_preset_identifies_the_mock_radio() -> None:
+    """The mock boots on the firmware defaults, which are EU/UK (Narrow) but for CR."""
+    snapshot = await build_snapshot(await _connected_mock())
+    assert current_preset(snapshot) is None  # CR5, where the EU preset asks CR8
+    assert current_preset({**snapshot, "radio_cr": 8}).name == "EU/UK (Narrow)"
+
+
+def test_current_preset_none_for_unmatched_radio() -> None:
+    """A hand-tuned radio matches no preset, and a missing field never crashes it."""
+    assert current_preset({"radio_freq": 868.0, "radio_bw": 250.0, "radio_sf": 11,
+                           "radio_cr": 5}) is None
+    assert current_preset({}) is None
 
 
 def test_get_spec_unknown_raises() -> None:
@@ -1063,8 +1109,8 @@ async def test_apply_coupled_radio_field_preserves_others() -> None:
     await spec.apply(device, 9, await build_snapshot(device))
     info = await device.get_self_info()
     assert info["radio_sf"] == 9
-    assert info["radio_freq"] == 869.525  # unchanged
-    assert info["radio_bw"] == 250.0
+    assert info["radio_freq"] == 869.618  # unchanged
+    assert info["radio_bw"] == 62.5
     assert info["radio_cr"] == 5
 
 
@@ -1099,7 +1145,7 @@ async def test_backup_and_read_round_trip(tmp_path: Path) -> None:
 
     backup = read_backup(path)
     assert backup.settings["name"] == "Foo"
-    assert backup.settings["radio_sf"] == 11
+    assert backup.settings["radio_sf"] == 8
     assert backup.custom["exp"] == "1"
     assert backup.channels[0]["name"] == "Public"
     assert backup.channels[0]["secret"] == ("01" * 16)
@@ -1119,7 +1165,7 @@ async def test_plan_restore_emits_only_differences(tmp_path: Path) -> None:
 
     assert ("set", "name", "Foo") in ops
     assert ("set_custom", "exp", "1") in ops
-    # Unchanged values (e.g. radio_sf 11 == 11) are not re-applied.
+    # Unchanged values (e.g. radio_sf 8 == 8) are not re-applied.
     assert "radio_sf" not in [op[1] for op in ops if op[0] == "set"]
 
 
