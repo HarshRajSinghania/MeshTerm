@@ -1006,6 +1006,28 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
     assert "route 11" in _plain(lines) and screen.cursor_line() is not None
 
 
+def test_node_detail_route_cursor_clamps_at_both_ends() -> None:
+    """The windowed route list does not wrap: ↑ on the first row and ↓ past the last stay
+    where they are, rather than hauling the window end to end."""
+    routes = _RoutesView(
+        routes=[
+            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
+            for i in range(12)
+        ],
+        glyph_of=lambda n: ("●", "#ffffff"),
+        label_of=lambda n: n[:2],
+        label_rgb_of=lambda n: (200, 200, 200),
+    )
+    screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
+    screen.note_viewport(30)
+    screen.render_body(72)
+    screen.handle("up")
+    assert screen._row_index == 0
+    for _ in range(20):
+        screen.handle("down")
+    assert screen._row_index == 11
+
+
 def test_fit_blocks_walks_wrapped_rows_into_view() -> None:
     """The variable-height fit keeps whole blocks, spends marker lines only when rows hide,
     and walks the window down to the cursor's row."""

@@ -443,6 +443,15 @@ class ListWindow:
     that side, and the settled content capacity is remembered as :attr:`page`, the
     stride a PgUp/PgDn should move by.
 
+    A highlight over such a list **clamps at both ends rather than wrapping** (as
+    :class:`~meshterm.ui.tui.select.SelectScreen` does with ``wrap=False``, and for a
+    sharper reason): the window follows the highlight, so a ↓ off the last row would not
+    merely move the pointer — it would haul the whole window back to the head, flipping
+    the edge markers as it went, which reads as the screen changing under the reader
+    rather than as one step. Held-down arrows settle at an end instead (JP, 2026-09-04).
+    Each screen owns its own cursor, so this is a rule its ``handle`` keeps, not something
+    this class can enforce.
+
     Attributes:
         top: First list row the window shows (clamped by :meth:`fit` each paint).
         page: Rows the window carried on the last :meth:`fit` — the paging stride.

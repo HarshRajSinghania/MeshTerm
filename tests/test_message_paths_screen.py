@@ -384,3 +384,16 @@ def test_a_short_list_advertises_no_paging() -> None:
     screen.render_body(72)
     assert "PgUp/PgDn" not in screen.footer_hint
     assert "more" not in _plain(screen.render_body(72))
+
+
+def test_the_selection_clamps_at_both_ends() -> None:
+    """↑ on the first arrival and ↓ on the last stay put: the window follows the highlight,
+    so a wrap would haul the whole list end to end instead of moving one row."""
+    screen = _screen(_many(6))
+    screen.note_viewport(24)
+    screen.render_body(72)
+    screen.handle("up")
+    assert screen._index == 0
+    for _ in range(10):
+        screen.handle("down")
+    assert screen._index == 5

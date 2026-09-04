@@ -443,9 +443,12 @@ class WalkScreen(Screen):
                 self.resolve(None)
                 return
         elif action == "up" and rows:
-            self._index = (self._index - 1) % len(rows)
+            # Both ends clamp rather than wrap: the list scrolls inside a window (see
+            # ListWindow), and a highlight that jumped end to end would take the window
+            # with it — the one move that looks like the screen changed under you.
+            self._index = max(0, self._index - 1)
         elif action == "down" and rows:
-            self._index = (self._index + 1) % len(rows)
+            self._index = min(len(rows) - 1, self._index + 1)
         elif action == "pageup" and rows:
             # The highlight pages by one list windowful: the window follows the
             # highlight, so paging the view without it would just snap straight back.

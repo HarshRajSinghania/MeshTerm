@@ -194,11 +194,14 @@ class MessagePathsScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Move the selection, shift the selected line sideways, or dismiss."""
         rows = len(self._arrivals)
+        # Both ends clamp rather than wrap: the arrivals scroll inside a window (see
+        # ListWindow), and a highlight that jumped from the last arrival to the first would
+        # take the window with it — the one move that looks like the screen changed under you.
         if action == "up" and rows:
-            self._index = (self._index - 1) % rows
+            self._index = max(0, self._index - 1)
             self._hshift = 0
         elif action == "down" and rows:
-            self._index = (self._index + 1) % rows
+            self._index = min(rows - 1, self._index + 1)
             self._hshift = 0
         elif action == "pageup" and rows:
             # A windowful of *arrivals*, not of body lines: the list is what moves.

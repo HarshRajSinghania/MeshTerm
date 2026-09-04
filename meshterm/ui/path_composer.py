@@ -702,10 +702,13 @@ class PathComposerScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Move the cursors, edit the entry, add/remove hops, or commit/cancel."""
         rows = self._rows()
+        # Both ends clamp rather than wrap: this list scrolls inside a window (see
+        # ListWindow), and a highlight that jumped from the tail to the head would take the
+        # whole window with it — the one move that looks like the screen changed under you.
         if action == "up" and rows:
-            self._index = (self._index - 1) % len(rows)
+            self._index = max(0, self._index - 1)
         elif action == "down" and rows:
-            self._index = (self._index + 1) % len(rows)
+            self._index = min(len(rows) - 1, self._index + 1)
         elif action == "pageup" and rows:
             self._index = max(0, self._index - self._list.page)
         elif action == "pagedown" and rows:

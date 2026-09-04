@@ -937,3 +937,19 @@ def test_walk_collapsed_stand_in_wears_the_selection_white() -> None:
     row = next(line for line in canvas if screen._label(target) in _plain([line]))
     assert _code((255, 255, 255)) in row  # the same white a drawn marker's selection takes
     assert _code(screen._label_rgb(target)) not in row
+
+
+def test_walk_link_cursor_clamps_at_both_ends() -> None:
+    """The windowed link list does not wrap: ↑ on the first row and ↓ past the last stay
+    where they are, rather than hauling the window end to end."""
+    screen = WalkScreen(
+        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
+    )
+    screen.note_viewport(20)
+    screen.render_body(80)
+    last = len(screen._rows()) - 1
+    screen.handle("up")
+    assert screen._index == 0
+    for _ in range(last + 5):
+        screen.handle("down")
+    assert screen._index == last

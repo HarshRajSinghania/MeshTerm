@@ -976,3 +976,17 @@ def test_a_stub_whose_only_link_was_its_owner_takes_the_owner_out_with_it() -> N
     topo._merge_node("a1", "a1b2c3d4e5f6", adjacency=adjacency)
     assert topo._links == {}
     assert adjacency == {}
+
+
+def test_composer_row_cursor_clamps_at_both_ends() -> None:
+    """The windowed suggestion list does not wrap: ↑ on the first row and ↓ past the last
+    stay where they are, rather than hauling the window end to end."""
+    walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
+    screen = _composer(_topo(trace_paths=walks))
+    screen.render_body(90)
+    last = len(screen._rows()) - 1
+    screen.handle("up")
+    assert screen._index == 0
+    for _ in range(last + 5):
+        screen.handle("down")
+    assert screen._index == last

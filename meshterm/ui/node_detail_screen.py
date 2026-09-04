@@ -603,11 +603,15 @@ class NodeDetailScreen(Screen):
             self._switch_tab(-1)
         elif action == "up":
             if n:
-                self._row_index = (self._row_index - 1) % n
+                # Both ends clamp rather than wrap: the route rows scroll inside a
+                # window (see ListWindow), and a highlight that jumped end to end would
+                # take the window with it — the one move that looks like the screen
+                # changed under you.
+                self._row_index = max(0, self._row_index - 1)
                 self._sync_route_sel(focus)
         elif action == "down":
             if n:
-                self._row_index = (self._row_index + 1) % n
+                self._row_index = min(n - 1, self._row_index + 1)
                 self._sync_route_sel(focus)
         elif action == "pageup":
             if n:
