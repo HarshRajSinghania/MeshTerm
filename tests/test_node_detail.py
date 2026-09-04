@@ -951,14 +951,14 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
 
     Route evidence reaches the page at mixed hash widths — a 1-byte trace hop (``3d``)
     beside the same relay's full id on a sibling route. The graph coalesces the short id
-    into the one wide marker, so the label muting must test membership against the *drawn*
-    ids: keyed on the raw draw hops, the selected route's own relay rendered muted while
-    the white line rode straight through it (the TSFCT SUTTON-680M report).
+    into the one wide marker, so the off-route dimming must test membership against the
+    *drawn* ids: keyed on the raw draw hops, the selected route's own relay rendered muted
+    while the white line rode straight through it (the TSFCT SUTTON-680M report).
     """
     lit: list[str] = []
 
     def base_rgb(node: str) -> tuple[int, int, int]:
-        lit.append(node)  # the stage's muting wrapper only consults us for on-route nodes
+        lit.append(node)  # the widget only consults us for nodes on the selected route
         return (200, 200, 200)
 
     routes = _RoutesView(

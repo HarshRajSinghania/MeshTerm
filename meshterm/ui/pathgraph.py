@@ -82,6 +82,14 @@ over and then settles. Concretely:
   exactly once, however many routes share it; the one edge drawn as a bare vertical is a pair
   of nodes walked in *both* directions — a genuine two-way hop, the sole place a straight
   up-and-down line tells the truth;
+* **the highlight recedes the rest** — where one layer is emphasised over the others, it is
+  the *only* path drawn in colour: every node it does not ride draws its marker and its label
+  in one dark grey (:data:`_OFF_ROUTE`), the same dim its unused lines already carry. A fan is
+  one route read against its alternatives, and full-hue markers strewn along the grey lines
+  argued with the very thing the emphasis was saying. The endpoints are never dimmed (every
+  path runs through them), and the glyphs keep their shapes — a repeater is still ``▲``
+  off-route, only its ink recedes. With no emphasis to compare (a single path, or a fan whose
+  layers are all equal) nothing is faded and the caller's colours stand as given;
 * **labels** sit straight above or below their marker — pushed to the side away from the
   graph's middle, a spot clear of the drawn lines preferred — and endpoints slide their
   label inward from the canvas edge so a long name still lands by its marker. A caller that
@@ -169,6 +177,16 @@ _BEND_K = 0.4
 #: Dots left of our marker the flow arrow sits — one cell, so it embeds in the trunk as ``▶★``
 #: and marks the node → us direction without crowding the endpoint.
 _ARROW_GAP_DOTS = 2
+
+#: The dim every node *off* the highlighted path draws in — its marker and its label
+#: alike, in both encodings the callbacks speak. A fan's whole point is one route read
+#: against its alternatives, and the picture only says which route that is if everything
+#: not on it recedes: the unused lines already draw grey, and a full-hue marker with a
+#: full-hue label sitting on one is the loudest thing in the frame (JP, 2026-09-04). Any
+#: value in this range folds to the console's dark-grey slot, so the rule survives the
+#: 16-colour quantizer unchanged.
+_OFF_ROUTE: RGB = (110, 110, 110)
+_OFF_ROUTE_HEX = "#%02x%02x%02x" % _OFF_ROUTE
 
 #: Most distinct paths the lane order is optimised over by exhaustive search. Beyond it the
 #: search space (``(n-1)!`` orders of the non-central lanes) is too large, so a barycentre
@@ -417,6 +435,46 @@ def _draw_rank(layer: PathLayer) -> int:
     return layer.priority + layer.emphasis * _EMPHASIS_BOOST
 
 
+def _highlighted(
+    drawn: Sequence[PathLayer], seqs: Sequence[tuple[str, ...]]
+) -> Optional[set[str]]:
+    """The nodes on the one emphasised path, or ``None`` when no single path is singled out.
+
+    A highlight is a *comparison*, so it takes at least two paths and exactly one winner: a
+    lone path has nothing to be read against, and a fan whose layers all carry the same
+    emphasis (the default — a picture with no selection at all) has no route to fade toward.
+    Both cases return ``None``, and the caller's colours are then used exactly as given.
+
+    The returned set carries the endpoints, since every path runs through them: the origin and
+    us are never the thing a selection distinguishes.
+    """
+    if len(drawn) < 2:
+        return None
+    top = max(layer.emphasis for layer in drawn)
+    lit = [i for i, layer in enumerate(drawn) if layer.emphasis == top]
+    return set(seqs[lit[0]]) if len(lit) == 1 else None
+
+
+def _dim_off_route(
+    glyph_of: GlyphOf, label_rgb_of: LabelRgbOf, lit: set[str]
+) -> tuple[GlyphOf, LabelRgbOf]:
+    """Wrap the marker/label colour callbacks to draw everything outside ``lit`` grey.
+
+    The caller's own callbacks are still asked for every node *on* the highlighted path, so
+    a node keeps whatever hue its screen gives it there; off it, neither callback is consulted
+    for a colour that would be thrown away. The glyph itself is untouched — a repeater is
+    still ``▲`` off-route, it is only the ink that recedes.
+    """
+    def glyph(node: str) -> tuple[str, str]:
+        mark, colour = glyph_of(node)
+        return mark, (colour if node in lit else _OFF_ROUTE_HEX)
+
+    def rgb(node: str) -> RGB:
+        return label_rgb_of(node) if node in lit else _OFF_ROUTE
+
+    return glyph, rgb
+
+
 def render_path_graph(
     layers: Sequence[PathLayer],
     width: int,
@@ -476,6 +534,15 @@ def render_path_graph(
         drawn = _split_revisits(drawn)
         glyph_of, label_of, label_rgb_of = _unqualified(glyph_of, label_of, label_rgb_of)
     seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in drawn]
+
+    # Where one path is emphasised over the rest, everything not on it recedes: the nodes
+    # the highlight rides keep their hue, every other marker and label draws :data:`_OFF_ROUTE`
+    # grey. Membership is tested in the graph's *own* id space — after the prefix coalesce,
+    # the identical-path collapse and the revisit split — so a relay the selected route reaches
+    # by a short hash still counts as ridden once it is folded into the wide marker drawn for it.
+    lit = _highlighted(drawn, seqs)
+    if lit is not None:
+        glyph_of, label_rgb_of = _dim_off_route(glyph_of, label_rgb_of, lit)
 
     # First-appearance order for every node, so the layout is identical on every repaint: a
     # set of hash-seeded string ids would iterate in a run-varying order and let the passes

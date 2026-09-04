@@ -97,7 +97,6 @@ from .pathgraph import (
     LabelOf,
     LabelRgbOf,
     PathLayer,
-    _coalesce_prefixes,
     bidir_clusters,
     render_path_graph,
 )
@@ -895,7 +894,7 @@ class NodeDetailScreen(Screen):
             return self._stage_memo[1]
         # Priority is fixed by evidence order (route 0, the best-evidence route, is always the
         # spine) so the fan's geometry never moves as the selection changes — only emphasis
-        # (which route is drawn white and on top) and the label muting below follow the pick.
+        # (which route draws white and on top, and which nodes keep their hue) follows the pick.
         layers = [
             PathLayer(
                 hops=route.draw,
@@ -905,19 +904,13 @@ class NodeDetailScreen(Screen):
             )
             for i, route in enumerate(rv.routes)
         ]
-        # A node keeps its name hue only while it sits on the selected route (its endpoints
-        # always do); every other node in the fan fades its label to the same grey its line
-        # went, so the picture reads as *this* route rather than the whole tangle.
-        # Membership is decided in the graph's own id space: the widget folds a short hop
-        # into the wide id it can only be among these routes (a 1-byte trace hop beside the
-        # same relay's full contact id), so the raw draw hops would grey the very marker the
-        # selected line rides through.
-        on_route = set(_coalesce_prefixes(layers)[sel].hops) | {SRC_NODE, DST_NODE}
-        base_rgb = rv.label_rgb_of
-        assert base_rgb is not None
-
-        def label_rgb_of(node: str):
-            return base_rgb(node) if node in on_route else _GREY
+        # A node keeps its hue only while it sits on the selected route, and everything off it
+        # — marker and label — recedes to grey. That is the widget's own rule now (see
+        # :func:`~meshterm.ui.pathgraph.render_path_graph`), decided in the graph's own id
+        # space, so a route reaching a relay by a short hash still lights the wide marker its
+        # hop is folded into.
+        label_rgb_of = rv.label_rgb_of
+        assert label_rgb_of is not None
 
         lines = list(
             render_path_graph(

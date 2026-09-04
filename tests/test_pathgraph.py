@@ -10,6 +10,7 @@ from meshterm.ui.pathgraph import (
     DST_NODE,
     SRC_NODE,
     _GRAPH_PAD_DOTS,
+    _OFF_ROUTE as OFF_ROUTE,
     _LANE_PITCH_ROWS,
     _OCCURRENCE_SEP,
     PathLayer,
@@ -790,3 +791,72 @@ def test_labels_ellipsize_only_when_wider_than_the_canvas() -> None:
     assert name not in plain  # the full 30-cell name cannot fit a 20-cell canvas
     assert "…" in plain  # so it is ellipsized to what fits
     assert all(len(_ANSI.sub("", ln)) <= 20 for ln in lines)  # never overruns the width
+
+
+def test_the_emphasised_path_is_the_only_one_drawn_in_colour() -> None:
+    """Off the highlighted path, every marker and label recedes to the off-route grey.
+
+    The fan says *which* route it is about only if everything not on it dims: the unused
+    lines already draw grey, and a full-hue marker sitting on one is the loudest thing in
+    the picture. The endpoints are on every path, so they keep their colour.
+    """
+    layers = [
+        PathLayer(hops=("aa",), color=WHITE, priority=2, emphasis=1),
+        PathLayer(hops=("bb", "cc"), color=GREY, priority=1),
+    ]
+    body = "\n".join(render_path_graph(
+        layers, 60,
+        glyph_of=_glyph,
+        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
+        label_rgb_of=lambda _node: GREEN,
+    ))
+    lit = [ln for ln in body.split("\n") if "aa" in _ANSI.sub("", ln)]
+    dim = [ln for ln in body.split("\n") if "bb" in _ANSI.sub("", ln)]
+    assert lit and _sgr(GREEN) in lit[0], "the selected route's label keeps its hue"
+    assert dim and _sgr(GREEN) not in dim[0]
+    assert _sgr(OFF_ROUTE) in dim[0], "an off-route label draws in the off-route grey"
+    # The marker recedes with the label: the relay glyph's own colour is drawn for the
+    # on-route node and never for the off-route one, which draws grey twice over (mark + label).
+    assert _sgr((0x65, 0x43, 0x21)) in body, "an on-route relay keeps its marker colour"
+    assert body.count(_sgr(OFF_ROUTE)) > 1
+
+
+def test_a_fan_with_nothing_emphasised_fades_nothing() -> None:
+    """No emphasis is no selection: with every layer equal there is no route to recede from,
+    and the caller's colours are used exactly as given."""
+    layers = [
+        PathLayer(hops=("aa",), color=WHITE, priority=2),
+        PathLayer(hops=("bb",), color=GREY, priority=1),
+    ]
+    body = "\n".join(render_path_graph(
+        layers, 60, glyph_of=_glyph,
+        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
+        label_rgb_of=lambda _node: GREEN,
+    ))
+    assert _sgr(OFF_ROUTE) not in body
+    assert body.count(_sgr(GREEN)) >= 2  # both relays' labels keep the hue they were given
+
+
+def test_a_lone_path_is_never_faded() -> None:
+    """One path has nothing to be read against, emphasised or not."""
+    body = "\n".join(render_path_graph(
+        [PathLayer(hops=("aa",), color=WHITE, priority=1, emphasis=1)], 60,
+        glyph_of=_glyph, label_of=lambda node: node[:2], label_rgb_of=lambda _node: GREEN,
+    ))
+    assert _sgr(OFF_ROUTE) not in body
+
+
+def test_the_highlight_lights_a_relay_reached_by_a_short_hash() -> None:
+    """Membership is decided in the graph's own id space, after the prefix coalesce: a route
+    that names a relay ``3d`` still lights the wide marker its hop is folded into."""
+    layers = [
+        PathLayer(hops=("3d63c6429436",), color=GREY, priority=2),
+        PathLayer(hops=("3d",), color=WHITE, priority=1, emphasis=1),
+    ]
+    body = "\n".join(render_path_graph(
+        layers, 60, glyph_of=_glyph,
+        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node[:2],
+        label_rgb_of=lambda _node: GREEN,
+    ))
+    assert _sgr(OFF_ROUTE) not in body, "the one relay drawn is on the selected route"
+    assert _sgr(GREEN) in body
