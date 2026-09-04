@@ -313,7 +313,6 @@ def _livefeed(cols: int, rows: int) -> Screen:
             Observation(node="a1b2c3d4", name="a1b2c3d4", kind="advert", snr=5.0, rssi=-90.0,
                         observed_at=utcnow()),
         ],
-        hub_active=lambda: True,
     )
 
 

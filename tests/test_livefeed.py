@@ -44,12 +44,11 @@ class _Fut:
 _KNOWN = {"a1b2": "Alice", "3d63": "YUL", "a1": "Alice", "3d": "YUL", "c0": "Us"}
 
 
-def _screen(seed=None, active=True, **kwargs) -> LiveFeedScreen:
+def _screen(seed=None, **kwargs) -> LiveFeedScreen:
     screen = LiveFeedScreen(
         session=_FakeSession(),
         resolve=lambda h: _KNOWN.get(h, ""),
         seed=list(seed or []),
-        hub_active=lambda: active,
         **kwargs,
     )
     screen.note_viewport(48)  # the frame records this before every real paint
@@ -72,8 +71,8 @@ def _stripped(lines: list[str]) -> list[str]:
 
 
 def _rows(screen: LiveFeedScreen, width: int) -> list[str]:
-    """Just the packet rows — the body past its heading and column header."""
-    return _stripped(screen.render_body(width))[2:]
+    """Just the packet rows — the body past its column header."""
+    return _stripped(screen.render_body(width))[1:]
 
 
 def _col(line: str, needle: str) -> int:
@@ -247,7 +246,7 @@ def test_livefeed_tokened_classes_are_about_their_token() -> None:
 def test_livefeed_column_header_sits_over_the_lanes_it_names() -> None:
     """The header names each lane, and every label lands on the values beneath it."""
     screen = _screen(seed=[_obs(node="3d63", kind="telemetry", snr=12.8, rssi=-105.0)])
-    header, row = _stripped(screen.render_body(72))[1:3]
+    header, row = _stripped(screen.render_body(72))[:2]
     assert header.split() == ["TIME", "CLASS", "SUBJECT", "SNR", "RSSI"]
     # Measured in display cells, not characters — the class icon is one character wide
     # but two cells, so a character index would report every later lane one column early.
@@ -268,13 +267,13 @@ def test_livefeed_column_header_is_pinned_and_carries_no_sort_cue() -> None:
     screen = _screen(seed=[_obs(node=f"n{i}", age_s=i) for i in range(40)])
     screen.note_viewport(12)
     lines = _stripped(screen.render_body(100))
-    assert "TIME" in lines[1]
-    assert not any(mark in lines[1] for mark in ("▲", "▼"))  # nothing here sorts
+    assert "TIME" in lines[0]
+    assert not any(mark in lines[0] for mark in ("▲", "▼"))  # nothing here sorts
     screen.handle("end")  # the list's last row — Back
     screen.handle("up")  # …and one up from it, the oldest packet: the window scrolls
     after = _stripped(screen.render_body(100))
-    assert after[1] == lines[1]  # …and the header is exactly where it was
-    assert "↑" in after[2] and "more" in after[2]  # the rows really did travel
+    assert after[0] == lines[0]  # …and the header is exactly where it was
+    assert "↑" in after[1] and "more" in after[1]  # the rows really did travel
 
 
 def test_livefeed_highlight_uses_the_app_wide_cursor() -> None:
@@ -284,7 +283,7 @@ def test_livefeed_highlight_uses_the_app_wide_cursor() -> None:
     rows = _rows(screen, 100)
     assert rows[0].startswith("❯ ") and rows[1].startswith("  ")
     assert "▸" not in "\n".join(rows)  # the old odd-one-out mark is gone
-    raw = screen.render_body(100)[2]
+    raw = screen.render_body(100)[1]
     assert raw.startswith("\x1b[")  # the pointer carries the cursor style, not bare text
 
 
@@ -391,7 +390,7 @@ def test_livefeed_carries_no_exit_row() -> None:
     # The heading and column header stay put as the feed scrolls under them.
     screen.handle("end")
     after = _stripped(screen.render_body(100))
-    assert "↑" in after[2] and "more" in after[2]
+    assert "↑" in after[1] and "more" in after[1]
     assert "Back" not in " ".join(after)
 
 
@@ -419,7 +418,7 @@ def test_livefeed_empty_feed_draws_its_note_and_nothing_else() -> None:
     screen = _screen()
     screen.future = _Fut()
     lines = _stripped(screen.render_body(100))
-    assert "nothing heard yet" in lines[1]
+    assert "nothing heard yet" in lines[0]
     assert "Back" not in " ".join(lines)
     assert not any(line.startswith("❯") for line in lines)  # nothing to point at
     screen.handle("up")  # nowhere to go, and no crash on the way
@@ -429,14 +428,14 @@ def test_livefeed_empty_feed_draws_its_note_and_nothing_else() -> None:
 
 
 def test_livefeed_windows_inside_the_fixed_screen() -> None:
-    """The heading stays pinned: the body fits the viewport and the feed rows window."""
+    """The header stays pinned: the body fits the viewport and the feed rows window."""
     seed = [_obs(node=f"n{i}", age_s=i) for i in range(40)]
     screen = _screen(seed=seed)
     screen.note_viewport(24)
     lines = screen.render_body(100)
-    assert len(lines) <= 24  # heading + feed window == the viewport, never more
+    assert len(lines) <= 24  # column header + feed window == the viewport, never more
     body = _plain(lines)
-    assert "newest first" in body  # the pinned status line is still there
+    assert "TIME" in body  # the pinned column header is still there
     assert "↓" in body and "more" in body  # hidden feed rows are counted below
 
 
@@ -448,7 +447,7 @@ _CRAMPED = 44
 def test_livefeed_the_whole_row_fits_a_72_column_screen() -> None:
     """No row overflows at 72 — which is why ←→ has nothing to advertise there."""
     screen = _screen(seed=[_obs(node="n0", kind="telemetry")])
-    for line in _stripped(screen.render_body(72))[1:]:
+    for line in _stripped(screen.render_body(72)):
         assert len(line.rstrip()) <= 72
     assert screen._hmax == 0
     assert "←→" not in screen.footer_hint
@@ -497,8 +496,3 @@ def test_livefeed_advertises_line_scroll_only_where_it_acts() -> None:
     assert "←→ scroll line" in screen.footer_hint
     assert len(screen.footer_hint) <= 72  # the screens-at-72 rule, fullest state
 
-
-def test_livefeed_without_a_device_reads_as_waiting() -> None:
-    """With the hub idle the heading says so instead of pretending to be live."""
-    screen = _screen(active=False)
-    assert "○ waiting for a device" in _plain(screen.render_body(100))

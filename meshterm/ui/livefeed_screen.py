@@ -73,8 +73,8 @@ from .widgets import NameKeyResolver, TypeOf
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: Seconds between full repaints while the feed is open (keeps the live-light and any
-#: age-sensitive chrome honest even between hub events).
+#: Seconds between full repaints while the feed is open (keeps age-sensitive chrome
+#: honest even between hub events).
 _REFRESH_S = 1.0
 
 #: How many feed rows are kept (the feed windows within the screen, so this is
@@ -207,7 +207,6 @@ class LiveFeedScreen(Screen):
         session: Any,
         resolve: Any,
         seed: list[Observation],
-        hub_active: Any,
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
         channels: Sequence[tuple[str, bytes]] = (),
@@ -222,7 +221,6 @@ class LiveFeedScreen(Screen):
             resolve: Maps a node hash to a friendly contact name when known.
             seed: Stored observations to open with (oldest first, as the repository
                 returns them); the newest :data:`_FEED_CAP` become the opening feed.
-            hub_active: Zero-arg callable: whether the event hub is pumping.
             prefix_bytes: The hash width to light in the packet viewer's keys.
             self_name: Our own node's name, drawn white wherever it appears.
             channels: The device's configured channels, as ``(name, secret)`` pairs. The
@@ -243,7 +241,6 @@ class LiveFeedScreen(Screen):
         self.title = "Live feed"
         self._session = session
         self._resolve = resolve
-        self._hub_active = hub_active
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._channels = channels
@@ -451,13 +448,12 @@ class LiveFeedScreen(Screen):
     # --- rendering ---------------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """The status line and column header, the feed's window, then the exit group.
+        """The column header, then the feed's window.
 
-        Every line but the feed's own is pinned by construction rather than by the base
-        screen's sticky-header machinery: the chrome above and below is struck from the
-        viewport first and the feed windows *inside* what is left (see
-        :meth:`_feed_lines`), so the body never scrolls — the header can't travel off the
-        top of it, and the oldest packet can't sink past the bottom.
+        The header is pinned by construction rather than by the base screen's sticky-header
+        machinery: it is struck from the viewport first and the feed windows *inside* what
+        is left (see :meth:`_feed_lines`), so the body never scrolls — the header can't
+        travel off the top of it, and the oldest packet can't sink past the bottom.
         """
         if self._selected is not None:
             self._selected = min(self._selected, len(self._feed) - 1) if self._feed else None
@@ -465,7 +461,7 @@ class LiveFeedScreen(Screen):
             self._hmax = 0  # nothing highlighted scrolls, so nothing advertises ←→
             self._pinned = False  # a feed with no rows has nothing to pin to
         show_label = width >= _FEED_LABEL_MIN_WIDTH
-        lines = [render_to_ansi(self._heading(), width, no_wrap=True)]
+        lines: list[str] = []
         if self._feed:  # a header over nothing is noise; the empty note speaks for itself
             lines.append(render_to_ansi(self._column_header(show_label), width, no_wrap=True))
         win = max(1, self._scroll_viewport - len(lines))
@@ -473,23 +469,14 @@ class LiveFeedScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def _heading(self) -> Text:
-        """The feed's pinned status line, with a live-light for the hub."""
-        heading = Text("newest first · Enter opens a packet  ", style="muted")
-        if self._hub_active():
-            heading.append("● live", style="ok")
-        else:
-            heading.append("○ waiting for a device", style="muted")
-        return heading
-
     @staticmethod
     def _column_header(show_label: bool) -> Text:
         """The lane names, in the app's uppercase muted column-header voice.
 
         Laid out lane for lane against :meth:`_feed_row`, the pointer column included, so
         every label sits over the values it names. Nothing here sorts — the feed is a
-        stream, and its one order (newest first) is the status line's to state — so no
-        column carries the contact list's sort triangle or its lit active-column style;
+        stream, and its one order (newest first) is what the ``TIME`` lane reads down — so
+        no column carries the contact list's sort triangle or its lit active-column style;
         these are signposts, not controls. On a terminal too narrow for the class label
         the header drops its ``CLASS`` too, leaving the icon lane unlabelled rather than
         clipping a word into three cells.
@@ -807,7 +794,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
 
     Wires the screen to its feeds: stored recent observations seed it, a hub
     subscription streams every new packet in, and a once-a-second ticker keeps the
-    live-light honest. Everything is torn down when the screen closes.
+    clock-sensitive rows honest. Everything is torn down when the screen closes.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
@@ -854,7 +841,6 @@ async def open_livefeed(ctx: "AppContext") -> None:
         session=session,
         resolve=resolve,
         seed=seed,
-        hub_active=lambda: ctx.events.active,
         prefix_bytes=prefix_bytes,
         self_name=self_name,
         channels=channels,
@@ -866,7 +852,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
     unsubscribe = ctx.events.subscribe(screen.on_event)
 
     async def tick() -> None:
-        """Repaint once a second so the live-light and clock-sensitive rows stay honest."""
+        """Repaint once a second so the clock-sensitive rows stay honest."""
         while True:
             await asyncio.sleep(_REFRESH_S)
             session.invalidate()
