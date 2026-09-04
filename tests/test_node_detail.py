@@ -37,7 +37,7 @@ from meshterm.ui.node_detail_screen import (
 )
 from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
 from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, SELF_GLYPH, PathHop, PathLine
-from meshterm.ui.tui.screen import CANCEL
+from meshterm.ui.tui.screen import CANCEL, ListWindow
 from meshterm.ui.widgets import highlighted_hash, route_graph_style, tab_strip
 
 US = "aaaaaaaaaaaa"
@@ -1009,10 +1009,11 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
 def test_fit_blocks_walks_wrapped_rows_into_view() -> None:
     """The variable-height fit keeps whole blocks, spends marker lines only when rows hide,
     and walks the window down to the cursor's row."""
-    screen = _screen()
-    top, count = screen._fit_blocks([2, 2, 2, 2], 5, 3)  # cursor on the last 2-line row
+    window = ListWindow()
+    top, count = window.fit_blocks([2, 2, 2, 2], 5, 3)  # cursor on the last 2-line row
     assert top + count == 4 and top == 2  # slid to the tail; the last two rows fit
-    top, count = screen._fit_blocks([1, 1], 5, 0)
+    assert window.page == count  # the settled capacity is the paging stride
+    top, count = window.fit_blocks([1, 1], 5, 0)
     assert (top, count) == (0, 2)  # everything fits: no window, no markers
 
 

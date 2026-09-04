@@ -491,6 +491,46 @@ class ListWindow:
         self.page = count
         return top, count
 
+    def fit_blocks(
+        self, heights: list[int], win: int, index: Optional[int] = None
+    ) -> tuple[int, int]:
+        """Settle the window over variable-height rows: ``(top, count)`` blocks to draw.
+
+        The hanging-wrap sibling of :meth:`fit`, for a list whose rows are *blocks* of
+        rendered lines — a route row and the muted facts under it, a wrapped path line —
+        rather than one line each. A block is never split across the window's edge, the
+        faint edge markers eat a window line exactly when rows hide beyond them, and the
+        highlighted block is walked into view.
+
+        Args:
+            heights: Rendered line count per list row.
+            win: Lines the window may spend — on content and markers alike.
+            index: A highlighted row that must stay visible, or ``None`` when the window
+                scrolls free (``top`` is then just clamped).
+
+        Returns:
+            The first visible row and how many rows to draw, as :meth:`fit` returns them.
+        """
+        n = len(heights)
+        if sum(heights) <= win:
+            self.top = 0
+            self.page = max(1, n)
+            return 0, n
+        top = max(0, min(self.top, n - 1))
+        if index is not None:
+            top = min(top, index)
+        while True:
+            above = 1 if top > 0 else 0
+            count = _fill(heights, top, win - above)
+            if top + count < n:  # rows hide below: the marker takes one of the lines
+                count = max(1, _fill(heights, top, win - above - 1))
+            if index is None or index < top + count:
+                break
+            top += 1  # walk the window down until the cursor's row is inside
+        self.top = top
+        self.page = max(1, count)
+        return top, count
+
     def to_end(self) -> None:
         """Slide the window to the list's tail on the next :meth:`fit`.
 
@@ -504,6 +544,18 @@ class ListWindow:
         """The faint edge row counting rows hidden ``"above"`` or ``"below"``."""
         arrow = "↑" if direction == "above" else "↓"
         return Text(f"  {arrow} {hidden} more", style="faint")
+
+
+def _fill(heights: list[int], top: int, budget: int) -> int:
+    """How many whole blocks from ``top`` fit into ``budget`` lines (greedy, in order)."""
+    used = 0
+    count = 0
+    for h in heights[top:]:
+        if used + h > budget:
+            break
+        used += h
+        count += 1
+    return count
 
 
 def _clamp_scroll(scroll: int, total: int, viewport: int) -> int:

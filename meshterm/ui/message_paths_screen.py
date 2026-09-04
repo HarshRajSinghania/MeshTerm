@@ -24,7 +24,12 @@ detail read together:
   cross-reference by hue instead of by spelling the hex twice. Under it, hanging muted,
   the frame's own facts: time heard, reception SNR, and which resend it was.
   The route is the line you pick — it is what one arrival differs from another by, and
-  what the graph highlights. ↑↓ move the selection (the graph's highlight follows); a
+  what the graph highlights. The list scrolls *inside* the dialog, in whatever rows the
+  quote and the graph above it leave, with faint ``↑ n more`` / ``↓ n more`` edge markers
+  (the app-wide windowed-list pattern, :class:`~meshterm.ui.tui.screen.ListWindow`) — so
+  walking the arrivals can never push the picture they belong to out of the box, and the
+  fan compresses its own lanes before the list would lose its window. ↑↓ move the
+  selection (the graph's highlight follows), PgUp/PgDn page it by a windowful; a
   route longer than the dialog **scrolls horizontally with ←→**, the whole line shifting
   under a cracked chip at whichever edge continues, and snaps back the moment the
   selection moves on. A row you are *not* on is cut the same way — it just cannot slide.
@@ -55,7 +60,7 @@ from .pathline import (
 )
 from .theme import snr_style
 from .tui.render import crop_cells, render_to_ansi
-from .tui.screen import Screen
+from .tui.screen import ListWindow, Screen
 from .widgets import (
     NameKeyResolver,
     NodeResolver,
@@ -71,6 +76,16 @@ _HSTEP = 4
 #: Columns the reception-facts line hangs in under the route it belongs to — past the
 #: ``❯ `` pointer lane, so the pair reads as one arrival with its detail tucked under it.
 _DETAIL_INDENT = 4
+
+#: The fewest rows the fan may compress to, and the most it may spend — the graph gives
+#: its lane pitch up to the arrival list before the list would lose its window.
+_GRAPH_MIN_ROWS = 5
+_GRAPH_MAX_ROWS = 15
+
+#: Lines the arrival list is guaranteed out of the dialog's budget, so a tall fan can
+#: never squeeze it below *two* arrivals and the marker saying more are hidden — one row
+#: alone is a fact, and what this dialog is for is comparing one arrival against another.
+_LIST_MIN_LINES = 5
 
 #: Edge colours: the selected path draws white over the unused paths' gray.
 _EDGE_SELECTED = (255, 255, 255)
@@ -141,15 +156,40 @@ class MessagePathsScreen(Screen):
         self._hshift = 0
         self._hmax = 0
         self._cursor: Optional[int] = None
+        #: The arrival list's window over the rows the pinned head leaves (its ``page`` is
+        #: the PgUp/PgDn stride), and whether it currently hides any rows — which is what
+        #: makes the paging keys worth advertising.
+        self._list = ListWindow()
+        self._list_hidden = False
 
     # --- input ---------------------------------------------------------------
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Row keys while there are rows; a bare close hint otherwise."""
-        if self._arrivals:
-            return "↑↓ move · ←→ scroll line · Esc close"
-        return "Esc close"
+        """Row keys while there are rows; a bare close hint otherwise.
+
+        The paging atom appears only while the window actually hides arrivals — the
+        app-wide rule that a hint never advertises a key that would do nothing.
+        """
+        if not self._arrivals:
+            return "Esc close"
+        parts = ["↑↓ move"]
+        if self._list_hidden:
+            parts.append("PgUp/PgDn scroll")
+        parts.extend(("←→ scroll line", "Esc close"))
+        return " · ".join(parts)
+
+    @property
+    def fkey_lane(self):
+        """The shared pager, dimmed while every arrival is already on screen.
+
+        Both banks move the *selection* here — the pager by a windowful, the jumps to the
+        first and last arrival — so they are live exactly when there is more than one
+        arrival to move between, whether or not the window hides any.
+        """
+        from .tui.fkeys import default_lane
+
+        return default_lane(nav=len(self._arrivals) > 1)
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the selection, shift the selected line sideways, or dismiss."""
@@ -161,10 +201,11 @@ class MessagePathsScreen(Screen):
             self._index = (self._index + 1) % rows
             self._hshift = 0
         elif action == "pageup" and rows:
-            self._index = max(0, self._index - self._page_step)
+            # A windowful of *arrivals*, not of body lines: the list is what moves.
+            self._index = max(0, self._index - self._list.page)
             self._hshift = 0
         elif action in ("pagedown", "space") and rows:
-            self._index = min(rows - 1, self._index + self._page_step)
+            self._index = min(rows - 1, self._index + self._list.page)
             self._hshift = 0
         elif action in ("home", "ctrl_home") and rows:
             self._index = 0
@@ -180,13 +221,24 @@ class MessagePathsScreen(Screen):
             self.resolve(None)
 
     def cursor_line(self) -> Optional[int]:
-        """The selected row, so a tall arrival list scrolls with the selection."""
+        """The selected row's body line. The window already keeps it inside the dialog, so
+        this only bites on a terminal too short for even the compressed head."""
         return self._cursor
 
     # --- rendering -------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
-        """The quoted message and summary, the path graph, then the arrival rows."""
+        """The pinned quote and path graph, then the arrival list windowed under them.
+
+        The head — the quoted message, the evidence summary, the fan and its captions —
+        holds still, and only the arrival rows scroll (see
+        :class:`~meshterm.ui.tui.screen.ListWindow`), so walking the arrivals can never
+        carry the picture they are being compared against out of the dialog. The three
+        share one budget: the head takes its lines, the list is guaranteed
+        :data:`_LIST_MIN_LINES`, and the fan compresses its lane pitch into whatever is
+        left rather than growing past it.
+        """
+        viewport = self._scroll_viewport
         quoted = self._message.text.replace("\n", " ")
         if len(quoted) > 64:
             quoted = quoted[:63] + "…"
@@ -200,6 +252,7 @@ class MessagePathsScreen(Screen):
             render_to_ansi(stamp, width, no_wrap=True),
         ]
         self._cursor = None
+        self._list_hidden = False
         if not self._arrivals:
             lines.append("")
             note = (
@@ -212,9 +265,22 @@ class MessagePathsScreen(Screen):
             self._scroll_total = len(lines)
             return lines
 
+        # The rows are drawn before the fan is sized: what they need is one of the terms
+        # the fan's row ceiling is struck from.
+        blocks = [
+            self._row_block(arrival, i == self._index, width)
+            for i, arrival in enumerate(self._arrivals)
+        ]
+        heights = [len(block) for block in blocks]
+
         # No blank line above the graph: its canvas already opens with air over the
         # topmost lane, so a spacer here would read as two rows of margin.
-        graph = self._graph_lines(width)
+        revisit = self._revisit_line(width)
+        # The fan's own trailing chrome (caption, node-type key, the revisit note) plus the
+        # blank that sets the list apart — all struck from the budget before the ceiling is.
+        chrome = 2 + len(revisit) + 1
+        room = viewport - len(lines) - chrome - min(sum(heights), _LIST_MIN_LINES)
+        graph = self._graph_lines(width, max(_GRAPH_MIN_ROWS, min(_GRAPH_MAX_ROWS, room)))
         if graph:
             lines.extend(graph)
             far = "you" if not self._destination else self._destination
@@ -224,24 +290,39 @@ class MessagePathsScreen(Screen):
             )
             lines.append(render_to_ansi(caption, width, no_wrap=True))
             lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
-            lines.extend(self._revisit_line(width))
+            lines.extend(revisit)
         lines.append("")
-        for i, arrival in enumerate(self._arrivals):
+
+        # -- the arrival list, windowed into whatever the head left.
+        window = max(min(heights), viewport - len(lines))
+        top, count = self._list.fit_blocks(heights, window, self._index)
+        if top > 0:
+            lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
+        for i in range(top, top + count):
             if i == self._index:
                 self._cursor = len(lines)
-                lines.append(self._selected_line(arrival, width))
-            else:
-                row = Text("  ")
-                row.append_text(self._path_text(arrival))
-                # Cut here rather than letting the render boundary ellipsize it: an
-                # unselected route runs off the lane exactly as the selected one does,
-                # and it owes the reader the same cracked chip rather than three dots.
-                lines.append(render_to_ansi(cut_to(row, width), width, no_wrap=True))
-            detail = Text(" " * _DETAIL_INDENT)
-            detail.append_text(self._detail_text(arrival))
-            lines.append(render_to_ansi(detail, width, no_wrap=True))
+            lines.extend(blocks[i])
+        below = len(blocks) - top - count
+        if below > 0:
+            lines.append(render_to_ansi(ListWindow.marker(below, "below"), width))
+        self._list_hidden = top > 0 or below > 0
         self._scroll_total = len(lines)
         return lines
+
+    def _row_block(self, arrival: Arrival, selected: bool, width: int) -> list[str]:
+        """One arrival as the window moves it: its route, then its facts hanging under it."""
+        if selected:
+            route = self._selected_line(arrival, width)
+        else:
+            row = Text("  ")
+            row.append_text(self._path_text(arrival))
+            # Cut here rather than letting the render boundary ellipsize it: an
+            # unselected route runs off the lane exactly as the selected one does,
+            # and it owes the reader the same cracked chip rather than three dots.
+            route = render_to_ansi(cut_to(row, width), width, no_wrap=True)
+        detail = Text(" " * _DETAIL_INDENT)
+        detail.append_text(self._detail_text(arrival))
+        return [route, render_to_ansi(detail, width, no_wrap=True)]
 
     # -- the rows --
 
@@ -392,7 +473,7 @@ class MessagePathsScreen(Screen):
                 seen.append(arrival.hops)
         return seen
 
-    def _graph_lines(self, width: int) -> list[str]:
+    def _graph_lines(self, width: int, max_rows: int) -> list[str]:
         """Draw every distinct path origin → us, the selected one white over gray.
 
         The shared route-graph widget does the layout (a left-to-right flow of paths that
@@ -408,6 +489,12 @@ class MessagePathsScreen(Screen):
         exactly as the node detail's Routes tab fixes it by evidence order, so the fan's
         geometry holds still as ↑↓ walk the arrivals — only the emphasis (which lane draws
         white and on top) follows the pick.
+
+        Args:
+            width: Canvas width in cells.
+            max_rows: The most rows the fan may spend — what the dialog's budget leaves once
+                the quote, the fan's own captions and the list's guaranteed lines are paid
+                for. A fan with more lanes than that compresses its lane pitch to fit.
         """
         selected = self._arrivals[self._index].hops
         paths = self._paths()
@@ -427,7 +514,7 @@ class MessagePathsScreen(Screen):
             destination=self._destination, type_of=self._type_of, key_of=self._key_of,
         )
         return render_path_graph(
-            layers, width,
+            layers, width, max_rows=max_rows,
             glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
             allow_duplicate_nodes=True,
         )

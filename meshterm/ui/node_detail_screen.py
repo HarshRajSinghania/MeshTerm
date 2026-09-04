@@ -59,9 +59,9 @@ lanes before it would overflow, the location preview grows into what the Info ta
 and a faint rule closes it, so the drawn view and the rows below read as separate bands.
 The route list scrolls *inside* the leftover rows with faint ``↑ n more`` / ``↓ n more``
 edge markers — the app-wide windowed-list pattern (see
-:class:`~meshterm.ui.tui.screen.ListWindow`; the variable-height rows get their own fit
-here) — so the graph, the selection driving it, and the action rows share one screen
-however many routes a busy node has. ``PgUp/PgDn`` page the cursor through the window.
+:class:`~meshterm.ui.tui.screen.ListWindow`, fitting whole blocks) — so the graph, the
+selection driving it, and the action rows share one screen however many routes a busy
+node has. ``PgUp/PgDn`` page the cursor through the window.
 
 The screen is a pure read-and-route view: it renders already-resolved display data and
 resolves an action token (the Trace token carrying the selected route's spec via
@@ -463,11 +463,9 @@ class NodeDetailScreen(Screen):
         #: The composed route fan for one (width, rows, selection) — see _routes_stage.
         self._stage_memo: Optional[tuple[tuple, list[str]]] = None
         self._cursor: Optional[int] = None
-        #: The route list's window state: the first visible row, the rows the last fit
-        #: carried (the PgUp/PgDn stride), and whether any rows are hidden (gates the
-        #: footer's scroll atom).
-        self._list_top = 0
-        self._list_page = 1
+        #: The route list's window over the leftover rows (its ``page`` is the PgUp/PgDn
+        #: stride), and whether any rows are hidden by it (gates the footer's scroll atom).
+        self._list = ListWindow()
         self._list_hidden = False
         #: The highlighted route's pathline horizontal scroll (cells shifted in, ``←/→``);
         #: resets whenever the cursor leaves that row (see :data:`_HSHIFT_RESET_ACTIONS`).
@@ -613,11 +611,11 @@ class NodeDetailScreen(Screen):
                 self._sync_route_sel(focus)
         elif action == "pageup":
             if n:
-                self._row_index = max(0, self._row_index - max(1, self._list_page))
+                self._row_index = max(0, self._row_index - self._list.page)
                 self._sync_route_sel(focus)
         elif action in ("pagedown", "space"):
             if n:
-                self._row_index = min(n - 1, self._row_index + max(1, self._list_page))
+                self._row_index = min(n - 1, self._row_index + self._list.page)
                 self._sync_route_sel(focus)
         elif action in ("home", "ctrl_home"):
             if n:
@@ -659,7 +657,7 @@ class NodeDetailScreen(Screen):
         self._tab_index = (self._tab_index + delta) % len(self._tabs)
         self._row_index = 0
         self._route_sel = 0
-        self._list_top = 0
+        self._list.top = 0
         self._hshift = 0
         self._key_shift = 0
         self.scroll_to_top()
@@ -758,8 +756,7 @@ class NodeDetailScreen(Screen):
             window = max(1, viewport - len(lines) - action_lines)
             heights = [len(block) for block in route_blocks]
             on_route = self._row_index if self._row_index < len(route_blocks) else None
-            top, count = self._fit_blocks(heights, window, on_route)
-            self._list_page = max(1, count)
+            top, count = self._list.fit_blocks(heights, window, on_route)
             if top > 0:
                 lines.append(render_to_ansi(ListWindow.marker(top, "above"), width))
             for i in range(top, top + count):
@@ -784,37 +781,6 @@ class NodeDetailScreen(Screen):
 
         self._scroll_total = max(1, len(lines))
         return lines
-
-    def _fit_blocks(self, heights: list[int], win: int, index: Optional[int]) -> tuple[int, int]:
-        """Settle the route-list window over variable-height rows: ``(top, count)`` to draw.
-
-        The hanging-wrap sibling of :meth:`~meshterm.ui.tui.screen.ListWindow.fit`: each row
-        is a whole block of rendered lines (a wrapped route never splits mid-hang), the faint
-        edge markers eat a window line exactly when rows hide beyond them, and the cursor's
-        row (``index``, or ``None`` while it rests on the action rows) is walked into view.
-
-        Args:
-            heights: Rendered line count per route row.
-            win: Lines the window may spend — on content and markers alike.
-            index: The cursor's route row to keep visible, or ``None`` to just clamp.
-        """
-        n = len(heights)
-        if sum(heights) <= win:
-            self._list_top = 0
-            return 0, n
-        top = max(0, min(self._list_top, n - 1))
-        if index is not None:
-            top = min(top, index)
-        while True:
-            above = 1 if top > 0 else 0
-            count = _fill(heights, top, win - above)
-            if top + count < n:  # rows hide below: the marker takes one of the lines
-                count = max(1, _fill(heights, top, win - above - 1))
-            if index is None or index < top + count:
-                break
-            top += 1  # walk the window down until the cursor's row is inside
-        self._list_top = top
-        return top, count
 
     def _info_stage(self, width: int, budget: int) -> list[str]:
         """The vitals block and, with a fix, the location preview grown to fit.
@@ -1062,18 +1028,6 @@ class NodeDetailScreen(Screen):
         text.no_wrap = True
         text.truncate(width, overflow="ellipsis")
         return render_to_ansi(text, width)
-
-
-def _fill(heights: list[int], top: int, budget: int) -> int:
-    """How many whole blocks from ``top`` fit into ``budget`` lines (greedy, in order)."""
-    used = 0
-    count = 0
-    for h in heights[top:]:
-        if used + h > budget:
-            break
-        used += h
-        count += 1
-    return count
 
 
 # -- geographic helpers --------------------------------------------------------
