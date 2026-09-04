@@ -63,6 +63,16 @@ _LIVENESS_POLL_S = 2.0
 #: can't fire a false "disconnected" prompt (seconds).
 _LIVENESS_CONFIRM_S = 0.4
 
+#: How long each round of the reconnect flow listens for a dropped Bluetooth companion's
+#: advertisement (seconds). The scan ends the instant the address is heard, so this is a
+#: ceiling on a *miss*, not a cost paid on success — long enough to cover several advertising
+#: intervals of a companion that has just powered on.
+_BLE_PRESENCE_SCAN_S = 8.0
+
+#: Pause between BLE presence scans (seconds). The scan window is the real wait; this only
+#: stops the loop spinning when scanning fails instantly (no adapter, Bluetooth switched off).
+_BLE_RESCAN_PAUSE_S = 1.0
+
 
 def _arm_exit_watchdog(seconds: float = _EXIT_WATCHDOG_S) -> None:
     """Guarantee the process terminates even if the exit path wedges.
@@ -991,34 +1001,59 @@ async def _animate_dialog(session: TuiSession, dialog: ReconnectDialog) -> None:
 async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
     """Poll for the device to return, reconnect when it does, then dismiss ``dialog``.
 
-    For serial, waits for the OS to re-enumerate the port the connection was opened on before
-    each attempt, so a reconnect is only tried once there's a device to reach. For Bluetooth
-    there is no cheap "is it back yet" probe short of a full scan, so it simply attempts a
-    reconnect each interval — ``create_ble`` connects directly by address and fails fast when
-    the peripheral isn't in range. Either way a failed attempt (the endpoint is back but the
-    board isn't ready yet, or it dropped again) just loops and retries. On the first success
-    the dialog's future is resolved with ``"reconnected"``, dismissing the popup. Runs until
-    it succeeds or the task is cancelled (the user quit).
+    The dead link is released up front (:meth:`~meshterm.context.AppContext.release_link`) so
+    the peripheral is free to advertise while we wait for it. Each transport then waits for its
+    own evidence that the device is reachable before touching the radio, so an attempt is only ever made against something that is actually there. Serial
+    waits for the OS to re-enumerate the port the connection was opened on. Bluetooth listens
+    for the companion's advertisement (:func:`~meshterm.core.discovery.find_ble_device`), which
+    is the same question asked of the only registry BLE has, and hands the resulting live
+    handle to :meth:`~meshterm.context.AppContext.reconnect` — a power-cycled peripheral is a
+    new one to the OS, so scanning is both how we notice it came back and how we get something
+    that can open it. Blind-retrying instead, as this used to, was doubly wrong: it drove
+    bleak's own internal address lookup into a device that wasn't advertising (a slow failure
+    that overlapped the window the device returned in) and, when one finally landed, it landed
+    with the startup scan's dead handle. TCP has no such probe and simply retries the connect,
+    which fails fast against an absent endpoint.
+
+    A failed attempt (the device is back but the board isn't ready yet, or it dropped again)
+    just loops and retries. On the first success the dialog's future is resolved with
+    ``"reconnected"``, dismissing the popup. Runs until it succeeds or the task is cancelled
+    (the user quit).
 
     Args:
         ctx: The shared application context.
         dialog: The reconnect dialog to dismiss once the link is back.
     """
     from ..core.connection import serial_port_present
+    from ..core.discovery import find_ble_device
+
+    # Put the dead link down before going looking for the device. A Bluetooth companion we are
+    # still nominally connected to does not advertise, so the scan below would wait out a
+    # peripheral that is powered on and silent purely because we never let go of it.
+    await ctx.release_link()
 
     while True:
-        # Serial: wait for the port to re-appear before touching the radio. BLE/TCP (and an
-        # unknown/deferred serial port): skip the wait and just retry the reconnect itself —
-        # ``create_ble``/``create_tcp`` connect by address/endpoint and fail fast when absent.
-        if ctx.active_transport == "serial":
+        ble_device: object | None = None
+        transport = ctx.active_transport
+        if transport == "serial":
             port = ctx.active_port
             # Off the loop: the probe enumerates ports, which blocks long enough to stall
             # the very spinner this dialog is showing while it waits.
             if port is not None and not await asyncio.to_thread(serial_port_present, port):
                 await asyncio.sleep(_LIVENESS_POLL_S)
                 continue
+        elif transport == "ble":
+            address = ctx.active_address
+            if address is not None:
+                ble_device = await find_ble_device(address, timeout=_BLE_PRESENCE_SCAN_S)
+                if ble_device is None:
+                    # The scan window is itself the wait — it just spent several seconds
+                    # listening — so only a brief pause is needed to keep a scan that fails
+                    # instantly (Bluetooth switched off mid-session) from spinning.
+                    await asyncio.sleep(_BLE_RESCAN_PAUSE_S)
+                    continue
         try:
-            await ctx.reconnect()
+            await ctx.reconnect(ble_device=ble_device)
         except Exception:  # noqa: BLE001 - not reachable yet; keep the popup up and retry
             await asyncio.sleep(_LIVENESS_POLL_S)
             continue

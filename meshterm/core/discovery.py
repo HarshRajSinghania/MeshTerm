@@ -49,6 +49,12 @@ BLE_NAME_PREFIX = "MeshCore"
 #: advertisement, short enough not to stall the startup splash noticeably.
 BLE_SCAN_TIMEOUT_S = 5.0
 
+#: Default seconds to watch for one *known* companion's advertisement while waiting for it to
+#: come back (see :func:`find_ble_device`). Deliberately longer than the startup scan: nothing
+#: is waiting on it, the watch ends the instant the device is heard, and a companion that just
+#: powered on can take several advertising intervals to be picked up by the OS.
+BLE_PRESENCE_TIMEOUT_S = 8.0
+
 # USB vendor IDs frequently seen on MeshCore/Meshtastic companion hardware and the
 # USB-UART bridges they ship with. Used only to name, flag, and sort likely devices.
 KNOWN_LORA_VIDS: dict[int, str] = {
@@ -404,6 +410,49 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
         )
     devices.sort(key=lambda d: (d.name or "").casefold())
     return devices
+
+
+async def find_ble_device(
+    address: str, timeout: float = BLE_PRESENCE_TIMEOUT_S
+) -> Optional[object]:
+    """Watch for one known companion's advertisement, returning its live ``BLEDevice``.
+
+    The Bluetooth counterpart to :func:`~meshterm.core.connection.serial_port_present`, and it
+    answers the same question the reconnect flow asks of a serial port: *is the device back
+    yet?* Unlike a serial port there is no OS registry to consult — a peripheral exists only
+    while it is advertising — so the probe is a scan. ``find_device_by_address`` returns the
+    **moment** the address is heard rather than at the end of the window, so a generous
+    ``timeout`` costs nothing when the device is present and simply keeps listening when it
+    isn't.
+
+    The returned handle matters as much as the answer. A companion that has been power-cycled
+    is a *new* peripheral to the OS: the ``BLEDevice`` captured by an earlier scan names a
+    connection endpoint that no longer resolves, and on Windows handing bleak that stale object
+    fails the connect outright. Answering the presence question with a freshly-scanned handle
+    means the reconnect that follows opens the device that is actually there (see
+    :meth:`~meshterm.context.AppContext.reconnect`).
+
+    Never raises: a missing ``bleak``, a disabled adapter, or a driver hiccup reads as "not
+    advertising", which is the truthful answer for a device we cannot currently reach.
+
+    Args:
+        address: The Bluetooth address to listen for (as reported by discovery).
+        timeout: Seconds to keep listening before giving up on this round.
+
+    Returns:
+        The live ``bleak.BLEDevice`` if the address advertised within ``timeout``, else
+        ``None``. Typed ``object`` so ``bleak`` stays an optional dependency.
+    """
+    try:
+        from bleak import BleakScanner
+    except ImportError:  # bleak not installed → BLE simply unavailable
+        return None
+
+    try:
+        return await BleakScanner.find_device_by_address(address, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 - no adapter / OS Bluetooth off / driver hiccup
+        _log.debug("BLE presence scan for %s unavailable: %s", address, exc)
+        return None
 
 
 async def discover_all(

@@ -16,12 +16,14 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
+from meshterm import context as context_module
 from meshterm.context import AppContext
-from meshterm.core import connection
+from meshterm.core import connection, discovery
 from meshterm.core.admin_store import AdminStore
 from meshterm.core.config import Settings
 from meshterm.core.connection import DeviceCommandError, is_connection_lost
 from meshterm.core.device_store import DeviceStore
+from meshterm.core.discovery import DiscoveredDevice
 from meshterm.persistence.repository import Repository
 from meshterm.ui import menu
 
@@ -743,7 +745,7 @@ async def test_handle_disconnect_auto_reconnects_when_port_returns(
         polls["n"] += 1
         return polls["n"] >= 2  # absent on the first poll, back thereafter
 
-    async def fake_reconnect(self: AppContext) -> None:
+    async def fake_reconnect(self: AppContext, *, ble_device: object | None = None) -> None:
         self._device = object()  # a fresh connection
 
     monkeypatch.setattr(connection, "serial_port_present", fake_present)
@@ -957,3 +959,152 @@ async def test_disconnect_graceful_path_needs_no_force(monkeypatch) -> None:
     assert healthy.disconnected
     assert not healthy.force_stopped
     assert dev._mc is None
+
+
+class _FakeBleDevice:
+    """A stand-in for a connected BLE :class:`Device` whose link has already dropped."""
+
+    transport = "ble"
+
+    def __init__(self) -> None:
+        self.disconnected = False
+
+    async def link_present(self) -> bool:
+        return False
+
+    async def connect(self) -> None:
+        return None
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+    async def get_self_info(self) -> dict:
+        return {}
+
+    async def get_device_info(self) -> dict:
+        return {}
+
+
+def _ble_ctx(tmp_path: Path) -> AppContext:
+    """A context standing in for a live BLE session whose companion has just dropped."""
+    ctx = _make_ctx(tmp_path)
+    ctx.mock = False
+    ctx._device = _FakeBleDevice()
+    ctx._active_transport = "ble"
+    ctx._active_address = "AA:BB:00:00:00:01"
+    return ctx
+
+
+async def test_ble_reconnect_waits_for_the_advertisement_and_hands_over_the_fresh_handle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BLE reconnects on hearing the companion, opening it with the handle just scanned."""
+    ctx = _ble_ctx(tmp_path)
+    fresh = object()  # the live BLEDevice the scan produced
+    scans: list[str] = []
+
+    async def fake_find(address: str, timeout: float = 0.0) -> object | None:
+        scans.append(address)
+        return fresh if len(scans) >= 2 else None  # silent on the first round, then heard
+
+    opened: list[object | None] = []
+
+    async def fake_reconnect(self: AppContext, *, ble_device: object | None = None) -> None:
+        opened.append(ble_device)
+        self._device = _FakeBleDevice()
+
+    monkeypatch.setattr(discovery, "find_ble_device", fake_find)
+    monkeypatch.setattr(AppContext, "reconnect", fake_reconnect)
+    monkeypatch.setattr(menu, "_BLE_RESCAN_PAUSE_S", 0.0)
+    monkeypatch.setattr(menu, "spinner_interval", lambda: 0.0)
+
+    session = _FakeSession()
+    try:
+        quit_chosen = await asyncio.wait_for(
+            menu._handle_disconnect(ctx, session), timeout=2.0
+        )
+        assert quit_chosen is False  # reconnected, not quit
+        # It waited for the device to be heard rather than blind-retrying the connect...
+        assert scans == [ctx._active_address, ctx._active_address]
+        assert len(opened) == 1
+        # ...and reopened it with the handle that scan produced, not a stale one.
+        assert opened == [fresh]
+    finally:
+        ctx.repo.close()
+
+
+async def test_ble_reconnect_releases_the_dead_link_before_scanning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The old link is put down first, so the peripheral is free to advertise again."""
+    ctx = _ble_ctx(tmp_path)
+    dead = ctx._device
+    held_at_scan: list[bool] = []
+
+    async def fake_find(address: str, timeout: float = 0.0) -> object | None:
+        held_at_scan.append(ctx._device is not None)
+        return object()
+
+    async def fake_reconnect(self: AppContext, *, ble_device: object | None = None) -> None:
+        self._device = _FakeBleDevice()
+
+    monkeypatch.setattr(discovery, "find_ble_device", fake_find)
+    monkeypatch.setattr(AppContext, "reconnect", fake_reconnect)
+    monkeypatch.setattr(menu, "spinner_interval", lambda: 0.0)
+
+    session = _FakeSession()
+    try:
+        await asyncio.wait_for(menu._handle_disconnect(ctx, session), timeout=2.0)
+        assert dead.disconnected  # the dead companion was let go...
+        assert held_at_scan == [False]  # ...before we ever listened for it
+    finally:
+        ctx.repo.close()
+
+
+async def test_reconnect_prefers_the_freshly_scanned_ble_handle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A handle passed to reconnect opens the link; the startup scan's stale one is not reused."""
+    address = "AA:BB:00:00:00:01"
+    ctx = _make_ctx(tmp_path)
+    ctx.mock = False
+    ctx.ble_override = address
+    stale = object()  # what the picker's scan produced when the session opened
+    fresh = object()  # what the reconnect flow just heard advertising
+    ctx.selected_device = DiscoveredDevice(
+        transport="ble", address=address, name="MeshCore-Homestead", ble_device=stale
+    )
+    handles: list[object | None] = []
+
+    def fake_make_device(**kwargs: object):  # noqa: ANN202 - a stub stands in for the radio
+        handles.append(kwargs.get("ble_device"))
+        return _FakeBleDevice()
+
+    monkeypatch.setattr(context_module, "make_device", fake_make_device)
+    try:
+        await ctx.reconnect(ble_device=fresh)
+        assert handles == [fresh]  # the freshly-scanned peripheral, never the stale handle
+        assert ctx._ble_handle is None  # consumed by the connection it opened
+
+        # With nothing scanned, the picker's handle is still the best available guess.
+        await ctx.reconnect()
+        assert handles == [fresh, stale]
+    finally:
+        ctx.repo.close()
+
+
+async def test_release_link_is_idempotent_and_holds_the_resume_intent(tmp_path: Path) -> None:
+    """Releasing twice is harmless, and what was running is still restored on reconnect."""
+    ctx = _make_ctx(tmp_path)
+    try:
+        await ctx.events.start()
+        await ctx.monitor.start()
+        await ctx.release_link()
+        assert not ctx.monitor.active  # the services rode the link down with it
+        await ctx.release_link()  # a second release finds nothing to do and says nothing
+
+        await ctx.reconnect()
+
+        assert ctx.events.active and ctx.monitor.active  # the held intent survived both
+    finally:
+        await ctx.aclose()

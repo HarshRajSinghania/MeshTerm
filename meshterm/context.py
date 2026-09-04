@@ -116,6 +116,11 @@ class AppContext:
     _active_transport: Optional[str] = field(default=None, init=False, repr=False)
     _active_address: Optional[str] = field(default=None, init=False, repr=False)
     _active_endpoint: Optional[str] = field(default=None, init=False, repr=False)
+    #: A live ``bleak.BLEDevice`` handed to :meth:`reconnect` by the flow that just heard the
+    #: companion advertise again. Preferred over the startup scan's handle when reopening the
+    #: link, because a device that dropped and came back is a *new* peripheral to the OS and
+    #: the older handle no longer names it. Typed ``object`` so ``bleak`` stays optional.
+    _ble_handle: Optional[object] = field(default=None, init=False, repr=False)
     unpair_on_exit: bool = field(default=False, init=False, repr=False)
     #: Set by the config editor just before it sends a reboot command, so the session's
     #: disconnect watcher can label the ensuing (expected) link drop as a reboot in
@@ -464,12 +469,14 @@ class AppContext:
         # resolution, and no re-scan needed to reconnect to a known address.
         ble_address, ble_pin = self._resolve_ble_endpoint()
         if ble_address:
-            # When this session's scan discovered the device, hand its live BLEDevice to the
+            # When a scan has produced a live BLEDevice for this address, hand it to the
             # connection so bleak opens it directly instead of re-discovering the address (a
             # fresh internal scan that intermittently misses a slow-advertising companion).
             # A remembered/explicit address has no scan result and connects by address alone.
+            # A handle from the reconnect watch wins over the startup picker's: it was scanned
+            # seconds ago, after the drop, so it names the peripheral that is on the air *now*.
             selected = self.selected_device
-            ble_device = (
+            ble_device = self._ble_handle or (
                 selected.ble_device
                 if selected is not None and selected.is_ble and selected.address == ble_address
                 else None
@@ -614,31 +621,27 @@ class AppContext:
         if restored:
             self.log.info("channels: restored %d remembered channel(s) to the device", restored)
 
-    async def reconnect(self) -> None:
-        """Drop a lost device connection and rebuild it, restoring live services.
+    async def release_link(self) -> None:
+        """Tear down the dead connection and the services riding on it, keeping what to resume.
 
-        Called after the companion link is detected as gone (see
-        :func:`~meshterm.core.connection.is_connection_lost`). Tears down the dead
-        connection and the services riding on it, opens a fresh connection to the same
-        device, then restarts whatever was running before — so passive monitoring and chat
-        recording resume transparently across a replug.
+        The first half of :meth:`reconnect`, split out because it is also worth doing *before*
+        going looking for the device. Over Bluetooth that ordering is load-bearing: a companion
+        only advertises while nothing is connected to it, so a peripheral we are still holding
+        a link to — however dead we believe that link to be — stays off the air and can never
+        be found by the scan waiting for it to come back. Releasing first puts it back on the
+        air, and is harmless on the transports that don't care.
 
-        Raises:
-            Exception: If a new connection could not be opened (e.g. the device is still
-                absent); the caller can surface it and offer to retry.
+        What was running is captured *once* and held across retries: this stops the services,
+        so a later attempt would otherwise read the now-idle flags and restore nothing. The
+        intent is cleared only after :meth:`reconnect` actually succeeds. Idempotent — calling
+        it again with nothing connected is a no-op.
         """
-        # Remember what was live so it can be restored after the reconnect — but capture it
-        # only *once*, and hold it across retries. The teardown below stops the services, so
-        # a second attempt (after the first failed because the device wasn't back yet) would
-        # otherwise read the now-idle flags and restore nothing. The intent is cleared only
-        # after a reconnect actually succeeds.
         if self._resume_intent is None:
             self._resume_intent = (
                 self._events is not None and self._events.active,
                 self._monitor is not None and self._monitor.active,
                 self._chat is not None and self._chat.active,
             )
-        resume_events, resume_monitor, resume_chat = self._resume_intent
 
         # Release the stale hub/service subscriptions and discard the dead device. The
         # subscriptions are in-process (to the hub), so they survive the link drop and must
@@ -661,6 +664,32 @@ class AppContext:
         if self._devstate is not None:
             self._devstate.reset()
 
+    async def reconnect(self, *, ble_device: Optional[object] = None) -> None:
+        """Drop a lost device connection and rebuild it, restoring live services.
+
+        Called after the companion link is detected as gone (see
+        :func:`~meshterm.core.connection.is_connection_lost`). Tears down the dead
+        connection and the services riding on it, opens a fresh connection to the same
+        device, then restarts whatever was running before — so passive monitoring and chat
+        recording resume transparently across a replug.
+
+        Args:
+            ble_device: The live ``bleak.BLEDevice`` the caller just scanned for this address,
+                when it has one (see :func:`~meshterm.core.discovery.find_ble_device`). Any
+                previously-held handle is dropped either way: the peripheral that comes back
+                from a power-cycle is a new one to the OS, so the scan result the session
+                opened with is not merely stale but wrong, and reusing it fails the connect
+                on Windows while the device sits there advertising. Passing ``None`` (serial,
+                TCP, or a BLE retry with nothing scanned) reconnects by address alone.
+
+        Raises:
+            Exception: If a new connection could not be opened (e.g. the device is still
+                absent); the caller can surface it and offer to retry.
+        """
+        self._ble_handle = ble_device
+        await self.release_link()
+        resume_events, resume_monitor, resume_chat = self._resume_intent
+
         # Open a fresh connection (raises if the device still can't be reached, leaving the
         # remembered intent in place for the next attempt), then restart whatever was running
         # before it dropped and clear the intent now that we're back.
@@ -672,6 +701,9 @@ class AppContext:
         if resume_chat:
             await self.chat.start()
         self._resume_intent = None
+        # The handle has been opened; it names a link that is now live rather than a device to
+        # go find, so the next drop starts from a clean slate and scans afresh.
+        self._ble_handle = None
 
     async def _node_name(self) -> str:
         """Return the connected device's own mesh node name, or ``""`` if unavailable."""
