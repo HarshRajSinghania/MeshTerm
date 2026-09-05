@@ -17,7 +17,7 @@ from meshterm.ui.pathline import (
     CRACK_HEAD, CRACK_TAIL, CURSOR_GLYPH, ELIDE_HEAD, ELIDE_TAIL, PATH_INK,
     POWERLINE_ROUND_CLOSE,
     POWERLINE_ROUND_OPEN, POWERLINE_SEP, SELF_GLYPH, WRAP_OFFSET, PathHop, PathLine,
-    _SELF_INK, _YOU_BG, _style_hex, cut_mark, cut_to, elision_hop, hops_atom,
+    _SELF_INK, _YOU_BG, _style_hex, cut_from, cut_mark, cut_to, elision_hop, hops_atom,
     path_line, with_action_mark,
 )
 from meshterm.ui.theme import node_style
@@ -204,6 +204,40 @@ def test_cut_to_leaves_arrow_lines_on_the_ellipsis() -> None:
     assert fitted.cell_len <= 10
     assert fitted.plain.endswith("…")
     assert CRACK_TAIL not in fitted.plain
+
+
+def test_cut_from_crops_the_head_and_keeps_the_line_flush_right() -> None:
+    """``cut_to``'s mirror, for a line anchored on its last hop: the crop eats the start,
+    the crack opens the line in the fill of the very chip it sheared, and the result
+    lands exactly on the width — which is what makes it flush right without a pad."""
+    full = _chips().text()
+    fitted = cut_from(full, 14)
+    assert fitted.cell_len == 14
+    assert fitted.plain.startswith(CRACK_HEAD)
+    assert fitted.plain.endswith(full.plain[-1])  # the tail is what it is anchored on
+    assert "…" not in fitted.plain and CRACK_TAIL not in fitted.plain
+    assert str(fitted.spans[0].style) == _style_hex(node_style("22bb"))  # inside BBBB
+    assert cut_from(full, 200) is full  # fits → untouched, no copy, no mark
+    assert cut_from(full, 0).plain == ""
+
+
+def test_cut_from_leaves_arrow_lines_on_the_ellipsis() -> None:
+    """Same mode test as the tail cut: no fill to shear, so the classic mark opens it."""
+    fitted = cut_from(PathLine(_chips().hops, mode="plain").text(), 10)
+    assert fitted.cell_len == 10
+    assert fitted.plain.startswith("…")
+    assert CRACK_HEAD not in fitted.plain
+
+
+def test_cut_from_drops_no_whole_hop_the_way_an_elision_does() -> None:
+    """The crop is not :meth:`PathLine.ellipsized`: what the reader loses is the cells
+    the lane ran out of, never the whole hop those cells were part of."""
+    line = PathLine([PathHop(label) for label in ("AAAA", "BBBB", "CCCC")], mode="plain")
+    full = line.text()
+    cropped, elided = cut_from(full, 14), line.ellipsized(14, elide=ELIDE_HEAD)
+    assert cropped.plain == "…→ BBBB → CCCC"  # BBBB survives, minus the cells that ran out
+    assert elided.plain == "⋯ → CCCC"  # where the elision gave up the whole hop
+    assert cropped.cell_len == 14 and elided.cell_len < 14  # and left cells on the floor
 
 
 def test_cut_mark_mirrors_itself_and_reads_the_visible_side() -> None:

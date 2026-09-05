@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
-from meshterm.ui.pathline import SELF_GLYPH
+from meshterm.ui.pathline import CRACK_HEAD, ELIDE_HEAD, SELF_GLYPH, PathLine
 from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import WalkScreen
 
@@ -287,8 +287,8 @@ def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
     assert screen._trail == [topo.self_id]
 
 
-def test_walk_trail_drops_the_head_not_the_tail_when_narrow() -> None:
-    """A trail too long for the line loses its head behind a leading ⋯, snapped right."""
+def test_walk_trail_crops_its_head_not_its_tail_when_narrow() -> None:
+    """A trail too long for the line is cropped at its *start*, the trophy case's crop."""
     screen = _screen(_topo())
     us = screen._topo.self_id
     yul = screen._topo.canonical(YUL.public_key)
@@ -296,10 +296,24 @@ def test_walk_trail_drops_the_head_not_the_tail_when_narrow() -> None:
     screen._trail = [us, yul, alice]
     width = 20  # too narrow for the whole "Homestead › YUL-Cartierville › Alice"
     text = screen._trail_text(width).plain
-    assert text.lstrip().startswith("⋯")
+    assert text[0] in ("…", CRACK_HEAD)  # cut, not elided: no whole hop bought the mark
+    assert "⋯" not in text
     assert text.endswith("Alice")  # the focus is always kept
-    assert "Homestead" not in text  # the head was dropped, not the tail
-    assert len(text) == width  # the surviving tail snaps flush to the right edge
+    assert "Homestead" not in text  # the start was cropped, not the tail
+    assert len(text) == width  # a crop lands on the width, so it is flush right already
+
+
+def test_walk_trail_crop_keeps_the_cells_an_elision_would_have_spent() -> None:
+    """The crop's whole point: cells the lane has go to the walk, not to a dropped hop."""
+    screen, width = _walked_chain(8)
+    cropped = screen._trail_text(width)
+    elided = PathLine(
+        [screen._trail_hop(node) for node in screen._trail], separator=" › "
+    ).ellipsized(width, elide=ELIDE_HEAD)
+    assert cropped.cell_len == width  # the crop fills the lane…
+    assert elided.cell_len < width  # …where dropping a whole hop left cells on the floor
+    # The crop keeps the tail of the hop it landed in; the elision dropped it whole.
+    assert cropped.plain.startswith("…-05 ") and "-05" not in elided.plain
 
 
 def test_walk_trail_sits_left_until_it_overflows() -> None:
@@ -313,10 +327,10 @@ def test_walk_trail_scrolled_back_to_its_head_sits_left_again() -> None:
     """Alignment follows the head, not the scroll: a visible start hangs the line left."""
     screen, width = _walked_chain(8)
     limit = screen._trail_max_scroll(width)
-    for step in range(1, limit):  # every stop short of the head keeps the right snap
+    for step in range(1, limit):  # every stop short of the head is still cropped
         screen.handle("left")
         cut = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
-        assert cut.startswith(" ") and cut.lstrip().startswith("⋯"), step
+        assert cut[0] in ("…", CRACK_HEAD) and len(cut) == width, step
 
     screen.handle("left")  # the step that brings the walk's start back into view
     assert screen._trail_scroll == limit
@@ -661,9 +675,9 @@ def test_walk_trail_scrolls_a_hop_at_a_time_off_its_tail() -> None:
     screen, width = _walked_chain(8)
     trail = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
 
-    # At rest the walk is flush right: the focus shows, the head is behind a leading ⋯.
+    # At rest the walk fills the lane: the focus shows, the start is cropped off the left.
     assert "Repeater-08" in trail and "Homestead" not in trail
-    assert trail.lstrip().startswith("⋯")
+    assert trail[0] in ("…", CRACK_HEAD) and len(trail) == width
     assert screen._trail_scroll == 0
 
     screen.handle("left")

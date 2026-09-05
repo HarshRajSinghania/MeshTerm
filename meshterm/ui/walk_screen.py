@@ -66,7 +66,7 @@ from ..services.topology import Link, MeshTopology
 from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
-from .pathline import ELIDE_HEAD, SELF_GLYPH, PathHop, PathLine, elision_hop
+from .pathline import SELF_GLYPH, PathHop, PathLine, cut_from, elision_hop
 from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import query_line, render_to_ansi
@@ -136,10 +136,10 @@ _FAN_MIN_SLOTS = 7
 #: never collide with a canonical id (those are hex).
 _MORE = "\x00more"
 
-#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``). The mark it shows
-#: on whichever side holds walk that is out of view is
-#: :func:`~meshterm.ui.pathline.elision_hop` itself (see :meth:`WalkScreen._trail_text`), so
-#: a head the widget hid and a tail the scroll hid read as the same thing.
+#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``). Each end that
+#: holds walk out of view says so in the mark that is *true* of it (see
+#: :meth:`WalkScreen._trail_text`): the head is cropped mid-hop, so it opens on the
+#: cut's crack; the tail loses whole hops to the scroll, so it closes on the elision.
 _TRAIL_SEP = " › "
 
 #: How many find matches the list shows at most (the filter narrows it fast).
@@ -609,28 +609,33 @@ class WalkScreen(Screen):
         reserved for keyed identities), so the trail and the rows below it agree on who is
         who.
 
-        The line never wraps. At rest, a walk that outgrows the width eats into its
-        *head* (:data:`~meshterm.ui.pathline.ELIDE_HEAD`) rather than a route's usual
-        tail: the oldest steps go behind a leading ``⋯`` and what survives snaps flush
-        against the **right** edge, so the focus and the steps that just led to it are
-        what a glance lands on.
+        The line never wraps, and it is drawn **whole** for as long as whole fits: the
+        walk hangs flush left, opening on its rounded head chip, exactly as it would in
+        a lane with cells to spare. Only when it outgrows the width does it give
+        anything up, and what it gives up is its **beginning** — the trophy case's crop,
+        mirrored (:func:`~meshterm.ui.pathline.cut_from`, JP, 2026-09-05). The line is
+        composed at its natural length and *cropped* at the left edge, so the chip the
+        crop lands in opens on the half-block crack in its own fill and the cells the
+        reader loses are the cells the lane ran out of — no whole hop is dropped to buy
+        room for a mark. The focus and the steps that just led to it are what a glance
+        lands on, and the cropped line fills the width by construction, which is what
+        puts it flush right without a pad.
 
-        Which edge the line hangs off follows one thing only: **whether the walk's start
-        is on it.** A line that shows its first hop — the rounded head chip, us — sits
-        flush **left**, where a path that begins at its beginning belongs; the right snap
-        is what a *cut* head looks like, holding the ``⋯`` against the far edge so the
-        elision reads as "the line continues off this side" rather than as a gap. So it
-        is not the resting state that decides, but the fit: a scrolled line whose head
-        has come back into view is left-aligned like any other complete one.
+        Which edge the line hangs off therefore follows one thing: **whether the walk's
+        start is on it.** A line showing its first hop sits left, where a path that
+        begins at its beginning belongs; a cropped one sits right, holding the crack
+        against the edge it continues past. It is not the resting state that decides but
+        the fit, so a scrolled line whose head has come back into view is left-aligned
+        like any other complete one.
 
         ← and → then **scroll it** (JP, 2026-08-09), a hop at a time, off the tail end:
-        the elided head is a real part of the walk and a long one had no way to be read
-        at all. A scrolled line grows its own trailing ``⋯`` — the focus is now the part
-        out of view — so the mark on each side always means the same thing, more walk
-        that way. Scrolling stops where the head comes into view rather than running the
-        line off the edge, and any change to the trail itself resets it: a walk, a step
-        back, a teleport and ^U all end with the focus in view, which is where the next
-        move is read from.
+        the cropped head is a real part of the walk and a long one had no way to be read
+        at all. A scrolled line grows a trailing ``⋯`` — whole hops really are dropped
+        off that end, which is what that mark means, against the crack's "this segment
+        continues". Scrolling stops where the head comes into view rather than running
+        the line off the edge, and any change to the trail itself resets it: a walk, a
+        step back, a teleport and ^U all end with the focus in view, which is where the
+        next move is read from.
         """
         hops = [self._trail_hop(node) for node in self._trail]
         self._trail_width = width
@@ -639,14 +644,9 @@ class WalkScreen(Screen):
         kept = hops[: len(hops) - self._trail_scroll]
         if self._trail_scroll:
             kept.append(elision_hop())  # the focus is off to the right
-        line = PathLine(kept, separator=_TRAIL_SEP)
-        full = line.text()
-        if full.cell_len <= width:
-            return full  # the start is in view: the walk reads from where it set out
-        fitted = line.ellipsized(width, elide=ELIDE_HEAD)
-        snapped = Text(" " * max(0, width - fitted.cell_len))  # snap the tail to the edge
-        snapped.append_text(fitted)
-        return snapped
+        # Whole while it fits (flush left, from the start), cropped at the head when it
+        # doesn't — and a crop lands exactly on the width, so the right snap is free.
+        return cut_from(PathLine(kept, separator=_TRAIL_SEP).text(), width)
 
     def _trail_max_scroll(self, width: int) -> int:
         """How far ← may scroll the trail: the step that first brings its head into view.
