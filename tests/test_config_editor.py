@@ -8,6 +8,7 @@ each prompt from a queue.
 
 from __future__ import annotations
 
+import io
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,14 +22,17 @@ from meshterm.core.admin_store import AdminStore
 from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
+from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.config_editor import (
     _parse_coords,
     _valid_coords,
+    config_table,
     contact_share_url,
     device_actions,
     edit_config,
     send_advert,
 )
+from meshterm.ui.theme import active_theme
 from meshterm.ui.tui.prompt import TypedConfirmDialog
 from meshterm.ui.tui.screen import CANCEL
 
@@ -51,6 +55,95 @@ class _Fut:
     def set_result(self, value: Any) -> None:
         self.value = value
         self._done = True
+
+
+# -- the config table's column allocation ---------------------------------------
+
+#: A snapshot carrying one of every field the table draws, including the values that push
+#: each lane widest: the longest setting label and the longest formatted value.
+_SNAPSHOT = {
+    "name": "Homestead-Hub",
+    "adv_lat": 45.5017,
+    "adv_lon": -73.5673,
+    "pin_code": 123456,
+    "radio_freq": 869525,
+    "radio_bw": 250,
+    "radio_sf": 11,
+    "radio_cr": 5,
+    "tx_power": 22,
+    "max_tx_power": 30,
+    "airtime_factor": 1.0,
+    "rx_delay": 0.0,
+    "manual_add_contacts": 0,
+    "autoadd_config": 0,
+    "flood_scope": "",
+    "adv_loc_policy": 1,
+    "multi_acks": 0,
+    "telemetry_mode_base": 1,
+    "telemetry_mode_loc": 0,
+    "telemetry_mode_env": 0,
+    "path_hash_mode": 1,
+}
+
+
+def _table_lines(width: int, **kwargs: Any) -> list[str]:
+    """The config table's rendered lines at ``width`` columns."""
+    console = Console(
+        width=width, file=io.StringIO(), theme=active_theme(), legacy_windows=False
+    )
+    with console.capture() as capture:
+        console.print(config_table(_SNAPSHOT, {}, **kwargs))
+    return _plain(capture.get()).rstrip("\n").split("\n")
+
+
+def test_config_table_gives_the_description_lane_the_widest_share() -> None:
+    lines = _table_lines(72)
+    header = next(line for line in lines if line.lstrip().startswith("SETTING"))
+    setting = header.index("CURRENT")
+    current = header.index("DESCRIPTION") - setting
+    description = 72 - header.index("DESCRIPTION")
+    # DESCRIPTION carries the systematically widest content, so it takes the widest lane
+    # — not what two lanes that sized themselves to their content left over. Its share
+    # used to be 19 of the 72 cells, and every explanation wrapped three deep.
+    assert description >= setting > current
+    assert description >= 26
+
+
+def test_config_table_keeps_every_row_within_three_lines() -> None:
+    # The whole point of the reallocation: no setting's explanation sprawls further than
+    # three lines at the readability standard.
+    lines = _table_lines(72)
+    body = [line for line in lines if line.strip() and not line.startswith("──")]
+    runs, run = [], 0
+    for line in body:
+        if line.startswith("  ") and not line.startswith("    "):
+            runs.append(run)
+            run = 1
+        else:
+            run += 1
+    runs.append(run)
+    assert max(runs) <= 3
+
+
+def test_config_table_drops_the_description_lane_where_it_cannot_fit() -> None:
+    # PicoCalc's 53 columns hold the setting and its value and nothing more; the labels
+    # keep their natural width there, nothing competing for the cells.
+    set_platform(PICOCALC)
+    try:
+        lines = _table_lines(PICOCALC.readable_cols)
+    finally:
+        set_platform(REGULAR)
+    header = next(line for line in lines if line.lstrip().startswith("SETTING"))
+    assert "DESCRIPTION" not in header
+    assert any("Telemetry mode (environment)" in line for line in lines)
+    assert max(len(line.rstrip()) for line in lines) <= PICOCALC.readable_cols
+
+
+def test_config_table_drops_the_description_lane_beside_a_staged_column() -> None:
+    # Three narrow lanes leave no room for prose, so the staged view is values alone.
+    lines = _table_lines(72, pending={"tx_power": 14})
+    header = next(line for line in lines if line.lstrip().startswith("SETTING"))
+    assert "STAGED" in header and "DESCRIPTION" not in header
 
 
 # -- contact share URL ----------------------------------------------------------

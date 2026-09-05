@@ -28,6 +28,7 @@ first-class manager — see the ``channels`` tool.)
 from __future__ import annotations
 
 import asyncio
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import quote
@@ -54,6 +55,7 @@ from ..core.device_config import (
     parse_value,
     settings_by_category,
 )
+from ..platforms import Platform, on_platform
 from .menus import (
     confirm_discard,
     exit_rows,
@@ -217,6 +219,11 @@ def config_table(
     """
     pending = pending or {}
     show_staged = bool(pending)
+    # The DESCRIPTION lane needs a screen wide enough to hold prose beside the setting and
+    # its value(s) — 72 columns, and no third narrow lane. Where it doesn't fit, the table
+    # is the settings alone (Rich was already dropping the column outright at those
+    # widths) and the explanations stay in the editor, one row at a time.
+    describe = _describe and not show_staged
     # Match the contacts list: a frameless SIMPLE_HEAD table with a left-justified accent title
     # and muted headers, so the two screens read as one family (see widgets.contacts_table).
     table = Table(
@@ -229,38 +236,110 @@ def config_table(
         expand=False,
         padding=(0, 2, 0, 0),
     )
+    # The two narrow lanes are ``no_wrap`` and pre-folded to a cap (see _fold_label /
+    # _fold_value), so each takes exactly the room its cap allows and DESCRIPTION — the
+    # lane whose content is systematically the widest — keeps the whole remainder. Letting
+    # the labels and values size themselves instead gave the descriptions 19 cells of a
+    # 72-cell screen and wrapped almost every one of them three lines deep.
     table.add_column("SETTING", style="muted", no_wrap=True)
     table.add_column("CURRENT", no_wrap=True)
     if show_staged:
         table.add_column("STAGED", style="warn", no_wrap=True)
-    table.add_column("DESCRIPTION", style="muted")
-    # Each setting's name is indented two spaces so the rows read as sitting *under* their
-    # accent section heading, which stays flush-left.
-    indent = "  "
+    if describe:
+        table.add_column("DESCRIPTION", style="muted")
+
+    def row_of(cells: list[str], description: str) -> list[str]:
+        """One table row: the narrow lanes, plus the description where it is drawn."""
+        return [*cells, description] if describe else cells
+
     for category, specs in settings_by_category():
         table.add_section()
         header = [f"[accent]── {category} ──[/accent]", ""]
         if show_staged:
             header.append("")
-        table.add_row(*header, "")
+        table.add_row(*row_of(header, ""))
         for spec in specs:
-            current = format_value(spec, spec.getter(snapshot))
-            row = [f"{indent}{spec.label}", current]
+            row = [
+                _fold_label(spec.label, describe),
+                _fold_value(format_value(spec, spec.getter(snapshot)), describe),
+            ]
             if show_staged:
-                row.append(format_value(spec, pending[spec.key]) if spec.key in pending else "")
-            table.add_row(*row, spec.help)
+                row.append(
+                    _fold_value(format_value(spec, pending[spec.key]), describe)
+                    if spec.key in pending
+                    else ""
+                )
+            table.add_row(*row_of(row, spec.help))
     if custom:
         table.add_section()
-        cols = 4 if show_staged else 3
-        table.add_row(
-            "[accent]── Custom ──[/accent]", *([""] * (cols - 1))
-        )
+        blanks = 2 if show_staged else 1
+        table.add_row(*row_of(["[accent]── Custom ──[/accent]", *([""] * blanks)], ""))
         for key, value in custom.items():
-            row = [f"{indent}{key}", value]
+            row = [_fold_label(key, describe), _fold_value(value, describe)]
             if show_staged:
                 row.append("")
-            table.add_row(*row, "")
+            table.add_row(*row_of(row, ""))
     return table
+
+
+#: Cell caps for the table's two narrow lanes, indent included. Sized to the widest label
+#: and value the settings actually carry, less the few longest — the four that overflow
+#: fold onto a second line, which costs nothing on rows whose description was wrapping
+#: anyway, and buys every other row ten more cells of prose.
+_SETTING_CAP = 24
+_VALUE_CAP = 15
+
+#: Each setting's name is indented two spaces so the rows read as sitting *under* their
+#: accent section heading, which stays flush-left; a folded continuation hangs two further
+#: in, so a wrapped label can never be mistaken for a heading at column 0.
+_INDENT = "  "
+_HANG = "    "
+
+
+def _fold_label(label: str, describe: bool) -> str:
+    """One SETTING cell: indented, and hard-wrapped at :data:`_SETTING_CAP` if it must be.
+
+    The cap only buys room for the DESCRIPTION lane, so where that lane isn't drawn the
+    label keeps its natural width — nothing is competing for the cells.
+    """
+    if not describe:
+        return f"{_INDENT}{label}"
+    return (
+        "\n".join(
+            textwrap.wrap(
+                label, _SETTING_CAP, initial_indent=_INDENT, subsequent_indent=_HANG
+            )
+        )
+        or _INDENT
+    )
+
+
+def _fold_value(value: str, describe: bool) -> str:
+    """One CURRENT/STAGED cell, hard-wrapped at :data:`_VALUE_CAP`.
+
+    An enum value reads ``N (label)``, so the fold prefers the break *before* the
+    parenthesised label — ``1`` over ``(2-byte hashes)`` rather than a torn ``1 (2-byte``
+    — and a long node name (the field is 31 bytes wide) folds instead of stretching the
+    lane across the whole screen.
+    """
+    if not describe or cell_len(value) <= _VALUE_CAP:
+        return value
+    head, sep, tail = value.partition(" (")
+    if sep and cell_len(head) <= _VALUE_CAP and cell_len(tail) + 1 <= _VALUE_CAP:
+        return f"{head}\n({tail}"
+    return "\n".join(textwrap.wrap(value, _VALUE_CAP)) or value
+
+
+#: Whether this platform's screen is wide enough for a DESCRIPTION lane at all. The
+#: PicoCalc's 53 columns are spent by the setting and its value.
+_describe: bool = True
+
+
+@on_platform
+def _bind_describe(platform: Platform) -> None:
+    """Bind the DESCRIPTION lane to the platform (runs now and on every switch)."""
+    global _describe
+    _describe = platform.readable_cols >= 72
 
 
 def _setting_value(spec: SettingSpec, snapshot: dict, pending: dict) -> Text:
