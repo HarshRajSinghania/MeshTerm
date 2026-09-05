@@ -44,11 +44,19 @@ def enabled() -> bool:
     """Whether the direct row writer is active.
 
     On by default — it is 2-3x on every navigation keystroke and its output is verified
-    byte-identical against the stock renderer by reading the console back. Set
-    ``MESHTERM_FASTRENDER=0`` to fall back to prompt_toolkit's renderer, which is the
-    escape hatch if a terminal ever disagrees.
+    byte-identical against the stock renderer by reading the console back. The escape
+    hatch, for a terminal that ever disagrees, is the ``fast_render`` preference;
+    ``MESHTERM_FASTRENDER=0``/``=1`` overrules it for one run without editing anything.
+
+    Read at session build, so a change made on the Preferences page takes hold at the
+    next launch — which is what that preference's description promises.
     """
-    return os.environ.get("MESHTERM_FASTRENDER", "1") != "0"
+    from ...core.preferences import current as current_preferences
+
+    override = os.environ.get("MESHTERM_FASTRENDER")
+    if override is not None:
+        return override != "0"
+    return bool(current_preferences().fast_render)
 
 
 class FastRenderer(Renderer):

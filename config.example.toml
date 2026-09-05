@@ -1,5 +1,11 @@
-# MeshTerm configuration.
+# MeshTerm configuration: where things live, and which device to talk to.
 # Copy to ~/.meshterm/config.toml (or pass --db / --port on the CLI).
+#
+# How MeshTerm itself behaves — transmit cooldown, message retries, how much history it
+# keeps, whether it connects at launch — is *not* here. Those are preferences: they live
+# in ~/.meshterm/preferences.yaml, and are edited on the Preferences page (or with
+# `meshterm preferences set <key> <value>`). Every one has a built-in default, so that
+# file only ever lists what you have changed.
 #
 # Profiles are optional. With no profile, no --port/--ble/--tcp, MeshTerm discovers attached
 # serial devices and nearby Bluetooth companions, lets you pick one (interactively) or uses the
@@ -9,14 +15,9 @@
 # stable aliases (e.g. --profile yagi, --profile handheld for Bluetooth, --profile wifi for TCP).
 
 default_profile = "s3"
-trace_cooldown_s = 1.0
-# Automatic re-sends of a direct message that goes unacknowledged, before it's marked failed.
-# 0, 1, or 2 (clamped): 0 = one shot, 2 (default) = up to three tries. Ctrl-R in chat is a
-# further manual retry on top of this.
-direct_message_soft_retries = 2
-# Days of overheard-packet history the recorder keeps; older observations are pruned
-# once per session start (0 = keep everything forever).
-history_days = 365
+# Open the radio link as soon as the menu appears. False opens it lazily instead — only
+# once monitoring is turned on or a tool first needs the radio.
+connect_on_start = true
 # db_path = "C:/Users/you/meshterm/meshterm.db"
 
 # One [profiles.<name>] block per physical companion device.

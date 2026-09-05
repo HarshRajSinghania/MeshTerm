@@ -19,6 +19,7 @@ from .core.config import DeviceProfile, Settings
 from .core.contact_store import ContactStore
 from .core.courier_store import CourierStore
 from .core.mute_store import MuteStore
+from .core.preferences import Preferences, install as install_preferences
 from .core.remote_store import RemoteStore
 from .core.settings_store import SettingsStore
 from .core.watch_store import WatchStore
@@ -48,7 +49,14 @@ class AppContext:
 
     Attributes:
         console: Rich console for all rendering.
-        settings: Loaded application settings.
+        settings: Loaded application settings — where things live and which device to
+            talk to (config directory, database, named profiles). *How MeshTerm behaves*
+            is ``preferences``, not this.
+        preferences: MeshTerm's own preferences, backed by
+            ``<config_dir>/preferences.yaml`` and edited on the Preferences page. Defaults
+            to a set loaded from that file when not injected, and is installed as the
+            process-wide :func:`~meshterm.core.preferences.current` set so the render
+            layer — which has no context to reach through — reads the same values.
         repo: Database repository.
         profile: Active device profile, if one was resolved.
         device_store: Store for the remembered "last known good" device.
@@ -94,6 +102,7 @@ class AppContext:
     repo: Repository
     device_store: DeviceStore
     admin_store: AdminStore
+    preferences: Optional[Preferences] = None
     advert_store: Optional[AdvertStore] = None
     remote_store: Optional[RemoteStore] = None
     watch_store: Optional[WatchStore] = None
@@ -142,7 +151,17 @@ class AppContext:
     _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Derive the JSON stores' default locations when they were not injected."""
+        """Load the preferences and derive the stores' default locations, where not injected.
+
+        The preferences are also installed as the process-wide set (see
+        :func:`~meshterm.core.preferences.install`), because the session's renderer and the
+        stores built without a context still have to read them.
+        """
+        if self.preferences is None:
+            self.preferences = Preferences.load(
+                self.settings.config_dir / "preferences.yaml"
+            )
+        install_preferences(self.preferences)
         if self.advert_store is None:
             self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")
         if self.remote_store is None:
@@ -390,7 +409,9 @@ class AppContext:
             from .ui.map_render import DRAWN_LAYERS
 
             self._basemap_source = BasemapSource(
-                self.settings.config_dir / "tilecache", layers=DRAWN_LAYERS
+                self.settings.config_dir / "tilecache",
+                layers=DRAWN_LAYERS,
+                tilejson_url=self.preferences.basemap_tilejson_url,
             )
         return self._basemap_source
 

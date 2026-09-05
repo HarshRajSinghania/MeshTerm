@@ -27,7 +27,8 @@ QUEUED = "queued"
 DELIVERED = "delivered"
 GAVE_UP = "gave-up"
 
-#: How many finished (delivered / given-up) entries are kept for the screen's history.
+#: How many finished (delivered / given-up) entries are kept for the screen's history —
+#: the code's default behind the ``courier_history_kept`` preference.
 DONE_CAP = 100
 
 
@@ -193,9 +194,12 @@ class CourierStore:
         message.finished = when or utcnow()
         messages = self._load()
         done = [m for m in messages if m.status != QUEUED]
-        if len(done) > DONE_CAP:
+        from .preferences import current as current_preferences
+
+        cap = current_preferences().courier_history_kept
+        if len(done) > cap:
             done.sort(key=lambda m: m.finished or m.created)
-            drop = {m.ident for m in done[: len(done) - DONE_CAP]}
+            drop = {m.ident for m in done[: len(done) - cap]}
             self._messages = [m for m in messages if m.ident not in drop]
         self._save()
 

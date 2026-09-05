@@ -16,6 +16,7 @@ from tests.conftest import plain as _strip_ansi  # THE strip-and-join screen rea
 
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.config import Settings
+from meshterm.core.preferences import Preferences
 from meshterm.core.connection import MockDevice
 from meshterm.core.events import MeshEvent
 from meshterm.core.models import (
@@ -57,6 +58,7 @@ class _StubContext:
         self.log = logging.getLogger("test.chat")
         self.profile_name = None
         self.settings = Settings()
+        self.preferences = Preferences()
         self.events = EventHub(self)
 
     async def device(self) -> MockDevice:
@@ -1586,7 +1588,7 @@ async def test_send_direct_soft_retries_until_acked(repo: Repository) -> None:
     """A DM unacked on the first tries is re-sent, and is recorded delivered once one lands."""
     device = _ScriptedDevice([None, None, object()])  # ack only on the third try
     ctx = _StubContext(device, repo)
-    ctx.settings.direct_message_soft_retries = 2  # 1 send + 2 retries = 3 tries
+    ctx.preferences.direct_message_soft_retries = 2  # 1 send + 2 retries = 3 tries
     chat = ChatService(ctx)
 
     sent = await chat.send_direct(_contact(), "hey")
@@ -1599,7 +1601,7 @@ async def test_send_direct_soft_retries_capped_by_setting(repo: Repository) -> N
     """The retry budget stops the resends: an always-unacked DM is tried retries+1 times."""
     device = _ScriptedDevice([])  # never acknowledges
     ctx = _StubContext(device, repo)
-    ctx.settings.direct_message_soft_retries = 2
+    ctx.preferences.direct_message_soft_retries = 2
     chat = ChatService(ctx)
 
     sent = await chat.send_direct(_contact(), "hey")
@@ -1612,7 +1614,7 @@ async def test_send_direct_zero_retries_is_one_shot(repo: Repository) -> None:
     """With soft retries disabled a DM is transmitted exactly once, acked or not."""
     device = _ScriptedDevice([])  # never acknowledges
     ctx = _StubContext(device, repo)
-    ctx.settings.direct_message_soft_retries = 0
+    ctx.preferences.direct_message_soft_retries = 0
     chat = ChatService(ctx)
 
     sent = await chat.send_direct(_contact(), "hey")

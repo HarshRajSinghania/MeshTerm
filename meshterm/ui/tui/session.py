@@ -228,18 +228,25 @@ def _reclaim_last_column() -> bool:
     This is a gate, not a certainty: it is *correct* only when the probe under-reports. On a
     terminal whose width probe is already right, the extra column falls off the real screen and
     the frame would wrap and tear — which is exactly PicoCalc's exact-width console, so
-    :data:`~meshterm.platforms.PICOCALC` defaults this off. ``MESHTERM_FULL_WIDTH=0``/``=1``
-    remains an explicit override on top of the platform default for any terminal that needs
-    to disagree with its platform's usual verdict (TODO: thread through ``settings`` and the
-    config editor once confirmed further).
+    :data:`~meshterm.platforms.PICOCALC` defaults this off.
+
+    Three sources, in confidence order, because the person at the keyboard can see the
+    column and the platform can only guess at it: ``MESHTERM_FULL_WIDTH=0``/``=1`` for a
+    one-off, then the ``full_width`` preference (``auto`` — the default — steps aside),
+    then the platform's own verdict.
 
     Read fresh on every call (never cached at import time) so it reflects whichever platform
     :func:`~meshterm.platforms.set_platform` installed for this process — see that module's
     docstring for why a cached/imported copy of the platform would go stale.
     """
+    from ...core.preferences import current as current_preferences
+
     override = os.environ.get("MESHTERM_FULL_WIDTH")
     if override is not None:
         return override != "0"
+    preferred = current_preferences().full_width
+    if preferred != "auto":
+        return preferred == "on"
     return get_platform().width_reclaim
 
 #: How many stacked dialog layers the layout can float over the background at once. A fixed

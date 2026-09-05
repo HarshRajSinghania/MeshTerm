@@ -20,6 +20,7 @@ from .core.admin_store import AdminStore
 from .core.config import Settings
 from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
+from .core.preferences import PreferenceError
 from .core.device_store import DeviceStore
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging
@@ -211,9 +212,11 @@ def run_tool_command(tool: Tool, params: dict) -> None:
     assert _state is not None  # set by the callback before any subcommand runs
     try:
         asyncio.run(_drive(_execute_and_render(tool, params, _state), _state))
-    except (DeviceSelectionError, DeviceConfigError, DeviceCommandError) as exc:
-        # Expected user-facing error (ambiguous/absent device, bad config value, or a
-        # transient command failure): show the message, not a traceback.
+    except (
+        DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError
+    ) as exc:
+        # Expected user-facing error (ambiguous/absent device, a bad config or preference
+        # value, or a transient command failure): show the message, not a traceback.
         _state.console.print(f"[err]✗[/err] {exc}")
         raise typer.Exit(1) from exc
     except Exception as exc:

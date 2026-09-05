@@ -1,9 +1,16 @@
-"""Configuration and named device profiles.
+"""Machine setup and named device profiles.
 
 Settings are read from a TOML file (default ``~/.meshterm/config.toml``) and may
 be overridden per-invocation by CLI flags. Profiles let you alias your hardware
 (``yagi`` repeater, ``local`` repeater, ``observer`` bot, ``s3`` serial companion) to a
 serial port and defaults so commands can target them by name.
+
+This file answers *where things are and which device to talk to* — nothing else. How
+MeshTerm itself behaves (cooldowns, retry budgets, how much history it keeps, whether it
+connects at launch) is a **preference**, lives in
+:mod:`meshterm.core.preferences`, and is edited on the Preferences page rather than in a
+text editor. The two were one thing until the page existed, which is why a few behaviour
+keys used to sit in this file with no screen behind them.
 """
 
 from __future__ import annotations
@@ -17,14 +24,6 @@ if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib
-
-
-#: Hard ceiling on a direct message's *soft retries* — the automatic re-sends that follow the
-#: initial transmission when it goes unacknowledged. Capped at 2, so a message gets at most one
-#: send plus two soft retries (three tries total) and is never re-broadcast more than twice on
-#: the shared mesh before being called a failure. :data:`Settings.direct_message_soft_retries`
-#: is clamped to ``0..DIRECT_MESSAGE_MAX_SOFT_RETRIES``.
-DIRECT_MESSAGE_MAX_SOFT_RETRIES = 2
 
 
 def default_config_dir() -> Path:
@@ -95,47 +94,28 @@ class DeviceProfile:
 
 @dataclass(slots=True)
 class Settings:
-    """Top-level application settings.
+    """Where MeshTerm keeps its files, and which device to talk to.
 
     Attributes:
         config_dir: Directory holding the config file and database.
         db_path: SQLite database location.
         default_profile: Profile used when ``--profile`` is omitted.
         profiles: Mapping of profile name to :class:`DeviceProfile`.
-        trace_cooldown_s: Minimum delay between transmit bursts (duty-cycle safety).
-        tx_opt_min: Lowest TX power explored by the remote-admin optimizer (dBm).
-        tx_opt_max: Highest TX power explored by the remote-admin optimizer (dBm).
-        direct_message_soft_retries: How many times a direct message is automatically
-            re-sent after its initial transmission goes unacknowledged, before it is reported
-            as failed. Each soft retry waits a full delivery-ack window (see
-            :meth:`Device.send_direct_message`) before firing, so a message only resends after
-            genuinely going unanswered rather than hammering the radio. Capped at 0, 1, or 2 —
-            clamped to ``0..DIRECT_MESSAGE_MAX_SOFT_RETRIES`` on load — so the send is tried at
-            most three times total. ``0`` disables soft retries (one shot); the default of
-            ``2`` matches the mesh convention of a few tries before giving up. The manual
-            Ctrl-R resend in the chat screen is a further, user-driven retry layered on top of
-            these automatic ones, not a substitute for them.
         connect_on_start: Whether the interactive session opens the companion connection
             (and starts always-on background listening) immediately at launch. When
             ``False`` the connection is opened lazily — only once monitoring is turned on
-            or a tool first needs the radio — so launching the menu touches no serial port.
-        history_days: How many days of overheard-packet history the recorder retains.
-            Observations older than this are pruned once per session start (the
-            housekeeping sweep), keeping the database bounded while the dashboard and
-            Time Machine draw on everything inside the window. ``0`` disables pruning
-            entirely — history grows forever.
+            or a tool first needs the radio — so launching the menu touches no serial
+            port. It sits here rather than among the preferences because it is about
+            *which device this machine talks to and when*, alongside the profile that
+            names it, and because it decides its own question before the session that
+            would show a preferences page exists.
     """
 
     config_dir: Path = field(default_factory=default_config_dir)
     db_path: Optional[Path] = None
     default_profile: Optional[str] = None
     profiles: dict[str, DeviceProfile] = field(default_factory=dict)
-    trace_cooldown_s: float = 1.0
-    tx_opt_min: int = 12
-    tx_opt_max: int = 28
-    direct_message_soft_retries: int = 2
     connect_on_start: bool = True
-    history_days: int = 365
 
     def __post_init__(self) -> None:
         """Derive dependent paths that were not explicitly provided."""
@@ -203,16 +183,5 @@ class Settings:
             db_path=Path(data["db_path"]) if data.get("db_path") else None,
             default_profile=data.get("default_profile"),
             profiles=profiles,
-            trace_cooldown_s=float(data.get("trace_cooldown_s", 1.0)),
-            tx_opt_min=int(data.get("tx_opt_min", 12)),
-            tx_opt_max=int(data.get("tx_opt_max", 28)),
-            direct_message_soft_retries=max(
-                0,
-                min(
-                    DIRECT_MESSAGE_MAX_SOFT_RETRIES,
-                    int(data.get("direct_message_soft_retries", DIRECT_MESSAGE_MAX_SOFT_RETRIES)),
-                ),
-            ),
             connect_on_start=bool(data.get("connect_on_start", True)),
-            history_days=max(0, int(data.get("history_days", 365))),
         )

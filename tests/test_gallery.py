@@ -45,6 +45,7 @@ from meshterm.core.models import (
     TxLevelResult,
     utcnow,
 )
+from meshterm.core.preferences import Preferences
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
 from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
@@ -76,11 +77,12 @@ from meshterm.ui.message_paths_screen import MessagePathsScreen
 from meshterm.ui.node_detail_screen import NodeDetailScreen, _Action, _RoutesView, _Tab
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 from meshterm.ui.path_composer import PathComposerScreen
+from meshterm.ui.preferences import _menu_items as _preference_items
 from meshterm.ui.records_screen import RecordDialog
 from meshterm.ui.remote_cli import RemoteCliScreen
 from meshterm.ui.timemachine_screen import TimeMachineScreen
 from meshterm.ui.trace_screen import TraceScreen
-from meshterm.ui.tui import Screen, frame
+from meshterm.ui.tui import Screen, SelectScreen, frame
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
 from meshterm.ui.theme import name_style
@@ -552,6 +554,17 @@ def _config_editor_revealed(cols: int, rows: int) -> Screen:
     return screen
 
 
+def _preferences(cols: int, rows: int) -> Screen:
+    """The Preferences page at its widest: one saved override, one staged, reset row drawn."""
+    prefs = Preferences()
+    prefs.set("trace_cooldown_s", 2.5)
+    title, items = _preference_items(prefs, {"history_days": 90})
+    return SelectScreen(
+        title, items, wrap=False,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+    )
+
+
 def _about_meshterm(cols: int, rows: int) -> Screen:
     return AboutPage("About MeshTerm", about_meshterm())
 
@@ -592,6 +605,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("device_info_revealed", _device_info_revealed),
     _Entry("config_editor", _config_editor),
     _Entry("config_editor_revealed", _config_editor_revealed),
+    _Entry("preferences", _preferences),
     _Entry("about_meshterm", _about_meshterm),
     _Entry("about_author", _about_author),
     _Entry("join_discord", _join_discord),

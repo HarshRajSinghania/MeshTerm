@@ -186,19 +186,33 @@ Global options (before the subcommand): `--profile/-p`, `--port`, `--ble`, `--bl
 
 ## Configuration
 
-MeshTerm runs with zero configuration — it discovers attached serial devices and nearby
-Bluetooth companions, lets you pick one, and remembers the last good default. A network (TCP)
-companion isn't discoverable, so reach it with `--tcp host:port`, a TCP profile, or the
-picker's "add a network device" prompt. Define a config file only to give your hardware stable
-aliases or tune behaviour.
+Two files, two jobs — and you need neither to run.
+
+**Preferences** are how MeshTerm behaves: the pause it leaves between transmissions, how
+hard it retries a message, how far back it keeps history, how a map frames itself. Every one has a built-in default, so change them only where you disagree — from
+the **Preferences** page in the menu (grouped, staged, saved by one action at the bottom),
+or from a shell:
+
+```console
+$ meshterm preferences show                 # every preference, its value, its default
+$ meshterm preferences set history_days 90
+$ meshterm preferences reset --yes          # back to the built-in defaults
+```
+
+They are kept in `~/.meshterm/preferences.yaml`, which lists only what you have changed;
+delete a line and the default takes over again.
+
+**Config** is where things live and which device to talk to. MeshTerm runs with none of it
+— it discovers attached serial devices and nearby Bluetooth companions, lets you pick one,
+and remembers the last good default. A network (TCP) companion isn't discoverable, so reach
+it with `--tcp host:port`, a TCP profile, or the picker's "add a network device" prompt.
+Write a config file only to give your hardware stable aliases.
 
 Copy [`config.example.toml`](config.example.toml) to `~/.meshterm/config.toml`:
 
 ```toml
 default_profile = "s3"
-trace_cooldown_s = 1.0
-direct_message_soft_retries = 2   # auto-resend an unacked DM up to N extra times (0–2)
-history_days = 365                # days of overheard-packet history to keep (0 = forever)
+connect_on_start = true   # false opens the radio link lazily instead of at launch
 
 [profiles.s3]
 port = "COM5"
@@ -218,8 +232,8 @@ host = "192.168.1.50"
 description = "Basestation over WiFi"
 ```
 
-Timestamps are stored as UTC and rendered in your local time. History older than
-`history_days` is pruned once at session start.
+Timestamps are stored as UTC and rendered in your local time. History older than the
+`history_days` preference is pruned once at session start.
 
 ## Architecture
 
@@ -228,7 +242,7 @@ MeshTerm is layered so a new feature is one file in `meshterm/tools/`:
 ```
 cli.py        Typer app; no subcommand -> interactive menu
 context.py    AppContext (console, config, repository, device) dependency container
-core/         Domain: models, config + device profiles, connection abstraction (+ mock)
+core/         Domain: models, preferences + device profiles, connection abstraction (+ mock)
 tools/        Pluggable "menu options"; each self-registers and gets logging for free
 services/     Background algorithms (monitor, trace, tx search, courier, watchtower) — no UI
 persistence/  SQLite schema, repository, structured logging

@@ -1822,7 +1822,7 @@ async def _open_session(
         ``None`` — the count is session state the screen reads back, not a spec.
         """
         nonlocal sample_count
-        pace = ctx.settings.trace_cooldown_s
+        pace = ctx.preferences.trace_cooldown_s
         items: list = []
         for n in SAMPLE_CHOICES:
             title = Text(f"{n} trace{'s' if n > 1 else ' '}")
@@ -1910,7 +1910,7 @@ async def _open_session(
                 device,
                 target,
                 candidates,
-                cooldown_s=ctx.settings.trace_cooldown_s,
+                cooldown_s=ctx.preferences.trace_cooldown_s,
                 on_result=on_result,
                 persist_trace=lambda t: ctx.repo.record_trace(run_id, t),
                 persist_candidate=lambda o: ctx.repo.record_path_candidate(
@@ -2187,7 +2187,7 @@ async def _open_session(
         pick_samples=pick_samples,
         width_bytes=lambda: width_bytes,
         sample_count=lambda: sample_count,
-        pace_s=ctx.settings.trace_cooldown_s,
+        pace_s=ctx.preferences.trace_cooldown_s,
         previous=previous,
         auto_spec=auto_spec,
         auto_source=auto_source,

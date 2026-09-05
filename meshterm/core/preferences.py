@@ -1,0 +1,666 @@
+"""Declarative registry of MeshTerm's own preferences, and the YAML file they live in.
+
+The distinction this module draws is between the three kinds of "setting" the app already
+had and never named apart:
+
+* :mod:`meshterm.core.device_config` describes the **radio's** settings — they live in
+  the companion's firmware, are read live each session, and are edited through the Device
+  config screen.
+* :mod:`meshterm.core.config` (``config.toml``) describes **where things are and which
+  device to talk to** — the config directory, the database, the named device profiles.
+  It is machine setup, edited in a text editor, and has no place in a full-screen page.
+* This module describes **how MeshTerm itself behaves** — whether it opens the link at
+  launch, how long it waits between transmissions, how much history it keeps, how a map
+  frames itself. Those values were scattered through the code as module constants and a
+  handful of undocumented ``config.toml`` keys with no screen behind them; they are
+  gathered here, given one place to be changed (the Preferences page), and one file to be
+  remembered in.
+
+Each :class:`PrefSpec` states a preference's group, type, bounds, and — the point of the
+whole exercise — its **default**. A preference is only written to disk once it is changed
+away from that default, so the file is a short list of your disagreements with the
+built-in behaviour rather than a snapshot that silently pins every value forever. Delete a
+key (or use *Reset to defaults*) and the code's default takes over again.
+
+The file is ``<config_dir>/preferences.yaml``, written grouped and commented so it reads
+the way the page does. Reads are tolerant: an unknown key, a malformed value, or an
+unparseable file costs the override, never the session.
+
+Two access paths, deliberately:
+
+* :attr:`~meshterm.context.AppContext.preferences` is the explicit one, and what every
+  tool, service, and screen should use.
+* :func:`current` is for the render and session layer, which has no context to reach
+  through — the same reason :func:`meshterm.platforms.get_platform` exists. The context
+  installs itself there as it is built.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
+
+from .advert_store import (
+    DEFAULT_DIRECT_HOURS,
+    DEFAULT_FLOOD_HOURS,
+    DIRECT_CADENCE_HOURS,
+    FLOOD_CADENCE_HOURS,
+    OFF,
+    cadence_label,
+)
+from .watch_store import DEFAULT_SILENCE_HOURS, SILENCE_CHOICES_H
+
+#: Display groups, in the order the page and the file present them. The order is the
+#: order a session happens in — what MeshTerm puts on the air, how loud, what it
+#: announces, what it watches for, how it draws the world, what it keeps, and how it
+#: paints. Nothing sorts alphabetically: a reader looking for "how long before I give up
+#: on a message" should not have to know it starts with a D.
+GROUPS: tuple[str, ...] = (
+    "Sending",
+    "Transmit power",
+    "Background adverts",
+    "Watchtower",
+    "Map",
+    "History kept",
+    "Display",
+)
+
+
+class PreferenceError(ValueError):
+    """Raised when a preference value cannot be parsed or fails validation.
+
+    The message is user-facing — the CLI prints it, and the editor's typed prompt shows
+    it under the input as the reason the value was refused.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PrefSpec:
+    """Specification for one preference.
+
+    Attributes:
+        key: Canonical key — the attribute name on :class:`Preferences`, and the key in
+            the YAML file.
+        label: Human-friendly name, as the page's SETTING lane shows it.
+        help: One-line description, as the page's DESCRIPTION lane shows it.
+        group: One of :data:`GROUPS`.
+        value_type: ``"str" | "int" | "float" | "bool" | "enum"``.
+        default: The built-in value, used whenever the file names no override.
+        choices: For ``enum``, a mapping of allowed value to label.
+        minimum: Inclusive lower bound for numeric types, if any.
+        maximum: Inclusive upper bound for numeric types, if any.
+        unit: Short suffix appended when the value is formatted (``"s"``, ``"dBm"``,
+            ``"days"``) so a bare number in the VALUE lane still says what it counts.
+        relaunch: Whether the new value only takes hold next launch. Woven into the
+            description rather than shown as its own mark — it is a caveat about one
+            preference, not a status the reader scans a column for.
+    """
+
+    key: str
+    label: str
+    help: str
+    group: str
+    value_type: str
+    default: Any
+    choices: Optional[dict[Any, str]] = None
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    unit: str = ""
+    relaunch: bool = False
+
+    @property
+    def description(self) -> str:
+        """The DESCRIPTION lane's text: the help, plus the relaunch caveat where it applies."""
+        return f"{self.help} (next launch)" if self.relaunch else self.help
+
+
+def _cadence_choices(hours: tuple[int, ...]) -> dict[int, str]:
+    """Advert-cadence choices as ``hours -> label``, ``off`` last (the editor's own order)."""
+    return {h: cadence_label(h) for h in (*hours, OFF)}
+
+
+#: The silence-rule choices, drawn from the Watchtower's own ring so the two never drift.
+_SILENCE_CHOICES: dict[int, str] = {
+    **{h: f"{h} h" for h in SILENCE_CHOICES_H},
+    OFF: "off",
+}
+
+#: How the terminal-width reclaim can be asked for: follow the platform's own verdict, or
+#: overrule it in either direction. See :func:`meshterm.ui.tui.session._reclaim_last_column`
+#: for why a terminal may need to disagree with its platform.
+_WIDTH_CHOICES: dict[str, str] = {
+    "auto": "follow the platform",
+    "on": "reclaim the column",
+    "off": "never reclaim",
+}
+
+#: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
+#: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
+#: default — nothing else has to follow.
+PREFERENCES: tuple[PrefSpec, ...] = (
+    # --- Sending -----------------------------------------------------------------
+    PrefSpec(
+        key="trace_cooldown_s",
+        label="Transmit cooldown",
+        help="Pause between our own transmissions, for duty-cycle safety",
+        group="Sending",
+        value_type="float",
+        default=1.0,
+        minimum=0.0,
+        maximum=60.0,
+        unit="s",
+    ),
+    PrefSpec(
+        key="direct_message_soft_retries",
+        label="Message retries",
+        help="Automatic re-sends of an unacknowledged direct message",
+        group="Sending",
+        value_type="int",
+        default=0,  # one shot: a re-send is a second transmission on a shared mesh
+        minimum=0,
+        maximum=2,
+    ),
+    # --- Transmit power ----------------------------------------------------------
+    PrefSpec(
+        key="tx_opt_min",
+        label="Sweep floor",
+        help="Lowest power the transmit-power optimizer explores",
+        group="Transmit power",
+        value_type="int",
+        default=18,
+        minimum=1,
+        maximum=30,
+        unit="dBm",
+    ),
+    PrefSpec(
+        key="tx_opt_max",
+        label="Sweep ceiling",
+        help="Highest power the transmit-power optimizer explores",
+        group="Transmit power",
+        value_type="int",
+        default=28,
+        minimum=1,
+        maximum=30,
+        unit="dBm",
+    ),
+    PrefSpec(
+        key="tx_snr_tolerance_db",
+        label="Tie tolerance",
+        help="Within this much SNR of the best, the lower power wins",
+        group="Transmit power",
+        value_type="float",
+        default=1.0,
+        minimum=0.0,
+        maximum=10.0,
+        unit="dB",
+    ),
+    # --- Background adverts ------------------------------------------------------
+    PrefSpec(
+        key="advert_direct_hours",
+        label="Direct advert",
+        help="Cadence a newly seen device starts on for zero-hop announces",
+        group="Background adverts",
+        value_type="enum",
+        default=DEFAULT_DIRECT_HOURS,
+        choices=_cadence_choices(DIRECT_CADENCE_HOURS),
+    ),
+    PrefSpec(
+        key="advert_flood_hours",
+        label="Flood advert",
+        help="Cadence a newly seen device starts on for mesh-wide announces",
+        group="Background adverts",
+        value_type="enum",
+        default=DEFAULT_FLOOD_HOURS,
+        choices=_cadence_choices(FLOOD_CADENCE_HOURS),
+    ),
+    # --- Watchtower --------------------------------------------------------------
+    PrefSpec(
+        key="watch_silence_hours",
+        label="Silence alarm",
+        help="Silence a newly watched node is allowed before the alarm",
+        group="Watchtower",
+        value_type="enum",
+        default=DEFAULT_SILENCE_HOURS,
+        choices=_SILENCE_CHOICES,
+    ),
+    PrefSpec(
+        key="watch_alerts_kept",
+        label="Alerts kept",
+        help="Alerts the Watchtower log retains, oldest dropped first",
+        group="Watchtower",
+        value_type="int",
+        default=200,
+        minimum=10,
+        maximum=5000,
+    ),
+    # --- Map ---------------------------------------------------------------------
+    PrefSpec(
+        key="map_view_fraction",
+        label="Opening frame",
+        help="Fraction of nodes a map frames, so outliers don't zoom it out",
+        group="Map",
+        value_type="float",
+        default=0.5,
+        minimum=0.1,
+        maximum=1.0,
+    ),
+    PrefSpec(
+        key="basemap_tilejson_url",
+        label="Basemap source",
+        help="TileJSON the map's vector tiles are fetched from",
+        group="Map",
+        value_type="str",
+        default="https://tiles.openfreemap.org/planet",
+        relaunch=True,
+    ),
+    # --- History kept ------------------------------------------------------------
+    PrefSpec(
+        key="history_days",
+        label="Packet history",
+        help="Days of overheard history kept; 0 keeps everything forever",
+        group="History kept",
+        value_type="int",
+        default=365,
+        minimum=0,
+        maximum=36500,
+        unit="days",
+    ),
+    PrefSpec(
+        key="chat_history_limit",
+        label="Transcript depth",
+        help="Past messages loaded when a conversation opens",
+        group="History kept",
+        value_type="int",
+        default=200,
+        minimum=20,
+        maximum=5000,
+    ),
+    PrefSpec(
+        key="courier_history_kept",
+        label="Courier history",
+        help="Delivered and given-up outbox entries kept for the screen",
+        group="History kept",
+        value_type="int",
+        default=100,
+        minimum=10,
+        maximum=5000,
+    ),
+    # --- Display -----------------------------------------------------------------
+    PrefSpec(
+        key="fast_render",
+        label="Fast redraw",
+        help="Write rows straight to the terminal instead of through the stock renderer",
+        group="Display",
+        value_type="bool",
+        default=True,
+        relaunch=True,
+    ),
+    PrefSpec(
+        key="full_width",
+        label="Last column",
+        help="Use the column a terminal that under-reports its width hides",
+        group="Display",
+        value_type="enum",
+        default="auto",
+        choices=_WIDTH_CHOICES,
+    ),
+)
+
+_BY_KEY: dict[str, PrefSpec] = {spec.key: spec for spec in PREFERENCES}
+
+
+def get_spec(key: str) -> PrefSpec:
+    """Look up one preference's spec.
+
+    Args:
+        key: The preference key.
+
+    Returns:
+        Its :class:`PrefSpec`.
+
+    Raises:
+        PreferenceError: If no preference is registered under ``key``.
+    """
+    try:
+        return _BY_KEY[key]
+    except KeyError:
+        raise PreferenceError(f"unknown preference: {key!r}") from None
+
+
+def by_group() -> list[tuple[str, list[PrefSpec]]]:
+    """Every preference grouped for display, in :data:`GROUPS` order.
+
+    Returns:
+        ``(group, specs)`` pairs; a group holding no preferences is omitted.
+    """
+    grouped = [(g, [s for s in PREFERENCES if s.group == g]) for g in GROUPS]
+    return [(g, specs) for g, specs in grouped if specs]
+
+
+# --- value parsing / formatting -----------------------------------------------
+
+_TRUE = {"1", "true", "yes", "on", "y"}
+_FALSE = {"0", "false", "no", "off", "n"}
+
+
+def parse_value(spec: PrefSpec, raw: Any) -> Any:
+    """Parse and validate a raw value (a typed scalar, or text from the CLI/file/prompt).
+
+    Args:
+        spec: The target preference.
+        raw: The value to coerce.
+
+    Returns:
+        The typed, range-checked value.
+
+    Raises:
+        PreferenceError: If the value is the wrong type, out of range, or not a choice.
+    """
+    text = str(raw).strip()
+    if spec.value_type == "bool":
+        low = text.lower()
+        if low in _TRUE:
+            return True
+        if low in _FALSE:
+            return False
+        raise PreferenceError(f"{spec.key}: expected on or off, got {raw!r}")
+
+    if spec.value_type == "str":
+        return text
+
+    if spec.value_type == "enum":
+        choices = spec.choices or {}
+        if raw in choices:
+            return raw
+        # Text arriving from the CLI or a hand-edited file: match a choice by its own
+        # spelling, so `preferences set advert_flood_hours 24` and a YAML `24` land alike.
+        for choice in choices:
+            if text == str(choice):
+                return choice
+        allowed = ", ".join(str(c) for c in choices)
+        raise PreferenceError(f"{spec.key}: must be one of {allowed}, got {raw!r}")
+
+    try:
+        value: Any = float(text) if spec.value_type == "float" else int(text, 0)
+    except (ValueError, TypeError) as exc:
+        raise PreferenceError(f"{spec.key}: invalid {spec.value_type} value {raw!r}") from exc
+    if spec.minimum is not None and value < spec.minimum:
+        raise PreferenceError(f"{spec.key}: must be >= {spec.minimum:g}, got {value:g}")
+    if spec.maximum is not None and value > spec.maximum:
+        raise PreferenceError(f"{spec.key}: must be <= {spec.maximum:g}, got {value:g}")
+    return value
+
+
+def format_value(spec: PrefSpec, value: Any) -> str:
+    """Render one preference's value for display.
+
+    Booleans read ``on``/``off`` (the words the editor's button pair offers), an enum
+    reads its own label, and a number carries its unit so a bare figure in the VALUE lane
+    still says what it counts.
+
+    Args:
+        spec: The preference the value belongs to.
+        value: The value to render.
+
+    Returns:
+        The display string.
+    """
+    if spec.value_type == "bool":
+        return "on" if value else "off"
+    if spec.value_type == "enum" and spec.choices is not None:
+        return str(spec.choices.get(value, value))
+    if spec.value_type in ("int", "float"):
+        text = f"{value:g}"
+        return f"{text} {spec.unit}" if spec.unit else text
+    return str(value)
+
+
+def range_hint(spec: PrefSpec) -> str:
+    """A muted "allowed values" hint for a typed prompt, or ``""`` where nothing bounds it."""
+    unit = f" {spec.unit}" if spec.unit else ""
+    if spec.minimum is not None and spec.maximum is not None:
+        return f"Allowed: {spec.minimum:g} – {spec.maximum:g}{unit}"
+    if spec.minimum is not None:
+        return f"Allowed: >= {spec.minimum:g}{unit}"
+    if spec.maximum is not None:
+        return f"Allowed: <= {spec.maximum:g}{unit}"
+    return ""
+
+
+# --- the store ----------------------------------------------------------------
+
+#: The file's opening comment. It says the one thing a reader hand-editing the file needs
+#: to know — that absence means "use the default", so deleting a line is how a preference
+#: is undone — and points at the two neighbouring kinds of setting so nobody looks for a
+#: device's radio parameters in here.
+_HEADER = """\
+# MeshTerm preferences -- how the app itself behaves.
+#
+# Every preference has a built-in default. A key is listed here only while you have
+# changed it away from that default, so deleting a line (or "Reset to defaults" on the
+# Preferences page) hands the value back to the code. `meshterm preferences show` prints
+# every preference, what it is set to, and what it defaults to.
+#
+# Device profiles, the database location, and the rest of the machine setup stay in
+# config.toml; the radio's own settings live on the radio, under Device config.
+"""
+
+
+class Preferences:
+    """The effective preferences: the built-in defaults, with the file's overrides on top.
+
+    Read a preference as an attribute — ``preferences.trace_cooldown_s`` — which resolves
+    through the registry, so a typo raises :class:`AttributeError` at the call site
+    instead of quietly reading ``None``. :meth:`set` takes a raw value, validates it
+    through the key's spec, and records it only while it differs from the default;
+    :meth:`save` writes the result.
+
+    Nothing here writes on its own: the Preferences page stages changes and saves them on
+    *Apply*, which — with the CLI — is the only path that reaches :meth:`save`.
+    """
+
+    def __init__(
+        self, path: Optional[Path] = None, values: Optional[Mapping[str, Any]] = None
+    ) -> None:
+        """Build a preferences view over an optional file and an optional set of overrides.
+
+        Args:
+            path: Where :meth:`save` writes. ``None`` for an in-memory set (tests, and
+                the fallback :func:`current` hands out before a context is built).
+            values: Overrides to start from; invalid ones are dropped, and a value equal
+                to its default is not recorded as an override at all.
+        """
+        self._path = path
+        self._values: dict[str, Any] = {}
+        if values:
+            self.update(values)
+
+    @classmethod
+    def load(cls, path: Path) -> "Preferences":
+        """Read ``path``, returning all-defaults for a missing, empty, or corrupt file.
+
+        Args:
+            path: The YAML file to read.
+
+        Returns:
+            The loaded preferences, bound to ``path`` for a later :meth:`save`.
+        """
+        import yaml
+
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            return cls(path)
+        return cls(path, data if isinstance(data, Mapping) else None)
+
+    @property
+    def path(self) -> Optional[Path]:
+        """Where :meth:`save` writes, or ``None`` for an in-memory set."""
+        return self._path
+
+    def __getattr__(self, name: str) -> Any:
+        """Resolve a registered preference key as an attribute.
+
+        Raises:
+            AttributeError: For any name that is not a preference key, so a mistyped
+                ``preferences.trace_cooldwn_s`` fails where it is written rather than
+                quietly reading nothing.
+        """
+        if name.startswith("_") or name not in _BY_KEY:
+            raise AttributeError(name)
+        return self.get(name)
+
+    def get(self, key: str) -> Any:
+        """The effective value for ``key``: the override where there is one, else the default.
+
+        Raises:
+            PreferenceError: If ``key`` is not a registered preference.
+        """
+        spec = get_spec(key)
+        return self._values.get(key, spec.default)
+
+    def is_overridden(self, key: str) -> bool:
+        """Whether ``key`` currently differs from its built-in default."""
+        return key in self._values
+
+    def overrides(self) -> dict[str, Any]:
+        """The values that differ from their defaults, in registry order (a copy)."""
+        return {s.key: self._values[s.key] for s in PREFERENCES if s.key in self._values}
+
+    def set(self, key: str, raw: Any) -> Any:
+        """Validate ``raw`` for ``key`` and record it, dropping it when it *is* the default.
+
+        An override is only ever a disagreement with the default, so setting a value back
+        to its default clears the entry rather than pinning it. That is what lets a later
+        change to the code's default reach an install that never asked to be exempt.
+
+        Args:
+            key: The preference key.
+            raw: The new value, typed or as text.
+
+        Returns:
+            The parsed value now in force.
+
+        Raises:
+            PreferenceError: If ``key`` is unknown or ``raw`` fails its spec.
+        """
+        spec = get_spec(key)
+        value = parse_value(spec, raw)
+        if value == spec.default:
+            self._values.pop(key, None)
+        else:
+            self._values[key] = value
+        return value
+
+    def update(self, values: Mapping[str, Any]) -> int:
+        """Apply several changes at once, skipping any the registry or a spec refuses.
+
+        Tolerant by design: this is the path a hand-edited file arrives through, and one
+        bad line should cost that line, not the file.
+
+        Args:
+            values: ``key -> value`` pairs.
+
+        Returns:
+            How many were accepted.
+        """
+        applied = 0
+        for key, value in values.items():
+            try:
+                self.set(str(key), value)
+            except PreferenceError:
+                continue
+            applied += 1
+        return applied
+
+    def reset(self) -> int:
+        """Drop every override, returning how many there were."""
+        count = len(self._values)
+        self._values.clear()
+        return count
+
+    def as_yaml(self) -> str:
+        """Render the current overrides as the file's text: header, then grouped entries.
+
+        Each group holding an override gets its own comment heading, and each entry its
+        help line and its default above it, so the file reads the way the page does
+        rather than as a bare map someone has to look up elsewhere.
+        """
+        import yaml
+
+        lines = [_HEADER]
+        for group, specs in by_group():
+            present = [s for s in specs if s.key in self._values]
+            if not present:
+                continue
+            lines.append(f"# --- {group} ---")
+            for spec in present:
+                entry = yaml.safe_dump(
+                    {spec.key: self._values[spec.key]},
+                    default_flow_style=False,
+                    sort_keys=False,
+                    allow_unicode=True,
+                ).rstrip("\n")
+                lines.append(f"# {spec.help}")
+                lines.append(f"# default: {format_value(spec, spec.default)}")
+                lines.append(entry)
+            lines.append("")
+        if len(lines) == 1:
+            lines.append("# (nothing overridden -- every preference is at its default)")
+            lines.append("")
+        return "\n".join(lines)
+
+    def save(self) -> None:
+        """Write the overrides to :attr:`path` atomically (a crash mid-write keeps the old file).
+
+        Raises:
+            RuntimeError: If this set was built without a path (an in-memory set).
+        """
+        if self._path is None:
+            raise RuntimeError("these preferences have no file to save to")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp.write_text(self.as_yaml(), encoding="utf-8")
+        tmp.replace(self._path)
+
+
+#: The set installed for this process. Starts as a defaults-only, file-less instance so
+#: the render layer works before (and without) an :class:`~meshterm.context.AppContext` —
+#: a specimen render, a unit test, the CLI's early boot.
+_current: Preferences = Preferences()
+
+
+def current() -> Preferences:
+    """The preferences in force for this process.
+
+    For the layers that have no context to reach through — the session's renderer, the
+    stores constructed without one — mirroring
+    :func:`meshterm.platforms.get_platform`. Anything holding an
+    :class:`~meshterm.context.AppContext` reads
+    :attr:`~meshterm.context.AppContext.preferences` instead.
+    """
+    return _current
+
+
+def install(preferences: Preferences) -> None:
+    """Make ``preferences`` the set :func:`current` returns (the context does this at boot)."""
+    global _current
+    _current = preferences
+
+
+__all__ = [
+    "GROUPS",
+    "PREFERENCES",
+    "PrefSpec",
+    "PreferenceError",
+    "Preferences",
+    "by_group",
+    "current",
+    "format_value",
+    "get_spec",
+    "install",
+    "parse_value",
+    "range_hint",
+]

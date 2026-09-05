@@ -125,16 +125,19 @@ class Tool(ABC):
         """
         from ..core.connection import DeviceCommandError
         from ..core.device_config import DeviceConfigError
+        from ..core.preferences import PreferenceError
         from ..core.selection import DeviceSelectionError
 
         run_id = ctx.repo.start_run(self.name, params, ctx.profile_name)
         ctx.log.debug("run %s start: tool=%s params=%s", run_id, self.name, params)
         try:
             result = await self.run(ctx, {**params, "_run_id": run_id})
-        except (DeviceSelectionError, DeviceConfigError, DeviceCommandError) as exc:
-            # Expected user-facing condition (no/ambiguous device, bad config value, or
-            # a transient command failure): record it but don't dump a traceback;
-            # callers print the message cleanly.
+        except (
+            DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError
+        ) as exc:
+            # Expected user-facing condition (no/ambiguous device, a bad config or
+            # preference value, or a transient command failure): record it but don't dump
+            # a traceback; callers print the message cleanly.
             ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
             ctx.log.debug("run %s aborted: %s", run_id, exc)
             raise
@@ -157,18 +160,19 @@ _REGISTRY: dict[str, Tool] = {}
 #: that score the walking), then the two scopes a setting can belong to — This node, the
 #: radio in your hand, and Other nodes, someone else's over the mesh.
 #:
-#: About MeshTerm closes the list and is the one section that names a *subject* instead:
-#: "what is this thing, and who made it" is a question none of the five doings can hold,
-#: and its pages act on nothing — so it sits last, where a reader who has run out of
-#: things to do finds it. Categories not listed here sort last, alphabetically, so a new
-#: category still appears.
+#: This app closes the list as the third and last *scope*, after the radio in your hand and
+#: someone else's over the mesh: the program in front of you. It holds the one thing that
+#: changes how MeshTerm behaves (Preferences) and the four pages that say what MeshTerm is
+#: — questions none of the doings above can hold, and which nothing on the mesh can answer.
+#: It sits last because a reader who has run out of things to do is who goes looking for it.
+#: Categories not listed here sort last, alphabetically, so a new category still appears.
 _CATEGORY_ORDER = [
     "Message",
     "Watch",
     "Explore",
     "This node",
     "Other nodes",
-    "About MeshTerm",
+    "This app",
 ]
 
 

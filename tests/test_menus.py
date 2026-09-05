@@ -145,11 +145,11 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
     by subject: the address book sits with the features that message from it, the
     recorded history with the live views it is the past tense of, the two walks with the
     topology they walk over, and a setting lands under the scope it changes — this radio,
-    or someone else's over the mesh.
+    someone else's over the mesh, or MeshTerm itself.
 
-    About MeshTerm is the deliberate exception, and the reason it sorts last: its pages
-    do nothing at all, so it names a subject and stays out of the workflow the five
-    doings above it describe.
+    This app is the last of the three scopes and the reason it sorts last: it holds the
+    preferences that change the program and the pages that describe it, neither of which
+    is a thing to do *on the mesh*.
     """
     from meshterm.tools import load_all_tools
     from meshterm.tools.base import _CATEGORY_ORDER, all_tools
@@ -167,7 +167,7 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
         "Explore": ["map", "walk", "trace", "trace-path", "records"],
         "This node": ["info", "config", "device-actions", "advert"],
         "Other nodes": ["repeater-admin", "tx-optimize"],
-        "About MeshTerm": ["about", "about-author", "discord", "support"],
+        "This app": ["preferences", "about", "about-author", "discord", "support"],
     }
     # No section is so big it stops being a grouping (the old Mesh bucket held seven of
     # nineteen rows), and none is a bucket of one.

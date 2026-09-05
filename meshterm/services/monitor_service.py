@@ -81,7 +81,8 @@ class MonitorService:
         self._kind_counts: dict[str, int] = {}
         # Housekeeping: age out observations past the retention window once per
         # session, so an always-recording database stays bounded (0 = keep forever).
-        days = getattr(getattr(ctx, "settings", None), "history_days", 0) or 0
+        preferences = getattr(ctx, "preferences", None)
+        days = (preferences.history_days if preferences is not None else 0) or 0
         if days:
             try:
                 pruned = ctx.repo.prune_observations(utcnow() - timedelta(days=days))

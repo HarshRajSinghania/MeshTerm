@@ -22,9 +22,27 @@ from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
-from ..core.geo import DEFAULT_VIEW_FRACTION, usable_fix
+from ..core.geo import usable_fix
 from ..core.models import NODE_TYPE_REPEATER
 from .base import Tool, ToolResult, register
+
+
+def _fraction(ctx: AppContext, params: dict[str, Any]) -> float:
+    """How much of the mesh a map opens framed on: the flag if one was passed, else the preference.
+
+    ``--fraction`` is resolved here rather than as the Typer option's default because the
+    options are declared at CLI *registration* time — before a context, and so before the
+    preferences file has been read.
+
+    Args:
+        ctx: Shared application context.
+        params: This invocation's parameters.
+
+    Returns:
+        The fraction to frame.
+    """
+    fraction = params.get("fraction")
+    return ctx.preferences.map_view_fraction if fraction is None else float(fraction)
 
 if TYPE_CHECKING:
     from ..ui.map_render import MapMarker
@@ -66,9 +84,7 @@ class MapTool(Tool):
         if interactive:
             from ..ui.map_screen import open_map
 
-            await open_map(
-                ctx, markers, fraction=params.get("fraction", DEFAULT_VIEW_FRACTION)
-            )
+            await open_map(ctx, markers, fraction=_fraction(ctx, params))
         else:
             await self._render_static(ctx, markers, params)
 
@@ -123,7 +139,7 @@ class MapTool(Tool):
                 dot_w,
                 dot_h,
                 max_zoom=max_zoom,
-                fraction=params.get("fraction", DEFAULT_VIEW_FRACTION),
+                fraction=_fraction(ctx, params),
             )
 
         tiles = {}
@@ -151,14 +167,15 @@ class MapTool(Tool):
             zoom: Optional[int] = typer.Option(
                 None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)"
             ),
-            fraction: float = typer.Option(
-                DEFAULT_VIEW_FRACTION,
+            fraction: Optional[float] = typer.Option(
+                None,
                 "--fraction",
                 "-f",
                 min=0.0,
                 max=1.0,
                 help="Fraction of nodes to frame: the densest that many, so distant "
-                "outliers don't zoom the view out. 1.0 fits every node. Ignored with --zoom",
+                "outliers don't zoom the view out. 1.0 fits every node. Ignored with "
+                "--zoom. Defaults to the 'Opening frame' preference",
             ),
             basemap: bool = typer.Option(
                 True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap"

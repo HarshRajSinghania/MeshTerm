@@ -41,8 +41,6 @@ from .widgets import name_chip
 if TYPE_CHECKING:
     from ..context import AppContext
 
-#: How many past messages to load into the transcript when a conversation opens.
-_HISTORY_LIMIT = 200
 
 #: Matches an ``@[Name]`` mention token, as the reply flow primes into the compose line (see
 #: :meth:`ChatScreen._begin_reply`). The transcript renders each as a bare ``@Name`` colored
@@ -997,7 +995,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
         is_channel=conversation.is_channel,
         channel_id=conversation.channel_id,
         peer=conversation.peer,
-        limit=_HISTORY_LIMIT,
+        limit=ctx.preferences.chat_history_limit,
     )
     contacts = await ctx.devstate.contacts()
     names = _contact_names(contacts)

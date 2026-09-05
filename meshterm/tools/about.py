@@ -1,8 +1,10 @@
-"""The About MeshTerm tools: the four pages under the menu's last section.
+"""The About MeshTerm tools: the four written pages in the menu's last section.
 
 *About MeshTerm*, *About the author*, *Join Discord*, *Support MeshTerm* — in that
 order, which is the order a stranger asks the questions in: what is this, who made it,
-where is everyone, how do I help.
+where is everyone, how do I help. They share the *This app* section with Preferences,
+which leads it: the section is the app's own scope, and the one row that *changes*
+MeshTerm sits above the four that describe it.
 Each is a page rather than a feature: it reads nothing, transmits nothing, and needs no
 device, so it opens straight to its screen (see :mod:`meshterm.ui.about`) instead of
 prompting for anything first.
@@ -34,7 +36,7 @@ class _AboutTool(Tool):
     subclass supplies :meth:`page`, and nothing more.
     """
 
-    category = "About MeshTerm"
+    category = "This app"
 
     @staticmethod
     def page() -> "MarkdownDoc":

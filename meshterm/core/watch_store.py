@@ -30,13 +30,16 @@ from .models import utcnow
 SILENCE_CHOICES_H = (1, 3, 6, 12, 24, 48)
 
 #: Default silence threshold: half a day covers nodes that only advertise daily-ish
-#: without crying wolf over a quiet afternoon.
+#: without crying wolf over a quiet afternoon. It is the *code's* default; what a newly
+#: starred node actually gets is the ``watch_silence_hours`` preference, which defaults
+#: to this (see :mod:`meshterm.core.preferences`).
 DEFAULT_SILENCE_HOURS = 12
 
 #: The stored value meaning "this rule is off".
 OFF = 0
 
-#: How many alerts the log retains (oldest dropped first).
+#: How many alerts the log retains (oldest dropped first) — the code's default behind
+#: the ``watch_alerts_kept`` preference.
 ALERT_CAP = 200
 
 #: Minimum seconds between disk flushes for the packet-driven last-heard updates.
@@ -202,8 +205,14 @@ class WatchStore:
             last_seen: When the node was last heard, if known.
             node_type: The node's advertised type, if known (for the watchlist glyph).
         """
+        from .preferences import current as current_preferences
+
         self.state.watched[key] = WatchedNode(
-            key=key, name=name, last_heard=last_seen or utcnow(), node_type=node_type
+            key=key,
+            name=name,
+            silence_hours=current_preferences().watch_silence_hours,
+            last_heard=last_seen or utcnow(),
+            node_type=node_type,
         )
         self._save()
 
@@ -324,8 +333,11 @@ class WatchStore:
         )
         state.next_id += 1
         state.alerts.append(alert)
-        if len(state.alerts) > ALERT_CAP:
-            del state.alerts[: len(state.alerts) - ALERT_CAP]
+        from .preferences import current as current_preferences
+
+        cap = current_preferences().watch_alerts_kept
+        if len(state.alerts) > cap:
+            del state.alerts[: len(state.alerts) - cap]
         self._dirty = True
         self.flush(only_if_due=True)
         return alert

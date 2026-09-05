@@ -638,8 +638,8 @@ async def open_tx_optimize(
         device_hash=device_hash,
         resolve=resolve,
         session=session,
-        tx_min=ctx.settings.tx_opt_min,
-        tx_max=ctx.settings.tx_opt_max,
+        tx_min=ctx.preferences.tx_opt_min,
+        tx_max=ctx.preferences.tx_opt_max,
         admin_key=admin_hash,
         target_key=target_hex,
     )
@@ -690,11 +690,11 @@ async def open_tx_optimize(
 
     async def pick_range() -> None:
         """Pick the sweep's TX window: the configured default, the full range, or typed."""
-        settings_lo, settings_hi = ctx.settings.tx_opt_min, ctx.settings.tx_opt_max
+        preferred_lo, preferred_hi = ctx.preferences.tx_opt_min, ctx.preferences.tx_opt_max
         items = [
             Choice(
-                title=f"TX {settings_lo}–{settings_hi}  —  your configured default",
-                value=(settings_lo, settings_hi),
+                title=f"TX {preferred_lo}–{preferred_hi}  —  your configured default",
+                value=(preferred_lo, preferred_hi),
             ),
             Choice(
                 title=f"TX {REMOTE_TX_MIN}–{REMOTE_TX_MAX}  —  the full remote range",
@@ -757,7 +757,7 @@ async def open_tx_optimize(
 
     async def pick_samples() -> None:
         """Pick how many traces each level measures (paced, like the trace tool's)."""
-        pace = ctx.settings.trace_cooldown_s
+        pace = ctx.preferences.trace_cooldown_s
         items = [
             Choice(
                 title=f"{n} trace{'s' if n > 1 else ' '}"
@@ -908,7 +908,8 @@ async def open_tx_optimize(
                 coarse_step=screen.step,
                 samples_per_level=screen.samples,
                 apply=False,  # the decision moves to the dialog, after the evidence is in
-                cooldown_s=ctx.settings.trace_cooldown_s,
+                cooldown_s=ctx.preferences.trace_cooldown_s,
+                snr_tolerance=ctx.preferences.tx_snr_tolerance_db,
                 on_level=screen.on_level,
                 on_phase=screen.on_phase,
                 persist_level=lambda lv: ctx.repo.record_tx_sample(run_id, lv),

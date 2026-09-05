@@ -427,8 +427,10 @@ class ChatService:
         """Transmit a direct message, softly retrying until it is acknowledged.
 
         A single logical send makes one initial transmission plus up to
-        ``settings.direct_message_soft_retries`` soft retries (two by default, three tries in
-        all): the message is re-sent only when an attempt goes unacknowledged, and each device
+        ``preferences.direct_message_soft_retries`` soft retries (none by default — one shot,
+        since a re-send is a second transmission on a shared mesh; two is the ceiling, for
+        three tries in all): the message is re-sent only when an attempt goes unacknowledged,
+        and each device
         call already blocks for a full delivery-ack window (see
         :meth:`~meshterm.core.connection.Device.send_direct_message`) before returning, so the
         retries are naturally spaced by that window rather than hammering the radio. The loop
@@ -449,7 +451,7 @@ class ChatService:
                 a rejection is not retried, since it is not a lost-in-the-mesh timeout.
         """
         device = await self._ctx.device()
-        attempts = max(0, self._ctx.settings.direct_message_soft_retries) + 1
+        attempts = max(0, self._ctx.preferences.direct_message_soft_retries) + 1
         ack = None
         for attempt in range(1, attempts + 1):
             ack = await device.send_direct_message(contact, text)
@@ -467,7 +469,7 @@ class ChatService:
     async def send_direct(self, contact: Contact, text: str) -> ChatMessage:
         """Send a direct message to a contact and record it in history.
 
-        Delivery is attempted with up to ``settings.direct_message_soft_retries`` automatic
+        Delivery is attempted with up to ``preferences.direct_message_soft_retries`` automatic
         soft retries (see :meth:`_deliver_direct`) before the message is recorded as
         unacknowledged.
 
@@ -499,7 +501,7 @@ class ChatService:
         is ``False``). The same stored row is reused — its delivery state is updated rather
         than a duplicate transcript entry created — so the message simply flips to delivered
         (or stays unacknowledged for another retry). Like an initial send, each manual retry
-        makes up to ``settings.direct_message_soft_retries`` soft retries of its own (see
+        makes up to ``preferences.direct_message_soft_retries`` soft retries of its own (see
         :meth:`_deliver_direct`).
 
         Args:

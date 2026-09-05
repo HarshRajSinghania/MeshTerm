@@ -55,6 +55,15 @@ the courier recipient, anything you *address*. The reception/persistence layer
 sortable list you pick from is `contactlist.py` (`ContactListScreen`/`ContactRow`/
 `ContactsSort`/`contacts_table`). The `contacts` tool lists the device's added contacts.
 
+Setting vs preference — the other boundary, three-way and never blurred: a **setting** is
+the *radio's* (`core/device_config.py`, read live from the companion, edited on Device
+config); a **preference** is *MeshTerm's own behaviour* (`core/preferences.py`, defaults in
+code, overrides in `preferences.yaml`, edited on the Preferences page — `ctx.preferences`,
+or `preferences.current()` where there is no context to reach through); and **config** is
+machine setup — paths and device profiles (`core/config.py`, `config.toml`, a text editor
+only). A behaviour value belongs in the preference registry, not as a module constant and
+not in `config.toml`: a code constant a reader can't reach is a preference nobody has.
+
 Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now ago"),
 `_format_age` for aligned columns ("now", "5m").
 

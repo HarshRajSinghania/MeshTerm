@@ -416,7 +416,7 @@ async def _apply(
                     ("✗ ", "err"), f"{spec.label} — {reply.strip()} (still staged)"
                 ))
             if i < total:
-                await asyncio.sleep(ctx.settings.trace_cooldown_s)
+                await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Applying — {node.name}", work)
     ctx.repo.finish_run(
@@ -461,7 +461,7 @@ async def _read_all(ctx: "AppContext", device: "Device", node: Contact) -> None:
                 ctx.remote_store.remember_setting(node, spec.key, value)
                 read += 1
             if i < len(specs):
-                await asyncio.sleep(ctx.settings.trace_cooldown_s)
+                await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Reading — {node.name}", work)
     ctx.repo.finish_run(
