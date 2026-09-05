@@ -38,6 +38,13 @@ REPEATER_MARK = ("▲", "#a78bfa")
 NODE_MARK = ("●", "#f472b6")
 UNKNOWN_MARK = ("○", "node.unknown")
 
+#: THE concealed character: one bullet stands in for one character of something the screen
+#: is holding back — a password being typed (``ui/tui/prompt.py``), the BLE pairing PIN on
+#: the Device info page. One glyph for the concept, so a row of them reads the same way
+#: wherever it appears, and it is deliberately *not* the ``●`` of an unread message or a
+#: node: those are marks that mean something, this one means "not shown".
+MASK_MARK = "•"
+
 #: Sentinels naming a path's endpoints on the route graph. ``\x00`` never appears in a
 #: node hash, so they can share the node-id namespace without colliding with one.
 SRC_NODE = "\x00src"

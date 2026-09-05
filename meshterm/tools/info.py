@@ -41,15 +41,37 @@ class InfoTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing the device name.
         """
-        from ..ui.config_editor import cached_snapshot, config_table
+        from rich.console import Group
+
+        from ..ui.config_editor import cached_snapshot, config_table, has_pin
 
         device = await ctx.device()
         snapshot = await cached_snapshot(ctx, device)
         custom = await device.get_custom_vars()
 
         # A live status panel (role, firmware, battery, clock, radio/packet statistics)
-        # above every current setting with a short explanation of each.
-        ctx.ui.show(await _status_panel(device, snapshot), Text(""), config_table(snapshot, custom))
+        # above every current setting with a short explanation of each. The panel is read
+        # once; only the table differs between the two states, and it is cheap to rebuild.
+        panel = await _status_panel(device, snapshot)
+
+        def page(reveal_pin: bool) -> Group:
+            return Group(panel, Text(""), config_table(snapshot, custom, reveal_pin=reveal_pin))
+
+        # In the menu the page is its own screen, because it has a key of its own: the
+        # pairing PIN is masked until ``p`` uncovers it. On the CLI there is no keyboard to
+        # press, so the dump prints as it always did — with the PIN masked there too, and
+        # ``meshterm config get device_pin`` as the way to name it deliberately.
+        session = getattr(ctx.ui, "session", None)
+        if session is None:
+            ctx.ui.show(page(False))
+        else:
+            from ..ui.device_info_screen import DeviceInfoScreen
+
+            await session.run_screen(
+                DeviceInfoScreen(
+                    session, page, title=self.title, conceals=has_pin(snapshot)
+                )
+            )
 
         return ToolResult(summary={"name": snapshot.get("name")})
 

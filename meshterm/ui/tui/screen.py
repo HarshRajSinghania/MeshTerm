@@ -641,6 +641,18 @@ class ScrollScreen(Screen):
         verb = "Esc close" if self.floating else "Esc back"
         return f"↑↓ PgUp/PgDn scroll · {verb}" if self.content_overflows else verb
 
+    def replace_content(self, renderable: RenderableType) -> None:
+        """Swap the body in place, keeping the reader where they were.
+
+        The select list's :meth:`~meshterm.ui.tui.select.SelectScreen.replace_items` for a
+        read-only body: the same page with something in it changed — a value uncovered, a
+        figure refreshed — is still the page the reader was part-way down, so the scroll
+        offset stands. (It is clamped on the next scroll anyway, so a body that did change
+        height cannot strand the viewport past its end.) Rebuild the screen instead when
+        what is on it is genuinely a different subject.
+        """
+        self._renderable = renderable
+
     def render_body(self, width: int) -> list[str]:
         """Render the wrapped content to ANSI lines and remember the total count."""
         lines = render_lines(self._renderable, width)

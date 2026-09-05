@@ -56,6 +56,7 @@ from ..core.device_config import (
     settings_by_category,
 )
 from ..platforms import Platform, on_platform
+from .marks import MASK_MARK
 from .menus import (
     confirm_discard,
     exit_rows,
@@ -205,6 +206,8 @@ def config_table(
     snapshot: dict,
     custom: dict[str, str],
     pending: Optional[dict[str, Any]] = None,
+    *,
+    reveal_pin: bool = False,
 ) -> Table:
     """Build the full configuration table, overlaying any staged changes.
 
@@ -212,6 +215,13 @@ def config_table(
         snapshot: Device snapshot from ``build_snapshot``.
         custom: Current custom variables.
         pending: Optional staged changes (setting key -> new value).
+        reveal_pin: Whether to print the BLE pairing PIN. It is concealed by default —
+            this table is the whole-device dump, the thing that gets read over a
+            shoulder, screenshotted, and pasted into a bug report, and a pairing code is
+            the one value on it that lets someone else's phone onto the radio. The
+            Device info page reveals it on a keypress (see
+            :class:`~meshterm.ui.device_info_screen.DeviceInfoScreen`); the CLI names it
+            one value at a time with ``meshterm config get device_pin``.
 
     Returns:
         A Rich :class:`Table` of every setting's current (and staged) value plus custom
@@ -259,10 +269,10 @@ def config_table(
             header.append("")
         table.add_row(*row_of(header, ""))
         for spec in specs:
-            row = [
-                _fold_label(spec.label, describe),
-                _fold_value(format_value(spec, spec.getter(snapshot)), describe),
-            ]
+            current = format_value(spec, spec.getter(snapshot))
+            if spec.key == PIN_KEY and not reveal_pin:
+                current = conceal(current)
+            row = [_fold_label(spec.label, describe), _fold_value(current, describe)]
             if show_staged:
                 row.append(
                     _fold_value(format_value(spec, pending[spec.key]), describe)
@@ -280,6 +290,36 @@ def config_table(
                 row.append("")
             table.add_row(*row_of(row, ""))
     return table
+
+
+#: The one setting this table holds back: the BLE pairing PIN (the firmware reports it as
+#: ``ble_pin``; :data:`~meshterm.core.device_config.SETTINGS` keys it ``device_pin``).
+PIN_KEY = "device_pin"
+
+
+#: How wide a concealed PIN draws: the width of the *field*, taken from the setting's own
+#: upper bound (999999), not the length of the value sitting in it. A typed password masks
+#: per character because the typist needs to count what they have entered; a stored one
+#: shows its field, so the row can't be read for how many digits to guess — and a PIN of
+#: ``0`` behind a single bullet would have read as a stray dot rather than a covered value.
+_PIN_WIDTH = len(str(get_spec(PIN_KEY).maximum))
+
+
+def conceal(value: str) -> str:
+    """``value`` as a row of :data:`_PIN_WIDTH` mask bullets.
+
+    A value the device could not report is not a secret, it is an absence: ``format_value``
+    already renders that as ``?``, and a ``?`` behind bullets would claim there is
+    something to reveal when there is nothing. So only a real value is concealed, and
+    :func:`has_pin` asks the same question the other way round — a page with nothing to
+    conceal advertises no key for it.
+    """
+    return value if value == "?" else MASK_MARK * _PIN_WIDTH
+
+
+def has_pin(snapshot: dict) -> bool:
+    """Whether ``snapshot`` carries a PIN at all — i.e. whether concealing it means anything."""
+    return get_spec(PIN_KEY).getter(snapshot) is not None
 
 
 #: Cell caps for the table's two narrow lanes, indent included. Sized to the widest label

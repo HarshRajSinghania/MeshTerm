@@ -27,11 +27,14 @@ from meshterm.ui.config_editor import (
     _parse_coords,
     _valid_coords,
     config_table,
+    has_pin,
     contact_share_url,
     device_actions,
     edit_config,
     send_advert,
 )
+from meshterm.ui.device_info_screen import DeviceInfoScreen
+from meshterm.ui.marks import MASK_MARK
 from meshterm.ui.theme import active_theme
 from meshterm.ui.tui.prompt import TypedConfirmDialog
 from meshterm.ui.tui.screen import CANCEL
@@ -65,7 +68,7 @@ _SNAPSHOT = {
     "name": "Homestead-Hub",
     "adv_lat": 45.5017,
     "adv_lon": -73.5673,
-    "pin_code": 123456,
+    "ble_pin": 123456,
     "radio_freq": 869525,
     "radio_bw": 250,
     "radio_sf": 11,
@@ -144,6 +147,115 @@ def test_config_table_drops_the_description_lane_beside_a_staged_column() -> Non
     lines = _table_lines(72, pending={"tx_power": 14})
     header = next(line for line in lines if line.lstrip().startswith("SETTING"))
     assert "STAGED" in header and "DESCRIPTION" not in header
+
+
+# -- the concealed pairing PIN --------------------------------------------------
+
+
+class _StubSession:
+    """A minimal session: the screen only ever asks it to repaint."""
+
+    def __init__(self) -> None:
+        self.repaints = 0
+
+    def invalidate(self) -> None:
+        self.repaints += 1
+
+
+def _pin_row(rendered) -> str:  # noqa: ANN001 - lines or an already-joined render
+    """The Device PIN row out of a rendered table or screen body."""
+    return next(line for line in _plain(rendered).split("\n") if "Device PIN" in line)
+
+
+def _info_screen(snapshot: dict) -> DeviceInfoScreen:
+    return DeviceInfoScreen(
+        _StubSession(),
+        lambda reveal: config_table(snapshot, {}, reveal_pin=reveal),
+        title="Device info",
+        conceals=has_pin(snapshot),
+    )
+
+
+def test_the_pin_is_bullets_until_it_is_asked_for() -> None:
+    # One bullet per digit — the app's own mask glyph, the one a password prompt types in.
+    masked = _pin_row(_table_lines(72))
+    assert f"{MASK_MARK * 6}" in masked
+    assert "123456" not in masked
+    assert "123456" in _pin_row(_table_lines(72, reveal_pin=True))
+
+
+def test_the_mask_shows_the_field_not_the_pins_length() -> None:
+    # A stored secret draws its field: a one-digit PIN behind one bullet would have told
+    # you how many digits to guess (and read as a stray dot besides).
+    short = {**_SNAPSHOT, "ble_pin": 0}
+    console = Console(
+        width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
+    )
+    with console.capture() as capture:
+        console.print(config_table(short, {}))
+    assert MASK_MARK * 6 in _pin_row(capture.get())
+
+
+def test_a_device_with_no_pin_has_nothing_to_conceal() -> None:
+    # "?" is an absence, not a secret: masking it would claim there is something behind it.
+    snapshot = {k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"}
+    console = Console(
+        width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
+    )
+    with console.capture() as capture:
+        console.print(config_table(snapshot, {}))
+    assert "?" in _pin_row(_plain(capture.get()).split("\n"))
+    assert not has_pin(snapshot)
+
+
+def test_p_uncovers_the_pin_and_puts_it_back() -> None:
+    screen = _info_screen(_SNAPSHOT)
+    assert MASK_MARK in _pin_row(screen.render_body(72))
+
+    screen.handle("text", "p")
+    assert "123456" in _pin_row(screen.render_body(72))
+
+    screen.handle("text", "p")  # the same key puts it away again
+    assert MASK_MARK in _pin_row(screen.render_body(72))
+
+
+def test_the_lane_chip_and_the_key_are_one_behaviour() -> None:
+    # The PicoCalc's chip dispatches the action the letter does, not a second copy of it.
+    screen = _info_screen(_SNAPSHOT)
+    assert screen.fkey_lane[2].label == "Reveal"
+
+    screen.handle("reveal")
+    assert "123456" in _pin_row(screen.render_body(72))
+    assert screen.fkey_lane[2].label == "Hide"
+
+
+def test_the_footer_names_what_the_press_would_do_now() -> None:
+    screen = _info_screen(_SNAPSHOT)
+    assert "p show PIN" in screen.footer_hint
+    screen.handle("text", "p")
+    assert "p hide PIN" in screen.footer_hint
+
+
+def test_a_page_with_no_pin_advertises_no_key_for_it() -> None:
+    # The standing rule: a footer never names a key that would do nothing, and a lane slot
+    # for an action this screen doesn't have stays empty rather than dim.
+    screen = _info_screen({k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"})
+    assert "PIN" not in screen.footer_hint
+    assert screen.fkey_lane[2] is None
+    screen.handle("text", "p")
+    assert screen.fkey_lane[2] is None
+
+
+def test_uncovering_the_pin_keeps_the_reader_where_they_were() -> None:
+    # Nothing reflows — six cells become six cells — so the scroll must not jump.
+    screen = _info_screen(_SNAPSHOT)
+    screen.note_viewport(10)
+    screen.render_body(72)
+    screen.scroll_lines(8)
+    where = screen.scroll
+    screen.handle("text", "p")
+    assert screen.scroll == where
+    assert len(screen.render_body(72)) == len(_table_lines(72))
 
 
 # -- contact share URL ----------------------------------------------------------

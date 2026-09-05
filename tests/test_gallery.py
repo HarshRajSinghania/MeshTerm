@@ -62,10 +62,12 @@ from meshterm.ui.about import (
     support_project,
 )
 from meshterm.ui.chat import ChatScreen
+from meshterm.ui.config_editor import config_table, has_pin
 from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
 from meshterm.ui.contacts_screen import ContactsScreen
 from meshterm.ui.courier_screen import CourierOutboxScreen
 from meshterm.ui.dashboard_screen import DashboardScreen
+from meshterm.ui.device_info_screen import DeviceInfoScreen
 from meshterm.ui.livefeed_screen import LiveFeedScreen
 from meshterm.ui.map_render import MapMarker
 from meshterm.ui.map_screen import MapScreen
@@ -486,6 +488,49 @@ def _tx_sweep(cols: int, rows: int) -> Screen:
     return screen
 
 
+#: A device snapshot shaped like a companion's, for the Device info page. Every field the
+#: config table draws, including the pairing PIN it conceals.
+_DEVICE_SNAPSHOT = {
+    "name": "Homestead-Hub",
+    "adv_lat": 45.5017,
+    "adv_lon": -73.5673,
+    "ble_pin": 123456,
+    "radio_freq": 869525,
+    "radio_bw": 250,
+    "radio_sf": 11,
+    "radio_cr": 5,
+    "tx_power": 22,
+    "max_tx_power": 30,
+    "airtime_factor": 1.0,
+    "rx_delay": 0.0,
+    "manual_add_contacts": 0,
+    "autoadd_config": 0,
+    "flood_scope": "",
+    "adv_loc_policy": 1,
+    "multi_acks": 0,
+    "telemetry_mode_base": 1,
+    "telemetry_mode_loc": 0,
+    "telemetry_mode_env": 0,
+    "path_hash_mode": 1,
+}
+
+
+def _device_info(cols: int, rows: int) -> Screen:
+    return DeviceInfoScreen(
+        _GallerySession(cols, rows),
+        lambda reveal: config_table(_DEVICE_SNAPSHOT, {}, reveal_pin=reveal),
+        title="Device info",
+        conceals=has_pin(_DEVICE_SNAPSHOT),
+    )
+
+
+def _device_info_revealed(cols: int, rows: int) -> Screen:
+    # The same page after ``p``: the widest state of the row the other case masks.
+    screen = _device_info(cols, rows)
+    screen.handle("text", "p")
+    return screen
+
+
 def _about_meshterm(cols: int, rows: int) -> Screen:
     return AboutPage("About MeshTerm", about_meshterm())
 
@@ -522,6 +567,8 @@ _ENTRIES: list[_Entry] = [
     _Entry("packet_viewer", _packet_viewer),
     _Entry("trace", _trace),
     _Entry("tx_sweep", _tx_sweep),
+    _Entry("device_info", _device_info),
+    _Entry("device_info_revealed", _device_info_revealed),
     _Entry("about_meshterm", _about_meshterm),
     _Entry("about_author", _about_author),
     _Entry("join_discord", _join_discord),

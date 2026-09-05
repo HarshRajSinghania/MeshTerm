@@ -13,6 +13,7 @@ from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from ..marks import MASK_MARK
 from .render import render_lines, right_aligned_tail
 from .screen import Screen
 from .spinner import Spinner
@@ -189,7 +190,7 @@ class _LineEditor:
         """
         if slots is not None:
             return self._render_slots(slots)
-        shown = "•" * len(self.text) if mask else self.text
+        shown = MASK_MARK * len(self.text) if mask else self.text
         text = Text("› ", style="accent")
         for i, ch in enumerate(shown):
             over = overflow_at is not None and i >= overflow_at
@@ -213,7 +214,7 @@ class _LineEditor:
         for i in range(slots):
             if i:
                 text.append(" ")
-            glyph = "•" if i < filled else "·"
+            glyph = MASK_MARK if i < filled else "·"
             if i == self.cursor:
                 text.append(glyph, style="reverse")  # the active slot
             elif i < filled:
