@@ -72,6 +72,22 @@ def powerline(monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_transmit_gate() -> Iterator[None]:
+    """Every test starts having transmitted nothing.
+
+    The transmit clock is process-wide (see :mod:`meshterm.core.transmit_gate`), which is
+    right for a session and wrong for a suite: a test that sends anything would otherwise
+    leave a cooldown standing for whatever ran next, and the next test's flow would stop
+    on a countdown nobody scripted.
+    """
+    from meshterm.core.transmit_gate import current as transmit_clock
+
+    transmit_clock().reset()
+    yield
+    transmit_clock().reset()
+
+
+@pytest.fixture(autouse=True)
 def _reset_platform() -> Iterator[None]:
     """Every test starts and ends on :data:`~meshterm.platforms.REGULAR`.
 

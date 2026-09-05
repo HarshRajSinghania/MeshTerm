@@ -603,6 +603,93 @@ class ButtonDialog(_KeylessDialog):
             super().handle("escape")
 
 
+class CountdownDialog(_KeylessDialog):
+    """A wait you can watch, and back out of: the seconds left, over one Cancel chip.
+
+    Shown while a cooldown holds a transmission back (see
+    :func:`meshterm.ui.cooldown.wait_for_cooldown`). The point is that a wait long enough
+    to notice should say *why* it is waiting and leave a way out — a frozen screen says
+    neither, and on a radio app it reads as a lost connection rather than as courtesy.
+
+    It resolves itself: the caller ticks it down with :meth:`set_remaining` and the dialog
+    resolves ``True`` the moment the clock reaches zero. Esc — or Enter on its Cancel chip
+    — resolves CANCEL instead, and the caller abandons whatever was waiting.
+
+    One chip, not two: there is nothing to choose between, only something to abandon, so
+    it takes the lone-button hint shape (no ``←→``) with Cancel as its verb.
+    """
+
+    def __init__(self, action: str, remaining: float, *, reason: str = "") -> None:
+        """Build a countdown over one Cancel chip.
+
+        Args:
+            action: What is waiting, named as the thing that will happen ("Flood advert").
+            remaining: Seconds left when the dialog opens.
+            reason: One muted line under the clock saying why the wait exists; empty for
+                no line at all.
+        """
+        super().__init__()
+        self.title = action
+        # Both keys do the one thing this dialog offers, so they share an atom rather
+        # than each claiming "cancel" in turn (the hint line's shared-key rule).
+        self.footer_hint = "Enter/Esc cancel"
+        self.border_style = "warn"
+        self._remaining = max(0.0, remaining)
+        self._reason = reason
+
+    def set_remaining(self, remaining: float) -> None:
+        """Update the clock, resolving the dialog once it reaches zero.
+
+        Resolving twice is harmless — :meth:`~meshterm.ui.tui.screen.Screen.resolve` drops
+        a second result — so the tick never has to know whether Esc beat it to it.
+        """
+        self._remaining = max(0.0, remaining)
+        if self._remaining <= 0:
+            self.resolve(True)
+
+    @property
+    def dialog_width(self) -> int:
+        """Natural outer width, sized for the widest line it will ever draw.
+
+        Measured against the *opening* clock rather than the current one, so the box does
+        not shrink a cell as the seconds tick from 10 to 9 — a dialog that resizes while
+        you read it is harder to read than a slightly wide one.
+        """
+        inner = max(
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            cell_len(self._clock_text(self._remaining)),
+            cell_len(self._reason),
+            len("  Cancel  "),
+        )
+        return inner + 8
+
+    @staticmethod
+    def _clock_text(remaining: float) -> str:
+        """The clock line: whole seconds, counted the way a person would say them."""
+        seconds = max(0, int(remaining + 0.999))  # 0.2s left still reads as "1s"
+        return f"Ready in {seconds}s"
+
+    def render_body(self, width: int) -> list[str]:
+        """Draw the clock, its reason, and the Cancel chip."""
+        lines: list[Text] = [Text(self._clock_text(self._remaining), style="warn")]
+        if self._reason:
+            lines.append(Text(self._reason, style="muted"))
+        lines.append(Text(""))
+        lines.append(Text("  Cancel  ", style="selected"))
+        rendered: list[str] = []
+        for line in lines:
+            # An empty Text renders to no lines at all on its own, so the spacer above the
+            # chip has to be asked for explicitly or the chip rides up against the reason.
+            rendered.extend(render_lines(line, width) or [""])
+        return rendered
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Enter and Esc both abandon: the only chip on the dialog is Cancel."""
+        if action in ("enter", "escape"):
+            super().handle("escape")
+
+
 class TypedConfirmDialog(_KeylessDialog):
     """A destructive-action gate: the user must type a confirmation word to proceed.
 

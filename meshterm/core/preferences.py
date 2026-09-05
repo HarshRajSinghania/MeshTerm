@@ -132,8 +132,19 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         group="Sending",
         value_type="float",
         default=5.0,
-        minimum=0.0,
+        minimum=0.1,  # a floor, not a switch: there is no "off" for duty-cycle courtesy
         maximum=60.0,
+        unit="s",
+    ),
+    PrefSpec(
+        key="flood_advert_cooldown_s",
+        label="Flood cooldown",
+        help="Extra wait before another mesh-wide advert",
+        group="Sending",
+        value_type="float",
+        default=60.0,
+        minimum=5.0,  # every repeater in range rebroadcasts one; five seconds is the floor
+        maximum=3600.0,
         unit="s",
     ),
     PrefSpec(

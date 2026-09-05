@@ -1003,7 +1003,10 @@ async def _run_now(
 async def send_advert(ctx: "AppContext") -> None:
     """Run the Send advert flow, behind the main menu's ``advert`` popup tool.
 
-    Send an advert (zero-hop or flood) or show this node's shareable contact card. Only
+    Send an advert (zero-hop or flood) or show this node's shareable contact card. Either
+    advert waits out the transmit cooldown first — a flood advert its own, longer one —
+    which is a countdown the reader can cancel where the wait is long enough to notice.
+    Only
     ``SELF_INFO`` is read here: the advert command itself never consults the snapshot,
     and the contact card needs just the name, public key, and advert type — so opening
     this skips the tuning/path-hash reads of a full
@@ -1038,7 +1041,18 @@ async def send_advert(ctx: "AppContext") -> None:
     if choice == "share":
         await _show_contact_card(ctx, snapshot)
         return
-    await _run_now(ctx, device, snapshot, [("advert", choice == "flood")], "Advert")
+
+    # An advert is the one transmission a reader fires by hand, over and over, so it is
+    # where the shared transmit cooldown is felt (see meshterm.ui.cooldown). A wait worth
+    # noticing becomes a countdown they can back out of; a short one just happens.
+    from .cooldown import wait_for_cooldown
+
+    flood = choice == "flood"
+    if not await wait_for_cooldown(
+        ctx, action="Flood advert" if flood else "Zero-hop advert", flood_advert=flood
+    ):
+        return
+    await _run_now(ctx, device, snapshot, [("advert", flood)], "Advert")
 
 
 def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:

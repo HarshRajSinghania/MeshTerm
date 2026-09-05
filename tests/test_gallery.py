@@ -78,6 +78,7 @@ from meshterm.ui.node_detail_screen import NodeDetailScreen, _Action, _RoutesVie
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 from meshterm.ui.path_composer import PathComposerScreen
 from meshterm.ui.preferences import _menu_items as _preference_items
+from meshterm.ui.tui.prompt import CountdownDialog
 from meshterm.ui.records_screen import RecordDialog
 from meshterm.ui.remote_cli import RemoteCliScreen
 from meshterm.ui.timemachine_screen import TimeMachineScreen
@@ -564,6 +565,18 @@ def _preferences(cols: int, rows: int) -> Screen:
     )
 
 
+def _cooldown_countdown(cols: int, rows: int) -> Screen:
+    """The transmit-cooldown countdown at its widest: a flood advert's wait and its reason.
+
+    A dialog rather than a menu screen, and here for the one thing only this harness does:
+    its box is sized from its own content, so a longer reason line would overflow the
+    PicoCalc's 53 columns with nothing else to catch it.
+    """
+    return CountdownDialog(
+        "Flood advert", 47.0, reason="a flood advert reaches the whole mesh"
+    )
+
+
 def _about_meshterm(cols: int, rows: int) -> Screen:
     return AboutPage("About MeshTerm", about_meshterm())
 
@@ -605,6 +618,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("config_editor", _config_editor),
     _Entry("config_editor_revealed", _config_editor_revealed),
     _Entry("preferences", _preferences),
+    _Entry("cooldown_countdown", _cooldown_countdown),
     _Entry("about_meshterm", _about_meshterm),
     _Entry("about_author", _about_author),
     _Entry("join_discord", _join_discord),

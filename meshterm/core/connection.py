@@ -22,6 +22,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable, Optional
 
+from . import transmit_gate
 from .channels import CHANNEL_SLOT_PROBE_CAP
 from .events import MeshEvent
 from .frames import frame_addressing, trace_link_snrs
@@ -2038,6 +2039,7 @@ class MeshCoreDevice(Device):
     async def send_remote_command(  # noqa: D102 - inherited docstring
         self, node: Contact, command: str, *, timeout: float = 8.0
     ) -> Optional[str]:
+        transmit_gate.mark()
         return await self._send_admin_cmd(node, command, timeout=timeout)
 
     async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
@@ -2089,6 +2091,7 @@ class MeshCoreDevice(Device):
         path: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> TraceResult:
+        transmit_gate.mark()
         from meshcore import EventType  # local import keeps mock path dependency-free
 
         from ..services.trace_runner import path_hash_flags, trace_timeout
@@ -2426,6 +2429,7 @@ class MeshCoreDevice(Device):
     async def send_direct_message(  # noqa: D102 - inherited docstring
         self, contact: Contact, text: str
     ) -> Optional[Ack]:
+        transmit_gate.mark()
         from meshcore import EventType
 
         mc = self._require()
@@ -2457,6 +2461,7 @@ class MeshCoreDevice(Device):
     async def send_channel_message(  # noqa: D102 - inherited docstring
         self, index: int, text: str
     ) -> None:
+        transmit_gate.mark()
         self._ok(await self._require().commands.send_chan_msg(index, text))
 
     @staticmethod
@@ -2642,6 +2647,7 @@ class MeshCoreDevice(Device):
         self._ok(await self._require().commands.set_time(epoch))
 
     async def send_advert(self, flood: bool = False) -> None:  # noqa: D102
+        transmit_gate.mark(flood_advert=flood)
         self._ok(await self._require().commands.send_advert(flood))
 
     async def reboot(self) -> None:  # noqa: D102 - inherited docstring
@@ -2835,6 +2841,7 @@ class MockDevice(Device):
     async def send_direct_message(  # noqa: D102 - inherited docstring
         self, contact: Contact, text: str
     ) -> Optional[Ack]:
+        transmit_gate.mark()
         await asyncio.sleep(0)
         # Firmware can only address a contact it holds, so a recipient this simulated device
         # doesn't have is refused exactly as hardware refuses one — which is what makes the
@@ -2848,6 +2855,7 @@ class MockDevice(Device):
     async def send_channel_message(  # noqa: D102 - inherited docstring
         self, index: int, text: str
     ) -> None:
+        transmit_gate.mark()
         await asyncio.sleep(0)
 
     async def admin_login(self, node: Contact, password: str) -> LoginResult:  # noqa: D102
@@ -2871,6 +2879,7 @@ class MockDevice(Device):
     async def send_remote_command(  # noqa: D102 - inherited docstring
         self, node: Contact, command: str, *, timeout: float = 8.0
     ) -> Optional[str]:
+        transmit_gate.mark()
         await asyncio.sleep(0)
         key = self._mock_key(node)
         if key not in self._admin_sessions:
@@ -3088,6 +3097,7 @@ class MockDevice(Device):
         self._clock_offset = epoch - int(_time.time())
 
     async def send_advert(self, flood: bool = False) -> None:  # noqa: D102
+        transmit_gate.mark(flood_advert=flood)
         await asyncio.sleep(0)
 
     async def reboot(self) -> None:  # noqa: D102 - inherited docstring
@@ -3271,6 +3281,7 @@ class MockDevice(Device):
         path: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> TraceResult:
+        transmit_gate.mark()
         await asyncio.sleep(0.05)  # mimic radio latency so progress bars are visible
         forced = [h for h in path.split(",") if h.strip()] if path else None
         # Mirror the real device: the path-hash width is the byte length of a forced hop.
