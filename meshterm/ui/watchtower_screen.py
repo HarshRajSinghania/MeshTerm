@@ -122,7 +122,6 @@ async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
     menu = SelectScreen(
         "Watchtower — alerts & watched nodes",
         rows(),
-        wrap=False,
         hscroll=True,
         # ←→ scroll is surfaced by the list itself, but only while the highlighted
         # alert actually overflows the width (see SelectScreen.hscroll_hint) — and it

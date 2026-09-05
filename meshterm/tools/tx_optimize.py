@@ -176,7 +176,6 @@ class TxOptimizeTool(Tool):
             "TX optimize — measure at",
             items,
             prompt=f"The node whose reception of {admin_node.name} gets optimized:",
-            wrap=False,
         )
         summary: dict[str, Any] = {}
         async with ctx.ui.session.stay(screen) as visit:

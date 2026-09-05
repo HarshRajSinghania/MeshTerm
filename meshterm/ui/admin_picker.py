@@ -113,7 +113,7 @@ async def pick_admin_node(
         await _note_nothing_to_pick(ctx, title)
         return None
 
-    choice = await ctx.ui.select(title, items, prompt=prompt, wrap=False)
+    choice = await ctx.ui.select(title, items, prompt=prompt)
     return _resolve(candidates, choice)
 
 
@@ -150,7 +150,7 @@ async def admin_node_visit(
             await _note_nothing_to_pick(ctx, title)
         yield None
         return
-    screen = SelectScreen(title, items, prompt=prompt, wrap=False)
+    screen = SelectScreen(title, items, prompt=prompt)
     async with ctx.ui.session.stay(screen) as visit:
         yield _AdminNodePicker(visit, candidates)
 

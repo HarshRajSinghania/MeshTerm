@@ -227,10 +227,12 @@ class RecordDialog(Screen):
         """Move the action cursor, scroll the card, commit the selection, or dismiss."""
         if action == "up":
             self._follow = True
-            self._index = (self._index - 1) % len(self._actions)
+            # Both ends clamp rather than wrap — the app-wide rule for a row cursor:
+            # a highlight that leaps end to end takes the results window with it.
+            self._index = max(0, self._index - 1)
         elif action == "down":
             self._follow = True
-            self._index = (self._index + 1) % len(self._actions)
+            self._index = min(len(self._actions) - 1, self._index + 1)
         elif action in ("pageup", "ctrl_pageup"):
             self._follow = False
             self.scroll_pages(-1)
@@ -788,7 +790,6 @@ async def open_records(ctx: "AppContext") -> dict:
                 rows,
                 footer_hint="↑↓ move · Enter select · Esc back",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is CANCEL or picked is None:  # Esc
@@ -845,7 +846,6 @@ async def open_records(ctx: "AppContext") -> dict:
             "Trophy case",
             items,
             footer_hint="↑↓ move · Enter open · Esc back",
-            wrap=False,
             hscroll=True,  # a long walk slides under ←→ instead of dying at the fold
         )
         # The browser stays pushed for the whole visit, so every dialog that belongs *over*

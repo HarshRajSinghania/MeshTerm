@@ -783,7 +783,6 @@ class TuiSession:
         *,
         prompt: str = "",
         default: Any = None,
-        wrap: bool = True,
         filterable: bool = True,
         footer_hint: Optional[str] = None,
         delete_hint: str = "",
@@ -798,7 +797,7 @@ class TuiSession:
         :class:`~meshterm.ui.tui.select.DeleteRequest` the caller unwraps.
         """
         kwargs: dict[str, Any] = dict(
-            prompt=prompt, default=default, wrap=wrap, filterable=filterable,
+            prompt=prompt, default=default, filterable=filterable,
             delete_hint=delete_hint,
         )
         if footer_hint is not None:

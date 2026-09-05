@@ -120,7 +120,6 @@ class ChatTool(Tool):
         picker = SelectScreen(
             "Chat — pick a conversation",
             await self._picker_items(ctx),
-            wrap=False,
             delete_hint="Del delete history",
         )
         opened = 0

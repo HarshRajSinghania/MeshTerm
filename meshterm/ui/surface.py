@@ -125,7 +125,6 @@ class Ui:
         *,
         prompt: str = "",
         default: Any = None,
-        wrap: bool = True,
         filterable: bool = True,
         delete_hint: str = "",
     ) -> Any:
@@ -406,7 +405,6 @@ class PlainUi(Ui):
         *,
         prompt: str = "",
         default: Any = None,
-        wrap: bool = True,
         filterable: bool = True,
         delete_hint: str = "",
     ) -> Any:
@@ -652,13 +650,12 @@ class TuiUi(Ui):
         *,
         prompt: str = "",
         default: Any = None,
-        wrap: bool = True,
         filterable: bool = True,
         delete_hint: str = "",
     ) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(
-            title, items, prompt=prompt, default=default, wrap=wrap,
+            title, items, prompt=prompt, default=default,
             filterable=filterable, delete_hint=delete_hint,
         )
 

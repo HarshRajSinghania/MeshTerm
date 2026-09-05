@@ -513,7 +513,6 @@ class ContactListScreen(SelectScreen):
             self._compose_items(),
             prompt=prompt,
             footer_hint=footer_hint,
-            wrap=False,
         )
 
     def _compose_items(self) -> list:

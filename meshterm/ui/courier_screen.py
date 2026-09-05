@@ -187,7 +187,6 @@ class CourierOutboxScreen(SelectScreen):
             "Courier — store-and-forward outbox",
             _menu_items(ctx, ctx.courier_store.entries()),
             default=default,
-            wrap=False,
             footer_hint="↑↓ move · Enter select · Esc back",
         )
 

@@ -89,7 +89,7 @@ async def edit_preferences(ctx: "AppContext") -> Optional[dict[str, Any]]:
     # whole visit means the typed filter survives editing a preference, not just the cursor.
     title, items = _menu_items(prefs, pending)
     menu = SelectScreen(
-        title, items, wrap=False,
+        title, items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:

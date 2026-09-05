@@ -251,7 +251,7 @@ def _rows(prefs: Preferences, pending: Optional[dict] = None) -> tuple[str, list
     from meshterm.ui.tui import SelectScreen
 
     title, items = _menu_items(prefs, pending or {})
-    screen = SelectScreen(title, items, wrap=False)
+    screen = SelectScreen(title, items)
     screen.note_viewport(len(items) + 4)  # no paging: every row on screen at once
     return title, [line.strip() for line in _plain(screen.render_body(_WIDE)).splitlines()]
 
@@ -316,7 +316,7 @@ def test_a_description_scrolls_under_a_pinned_setting_and_value() -> None:
     from meshterm.ui.tui import SelectScreen
 
     title, items = _menu_items(Preferences(), {})
-    screen = SelectScreen(title, items, wrap=False)
+    screen = SelectScreen(title, items)
     screen.note_viewport(len(items) + 4)
     before = _plain(screen.render_body(72)).splitlines()
     cursor = next(line for line in before if line.lstrip().startswith("❯"))

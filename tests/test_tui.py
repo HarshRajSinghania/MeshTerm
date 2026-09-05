@@ -95,13 +95,14 @@ def _menu() -> SelectScreen:
     return SelectScreen("pick", items, default=2)
 
 
-def test_select_default_and_arrow_wrap() -> None:
-    """The default choice is preselected and Down wraps around the selectable choices."""
+def test_select_default_and_arrows_walk_the_choices() -> None:
+    """The default choice is preselected and the arrows step over the selectable choices."""
     screen = _menu()
     assert _run(screen, "enter") == 2  # default is beta
     screen = _menu()
     screen.handle("down")  # beta -> gamma
-    screen.handle("down")  # gamma -> alpha (wrap)
+    screen.handle("up")    # gamma -> beta
+    screen.handle("up")    # beta -> alpha
     assert _run(screen, "enter") == 1
 
 
@@ -148,7 +149,6 @@ def test_select_delete_hint_follows_the_highlight() -> None:
         footer_hint="↑↓ move · Enter select · Esc quit",
         delete_hint="Del remove",
         filterable=False,
-        wrap=False,
     )
     # On the non-deletable row, the footer is the plain base hint.
     assert "Del remove" not in screen.footer_hint
@@ -247,13 +247,13 @@ def test_select_filter_matches_callable_title() -> None:
     assert _run(screen, "enter") == 1
 
 
-def test_select_no_wrap_clamps_at_the_ends() -> None:
-    """With wrap off, Up on the first row and Down on the last stay put (no cycling)."""
+def test_select_clamps_at_the_ends() -> None:
+    """Up on the first row and Down on the last stay put — no cursor in the app rolls over."""
     items = [Choice("alpha", 1), Choice("beta", 2), Choice("gamma", 3)]
-    screen = SelectScreen("pick", items, wrap=False)
+    screen = SelectScreen("pick", items)
     screen.handle("up")  # already on the first choice — must not jump to the last
     assert _run(screen, "enter") == 1
-    screen = SelectScreen("pick", items, default=3, wrap=False)  # last choice
+    screen = SelectScreen("pick", items, default=3)  # last choice
     screen.handle("down")  # already on the last — must not wrap to the first
     assert _run(screen, "enter") == 3
 
@@ -312,7 +312,7 @@ def _trophy_shaped() -> SelectScreen:
     items += [Choice(f"rec{i}", ("l", i)) for i in range(6)]
     items += [section_heading("Widest arc"), Separator("   no records yet", style="muted")]
     items += [Choice(f"arc{i}", ("a", i)) for i in range(6)]
-    return SelectScreen("Trophy case", items, default=("l", 5), wrap=False)
+    return SelectScreen("Trophy case", items, default=("l", 5))
 
 
 def _blocks(screen: SelectScreen) -> list[list[str]]:
@@ -399,7 +399,7 @@ def _columned_menu(default: object = None) -> SelectScreen:
     items += [Choice(f"chan{i}", ("c", i)) for i in range(6)]
     items += [section_heading("Direct")]
     items += [Choice(f"peer{i}", ("d", i)) for i in range(8)]
-    return SelectScreen("pick", items, default=default, wrap=False)
+    return SelectScreen("pick", items, default=default)
 
 
 def test_select_pins_a_column_header_above_the_section_heading() -> None:
@@ -636,26 +636,29 @@ def test_reorder_back_row_and_escape_cancel_discarding_moves() -> None:
     assert _run(screen, "enter") is CANCEL
 
 
-def test_reorder_cursor_wraps_through_the_action_rows() -> None:
-    """↑ from the first row lands on the last row; ↓ from there wraps back to the top.
+def test_reorder_cursor_runs_into_the_action_rows_and_clamps() -> None:
+    """↑ on the first row stays put; ↓ walks the list and on into the action rows, then stops.
 
     Clean, the list is the whole cursor space; once dirty the two action rows join it and
-    the wrap runs through them.
+    the cursor runs on through them to the bottom — never round to the top.
     """
     screen = ReorderScreen("order", ["a", "b"])
-    screen.handle("up")  # wrap: onto the last list row, there being no action rows
-    assert screen._index == 1
-    screen.handle("down")  # wrap forward to the first list row
+    screen.handle("up")  # already atop: no last row to fall onto
     assert screen._index == 0
+    screen.handle("down")   # onto the last list row, there being no action rows
+    assert screen._index == 1
+    screen.handle("down")   # and stop there
+    assert screen._index == 1
 
-    screen.handle("enter")  # grab row 0…
-    screen.handle("down")   # …and carry it down: dirty, so Apply and Back join the space
-    screen.handle("enter")  # drop it — the cursor rode it to the last list row
+    screen.handle("enter")  # grab row 1…
+    screen.handle("up")     # …and carry it up: dirty, so Apply and Back join the space
+    screen.handle("enter")  # drop it — the cursor rode it to the first list row
+    screen.handle("down")   # onto the second list row
     screen.handle("down")   # off the list, onto Apply
     screen.handle("down")   # …then the discard-Back row below it
     assert screen._index == 3
-    screen.handle("down")   # and round to the top again
-    assert screen._index == 0
+    screen.handle("down")   # the bottom of the space: it stays
+    assert screen._index == 3
 
 
 def test_reorder_ignores_typed_characters_including_space() -> None:
@@ -1110,13 +1113,23 @@ def test_button_dialog_enter_commits_highlighted() -> None:
 
 
 def test_button_dialog_arrows_move_highlight() -> None:
-    """←/→ (and Tab) move the highlight between the buttons, wrapping at the ends."""
+    """←/→ move the highlight between the buttons and clamp at the ends; Tab still cycles.
+
+    Tab is the exception: it has no reverse of its own, so on the last chip it comes round
+    rather than dead-ending.
+    """
     screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=0)
     screen.handle("right")  # → No
     assert _run(screen, "enter") is False
     screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=0)
-    screen.handle("left")  # wraps → No
+    screen.handle("left")  # already leftmost — stays on Yes
+    assert _run(screen, "enter") is True
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=1)
+    screen.handle("right")  # already rightmost — stays on No
     assert _run(screen, "enter") is False
+    screen = ButtonDialog("quit?", [("Yes", True), ("No", False)], default=1)
+    screen.handle("tab")  # No -> round to Yes
+    assert _run(screen, "enter") is True
 
 
 def test_button_dialog_shortcut_keys_commit_instantly() -> None:

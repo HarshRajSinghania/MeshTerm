@@ -1755,7 +1755,7 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
 
     header = items[0]
     assert header.pinned  # the lanes mean the same in both groups — pinned for the list
-    screen = SelectScreen("Chat", items, wrap=False)
+    screen = SelectScreen("Chat", items)
     for _ in range(8):  # down past the Direct heading
         screen.handle("down")
     visible, above, _below = frame._visible_slice(screen, screen.render_body(72), 8)

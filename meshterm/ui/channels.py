@@ -227,7 +227,7 @@ async def manage_channels(ctx: "AppContext") -> int:
             if not await _menu_round(ctx, title, items, default=highlight, handle=handle):
                 return changes
             title, items = await reload()
-    menu = SelectScreen(title, items, wrap=False)
+    menu = SelectScreen(title, items)
     async with session.stay(menu) as visit:
         while True:
             choice = await visit.result()
@@ -743,7 +743,6 @@ async def _channel_detail(
         title,
         _detail_items(ctx, slot),
         prompt=_detail_summary(ctx, slot, stats),
-        wrap=False,
     )
     async with session.stay(menu) as visit:
         while True:

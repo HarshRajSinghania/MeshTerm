@@ -166,7 +166,6 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
             snapshot, pending, len(pending) + len(extra_ops), policy, reveal
         ),
         conceals=has_pin(snapshot),
-        wrap=False,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:
@@ -933,7 +932,7 @@ async def device_actions(ctx: "AppContext") -> None:
     # One screen for the whole visit: the action rows are fixed, so nothing here needs
     # rebuilding — and the cursor and any typed filter simply stay where the reader left them
     # while each action's prompts float over the list.
-    menu = SelectScreen("Device actions", _action_items(), wrap=False)
+    menu = SelectScreen("Device actions", _action_items())
     async with session.stay(menu) as visit:
         while True:
             choice = await visit.result()

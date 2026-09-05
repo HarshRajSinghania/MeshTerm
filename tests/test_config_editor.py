@@ -270,7 +270,6 @@ def _editor(snapshot: dict, pending: dict | None = None) -> _ConfigMenu:
         _StubSession(),
         lambda reveal: _menu_items(snapshot, pending, len(pending), AdvertPolicy(), reveal),
         conceals=has_pin(snapshot),
-        wrap=False,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
 
@@ -777,7 +776,7 @@ async def test_editor_menu_pins_the_column_header_over_the_category(ctx: AppCont
     menu = ui.session.pushed[0]
     # Re-open the same rows highlighting a row in the last category, so the list scrolls
     # past both the column header and the earlier headings.
-    deep = SelectScreen(menu.title, menu._items, default="__advert_flood__", wrap=False)
+    deep = SelectScreen(menu.title, menu._items, default="__advert_flood__")
     visible, above, _below = frame._visible_slice(deep, deep.render_body(100), 6)
     top = [_ANSI.sub("", row).strip() for row in visible[:2]]
     assert top[0].startswith("SETTING") and top[0].endswith("DESCRIPTION")

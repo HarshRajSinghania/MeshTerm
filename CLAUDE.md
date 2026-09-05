@@ -131,6 +131,15 @@ deliberately, one at a time, and say why in the code.
   shape in `ReorderScreen`. A **Quit** row is likewise kept (main menu, device splash):
   it *initiates* the app's terminal action behind a confirm, and on the splash it is the
   only statement that the app can be left at all.
+- **A cursor clamps at both ends — nothing in the app rolls over.** ↓ off the last row
+  and ↑ off the first stay put, in a select list, a hand-drawn action list, a reorder
+  list, a dialog's button row, everywhere. The window follows the highlight, so a roll
+  hauls the whole list back to the other end and flips its edge markers: the one move
+  that reads as the screen changing under you rather than as one step, and held-down
+  arrows should settle at an end rather than loop. The exception is a **forward-only key
+  with no reverse of its own**, which cycles or it dead-ends — Tab on a button row, and
+  the picocalc F-lane's single-chip advancers (`Sort →`, the node page's tab chip, the
+  Time Machine's window chip). Those state it in the code.
 - Grouped-list section headings use `section_heading("Label")` → `── Label ──` accent.
   That is also what makes a heading *sticky* (it pins to the top row while its section
   scrolls, and the ^PgUp/^PgDn jumps step by it), so build them through it — a hand-rolled

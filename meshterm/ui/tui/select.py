@@ -288,7 +288,6 @@ class SelectScreen(Screen):
         footer_hint: Optional[str] = None,
         delete_hint: str = "",
         filterable: bool = True,
-        wrap: bool = True,
         hscroll: bool = False,
         hscroll_hint: str = "←→ scroll",
     ) -> None:
@@ -308,9 +307,6 @@ class SelectScreen(Screen):
                 touch. Empty (the default) leaves the footer fixed.
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
                 the startup device picker) where type-to-filter would only get in the way.
-            wrap: Whether the highlight wraps around the ends (Down from the last row jumps
-                to the first, and vice versa). Off for grouped lists where wrapping across the
-                section headings reads as a jarring jump rather than continuing to scroll.
             hscroll: Whether ←/→ horizontally scroll the *highlighted* row so an over-long
                 line can be read to its end (the Watchtower's alert log). Off by default —
                 rows simply ellipsize at the right edge and ←/→ stay inert. Only a row that
@@ -350,7 +346,6 @@ class SelectScreen(Screen):
         self._delete_hint = delete_hint
         self._prompt = prompt
         self._filterable = filterable
-        self._wrap = wrap
         self._items = items
         self._filter = ""
         # Index into the currently-selectable (filtered) choices.
@@ -801,14 +796,16 @@ class SelectScreen(Screen):
             self._hshift = 0  # moving off a row abandons its scroll — each row scrolls alone
         if action == "up":
             if choices:
-                self._index = (self._index - 1) % len(choices) if self._wrap else max(
-                    0, self._index - 1
-                )
+                # Both ends clamp; nothing in the app rolls a highlight over. A ↓ off the
+                # last row would haul the window back to the head and flip the edge
+                # markers with it, which reads as the screen changing under the reader
+                # rather than as one step — and across a grouped list's section headings
+                # it reads as a jump rather than as continuing to scroll. Held-down arrows
+                # settle at an end instead.
+                self._index = max(0, self._index - 1)
         elif action == "down":
             if choices:
-                self._index = (self._index + 1) % len(choices) if self._wrap else min(
-                    len(choices) - 1, self._index + 1
-                )
+                self._index = min(len(choices) - 1, self._index + 1)
         elif action == "pageup":
             self._index = max(0, self._index - self._page_step)
         elif action == "pagedown":
@@ -995,14 +992,17 @@ class ReorderScreen(Screen):
                     self._order[self._index], self._order[self._index - 1])
                 self._index -= 1
             elif not self._grabbed and total:
-                self._index = (self._index - 1) % total
+                # Clamps like every other row cursor, and like the grabbed one just above:
+                # the same two keys must not mean "stop at the end" in one mode and "leap
+                # to the other end" in the other.
+                self._index = max(0, self._index - 1)
         elif action == "down":
             if self._grabbed and self._index < n - 1:
                 self._order[self._index + 1], self._order[self._index] = (
                     self._order[self._index], self._order[self._index + 1])
                 self._index += 1
             elif not self._grabbed and total:
-                self._index = (self._index + 1) % total
+                self._index = min(total - 1, self._index + 1)
         elif action == "enter":
             if self._index < n:
                 self._grabbed = not self._grabbed  # Enter grabs a row, Enter again drops it

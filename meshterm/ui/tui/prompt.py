@@ -585,9 +585,16 @@ class ButtonDialog(_KeylessDialog):
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the highlight, commit on Enter or a shortcut key, or cancel on Esc."""
-        if action in ("left", "right", "tab") and self._buttons:
+        if action in ("left", "right") and self._buttons:
+            # ←→ clamp, like every other cursor the app steers with a directional pair —
+            # a highlight that leaps end to end is the one move that reads as the screen
+            # changing rather than as one step.
             step = -1 if action == "left" else 1
-            self._index = (self._index + step) % len(self._buttons)
+            self._index = max(0, min(len(self._buttons) - 1, self._index + step))
+        elif action == "tab" and self._buttons:
+            # Tab is the exception the rule allows: a forward-only key with no reverse of
+            # its own, so it cycles or it dead-ends on the last chip.
+            self._index = (self._index + 1) % len(self._buttons)
         elif action == "text" and data.lower() in self._keys:
             self.resolve(self._keys[data.lower()])
         elif action == "enter" and self._buttons:
@@ -828,9 +835,9 @@ class AutocompleteScreen(_KeylessDialog):
         """Edit the field, move/accept suggestions, submit on Enter, or cancel on Esc."""
         suggestions = self._suggestions()
         if action == "up":
-            self._sugg = (self._sugg - 1) % len(suggestions) if suggestions else 0
+            self._sugg = max(0, self._sugg - 1) if suggestions else 0
         elif action == "down":
-            self._sugg = (self._sugg + 1) % len(suggestions) if suggestions else 0
+            self._sugg = min(len(suggestions) - 1, self._sugg + 1) if suggestions else 0
         elif action == "tab":
             if suggestions:
                 self._editor = _LineEditor(suggestions[self._sugg])

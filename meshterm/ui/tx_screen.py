@@ -295,10 +295,12 @@ class TxSweepScreen(Screen):
         if action == "enter":
             self._commit_action()
         elif action == "up":
-            self._index = (self._index - 1) % len(self._actions)
+            # Both ends clamp rather than wrap — the app-wide rule for a row cursor:
+            # a highlight that leaps end to end takes the results window with it.
+            self._index = max(0, self._index - 1)
             self._pin_cursor = True
         elif action == "down":
-            self._index = (self._index + 1) % len(self._actions)
+            self._index = min(len(self._actions) - 1, self._index + 1)
             self._pin_cursor = True
         elif action == "pageup":
             self._pin_cursor = False
@@ -710,7 +712,6 @@ async def open_tx_optimize(
                 default=(screen.tx_min, screen.tx_max),
                 footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is CANCEL or picked is None:
@@ -749,7 +750,6 @@ async def open_tx_optimize(
                 default=screen.step,
                 footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is not CANCEL and picked is not None:
@@ -774,7 +774,6 @@ async def open_tx_optimize(
                 default=screen.samples,
                 footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is not CANCEL and picked is not None:

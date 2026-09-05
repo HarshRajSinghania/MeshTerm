@@ -192,7 +192,7 @@ async def _admin_session(
     cache = ctx.remote_store.settings(node)
     title, items = _menu_items(node, cache, pending)
     menu = SelectScreen(
-        title, items, wrap=False,
+        title, items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:

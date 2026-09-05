@@ -368,7 +368,6 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
         ),
         footer_hint="↑↓ move · Enter select · Esc back",
         filterable=False,
-        wrap=False,
     )
 
 
@@ -417,7 +416,6 @@ def _preview_screen(victims: list[ScoredContact]):
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
         delete_hint="Del keep",
         default=_APPLY,
-        wrap=False,
         hscroll=True,
         hscroll_hint="←→ scroll",
     )

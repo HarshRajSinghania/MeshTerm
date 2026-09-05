@@ -542,7 +542,6 @@ def _config_editor(cols: int, rows: int) -> Screen:
             _DEVICE_SNAPSHOT, {"tx_power": 14}, 1, AdvertPolicy(), reveal
         ),
         conceals=has_pin(_DEVICE_SNAPSHOT),
-        wrap=False,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
 
@@ -560,7 +559,7 @@ def _preferences(cols: int, rows: int) -> Screen:
     prefs.set("trace_cooldown_s", 2.5)
     title, items = _preference_items(prefs, {"history_days": 90})
     return SelectScreen(
-        title, items, wrap=False,
+        title, items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
 

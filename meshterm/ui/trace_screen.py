@@ -672,10 +672,12 @@ class TraceScreen(Screen):
         if action == "enter":
             self._commit_action()
         elif action == "up":
-            self._index = (self._index - 1) % len(self._actions)
+            # Both ends clamp rather than wrap — the app-wide rule for a row cursor:
+            # a highlight that leaps end to end takes the results window with it.
+            self._index = max(0, self._index - 1)
             self._pin_cursor = True
         elif action == "down":
-            self._index = (self._index + 1) % len(self._actions)
+            self._index = min(len(self._actions) - 1, self._index + 1)
             self._pin_cursor = True
         elif action == "pageup":
             self._pin_cursor = False
@@ -1800,7 +1802,6 @@ async def _open_session(
                 default=width_bytes,
                 footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is CANCEL or picked is None or int(picked) == width_bytes:
@@ -1837,7 +1838,6 @@ async def _open_session(
                 default=sample_count,
                 footer_hint="↑↓ move · Enter set · Esc keep",
                 filterable=False,
-                wrap=False,
             )
         )
         if picked is not CANCEL and picked is not None:
@@ -2026,7 +2026,6 @@ async def _open_session(
                 items,
                 prompt="Choose the outbound leg — the return mirrors it.",
                 footer_hint="↑↓ move · Enter adopt/probe · Esc back",
-                wrap=False,
                 hscroll=True,  # a long candidate row slides under ←→ instead of truncating
             )
         )
@@ -2064,7 +2063,6 @@ async def _open_session(
                 f"Probe results — {target_label}",
                 result_items,
                 footer_hint="↑↓ move · Enter adopt path · Esc keep",
-                wrap=False,
                 # ←→ read the tail of a long spec; the ranking lanes in front of it stay
                 # pinned (each row declares their width — see outcome_lanes).
                 hscroll=True,

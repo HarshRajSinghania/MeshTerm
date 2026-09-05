@@ -353,7 +353,7 @@ def test_admin_menu_pins_the_column_header_over_the_category() -> None:
 
     ansi = re.compile(r"\x1b\[[0-9;]*m")
     title, items = _menu_items(NODE, {}, {})
-    screen = SelectScreen(title, items, wrap=False)
+    screen = SelectScreen(title, items)
     for _ in range(18):  # down past the first categories
         screen.handle("down")
     visible, above, _below = frame._visible_slice(screen, screen.render_body(72), 10)

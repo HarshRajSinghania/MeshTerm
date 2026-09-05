@@ -366,7 +366,8 @@ async def test_trace_screen_composer_updates_the_spec() -> None:
         return "3d,f2,3d"  # one forced hop: outbound, target, then the mirrored return
 
     screen, _ = _trace_screen(compose_path=compose)
-    screen.handle("down")  # Trace is the last row, so ↓ wraps onto Compose path
+    for _ in range(len(screen._actions) - 1):
+        screen.handle("up")  # the cursor opens on Trace, the last row; walk it up to Compose
     screen.handle("enter")
     await asyncio.sleep(0)
     assert asked == [""]
