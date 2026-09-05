@@ -51,7 +51,7 @@ from .watch_store import DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
 #: not have to know it starts with a D.
 GROUPS: tuple[str, ...] = (
     "Sending",
-    "Transmit power",
+    "TX optimize",
     "Watchtower",
     "Map",
     "History",
@@ -127,7 +127,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Sending -----------------------------------------------------------------
     PrefSpec(
         key="trace_cooldown_s",
-        label="Pause between sends",
+        label="Transmit cooldown",
         help="Wait this long before transmitting again",
         group="Sending",
         value_type="float",
@@ -146,12 +146,12 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         minimum=0,
         maximum=2,
     ),
-    # --- Transmit power ----------------------------------------------------------
+    # --- TX optimize -------------------------------------------------------------
     PrefSpec(
         key="tx_opt_min",
-        label="Lowest power",
-        help="Weakest setting the power search tries",
-        group="Transmit power",
+        label="Range min",
+        help="Weakest power it will try",
+        group="TX optimize",
         value_type="int",
         default=18,
         minimum=1,
@@ -160,9 +160,9 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     ),
     PrefSpec(
         key="tx_opt_max",
-        label="Highest power",
-        help="Strongest setting the power search tries",
-        group="Transmit power",
+        label="Range max",
+        help="Strongest power it will try",
+        group="TX optimize",
         value_type="int",
         default=28,
         minimum=1,
@@ -173,7 +173,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         key="tx_snr_tolerance_db",
         label="Tie margin",
         help="Signals this close are a tie, so less power wins",
-        group="Transmit power",
+        group="TX optimize",
         value_type="float",
         default=1.0,
         minimum=0.0,
