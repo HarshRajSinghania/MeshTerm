@@ -141,6 +141,69 @@ def test_packet_viewer_lane_names_the_ends_of_the_list_not_the_body() -> None:
     assert [pair.enabled for pair in pair_view.fkey_lane[3:]] == [True, True]
 
 
+def test_packet_viewer_follows_the_stream_off_the_top_of_a_live_list() -> None:
+    """``↑`` off the newest packet is the feed's second stop, not a clamp.
+
+    On the pin the view holds the top *position*: each arrival becomes the card being
+    read, the title says so, and ``↓`` steps back off onto whichever packet is showing
+    at that moment.
+    """
+    old = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    feed = [old]
+    pinned_by_viewer = []
+    viewer = PacketViewer(
+        list(feed), 0, resolve=lambda h: "", source=lambda: list(feed),
+        on_pin=lambda: pinned_by_viewer.append(True),
+    )
+    assert not viewer._pinned, "opening a packet named that packet, not the stream"
+    assert "↑ follow" in viewer.footer_hint
+
+    viewer.handle("up")
+    assert viewer._pinned and pinned_by_viewer == [True]
+    assert viewer.title.endswith("· following")  # the word, not a perpetual 1/n
+    assert "↓ hold packet" in viewer.footer_hint
+
+    newer = PacketEntry(when=utcnow(), kind="message", node="bb", text="new!")
+    feed.insert(0, newer)
+    assert "new!" in _plain(viewer.render_body(80))  # the arrival is now the card
+    assert viewer.title.endswith("· following")
+
+    viewer.handle("down")
+    assert not viewer._pinned and viewer._entries[viewer._index] is newer
+    assert "1/2" in viewer.title  # holding that packet, which now rides down the list
+
+
+def test_packet_viewer_over_a_snapshot_has_nothing_to_follow() -> None:
+    """No live source, no pin: ``↑`` on the newest packet clamps as it always did."""
+    newer = PacketEntry(when=utcnow(), kind="message", node="bb", text="new!")
+    old = PacketEntry(when=utcnow(), kind="advert", node="aa")
+    viewer = PacketViewer([newer, old], 0, resolve=lambda h: "")
+
+    viewer.handle("up")
+    assert not viewer._pinned and "following" not in viewer.title
+    assert viewer.footer_hint.startswith("↑↓ newer/older")
+    viewer.handle("home")
+    assert not viewer._pinned and viewer._index == 0
+
+
+def test_packet_viewer_home_resumes_the_stream() -> None:
+    """Home reaches the pin on a live list — the feed's own Home, and its ``Newest`` chip.
+
+    Which is also why the jump chips light over a live list holding a single packet:
+    there is somewhere to go even where there is no second packet to go to.
+    """
+    feed = [PacketEntry(when=utcnow(), kind="advert", node=f"n{i}") for i in range(3)]
+    viewer = PacketViewer(list(feed), 0, resolve=lambda h: "", source=lambda: list(feed))
+    viewer.handle("end")
+    assert viewer._index == 2 and not viewer._pinned  # the oldest packet
+    viewer.handle("home")
+    assert viewer._pinned
+
+    lone = PacketViewer(feed[:1], 0, resolve=lambda h: "", source=lambda: feed[:1])
+    lone.note_metrics(4, 20)  # a short body in a roomy box: nothing to page
+    assert [pair.opp_enabled for pair in lone.fkey_lane[3:]] == [True, True]
+
+
 def test_packet_viewer_without_a_source_stays_a_snapshot() -> None:
     """With no live source the viewer is frozen on its opening list (unchanged behaviour)."""
     entry = PacketEntry(when=utcnow(), kind="advert", node="aa")

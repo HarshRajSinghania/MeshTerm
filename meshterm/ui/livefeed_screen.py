@@ -35,7 +35,11 @@ packet re-pins, and Home jumps straight back to the pin from anywhere.
 Enter opens the highlighted packet in the shared
 :class:`~meshterm.ui.packet_viewer.PacketViewer` — which then pages through the feed
 itself with the same ``↑``/``↓``, and, for an overheard channel-text packet naming a
-channel we hold the key for, decrypts it.
+channel we hold the key for, decrypts it. **Both stops go up with it**: the viewer holds
+the same pin above the newest packet, so ``↑`` off the top follows the stream there too
+(each arrival becoming the card being read), and it walks the feed's cursor in step, pin
+included — closing the dialog lands on whatever the reader was doing inside it rather
+than on a state they left behind at the door.
 
 The screen holds no subscriptions of its own — the opener (:func:`open_livefeed`)
 wires the hub subscription and the once-a-second repaint, and tears them down when
@@ -438,6 +442,10 @@ class LiveFeedScreen(Screen):
             list(self._feed), self._selected,
             resolve=self._resolve, prefix_bytes=self._prefix_bytes,
             self_name=self._self_name, on_navigate=follow,
+            # The viewer carries this screen's own second stop, so a reader who walks up
+            # to the stream inside the dialog re-pins the feed under it and is still
+            # following when the dialog closes.
+            on_pin=lambda: self._select_stop(0),
             channels=self._channels, type_of=self._type_of, key_of=self._key_of,
             # The live feed itself (newest first), so the viewer keeps up with packets
             # that arrive while it is open instead of freezing at this snapshot.

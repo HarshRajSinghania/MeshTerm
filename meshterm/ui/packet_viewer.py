@@ -26,6 +26,15 @@ the newer/older packet, Home/End jump to the newest/oldest, mirroring the keys t
 opening list itself walks rows with — so a burst can be read packet by packet
 without bouncing back out to the list. PgUp/PgDn scroll a tall packet inside the
 dialog, matching what they do on every other screen; Esc closes it.
+
+Over a *live* list — one that hands the viewer a ``source`` — the top is **two stops
+rather than one**, exactly as the live feed's own top is. ``↑`` off the newest packet,
+and Home from anywhere, lands on the **pin**: the view holds the top *position* instead
+of a packet, so every arrival becomes the card being read, and the title says
+``following`` where it would say ``n/total``. ``↓`` steps back off the pin onto whichever
+packet is showing at that moment, which then rides down the list as newer ones arrive —
+the reader who opened a packet to read it keeps it, and the reader who walked up to the
+top gets the stream. Same two stops, same keys, as the feed underneath.
 """
 
 from __future__ import annotations
@@ -345,6 +354,11 @@ class PacketViewer(Screen):
     ends, PgUp/PgDn scroll a tall body, Esc closes. Opened over a single packet (a
     one-entry list) the paging keys simply do nothing.
 
+    Over a live list (``source``) the top gains the feed's second stop — the pin, where
+    the view follows the stream instead of a packet (see the module docstring and
+    :meth:`_pin`). Opened over a snapshot there is nothing to follow, and ``↑`` on the
+    newest packet clamps as it always did.
+
     The dialog only ever grows (see
     :attr:`~meshterm.ui.tui.screen.Screen.grow_only`): paging from a short packet to a
     tall one enlarges the box, but paging back keeps it at that size — blank-padded
@@ -364,13 +378,15 @@ class PacketViewer(Screen):
         so it keeps the right-hand slot behind Page ↑.
 
         The two banks gate on different things, because they move different things. The
-        pager needs a body taller than the box; the jumps need a second packet to jump to.
-        Opened over a single packet, all four chips go dim at once.
+        pager needs a body taller than the box; the jumps need somewhere to jump to — a
+        second packet, or, on a live list, the pin that ``Newest`` reaches even when the
+        list holds one packet (the feed's ``Top`` chip, one screen up). Opened over a lone
+        packet of a snapshot, all four chips go dim at once.
         """
         from .tui.fkeys import FPair, default_lane
 
         lane = list(default_lane(nav=self.content_overflows))
-        many = len(self._entries) > 1
+        many = len(self._entries) > 1 or self._can_pin
         lane[3] = FPair("Page ↓", "pagedown", "Oldest", "end",
                         enabled=self.content_overflows, opp_enabled=many)
         lane[4] = FPair("Page ↑", "pageup", "Newest", "home",
@@ -386,6 +402,7 @@ class PacketViewer(Screen):
         prefix_bytes: int = 0,
         self_name: Optional[str] = None,
         on_navigate: Optional[Callable[[PacketEntry], None]] = None,
+        on_pin: Optional[Callable[[], None]] = None,
         channels: Sequence[tuple[str, bytes]] = (),
         source: Optional[Callable[[], Sequence[PacketEntry]]] = None,
         type_of: Optional[TypeOf] = None,
@@ -401,6 +418,10 @@ class PacketViewer(Screen):
             self_name: Our own node's name, drawn white wherever it appears.
             on_navigate: Called with the newly shown entry whenever paging moves the
                 view, so the opening list can walk its own highlight in step.
+            on_pin: Called when the view moves onto the pin, so a list that has the same
+                stop (the live feed) can follow the stream too and still be following it
+                when the dialog closes. Never called without a ``source``: the pin is
+                only a stop where the list is live.
             channels: The device's configured channels, as ``(name, secret)`` pairs —
                 tried against an overheard ``packet`` entry's channel-text frame (see
                 :func:`~meshterm.core.channels.decrypt_channel_text`), so a raw frame
@@ -426,6 +447,7 @@ class PacketViewer(Screen):
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
         self._on_navigate = on_navigate
+        self._on_pin = on_pin
         self._channels = channels
         self._source = source
         self._type_of = type_of
@@ -435,15 +457,49 @@ class PacketViewer(Screen):
         self._current: Optional[PacketEntry] = (
             self._entries[self._index] if self._entries else None
         )
+        #: Whether the view is on the *pin* — the stop above the newest packet, which
+        #: holds the top position rather than a packet. Implies ``_index == 0``: the pin
+        #: is a mode on the newest entry, so everything that reads the view (the card,
+        #: the scroll, the cache) needs no special case; only the title and the moves
+        #: differ. Opening never pins — Enter named *this* packet (see
+        #: :meth:`~meshterm.ui.livefeed_screen.LiveFeedScreen._open_packet`) — so the
+        #: reader walks up to the stream deliberately or not at all.
+        self._pinned = False
         self._update_footer()
         self._set_title()
 
     def _update_footer(self) -> None:
-        """Set the footer hint to match whether the list currently has more than one entry."""
-        if len(self._entries) > 1:
-            self.footer_hint = "↑↓ newer/older · PgUp/PgDn scroll · Home/End ends · Esc close"
+        """Set the footer hint to the moves that are live right now.
+
+        Three shapes, because the top of a live list is two stops. On the pin only ``↓``
+        moves, and the atom says what stepping off it buys — the packet on screen, held
+        against the next arrival. One stop below, ``↑`` and ``↓`` do different things (one
+        follows the stream, the other walks older), so they take an atom each rather than
+        sharing ``newer/older``, which would name neither. Everywhere else the pair walks
+        the list and reads as one atom, and a lone packet with nothing to follow keeps the
+        bare ``Esc close`` it always had.
+        """
+        if self._pinned:
+            atoms = ["↓ hold packet"]
+        elif self._index == 0 and self._can_pin:
+            atoms = ["↑ follow"] + (["↓ older"] if len(self._entries) > 1 else [])
+        elif len(self._entries) > 1:
+            atoms = ["↑↓ newer/older"]
         else:
-            self.footer_hint = "Esc close"
+            atoms = []
+        if len(self._entries) > 1 or self._can_pin:
+            atoms += ["PgUp/PgDn scroll", "Home/End ends"]
+        atoms.append("Esc close")
+        self.footer_hint = " · ".join(atoms)
+
+    @property
+    def _can_pin(self) -> bool:
+        """Whether this viewer has a stream to follow — which is what a ``source`` is.
+
+        Over a snapshot there is no second stop above the newest packet: nothing will ever
+        arrive there, so the pin would be an empty mode and ``↑`` clamps instead.
+        """
+        return self._source is not None
 
     def _sync(self) -> None:
         """Refresh the entries from the live source, re-finding the viewed packet by identity.
@@ -454,6 +510,11 @@ class PacketViewer(Screen):
         so paging keys measure against the current list and newly arrived packets sit
         reachable above the one being read. A packet that has since aged out of the
         list drops the view to the nearest surviving index.
+
+        The pin is where that parts company: it is attached to the *position*, so a
+        re-read lands it on whatever is newest now and the card under it changes. This
+        runs on every paint as well as before every move, so following costs nothing
+        more than the repaint the feed was already buying.
         """
         if self._source is None:
             return
@@ -461,7 +522,9 @@ class PacketViewer(Screen):
         if not entries:
             return
         self._entries = entries
-        if self._current is not None:
+        if self._pinned:
+            self._show(0)
+        elif self._current is not None:
             for i, candidate in enumerate(entries):
                 if candidate is self._current:
                     self._index = i
@@ -477,26 +540,45 @@ class PacketViewer(Screen):
 
     def _set_title(self) -> None:
         # No emoji in a dialog title (the standards' rule); the class row carries the icon.
+        # The position atom says which of the two things the view is doing: a count while
+        # it holds a packet, and ``following`` while it holds the top of the stream — the
+        # word rather than a perpetual ``1/n``, because what changes under the pin is the
+        # card, not the number.
         entry = self._entries[self._index]
         title = entry.kind
-        if len(self._entries) > 1:
+        if self._pinned:
+            title += " · following"
+        elif len(self._entries) > 1:
             title += f" · {self._index + 1}/{len(self._entries)}"
         self.title = title
 
     # --- input ---------------------------------------------------------------
 
     def handle(self, action: str, data: str = "") -> None:
-        """Page through the list, scroll a tall entry, or dismiss."""
+        """Page through the list, follow the stream, scroll a tall entry, or dismiss."""
         if action in ("up", "down", "home", "ctrl_home", "end", "ctrl_end"):
             # Re-read the live list first so newly arrived packets are in range before we
             # step — otherwise the first ``↑`` off the newest could never reach them.
             self._sync()
         if action == "up":
-            self._jump(self._index - 1)
+            # Off the newest packet ``↑`` has one more place to go on a live list: the
+            # pin. On a snapshot the same press clamps, there being no stream to follow.
+            if self._index == 0:
+                self._pin()
+            else:
+                self._jump(self._index - 1)
         elif action == "down":
-            self._jump(self._index + 1)
+            # Off the pin ``↓`` does not move down a row — it lands on the same packet
+            # showing under it, now held. The feed's own ``↓`` off its pin, exactly.
+            self._jump(self._index if self._pinned else self._index + 1)
         elif action in ("home", "ctrl_home"):
-            self._jump(0)
+            # "Take me back to the top" resumes the stream where there is one, rather than
+            # parking on whichever packet happens to be newest this instant — the feed's
+            # Home again, and what the ``Newest`` chip reaches on the console.
+            if self._can_pin:
+                self._pin()
+            else:
+                self._jump(0)
         elif action in ("end", "ctrl_end"):
             self._jump(len(self._entries) - 1)
         elif action == "pageup":
@@ -507,15 +589,53 @@ class PacketViewer(Screen):
             self.resolve(None)
 
     def _jump(self, index: int) -> None:
-        """Move to another entry (clamped), resetting the scroll for the new body."""
+        """Hold the entry at ``index`` (clamped), leaving the pin behind.
+
+        Landing on an entry is by definition holding a packet rather than following the
+        stream, so this is also the way *off* the pin — and the one move that does
+        something while the index stays put, which is exactly what ``↓`` off the pin is.
+        The scroll resets only where the packet itself changes (see :meth:`_show`), so
+        that press keeps the reader where they were in the card they were already reading.
+        """
         index = max(0, min(index, len(self._entries) - 1))
-        if index != self._index:
-            self._index = index
-            self._current = self._entries[index]
+        if index == self._index and not self._pinned:
+            return
+        self._pinned = False
+        self._show(index)
+        self._set_title()
+        self._update_footer()
+        if self._on_navigate is not None and self._current is not None:
+            self._on_navigate(self._current)
+
+    def _pin(self) -> None:
+        """Follow the stream: hold the top of the list, whichever packet is newest.
+
+        A no-op over a snapshot (nothing to follow), and on the pin already. Otherwise the
+        list is re-read so the pin lands on what is newest *now*, and the opener is told —
+        so a list carrying the same stop follows along, and is still following when the
+        dialog closes back onto it.
+        """
+        if self._pinned or not self._can_pin:
+            return
+        self._pinned = True
+        self._sync()
+        self._set_title()
+        self._update_footer()
+        if self._on_pin is not None:
+            self._on_pin()
+
+    def _show(self, index: int) -> None:
+        """Put the view on entry ``index``, starting a *different* packet from its top.
+
+        The scroll belongs to the packet, not to the position: paging onto another card
+        starts it at its beginning, while re-landing on the card already showing (``↓``
+        off the pin) leaves the reader exactly where they had scrolled to.
+        """
+        self._index = index
+        entry = self._entries[index]
+        if entry is not self._current:
+            self._current = entry
             self.scroll = 0
-            self._set_title()
-            if self._on_navigate is not None:
-                self._on_navigate(self._current)
 
     # --- rendering -------------------------------------------------------------
 

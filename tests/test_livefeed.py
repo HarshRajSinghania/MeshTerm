@@ -19,9 +19,18 @@ from meshterm.ui.livefeed_screen import _ICON_LANE, LiveFeedScreen
 class _FakeSession:
     def __init__(self) -> None:
         self.repaints = 0
+        #: The screen the feed last floated over itself (the packet viewer).
+        self.opened = None
 
     def invalidate(self) -> None:
         self.repaints += 1
+
+    def run_screen(self, screen):
+        """Record the floated screen instead of running it — there is no loop here."""
+        self.opened = screen
+
+    def run_detached(self, coro) -> None:
+        """The session's fire-and-forget launch; ``run_screen`` already did the recording."""
 
 
 class _Fut:
@@ -350,6 +359,28 @@ def test_livefeed_opening_a_packet_drops_the_pin() -> None:
     assert not screen._pinned and screen._selected == 0
     screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
     assert screen._selected == 1, "the cursor left the packet being viewed"
+
+
+def test_livefeed_viewer_that_walks_up_to_the_stream_re_pins_the_feed() -> None:
+    """The viewer carries this screen's second stop, and hands the pin back through it.
+
+    Enter still names *this* packet, so the dialog opens holding one. Walking up off the
+    top inside it is the same move as walking up off the top out here, so the feed
+    follows the stream again — and is still following when the dialog closes over it.
+    """
+    screen = _screen(seed=[_obs(node="n0", age_s=2), _obs(node="n1", age_s=1)])
+    screen.handle("enter")
+    viewer = screen._session.opened
+    assert viewer is not None and not screen._pinned
+
+    viewer.handle("up")
+    assert viewer._pinned and "following" in viewer.title
+    assert screen._pinned, "the feed stayed parked while the viewer followed the stream"
+
+    # One arrival, both stops: the feed's cursor holds the top and so does the card.
+    screen.on_event(MeshEvent.observation_event(_obs(node="a1b2")))
+    assert screen._selected == 0
+    assert "Alice" in _plain(viewer.render_body(72))
 
 
 def test_livefeed_page_keys_move_the_feed_selection() -> None:
