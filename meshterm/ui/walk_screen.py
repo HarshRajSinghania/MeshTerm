@@ -615,6 +615,14 @@ class WalkScreen(Screen):
         against the **right** edge, so the focus and the steps that just led to it are
         what a glance lands on.
 
+        Which edge the line hangs off follows one thing only: **whether the walk's start
+        is on it.** A line that shows its first hop — the rounded head chip, us — sits
+        flush **left**, where a path that begins at its beginning belongs; the right snap
+        is what a *cut* head looks like, holding the ``⋯`` against the far edge so the
+        elision reads as "the line continues off this side" rather than as a gap. So it
+        is not the resting state that decides, but the fit: a scrolled line whose head
+        has come back into view is left-aligned like any other complete one.
+
         ← and → then **scroll it** (JP, 2026-08-09), a hop at a time, off the tail end:
         the elided head is a real part of the walk and a long one had no way to be read
         at all. A scrolled line grows its own trailing ``⋯`` — the focus is now the part
@@ -628,14 +636,14 @@ class WalkScreen(Screen):
         self._trail_width = width
         limit = self._trail_max_scroll(width)
         self._trail_scroll = max(0, min(self._trail_scroll, limit))
-        if not limit and not self._trail_scroll:
-            full = PathLine(hops, separator=_TRAIL_SEP).text()
-            if full.cell_len <= width:
-                return full
         kept = hops[: len(hops) - self._trail_scroll]
         if self._trail_scroll:
             kept.append(elision_hop())  # the focus is off to the right
-        fitted = PathLine(kept, separator=_TRAIL_SEP).ellipsized(width, elide=ELIDE_HEAD)
+        line = PathLine(kept, separator=_TRAIL_SEP)
+        full = line.text()
+        if full.cell_len <= width:
+            return full  # the start is in view: the walk reads from where it set out
+        fitted = line.ellipsized(width, elide=ELIDE_HEAD)
         snapped = Text(" " * max(0, width - fitted.cell_len))  # snap the tail to the edge
         snapped.append_text(fitted)
         return snapped

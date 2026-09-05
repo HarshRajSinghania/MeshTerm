@@ -309,6 +309,22 @@ def test_walk_trail_sits_left_until_it_overflows() -> None:
     assert screen._trail_text(40).plain == SELF_GLYPH  # us, in one cell
 
 
+def test_walk_trail_scrolled_back_to_its_head_sits_left_again() -> None:
+    """Alignment follows the head, not the scroll: a visible start hangs the line left."""
+    screen, width = _walked_chain(8)
+    limit = screen._trail_max_scroll(width)
+    for step in range(1, limit):  # every stop short of the head keeps the right snap
+        screen.handle("left")
+        cut = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+        assert cut.startswith(" ") and cut.lstrip().startswith("⋯"), step
+
+    screen.handle("left")  # the step that brings the walk's start back into view
+    assert screen._trail_scroll == limit
+    home = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+    assert home.startswith(SELF_GLYPH)  # flush left, no padding before the head
+    assert home.rstrip().endswith("⋯")  # the elision it does have is on the tail
+
+
 def test_walk_trail_names_carry_their_node_hues() -> None:
     """Trail names take the per-node key hue (ours the white you-style), the focus bold."""
     from meshterm.ui.theme import node_style
