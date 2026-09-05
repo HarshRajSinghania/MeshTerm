@@ -54,7 +54,7 @@ GROUPS: tuple[str, ...] = (
     "Transmit power",
     "Watchtower",
     "Map",
-    "History kept",
+    "History",
     "Display",
 )
 
@@ -127,8 +127,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Sending -----------------------------------------------------------------
     PrefSpec(
         key="trace_cooldown_s",
-        label="Transmit cooldown",
-        help="Pause between our own transmissions, for duty-cycle safety",
+        label="Pause between sends",
+        help="Wait this long before transmitting again",
         group="Sending",
         value_type="float",
         default=5.0,
@@ -139,7 +139,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="direct_message_soft_retries",
         label="Message retries",
-        help="Automatic re-sends of an unacknowledged direct message",
+        help="Times to resend a message that gets no reply",
         group="Sending",
         value_type="int",
         default=0,  # one shot: a re-send is a second transmission on a shared mesh
@@ -149,8 +149,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Transmit power ----------------------------------------------------------
     PrefSpec(
         key="tx_opt_min",
-        label="Sweep floor",
-        help="Lowest power the transmit-power optimizer explores",
+        label="Lowest power",
+        help="Weakest setting the power search tries",
         group="Transmit power",
         value_type="int",
         default=18,
@@ -160,8 +160,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     ),
     PrefSpec(
         key="tx_opt_max",
-        label="Sweep ceiling",
-        help="Highest power the transmit-power optimizer explores",
+        label="Highest power",
+        help="Strongest setting the power search tries",
         group="Transmit power",
         value_type="int",
         default=28,
@@ -171,8 +171,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     ),
     PrefSpec(
         key="tx_snr_tolerance_db",
-        label="Tie tolerance",
-        help="Within this much SNR of the best, the lower power wins",
+        label="Tie margin",
+        help="Signals this close are a tie, so less power wins",
         group="Transmit power",
         value_type="float",
         default=1.0,
@@ -183,8 +183,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Watchtower --------------------------------------------------------------
     PrefSpec(
         key="watch_silence_hours",
-        label="Silence alarm",
-        help="Silence a newly watched node is allowed before the alarm",
+        label="Alert after",
+        help="Warn when a watched node goes quiet this long",
         group="Watchtower",
         value_type="enum",
         default=DEFAULT_SILENCE_HOURS,
@@ -193,7 +193,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="watch_alerts_kept",
         label="Alerts kept",
-        help="Alerts the Watchtower log retains, oldest dropped first",
+        help="How many past alerts to keep",
         group="Watchtower",
         value_type="int",
         default=200,
@@ -203,8 +203,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Map ---------------------------------------------------------------------
     PrefSpec(
         key="map_view_fraction",
-        label="Opening frame",
-        help="Fraction of nodes a map frames, so outliers don't zoom it out",
+        label="Map fit",
+        help="Share of nodes to fit on screen; 1 shows them all",
         group="Map",
         value_type="float",
         default=0.5,
@@ -213,8 +213,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     ),
     PrefSpec(
         key="basemap_tilejson_url",
-        label="Basemap source",
-        help="TileJSON the map's vector tiles are fetched from",
+        label="Map tiles",
+        help="Where map images come from",
         group="Map",
         value_type="str",
         default="https://tiles.openfreemap.org/planet",
@@ -223,9 +223,9 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     # --- History kept ------------------------------------------------------------
     PrefSpec(
         key="history_days",
-        label="Packet history",
-        help="Days of overheard history kept; 0 keeps everything forever",
-        group="History kept",
+        label="Keep packets for",
+        help="Older ones are deleted; 0 keeps everything",
+        group="History",
         value_type="int",
         default=365,
         minimum=0,
@@ -234,9 +234,9 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     ),
     PrefSpec(
         key="chat_history_limit",
-        label="Transcript depth",
-        help="Past messages loaded when a conversation opens",
-        group="History kept",
+        label="Chat history",
+        help="Old messages to load when you open a chat",
+        group="History",
         value_type="int",
         default=200,
         minimum=20,
@@ -245,8 +245,8 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="courier_history_kept",
         label="Courier history",
-        help="Delivered and given-up outbox entries kept for the screen",
-        group="History kept",
+        help="Finished outbox messages to keep",
+        group="History",
         value_type="int",
         default=100,
         minimum=10,
@@ -256,7 +256,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="fast_render",
         label="Fast redraw",
-        help="Write rows straight to the terminal instead of through the stock renderer",
+        help="Faster screen updates; turn off if it looks wrong",
         group="Display",
         value_type="bool",
         default=True,
@@ -265,7 +265,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="full_width",
         label="Last column",
-        help="Use the column a terminal that under-reports its width hides",
+        help="Use the extra column some terminals hide",
         group="Display",
         value_type="enum",
         default="auto",

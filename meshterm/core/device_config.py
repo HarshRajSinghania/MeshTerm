@@ -331,7 +331,7 @@ _PATH_HASH_CHOICES = {
 def _telemetry_spec(key: str, label: str) -> SettingSpec:
     """Build a telemetry-mode setting spec (shared shape for base/loc/env)."""
     return SettingSpec(
-        key=key, label=label, help="Telemetry reporting mode", category="Behavior",
+        key=key, label=label, help="Who may read this node's sensor readings", category="Behavior",
         value_type="enum", choices=_TELEMETRY_CHOICES, minimum=0, maximum=3,
         getter=_get(key), apply=_telemetry_apply(key),
     )
@@ -452,16 +452,16 @@ def current_preset(snapshot: dict[str, Any]) -> Optional[RadioPreset]:
 DEVICE_SETTINGS: list[SettingSpec] = [
     # Identity
     SettingSpec(
-        "name", "Node name", "Advertised node name", "Identity", "str",
+        "name", "Node name", "The name other nodes see", "Identity", "str",
         getter=_get("name"), apply=lambda d, v, s: d.set_name(v),
     ),
     SettingSpec(
-        "adv_lat", "Latitude", "Advertised latitude, degrees", "Identity",
+        "adv_lat", "Latitude", "How far north or south this node says it is", "Identity",
         "float", minimum=-90.0, maximum=90.0,
         getter=_get("adv_lat"), apply=_coords_apply("adv_lat"),
     ),
     SettingSpec(
-        "adv_lon", "Longitude", "Advertised longitude, degrees", "Identity",
+        "adv_lon", "Longitude", "How far east or west this node says it is", "Identity",
         "float", minimum=-180.0, maximum=180.0,
         getter=_get("adv_lon"), apply=_coords_apply("adv_lon"),
     ),
@@ -472,34 +472,36 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         # backups still restore; reading the firmware's own name means the row shows a
         # value instead of "?" on real hardware. The fallback keeps the canonical key
         # working for anything that reports it directly.
-        "device_pin", "Device PIN", "BLE pairing PIN", "Identity", "int",
+        "device_pin", "Device PIN", "Code a phone needs to pair over Bluetooth", "Identity", "int",
         minimum=0, maximum=999999,
         getter=lambda snapshot: snapshot.get("ble_pin", snapshot.get("device_pin")),
         apply=lambda d, v, s: d.set_device_pin(v),
     ),
     # Radio
     SettingSpec(
-        "radio_freq", "Frequency (MHz)", "Carrier frequency in MHz", "Radio", "float",
+        "radio_freq", "Frequency (MHz)", "Must match every other node on your mesh",
+        "Radio", "float",
         minimum=100.0, maximum=1000.0,
         getter=_get("radio_freq"), apply=_radio_apply("freq"),
     ),
     SettingSpec(
-        "radio_bw", "Bandwidth (kHz)", "Channel bandwidth in kHz", "Radio", "float",
+        "radio_bw", "Bandwidth (kHz)", "Wider is faster, narrower reaches further",
+        "Radio", "float",
         minimum=1.0, maximum=1000.0,
         getter=_get("radio_bw"), apply=_radio_apply("bw"),
     ),
     SettingSpec(
-        "radio_sf", "Spreading factor", "LoRa spreading factor", "Radio", "int",
+        "radio_sf", "Spreading factor", "Higher reaches further but sends slower", "Radio", "int",
         minimum=5, maximum=12,
         getter=_get("radio_sf"), apply=_radio_apply("sf"),
     ),
     SettingSpec(
-        "radio_cr", "Coding rate", "LoRa coding-rate denominator (4/5–4/8)",
+        "radio_cr", "Coding rate", "Higher survives noise better, sends slower",
         "Radio", "int", minimum=5, maximum=8,
         getter=_get("radio_cr"), apply=_radio_apply("cr"),
     ),
     SettingSpec(
-        "tx_power", "TX power (dBm)", "Transmit power, up to this board's reported max",
+        "tx_power", "TX power (dBm)", "How loud this radio transmits",
         "Radio", "int", minimum=1, maximum=30, max_key="max_tx_power",
         getter=_get("tx_power"), apply=lambda d, v, s: d.set_tx_power(v),
     ),
@@ -508,44 +510,44 @@ DEVICE_SETTINGS: list[SettingSpec] = [
     # here: companion firmware ignores them — they are remote-CLI settings on repeaters.)
     SettingSpec(
         "airtime_factor", "Airtime factor",
-        "Airtime budget: duty cycle = 100 / (factor + 1) %, so 0 = unlimited", "Tuning",
+        "Caps how much of the air we use; 0 = no cap", "Tuning",
         "float", minimum=0.0, maximum=9.0,
         getter=_get("airtime_factor"), apply=_tuning_apply("airtime_factor"),
     ),
     SettingSpec(
         "rx_delay", "RX delay",
-        "Base delay before handling received packets, seconds", "Tuning",
+        "Wait this long before acting on what we hear", "Tuning",
         "float", minimum=0.0, maximum=20.0,
         getter=_get("rx_delay"), apply=_tuning_apply("rx_delay"),
     ),
     # Behavior
     SettingSpec(
-        "manual_add_contacts", "Manual add contacts",
-        "Require adding contacts manually", "Behavior", "bool",
+        "manual_add_contacts", "Add contacts by hand",
+        "Only save a node when you say so", "Behavior", "bool",
         getter=_get("manual_add_contacts"),
         apply=lambda d, v, s: d.set_manual_add_contacts(v),
     ),
     SettingSpec(
-        "autoadd_config", "Contact auto-add",
-        "Bitmask of advert types auto-added as contacts (0 = none)", "Behavior", "int",
+        "autoadd_config", "Auto-add contacts",
+        "Which kinds of node get saved on their own; 0 = none", "Behavior", "int",
         minimum=0, maximum=255,
         getter=_get("autoadd_config"), apply=lambda d, v, s: d.set_autoadd_config(v),
     ),
     SettingSpec(
         "flood_scope", "Flood scope",
-        "Limit flood routing to one #scope; empty reaches the whole mesh", "Behavior",
+        "Keep traffic to one group; empty reaches everyone", "Behavior",
         "str", max_length=30,
         getter=_get("flood_scope"), apply=lambda d, v, s: d.set_default_flood_scope(v),
     ),
     SettingSpec(
-        "adv_loc_policy", "Advert location policy",
-        "Share location in adverts", "Behavior", "enum",
+        "adv_loc_policy", "Share location",
+        "Tell other nodes where this one is", "Behavior", "enum",
         choices=_ADV_LOC_CHOICES, minimum=0, strict_choices=False,
         getter=_get("adv_loc_policy"), apply=lambda d, v, s: d.set_adv_loc_policy(v),
     ),
     SettingSpec(
         "multi_acks", "Multi-acks",
-        "Extra acknowledgements for reliability", "Behavior",
+        "Send extra receipts so replies get through", "Behavior",
         "enum", choices=_MULTI_ACKS_CHOICES, minimum=0, strict_choices=False,
         getter=_get("multi_acks"), apply=lambda d, v, s: d.set_multi_acks(v),
     ),
@@ -555,7 +557,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
     # Experimental
     SettingSpec(
         "path_hash_mode", "Path-hash mode",
-        "Per-hop path-hash size; larger resists collisions, adds overhead",
+        "Longer hop ids mix up fewer nodes, but cost space",
         "Experimental", "enum", choices=_PATH_HASH_CHOICES, minimum=0, maximum=3,
         getter=_get("path_hash_mode"), apply=lambda d, v, s: d.set_path_hash_mode(v),
     ),

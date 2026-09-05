@@ -158,8 +158,8 @@ def test_the_file_reads_the_way_the_page_does(tmp_path: Path) -> None:
     prefs = Preferences(tmp_path / "preferences.yaml")
     prefs.set("history_days", 30)
     text = prefs.as_yaml()
-    assert "# --- History kept ---" in text
-    assert "# Days of overheard history kept" in text
+    assert "# --- History ---" in text
+    assert "# Older ones are deleted; 0 keeps everything" in text
     assert "# default: 365 days" in text
     # A group with nothing changed in it earns no heading.
     assert "# --- Display ---" not in text
@@ -298,9 +298,9 @@ def test_a_staged_change_shows_its_arrow_and_the_save_action() -> None:
 def test_a_long_value_is_capped_so_the_descriptions_keep_their_lane() -> None:
     """The basemap URL is shortened in the lane rather than eating the prose column."""
     _, rows = _rows(Preferences())
-    basemap = next(row for row in rows if "Basemap source" in row)
+    basemap = next(row for row in rows if "Map tiles" in row)
     assert "https://tiles.openf…" in basemap
-    assert "TileJSON" in basemap  # its description still made it onto the row
+    assert "Where map images" in basemap  # its description still made it onto the row
 
 
 def _table_lines(prefs: Preferences, width: int) -> list[str]:
@@ -345,8 +345,8 @@ def test_the_printed_table_names_every_value_and_its_default() -> None:
     body = "\n".join(_table_lines(prefs, 160))
     assert "https://tiles.openfreemap.org/planet" in body  # never capped here
     assert "30 days" in body and "365 days" in body  # value beside its default
-    assert "── History kept ──" in body
-    assert "Days of overheard history kept" in body  # the description lane, at this width
+    assert "── History ──" in body
+    assert "Older ones are deleted" in body  # the description lane, at this width
 
 
 def test_the_printed_table_never_elides_a_key() -> None:
