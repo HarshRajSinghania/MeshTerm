@@ -11,9 +11,11 @@ from datetime import timedelta
 
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
-from meshterm.ui.pathline import CRACK_HEAD, ELIDE_HEAD, SELF_GLYPH, PathLine
+from meshterm.ui.pathline import (
+    CRACK_HEAD, CRACK_TAIL, ELIDE_HEAD, SELF_GLYPH, PathLine,
+)
 from meshterm.ui.tui.render import render_to_ansi
-from meshterm.ui.walk_screen import WalkScreen
+from meshterm.ui.walk_screen import _HSCROLL_STEP, WalkScreen
 
 US = "aa" * 6
 YUL = Contact(name="YUL-Cartierville", public_key="3d" * 32, node_type=2)
@@ -326,17 +328,16 @@ def test_walk_trail_sits_left_until_it_overflows() -> None:
 def test_walk_trail_scrolled_back_to_its_head_sits_left_again() -> None:
     """Alignment follows the head, not the scroll: a visible start hangs the line left."""
     screen, width = _walked_chain(8)
-    limit = screen._trail_max_scroll(width)
-    for step in range(1, limit):  # every stop short of the head is still cropped
+    steps = screen._trail_max_scroll(width) // _HSCROLL_STEP
+    for step in range(1, steps):  # every stop short of the head is still cropped
         screen.handle("left")
         cut = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
         assert cut[0] in ("…", CRACK_HEAD) and len(cut) == width, step
 
     screen.handle("left")  # the step that brings the walk's start back into view
-    assert screen._trail_scroll == limit
+    assert screen._trail_scroll == steps * _HSCROLL_STEP
     home = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
     assert home.startswith(SELF_GLYPH)  # flush left, no padding before the head
-    assert home.rstrip().endswith("⋯")  # the elision it does have is on the tail
 
 
 def test_walk_trail_names_carry_their_node_hues() -> None:
@@ -670,22 +671,26 @@ def _walked_chain(length: int, *, width: int = 46):
     return screen, width
 
 
-def test_walk_trail_scrolls_a_hop_at_a_time_off_its_tail() -> None:
-    """← reads back over a long walk; → returns; the focus is what the marks are about."""
+def test_walk_trail_slides_a_window_over_the_walk_and_cracks_both_edges() -> None:
+    """← reads back over a long walk; → returns; each edge it continues past is cracked."""
     screen, width = _walked_chain(8)
     trail = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
 
-    # At rest the walk fills the lane: the focus shows, the start is cropped off the left.
+    # At rest the window sits at the tail: the focus shows, the start is cropped off the
+    # left, and the walk's own end needs no mark because the walk really does end there.
     assert "Repeater-08" in trail and "Homestead" not in trail
     assert trail[0] in ("…", CRACK_HEAD) and len(trail) == width
+    assert trail[-1] not in ("…", CRACK_TAIL) and "⋯" not in trail
     assert screen._trail_scroll == 0
 
     screen.handle("left")
-    scrolled = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
-    assert screen._trail_scroll == 1
-    # One hop of walk moved out of view on the right, and says so with the same mark.
-    assert "Repeater-08" not in scrolled and "Repeater-07" in scrolled
-    assert scrolled.rstrip().endswith("⋯")
+    slid = _plain([render_to_ansi(screen._trail_text(width), width, no_wrap=True)])
+    assert screen._trail_scroll == _HSCROLL_STEP  # the app's own step, cells not hops
+    # Walk moved out of view on the right, and says so in the same language as the left:
+    # the cut mark, never the ⋯ — nothing here is elided, the lane just ran out.
+    assert "Repeater-08" not in slid and "Repeater-07" in slid
+    assert slid[-1] in ("…", CRACK_TAIL) and "⋯" not in slid
+    assert len(slid) == width
 
     screen.handle("right")
     assert screen._trail_scroll == 0

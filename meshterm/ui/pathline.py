@@ -29,9 +29,9 @@ drawn*, so every surface the survey found can eventually route through it:
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
 * **Three overflow answers**, matching the three patterns the surfaces already use:
-  :meth:`PathLine.text` is the full one-liner (for callers that crop or
-  h-scroll it themselves — :func:`cut_to` anchored on the first hop, :func:`cut_from`
-  on the last), :meth:`PathLine.ellipsized` fits a width by eliding
+  :meth:`PathLine.text` is the full one-liner (for callers that crop it with
+  :func:`cut_to` or read it through a sliding window of their own, each cut edge
+  marked by :func:`cut_mark`), :meth:`PathLine.ellipsized` fits a width by eliding
   hops behind a ``⋯`` mark, on whichever side it is told to eat into
   (:data:`ELIDE_TAIL` by default — both endpoints survive, unlike a plain tail
   truncation that amputates the destination; :data:`ELIDE_HEAD` where a surface
@@ -364,44 +364,6 @@ def cut_to(line: Text, width: int, *, action: bool = False) -> Text:
         fitted.truncate(max(0, width - mark.cell_len), overflow="crop")
         fitted.append_text(mark)
     return with_action_mark(fitted, width) if action else fitted
-
-
-def cut_from(line: Text, width: int) -> Text:
-    """Fit a rendered path line to ``width`` by cutting its *head* — cracked, not elided.
-
-    :func:`cut_to`'s mirror, for a line anchored on its **last** hop rather than its
-    first: a breadcrumb whose news is where the walk got to, a lane whose right edge is
-    the thing being read. The body keeps the tail cells and the freed cell at the left
-    carries :func:`cut_mark`, so the chip the crop landed in opens on
-    :data:`CRACK_HEAD` — half segment, half page, the picture of a path that began off
-    to the left — while an arrow line opens on the same ``…`` it always did. A line that
-    already fits comes back untouched, which is what makes "draw it whole until it can't
-    be" the caller's default rather than a special case it has to write.
-
-    This is a *crop*, deliberately not :meth:`PathLine.ellipsized`: nothing is dropped
-    behind a ``⋯``, so the reader loses exactly the cells the lane ran out of and not the
-    whole hop those cells were part of. The two marks stay honest about which happened —
-    the crack says a segment continues, the ellipsis says whole hops are missing.
-
-    Args:
-        line: The rendered line to fit.
-        width: The cell budget.
-
-    Returns:
-        A line no wider than ``width``, flush against its right edge by construction.
-    """
-    if width <= 0:
-        return Text()
-    if line.cell_len <= width:
-        return line
-    from .tui.render import crop_cells  # deferred: render reads PATH_INK from here
-
-    mark = cut_mark(line, line.cell_len - width + 1, ELIDE_HEAD)
-    kept = max(0, width - mark.cell_len)
-    out = Text(style=line.style, no_wrap=True)
-    out.append_text(mark)
-    out.append_text(crop_cells(line, line.cell_len - kept, kept))
-    return out
 
 
 def hops_atom(count: int) -> Text:

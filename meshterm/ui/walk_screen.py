@@ -39,10 +39,12 @@ across the top grows (a :mod:`~meshterm.ui.pathline` path line — powerline chi
 terminal draws them, ``you › YUL-Cartierville › …`` where it doesn't, each name in its
 node's own hue), and **⌫ steps back** along it. Walking to a node already on the trail
 truncates the stack to its first appearance — the loop you walked to get back there is
-dropped rather than recorded. The trail never wraps: at rest its *head* goes behind a
-leading ``⋯`` and the rest snaps flush right, so the focus and the steps just taken stay
-in view, and **←→ scroll it** a hop at a time to read back over a long walk (a trailing
-``⋯`` then marks the focus as the part out of view). **^U** refocuses our own node.
+dropped rather than recorded. The trail never wraps: it is one line read through a
+window, drawn whole while whole fits and *cropped* at either edge the walk continues
+past — a chip sheared on its own half block, the way every path row in the app that
+outgrows its lane is cut. At rest the window sits at the tail, so the focus and the
+steps just taken are in view and it is the walk's start that is cropped; **←→ slide
+it** to read back over a long walk. **^U** refocuses our own node.
 **Typing finds** — a global filter over every node in the graph, islands included — and
 narrows the canvas's fan to matching neighbours as it goes, the focus and the came-from
 node holding through it; Enter teleports the focus to the highlighted match (the trail
@@ -66,10 +68,10 @@ from ..services.topology import Link, MeshTopology
 from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
 from .menus import fit_cells
-from .pathline import SELF_GLYPH, PathHop, PathLine, cut_from, elision_hop
+from .pathline import ELIDE_HEAD, ELIDE_TAIL, SELF_GLYPH, PathHop, PathLine, cut_mark
 from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
-from .tui.render import query_line, render_to_ansi
+from .tui.render import crop_cells, query_line, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _format_age, highlighted_hash
 
@@ -136,11 +138,18 @@ _FAN_MIN_SLOTS = 7
 #: never collide with a canonical id (those are hex).
 _MORE = "\x00more"
 
-#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``). Each end that
-#: holds walk out of view says so in the mark that is *true* of it (see
-#: :meth:`WalkScreen._trail_text`): the head is cropped mid-hop, so it opens on the
-#: cut's crack; the tail loses whole hops to the scroll, so it closes on the elision.
+#: The breadcrumb trail's own hop joiner (``›``, not the app-wide ``→``). Either end that
+#: holds walk out of view wears the app's cut mark — a chip broken off on its own fill,
+#: the faint ``…`` where the line is drawn in arrows (see :meth:`WalkScreen._trail_text`).
 _TRAIL_SEP = " › "
+
+#: Cells one ←/→ press slides the breadcrumb by — the same step every other windowed path
+#: row in the app takes (the node page's routes, the Message paths lanes, the select
+#: list's ``hscroll``), because this is the same window: one line, cropped, read a lane at
+#: a time. A hop a press was the old fit's unit, when the overflow was whole hops going
+#: behind a ``⋯``; a cropped line has no hop boundaries to step by, and stepping by the
+#: crop's own unit is what makes the slide read as a slide.
+_HSCROLL_STEP = 8
 
 #: How many find matches the list shows at most (the filter narrows it fast).
 _MAX_MATCHES = 10
@@ -475,10 +484,11 @@ class WalkScreen(Screen):
             # holding ← parks at the head instead of banking presses to undo (0 until the
             # trail actually overflows, which makes the key inert on a short walk).
             self._trail_scroll = min(
-                self._trail_scroll + 1, self._trail_max_scroll(self._trail_width)
+                self._trail_scroll + _HSCROLL_STEP,
+                self._trail_max_scroll(self._trail_width),
             )
         elif action == "right":
-            self._trail_scroll = max(0, self._trail_scroll - 1)
+            self._trail_scroll = max(0, self._trail_scroll - _HSCROLL_STEP)
         elif action == "locate":
             # ^U (and F3): abandon the walk rather than move within it — the trail goes
             # back to just us and any find narrowing the list is dropped with it.
@@ -609,68 +619,80 @@ class WalkScreen(Screen):
         reserved for keyed identities), so the trail and the rows below it agree on who is
         who.
 
-        The line never wraps, and it is drawn **whole** for as long as whole fits: the
-        walk hangs flush left, opening on its rounded head chip, exactly as it would in
-        a lane with cells to spare. Only when it outgrows the width does it give
-        anything up, and what it gives up is its **beginning** — the trophy case's crop,
-        mirrored (:func:`~meshterm.ui.pathline.cut_from`, JP, 2026-09-05). The line is
-        composed at its natural length and *cropped* at the left edge, so the chip the
-        crop lands in opens on the half-block crack in its own fill and the cells the
-        reader loses are the cells the lane ran out of — no whole hop is dropped to buy
-        room for a mark. The focus and the steps that just led to it are what a glance
-        lands on, and the cropped line fills the width by construction, which is what
-        puts it flush right without a pad.
+        The line never wraps and it is never elided: it is composed once at its natural
+        length and then **read through a window**, exactly as every other path row in the
+        app that outgrows its lane is (the node page's routes, the Message paths lanes, a
+        trophy row under ``←→``). Whole while whole fits — flush left, opening on its
+        rounded head chip, as it would in a lane with cells to spare — and cropped when it
+        doesn't, with **each edge the walk continues past wearing the cut mark**
+        (:func:`~meshterm.ui.pathline.cut_mark`): a chip sheared on the half block in its
+        own fill, the faint ``…`` where the trail is drawn in arrows. What the reader
+        loses is the cells the lane ran out of, never the whole hop those cells were part
+        of (JP, 2026-09-05) — no ``⋯`` here, on either side, because nothing is elided.
 
-        Which edge the line hangs off therefore follows one thing: **whether the walk's
-        start is on it.** A line showing its first hop sits left, where a path that
-        begins at its beginning belongs; a cropped one sits right, holding the crack
-        against the edge it continues past. It is not the resting state that decides but
-        the fit, so a scrolled line whose head has come back into view is left-aligned
-        like any other complete one.
+        Which edge the line hangs off follows one thing: **whether the walk's start is on
+        it.** A line showing its first hop sits left, where a path that begins at its
+        beginning belongs; one cropped at the head sits right, holding the crack against
+        the edge it continues past — and a crop lands exactly on the width, so that flush
+        is by construction rather than by a pad. At rest the window is at the tail, so the
+        focus and the steps that just led to it are what a glance lands on.
 
-        ← and → then **scroll it** (JP, 2026-08-09), a hop at a time, off the tail end:
-        the cropped head is a real part of the walk and a long one had no way to be read
-        at all. A scrolled line grows a trailing ``⋯`` — whole hops really are dropped
-        off that end, which is what that mark means, against the crack's "this segment
-        continues". Scrolling stops where the head comes into view rather than running
-        the line off the edge, and any change to the trail itself resets it: a walk, a
-        step back, a teleport and ^U all end with the focus in view, which is where the
-        next move is read from.
+        ← and → then **slide the window** (JP, 2026-08-09), :data:`_HSCROLL_STEP` cells a
+        press: the cropped head is a real part of the walk and a long one had no way to be
+        read at all. The marks are chrome *inside* the lane rather than extra width — each
+        costs the window a cell, so the crop is measured only once both are known, else the
+        line would draw a cell past the row. Sliding stops where the head comes into view
+        rather than running the line off the edge, and any change to the trail itself
+        resets it: a walk, a step back, a teleport and ^U all end with the focus in view,
+        which is where the next move is read from.
         """
-        hops = [self._trail_hop(node) for node in self._trail]
         self._trail_width = width
-        limit = self._trail_max_scroll(width)
-        self._trail_scroll = max(0, min(self._trail_scroll, limit))
-        kept = hops[: len(hops) - self._trail_scroll]
+        full = PathLine(
+            [self._trail_hop(node) for node in self._trail], separator=_TRAIL_SEP
+        ).text()
+        total = full.cell_len
+        # Clamped before the fit is read, so a line that grew back into its width (a
+        # wider terminal, a step back) leaves no slide banked behind a whole picture.
+        self._trail_scroll = max(0, min(self._trail_scroll, self._trail_max_scroll(width)))
+        if total <= width:
+            return full  # whole, from the start, flush left — nothing to crop or slide
+        end = total - self._trail_scroll  # one past the last cell the window shows
+        inner = width - (1 if self._trail_scroll else 0)
+        left = 1 if end > inner else 0
+        window = min(end, inner - left)
+        start = end - window
+        line = Text(style=full.style, no_wrap=True)
+        if left:
+            line.append_text(cut_mark(full, start, ELIDE_HEAD))
+        line.append_text(crop_cells(full, start, window))
         if self._trail_scroll:
-            kept.append(elision_hop())  # the focus is off to the right
-        # Whole while it fits (flush left, from the start), cropped at the head when it
-        # doesn't — and a crop lands exactly on the width, so the right snap is free.
-        return cut_from(PathLine(kept, separator=_TRAIL_SEP).text(), width)
+            line.append_text(cut_mark(full, end - 1, ELIDE_TAIL))
+        return line
 
     def _trail_max_scroll(self, width: int) -> int:
-        """How far ← may scroll the trail: the step that first brings its head into view.
+        """How far ← may slide the trail: the first whole step that shows its head.
 
-        Scrolling past that only shortens a line that already shows every hop it has, so
-        the walk stops there — the same claim the F-lane makes when it dims a key that
-        would do nothing. ``0`` for a trail that fits, which is what makes ← inert on a
-        short walk without the handler needing to know the width.
+        Sliding past that only shortens a line already showing every cell it has, so the
+        walk stops there — the same claim the F-lane makes when it dims a key that would
+        do nothing. The stop is a whole :data:`_HSCROLL_STEP` rather than the exact cell
+        that brings the head in: a slid line has given up a cell to its right mark, so its
+        last window spans one less than the lane, and stopping short of a whole step would
+        leave the *left* mark drawn, promising a head ← can no longer reach. (Every other
+        windowed path row in the app clamps the same way.) ``0`` for a trail that fits,
+        which is what makes ← inert on a short walk without the handler knowing the width.
 
-        Memoized on ``(width, trail)``: it costs a rendering per candidate step and the
-        answer only moves when the walk or the terminal does.
+        Memoized on ``(width, trail)``: it costs a rendering, and the answer only moves
+        when the walk or the terminal does.
         """
         key = (width, tuple(self._trail))
         if self._trail_fit is not None and self._trail_fit[0] == key:
             return self._trail_fit[1]
         hops = [self._trail_hop(node) for node in self._trail]
+        total = PathLine(hops, separator=_TRAIL_SEP).text().cell_len
         limit = 0
-        if PathLine(hops, separator=_TRAIL_SEP).text().cell_len > width:
-            mark = elision_hop()
-            for dropped in range(1, len(hops)):
-                limit = dropped
-                head = PathLine(hops[: len(hops) - dropped] + [mark], separator=_TRAIL_SEP)
-                if head.text().cell_len <= width:
-                    break
+        if total > width:
+            steps = -(-(total - (width - 1)) // _HSCROLL_STEP)
+            limit = steps * _HSCROLL_STEP
         self._trail_fit = (key, limit)
         return limit
 
