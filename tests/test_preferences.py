@@ -18,7 +18,6 @@ from rich.console import Console
 
 from meshterm.context import AppContext
 from meshterm.core.admin_store import AdminStore
-from meshterm.core.advert_store import AdvertStore
 from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.core.preferences import (
@@ -85,8 +84,8 @@ def test_an_unknown_key_fails_where_it_is_written() -> None:
         ("fast_render", "yes", True),
         ("trace_cooldown_s", "2.5", 2.5),
         ("history_days", "0", 0),
-        ("advert_flood_hours", "24", 24),  # an enum named as text lands on its own value
-        ("full_width", "on", "on"),
+        ("watch_silence_hours", "6", 6),  # an enum named as text lands on its own value
+        ("full_width", "yes", "yes"),
     ],
 )
 def test_values_parse_from_text(key: str, raw: str, expected: Any) -> None:
@@ -100,7 +99,7 @@ def test_values_parse_from_text(key: str, raw: str, expected: Any) -> None:
         ("direct_message_soft_retries", "9"),  # over the maximum
         ("map_view_fraction", "0"),  # under the minimum
         ("trace_cooldown_s", "soon"),  # not a number at all
-        ("advert_flood_hours", "7"),  # not one of the cadences
+        ("watch_silence_hours", "7"),  # not one of the silence choices
         ("fast_render", "maybe"),
     ],
 )
@@ -115,8 +114,8 @@ def test_values_format_for_the_lane_they_are_drawn_in() -> None:
     """Booleans read as words, enums as their labels, numbers carry their unit."""
     assert format_value(get_spec("fast_render"), True) == "on"
     assert format_value(get_spec("fast_render"), False) == "off"
-    assert format_value(get_spec("advert_flood_hours"), 24) == "daily"
-    assert format_value(get_spec("advert_flood_hours"), 0) == "off"
+    assert format_value(get_spec("watch_silence_hours"), 6) == "6 h"
+    assert format_value(get_spec("watch_silence_hours"), 0) == "off"
     assert format_value(get_spec("trace_cooldown_s"), 2.5) == "2.5 s"
     assert format_value(get_spec("history_days"), 365) == "365 days"
 
@@ -173,6 +172,23 @@ def test_an_untouched_file_says_so(tmp_path: Path) -> None:
     assert "every preference is at its default" in (tmp_path / "preferences.yaml").read_text(
         encoding="utf-8"
     )
+
+
+def test_a_yaml_boolean_still_reaches_a_yes_no_choice(tmp_path: Path) -> None:
+    """YAML reads a bare ``yes`` as ``True``; the obvious hand edit is understood anyway."""
+    path = tmp_path / "preferences.yaml"
+    path.write_text("full_width: yes\n", encoding="utf-8")
+    assert Preferences.load(path).full_width == "yes"
+
+    path.write_text("full_width: no\n", encoding="utf-8")
+    assert Preferences.load(path).full_width == "no"
+
+    # And what we write ourselves is quoted, so it round-trips as the string it is.
+    prefs = Preferences(path)
+    prefs.set("full_width", "yes")
+    prefs.save()
+    assert "full_width: 'yes'" in path.read_text(encoding="utf-8")
+    assert Preferences.load(path).full_width == "yes"
 
 
 @pytest.mark.parametrize(
@@ -487,7 +503,7 @@ async def test_reset_stages_the_defaults_rather_than_writing_them(ctx: AppContex
         ("dialog", True),
         ("select", "__apply__"),
     ])
-    assert await edit_preferences(ctx) == {"history_days": 365, "trace_cooldown_s": 1.0}
+    assert await edit_preferences(ctx) == {"history_days": 365, "trace_cooldown_s": 5.0}
     # Still only staged — the values in force are untouched until the tool applies them.
     assert ctx.preferences.history_days == 30
 
@@ -512,7 +528,7 @@ async def test_the_tool_writes_the_staged_values_once(ctx: AppContext) -> None:
 
     _install(ctx, [])
     tool = get_tool("preferences")
-    ops = [("set", "history_days", 30), ("set", "full_width", "on")]
+    ops = [("set", "history_days", 30), ("set", "full_width", "yes")]
     result = await tool.run(ctx, {"ops": ops})
     assert result.summary == {"changes": 2}
 
@@ -551,18 +567,6 @@ def test_a_newly_watched_node_takes_the_preferred_silence_rule(tmp_path: Path) -
         install(Preferences())
 
 
-def test_a_device_with_no_policy_starts_on_the_preferred_cadence(tmp_path: Path) -> None:
-    """The advert preferences are the cadence an unseen device is scheduled at."""
-    prefs = Preferences()
-    prefs.set("advert_flood_hours", 168)
-    install(prefs)
-    try:
-        policy = AdvertStore(tmp_path / "adverts.json").load("ab" * 32)
-        assert policy.flood_hours == 168
-    finally:
-        install(Preferences())
-
-
 def test_the_last_column_preference_overrules_the_platform() -> None:
     """``full_width`` steps aside on ``auto`` and decides otherwise (env still wins over both)."""
     from meshterm.platforms import PICOCALC, set_platform
@@ -573,9 +577,9 @@ def test_the_last_column_preference_overrules_the_platform() -> None:
     install(prefs)
     try:
         assert _reclaim_last_column() is False  # auto: the platform's verdict stands
-        prefs.set("full_width", "on")
+        prefs.set("full_width", "yes")
         assert _reclaim_last_column() is True
-        prefs.set("full_width", "off")
+        prefs.set("full_width", "no")
         assert _reclaim_last_column() is False
     finally:
         install(Preferences())

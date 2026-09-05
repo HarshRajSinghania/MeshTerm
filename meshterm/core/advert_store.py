@@ -30,10 +30,7 @@ DIRECT_CADENCE_HOURS = (1, 2, 3, 4)
 FLOOD_CADENCE_HOURS = (3, 6, 12, 24, 48, 168)
 
 #: Defaults applied when a device has no stored policy: announce to neighbours hourly,
-#: flood the wider mesh daily. These are the *code's* defaults; the cadence a device
-#: without a stored policy actually starts on is the ``advert_direct_hours`` /
-#: ``advert_flood_hours`` preference, which defaults to these (see
-#: :mod:`meshterm.core.preferences`).
+#: flood the wider mesh daily.
 DEFAULT_DIRECT_HOURS = 1
 DEFAULT_FLOOD_HOURS = 24
 
@@ -133,17 +130,12 @@ class AdvertStore:
         Returns:
             The device's :class:`AdvertPolicy`; defaults apply for anything unset.
         """
-        from .preferences import current as current_preferences
-
-        preferences = current_preferences()
-        direct = preferences.advert_direct_hours
-        flood = preferences.advert_flood_hours
         record = self._load_all().get(self._key(public_key))
         if not isinstance(record, dict):
-            return AdvertPolicy(direct_hours=direct, flood_hours=flood)
+            return AdvertPolicy()
         return AdvertPolicy(
-            direct_hours=_as_hours(record.get("direct_hours"), direct),
-            flood_hours=_as_hours(record.get("flood_hours"), flood),
+            direct_hours=_as_hours(record.get("direct_hours"), DEFAULT_DIRECT_HOURS),
+            flood_hours=_as_hours(record.get("flood_hours"), DEFAULT_FLOOD_HOURS),
             last_direct=_as_time(record.get("last_direct")),
             last_flood=_as_time(record.get("last_flood")),
         )

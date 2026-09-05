@@ -42,25 +42,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .advert_store import (
-    DEFAULT_DIRECT_HOURS,
-    DEFAULT_FLOOD_HOURS,
-    DIRECT_CADENCE_HOURS,
-    FLOOD_CADENCE_HOURS,
-    OFF,
-    cadence_label,
-)
-from .watch_store import DEFAULT_SILENCE_HOURS, SILENCE_CHOICES_H
+from .watch_store import DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
 
 #: Display groups, in the order the page and the file present them. The order is the
-#: order a session happens in — what MeshTerm puts on the air, how loud, what it
-#: announces, what it watches for, how it draws the world, what it keeps, and how it
-#: paints. Nothing sorts alphabetically: a reader looking for "how long before I give up
-#: on a message" should not have to know it starts with a D.
+#: order a session happens in — what MeshTerm puts on the air, how loud, what it watches
+#: for, how it draws the world, what it keeps, and how it paints. Nothing sorts
+#: alphabetically: a reader looking for "how long before I give up on a message" should
+#: not have to know it starts with a D.
 GROUPS: tuple[str, ...] = (
     "Sending",
     "Transmit power",
-    "Background adverts",
     "Watchtower",
     "Map",
     "History kept",
@@ -116,11 +107,6 @@ class PrefSpec:
         return f"{self.help} (next launch)" if self.relaunch else self.help
 
 
-def _cadence_choices(hours: tuple[int, ...]) -> dict[int, str]:
-    """Advert-cadence choices as ``hours -> label``, ``off`` last (the editor's own order)."""
-    return {h: cadence_label(h) for h in (*hours, OFF)}
-
-
 #: The silence-rule choices, drawn from the Watchtower's own ring so the two never drift.
 _SILENCE_CHOICES: dict[int, str] = {
     **{h: f"{h} h" for h in SILENCE_CHOICES_H},
@@ -128,13 +114,11 @@ _SILENCE_CHOICES: dict[int, str] = {
 }
 
 #: How the terminal-width reclaim can be asked for: follow the platform's own verdict, or
-#: overrule it in either direction. See :func:`meshterm.ui.tui.session._reclaim_last_column`
-#: for why a terminal may need to disagree with its platform.
-_WIDTH_CHOICES: dict[str, str] = {
-    "auto": "follow the platform",
-    "on": "reclaim the column",
-    "off": "never reclaim",
-}
+#: overrule it in either direction. The row's description asks a yes/no question ("use the
+#: column ... ?"), so the values answer it in those words rather than naming the mechanism
+#: twice. See :func:`meshterm.ui.tui.session._reclaim_last_column` for why a terminal may
+#: need to disagree with its platform.
+_WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 
 #: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
 #: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
@@ -147,7 +131,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         help="Pause between our own transmissions, for duty-cycle safety",
         group="Sending",
         value_type="float",
-        default=1.0,
+        default=5.0,
         minimum=0.0,
         maximum=60.0,
         unit="s",
@@ -195,25 +179,6 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         minimum=0.0,
         maximum=10.0,
         unit="dB",
-    ),
-    # --- Background adverts ------------------------------------------------------
-    PrefSpec(
-        key="advert_direct_hours",
-        label="Direct advert",
-        help="Cadence a newly seen device starts on for zero-hop announces",
-        group="Background adverts",
-        value_type="enum",
-        default=DEFAULT_DIRECT_HOURS,
-        choices=_cadence_choices(DIRECT_CADENCE_HOURS),
-    ),
-    PrefSpec(
-        key="advert_flood_hours",
-        label="Flood advert",
-        help="Cadence a newly seen device starts on for mesh-wide announces",
-        group="Background adverts",
-        value_type="enum",
-        default=DEFAULT_FLOOD_HOURS,
-        choices=_cadence_choices(FLOOD_CADENCE_HOURS),
     ),
     # --- Watchtower --------------------------------------------------------------
     PrefSpec(
@@ -372,12 +337,20 @@ def parse_value(spec: PrefSpec, raw: Any) -> Any:
 
     if spec.value_type == "enum":
         choices = spec.choices or {}
-        if raw in choices:
+        if raw in choices and not isinstance(raw, bool):
             return raw
+        if isinstance(raw, bool):
+            # YAML 1.1 reads a bare ``yes``/``no`` (and ``on``/``off``) as a *boolean*, so a
+            # hand-edited file hands us ``True`` where the choice is spelled "yes". We quote
+            # ours on the way out, but someone typing the obvious thing should still be
+            # understood: map the boolean back to whichever spelling this spec offers.
+            for choice in choices:
+                if str(choice).lower() in (_TRUE if raw else _FALSE):
+                    return choice
         # Text arriving from the CLI or a hand-edited file: match a choice by its own
-        # spelling, so `preferences set advert_flood_hours 24` and a YAML `24` land alike.
+        # spelling, so `preferences set watch_silence_hours 6` and a YAML `6` land alike.
         for choice in choices:
-            if text == str(choice):
+            if text.lower() == str(choice).lower():
                 return choice
         allowed = ", ".join(str(c) for c in choices)
         raise PreferenceError(f"{spec.key}: must be one of {allowed}, got {raw!r}")

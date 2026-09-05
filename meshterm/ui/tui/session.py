@@ -232,8 +232,8 @@ def _reclaim_last_column() -> bool:
 
     Three sources, in confidence order, because the person at the keyboard can see the
     column and the platform can only guess at it: ``MESHTERM_FULL_WIDTH=0``/``=1`` for a
-    one-off, then the ``full_width`` preference (``auto`` — the default — steps aside),
-    then the platform's own verdict.
+    one-off, then the ``full_width`` preference (``yes``/``no``; ``auto`` — the default —
+    steps aside), then the platform's own verdict.
 
     Read fresh on every call (never cached at import time) so it reflects whichever platform
     :func:`~meshterm.platforms.set_platform` installed for this process — see that module's
@@ -246,7 +246,7 @@ def _reclaim_last_column() -> bool:
         return override != "0"
     preferred = current_preferences().full_width
     if preferred != "auto":
-        return preferred == "on"
+        return preferred == "yes"
     return get_platform().width_reclaim
 
 #: How many stacked dialog layers the layout can float over the background at once. A fixed
