@@ -23,7 +23,10 @@ from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
+from meshterm.core.advert_store import AdvertPolicy
 from meshterm.ui.config_editor import (
+    _ConfigMenu,
+    _menu_items,
     _parse_coords,
     _valid_coords,
     config_table,
@@ -33,7 +36,7 @@ from meshterm.ui.config_editor import (
     edit_config,
     send_advert,
 )
-from meshterm.ui.device_info_screen import DeviceInfoScreen
+from meshterm.ui.device_info_screen import REVEAL_KEY, DeviceInfoScreen
 from meshterm.ui.marks import MASK_MARK
 from meshterm.ui.theme import active_theme
 from meshterm.ui.tui.prompt import TypedConfirmDialog
@@ -208,14 +211,14 @@ def test_a_device_with_no_pin_has_nothing_to_conceal() -> None:
     assert not has_pin(snapshot)
 
 
-def test_p_uncovers_the_pin_and_puts_it_back() -> None:
+def test_the_chord_uncovers_the_pin_and_puts_it_back() -> None:
     screen = _info_screen(_SNAPSHOT)
     assert MASK_MARK in _pin_row(screen.render_body(72))
 
-    screen.handle("text", "p")
+    screen.handle("reveal")
     assert "123456" in _pin_row(screen.render_body(72))
 
-    screen.handle("text", "p")  # the same key puts it away again
+    screen.handle("reveal")  # the same key puts it away again
     assert MASK_MARK in _pin_row(screen.render_body(72))
 
 
@@ -231,9 +234,9 @@ def test_the_lane_chip_and_the_key_are_one_behaviour() -> None:
 
 def test_the_footer_names_what_the_press_would_do_now() -> None:
     screen = _info_screen(_SNAPSHOT)
-    assert "p show PIN" in screen.footer_hint
-    screen.handle("text", "p")
-    assert "p hide PIN" in screen.footer_hint
+    assert f"{REVEAL_KEY} show PIN" in screen.footer_hint
+    screen.handle("reveal")
+    assert f"{REVEAL_KEY} hide PIN" in screen.footer_hint
 
 
 def test_a_page_with_no_pin_advertises_no_key_for_it() -> None:
@@ -242,7 +245,7 @@ def test_a_page_with_no_pin_advertises_no_key_for_it() -> None:
     screen = _info_screen({k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"})
     assert "PIN" not in screen.footer_hint
     assert screen.fkey_lane[2] is None
-    screen.handle("text", "p")
+    screen.handle("reveal")
     assert screen.fkey_lane[2] is None
 
 
@@ -253,9 +256,74 @@ def test_uncovering_the_pin_keeps_the_reader_where_they_were() -> None:
     screen.render_body(72)
     screen.scroll_lines(8)
     where = screen.scroll
-    screen.handle("text", "p")
+    screen.handle("reveal")
     assert screen.scroll == where
     assert len(screen.render_body(72)) == len(_table_lines(72))
+
+
+# -- the editor's copy of the same secret ---------------------------------------
+
+
+def _editor(snapshot: dict, pending: dict | None = None) -> _ConfigMenu:
+    pending = {} if pending is None else pending
+    return _ConfigMenu(
+        _StubSession(),
+        lambda reveal: _menu_items(snapshot, pending, len(pending), AdvertPolicy(), reveal),
+        conceals=has_pin(snapshot),
+        wrap=False,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+    )
+
+
+def test_the_editor_masks_the_pin_row_too() -> None:
+    # The same value on the page next door: concealed on the same terms, or the reader
+    # only has to walk one menu over to undo it.
+    menu = _editor(_SNAPSHOT)
+    assert MASK_MARK in _pin_row(menu.render_body(72))
+    assert "123456" not in _pin_row(menu.render_body(72))
+
+
+def test_a_staged_pin_is_concealed_as_well_as_the_saved_one() -> None:
+    # A PIN typed a moment ago is still a PIN; a row that uncovered itself the instant it
+    # was edited would leave the secret up for the rest of the staging session.
+    menu = _editor(_SNAPSHOT, {"device_pin": 424242})
+    row = _pin_row(menu.render_body(72))
+    assert f"{MASK_MARK * 6} → {MASK_MARK * 6}" in row
+    menu.handle("reveal")
+    assert "123456 → 424242" in _pin_row(menu.render_body(72))
+
+
+def test_the_editor_reveals_on_the_same_chord_as_the_info_page() -> None:
+    # One key for the concept, both places — the editor's letters are find-as-you-type,
+    # which is why it can't be a bare one.
+    menu = _editor(_SNAPSHOT)
+    assert f"{REVEAL_KEY} show PIN" in menu.footer_hint
+    assert menu.fkey_lane[2].label == "Reveal"
+
+    menu.handle("reveal")
+    assert "123456" in _pin_row(menu.render_body(72))
+    assert f"{REVEAL_KEY} hide PIN" in menu.footer_hint
+    assert menu.fkey_lane[2].label == "Hide"
+
+
+def test_revealing_keeps_the_filter_and_the_row_the_reader_was_on() -> None:
+    # The rows are data, so the toggle refreshes them in place rather than rebuilding the
+    # screen under a reader who had narrowed it and picked a row.
+    menu = _editor(_SNAPSHOT)
+    for ch in "telemetry":
+        menu.handle("text", ch)
+    menu.handle("down")
+    before = menu._current_choice()
+
+    menu.handle("reveal")
+    assert menu._filter == "telemetry"
+    assert menu._current_choice().value == before.value
+
+
+def test_an_editor_over_a_device_with_no_pin_offers_no_reveal() -> None:
+    menu = _editor({k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"})
+    assert "PIN" not in menu.footer_hint
+    assert menu.fkey_lane[2] is None
 
 
 # -- contact share URL ----------------------------------------------------------

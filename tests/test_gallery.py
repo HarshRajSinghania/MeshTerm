@@ -31,6 +31,7 @@ import pytest
 from rich.cells import cell_len
 from rich.text import Text
 
+from meshterm.core.advert_store import AdvertPolicy
 from meshterm.core.courier_store import CourierStore
 from meshterm.core.models import (
     NODE_TYPE_REPEATER,
@@ -62,7 +63,7 @@ from meshterm.ui.about import (
     support_project,
 )
 from meshterm.ui.chat import ChatScreen
-from meshterm.ui.config_editor import config_table, has_pin
+from meshterm.ui.config_editor import _ConfigMenu, _menu_items, config_table, has_pin
 from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
 from meshterm.ui.contacts_screen import ContactsScreen
 from meshterm.ui.courier_screen import CourierOutboxScreen
@@ -525,9 +526,29 @@ def _device_info(cols: int, rows: int) -> Screen:
 
 
 def _device_info_revealed(cols: int, rows: int) -> Screen:
-    # The same page after ``p``: the widest state of the row the other case masks.
+    # The same page after ^S: the widest state of the row the other case masks.
     screen = _device_info(cols, rows)
-    screen.handle("text", "p")
+    screen.handle("reveal")
+    return screen
+
+
+def _config_editor(cols: int, rows: int) -> Screen:
+    """The Device config editor: every setting staged from one grouped list."""
+    return _ConfigMenu(
+        _GallerySession(cols, rows),
+        lambda reveal: _menu_items(
+            _DEVICE_SNAPSHOT, {"tx_power": 14}, 1, AdvertPolicy(), reveal
+        ),
+        conceals=has_pin(_DEVICE_SNAPSHOT),
+        wrap=False,
+        footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+    )
+
+
+def _config_editor_revealed(cols: int, rows: int) -> Screen:
+    # The same list after ^S, where the PIN row is at its widest.
+    screen = _config_editor(cols, rows)
+    screen.handle("reveal")
     return screen
 
 
@@ -569,6 +590,8 @@ _ENTRIES: list[_Entry] = [
     _Entry("tx_sweep", _tx_sweep),
     _Entry("device_info", _device_info),
     _Entry("device_info_revealed", _device_info_revealed),
+    _Entry("config_editor", _config_editor),
+    _Entry("config_editor_revealed", _config_editor_revealed),
     _Entry("about_meshterm", _about_meshterm),
     _Entry("about_author", _about_author),
     _Entry("join_discord", _join_discord),

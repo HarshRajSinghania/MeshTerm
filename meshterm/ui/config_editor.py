@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import textwrap
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 from urllib.parse import quote
 
 from rich import box
@@ -56,6 +56,7 @@ from ..core.device_config import (
     settings_by_category,
 )
 from ..platforms import Platform, on_platform
+from .device_info_screen import REVEAL_KEY
 from .marks import MASK_MARK
 from .menus import (
     confirm_discard,
@@ -66,7 +67,8 @@ from .menus import (
     run_steps,
     section_heading,
 )
-from .tui import Choice, Separator
+from .tui import Choice, Separator, SelectScreen
+from .tui.select import _splice_hint
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -134,7 +136,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
         A list of operation tuples for the tool to execute, or ``None`` if the user
         cancelled without anything staged to apply.
     """
-    from .tui import CANCEL, SelectScreen
+    from .tui import CANCEL
 
     device = await ctx.device()
     snapshot = await cached_snapshot(ctx, device)
@@ -158,9 +160,13 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
     # the title counts what is staged — so they are refreshed in place after every round
     # (``replace_items``) rather than rebuilt as a new screen. One screen for the whole
     # session means the typed filter survives editing a setting, not just the cursor.
-    title, items = _menu_items(snapshot, pending, 0, policy)
-    menu = SelectScreen(
-        title, items, wrap=False,
+    menu = _ConfigMenu(
+        session,
+        lambda reveal: _menu_items(
+            snapshot, pending, len(pending) + len(extra_ops), policy, reveal
+        ),
+        conceals=has_pin(snapshot),
+        wrap=False,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:
@@ -193,10 +199,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
                 await _stage_custom_var(ctx, custom, extra_ops)
             else:  # a setting key
                 await _stage_setting(ctx, choice, snapshot, pending)
-            title, items = _menu_items(
-                snapshot, pending, len(pending) + len(extra_ops), policy
-            )
-            menu.replace_items(items, title=title)
+            menu.refresh()
 
 
 # --- rendering ---------------------------------------------------------------
@@ -382,15 +385,25 @@ def _bind_describe(platform: Platform) -> None:
     _describe = platform.readable_cols >= 72
 
 
-def _setting_value(spec: SettingSpec, snapshot: dict, pending: dict) -> Text:
+def _setting_value(
+    spec: SettingSpec, snapshot: dict, pending: dict, reveal_pin: bool = False
+) -> Text:
     """One setting's VALUE lane: ``current [→ staged]``.
 
     The staged arrow is drawn in the warn style so a dirty row stands out at a glance;
     the span survives the select highlight (which only tints the row's base style).
+
+    The pairing PIN is concealed here on the same terms as in :func:`config_table` — a
+    staged one too: a PIN you typed a moment ago is still a PIN, and a row that uncovered
+    itself the instant it was edited would leave the secret on screen for the rest of the
+    session's staging.
     """
-    value = Text(format_value(spec, spec.getter(snapshot)))
+    hide = spec.key == PIN_KEY and not reveal_pin
+    shown = format_value(spec, spec.getter(snapshot))
+    value = Text(conceal(shown) if hide else shown)
     if spec.key in pending:
-        value.append(f" → {format_value(spec, pending[spec.key])}", style="warn")
+        staged = format_value(spec, pending[spec.key])
+        value.append(f" → {conceal(staged) if hide else staged}", style="warn")
     return value
 
 
@@ -415,8 +428,94 @@ def _location_value(snapshot: dict, pending: dict) -> Text:
     return value
 
 
+class _ConfigMenu(SelectScreen):
+    """The editor's list, with the pairing PIN's row concealed until ``^S`` uncovers it.
+
+    Everything a grouped select list does, plus the same toggle the Device info page
+    carries — the same chord, the same chip, the same words — because the two pages show
+    the same value and a secret that comes out from under a different key on each is a
+    second thing to learn for nothing. Here the key *has* to be a chord: this list filters
+    as you type, so every bare letter is spoken for.
+
+    The rows are data (each carries its staged ``current → new``), so a toggle refreshes
+    them in place through :meth:`~meshterm.ui.tui.select.SelectScreen.replace_items` —
+    which follows the highlighted row by value and keeps the typed filter — rather than
+    rebuilding the screen under a reader who was part-way down it.
+    """
+
+    def __init__(
+        self,
+        session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
+        build: Callable[[bool], tuple[str, list]],
+        *,
+        conceals: bool,
+        **kwargs: Any,
+    ) -> None:
+        """Build the list over its row builder.
+
+        Args:
+            session: The running TUI session (repainted when the PIN is toggled).
+            build: Renders ``(title, items)`` for a given ``reveal_pin``.
+            conceals: Whether this device reports a PIN at all. ``False`` leaves the page
+                with nothing to reveal, so neither the footer nor the lane offers a key
+                for it.
+            **kwargs: Passed to :class:`~meshterm.ui.tui.select.SelectScreen`.
+        """
+        title, items = build(False)
+        super().__init__(title, items, **kwargs)
+        self._session = session
+        self._build = build
+        self._conceals = conceals
+        self._revealed = False
+
+    def refresh(self) -> None:
+        """Re-read the rows for what is staged now, keeping the reveal, cursor and filter."""
+        title, items = self._build(self._revealed)
+        self.replace_items(items, title=title)
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The list's own hint, plus the reveal atom before the trailing Esc clause."""
+        base = super().footer_hint
+        if not self._conceals:
+            return base
+        verb = "hide" if self._revealed else "show"
+        return _splice_hint(base, f"{REVEAL_KEY} {verb} PIN")
+
+    @property
+    def fkey_lane(self):
+        """The list's lane with the reveal on F3 — the slot a delete-less list leaves free.
+
+        F1/F2 are this grouped list's section jumps, F4/F5 the pager; F3 is what a select
+        list spends on its own verb (``Delete``, where it has one), and this one's verb is
+        the reveal. A device with no PIN leaves the slot empty rather than dim: the action
+        isn't a thing on this page at all.
+        """
+        from .tui.fkeys import FPair
+
+        lane = list(super().fkey_lane)
+        if self._conceals:
+            lane[2] = FPair("Hide" if self._revealed else "Reveal", "reveal")
+        return lane
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Toggle the PIN, or behave as any select list does."""
+        if action == "reveal":
+            if not self._conceals:
+                return
+            self._revealed = not self._revealed
+            self.refresh()
+            self._session.invalidate()
+            return
+        super().handle(action, data)
+
+
 def _menu_items(
-    snapshot: dict, pending: dict, staged: int, policy: AdvertPolicy
+    snapshot: dict,
+    pending: dict,
+    staged: int,
+    policy: AdvertPolicy,
+    reveal_pin: bool = False,
 ) -> tuple[str, list]:
     """Build the editor menu's title and rows for the current snapshot + staged state.
 
@@ -424,6 +523,9 @@ def _menu_items(
     sub-prompts float over it). The rows sit in three aligned columns — setting, current
     value (and any staged new value), description — under one header line, so the list
     reads like the full-configuration table it stages changes for.
+
+    ``reveal_pin`` is :class:`_ConfigMenu`'s toggle, passed straight through to the PIN's
+    value lane.
     """
     # First pass: collect every row's lanes per category, so the columns can be sized to
     # their content (including any staged ``→ new`` arrows) before a single row is built.
@@ -442,7 +544,12 @@ def _menu_items(
                         _LOCATION,
                     ))
                 continue
-            rows.append((spec.label, _setting_value(spec, snapshot, pending), spec.help, spec.key))
+            rows.append((
+                spec.label,
+                _setting_value(spec, snapshot, pending, reveal_pin),
+                spec.help,
+                spec.key,
+            ))
         if category == "Radio":
             rows.append((
                 "Radio presets…", Text(),

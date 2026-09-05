@@ -76,6 +76,9 @@ _CTRL_LETTER_CHORDS: dict[str, str] = {
     "p": "paths",
     "q": "quit",
     "r": "retry",
+    # ^S is XOFF's key, and safe here for the same reason ^Q is not XON (see above): raw
+    # mode clears IXON/IXOFF, so the terminal never eats it to freeze the screen.
+    "s": "reveal",
     "u": "locate",
     "v": "paste_clipboard",
     "w": "to_menu",

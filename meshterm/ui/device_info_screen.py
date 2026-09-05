@@ -21,11 +21,13 @@ from rich.console import RenderableType
 
 from .tui.screen import ScrollScreen
 
-#: The key that reveals the PIN, and the word the footer names it by. A bare letter is the
-#: idiom for a read-only page's own verb (the Time Machine's ``w``); ``p`` is the value it
-#: uncovers, and nothing else on a scrolling body claims it — the page has no
-#: find-as-you-type, and ``^P`` (paths) is a different key.
-REVEAL_KEY = "p"
+#: The key that uncovers a concealed value, and the name the footer gives it. One chord for
+#: the concept on every page that conceals something: this one could have taken a bare
+#: letter (a read-only body has none spoken for), but the Device config editor cannot — its
+#: letters are find-as-you-type — and a secret that comes out from under two different keys
+#: depending on which page you are standing on is a second thing to learn for nothing. A
+#: chord also has to be *meant*: no PIN ever appears because a hand brushed a letter.
+REVEAL_KEY = "^S"
 
 
 class DeviceInfoScreen(ScrollScreen):
@@ -101,10 +103,10 @@ class DeviceInfoScreen(ScrollScreen):
     def handle(self, action: str, data: str = "") -> None:
         """Toggle the PIN, or scroll/dismiss as any result window does.
 
-        The key and the lane's chip dispatch into the same branch — one behaviour, two ways
-        in, so the chip is not a second implementation of the letter.
+        The chord and the lane's chip arrive as the same action, so the chip is not a second
+        implementation of the key (``^S`` is bound once, in the session's chord table).
         """
-        if action == "reveal" or (action == "text" and data.lower() == REVEAL_KEY):
+        if action == "reveal":
             if not self._conceals:
                 return
             self._revealed = not self._revealed
