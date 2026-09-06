@@ -24,12 +24,13 @@
 #   4. timezone        Eastern (America/Toronto, same rules as America/Montreal) via
 #                      timedatectl if tzdata's opkg feed is reachable, else a POSIX TZ rule
 #                      in /etc/environment -- glibc honours it with no zoneinfo database.
-#   5. deploy user     The `meshterm` login MeshTerm runs under (created if absent; no password is
-#                      set here -- run `passwd meshterm` yourself).
+#   5. deploy user     The `$DEPLOY_USER` login MeshTerm runs under, `meshterm` unless you
+#                      say otherwise (created if absent; no password is set here -- run
+#                      `passwd` for it yourself).
 #   6. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
 #   7. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
 #                      is a tiny RAM tmpfs, so TMPDIR is redirected to $HOME/tmp on /data.
-#   8. PATH            Put the venv's `meshterm` on meshterm's login PATH via ~/.profile.
+#   8. PATH            Put the venv's `meshterm` on that user's login PATH via ~/.profile.
 #   9. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
