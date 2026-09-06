@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncIterator, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional, Sequence
 
 from rich.cells import cell_len
 from rich.logging import RichHandler
@@ -29,7 +29,14 @@ from ..platforms import get_platform
 from ..tools import all_tools
 from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
-from .menus import SEP_COMPACT, SEP_ROOMY, command_icon, command_label, section_heading
+from .menus import (
+    SEP_COMPACT,
+    SEP_ROOMY,
+    command_label,
+    icon_lane,
+    icon_mark,
+    section_heading,
+)
 from .theme import make_console
 from .widgets import battery_cell
 from .tui import (
@@ -462,6 +469,34 @@ async def _unpair_on_exit(ctx: AppContext) -> None:
         await MeshCoreDevice.unpair_ble(address)
 
 
+def _menu_labels(tools: Sequence[Any]) -> list[Text]:
+    """Every visible tool's menu label — the icon, its column, and the title after it.
+
+    The menu's icons are **not all one width**: ``⚙`` draws a single cell where ``📡``
+    draws two, and the terminal is the authority on which are which. A row that wrote
+    ``icon + " "`` therefore started its title a column left of its two-cell siblings,
+    which is what put *Preferences* out of line with the whole menu above it (JP,
+    2026-09-06). The column is measured once over every icon the menu can show and each
+    mark padded out to it, exactly as a screen's own action list does
+    (:func:`~meshterm.ui.menus.icon_lane`). Where the platform draws no icon lane the
+    column measures zero and the titles take the cells back, flush.
+
+    Args:
+        tools: The menu's visible tools, in the order they are drawn.
+
+    Returns:
+        One label per tool, in that same order — fresh :class:`~rich.text.Text` the
+        caller is free to append its description to.
+    """
+    lane = icon_lane([tool.icon for tool in tools])
+    labels: list[Text] = []
+    for tool in tools:
+        label = icon_mark(tool.icon, "", lane)
+        label.append(tool.title or tool.name)
+        labels.append(label)
+    return labels
+
+
 async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     """Show the tool menu and run selections until the user quits.
 
@@ -484,22 +519,15 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     # Two aligned columns — tool name, then its muted description — with no header
     # line: these are commands, not tabular data, so the alignment alone carries it.
     tools = [tool for tool in all_tools() if tool.menu_visible]
-
-    def _label(tool) -> str:  # noqa: ANN001 - registry Tool; typed at the source
-        title = tool.title or tool.name
-        icon = command_icon(tool.icon)
-        return f"{icon} {title}" if icon else title
-
-    name_w = max((cell_len(_label(tool)) for tool in tools), default=0)
+    labels = _menu_labels(tools)
+    name_w = max((label.cell_len for label in labels), default=0)
     items: list = []
     current_category: str | None = None
-    for tool in tools:
+    for tool, row in zip(tools, labels):
         if tool.category != current_category:
             current_category = tool.category
             items.append(section_heading(current_category))
-        label = _label(tool)
-        row = Text(label)
-        row.append(" " * (name_w - cell_len(label) + 2))
+        row.append(" " * (name_w - row.cell_len + 2))
         row.append(tool.help, style="muted")
         # The tool's name is the row's identity and always fits; only the description
         # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).

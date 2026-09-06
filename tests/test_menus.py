@@ -229,6 +229,34 @@ def test_marked_label_lines_up_a_mixed_list_when_told_its_lane() -> None:
                 for row, letter in zip(solo, ("A", "B"))}) == 2
 
 
+def test_the_main_menu_starts_every_title_in_the_same_cell() -> None:
+    """The app's front door obeys its own icon-column rule (JP, 2026-09-06).
+
+    The menu is the one list that never declares its icons — it takes whatever the tool
+    registry carries — so it is also the one that quietly drifts when a tool arrives with
+    a mark of a different width. ``⚙`` is that mark today: a single cell among
+    twenty-three two-cell siblings, which started *Preferences* a column left of every
+    other row. Asserting the shared start column rather than the gear itself keeps the
+    next narrow icon from re-opening it.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.tools import all_tools, load_all_tools
+    from meshterm.ui.menu import _menu_labels
+
+    load_all_tools()
+    tools = [tool for tool in all_tools() if tool.menu_visible]
+    labels = _menu_labels(tools)
+
+    widths = {cell_len(tool.icon) for tool in tools if tool.icon}
+    assert widths == {1, 2}, "a menu of one icon width would prove nothing"
+    starts = {
+        label.cell_len - cell_len(tool.title or tool.name)
+        for tool, label in zip(tools, labels)
+    }
+    assert len(starts) == 1, "a title starts a column early"
+
+
 def test_an_iconless_platform_collapses_the_column_and_keeps_the_tint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
