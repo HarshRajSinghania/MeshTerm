@@ -14,8 +14,8 @@ on came from the real app on `/dev/tty1`.
 
 ## Reaching the device
 
-The address, login, key and password are **not in this file**. Read `dev.env` at the
-repo root first (gitignored; `dev.env.example` shows the shape) — the `$DEV_*` names
+The address, login, key and password are **not in this file**. Read `.dev.env` at the
+repo root first (gitignored; `.dev.env.example` shows the shape) — the `$DEV_*` names
 below are its keys, and everything here is written to be run with them substituted.
 
 `ssh -i $DEV_PICOCALC_SSH_KEY $DEV_PICOCALC_USER@$DEV_PICOCALC_HOST` (key installed;

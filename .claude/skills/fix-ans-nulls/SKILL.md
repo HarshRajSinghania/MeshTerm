@@ -15,8 +15,8 @@ stays exactly where it was, so the file's length never changes.
 
 ## Run
 
-The interpreter below is `$DEV_VENV_PYTHON` from `dev.env` at the repo root (gitignored;
-`dev.env.example` shows the shape) — read it first.
+The interpreter below is `$DEV_VENV_PYTHON` from `.dev.env` at the repo root (gitignored;
+`.dev.env.example` shows the shape) — read it first.
 
 ```
 $DEV_VENV_PYTHON .claude/skills/fix-ans-nulls/denul.py --dry-run --width 71 meshterm/assets/splash/logo.71.ans

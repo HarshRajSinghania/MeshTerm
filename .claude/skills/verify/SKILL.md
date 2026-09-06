@@ -8,8 +8,8 @@ model: haiku
 
 ## Launch
 
-- Machine-specific values (this venv, the BLE companions below) live in `dev.env` at
-  the repo root — gitignored, with `dev.env.example` showing the shape. Read it first;
+- Machine-specific values (this venv, the BLE companions below) live in `.dev.env` at
+  the repo root — gitignored, with `.dev.env.example` showing the shape. Read it first;
   the `$DEV_*` names here are its keys.
 - Venv interpreter: `$DEV_VENV_PYTHON`
 - Run the app as a module: `python -m meshterm …` (no install step needed).

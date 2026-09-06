@@ -34,8 +34,8 @@ the commonest answer to "please add this one".
 
 1. **Classify the emoji.** Run, from the repo root:
 
-   The interpreter below is `$DEV_VENV_PYTHON` from `dev.env` at the repo root (gitignored;
-`dev.env.example` shows the shape) — read it first.
+   The interpreter below is `$DEV_VENV_PYTHON` from `.dev.env` at the repo root (gitignored;
+`.dev.env.example` shows the shape) — read it first.
 
 ```
    $DEV_VENV_PYTHON .claude/skills/add-narrow-emoji/classify.py <emoji>
