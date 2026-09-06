@@ -11,7 +11,7 @@ node-name resolution.
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
 
 from ..core.connection import Device
 from ..core.models import Contact, TraceResult
@@ -20,15 +20,15 @@ ProgressCallback = Callable[[int, int, TraceResult], None]
 
 #: Maps a trace hop's key-prefix hash to a display label (a contact name, or the
 #: hash itself when unknown). ``None`` passes through (our own device).
-NodeResolver = Callable[[Optional[str]], Optional[str]]
+NodeResolver = Callable[[str | None], str | None]
 
 
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
 
 def make_node_resolver(
-    contacts: Optional[list[Contact]],
-    stored_names: Optional[dict[str, str]] = None,
+    contacts: list[Contact] | None,
+    stored_names: dict[str, str] | None = None,
 ) -> NodeResolver:
     """Build a resolver that names a trace hop from its key-prefix hash.
 
@@ -64,9 +64,9 @@ def make_node_resolver(
     # Memoized per label: the render paths ask for the same few hop hashes on every
     # repaint (per hop, per row, per frame), and ``entries`` is immutable for this
     # closure's lifetime, so each distinct label is scanned exactly once.
-    memo: dict[str, Optional[str]] = {}
+    memo: dict[str, str | None] = {}
 
-    def resolve(label: Optional[str]) -> Optional[str]:
+    def resolve(label: str | None) -> str | None:
         if not label:
             return label
         if label in memo:
@@ -89,8 +89,8 @@ def make_node_resolver(
 
 
 def make_node_type_resolver(
-    contacts: Optional[list[Contact]],
-) -> Callable[[Optional[str]], Optional[int]]:
+    contacts: list[Contact] | None,
+) -> Callable[[str | None], int | None]:
     """Build a resolver that names a hop's *node type* from its key-prefix hash.
 
     The type counterpart to :func:`make_node_resolver`: it maps a trace/relay hash to the
@@ -111,9 +111,9 @@ def make_node_type_resolver(
         if ident and c.node_type is not None:
             entries.append((ident, c.node_type))
 
-    memo: dict[str, Optional[int]] = {}  # per label, as in make_node_resolver
+    memo: dict[str, int | None] = {}  # per label, as in make_node_resolver
 
-    def type_of(label: Optional[str]) -> Optional[int]:
+    def type_of(label: str | None) -> int | None:
         if not label:
             return None
         if label in memo:
@@ -130,7 +130,7 @@ def make_node_type_resolver(
     return type_of
 
 
-def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
+def make_key_resolver(contacts: list[Contact] | None) -> NodeResolver:
     """Build a resolver that expands a node's stored key-prefix hash to its full public key.
 
     The recorder's observations identify a node only by a short key-prefix hash — the slice
@@ -154,7 +154,7 @@ def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
 
     memo: dict[str, str] = {}  # per label, as in make_node_resolver
 
-    def resolve(label: Optional[str]) -> Optional[str]:
+    def resolve(label: str | None) -> str | None:
         if not label:
             return label
         if label in memo:
@@ -171,12 +171,12 @@ def make_key_resolver(contacts: Optional[list[Contact]]) -> NodeResolver:
 #: prefix, or a stored node id), or ``None`` for a name no known node carries. The
 #: colour side of :func:`make_node_resolver`: where that resolver turns hex into names,
 #: this one turns a bare name back into the key its palette hue derives from.
-NameKeyResolver = Callable[[str], Optional[str]]
+NameKeyResolver = Callable[[str], str | None]
 
 
 def make_name_key_resolver(
-    contacts: Optional[list[Contact]],
-    stored_names: Optional[dict[str, str]] = None,
+    contacts: list[Contact] | None,
+    stored_names: dict[str, str] | None = None,
 ) -> NameKeyResolver:
     """Build a resolver that finds the key behind a display name.
 
@@ -208,7 +208,7 @@ def make_name_key_resolver(
         if c.name and ident:
             keys[c.name.casefold()] = ident  # contacts win over stored names
 
-    def key_of(name: str) -> Optional[str]:
+    def key_of(name: str) -> str | None:
         if not name:
             return None
         return keys.get(name.casefold())
@@ -216,7 +216,7 @@ def make_name_key_resolver(
     return key_of
 
 
-def parse_trace_path(spec: str, contacts: Optional[list[Contact]] = None) -> str:
+def parse_trace_path(spec: str, contacts: list[Contact] | None = None) -> str:
     """Parse a user path spec into the hex path string ``send_trace`` expects.
 
     The MeshCore trace protocol forces a route through a list of repeaters, each
@@ -275,7 +275,7 @@ def parse_trace_path(spec: str, contacts: Optional[list[Contact]] = None) -> str
     return ",".join(hops)
 
 
-def path_hash_flags(width_bytes: int) -> Optional[int]:
+def path_hash_flags(width_bytes: int) -> int | None:
     """Return the trace ``flags`` value that encodes a per-hop path-hash width.
 
     The trace subsystem encodes the hash size as ``1 << (flags & 3)`` on both the
@@ -348,11 +348,11 @@ async def run_traces(
     target: str,
     *,
     samples: int = 5,
-    path: Optional[str] = None,
+    path: str | None = None,
     cooldown_s: float = 1.0,
-    timeout: Optional[float] = None,
-    on_result: Optional[ProgressCallback] = None,
-    persist: Optional[Callable[[TraceResult], Awaitable[None] | None]] = None,
+    timeout: float | None = None,
+    on_result: ProgressCallback | None = None,
+    persist: Callable[[TraceResult], Awaitable[None] | None] | None = None,
 ) -> list[TraceResult]:
     """Run ``samples`` traces to ``target`` with pacing between transmissions.
 

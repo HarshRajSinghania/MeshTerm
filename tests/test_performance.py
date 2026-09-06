@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.output import DummyOutput
@@ -25,6 +26,8 @@ from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.tui.session import _has_wide_glyph
 from meshterm.ui.tui.spinner import Spinner
 
+if TYPE_CHECKING:
+    from meshterm.ui.tui.fastrender import FastRenderer
 
 # --- the database's write path ------------------------------------------------------
 
@@ -154,8 +157,8 @@ def test_an_explicit_spinner_cycle_still_wins() -> None:
 
 def test_battery_gauge_steps_the_sweep_at_the_platforms_own_cadence(monkeypatch) -> None:
     """The charging sweep runs on the PicoCalc too — a step per repaint, not per second."""
-    from meshterm.ui import menu
     from meshterm.services.battery_service import BatteryReading
+    from meshterm.ui import menu
     from meshterm.ui.menu import _battery_segment
 
     class _Ctx:
@@ -239,7 +242,7 @@ class _CapturingOutput(DummyOutput):
         return "".join(self.written)
 
 
-def _fast_renderer(frames: list[str]) -> tuple["FastRenderer", _CapturingOutput]:
+def _fast_renderer(frames: list[str]) -> tuple[FastRenderer, _CapturingOutput]:
     """A FastRenderer fed a scripted sequence of composed frames."""
     from prompt_toolkit.styles import Style
 

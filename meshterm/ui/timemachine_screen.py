@@ -23,9 +23,10 @@ transmits.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from statistics import median
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -41,18 +42,18 @@ from .braillechart import (
     chart_span,
     timeline_rows,
 )
-from .menus import command_label, fit_cells, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
+from .menus import command_label, fit_cells, section_heading
 from .theme import name_style, snr_style
 from .tui.render import render_lines
 from .tui.screen import CANCEL, Screen
 from .tui.select import Choice, Separator
 from .widgets import (
+    ContactsSort,
     _age_seconds,
     _recency_style,
     format_ago,
     highlighted_hash,
-    ContactsSort,
 )
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ if TYPE_CHECKING:
 
 #: Every history window the screen knows (``None`` = everything ever recorded). What a
 #: session actually offers is the platform-bound :data:`_WINDOWS` below.
-_ALL_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
+_ALL_WINDOWS: tuple[tuple[str, timedelta | None], ...] = (
     ("24 h", timedelta(days=1)),
     ("7 d", timedelta(days=7)),
     ("30 d", timedelta(days=30)),
@@ -73,7 +74,7 @@ _ALL_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = (
 #: the one span whose scan grows with the whole history — stays a desktop affordance,
 #: and the F3 chip there cycles the three spans that remain. Bound at platform-switch
 #: time.
-_WINDOWS: tuple[tuple[str, Optional[timedelta]], ...] = _ALL_WINDOWS
+_WINDOWS: tuple[tuple[str, timedelta | None], ...] = _ALL_WINDOWS
 
 
 @on_platform
@@ -166,7 +167,7 @@ def _fit_rhythm(
 
 def bucket_medians(
     pairs: list[tuple[datetime, float]], start: datetime, end: datetime, buckets: int
-) -> list[Optional[float]]:
+) -> list[float | None]:
     """Per-bucket medians of timestamped readings (``None`` for empty buckets)."""
     grouped: list[list[float]] = [[] for _ in range(max(1, buckets))]
     span = max(1.0, (end - start).total_seconds())
@@ -252,7 +253,7 @@ class TimeMachineScreen(Screen):
         *,
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
         label: str,
-        build: Callable[[Optional[timedelta], int], list[RenderableType]],
+        build: Callable[[timedelta | None, int], list[RenderableType]],
     ) -> None:
         """Create the page over its section builder.
 
@@ -323,7 +324,7 @@ def _when_label(when: datetime) -> str:
 
 
 def _node_sections(
-    ctx: "AppContext", node_id: str, label: str, window: Optional[timedelta], width: int
+    ctx: AppContext, node_id: str, label: str, window: timedelta | None, width: int
 ) -> list[RenderableType]:
     """Build one node's history page: volume, SNR band, rhythm, and the roll-up."""
     now = utcnow()
@@ -429,7 +430,7 @@ def _node_sections(
 
 
 def _self_sections(
-    ctx: "AppContext", window: Optional[timedelta], width: int
+    ctx: AppContext, window: timedelta | None, width: int
 ) -> list[RenderableType]:
     """Build the own-node page: transmission volume, reach SNR band, rhythm, and the ledger.
 
@@ -550,7 +551,7 @@ def _self_sections(
     return out
 
 
-def _self_sent_line(ledger) -> Optional[Text]:  # noqa: ANN001 - SelfActivity, kept local
+def _self_sent_line(ledger) -> Text | None:  # noqa: ANN001 - SelfActivity, kept local
     """The Ledger's outbound-messages line: channel/direct counts and the DM ack rate.
 
     Omitted entirely when nothing was sent in the window (``None``), so a trace-only
@@ -736,7 +737,7 @@ def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
 
     def label_of(picks: list[int]) -> list[str]:
         labels: list[str] = []
-        prev_month: Optional[str] = None
+        prev_month: str | None = None
         for i in picks:
             iso = shown[i][0]
             try:
@@ -798,7 +799,7 @@ def _hour_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
 
 
 def _fill_days(
-    active: list[tuple[str, int, int]], since: Optional[datetime], now: datetime
+    active: list[tuple[str, int, int]], since: datetime | None, now: datetime
 ) -> list[tuple[str, int, int]]:
     """Fill a day series' gaps so an empty day shows as an empty bar, not a skip.
 
@@ -917,12 +918,12 @@ def _day_columns(values: list[int], chars: int) -> list:
 
 
 def _mesh_sections(
-    ctx: "AppContext",
-    window: Optional[timedelta],
+    ctx: AppContext,
+    window: timedelta | None,
     width: int,
     prefix_bytes: int = 0,
-    resolve: "NodeResolver" = lambda label: label,
-    resolve_key: "NodeResolver" = lambda node: node,
+    resolve: NodeResolver = lambda label: label,
+    resolve_key: NodeResolver = lambda node: node,
 ) -> list[RenderableType]:
     """Build the whole-mesh overview: days, rhythm, arrivals, and the all-time ledger.
 
@@ -945,7 +946,7 @@ def _mesh_sections(
     hourly = since is not None and window is not None and window <= timedelta(days=1)
     # The all-days series feeds the ledger at the bottom too — fetched once here (it is
     # one of the costlier scans), and only on demand in the hourly case.
-    all_days: Optional[list[tuple[str, int, int]]] = None
+    all_days: list[tuple[str, int, int]] | None = None
     if hourly:
         series = _fill_hours(ctx.repo.hourly_series(since), since, now)
     else:
@@ -1115,7 +1116,7 @@ _PICK_HASH_W = 16
 _ARRIVAL_TAIL = 2 + 2 + 2 + 12 + 12
 
 
-def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str]) -> Optional[str]:
+def _known_name(resolve: NodeResolver, node: str | None, name: str | None) -> str | None:
     """The best display name for a heard node, or ``None`` when truly unknown.
 
     The app-wide fill-in-the-blanks rule: a node id without a stored name is not
@@ -1132,7 +1133,7 @@ def _known_name(resolve: "NodeResolver", node: Optional[str], name: Optional[str
     return None
 
 
-async def _routing_prefix_bytes(ctx: "AppContext") -> int:
+async def _routing_prefix_bytes(ctx: AppContext) -> int:
     """The device's path-hash width in bytes, or 0 when unknowable.
 
     Best-effort, exactly like the Nodes tool: the Time Machine reads stored history
@@ -1149,8 +1150,8 @@ async def _routing_prefix_bytes(ctx: "AppContext") -> int:
 
 
 async def _contact_resolvers(
-    ctx: "AppContext",
-) -> tuple["NodeResolver", Callable[[Optional[str]], Optional[int]], "NodeResolver"]:
+    ctx: AppContext,
+) -> tuple[NodeResolver, Callable[[str | None], int | None], NodeResolver]:
     """A ``(name, type, key)`` resolver trio over the device's contacts, best-effort like the prefix read.
 
     All three fill the picker's (and arrivals') blanks from what the companion knows but the
@@ -1182,7 +1183,7 @@ async def _contact_resolvers(
     )
 
 
-async def _self_identity(ctx: "AppContext") -> tuple[Optional[str], Optional[str]]:
+async def _self_identity(ctx: AppContext) -> tuple[str | None, str | None]:
     """Our own node's ``(name, public_key)`` for its picker lane, best-effort like the prefix read.
 
     The own-node page needs no device — it reads stored history — so this fetch only dresses
@@ -1214,14 +1215,14 @@ class TimeMachinePickerScreen(ContactListScreen):
     def __init__(
         self,
         *,
-        listed: list[tuple["HeardNode", Optional[str]]],
+        listed: list[tuple[HeardNode, str | None]],
         prefix_bytes: int,
         sort: ContactsSort,
         prompt: str,
-        self_name: Optional[str] = None,
-        self_key: Optional[str] = None,
-        type_of: Callable[[Optional[str]], Optional[int]] = lambda _node: None,
-        resolve_key: Callable[[Optional[str]], Optional[str]] = lambda node: node,
+        self_name: str | None = None,
+        self_key: str | None = None,
+        type_of: Callable[[str | None], int | None] = lambda _node: None,
+        resolve_key: Callable[[str | None], str | None] = lambda node: node,
     ) -> None:
         """Build the picker over already-resolved ``(node, name)`` pairs.
 
@@ -1279,7 +1280,7 @@ class TimeMachinePickerScreen(ContactListScreen):
         )
 
 
-async def open_timemachine(ctx: "AppContext") -> None:
+async def open_timemachine(ctx: AppContext) -> None:
     """Run the Time Machine: pick a subject, explore its page, repeat until Esc.
 
     Args:
@@ -1366,7 +1367,7 @@ async def open_timemachine(ctx: "AppContext") -> None:
                     break  # the mesh spoke while the page was open; relist
 
 
-async def open_timemachine_node(ctx: "AppContext", node_id: str, label: str) -> None:
+async def open_timemachine_node(ctx: AppContext, node_id: str, label: str) -> None:
     """Open one node's Time Machine page directly, skipping the subject picker.
 
     The Node detail screen's *Time machine* link lands here: the same scrollable per-node
@@ -1395,7 +1396,7 @@ async def open_timemachine_node(ctx: "AppContext", node_id: str, label: str) -> 
     await session.run_screen(TimeMachineScreen(session=session, label=label, build=build))
 
 
-async def open_timemachine_self(ctx: "AppContext") -> None:
+async def open_timemachine_self(ctx: AppContext) -> None:
     """Open our own node's Time Machine page directly (the outbound-activity ledger).
 
     The Node detail screen's *Time machine* link for our own node: we never overhear

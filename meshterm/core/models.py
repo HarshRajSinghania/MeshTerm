@@ -9,9 +9,8 @@ from __future__ import annotations
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from enum import Enum
 
 #: Label used for our own (local) device when framing a trace path's endpoints.
 LOCAL_DEVICE_LABEL = "us"
@@ -70,7 +69,7 @@ class LoginResult(Enum):
         return self is LoginResult.ACCEPTED
 
 
-def is_direct_messageable(node_type: Optional[int]) -> bool:
+def is_direct_messageable(node_type: int | None) -> bool:
     """Whether a node of this advert type is a direct-message recipient — THE DM rule.
 
     We only send direct messages to *companion* (chat) nodes: a repeater, room server, or
@@ -109,7 +108,7 @@ def utcnow() -> datetime:
 ADVERT_FUTURE_SKEW_S = 300
 
 
-def advert_time(last_advert: object) -> Optional[datetime]:
+def advert_time(last_advert: object) -> datetime | None:
     """Convert an advert's Unix timestamp into a *plausible* UTC datetime, or ``None``.
 
     THE converter for every ``last_advert`` epoch entering the app — the device's live
@@ -161,11 +160,11 @@ class Contact:
     name: str
     public_key: str = ""
     key_prefix: str = ""
-    last_seen: Optional[datetime] = None
-    node_type: Optional[int] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    route_hops: Optional[tuple[str, ...]] = None
+    last_seen: datetime | None = None
+    node_type: int | None = None
+    lat: float | None = None
+    lon: float | None = None
+    route_hops: tuple[str, ...] | None = None
 
     @property
     def has_location(self) -> bool:
@@ -196,8 +195,8 @@ class NeighbourInfo:
     """
 
     node: str
-    snr: Optional[float] = None
-    heard_at: Optional[datetime] = None
+    snr: float | None = None
+    heard_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -236,18 +235,18 @@ class Observation:
         raw: Optional raw event payload for debugging/replay.
     """
 
-    node: Optional[str]
-    public_key: Optional[str] = None
-    name: Optional[str] = None
+    node: str | None
+    public_key: str | None = None
+    name: str | None = None
     kind: str = "advert"
-    node_type: Optional[int] = None
-    snr: Optional[float] = None
-    rssi: Optional[float] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    path: Optional[str] = None
+    node_type: int | None = None
+    snr: float | None = None
+    rssi: float | None = None
+    lat: float | None = None
+    lon: float | None = None
+    path: str | None = None
     observed_at: datetime = field(default_factory=utcnow)
-    raw: Optional[dict] = None
+    raw: dict | None = None
 
 
 @dataclass(slots=True)
@@ -271,13 +270,13 @@ class Message:
     """
 
     text: str
-    sender: Optional[str] = None
-    channel: Optional[int] = None
+    sender: str | None = None
+    channel: int | None = None
     is_channel: bool = False
-    sender_timestamp: Optional[datetime] = None
-    snr: Optional[float] = None
+    sender_timestamp: datetime | None = None
+    snr: float | None = None
     received_at: datetime = field(default_factory=utcnow)
-    raw: Optional[dict] = None
+    raw: dict | None = None
 
 
 @dataclass(slots=True)
@@ -290,13 +289,13 @@ class Ack:
         raw: Optional raw event payload for debugging/replay.
     """
 
-    code: Optional[str] = None
+    code: str | None = None
     received_at: datetime = field(default_factory=utcnow)
-    raw: Optional[dict] = None
+    raw: dict | None = None
 
 
 def conversation_key(
-    is_channel: bool, channel_id: Optional[str], peer: Optional[str]
+    is_channel: bool, channel_id: str | None, peer: str | None
 ) -> str:
     """Return a stable key identifying a chat conversation.
 
@@ -354,14 +353,14 @@ class ChatMessage:
     text: str
     outbound: bool = False
     is_channel: bool = False
-    channel_id: Optional[str] = None
-    channel_idx: Optional[int] = None
-    peer: Optional[str] = None
-    peer_name: Optional[str] = None
-    snr: Optional[float] = None
-    acked: Optional[bool] = None
+    channel_id: str | None = None
+    channel_idx: int | None = None
+    peer: str | None = None
+    peer_name: str | None = None
+    snr: float | None = None
+    acked: bool | None = None
     created_at: datetime = field(default_factory=utcnow)
-    row_id: Optional[int] = None
+    row_id: int | None = None
 
     @property
     def key(self) -> str:
@@ -371,11 +370,11 @@ class ChatMessage:
     @classmethod
     def from_message(
         cls,
-        message: "Message",
+        message: Message,
         *,
-        peer_name: Optional[str] = None,
-        channel_id: Optional[str] = None,
-    ) -> "ChatMessage":
+        peer_name: str | None = None,
+        channel_id: str | None = None,
+    ) -> ChatMessage:
         """Build an inbound :class:`ChatMessage` from a received :class:`Message`.
 
         Args:
@@ -422,13 +421,13 @@ class Conversation:
 
     label: str
     is_channel: bool
-    channel_idx: Optional[int] = None
-    channel_id: Optional[str] = None
-    secret: Optional[bytes] = None
-    contact: Optional[Contact] = None
+    channel_idx: int | None = None
+    channel_id: str | None = None
+    secret: bytes | None = None
+    contact: Contact | None = None
 
     @property
-    def peer(self) -> Optional[str]:
+    def peer(self) -> str | None:
         """The peer key prefix for a direct conversation, else ``None``."""
         if self.is_channel or self.contact is None:
             return None
@@ -460,17 +459,17 @@ class HeardNode:
             :attr:`Observation.public_key`); ``None`` leaves only the short :attr:`node` id.
     """
 
-    node: Optional[str]
-    name: Optional[str]
+    node: str | None
+    name: str | None
     count: int
-    median_snr: Optional[float]
-    best_snr: Optional[float]
-    last_rssi: Optional[float]
+    median_snr: float | None
+    best_snr: float | None
+    last_rssi: float | None
     last_seen: datetime
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    node_type: Optional[int] = None
-    public_key: Optional[str] = None
+    lat: float | None = None
+    lon: float | None = None
+    node_type: int | None = None
+    public_key: str | None = None
 
     @property
     def has_location(self) -> bool:
@@ -484,8 +483,8 @@ class HeardNode:
 
     @classmethod
     def from_observations(
-        cls, node: Optional[str], observations: list["Observation"]
-    ) -> "HeardNode":
+        cls, node: str | None, observations: list[Observation]
+    ) -> HeardNode:
         """Aggregate one node's observations into reception statistics.
 
         Args:
@@ -567,7 +566,7 @@ class Hop:
     """
 
     index: int
-    node: Optional[str]
+    node: str | None
     snr: float
 
 
@@ -590,11 +589,11 @@ class TraceResult:
     target: str
     success: bool
     hops: list[Hop] = field(default_factory=list)
-    round_trip_ms: Optional[float] = None
-    tx_power: Optional[int] = None
-    path_hash_bytes: Optional[int] = None
+    round_trip_ms: float | None = None
+    tx_power: int | None = None
+    path_hash_bytes: int | None = None
     timestamp: datetime = field(default_factory=utcnow)
-    raw: Optional[dict] = None
+    raw: dict | None = None
 
     @property
     def hop_count(self) -> int:
@@ -602,13 +601,13 @@ class TraceResult:
         return len(self.hops)
 
     @property
-    def min_snr(self) -> Optional[float]:
+    def min_snr(self) -> float | None:
         """The bottleneck (weakest) SNR along the path, or ``None`` if no hops."""
         if not self.hops:
             return None
         return min(h.snr for h in self.hops)
 
-    def edges(self, device_label: str = LOCAL_DEVICE_LABEL) -> list["HopEdge"]:
+    def edges(self, device_label: str = LOCAL_DEVICE_LABEL) -> list[HopEdge]:
         """Frame the per-hop SNR as directed ``origin -> destination`` edges.
 
         Each hop's SNR is the signal measured arriving at that node, so an edge runs
@@ -664,8 +663,8 @@ class HopAggregate:
     """
 
     index: int
-    origin: Optional[str]
-    destination: Optional[str]
+    origin: str | None
+    destination: str | None
     median_snr: float
     samples: int
 
@@ -690,9 +689,9 @@ class TraceStats:
     target: str
     samples: int
     successes: int
-    median_min_snr: Optional[float]
-    median_rtt_ms: Optional[float]
-    tx_power: Optional[int] = None
+    median_min_snr: float | None
+    median_rtt_ms: float | None
+    tx_power: int | None = None
     hop_snrs: list[HopAggregate] = field(default_factory=list)
 
     @property
@@ -701,7 +700,7 @@ class TraceStats:
         return self.successes / self.samples if self.samples else 0.0
 
     @classmethod
-    def from_traces(cls, target: str, traces: list[TraceResult]) -> "TraceStats":
+    def from_traces(cls, target: str, traces: list[TraceResult]) -> TraceStats:
         """Aggregate a list of traces into robust statistics.
 
         Args:
@@ -726,7 +725,7 @@ class TraceStats:
         )
 
     @staticmethod
-    def _aggregate_hops(successes: list["TraceResult"]) -> list[HopAggregate]:
+    def _aggregate_hops(successes: list[TraceResult]) -> list[HopAggregate]:
         """Compute the median SNR per hop position across successful traces.
 
         Hops are grouped by their path position; for each position the SNR median is
@@ -741,10 +740,10 @@ class TraceStats:
             One :class:`HopAggregate` per hop position, ordered along the path.
         """
         snrs_by_index: dict[int, list[float]] = {}
-        origins_by_index: dict[int, list[Optional[str]]] = {}
-        dests_by_index: dict[int, list[Optional[str]]] = {}
+        origins_by_index: dict[int, list[str | None]] = {}
+        dests_by_index: dict[int, list[str | None]] = {}
         for trace in successes:
-            origin: Optional[str] = None  # the first hop originates at our device
+            origin: str | None = None  # the first hop originates at our device
             for hop in trace.hops:
                 snrs_by_index.setdefault(hop.index, []).append(hop.snr)
                 origins_by_index.setdefault(hop.index, []).append(origin)
@@ -791,7 +790,7 @@ class TxLevelResult:
     tx_power: int
     samples: int
     successes: int
-    target_snr: Optional[float]
+    target_snr: float | None
     score: float
     stats: TraceStats
 
@@ -820,15 +819,15 @@ class TxOptResult:
     target: str
     admin_node: str
     path: str
-    original_tx: Optional[int]
+    original_tx: int | None
     best_tx: int
-    best_snr: Optional[float]
+    best_snr: float | None
     best_success_rate: float
     applied: bool
     levels: list[TxLevelResult] = field(default_factory=list)
 
     @property
-    def best_level(self) -> Optional[TxLevelResult]:
+    def best_level(self) -> TxLevelResult | None:
         """The :class:`TxLevelResult` for ``best_tx``, if present."""
         return next((lv for lv in self.levels if lv.tx_power == self.best_tx), None)
 

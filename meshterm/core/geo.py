@@ -47,7 +47,7 @@ class BBox:
     max_lon: float
 
     @classmethod
-    def around(cls, points: list[tuple[float, float]]) -> "BBox":
+    def around(cls, points: list[tuple[float, float]]) -> BBox:
         """Return the tightest box containing every ``(lat, lon)`` point.
 
         Args:
@@ -309,7 +309,7 @@ class Viewport:
         ox, oy = self.origin_world
         return wx - ox, wy - oy
 
-    def panned(self, frac_x: float, frac_y: float) -> "Viewport":
+    def panned(self, frac_x: float, frac_y: float) -> Viewport:
         """Return a viewport shifted by a fraction of its own width/height.
 
         Args:
@@ -325,12 +325,12 @@ class Viewport:
         lat, lon = world_to_lonlat(cx, cy, self.zoom)
         return Viewport(clamp_lat(lat), lon, self.zoom, self.dot_w, self.dot_h)
 
-    def zoomed(self, delta: int, *, min_zoom: int = 2, max_zoom: int = 19) -> "Viewport":
+    def zoomed(self, delta: int, *, min_zoom: int = 2, max_zoom: int = 19) -> Viewport:
         """Return a viewport zoomed by ``delta`` levels about the same centre (clamped)."""
         z = max(min_zoom, min(max_zoom, self.zoom + delta))
         return Viewport(self.center_lat, self.center_lon, z, self.dot_w, self.dot_h)
 
-    def resized(self, dot_w: int, dot_h: int) -> "Viewport":
+    def resized(self, dot_w: int, dot_h: int) -> Viewport:
         """Return the same view centred as before but at a new canvas size."""
         return Viewport(self.center_lat, self.center_lon, self.zoom, dot_w, dot_h)
 
@@ -346,7 +346,7 @@ class Viewport:
         max_zoom: int = 16,
         default_zoom: int = 14,
         fraction: float = 1.0,
-    ) -> "Viewport":
+    ) -> Viewport:
         """Build a viewport framing ``points`` — centred on them at the tightest fitting zoom.
 
         Args:

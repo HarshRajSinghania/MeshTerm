@@ -17,7 +17,7 @@ communications, not overheard noise, so they are always recorded while a device 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..core.channels import CHANNEL_SLOT_PROBE_CAP, channel_identity
 from ..core.connection import Unsubscribe
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 
-def _fallback_channel_id(idx: Optional[int]) -> str:
+def _fallback_channel_id(idx: int | None) -> str:
     """Identity for a channel we can't read (an unconfigured/unknown slot).
 
     Only used when the device has no channel to identify at ``idx`` — a degenerate case a
@@ -56,24 +56,24 @@ class ChatService:
     list, while history records everything.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize the service bound to an application context.
 
         Args:
             ctx: The shared application context (device, repository, event hub, logger).
         """
         self._ctx = ctx
-        self._unsubscribe: Optional[Unsubscribe] = None
-        self._run_id: Optional[int] = None
+        self._unsubscribe: Unsubscribe | None = None
+        self._run_id: int | None = None
         self._unread: dict[str, int] = {}
-        self._active: Optional[str] = None
+        self._active: str | None = None
         self._session_count = 0
         # Inbound messages are recorded off a single serialized worker (see
         # :meth:`_process_inbound`) so channel messages — whose identity is resolved with an
         # async device read — are still stored in the order they arrived. The queue is the
         # hand-off from the (synchronous) hub callback to that worker.
-        self._queue: Optional["asyncio.Queue[Message]"] = None
-        self._worker: Optional["asyncio.Task[None]"] = None
+        self._queue: asyncio.Queue[Message] | None = None
+        self._worker: asyncio.Task[None] | None = None
         # Last-known channel slot index -> intrinsic identity. Inbound resolution reads the
         # slot fresh every time (see :meth:`channel_id_for`), so this is not the source of
         # truth — only a warm map for priming/backfill and a fallback when a read fails.
@@ -97,7 +97,7 @@ class ChatService:
         """Return the total unread count across all conversations."""
         return sum(self._unread.values())
 
-    def set_active(self, key: Optional[str]) -> None:
+    def set_active(self, key: str | None) -> None:
         """Mark ``key`` as the open conversation (or ``None`` when none is open).
 
         The open conversation is immediately cleared of unread and won't accrue more while
@@ -176,7 +176,7 @@ class ChatService:
         self._note_slot(idx, None)
         return _fallback_channel_id(idx)
 
-    def _note_slot(self, idx: int, cid: Optional[str]) -> None:
+    def _note_slot(self, idx: int, cid: str | None) -> None:
         """Record a slot's freshly-read identity, dropping stale screen caches when it moved.
 
         This resolution is the one place in the app that reads a channel slot *per message*, so
@@ -320,7 +320,7 @@ class ChatService:
         self,
         run_id: int,
         message: Message,
-        channel_id: Optional[str],
+        channel_id: str | None,
         *,
         notify: bool = True,
     ) -> None:
@@ -341,7 +341,7 @@ class ChatService:
         except Exception as exc:  # noqa: BLE001 - never let logging break the subscription
             self._ctx.log.debug("chat: failed to record message: %s", exc)
 
-    async def _notifies(self, message: Message, channel_id: Optional[str]) -> bool:
+    async def _notifies(self, message: Message, channel_id: str | None) -> bool:
         """Whether this message should raise the header's unread badge — THE badge rule.
 
         The badge is a pointer, not a tally: its whole job is to send you to a conversation
@@ -380,7 +380,7 @@ class ChatService:
             return await self._is_listed_channel(channel_id)
         return await self._is_listed_contact(message.sender)
 
-    async def _is_listed_channel(self, channel_id: Optional[str]) -> bool:
+    async def _is_listed_channel(self, channel_id: str | None) -> bool:
         """Whether a channel identity is one of the device's configured channel slots.
 
         A message whose slot couldn't be identified carries the slot-derived fallback identity
@@ -398,7 +398,7 @@ class ChatService:
             return True
         return any(channel_identity(slot.name, slot.secret) == channel_id for slot in slots)
 
-    async def _is_listed_contact(self, sender: Optional[str]) -> bool:
+    async def _is_listed_contact(self, sender: str | None) -> bool:
         """Whether a direct message's sender is a contact the Chat picker lists.
 
         Matched the way the live chat matches an inbound sender to its thread: either prefix
@@ -519,7 +519,7 @@ class ChatService:
         return message
 
     async def send_channel(
-        self, index: int, text: str, *, label: Optional[str] = None
+        self, index: int, text: str, *, label: str | None = None
     ) -> ChatMessage:
         """Broadcast a message on a channel and record it in history.
 

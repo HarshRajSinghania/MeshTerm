@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -135,12 +136,12 @@ class ChatScreen(Screen):
         conversation: Conversation,
         messages: list[ChatMessage],
         *,
-        send: Callable[[str], Awaitable[Optional[ChatMessage]]],
+        send: Callable[[str], Awaitable[ChatMessage | None]],
         names: dict[str, str],
         session,  # noqa: ANN001 - TuiSession, imported lazily to avoid a cycle
-        resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None,
-        paths: Optional[Callable[[ChatMessage], Awaitable[None]]] = None,
-        key_of: Optional[Callable[[str], Optional[str]]] = None,
+        resend: Callable[[ChatMessage], Awaitable[ChatMessage]] | None = None,
+        paths: Callable[[ChatMessage], Awaitable[None]] | None = None,
+        key_of: Callable[[str], str | None] | None = None,
     ) -> None:
         """Build the chat screen.
 
@@ -165,7 +166,7 @@ class ChatScreen(Screen):
         super().__init__()
         self.title = conversation.label
         self._is_channel = conversation.is_channel
-        self._key_of: Callable[[str], Optional[str]] = key_of or (lambda name: None)
+        self._key_of: Callable[[str], str | None] = key_of or (lambda name: None)
         # A direct thread's one remote sender is the peer; its key colours the header
         # even when the resolver can't place the display name.
         contact = conversation.contact
@@ -191,12 +192,12 @@ class ChatScreen(Screen):
         self._paste_open = False  # one paste-confirm dialog at a time
         # The pick: index of the highlighted message (or None when the compose line is
         # focused), plus the body line it rendered on so the frame keeps it in view.
-        self._selected: Optional[int] = None
-        self._selected_line: Optional[int] = None
+        self._selected: int | None = None
+        self._selected_line: int | None = None
         # Memoizes _render_grouped's output per message, so a repaint triggered by
         # something outside the transcript (a keystroke, the 1s idle tick, a spinner
         # frame) only re-renders the rows that actually changed. See _render_grouped.
-        self._render_cache: Optional[dict] = None
+        self._render_cache: dict | None = None
 
     @property
     def footer_hint(self) -> str:
@@ -266,7 +267,7 @@ class ChatScreen(Screen):
             self.scroll = len(lines)
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Keep the picked reply target in view; otherwise free scroll (managed by stick)."""
         return self._selected_line
 
@@ -280,7 +281,7 @@ class ChatScreen(Screen):
         """UTF-8 byte length of the current compose buffer — what counts against the limit."""
         return len(self._editor.text.encode("utf-8"))
 
-    def _overflow_at(self, limit: int) -> Optional[int]:
+    def _overflow_at(self, limit: int) -> int | None:
         """Index of the first compose character whose bytes spill past ``limit``, else ``None``.
 
         Walking by character (not byte) keeps multibyte input intact: an emoji or accented
@@ -297,7 +298,7 @@ class ChatScreen(Screen):
         """The inline ``used/limit`` budget — the shared compose gauge (:func:`byte_counter`)."""
         return byte_counter(self._used_bytes(), limit)
 
-    def _name(self, peer: Optional[str]) -> Optional[str]:
+    def _name(self, peer: str | None) -> str | None:
         """Resolve a sender key prefix to a contact name (exact, then prefix match)."""
         if not peer:
             return None
@@ -358,10 +359,10 @@ class ChatScreen(Screen):
         # the divider alone; a select list's heading may carry its description along.
         self._sticky_headers = []
         ids: list[int] = []
-        ackeds: list[Optional[bool]] = []
+        ackeds: list[bool | None] = []
         selecteds: list[bool] = []
         boundaries: list[int] = []
-        prev_group: Optional[tuple[bool, str]] = None
+        prev_group: tuple[bool, str] | None = None
         prev_day = None
 
         for idx in range(total):
@@ -521,7 +522,7 @@ class ChatScreen(Screen):
             text.append(body[pos:], style=base)
         return text
 
-    def _delivery_glyph(self, acked: Optional[bool]) -> Text:
+    def _delivery_glyph(self, acked: bool | None) -> Text:
         """Map an outbound direct message's ``acked`` state to its trailing mark.
 
         A message still awaiting its ack (``acked is None``) shows the current spinner frame,
@@ -580,7 +581,7 @@ class ChatScreen(Screen):
             return "node.unknown"
         return name_style(sender, self._sender_key(sender, mention=mention))
 
-    def _sender_key(self, sender: str, *, mention: bool = False) -> Optional[str]:
+    def _sender_key(self, sender: str, *, mention: bool = False) -> str | None:
         """The key a sender name resolves back to, or ``None`` when nothing places it.
 
         Contacts first, then the recorder's stored names; in a *direct* thread a sender
@@ -659,7 +660,7 @@ class ChatScreen(Screen):
                 self._clear_selection()
                 self._stick = True
 
-    def _open_paths(self, index: Optional[int]) -> None:
+    def _open_paths(self, index: int | None) -> None:
         """Float the delivery-paths view for the picked message (one dialog at a time).
 
         ``index`` is the pick, so ``None`` — nothing picked — opens nothing: a path is a
@@ -903,7 +904,7 @@ class ChatScreen(Screen):
             self._stick = True
             self._session.invalidate()
 
-    def _retry_target(self) -> Optional[ChatMessage]:
+    def _retry_target(self) -> ChatMessage | None:
         """The message ^R would re-send, or ``None`` when there is nothing to retry.
 
         The newest outbound direct message that went out and was never acknowledged —
@@ -959,7 +960,7 @@ class ChatScreen(Screen):
             pass
 
 
-async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
+async def open_chat(ctx: AppContext, conversation: Conversation) -> int:
     """Open the live chat screen for ``conversation`` and run it until dismissed.
 
     Ensures listening and message recording are active, loads the stored transcript,
@@ -1001,7 +1002,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
     names = _contact_names(contacts)
     key_of = trace_runner.make_name_key_resolver(contacts, ctx.repo.node_names())
 
-    async def send(text: str) -> Optional[ChatMessage]:
+    async def send(text: str) -> ChatMessage | None:
         if conversation.is_channel:
             assert conversation.channel_idx is not None
             return await ctx.chat.send_channel(
@@ -1012,7 +1013,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
             ctx, lambda: ctx.chat.send_direct(conversation.contact, text)
         )
 
-    resend: Optional[Callable[[ChatMessage], Awaitable[ChatMessage]]] = None
+    resend: Callable[[ChatMessage], Awaitable[ChatMessage]] | None = None
     if not conversation.is_channel:
 
         async def resend(message: ChatMessage) -> ChatMessage:
@@ -1053,7 +1054,7 @@ async def open_chat(ctx: "AppContext", conversation: Conversation) -> int:
     return len(screen._messages)
 
 
-async def _with_restore(ctx: "AppContext", attempt: Callable[[], Awaitable[Any]]) -> Any:
+async def _with_restore(ctx: AppContext, attempt: Callable[[], Awaitable[Any]]) -> Any:
     """Run a direct send, offering to restore a contact the device has forgotten, then retry.
 
     The one rejection a send can recover from: the firmware has no contact for the recipient
@@ -1080,7 +1081,7 @@ async def _with_restore(ctx: "AppContext", attempt: Callable[[], Awaitable[Any]]
         return await attempt()
 
 
-async def _restore_contact(ctx: "AppContext", missing: ContactNotOnDeviceError) -> bool:
+async def _restore_contact(ctx: AppContext, missing: ContactNotOnDeviceError) -> bool:
     """Offer to write a forgotten contact back to the device; ``True`` if it now holds it.
 
     A direct message is addressed by the *device's* own contact entry, so a contact the
@@ -1156,7 +1157,7 @@ def _belongs(message: Message, conversation: Conversation) -> bool:
 
 
 async def _make_paths_presenter(
-    ctx: "AppContext",
+    ctx: AppContext,
     conversation: Conversation,
     device,  # noqa: ANN001 - core Device; typed at the source
 ) -> Callable[[ChatMessage], Awaitable[None]]:
@@ -1194,8 +1195,8 @@ async def _make_paths_presenter(
     type_of = trace_runner.make_node_type_resolver(contacts)
     key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
     prefix_bytes = await _routing_prefix_bytes(ctx)
-    self_name: Optional[str] = None
-    self_key: Optional[str] = None
+    self_name: str | None = None
+    self_key: str | None = None
     try:
         info = await ctx.devstate.self_info()
         self_name = str(info.get("name") or "") or None
@@ -1266,7 +1267,7 @@ async def _make_paths_presenter(
         # Our own sends leave us for the peer; an inbound channel message names its sender
         # on the wire and is addressed to everyone, so it lands on us; a direct chat's
         # inbound origin is the conversation's peer.
-        destination: Optional[str] = self_name
+        destination: str | None = self_name
         if message.outbound:
             source = self_name
             # A channel broadcast is addressed to nobody in particular, and the copies we

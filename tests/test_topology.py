@@ -12,6 +12,7 @@ from datetime import timedelta
 
 import pytest
 
+import meshterm.ui.pathline as pathline
 from meshterm.core.connection import DeviceCommandError, MockDevice
 from meshterm.core.models import Contact, NeighbourInfo, Observation, utcnow
 from meshterm.persistence.repository import (
@@ -20,10 +21,9 @@ from meshterm.persistence.repository import (
     Repository,
     TracedPath,
 )
-from meshterm.services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
+from meshterm.services.path_probe import ProbeCandidate, probe_paths
 from meshterm.services.topology import build_topology, collapse_width, render_custom_spec
 from meshterm.services.trace_runner import make_node_resolver
-import meshterm.ui.pathline as pathline
 from meshterm.ui.path_composer import AUTO_SPEC, FetchNeighbours, PathComposerScreen
 from meshterm.ui.pathline import CURSOR_GLYPH, SELF_GLYPH
 from meshterm.ui.tui.screen import CANCEL
@@ -404,7 +404,7 @@ async def test_mock_fetch_neighbours_is_login_gated_like_real_firmware() -> None
 
 async def test_probe_paths_ranks_reliability_first() -> None:
     """A path that always answers outranks a stronger-SNR one that drops traces."""
-    from meshterm.core.models import TraceResult, Hop
+    from meshterm.core.models import Hop, TraceResult
 
     class _Device:
         async def run_trace(self, target, *, path=None, timeout=10.0):  # noqa: ANN001
@@ -569,7 +569,8 @@ def test_composer_suggestions_follow_the_cursor_anchor() -> None:
 
 def test_composer_preview_stands_the_cursor_in_the_route() -> None:
     """The insertion point is a hop of the route — the ``+`` slot the next node takes —
-    and ←/→ slide it along, one position at a time."""
+    and ←/→ slide it along, one position at a time.
+    """
     screen = _composer(_topo(), hops=["3d63c6429436"], target=False)
 
     def slot_at() -> int:
@@ -980,7 +981,8 @@ def test_a_stub_whose_only_link_was_its_owner_takes_the_owner_out_with_it() -> N
 
 def test_composer_row_cursor_clamps_at_both_ends() -> None:
     """The windowed suggestion list does not wrap: ↑ on the first row and ↓ past the last
-    stay where they are, rather than hauling the window end to end."""
+    stay where they are, rather than hauling the window end to end.
+    """
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
     screen = _composer(_topo(trace_paths=walks))
     screen.render_body(90)

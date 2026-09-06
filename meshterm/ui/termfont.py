@@ -52,10 +52,10 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional
 
 #: Coverage levels a verdict (or a recommended font) can carry, strongest first.
 FULL = "full"
@@ -165,8 +165,8 @@ class PowerlineSupport:
 
     level: str
     source: str
-    face: Optional[str] = None
-    matched: Optional[RecommendedFont] = None
+    face: str | None = None
+    matched: RecommendedFont | None = None
 
     @property
     def capable(self) -> bool:
@@ -205,7 +205,7 @@ def normalize_face(face: str) -> str:
     return " ".join(face.strip().strip("'\"").lower().split())
 
 
-def match_recommended(face: Optional[str]) -> Optional[RecommendedFont]:
+def match_recommended(face: str | None) -> RecommendedFont | None:
     """Match a configured face against the recommended-font list.
 
     A face matches an entry when it *is* one of the entry's aliases or extends one as
@@ -273,7 +273,7 @@ def _strip_jsonc(text: str) -> str:
     return "".join(out)
 
 
-def _read_jsonc(path: Path) -> Optional[dict]:
+def _read_jsonc(path: Path) -> dict | None:
     """Parse a JSONC settings file (comments, trailing commas), ``None`` on any failure.
 
     Both Windows Terminal and VS Code write JSON-with-comments; a strict parser dies
@@ -289,9 +289,10 @@ def _read_jsonc(path: Path) -> Optional[dict]:
         return None
 
 
-def _profile_face(profile: object) -> Optional[str]:
+def _profile_face(profile: object) -> str | None:
     """A Windows Terminal profile's configured face — new ``font.face`` or legacy
-    ``fontFace`` — or ``None`` when the profile leaves it to the defaults chain."""
+    ``fontFace`` — or ``None`` when the profile leaves it to the defaults chain.
+    """
     if not isinstance(profile, dict):
         return None
     font = profile.get("font")
@@ -309,7 +310,8 @@ def _profile_face(profile: object) -> Optional[str]:
 
 def _wt_settings_paths(environ: Mapping[str, str]) -> list[Path]:
     """Candidate Windows Terminal ``settings.json`` locations (packaged, preview,
-    unpackaged), existing files only."""
+    unpackaged), existing files only.
+    """
     local = environ.get("LOCALAPPDATA")
     if not local:
         return []
@@ -363,10 +365,11 @@ def _windows_terminal_face(environ: Mapping[str, str]) -> str:
 
 
 def _vscode_settings_paths(
-    environ: Mapping[str, str], start: Optional[Path]
+    environ: Mapping[str, str], start: Path | None
 ) -> list[Path]:
     """VS Code settings files in precedence order: nearest workspace, then user
-    (stable and Insiders, per-platform locations), existing files only."""
+    (stable and Insiders, per-platform locations), existing files only.
+    """
     paths: list[Path] = []
     try:
         here = (start or Path.cwd()).resolve()
@@ -402,7 +405,7 @@ def _vscode_default_face() -> str:
     return "Droid Sans Mono"
 
 
-def _vscode_face(environ: Mapping[str, str], start: Optional[Path] = None) -> str:
+def _vscode_face(environ: Mapping[str, str], start: Path | None = None) -> str:
     """The face VS Code's integrated terminal is rendering with.
 
     ``terminal.integrated.fontFamily`` wins over ``editor.fontFamily`` (VS Code's own
@@ -419,7 +422,7 @@ def _vscode_face(environ: Mapping[str, str], start: Optional[Path] = None) -> st
     return _vscode_default_face()
 
 
-def _conhost_face() -> Optional[str]:
+def _conhost_face() -> str | None:
     """The classic-console face via ``GetCurrentConsoleFontEx``, or ``None``.
 
     Only meaningful on a *genuine* conhost — the caller gates on the absence of ConPTY
@@ -463,11 +466,11 @@ def _conhost_face() -> Optional[str]:
 
 
 def detect_terminal_font(
-    environ: Optional[Mapping[str, str]] = None,
+    environ: Mapping[str, str] | None = None,
     *,
-    cwd: Optional[Path] = None,
-    conhost_probe: Callable[[], Optional[str]] = _conhost_face,
-) -> Optional[FontDetection]:
+    cwd: Path | None = None,
+    conhost_probe: Callable[[], str | None] = _conhost_face,
+) -> FontDetection | None:
     """Identify the terminal and read the font it is configured to render with.
 
     The ladder, most to least certain: Windows Terminal (``WT_SESSION`` names the app,
@@ -497,7 +500,7 @@ def detect_terminal_font(
     return None
 
 
-def _renderer_backed(environ: Mapping[str, str]) -> Optional[str]:
+def _renderer_backed(environ: Mapping[str, str]) -> str | None:
     """The terminal id when the terminal draws the core triangles itself.
 
     Windows Terminal falls back to its bundled Cascadia Code NF for the powerline
@@ -522,10 +525,10 @@ def _renderer_backed(environ: Mapping[str, str]) -> Optional[str]:
 
 
 def _powerline_support(
-    environ: Optional[Mapping[str, str]] = None,
+    environ: Mapping[str, str] | None = None,
     *,
-    cwd: Optional[Path] = None,
-    conhost_probe: Callable[[], Optional[str]] = _conhost_face,
+    cwd: Path | None = None,
+    conhost_probe: Callable[[], str | None] = _conhost_face,
 ) -> PowerlineSupport:
     """The uncached verdict (see :func:`powerline_support` for the ladder)."""
     env = os.environ if environ is None else environ
@@ -630,7 +633,7 @@ def _installed_families() -> Iterable[str]:
         return
 
 
-def installed_recommended() -> Optional[RecommendedFont]:
+def installed_recommended() -> RecommendedFont | None:
     """The best recommended font *installed* on this machine, selected or not.
 
     The weaker, always-available check that a future recommendation screen splits its
@@ -639,7 +642,7 @@ def installed_recommended() -> Optional[RecommendedFont]:
     :data:`CORE`; returns ``None`` when nothing recommended is installed (or the
     platform offers no way to ask).
     """
-    best: Optional[RecommendedFont] = None
+    best: RecommendedFont | None = None
     for family in _installed_families():
         matched = match_recommended(family)
         if matched is None:

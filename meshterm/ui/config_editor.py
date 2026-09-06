@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import asyncio
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from rich import box
@@ -67,7 +68,7 @@ from .menus import (
     run_steps,
     section_heading,
 )
-from .tui import Choice, Separator, SelectScreen
+from .tui import Choice, SelectScreen, Separator
 from .tui.select import _splice_hint
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ _REBOOT_DROP_TIMEOUT_S = 10.0
 _REBOOT_DROP_POLL_S = 0.25
 
 
-async def cached_snapshot(ctx: "AppContext", device: "Device") -> dict:
+async def cached_snapshot(ctx: AppContext, device: Device) -> dict:
     """A config snapshot for a *screen open*, reusing the devstate session cache.
 
     The two facts devstate already holds — ``SELF_INFO`` and the path-hash mode — are
@@ -114,8 +115,8 @@ async def cached_snapshot(ctx: "AppContext", device: "Device") -> dict:
     key change, or factory reset keeps calling ``build_snapshot(device)`` raw: the
     device state genuinely changed under us there.
     """
-    self_info: Optional[dict] = None
-    path_hash_mode: Optional[int] = None
+    self_info: dict | None = None
+    path_hash_mode: int | None = None
     try:
         self_info = await ctx.devstate.self_info()
         path_hash_mode = await ctx.devstate.path_hash_mode()
@@ -126,7 +127,7 @@ async def cached_snapshot(ctx: "AppContext", device: "Device") -> dict:
     )
 
 
-async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
+async def edit_config(ctx: AppContext) -> list[tuple] | None:
     """Run the interactive editor and return the staged operations to perform.
 
     Args:
@@ -207,7 +208,7 @@ async def edit_config(ctx: "AppContext") -> Optional[list[tuple]]:
 def config_table(
     snapshot: dict,
     custom: dict[str, str],
-    pending: Optional[dict[str, Any]] = None,
+    pending: dict[str, Any] | None = None,
     *,
     reveal_pin: bool = False,
 ) -> Table:
@@ -622,7 +623,7 @@ def _cadence_value(policy: AdvertPolicy, flood: bool, pending: dict) -> Text:
 
 
 async def _stage_setting(
-    ctx: "AppContext", key: str, snapshot: dict, pending: dict[str, Any]
+    ctx: AppContext, key: str, snapshot: dict, pending: dict[str, Any]
 ) -> None:
     """Prompt for one setting's new value and stage it."""
     spec = get_spec(key)
@@ -654,7 +655,7 @@ def _range_hint(spec: SettingSpec, snapshot: dict) -> str:
 
 
 async def _prompt_value(
-    ctx: "AppContext", spec: SettingSpec, current: Any, snapshot: dict
+    ctx: AppContext, spec: SettingSpec, current: Any, snapshot: dict
 ) -> Any:
     """Prompt for a typed value for ``spec`` (in the fitting dialog), ``None`` on cancel."""
     if spec.value_type == "bool":
@@ -710,7 +711,7 @@ async def _prompt_value(
 
 
 async def _stage_advert_cadence(
-    ctx: "AppContext", flood: bool, policy: AdvertPolicy, pending: dict[str, Any]
+    ctx: AppContext, flood: bool, policy: AdvertPolicy, pending: dict[str, Any]
 ) -> None:
     """Pick one background-advert type's cadence and stage it.
 
@@ -749,7 +750,7 @@ async def _stage_advert_cadence(
 
 
 async def _stage_location(
-    ctx: "AppContext", snapshot: dict, pending: dict[str, Any]
+    ctx: AppContext, snapshot: dict, pending: dict[str, Any]
 ) -> None:
     """Set the advertised location: on the map, typed as a pair, or cleared.
 
@@ -825,7 +826,7 @@ def _valid_coords(text: str) -> bool | str:
         return str(exc)
 
 
-async def _stage_preset(ctx: "AppContext", snapshot: dict, pending: dict[str, Any]) -> None:
+async def _stage_preset(ctx: AppContext, snapshot: dict, pending: dict[str, Any]) -> None:
     """Pick a MeshCore radio preset and stage every field it names for review/apply.
 
     The rows are MeshCore's own suggested settings (see
@@ -852,7 +853,7 @@ async def _stage_preset(ctx: "AppContext", snapshot: dict, pending: dict[str, An
 
 
 async def _stage_custom_var(
-    ctx: "AppContext", custom: dict[str, str], extra_ops: list[tuple]
+    ctx: AppContext, custom: dict[str, str], extra_ops: list[tuple]
 ) -> None:
     """Prompt for a custom/experimental variable and stage a set operation.
 
@@ -879,8 +880,8 @@ async def _stage_custom_var(
 
 
 async def _ask_custom_name(
-    ctx: "AppContext", custom: dict[str, str], previous: Optional[str]
-) -> Optional[str]:
+    ctx: AppContext, custom: dict[str, str], previous: str | None
+) -> str | None:
     """The variable-name step: suggestions where there are any, free text otherwise.
 
     Args:
@@ -906,7 +907,7 @@ async def _ask_custom_name(
 # --- device actions (run immediately) -----------------------------------------
 
 
-async def device_actions(ctx: "AppContext") -> None:
+async def device_actions(ctx: AppContext) -> None:
     """Run the Device actions screen: immediate operations on the companion itself.
 
     The action counterpart of :func:`edit_config`, behind the ``device-actions`` tool.
@@ -980,7 +981,7 @@ def _action_items() -> list:
 
 
 async def _run_now(
-    ctx: "AppContext", device: "Device", snapshot: dict, ops: list[tuple], title: str
+    ctx: AppContext, device: Device, snapshot: dict, ops: list[tuple], title: str
 ) -> int:
     """Execute ``ops`` on the device right away and show the result window.
 
@@ -1000,7 +1001,7 @@ async def _run_now(
     return changes
 
 
-async def send_advert(ctx: "AppContext") -> None:
+async def send_advert(ctx: AppContext) -> None:
     """Run the Send advert flow, behind the main menu's ``advert`` popup tool.
 
     Send an advert (zero-hop or flood) or show this node's shareable contact card. Either
@@ -1077,7 +1078,7 @@ def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:
 
 
 async def show_contact_card(
-    ctx: "AppContext", name: str, public_key: str, node_type: int = 1
+    ctx: AppContext, name: str, public_key: str, node_type: int = 1
 ) -> None:
     """Pop up a node's contact card: a scannable QR code over the raw share link.
 
@@ -1103,7 +1104,7 @@ async def show_contact_card(
     )
 
 
-async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
+async def _show_contact_card(ctx: AppContext, snapshot: dict) -> None:
     """Show our own node's contact card from its ``SELF_INFO`` snapshot."""
     public_key = str(snapshot.get("public_key") or "")
     if not public_key:
@@ -1114,7 +1115,7 @@ async def _show_contact_card(ctx: "AppContext", snapshot: dict) -> None:
     await show_contact_card(ctx, name, public_key, int(snapshot.get("adv_type") or 1))
 
 
-async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+async def _reboot(ctx: AppContext, device: Device, snapshot: dict) -> bool:
     """Confirm and reboot the device, handing off to the session's reconnect dialog.
 
     After the command is sent, we wait to actually observe the link dropping — flagging
@@ -1162,7 +1163,7 @@ async def _reboot(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
     return True
 
 
-async def _sync_clock(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
+async def _sync_clock(ctx: AppContext, device: Device, snapshot: dict) -> None:
     """Show the device clock's drift against this computer and offer to correct it.
 
     A companion that boots with a bad RTC stamps every message wrongly, so the dialog
@@ -1171,7 +1172,7 @@ async def _sync_clock(ctx: "AppContext", device: "Device", snapshot: dict) -> No
     """
     import time
 
-    device_time: Optional[int] = None
+    device_time: int | None = None
     try:
         device_time = await device.get_time()
     except Exception:  # noqa: BLE001 - old firmware; offer the blind sync instead
@@ -1212,7 +1213,7 @@ def _drift_text(drift: int) -> str:
     return f"{abs(drift)} s {direction} this computer"
 
 
-async def _backup_now(ctx: "AppContext", device: "Device", snapshot: dict) -> None:
+async def _backup_now(ctx: AppContext, device: Device, snapshot: dict) -> None:
     """Prompt for a destination and write the TOML backup immediately."""
     path = await ctx.ui.path(
         "Back up config",
@@ -1223,7 +1224,7 @@ async def _backup_now(ctx: "AppContext", device: "Device", snapshot: dict) -> No
         await _run_now(ctx, device, snapshot, [("backup", Path(path))], "Backup")
 
 
-async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+async def _restore_now(ctx: AppContext, device: Device, snapshot: dict) -> bool:
     """Restore from a TOML backup: pick the file, preview if wanted, then apply.
 
     Returns:
@@ -1260,7 +1261,7 @@ async def _restore_now(ctx: "AppContext", device: "Device", snapshot: dict) -> b
     return changed > 0
 
 
-async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+async def _identity_key_menu(ctx: AppContext, device: Device, snapshot: dict) -> bool:
     """Export or import the device's private identity key.
 
     Returns:
@@ -1326,7 +1327,7 @@ async def _identity_key_menu(ctx: "AppContext", device: "Device", snapshot: dict
     return True
 
 
-async def _factory_reset(ctx: "AppContext", device: "Device", snapshot: dict) -> bool:
+async def _factory_reset(ctx: AppContext, device: Device, snapshot: dict) -> bool:
     """Factory-reset the device behind a typed confirmation.
 
     Returns:

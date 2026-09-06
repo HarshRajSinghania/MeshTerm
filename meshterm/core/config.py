@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -62,15 +62,15 @@ class DeviceProfile:
     """
 
     name: str
-    port: Optional[str] = None
+    port: str | None = None
     baudrate: int = 115200
-    default_tx_power: Optional[int] = None
+    default_tx_power: int | None = None
     description: str = ""
     transport: str = "serial"
-    address: Optional[str] = None
-    ble_pin: Optional[str] = None
-    host: Optional[str] = None
-    tcp_port: Optional[int] = None
+    address: str | None = None
+    ble_pin: str | None = None
+    host: str | None = None
+    tcp_port: int | None = None
 
     @property
     def is_ble(self) -> bool:
@@ -83,7 +83,7 @@ class DeviceProfile:
         return self.transport == "tcp"
 
     @property
-    def tcp_endpoint(self) -> Optional[str]:
+    def tcp_endpoint(self) -> str | None:
         """The ``host:port`` string for a TCP profile, or ``None`` if it isn't one / has no host."""
         if not self.is_tcp or not self.host:
             return None
@@ -112,8 +112,8 @@ class Settings:
     """
 
     config_dir: Path = field(default_factory=default_config_dir)
-    db_path: Optional[Path] = None
-    default_profile: Optional[str] = None
+    db_path: Path | None = None
+    default_profile: str | None = None
     profiles: dict[str, DeviceProfile] = field(default_factory=dict)
     connect_on_start: bool = True
 
@@ -122,7 +122,7 @@ class Settings:
         if self.db_path is None:
             self.db_path = self.config_dir / "meshterm.db"
 
-    def resolve_profile(self, name: Optional[str]) -> Optional[DeviceProfile]:
+    def resolve_profile(self, name: str | None) -> DeviceProfile | None:
         """Look up a profile by name, falling back to the default profile.
 
         Args:
@@ -138,7 +138,7 @@ class Settings:
         return self.profiles.get(key)
 
     @classmethod
-    def load(cls, config_path: Optional[Path] = None) -> "Settings":
+    def load(cls, config_path: Path | None = None) -> Settings:
         """Load settings from a TOML file, returning defaults if it is absent.
 
         Args:

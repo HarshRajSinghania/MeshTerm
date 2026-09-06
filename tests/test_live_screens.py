@@ -13,13 +13,25 @@ from datetime import timedelta
 import pytest
 from rich.cells import cell_len
 
-from meshterm.core.models import Contact, Hop, TraceResult, TraceStats, TxLevelResult, \
-    TxOptResult, utcnow
+from meshterm.core.models import (
+    Contact,
+    Hop,
+    TraceResult,
+    TraceStats,
+    TxLevelResult,
+    TxOptResult,
+    utcnow,
+)
 from meshterm.services.topology import PathScenario, build_topology
 from meshterm.ui.braillechart import _METER_SLIM
 from meshterm.ui.theme import snr_style
 from meshterm.ui.trace_screen import (
-    _BAR_WIDTH, OPEN_TROPHY_CASE, TraceScreen, _scenario_detail, _scenario_path, snr_bar,
+    _BAR_WIDTH,
+    OPEN_TROPHY_CASE,
+    TraceScreen,
+    _scenario_detail,
+    _scenario_path,
+    snr_bar,
 )
 from meshterm.ui.tx_screen import TxSweepScreen
 
@@ -68,7 +80,6 @@ def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceRe
 
 
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
-
 
 # --- snr_bar -------------------------------------------------------------------
 
@@ -1188,7 +1199,8 @@ def _scenario_topo() -> object:
 
 def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
     """The pathline draws the whole boomerang leg, not just the stored intermediate
-    hops — our own end bare, since every candidate starts from us."""
+    hops — our own end bare, since every candidate starts from us.
+    """
     topo = _scenario_topo()
     scenario = PathScenario(
         label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,

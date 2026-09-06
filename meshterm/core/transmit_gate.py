@@ -33,7 +33,6 @@ nothing.
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 
 class TransmitGate:
@@ -45,8 +44,8 @@ class TransmitGate:
 
     def __init__(self) -> None:
         """Start an idle gate — nothing sent, nothing owed."""
-        self._last_sent: Optional[float] = None
-        self._last_flood_advert: Optional[float] = None
+        self._last_sent: float | None = None
+        self._last_flood_advert: float | None = None
 
     def mark(self, *, flood_advert: bool = False) -> None:
         """Record a transmission as having just finished.
@@ -95,7 +94,7 @@ class TransmitGate:
         self._last_flood_advert = None
 
 
-def _left(last: Optional[float], cooldown: float) -> float:
+def _left(last: float | None, cooldown: float) -> float:
     """Seconds left of ``cooldown`` since ``last``, or ``0.0`` if it never happened."""
     if last is None or cooldown <= 0:
         return 0.0

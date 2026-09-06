@@ -35,7 +35,7 @@ Two details make the row diff safe rather than merely fast:
 from __future__ import annotations
 
 import os
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from prompt_toolkit.renderer import Renderer
 
@@ -68,11 +68,11 @@ class FastRenderer(Renderer):
             and must go through prompt_toolkit's layout instead.
     """
 
-    def __init__(self, *args, frame_source: Callable[[], Optional[str]], **kwargs) -> None:
+    def __init__(self, *args, frame_source: Callable[[], str | None], **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._frame_source = frame_source
-        self._prev_rows: Optional[list[str]] = None
-        self._prev_size: Optional[tuple[int, int]] = None
+        self._prev_rows: list[str] | None = None
+        self._prev_size: tuple[int, int] | None = None
         #: Paints answered here vs handed to the stock renderer — read by the bench.
         self.fast_paints = 0
         self.slow_paints = 0

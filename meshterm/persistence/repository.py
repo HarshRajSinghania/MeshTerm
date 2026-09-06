@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..core.frames import ADDRESSED_CLASSES, CHANNEL_CLASSES, ENDPOINT_HASH_BYTES
 from ..core.models import (
@@ -69,7 +70,7 @@ ACTIVITY_DRAWN_BUCKETS = 24
 HOP_EVIDENCE_LIMIT = 20000
 
 
-def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
+def _packet_raw(row: sqlite3.Row) -> dict | None:
     """Rebuild the minimal raw payload a stored ``packet`` observation is read back with.
 
     What a live RX-log event carried in its raw payload is kept per row, under the very
@@ -122,7 +123,7 @@ def _packet_raw(row: sqlite3.Row) -> Optional[dict]:
     return raw
 
 
-def _as_when(iso: Any) -> Optional[datetime]:
+def _as_when(iso: Any) -> datetime | None:
     """Parse a stored ISO timestamp, or ``None`` when absent/unparseable."""
     if not iso:
         return None
@@ -140,7 +141,7 @@ def _row_value(row: sqlite3.Row, key: str) -> Any:
         return None
 
 
-def _hops_hash_bytes(hops: list[Hop]) -> Optional[int]:
+def _hops_hash_bytes(hops: list[Hop]) -> int | None:
     """Recover a stored trace's per-hop path-hash width from its hop hashes.
 
     The ``traces`` table predates :attr:`~meshterm.core.models.TraceResult.
@@ -183,7 +184,7 @@ class ChannelStats:
 
     total: int
     recent: int
-    last_at: Optional[datetime]
+    last_at: datetime | None
     histogram: tuple[int, ...]
 
 
@@ -200,7 +201,7 @@ class TracedPath:
     """
 
     when: datetime
-    hops: list[tuple[Optional[str], float]]
+    hops: list[tuple[str | None, float]]
 
 
 @dataclass(slots=True)
@@ -218,8 +219,8 @@ class PacketPath:
     """
 
     when: datetime
-    origin: Optional[str]
-    snr: Optional[float]
+    origin: str | None
+    snr: float | None
     hops: list[str]
 
 
@@ -243,7 +244,7 @@ class NeighbourLink:
     when: datetime
     repeater: str
     neighbour: str
-    snr: Optional[float]
+    snr: float | None
 
 
 @dataclass(slots=True)
@@ -294,11 +295,11 @@ class RunRecord:
 
     id: int
     tool: str
-    profile: Optional[str]
+    profile: str | None
     status: str
     started_at: str
-    finished_at: Optional[str]
-    summary: Optional[dict]
+    finished_at: str | None
+    summary: dict | None
 
 
 class Repository:
@@ -319,7 +320,7 @@ class Repository:
     # -- runs -------------------------------------------------------------------
 
     def start_run(
-        self, tool: str, args: dict[str, Any], profile: Optional[str] = None
+        self, tool: str, args: dict[str, Any], profile: str | None = None
     ) -> int:
         """Record the start of a tool execution.
 
@@ -339,7 +340,7 @@ class Repository:
         self._conn.commit()
         return int(cur.lastrowid)
 
-    def finish_run(self, run_id: int, status: str, summary: Optional[dict] = None) -> None:
+    def finish_run(self, run_id: int, status: str, summary: dict | None = None) -> None:
         """Mark a run as finished.
 
         Args:
@@ -424,9 +425,9 @@ class Repository:
         self,
         target: str,
         *,
-        exclude_run_id: Optional[int] = None,
+        exclude_run_id: int | None = None,
         success_only: bool = True,
-    ) -> Optional[TraceResult]:
+    ) -> TraceResult | None:
         """Return the most recently recorded trace to ``target``, rehydrated with hops.
 
         Used to show the previous run's result before a new trace starts.
@@ -707,7 +708,7 @@ class Repository:
         ).fetchall()
         links: list[NeighbourLink] = []
         for row in rows:
-            when: Optional[datetime] = None
+            when: datetime | None = None
             for stamp in (row["heard_at"], row["fetched_at"]):
                 try:
                     when = datetime.fromisoformat(stamp)
@@ -758,9 +759,9 @@ class Repository:
         target: str,
         path: str,
         *,
-        bottleneck_snr: Optional[float],
+        bottleneck_snr: float | None,
         success_rate: float,
-        median_rtt_ms: Optional[float],
+        median_rtt_ms: float | None,
     ) -> None:
         """Persist one measured candidate path from a path-probe sweep.
 
@@ -803,7 +804,7 @@ class Repository:
         app_version: str,
         keep: int = 5,
         ascending: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Offer one walk to a category leaderboard; store it only if it places.
 
         The leaderboard invariant lives here so every caller shares it: a walk enters
@@ -887,7 +888,7 @@ class Repository:
         return None if new_id in doomed else new_id
 
     def discoveries(
-        self, category: Optional[str] = None, *, width_bytes: Optional[int] = None
+        self, category: str | None = None, *, width_bytes: int | None = None
     ) -> list[DiscoveredPath]:
         """Return stored trophy-case records, optionally narrowed.
 
@@ -951,7 +952,7 @@ class Repository:
         return cursor.rowcount > 0
 
     def delete_discoveries(
-        self, category: Optional[str] = None, *, width_bytes: Optional[int] = None
+        self, category: str | None = None, *, width_bytes: int | None = None
     ) -> int:
         """Delete trophy-case records wholesale, optionally narrowed; returns the count.
 
@@ -1153,7 +1154,7 @@ class Repository:
         return observations
 
     def node_observations(
-        self, node: str, *, since: Optional[datetime] = None, limit: int = 50000
+        self, node: str, *, since: datetime | None = None, limit: int = 50000
     ) -> list[Observation]:
         """Every stored reception of one node, oldest first — its longitudinal record.
 
@@ -1257,7 +1258,7 @@ class Repository:
         ).fetchall()
         return [(row["hour"], int(row["pkts"]), int(row["nodes"])) for row in rows]
 
-    def hourly_activity(self, *, since: Optional[datetime] = None) -> list[int]:
+    def hourly_activity(self, *, since: datetime | None = None) -> list[int]:
         """Observation counts by local hour of day (0–23) across the stored history.
 
         The whole-mesh Rhythm chart's feed: every stored observation counted into
@@ -1290,7 +1291,7 @@ class Repository:
                 continue  # a malformed stray timestamp simply isn't counted
         return counts
 
-    def rhythm_activity(self, *, since: Optional[datetime] = None) -> list[int]:
+    def rhythm_activity(self, *, since: datetime | None = None) -> list[int]:
         """Observation counts by local minute of day (0–1439) across the history.
 
         The base grid behind the whole-mesh Rhythm chart: a minute divides every slice
@@ -1326,7 +1327,7 @@ class Repository:
                 continue  # a malformed stray timestamp simply isn't counted
         return counts
 
-    def self_transmissions(self, *, since: Optional[datetime] = None) -> list[datetime]:
+    def self_transmissions(self, *, since: datetime | None = None) -> list[datetime]:
         """Timestamps of everything this station put on the air, oldest first.
 
         The own-node counterpart of :meth:`node_observations`: our node is never in the
@@ -1361,8 +1362,8 @@ class Repository:
         return stamps
 
     def self_trace_reach(
-        self, *, since: Optional[datetime] = None
-    ) -> list[tuple[datetime, bool, Optional[float], Optional[int]]]:
+        self, *, since: datetime | None = None
+    ) -> list[tuple[datetime, bool, float | None, int | None]]:
         """Per-trace reach outcomes, oldest first: ``(when, came_home, min_snr, hop_count)``.
 
         The measurement behind the own-node page's Reach section. Every trace row is one
@@ -1383,7 +1384,7 @@ class Repository:
             sql += " WHERE created_at >= ?"
             params.append(since.isoformat())
         sql += " ORDER BY created_at"
-        out: list[tuple[datetime, bool, Optional[float], Optional[int]]] = []
+        out: list[tuple[datetime, bool, float | None, int | None]] = []
         for row in self._conn.execute(sql, params).fetchall():
             try:
                 when = datetime.fromisoformat(row["created_at"])
@@ -1392,7 +1393,7 @@ class Repository:
             out.append((when, bool(row["success"]), row["min_snr"], row["hop_count"]))
         return out
 
-    def self_activity_ledger(self, *, since: Optional[datetime] = None) -> SelfActivity:
+    def self_activity_ledger(self, *, since: datetime | None = None) -> SelfActivity:
         """Roll-up tallies of this station's outbound life (see :class:`SelfActivity`).
 
         One aggregate pass each over the traces, messages, and tx-sample tables — every
@@ -1448,8 +1449,8 @@ class Repository:
         )
 
     def first_seen(
-        self, *, since: Optional[datetime] = None
-    ) -> list[tuple[str, Optional[str], datetime]]:
+        self, *, since: datetime | None = None
+    ) -> list[tuple[str, str | None, datetime]]:
         """When each node first ever appeared in the history, newest arrivals first.
 
         The Time Machine's "new arrivals" feed: one grouped scan yields each node's
@@ -1481,7 +1482,7 @@ class Repository:
                 named = names.get(node)
                 if named is None or iso >= named[0]:
                     names[node] = (iso, row["name"])
-        arrivals: list[tuple[str, Optional[str], datetime]] = []
+        arrivals: list[tuple[str, str | None, datetime]] = []
         for node, iso in firsts.items():
             try:
                 first = datetime.fromisoformat(iso)
@@ -1493,7 +1494,7 @@ class Repository:
         arrivals.sort(key=lambda t: t[2], reverse=True)
         return arrivals
 
-    def kind_counts(self, *, since: Optional[datetime] = None) -> dict[str, int]:
+    def kind_counts(self, *, since: datetime | None = None) -> dict[str, int]:
         """Stored observation tallies by packet class, optionally windowed.
 
         The persistent seed of the dashboard's traffic panel: what the recorder has
@@ -1595,7 +1596,7 @@ class Repository:
         ).fetchall()
         return {row["node"]: datetime.fromisoformat(row["last"]) for row in rows}
 
-    def heard_nodes(self, *, since: Optional[datetime] = None) -> list[HeardNode]:
+    def heard_nodes(self, *, since: datetime | None = None) -> list[HeardNode]:
         """Aggregate stored observations into per-node reception statistics.
 
         Spans every monitoring run (optionally limited to recent history), so the result
@@ -1627,7 +1628,7 @@ class Repository:
         # "most recent X" is tracked by string comparison and only the one winning stamp
         # per node is parsed at the end. ``>=`` on every comparison keeps the old
         # sort-then-walk-backwards tie behaviour: among equal stamps, the later row wins.
-        stats: dict[Optional[str], list] = {}
+        stats: dict[str | None, list] = {}
         for row in self._conn.execute(sql, params):
             iso = row["observed_at"]
             snr = row["snr"]
@@ -1670,7 +1671,7 @@ class Repository:
         ]
         return sorted(nodes, key=lambda n: n.last_seen, reverse=True)
 
-    def contact_signals(self, nodes: "Sequence[str]") -> "dict[str, ContactSignals]":
+    def contact_signals(self, nodes: Sequence[str]) -> dict[str, ContactSignals]:
         """Gather every scoring signal for a set of nodes, in a fixed number of scans.
 
         The evidence behind the Contacts sweep (see
@@ -1716,7 +1717,7 @@ class Repository:
             return {}
         now = utcnow()
 
-        def age_days(iso: Optional[str]) -> Optional[float]:
+        def age_days(iso: str | None) -> float | None:
             """Days from a stored ISO stamp to now, or ``None`` for an unparseable one."""
             if not iso:
                 return None
@@ -1765,7 +1766,7 @@ class Repository:
             first, last, packets = heard.get(node, (None, None, 0))
             hops = hop_counts.get(node)
             total = sent = 0
-            latest: Optional[str] = None
+            latest: str | None = None
             for row in dm_rows:
                 peer = (row["peer"] or "").lower()
                 # Either side may be the shorter: the wire addresses at whatever width it
@@ -1789,7 +1790,7 @@ class Repository:
             )
         return signals
 
-    def channel_post_counts(self) -> "dict[str, int]":
+    def channel_post_counts(self) -> dict[str, int]:
         """How many channel messages each *name* has posted, lowercased.
 
         A channel frame carries no sender key — senders identify themselves by prefixing
@@ -1819,7 +1820,7 @@ class Repository:
     # -- chat messages ----------------------------------------------------------
 
     def record_chat_message(
-        self, msg: ChatMessage, *, run_id: Optional[int] = None
+        self, msg: ChatMessage, *, run_id: int | None = None
     ) -> int:
         """Persist one chat message (sent or received).
 
@@ -1866,7 +1867,7 @@ class Repository:
         )
         self._conn.commit()
 
-    def delete_chat_history(self, peer: Optional[str]) -> int:
+    def delete_chat_history(self, peer: str | None) -> int:
         """Delete every stored message of one direct conversation.
 
         The chat picker's per-contact history delete: removes only that peer's direct
@@ -1890,8 +1891,8 @@ class Repository:
         self,
         *,
         is_channel: bool,
-        channel_id: Optional[str] = None,
-        peer: Optional[str] = None,
+        channel_id: str | None = None,
+        peer: str | None = None,
         limit: int = 200,
     ) -> list[ChatMessage]:
         """Return a conversation's most recent messages, oldest-first.
@@ -1958,8 +1959,8 @@ class Repository:
         return {row["peer"]: datetime.fromisoformat(row["last"]) for row in rows}
 
     def direct_message_bounds(
-        self, peer: Optional[str], when: datetime, *, outbound: bool
-    ) -> "tuple[Optional[datetime], Optional[datetime]]":
+        self, peer: str | None, when: datetime, *, outbound: bool
+    ) -> tuple[datetime | None, datetime | None]:
         """The times of the direct messages either side of ``when`` in one conversation.
 
         What bounds the message-paths search for a direct message (see
@@ -2099,7 +2100,7 @@ class Repository:
 
     # -- persisted UI state -----------------------------------------------------
 
-    def get_map_view(self) -> Optional[tuple[float, float, int]]:
+    def get_map_view(self) -> tuple[float, float, int] | None:
         """Return the last saved map viewport as ``(center_lat, center_lon, zoom)``.
 
         Lets the interactive map reopen exactly where the user left it. Returns ``None``

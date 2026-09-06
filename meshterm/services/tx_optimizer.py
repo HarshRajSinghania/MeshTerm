@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import statistics
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from ..core.connection import REMOTE_TX_MAX, REMOTE_TX_MIN, Device
 from ..core.models import Contact, TraceResult, TraceStats, TxLevelResult, TxOptResult
@@ -43,7 +43,7 @@ PHASES = ("coarse", "refine", "verify")
 DEFAULT_SNR_TOLERANCE_DB = 1.0
 
 
-def trace_target_snr(trace: TraceResult, target_hash: str) -> Optional[float]:
+def trace_target_snr(trace: TraceResult, target_hash: str) -> float | None:
     """Return the SNR the *target* received on a single (round-trip) trace.
 
     Because we trace out to the target and back (so a reachable node, not the far
@@ -147,10 +147,10 @@ async def optimize_tx_power(
     apply: bool = True,
     cooldown_s: float = 1.0,
     snr_tolerance: float = DEFAULT_SNR_TOLERANCE_DB,
-    on_level: Optional[LevelCallback] = None,
-    on_phase: Optional[PhaseCallback] = None,
-    persist_level: Optional[PersistLevel] = None,
-    persist_trace: Optional[Callable] = None,
+    on_level: LevelCallback | None = None,
+    on_phase: PhaseCallback | None = None,
+    persist_level: PersistLevel | None = None,
+    persist_trace: Callable | None = None,
 ) -> TxOptResult:
     """Tune ``admin_node``'s TX power for the best signal at ``target``.
 

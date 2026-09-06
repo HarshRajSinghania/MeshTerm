@@ -12,7 +12,7 @@ management, factory reset) through the same executor.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.table import Table
@@ -41,7 +41,7 @@ class ConfigTool(Tool):
     category = "This node"
     order = 20
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Launch the interactive editor and collect the operations to perform.
 
         Args:
@@ -135,7 +135,7 @@ class ConfigTool(Tool):
         def _channel_cmd(
             index: int = typer.Argument(..., help="Channel slot index"),
             name: str = typer.Argument(..., help="Channel name (# derives the secret)"),
-            secret: Optional[str] = typer.Option(None, "--secret", help="16-byte hex secret"),
+            secret: str | None = typer.Option(None, "--secret", help="16-byte hex secret"),
         ) -> None:
             secret_bytes = bytes.fromhex(secret) if secret else None
             run_tool_command(self, {"ops": [("set_channel", index, name, secret_bytes)]})
@@ -166,7 +166,7 @@ class ConfigTool(Tool):
 
         @config_app.command("export-key", help="Export the private key (sensitive)")
         def _export_key_cmd(
-            out: Optional[Path] = typer.Option(None, "--out", help="Write to file instead of stdout"),
+            out: Path | None = typer.Option(None, "--out", help="Write to file instead of stdout"),
         ) -> None:
             ops = [("export_key", out)] if out else [("export_key",)]
             run_tool_command(self, {"ops": ops})
@@ -410,7 +410,7 @@ async def _restore(
 
 
 async def _export_key(
-    ctx: AppContext, device: Device, out: Optional[Path], artifacts: list[str]
+    ctx: AppContext, device: Device, out: Path | None, artifacts: list[str]
 ) -> None:
     """Export the private key, to a file if ``out`` is given, else to the console."""
     key_hex = await device.export_private_key()

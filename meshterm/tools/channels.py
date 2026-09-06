@@ -12,7 +12,7 @@ everything to do with configuring the slots themselves.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.console import Group
@@ -213,7 +213,7 @@ class ChannelsTool(Tool):
         def _add_cmd(
             index: int = typer.Argument(..., help="Channel slot index"),
             name: str = typer.Argument(..., help="Channel name (leading # = public)"),
-            secret: Optional[str] = typer.Option(
+            secret: str | None = typer.Option(
                 None, "--secret", help="32-hex-char key (private only; random if omitted)"
             ),
         ) -> None:

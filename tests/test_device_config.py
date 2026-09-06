@@ -73,7 +73,8 @@ def test_path_hash_mode_is_strict_enum() -> None:
 
 def test_highlighted_hash_highlights_path_hash_prefix() -> None:
     """The full key is shown with only its path-hash prefix bytes highlighted, lit in
-    the node's hash-derived palette hue (the same hue the node's name wears)."""
+    the node's hash-derived palette hue (the same hue the node's name wears).
+    """
     from meshterm.ui.theme import node_style
     from meshterm.ui.widgets import highlighted_hash
 
@@ -88,7 +89,8 @@ def test_highlighted_hash_highlights_path_hash_prefix() -> None:
 
 def test_highlighted_hash_truncates_on_a_byte_boundary() -> None:
     """A key too long for the budget keeps whole leading bytes (an even digit count) plus
-    an ellipsis, padding to the exact width — a half-byte digit never shows."""
+    an ellipsis, padding to the exact width — a half-byte digit never shows.
+    """
     from meshterm.ui.widgets import highlighted_hash
 
     pub = "ab" * 32  # 64 hex digits
@@ -248,7 +250,8 @@ def _contacts_sort(name: str = "name"):
 
 def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
     """Ctrl+←/→ walk the shared four-column ring (wrapping); Ctrl+↑/↓ force the direction —
-    the Time Machine picker's keys, now the Contacts screen's too."""
+    the Time Machine picker's keys, now the Contacts screen's too.
+    """
     from meshterm.ui.contacts_screen import ContactsScreen
 
     screen = ContactsScreen("Us", "aabbcc" + "00" * 29, [], 3, {}, _contacts_sort())
@@ -272,7 +275,8 @@ def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
 
 def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     """Contacts render in the shared NAME/HEARD/PKTS/KEY lanes, our node pinned first;
-    plain arrows only move the highlight, and Enter resolves the highlighted node."""
+    plain arrows only move the highlight, and Enter resolves the highlighted node.
+    """
     import re
 
     from meshterm.core.models import Contact, utcnow
@@ -497,13 +501,13 @@ async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> 
     genuinely dropped from what the sweep goes on to archive.
     """
     import asyncio
+    from types import SimpleNamespace
 
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
     from meshterm.ui.purge_screen import _preview
     from meshterm.ui.surface import TuiUi
     from meshterm.ui.tui.session import TuiSession
-    from types import SimpleNamespace
 
     def scored(name: str, pct: int) -> ScoredContact:
         key = f"{ord(name[-1]):02x}" * 32
@@ -562,13 +566,13 @@ async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> 
 async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
     """A preview emptied by the reader backs out rather than confirming an empty archive."""
     import asyncio
+    from types import SimpleNamespace
 
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
     from meshterm.ui.purge_screen import _preview
     from meshterm.ui.surface import TuiUi
     from meshterm.ui.tui.session import TuiSession
-    from types import SimpleNamespace
 
     key = "aa" * 32
     only = ScoredContact(

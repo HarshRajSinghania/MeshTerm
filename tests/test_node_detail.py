@@ -25,15 +25,15 @@ from meshterm.ui.minimap import MiniMap
 from meshterm.ui.node_detail_screen import (
     NodeDetailScreen,
     _Action,
-    _Route,
-    _RoutesView,
-    _Tab,
     _bearing,
     _distance_km,
     _range_text,
+    _Route,
     _route_line,
     _routes_view,
+    _RoutesView,
     _signal_row,
+    _Tab,
 )
 from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
 from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, SELF_GLYPH, PathHop, PathLine
@@ -169,7 +169,8 @@ def test_tab_strip_labels_hold_position_across_the_active_index() -> None:
 
 def test_tab_strip_rule_fills_out_to_the_render_width() -> None:
     """The bottom rule extends to the full render width; unlike the tabs, it isn't indented
-    by the left margin — that margin is itself part of the one continuous line."""
+    by the left margin — that margin is itself part of the one continuous line.
+    """
     top, _, bot = tab_strip(["Map", "Routes"], 1, width=25).renderables
     assert top.plain.startswith("  ╭")  # the tab boxes sit indented...
     assert bot.plain == "──────────╯          ╰───"  # ...but the rule fills straight through
@@ -193,7 +194,8 @@ def test_tab_strip_collapses_a_lone_tab_to_a_plain_heading() -> None:
 
 def test_route_line_names_its_hops() -> None:
     """The pathline runs contact → relays → us, every hop it can place by *name* — the
-    Message paths reading; the tag trails on the context line."""
+    Message paths reading; the tag trails on the context line.
+    """
     path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "device", None, 0,
         resolve=make_node_resolver([HUB]), node_known=True,
@@ -212,7 +214,8 @@ def test_route_line_names_its_hops() -> None:
 
 def test_route_line_greys_hops_nobody_can_name() -> None:
     """A named hop takes its key-derived hue; a hop nobody can name — and a page node with no
-    name — stands in its hash in the unknown-node grey, like the graph."""
+    name — stands in its hash in the unknown-node grey, like the graph.
+    """
     from meshterm.ui.theme import node_style
 
     path, _context = _route_line(
@@ -230,7 +233,8 @@ def test_route_line_greys_hops_nobody_can_name() -> None:
 
 def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
     """Only the hops with no name to show spend hash cells — and those at the device's own
-    path-hash width, three bytes here rather than the 1-byte default."""
+    path-hash width, three bytes here rather than the 1-byte default.
+    """
     path, _context = _route_line(
         "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
         resolve=make_node_resolver([HUB]), node_known=False,
@@ -330,7 +334,8 @@ def test_routes_view_puts_the_contact_on_the_left_and_us_on_the_right() -> None:
 def test_routes_view_tags_every_relay_with_its_hash_byte_alone() -> None:
     """Only the two endpoints are named in the graph — a relay wears its first hash byte
     whether or not a contact can name it, so a label never outgrows two cells and spills
-    across the lanes it sits between (the Message paths graph's rule exactly)."""
+    across the lanes it sits between (the Message paths graph's rule exactly).
+    """
     topo = _topo_with_route()
     view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
                  "f2c24f54551e", "Far", [HUB, FAR])
@@ -404,7 +409,8 @@ def _topo_two_alternatives():  # noqa: ANN202
 
 def test_good_alternatives_keeps_observed_routes_and_drops_outliers() -> None:
     """The grey alternatives are the observed routes worth trusting — outliers and the bare
-    direct/device families don't earn a lane."""
+    direct/device families don't earn a lane.
+    """
     from meshterm.ui.node_detail_screen import _good_alternatives
 
     topo = _topo_two_alternatives()
@@ -440,7 +446,8 @@ def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
 
 def test_contract_bidir_clusters_folds_a_knot_but_keeps_the_rows() -> None:
     """A 3+ bidirectional knot contracts to one super-node in the graph draw, while each route
-    row and its trace spec keep every member named in order."""
+    row and its trace spec keep every member named in order.
+    """
     from meshterm.ui.node_detail_screen import _contract_bidir_clusters
 
     routes = [
@@ -470,7 +477,8 @@ def test_contract_leaves_a_two_node_pair_and_unclustered_routes_alone() -> None:
 
 def test_contract_labels_a_mixed_cluster_generically() -> None:
     """A knot whose members are different node types can't wear one type mark — it reads
-    ``n nodes`` under the plain dot."""
+    ``n nodes`` under the plain dot.
+    """
     from meshterm.ui.node_detail_screen import _contract_bidir_clusters
 
     routes = [
@@ -726,7 +734,8 @@ def test_node_detail_screen_context_hangs_under_the_pathline() -> None:
 
 def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() -> None:
     """A route with no weakest SNR, sample count, or tag draws just its pathline — no bare
-    hanging line under it."""
+    hanging line under it.
+    """
     routes = _RoutesView(
         routes=[_Route(draw=(), spec="", path=Text("f2 aa"), context=Text(""))],
         glyph_of=lambda n: ("●", "#ffffff"),
@@ -745,7 +754,8 @@ def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() ->
 
 def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     """A pathline too wide for the lane scrolls with ←/→ on the highlighted row only; moving
-    the cursor off it abandons the scroll, and an unselected long row just ellipsizes."""
+    the cursor off it abandons the scroll, and an unselected long row just ellipsizes.
+    """
     long_path = Text("f2 " + " ".join(f"{i:02x}" for i in range(40)) + " aa")
     routes = _RoutesView(
         routes=[
@@ -803,7 +813,8 @@ def test_node_detail_route_row_cracks_a_chip_path_at_both_edges() -> None:
     """The same window, drawn in chips: each edge the route runs past breaks the chip off
     on a half block instead of hiding it behind an ellipsis — the row is a view onto a
     route that continues, and a cracked segment says so where three dots would claim a
-    shortened word."""
+    shortened word.
+    """
     chips = PathLine(
         [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(12)], mode="powerline"
     ).text()
@@ -889,7 +900,8 @@ def _key_row(screen: NodeDetailScreen, width: int) -> str:
 
 def test_node_detail_key_lane_hscrolls_instead_of_wrapping() -> None:
     """The key holds one line and slides under ←/→: byte-aligned windows, faint ``…`` marks
-    at whichever edge it continues past, clamped at both ends."""
+    at whichever edge it continues past, clamped at both ends.
+    """
     screen = _screen(info_rows=[("key", highlighted_hash(_LONG_KEY, 1)), ("heard", Text("5m ago"))])
 
     row = _key_row(screen, 53)
@@ -915,7 +927,8 @@ def test_node_detail_key_lane_hscrolls_instead_of_wrapping() -> None:
 
 def test_node_detail_key_lane_scroll_survives_the_cursor_and_resets_on_tab() -> None:
     """The key is pinned chrome, not a cursor row: walking the action rows leaves its scroll
-    alone, while leaving the tab drops it — and a key that fits earns no ←→ at all."""
+    alone, while leaving the tab drops it — and a key that fits earns no ←→ at all.
+    """
     screen = _screen(info_rows=[("key", highlighted_hash(_LONG_KEY, 1)), ("heard", Text("5m ago"))])
     _key_row(screen, 53)
     screen.handle("right")
@@ -979,7 +992,8 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
 
 def test_node_detail_route_list_windows_inside_the_page() -> None:
     """With more routes than fit, the list windows with edge markers — the pinned chrome
-    never leaves the screen, however many routes a busy node has."""
+    never leaves the screen, however many routes a busy node has.
+    """
     routes = _RoutesView(
         routes=[
             _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
@@ -1008,7 +1022,8 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
 
 def test_node_detail_route_cursor_clamps_at_both_ends() -> None:
     """The windowed route list does not wrap: ↑ on the first row and ↓ past the last stay
-    where they are, rather than hauling the window end to end."""
+    where they are, rather than hauling the window end to end.
+    """
     routes = _RoutesView(
         routes=[
             _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
@@ -1030,7 +1045,8 @@ def test_node_detail_route_cursor_clamps_at_both_ends() -> None:
 
 def test_fit_blocks_walks_wrapped_rows_into_view() -> None:
     """The variable-height fit keeps whole blocks, spends marker lines only when rows hide,
-    and walks the window down to the cursor's row."""
+    and walks the window down to the cursor's row.
+    """
     window = ListWindow()
     top, count = window.fit_blocks([2, 2, 2, 2], 5, 3)  # cursor on the last 2-line row
     assert top + count == 4 and top == 2  # slid to the tail; the last two rows fit

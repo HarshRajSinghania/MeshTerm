@@ -10,13 +10,13 @@ prompts layer as dialogs, and its output appears in a bounded, scrollable result
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import sys
 import threading
 import time
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, AsyncIterator, Iterator, Optional, Sequence
+from typing import Any
 
 from rich.cells import cell_len
 from rich.logging import RichHandler
@@ -27,7 +27,6 @@ from ..context import AppContext
 from ..persistence.logging import get_logger
 from ..platforms import get_platform
 from ..tools import all_tools
-from .surface import TuiUi
 from .braillechart import activity_peak, activity_sparkline
 from .menus import (
     SEP_COMPACT,
@@ -37,8 +36,8 @@ from .menus import (
     icon_mark,
     section_heading,
 )
+from .surface import TuiUi
 from .theme import make_console
-from .widgets import battery_cell
 from .tui import (
     CANCEL,
     Choice,
@@ -51,7 +50,7 @@ from .tui import (
 )
 from .tui.emoji_width import calibrate as calibrate_emoji_width
 from .tui.spinner import spinner_interval
-
+from .widgets import battery_cell
 
 #: Grace period (seconds) allowed for the whole exit sequence — the full-screen unwind,
 #: the device disconnect, and the interpreter's atexit thread joins — once the user has
@@ -580,7 +579,7 @@ async def _menu_round(
     session: TuiSession,
     menu: SelectScreen,
     tools: list,
-    loop: "asyncio.AbstractEventLoop",
+    loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Show the menu once, then run whatever it committed to.
 
@@ -681,7 +680,7 @@ async def _startup(ctx: AppContext) -> bool:
         # it for the session rather than reopening (boards often reset on each open).
         probed: dict = {}
 
-        async def verify(device: DiscoveredDevice, pin: Optional[str] = None):
+        async def verify(device: DiscoveredDevice, pin: str | None = None):
             # ``pin`` is what the picker's PIN dialog collected on a retry; fall back to any
             # ``--ble-pin`` supplied on the CLI for the first attempt.
             used = pin if pin is not None else ctx.ble_pin
@@ -924,7 +923,7 @@ async def _session_loop(ctx: AppContext, session: TuiSession) -> None:
         # Reconnected — loop and start a fresh menu (with a fresh watcher).
 
 
-async def _cancel_and_wait(task: "asyncio.Future") -> None:
+async def _cancel_and_wait(task: asyncio.Future) -> None:
     """Cancel ``task`` and await its unwind, swallowing the cancellation and any error.
 
     Used to stop the sibling menu-worker or watcher: awaiting the cancelled task lets its

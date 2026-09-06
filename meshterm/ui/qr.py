@@ -62,7 +62,7 @@ def qr_text(data: str, *, error: str = "m") -> Text:
     return text
 
 
-async def share_popup(ctx: "AppContext", *, name: str, url: str, intro: str) -> None:
+async def share_popup(ctx: AppContext, *, name: str, url: str, intro: str) -> None:
     """THE share popup: a muted intro, the scannable code, then the URL to copy out.
 
     One layout for every ``Share {name}`` surface — the channel share and the contact

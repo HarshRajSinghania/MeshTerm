@@ -18,7 +18,6 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from .models import Contact, LoginResult, utcnow
 
@@ -75,7 +74,7 @@ class AdminStore:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def get(self, node: Contact) -> Optional[str]:
+    def get(self, node: Contact) -> str | None:
         """Return the remembered password for ``node``, or ``None`` if not stored.
 
         Args:

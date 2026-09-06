@@ -7,7 +7,7 @@ prompt shares the framework's look, layering, resize, and Esc-to-cancel behavior
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
@@ -86,7 +86,7 @@ class _LineEditor:
     cursor position; rendering shows the cursor as a reverse-video cell.
     """
 
-    def __init__(self, initial: str = "", *, max_length: Optional[int] = None) -> None:
+    def __init__(self, initial: str = "", *, max_length: int | None = None) -> None:
         """Start the editor with ``initial`` text and the cursor at its end.
 
         Args:
@@ -175,7 +175,7 @@ class _LineEditor:
         return i
 
     def render(
-        self, mask: bool = False, *, overflow_at: Optional[int] = None, slots: Optional[int] = None
+        self, mask: bool = False, *, overflow_at: int | None = None, slots: int | None = None
     ) -> Text:
         """Render the current line with a reverse-video cursor cell.
 
@@ -259,10 +259,10 @@ class TextScreen(_KeylessDialog):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         password: bool = False,
-        byte_limit: Optional[int] = None,
+        byte_limit: int | None = None,
         footer_hint: str = "Enter accept · Esc cancel",
     ) -> None:
         """Build a text prompt.
@@ -493,12 +493,12 @@ class ButtonDialog(_KeylessDialog):
 
     def __init__(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         buttons: list[tuple[str, object]],
         *,
         title: str = "",
         default: int = 0,
-        keys: Optional[dict[str, object]] = None,
+        keys: dict[str, object] | None = None,
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
         prompt_style: str = "",
         button_style: str = "selected",
@@ -857,7 +857,7 @@ class AutocompleteScreen(_KeylessDialog):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         footer_hint: str = "↑↓ move · Tab complete · Enter accept · Esc cancel",
     ) -> None:
         """Build an autocomplete prompt.

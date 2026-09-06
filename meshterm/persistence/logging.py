@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -119,7 +118,7 @@ def _quiet_library_console(file_handler: logging.Handler) -> None:
         lib.addHandler(file_handler)
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """Return a child of the application logger.
 
     Args:

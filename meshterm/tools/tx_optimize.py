@@ -17,14 +17,13 @@ progress streams like a trace.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
 from ..context import AppContext
 from ..core.connection import DeviceCommandError
-from ..core.models import LoginResult
-from ..core.models import Contact
+from ..core.models import Contact, LoginResult
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
 from .base import Tool, ToolResult, register
@@ -45,7 +44,7 @@ class TxOptimizeTool(Tool):
     category = "Other nodes"
     order = 20  # like Repeater admin: a remote radio, changed over the mesh
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Nothing to gather here — both pickers live inside :meth:`run`.
 
         Each has to *stay pushed* while what it opens runs, so that Esc walks back down the
@@ -396,9 +395,9 @@ class TxOptimizeTool(Tool):
             ),
             samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level"),
             step: int = typer.Option(3, "--step", help="Coarse sweep step"),
-            tx_min: Optional[int] = typer.Option(None, "--min", help="Lowest TX power"),
-            tx_max: Optional[int] = typer.Option(None, "--max", help="Highest TX power"),
-            password: Optional[str] = typer.Option(
+            tx_min: int | None = typer.Option(None, "--min", help="Lowest TX power"),
+            tx_max: int | None = typer.Option(None, "--max", help="Highest TX power"),
+            password: str | None = typer.Option(
                 None, "--password", help="Admin password (else remembered/prompted)"
             ),
             apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner"),
@@ -447,7 +446,7 @@ def _resolve_link(path: str, contacts: list[Contact]) -> tuple[Contact, str]:
     return admin, (target.name if target else hops[-1])
 
 
-def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Optional[Contact]:
+def _contact_for_hash(hash_hex: str, contacts: list[Contact]) -> Contact | None:
     """Return the contact whose key matches a path-hop hash, if any.
 
     Args:
@@ -510,7 +509,7 @@ def _target_items(contacts: list[Contact], admin: Contact) -> list:
     ]
 
 
-def _fmt_snr(snr: Optional[float]) -> str:
+def _fmt_snr(snr: float | None) -> str:
     """Format an optional SNR for the progress description.
 
     Args:

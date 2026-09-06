@@ -18,9 +18,9 @@ current value, so it has no such trap.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,9 +260,9 @@ class Resolution:
         platform: The resolved :class:`Platform`.
     """
 
-    flag: Optional[str]
-    env: Optional[str]
-    detected_model: Optional[str]
+    flag: str | None
+    env: str | None
+    detected_model: str | None
     source: str
     platform: Platform
 
@@ -277,7 +277,7 @@ _LYRA_MODEL = "Luckfox Lyra"
 _DEVICE_TREE_MODEL_PATH = Path("/proc/device-tree/model")
 
 
-def _read_device_tree_model() -> Optional[str]:
+def _read_device_tree_model() -> str | None:
     """Read and normalize ``/proc/device-tree/model``, or ``None`` when it doesn't exist.
 
     Absent on every machine that isn't running a device-tree-based Linux kernel — every
@@ -306,7 +306,7 @@ def _lookup(name: str, *, source: str) -> Platform:
         ) from None
 
 
-def resolve(flag: Optional[str] = None) -> Resolution:
+def resolve(flag: str | None = None) -> Resolution:
     """Decide which platform is active, and record what the decision looked at.
 
     Resolution order: the explicit ``--platform`` flag, then the ``MESHTERM_PLATFORM``

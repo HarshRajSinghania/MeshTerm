@@ -17,8 +17,9 @@ only), so :class:`PlainUi` leaves them unsupported.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any
 
 from rich import box
 from rich.console import Console, Group, RenderableType
@@ -54,7 +55,7 @@ def _dialog_max_cells() -> int:
     return _DIALOG_MAX_CELLS if get_platform().frame_border else 43
 
 
-def _collapse_to_message(buffered: list[RenderableType]) -> Optional[Text]:
+def _collapse_to_message(buffered: list[RenderableType]) -> Text | None:
     """Collapse small, text-only buffered output into one dialog message.
 
     This is the gate for :meth:`TuiUi.present`'s popup upgrade: output qualifies only
@@ -115,7 +116,8 @@ class Ui:
         In the interactive menu this shows the top-most skeleton card (see
         :meth:`~meshterm.ui.tui.session.TuiSession.busy_overlay`), used to cover the lag of a
         Bluetooth operation that would otherwise leave the screen blank. In scripted CLI mode
-        it does nothing (there is no full-screen surface to float over)."""
+        it does nothing (there is no full-screen surface to float over).
+        """
         raise NotImplementedError
 
     async def select(
@@ -144,20 +146,20 @@ class Ui:
         *,
         default: Any = None,
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """Choose one item on a chromeless startup splash; ``None`` if skipped."""
         raise NotImplementedError
 
     async def confirm_startup(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         *,
         title: str = "",
         confirm_label: str = "Remove",
         banner: Any = None,
-        footnote: Optional[str] = None,
-        backdrop_items: Optional[list] = None,
+        footnote: str | None = None,
+        backdrop_items: list | None = None,
         backdrop_default: Any = None,
     ) -> bool:
         """Confirm a destructive action on the startup splash; ``True`` only if committed.
@@ -173,7 +175,7 @@ class Ui:
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> None:
         """Show a message on a chromeless startup splash until the user dismisses it."""
         raise NotImplementedError
@@ -185,7 +187,7 @@ class Ui:
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """Await ``coro`` while showing a spinner on the startup splash; return its result."""
         raise NotImplementedError
@@ -197,8 +199,8 @@ class Ui:
         error: str = "",
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Ask for a Bluetooth companion's pairing PIN on the startup splash; ``None`` if cancelled."""
         raise NotImplementedError
 
@@ -208,11 +210,11 @@ class Ui:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Ask for a line of text on a chromeless startup splash; ``None`` if cancelled."""
         raise NotImplementedError
 
@@ -226,11 +228,11 @@ class Ui:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         password: bool = False,
         floating: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Prompt for a line of text; return it or ``None`` if cancelled.
 
         Keep ``title`` short (it heads the popup's border) and put the question/instruction
@@ -241,7 +243,7 @@ class Ui:
         """
         raise NotImplementedError
 
-    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+    async def confirm(self, title: str, *, default: bool = True) -> bool | None:
         """Prompt yes/no; return the answer or ``None`` if cancelled."""
         raise NotImplementedError
 
@@ -252,7 +254,7 @@ class Ui:
         *,
         title: str = "",
         default: int = 0,
-        keys: Optional[dict[str, Any]] = None,
+        keys: dict[str, Any] | None = None,
         danger: bool = False,
         destructive: bool = False,
     ) -> Any:
@@ -281,17 +283,17 @@ class Ui:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
-    ) -> Optional[str]:
+        validate: Validator | None = None,
+    ) -> str | None:
         """Prompt for free text with suggestions; return it or ``None`` if cancelled."""
         raise NotImplementedError
 
-    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> str | None:
         """Prompt for a filesystem path; return it or ``None`` if cancelled."""
         raise NotImplementedError
 
 
-def _heading(title: "str | Text") -> Text:
+def _heading(title: str | Text) -> Text:
     """Render a Panel's or Table's hoisted title as an accent heading line.
 
     The ``accent`` theme style (bold indigo) is the one bit of emphasis that earns its
@@ -418,20 +420,20 @@ class PlainUi(Ui):
         *,
         default: Any = None,
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
     async def confirm_startup(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         *,
         title: str = "",
         confirm_label: str = "Remove",
         banner: Any = None,
-        footnote: Optional[str] = None,
-        backdrop_items: Optional[list] = None,
+        footnote: str | None = None,
+        backdrop_items: list | None = None,
         backdrop_default: Any = None,
     ) -> bool:
         """Unsupported in scripted CLI mode — the picker splash is interactive-only."""
@@ -443,7 +445,7 @@ class PlainUi(Ui):
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -455,7 +457,7 @@ class PlainUi(Ui):
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """No splash in scripted CLI mode; just await the task and return its result."""
         return await coro
@@ -467,8 +469,8 @@ class PlainUi(Ui):
         error: str = "",
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Unsupported in scripted CLI mode — a PIN must be supplied non-interactively.
 
         The scripted path can't pop a dialog, so a PIN-protected device is handled by the
@@ -482,11 +484,11 @@ class PlainUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Unsupported in scripted CLI mode — a network endpoint comes from ``--tcp`` instead."""
         raise self._no_prompt()
 
@@ -500,11 +502,11 @@ class PlainUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         password: bool = False,
         floating: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Prompt on the terminal (line editor / getpass), re-asking until valid.
 
         A few tools (e.g. a remote-admin password) can legitimately prompt from a scripted
@@ -535,7 +537,7 @@ class PlainUi(Ui):
                     continue
             return value
 
-    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+    async def confirm(self, title: str, *, default: bool = True) -> bool | None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -546,7 +548,7 @@ class PlainUi(Ui):
         *,
         title: str = "",
         default: int = 0,
-        keys: Optional[dict[str, Any]] = None,
+        keys: dict[str, Any] | None = None,
         danger: bool = False,
         destructive: bool = False,
     ) -> Any:
@@ -566,12 +568,12 @@ class PlainUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
-    ) -> Optional[str]:
+        validate: Validator | None = None,
+    ) -> str | None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
-    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> str | None:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
@@ -666,7 +668,7 @@ class TuiUi(Ui):
         *,
         default: Any = None,
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """Delegate to the session's chromeless startup select splash."""
         return await self.session.select_startup(
@@ -675,13 +677,13 @@ class TuiUi(Ui):
 
     async def confirm_startup(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         *,
         title: str = "",
         confirm_label: str = "Remove",
         banner: Any = None,
-        footnote: Optional[str] = None,
-        backdrop_items: Optional[list] = None,
+        footnote: str | None = None,
+        backdrop_items: list | None = None,
         backdrop_default: Any = None,
     ) -> bool:
         """Delegate to the session's startup confirm dialog (floated over the picker)."""
@@ -701,7 +703,7 @@ class TuiUi(Ui):
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> None:
         """Delegate to the session's chromeless startup message splash."""
         await self.session.notify_startup(
@@ -715,7 +717,7 @@ class TuiUi(Ui):
         *,
         title: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
+        footnote: str | None = None,
     ) -> Any:
         """Delegate to the session's animated-spinner startup splash."""
         return await self.session.busy_startup(
@@ -729,8 +731,8 @@ class TuiUi(Ui):
         error: str = "",
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Delegate to the session's startup PIN dialog."""
         return await self.session.prompt_pin_startup(
             device_name, error=error, help_text=help_text, banner=banner, footnote=footnote
@@ -742,11 +744,11 @@ class TuiUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         banner: Any = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        footnote: str | None = None,
+    ) -> str | None:
         """Delegate to the session's chromeless startup text dialog."""
         return await self.session.prompt_text_startup(
             title,
@@ -768,12 +770,12 @@ class TuiUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         password: bool = False,
-        byte_limit: Optional[int] = None,
+        byte_limit: int | None = None,
         floating: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Delegate to the session's text screen."""
         return await self.session.text(
             title,
@@ -786,7 +788,7 @@ class TuiUi(Ui):
             floating=floating,
         )
 
-    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+    async def confirm(self, title: str, *, default: bool = True) -> bool | None:
         """Delegate to the session's confirm screen."""
         return await self.session.confirm(title, default=default)
 
@@ -797,12 +799,13 @@ class TuiUi(Ui):
         *,
         title: str = "",
         default: int = 0,
-        keys: Optional[dict[str, Any]] = None,
+        keys: dict[str, Any] | None = None,
         danger: bool = False,
         destructive: bool = False,
     ) -> Any:
         """Delegate to the session's button dialog, themed cautionary when ``danger``,
-        or in the reserved error red when ``destructive`` (irreversible data loss)."""
+        or in the reserved error red when ``destructive`` (irreversible data loss).
+        """
         tier = "err" if destructive else "warn" if danger else ""
         return await self.session.button_dialog(
             prompt,
@@ -827,14 +830,14 @@ class TuiUi(Ui):
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
-    ) -> Optional[str]:
+        validate: Validator | None = None,
+    ) -> str | None:
         """Delegate to the session's autocomplete screen."""
         return await self.session.autocomplete(
             title, choices, prompt=prompt, default=default, validate=validate
         )
 
-    async def path(self, title: str, *, prompt: str = "", default: str = "") -> Optional[str]:
+    async def path(self, title: str, *, prompt: str = "", default: str = "") -> str | None:
         """Prompt for a path as free text (with the current value prefilled)."""
         return await self.session.text(
             title, prompt=prompt, default=default, help_text="filesystem path"

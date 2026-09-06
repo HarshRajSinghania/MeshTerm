@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from meshterm.core.models import Contact
-from meshterm.services.device_state import DeviceState, _CONTACTS_TTL_S
+from meshterm.services.device_state import _CONTACTS_TTL_S, DeviceState
 
 
 class FakeDevice:
@@ -27,7 +27,7 @@ class FakeDevice:
         self.mode_calls = 0
         self.channel_calls = 0
         self.capacity_calls = 0
-        self.contact_rows: "list[Contact] | None" = None  # fixed table, when a test needs one
+        self.contact_rows: list[Contact] | None = None  # fixed table, when a test needs one
 
     async def get_contacts(self) -> list:
         self.contacts_calls += 1
@@ -58,8 +58,8 @@ class FakeDevice:
 
 def _devstate(
     device: FakeDevice,
-    heard: "dict | None" = None,
-    messaged: "dict | None" = None,
+    heard: dict | None = None,
+    messaged: dict | None = None,
 ) -> DeviceState:
     """A DeviceState over a fake ctx: device(), a silent logger, and our reception history.
 

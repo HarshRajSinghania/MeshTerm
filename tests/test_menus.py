@@ -23,7 +23,7 @@ from meshterm.ui.menus import (
     menu_rows,
     section_heading,
 )
-from meshterm.ui.tui import Choice, Separator
+from meshterm.ui.tui import Separator
 
 
 def test_exit_rows_clean_state_is_nothing_at_all() -> None:

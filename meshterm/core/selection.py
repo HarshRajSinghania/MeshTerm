@@ -9,7 +9,6 @@ raises :class:`DeviceSelectionError` with a ready-to-print, user-facing message.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from .config import DeviceProfile
 from .device_store import RememberedDevice
@@ -48,7 +47,7 @@ class Resolution:
     """
 
     port: str
-    device: Optional[DiscoveredDevice]
+    device: DiscoveredDevice | None
     source: str
     transport: str = TRANSPORT_SERIAL
 
@@ -60,14 +59,14 @@ class Resolution:
 
 def _find_by_target(
     devices: list[DiscoveredDevice], target: str
-) -> Optional[DiscoveredDevice]:
+) -> DiscoveredDevice | None:
     """Return the discovered device whose port or BLE address equals ``target``."""
     return next((d for d in devices if d.target == target or d.port == target), None)
 
 
 def _resolve_tcp(
     endpoint: str, devices: list[DiscoveredDevice], source: str
-) -> "Resolution":
+) -> Resolution:
     """Build a TCP :class:`Resolution` from a ``host[:port]`` string.
 
     The endpoint is normalized (a bare host gains the default port) so the resulting target
@@ -102,12 +101,12 @@ def _format_device_list(devices: list[DiscoveredDevice]) -> str:
 
 def resolve_device(
     devices: list[DiscoveredDevice],
-    remembered: Optional[RememberedDevice],
+    remembered: RememberedDevice | None,
     *,
-    explicit_port: Optional[str] = None,
-    explicit_ble: Optional[str] = None,
-    explicit_tcp: Optional[str] = None,
-    profile: Optional[DeviceProfile] = None,
+    explicit_port: str | None = None,
+    explicit_ble: str | None = None,
+    explicit_tcp: str | None = None,
+    profile: DeviceProfile | None = None,
 ) -> Resolution:
     """Decide which companion to connect to without prompting.
 

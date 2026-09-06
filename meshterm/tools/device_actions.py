@@ -14,7 +14,7 @@ subcommand is registered here.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -33,7 +33,7 @@ class DeviceActionsTool(Tool):
     category = "This node"
     order = 30
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the interactive actions screen; there are never parameters to collect.
 
         Each action executes and presents its result inside the screen itself, so by the

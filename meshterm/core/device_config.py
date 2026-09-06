@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .connection import Device
 
@@ -64,12 +64,12 @@ class SettingSpec:
     value_type: str
     getter: Callable[[dict], Any]
     apply: Callable[[Device, Any, dict], Awaitable[None]]
-    choices: Optional[dict[int, str]] = None
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
+    choices: dict[int, str] | None = None
+    minimum: float | None = None
+    maximum: float | None = None
     strict_choices: bool = True
-    max_key: Optional[str] = None
-    max_length: Optional[int] = None
+    max_key: str | None = None
+    max_length: int | None = None
 
 
 # --- value parsing / formatting ----------------------------------------------
@@ -78,7 +78,7 @@ _TRUE = {"1", "true", "yes", "on", "y"}
 _FALSE = {"0", "false", "no", "off", "n"}
 
 
-def parse_value(spec: SettingSpec, raw: Any, snapshot: Optional[dict] = None) -> Any:
+def parse_value(spec: SettingSpec, raw: Any, snapshot: dict | None = None) -> Any:
     """Parse and validate a raw value (typically a CLI/TOML string) for ``spec``.
 
     Args:
@@ -136,7 +136,7 @@ def parse_value(spec: SettingSpec, raw: Any, snapshot: Optional[dict] = None) ->
     return value
 
 
-def effective_maximum(spec: SettingSpec, snapshot: Optional[dict]) -> Optional[float]:
+def effective_maximum(spec: SettingSpec, snapshot: dict | None) -> float | None:
     """The inclusive maximum for ``spec``: the device-reported one when known, else static.
 
     Args:
@@ -186,8 +186,8 @@ def format_value(spec: SettingSpec, value: Any) -> str:
 async def build_snapshot(
     device: Device,
     *,
-    self_info: Optional[dict] = None,
-    path_hash_mode: Optional[int] = None,
+    self_info: dict | None = None,
+    path_hash_mode: int | None = None,
 ) -> dict:
     """Read a device's full current configuration into one dict.
 
@@ -360,7 +360,7 @@ class RadioPreset:
     bw: float
     sf: int
     cr: int
-    path_hash_size: Optional[int] = None
+    path_hash_size: int | None = None
 
     @property
     def summary(self) -> str:
@@ -423,7 +423,7 @@ RADIO_PRESETS: list[RadioPreset] = [
 _FREQ_TOLERANCE_MHZ = 0.0005
 
 
-def current_preset(snapshot: dict[str, Any]) -> Optional[RadioPreset]:
+def current_preset(snapshot: dict[str, Any]) -> RadioPreset | None:
     """Return the preset the radio is tuned to, or ``None`` where it matches none.
 
     Matched on the four radio parameters alone — the ones every node on the mesh has to

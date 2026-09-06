@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..core.connection import Unsubscribe
 from ..core.courier_store import QUEUED, QueuedMessage
@@ -63,15 +63,15 @@ class CourierService:
     :meth:`eligible` so tests can drive it directly.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize the (idle) service.
 
         Args:
             ctx: The shared application context (store, chat service, event hub).
         """
         self._ctx = ctx
-        self._task: Optional[asyncio.Task] = None
-        self._unsubscribe: Optional[Unsubscribe] = None
+        self._task: asyncio.Task | None = None
+        self._unsubscribe: Unsubscribe | None = None
         #: When each node id was last overheard this session (the freshness map).
         self._heard: dict[str, datetime] = {}
         #: Re-entry guard: one attempt in flight at a time, pass or forced.
@@ -134,14 +134,14 @@ class CourierService:
 
     # --- eligibility ---------------------------------------------------------------------
 
-    def heard_recently(self, node_key: str, now: Optional[datetime] = None) -> bool:
+    def heard_recently(self, node_key: str, now: datetime | None = None) -> bool:
         """Whether ``node_key`` was overheard within the freshness window."""
         heard = self._heard.get(node_key)
         if heard is None:
             return False
         return ((now or utcnow()) - heard).total_seconds() <= FRESH_S
 
-    def eligible(self, message: QueuedMessage, now: Optional[datetime] = None) -> bool:
+    def eligible(self, message: QueuedMessage, now: datetime | None = None) -> bool:
         """Whether one queued entry may be attempted right now.
 
         The rules, in order: only queued entries; a schedule holds until its time;
@@ -170,7 +170,7 @@ class CourierService:
             return False
         return True
 
-    def next_retry_s(self, message: QueuedMessage, now: Optional[datetime] = None) -> Optional[float]:
+    def next_retry_s(self, message: QueuedMessage, now: datetime | None = None) -> float | None:
         """Seconds until the backoff releases a failed entry, or ``None`` if free now."""
         if message.last_attempt is None or message.attempts == 0:
             return None
@@ -247,7 +247,7 @@ class CourierService:
         finally:
             self._sending = False
 
-    async def _resolve(self, message: QueuedMessage) -> Optional[Contact]:
+    async def _resolve(self, message: QueuedMessage) -> Contact | None:
         """Find the recipient in the device's contact list, by key then by name."""
         device = await self._ctx.device()
         contacts = await device.get_contacts()

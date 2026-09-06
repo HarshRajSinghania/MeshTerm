@@ -77,7 +77,7 @@ class ContactsScreen(ContactListScreen):
         self,
         self_name: str,
         self_key: str,
-        contacts: "list[Contact]",
+        contacts: list[Contact],
         prefix_bytes: int,
         counts: dict[str, int],
         sort: ContactsSort,
@@ -148,10 +148,10 @@ class ContactsScreen(ContactListScreen):
 
 
 async def open_contacts(
-    ctx: "AppContext",
+    ctx: AppContext,
     self_name: str,
     self_key: str,
-    contacts: "list[Contact]",
+    contacts: list[Contact],
     prefix_bytes: int,
     counts: dict[str, int],
     sort: ContactsSort,
@@ -234,7 +234,7 @@ async def open_contacts(
         screen = build()
 
 
-def _archived_count(ctx: "AppContext", self_key: str) -> int:
+def _archived_count(ctx: AppContext, self_key: str) -> int:
     """How many contacts are archived off this device — the tail row's tally and its gate."""
     store = getattr(ctx, "contact_store", None)
     dev_pub = (self_key or "").lower().removeprefix("0x")

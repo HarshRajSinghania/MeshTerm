@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from time import monotonic
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..core.geo import Viewport, clamp_lat
 from ..core.mvt import Layer
@@ -67,7 +67,7 @@ class MiniMap:
     def __init__(
         self,
         session,  # noqa: ANN001 - TuiSession, untyped to avoid an import cycle
-        source: "BasemapSource",
+        source: BasemapSource,
         max_tile_zoom: int,
         *,
         center_lat: float,
@@ -97,7 +97,7 @@ class MiniMap:
         self._markers = markers
         # Decoded tiles keyed by (z, x, y); a stored ``None`` is the source's own word that
         # there is no tile there. Silence is not that answer and is not stored here.
-        self._tiles: dict[tuple[int, int, int], Optional[list[Layer]]] = {}
+        self._tiles: dict[tuple[int, int, int], list[Layer] | None] = {}
         self._pending: set[tuple[int, int, int]] = set()
         # Tiles we got no answer about, and when each may be asked for again.
         self._unanswered: dict[tuple[int, int, int], float] = {}

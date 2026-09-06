@@ -48,8 +48,9 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
+from collections.abc import Container
 from pathlib import Path
-from typing import Container, NamedTuple, Optional
+from typing import NamedTuple
 
 from ..core.mvt import Layer, decode_tile, dumps_layers, loads_layers
 
@@ -121,7 +122,7 @@ class BasemapSource:
         *,
         tilejson_url: str = DEFAULT_TILEJSON_URL,
         timeout: float = 12.0,
-        layers: Optional[Container[str]] = None,
+        layers: Container[str] | None = None,
         max_decoded_bytes: int = _DEFAULT_MAX_DECODED_BYTES,
     ) -> None:
         """Open a tile source backed by an on-disk cache.
@@ -146,8 +147,8 @@ class BasemapSource:
         # What a sidecar was decoded *under*. A blob written for one layer set must never
         # be served to a caller expecting another, so the set travels with the bytes.
         self._stamp = "all" if layers is None else ",".join(sorted(layers))  # type: ignore[arg-type]
-        self._template: Optional[str] = None
-        self._max_zoom: Optional[int] = None
+        self._template: str | None = None
+        self._max_zoom: int | None = None
         # When the source may next try to resolve its template. Zero means "now";
         # a success sets the template and this is never consulted again.
         self._resolve_after = 0.0
@@ -160,7 +161,7 @@ class BasemapSource:
         # PicoCalc — and a map paints its whole viewport's worth of tiles on *every*
         # frame, so panning one dot re-read every tile that had not moved. Bounded because
         # decoded layers are the fattest thing this class holds.
-        self._memo: "OrderedDict[tuple[int, int, int], list[Layer]]" = OrderedDict()
+        self._memo: OrderedDict[tuple[int, int, int], list[Layer]] = OrderedDict()
 
     # -- metadata ---------------------------------------------------------------
 
@@ -260,7 +261,7 @@ class BasemapSource:
     def _decoded_path(self, z: int, x: int, y: int) -> Path:
         return self.cache_dir / "decoded" / str(z) / str(x) / f"{y}.bin"
 
-    def load_tile(self, z: int, x: int, y: int) -> Optional[list[Layer]]:
+    def load_tile(self, z: int, x: int, y: int) -> list[Layer] | None:
         """Return the decoded layers for a tile, from cache or the network.
 
         Three places are tried in cost order: the decoded sidecar (a ``marshal`` load),
@@ -327,7 +328,7 @@ class BasemapSource:
 
     # -- the decoded sidecar ----------------------------------------------------
 
-    def _read_decoded(self, z: int, x: int, y: int) -> Optional[list[Layer]]:
+    def _read_decoded(self, z: int, x: int, y: int) -> list[Layer] | None:
         """Return a tile's already-decoded layers, or ``None`` to decode it properly."""
         blob = self._read_cached(self._decoded_path(z, x, y))
         return None if blob is None else loads_layers(blob, stamp=self._stamp)
@@ -368,7 +369,7 @@ class BasemapSource:
             total -= size
         _log.debug("pruned decoded tile cache to %.1f MB", total / 1024 / 1024)
 
-    def _decode(self, raw: bytes, key: tuple[int, int, int]) -> Optional[list[Layer]]:
+    def _decode(self, raw: bytes, key: tuple[int, int, int]) -> list[Layer] | None:
         """Decode a tile's bytes, or ``None`` if they aren't a tile at all.
 
         The question this answers is "are these real tile bytes?", and the answer decides
@@ -397,7 +398,7 @@ class BasemapSource:
             return None
         return layers or None
 
-    def _fetch_tile(self, z: int, x: int, y: int) -> Optional[bytes]:
+    def _fetch_tile(self, z: int, x: int, y: int) -> bytes | None:
         """Fetch a tile's raw bytes from the network.
 
         Args:
@@ -420,7 +421,7 @@ class BasemapSource:
         return resp.body if resp.answered else None
 
     @staticmethod
-    def _read_cached(path: Path) -> Optional[bytes]:
+    def _read_cached(path: Path) -> bytes | None:
         try:
             return path.read_bytes() if path.exists() else None
         except OSError:  # pragma: no cover

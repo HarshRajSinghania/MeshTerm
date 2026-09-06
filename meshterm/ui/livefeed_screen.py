@@ -51,8 +51,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
@@ -170,7 +171,7 @@ _CURSOR = "❯ "
 _PIN_CURSOR = "^ "
 
 
-def _channel_sender(text: Optional[str]) -> Optional[str]:
+def _channel_sender(text: str | None) -> str | None:
     """The sender named by a channel message's ``Name: `` prefix, or ``None`` if absent.
 
     The shared protocol-layer parse (see
@@ -212,11 +213,11 @@ class LiveFeedScreen(Screen):
         resolve: Any,
         seed: list[Observation],
         prefix_bytes: int = 0,
-        self_name: Optional[str] = None,
+        self_name: str | None = None,
         channels: Sequence[tuple[str, bytes]] = (),
-        channel_names: Optional[Mapping[int, str]] = None,
-        type_of: Optional[TypeOf] = None,
-        key_of: Optional[NameKeyResolver] = None,
+        channel_names: Mapping[int, str] | None = None,
+        type_of: TypeOf | None = None,
+        key_of: NameKeyResolver | None = None,
     ) -> None:
         """Create the feed over its data feeds.
 
@@ -258,7 +259,7 @@ class LiveFeedScreen(Screen):
             self._feed.append(PacketEntry.from_observation(obs))
         #: The highlighted feed row, or ``None`` when there is no row to highlight —
         #: an empty feed, which offers no cursor stop at all. Starts on the newest packet.
-        self._selected: Optional[int] = 0 if self._feed else None
+        self._selected: int | None = 0 if self._feed else None
         #: Whether the cursor is on the *pin* — the stop above row 0, which holds the
         #: topmost position rather than a packet (see the module docstring). Implies
         #: ``_selected == 0``: the pin is a mode on the newest row, so everything that
@@ -287,7 +288,7 @@ class LiveFeedScreen(Screen):
         just as surely as if the reader had pressed ``↓``, and every other move onto a new
         row starts that row at its own beginning (see :data:`_HSHIFT_RESET`).
         """
-        entry: Optional[PacketEntry] = None
+        entry: PacketEntry | None = None
         obs = event.observation
         if obs is not None:
             entry = PacketEntry.from_observation(obs)
@@ -770,7 +771,7 @@ class LiveFeedScreen(Screen):
         text.append(value, style="muted")
         return text
 
-    def _feed_note(self, entry: PacketEntry) -> Optional[Text]:
+    def _feed_note(self, entry: PacketEntry) -> Text | None:
         """The row's trailing detail — a message's conversation, and nothing else.
 
         A relayed frame's route used to sit here, and it never fitted: whatever the fixed
@@ -797,7 +798,7 @@ class LiveFeedScreen(Screen):
         return Text(entry.where, style="muted")
 
 
-async def open_livefeed(ctx: "AppContext") -> None:
+async def open_livefeed(ctx: AppContext) -> None:
     """Open the live feed and run it until dismissed.
 
     Wires the screen to its feeds: stored recent observations seed it, a hub
@@ -819,7 +820,7 @@ async def open_livefeed(ctx: "AppContext") -> None:
     session = ctx.ui.session
 
     contacts = []
-    self_name: Optional[str] = None
+    self_name: str | None = None
     channels: list[tuple[str, bytes]] = []
     channel_names: dict[int, str] = {}
     try:

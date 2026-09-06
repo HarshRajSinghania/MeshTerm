@@ -475,8 +475,8 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
 
 def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
     """The picker draws the full lanes, opens freshest-heard first, and Enter commits."""
-    from meshterm.ui.courier_screen import _PICK_HINT, CourierRecipientScreen
     from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.courier_screen import _PICK_HINT, CourierRecipientScreen
     from meshterm.ui.widgets import ContactsSort
 
     fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=utcnow())
@@ -509,8 +509,8 @@ def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
 
 def test_recipient_picker_sort_keys_walk_the_ring(tmp_path: Path) -> None:
     """The same ^←→ keys the Nodes list uses re-sort the picker's columns."""
-    from meshterm.ui.courier_screen import CourierRecipientScreen
     from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
+    from meshterm.ui.courier_screen import CourierRecipientScreen
     from meshterm.ui.widgets import ContactsSort
 
     a = Contact(name="Alpha", public_key="aa" * 32, last_seen=utcnow())

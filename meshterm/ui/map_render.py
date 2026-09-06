@@ -24,7 +24,6 @@ from __future__ import annotations
 import math
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ..core.geo import Viewport
 from ..core.mvt import GEOM_LINE, GEOM_POLYGON, Layer
@@ -57,7 +56,7 @@ class MapMarker:
     is_repeater: bool = False
     is_self: bool = False
     detail: str = ""
-    key: Optional[str] = None
+    key: str | None = None
 
     def _rank(self) -> int:
         """Draw order: self on top of repeaters on top of leaf nodes."""
@@ -341,12 +340,12 @@ def _paste_ghost(canvas: MapCanvas, viewport: Viewport, ghost: Ghost) -> None:
 
 def render_map(
     viewport: Viewport,
-    tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
+    tiles: dict[tuple[int, int, int], list[Layer] | None],
     markers: list[MapMarker],
     *,
     max_labels: int = 80,
     find: str = "",
-    ghost: Optional[Ghost] = None,
+    ghost: Ghost | None = None,
 ) -> list[str]:
     """Render a full map frame to truecolour ANSI lines.
 
@@ -373,7 +372,7 @@ def render_map(
 
 def render_ground(
     viewport: Viewport,
-    tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
+    tiles: dict[tuple[int, int, int], list[Layer] | None],
     markers: list[MapMarker],
     *,
     max_labels: int = 80,
@@ -415,12 +414,12 @@ def render_ground(
 
 def _compose(
     viewport: Viewport,
-    tiles: dict[tuple[int, int, int], Optional[list[Layer]]],
+    tiles: dict[tuple[int, int, int], list[Layer] | None],
     markers: list[MapMarker],
     *,
     max_labels: int = 80,
     find: str = "",
-    ghost: Optional[Ghost] = None,
+    ghost: Ghost | None = None,
     coarse: bool = False,
 ) -> MapCanvas:
     """Draw one frame onto a fresh canvas — see :func:`render_map` for the arguments."""
@@ -484,8 +483,8 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
     water_rgb, water_prio = mark_rgb(_WATER_FILL[0]), _WATER_FILL[1]
     green_rgb, green_prio = mark_rgb(_GREEN_FILL[0]), _GREEN_FILL[1]
     boundary_rgb = mark_rgb("#6d5f88")
-    road_styles: dict[Optional[str], tuple[tuple[int, int, int], int]] = {}
-    water_styles: dict[Optional[str], Optional[tuple[tuple[int, int, int], int]]] = {}
+    road_styles: dict[str | None, tuple[tuple[int, int, int], int]] = {}
+    water_styles: dict[str | None, tuple[tuple[int, int, int], int] | None] = {}
 
     # Fills first (water, green space) so lines and labels sit on top.
     for name in _FILL_LAYERS:
@@ -644,7 +643,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
 
 def _clip_to_canvas(
     x0: float, y0: float, x1: float, y1: float, w: float, h: float
-) -> Optional[tuple[float, float, float, float]]:
+) -> tuple[float, float, float, float] | None:
     """Trim a segment to the ``0..w`` by ``0..h`` canvas (Liang-Barsky).
 
     Returns:

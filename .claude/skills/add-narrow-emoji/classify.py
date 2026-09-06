@@ -22,10 +22,9 @@ sys.stdout.reconfigure(encoding="utf-8")  # print emoji safely on a cp1252 conso
 # Run from anywhere: put the repo root (four levels up) on the path so `meshterm` imports.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from wcwidth import wcwidth  # noqa: E402
-
 import rich.cells as rc  # noqa: E402
 from prompt_toolkit.utils import get_cwidth  # noqa: E402
+from wcwidth import wcwidth  # noqa: E402
 
 from meshterm.ui.tui.emoji_width import (  # noqa: E402
     _DEFAULT_NARROW_LONE,

@@ -12,7 +12,11 @@ from datetime import timedelta
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import MeshTopology
 from meshterm.ui.pathline import (
-    CRACK_HEAD, CRACK_TAIL, ELIDE_HEAD, SELF_GLYPH, PathLine,
+    CRACK_HEAD,
+    CRACK_TAIL,
+    ELIDE_HEAD,
+    SELF_GLYPH,
+    PathLine,
 )
 from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import _HSCROLL_STEP, WalkScreen
@@ -31,7 +35,7 @@ class _FakeSession:
 
 
 def _topo(*, with_island: bool = False) -> MeshTopology:
-    """us — Hub — Alice as a two-ring chain, optionally plus a detached island pair."""
+    """Us — Hub — Alice as a two-ring chain, optionally plus a detached island pair."""
     topo = MeshTopology(US, contacts=[Hub, ALICE])
     hub = topo.canonical(Hub.public_key)
     alice = topo.canonical(ALICE.public_key)
@@ -58,7 +62,6 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
 
 
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
-
 
 # --- rendering ----------------------------------------------------------------------------
 
@@ -265,7 +268,8 @@ def test_walk_the_node_walked_in_from_is_not_offered_back_as_a_link() -> None:
 
 def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
     """Revisiting a node already on the trail truncates the stack to its first appearance,
-    dropping the circular stretch walked to get back there."""
+    dropping the circular stretch walked to get back there.
+    """
     topo = MeshTopology(US, contacts=[Hub, ALICE])
     hub = topo.canonical(Hub.public_key)
     alice = topo.canonical(ALICE.public_key)
@@ -635,7 +639,7 @@ def test_walk_esc_peels_find_then_dismisses() -> None:
 
 
 def _chain(length: int) -> MeshTopology:
-    """us — hop-01 — hop-02 — … , every name long enough to overflow a narrow trail."""
+    """Us — hop-01 — hop-02 — … , every name long enough to overflow a narrow trail."""
     contacts = [
         Contact(name=f"Repeater-{i:02d}", public_key=f"{i:02x}" * 32) for i in range(1, length + 1)
     ]
@@ -976,7 +980,8 @@ def test_walk_collapsed_stand_in_wears_the_selection_white() -> None:
 
 def test_walk_link_cursor_clamps_at_both_ends() -> None:
     """The windowed link list does not wrap: ↑ on the first row and ↓ past the last stay
-    where they are, rather than hauling the window end to end."""
+    where they are, rather than hauling the window end to end.
+    """
     screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
     )

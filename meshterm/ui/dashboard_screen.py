@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, deque
 from statistics import median
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Group, RenderableType
 from rich.table import Table
@@ -45,11 +45,11 @@ from ..core.models import NODE_TYPE_REPEATER, Observation, utcnow
 from ..persistence.repository import OBSERVATION_WINDOW
 from .braillechart import axis_chart, axis_chrome, axis_label_w, meter, timeline_rows
 from .packet_viewer import (
+    _PAYLOAD_GLOSS,
     DEFAULT_ICON,
     KIND_ICONS,
     KIND_STYLES,
     PAYLOAD_ICONS,
-    _PAYLOAD_GLOSS,
 )
 from .theme import glyph, snr_style
 from .trace_screen import snr_bar
@@ -197,7 +197,7 @@ class DashboardScreen(Screen):
         self._win_rssis: list[float] = []
         #: The last activity chart and the inputs it was drawn from — see
         #: :meth:`_activity_section`.
-        self._chart_memo: Optional[tuple[tuple, list[RenderableType]]] = None
+        self._chart_memo: tuple[tuple, list[RenderableType]] | None = None
 
     # --- live window -----------------------------------------------------------------
 
@@ -411,7 +411,7 @@ class DashboardScreen(Screen):
             rows.append(("busiest", value))
         return self._grid(rows)
 
-    def _busiest(self) -> Optional[tuple[str, int]]:
+    def _busiest(self) -> tuple[str, int] | None:
         """The window's most-heard attributable node, or ``None`` in silence."""
         counts = self._win_counts  # the one-pass window digest (see _digest_window)
         if not counts:
@@ -504,7 +504,7 @@ class DashboardScreen(Screen):
             return [heading, Text("no receptions in the window yet", style="muted")]
         return [heading, self._grid(rows)]
 
-    def _name(self, node: Optional[str]) -> str:
+    def _name(self, node: str | None) -> str:
         """A node's friendly name when known, else its raw hash (never ``None``)."""
         if not node:
             return "?"
@@ -512,7 +512,7 @@ class DashboardScreen(Screen):
         return named if named else node
 
 
-async def open_dashboard(ctx: "AppContext") -> None:
+async def open_dashboard(ctx: AppContext) -> None:
     """Open the live dashboard and run it until dismissed.
 
     Wires the screen to its feeds: the stored trailing window seeds it, a hub

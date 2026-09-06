@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -20,8 +19,8 @@ from .core.admin_store import AdminStore
 from .core.config import Settings
 from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
-from .core.preferences import PreferenceError
 from .core.device_store import DeviceStore
+from .core.preferences import PreferenceError
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging
 from .persistence.repository import Repository
@@ -29,6 +28,7 @@ from .platforms import Resolution, resolve, set_platform
 from .tools import all_tools
 from .tools.base import Tool, ToolResult
 from .ui.theme import make_console
+
 
 def _unframe_help_panels() -> None:
     """Render Typer's help/error sections as coloured headings instead of boxed panels.
@@ -72,34 +72,34 @@ app = typer.Typer(
 )
 
 # The context built by the callback and consumed by subcommands within one process.
-_state: Optional[AppContext] = None
+_state: AppContext | None = None
 
 # The platform resolution the callback made, for the ``platform`` diagnostic subcommand
 # to report back (see :func:`platform_command`) without re-deriving it independently.
-_platform_resolution: Optional[Resolution] = None
+_platform_resolution: Resolution | None = None
 
 
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
-    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Device profile"),
-    port: Optional[str] = typer.Option(None, "--port", help="Serial port override"),
-    ble: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Device profile"),
+    port: str | None = typer.Option(None, "--port", help="Serial port override"),
+    ble: str | None = typer.Option(
         None, "--ble", help="Bluetooth address of a companion device (selects the BLE transport)"
     ),
-    ble_pin: Optional[str] = typer.Option(
+    ble_pin: str | None = typer.Option(
         None, "--ble-pin", help="BLE pairing PIN, if the Bluetooth companion requires one"
     ),
-    tcp: Optional[str] = typer.Option(
+    tcp: str | None = typer.Option(
         None,
         "--tcp",
         help="Network address host[:port] of a TCP companion (selects the TCP transport)",
     ),
     mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator"),
-    db_path: Optional[Path] = typer.Option(None, "--db", help="SQLite database path"),
+    db_path: Path | None = typer.Option(None, "--db", help="SQLite database path"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress console logging"),
-    platform: Optional[str] = typer.Option(
+    platform: str | None = typer.Option(
         None,
         "--platform",
         help="Force the UI platform (regular|picocalc) instead of auto-detecting it",

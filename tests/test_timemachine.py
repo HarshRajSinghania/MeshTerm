@@ -483,7 +483,8 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
 def test_mesh_page_arrivals_key_lane_flexes_with_width(tmp_path: Path) -> None:
     """The arrivals key lane fills the terminal: a resolvable full key shows more
     than the stored 12 hex, truncating on a byte boundary with an ellipsis; a
-    narrow terminal floors the lane at its old fixed width."""
+    narrow terminal floors the lane at its old fixed width.
+    """
     from meshterm.ui.timemachine_screen import _PICK_HASH_W
 
     repo = _seeded_repo(tmp_path)
@@ -596,7 +597,8 @@ def test_mesh_page_rhythm_left_edge_aligns_with_the_day_charts(tmp_path: Path) -
 
 def test_picker_row_lanes_align_under_the_header() -> None:
     """Picker rows lane up under the header; the heard age glows hot, the hash prefix
-    lights in the key's own hue, and a nameless node's placeholder stays muted."""
+    lights in the key's own hue, and a nameless node's placeholder stays muted.
+    """
     from meshterm.core.models import HeardNode
     from meshterm.ui.contactlist import ContactRow, _header, _lane
     from meshterm.ui.widgets import ContactsSort
@@ -785,7 +787,7 @@ def _heard_nodes() -> list:
 
     now = utcnow()
 
-    def node(node_id: str, name: str, count: int, mins: int) -> "HeardNode":
+    def node(node_id: str, name: str, count: int, mins: int) -> HeardNode:
         return HeardNode(
             node=node_id, name=name, count=count, median_snr=None, best_snr=None,
             last_rssi=None, last_seen=now - timedelta(minutes=mins),
@@ -902,7 +904,8 @@ def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
 
 def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
     """Columns anchor left: the name lane hugs its content and stays put as the window
-    widens, and the freed width flows to the hash lane so more of each key shows."""
+    widens, and the freed width flows to the hash lane so more of each key shows.
+    """
     from meshterm.ui.contactlist import _GAP, _LEAD
 
     screen = _picker(_heard_nodes(), width=72)
@@ -973,7 +976,8 @@ def test_picocalc_window_ring_stops_at_30_days() -> None:
 
 def _activity_repo(tmp_path: Path) -> Repository:
     """A repository seeded with our own outbound life: traces (homed, timed-out, one path
-    walk), channel + direct messages (some acked, one inbound), and a tx-power sample."""
+    walk), channel + direct messages (some acked, one inbound), and a tx-power sample.
+    """
     from meshterm.core.models import (
         PATH_TRACE_TARGET,
         ChatMessage,
@@ -985,7 +989,7 @@ def _activity_repo(tmp_path: Path) -> Repository:
     now = utcnow()
     trun = repo.start_run("trace", {}, None)
 
-    def trace(target: str, ok: bool, snrs: list, mins: int) -> "TraceResult":
+    def trace(target: str, ok: bool, snrs: list, mins: int) -> TraceResult:
         return TraceResult(
             target=target, success=ok,
             hops=[Hop(index=i, node=None, snr=s) for i, s in enumerate(snrs)],
@@ -1121,7 +1125,8 @@ def test_picker_lists_you_first_in_the_node_block() -> None:
 
 def test_picker_hash_lane_shows_a_heard_nodes_full_key_when_a_contact_holds_it() -> None:
     """A heard node stored as a 12-hex prefix shows its whole key when a contact carries it,
-    so a wide screen reveals more than the twelve stored digits (its stored id still selects)."""
+    so a wide screen reveals more than the twelve stored digits (its stored id still selects).
+    """
     from meshterm.core.models import HeardNode
 
     stored = "3d63c6429436"  # the 12-hex prefix the observations keep

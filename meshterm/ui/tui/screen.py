@@ -13,8 +13,9 @@ push/await/pop model behind ``await session.select(...)`` and friends.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from collections.abc import Sequence as _SequenceABC
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -91,8 +92,8 @@ class Screen:
     modal: bool = False
     grow_only: bool = False
     chrome: bool = True
-    banner: Optional[Sequence[str]] = None
-    footnote: Optional[str] = None
+    banner: Sequence[str] | None = None
+    footnote: str | None = None
 
     @property
     def fkey_lane(self):
@@ -120,7 +121,7 @@ class Screen:
     def __init__(self) -> None:
         """Initialize scroll state and the (later-assigned) result future."""
         self.scroll = 0
-        self.future: Optional[asyncio.Future] = None
+        self.future: asyncio.Future | None = None
         # (body-line index, rendered ANSI lines) for each section landmark eligible to be
         # pinned to the top rows once it scrolls off. A block is usually one line — a section
         # heading, a day divider — but may carry the rows that belong with it (a heading and
@@ -131,7 +132,7 @@ class Screen:
         # The one header that pins for the *whole* list rather than for its section — a
         # table's column header, which means nothing scrolled off (see :meth:`sticky_rows`).
         # Recorded the same way, as (body-line index, rendered line); ``None`` for none.
-        self._pinned_header: Optional[tuple[int, str]] = None
+        self._pinned_header: tuple[int, str] | None = None
         # The last render's body height and viewport, recorded by the frame (:meth:`note_metrics`)
         # so the shared scroll helpers can page by a screenful of the *current* terminal and
         # clamp to the content without every caller threading the sizes through.
@@ -183,7 +184,7 @@ class Screen:
         self._width_floor = max(self._width_floor, natural)
         return self._width_floor
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Return a body line that must stay visible, or ``None`` for free scrolling.
 
         Selection/text screens return the active row so the session can keep it in view;
@@ -223,7 +224,7 @@ class Screen:
         so the heading — the row that says which section this is — is the last thing dropped on
         a short terminal.
         """
-        governing: Optional[tuple[int, list[str]]] = None
+        governing: tuple[int, list[str]] | None = None
         for entry in self._sticky_headers:
             if entry[0] <= scroll:
                 governing = entry
@@ -396,7 +397,7 @@ class LazyLines(_SequenceABC):
 
     __slots__ = ("_entries", "_drawn")
 
-    def __init__(self, entries: list[Union[str, Callable[[], str]]]) -> None:
+    def __init__(self, entries: list[str | Callable[[], str]]) -> None:
         """Wrap one entry per body line: a rendered string, or a callable rendering it."""
         self._entries = entries
         self._drawn: dict[int, str] = {}
@@ -462,7 +463,7 @@ class ListWindow:
         self.top = 0
         self.page = 6
 
-    def fit(self, n: int, win: int, index: Optional[int] = None) -> tuple[int, int]:
+    def fit(self, n: int, win: int, index: int | None = None) -> tuple[int, int]:
         """Settle the window over ``n`` rows into ``win`` lines: ``(top, count)``.
 
         The edge markers eat the window's boundary rows exactly when rows hide
@@ -501,7 +502,7 @@ class ListWindow:
         return top, count
 
     def fit_blocks(
-        self, heights: list[int], win: int, index: Optional[int] = None
+        self, heights: list[int], win: int, index: int | None = None
     ) -> tuple[int, int]:
         """Settle the window over variable-height rows: ``(top, count)`` blocks to draw.
 
@@ -607,7 +608,7 @@ class ScrollScreen(Screen):
         renderable: RenderableType,
         *,
         title: str = "",
-        footer_hint: Optional[str] = None,
+        footer_hint: str | None = None,
         floating: bool = True,
     ) -> None:
         """Wrap a renderable in a dismissable, scrollable screen.

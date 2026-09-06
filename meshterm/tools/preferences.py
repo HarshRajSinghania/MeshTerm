@@ -17,7 +17,7 @@ than sitting beside Device config.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -37,7 +37,7 @@ class PreferencesTool(Tool):
     category = "This app"
     order = 5  # leads the section: the one row there that changes MeshTerm, not describes it
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Open the Preferences page and collect the changes it staged.
 
         Args:

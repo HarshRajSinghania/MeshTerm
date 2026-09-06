@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 
 class MuteStore:
@@ -40,7 +39,7 @@ class MuteStore:
             path: Path to the JSON state file (created lazily on the first mute).
         """
         self._path = path
-        self._muted: Optional[set[str]] = None
+        self._muted: set[str] | None = None
 
     @property
     def _state(self) -> set[str]:
@@ -59,7 +58,7 @@ class MuteStore:
             return set()
         return {str(x) for x in data.get("muted", []) if isinstance(x, str)}
 
-    def is_muted(self, channel_id: Optional[str]) -> bool:
+    def is_muted(self, channel_id: str | None) -> bool:
         """Whether the channel with this intrinsic identity has its notifications muted.
 
         Args:

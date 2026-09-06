@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import timedelta
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
@@ -46,23 +46,23 @@ class MonitorService:
     methods (:meth:`start`, :meth:`stop`, :meth:`aclose`).
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize the (idle) service.
 
         Args:
             ctx: The shared application context (device, repository, logger).
         """
         self._ctx = ctx
-        self._unsubscribe: Optional[Unsubscribe] = None  # hub subscription, when recording
-        self._count_unsubscribe: Optional[Unsubscribe] = None  # the all-packet counter's
-        self._run_id: Optional[int] = None
+        self._unsubscribe: Unsubscribe | None = None  # hub subscription, when recording
+        self._count_unsubscribe: Unsubscribe | None = None  # the all-packet counter's
+        self._run_id: int | None = None
         self._session_count = 0
         self._run_start_count = 0
         # Observations queue off the event-loop callback onto this worker (see start()),
         # so a burst of overheard packets writes to disk between repaints instead of
         # blocking them — the same shape as ChatService's inbound queue.
-        self._queue: Optional["asyncio.Queue[Observation]"] = None
-        self._worker: Optional["asyncio.Future"] = None
+        self._queue: asyncio.Queue[Observation] | None = None
+        self._worker: asyncio.Future | None = None
         # All-packet activity, bucketed by wall-clock minute (epoch // span → count).
         # Every hub event counts — observations, messages, acks — because the header's
         # indicator answers "is the mesh alive?", not "any mail?". Pruned as it rolls,

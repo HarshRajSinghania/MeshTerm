@@ -137,7 +137,8 @@ def test_flags_measure_two_cells_in_both_authorities() -> None:
     """A country flag is a Regional Indicator pair: prompt_toolkit's wcwidth calls it four
     cells, Rich and the terminal draw it as one two-cell glyph. Narrowing the indicators as a
     category makes every flag sum to two in both authorities — no per-country allowlist entry,
-    and flags sharing an indicator (🇨🇦 / 🇨🇳) are all fixed at once."""
+    and flags sharing an indicator (🇨🇦 / 🇨🇳) are all fixed at once.
+    """
     # Only the lone-emoji allowlist is passed; flags are handled by category, not by listing.
     cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
     cache = ew._make_pt_cache(frozenset(_WAVE), frozenset())

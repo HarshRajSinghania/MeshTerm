@@ -166,7 +166,7 @@ async def test_confirm_floats_over_an_existing_popup_end_to_end() -> None:
 
 
 def test_message_border_echoes_the_strongest_tone() -> None:
-    """err outranks warn; warn outranks the neutral accent; ok stays neutral."""
+    """Err outranks warn; warn outranks the neutral accent; ok stays neutral."""
     err = Text.from_markup("[err]✗ Trace failed:[/err] timeout")
     warn = Text.from_markup("[warn]device rebooting[/warn]")
     ok = Text.from_markup("[ok]✓[/ok] private key imported")

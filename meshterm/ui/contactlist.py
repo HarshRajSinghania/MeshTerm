@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -37,11 +36,11 @@ from .tui.select import Choice, SelectScreen, Separator
 from .widgets import (
     _DEFAULT_GLYPH,
     _NODE_GLYPHS,
+    ContactsSort,
     _age_seconds,
     _format_age,
     _recency_style,
     highlighted_hash,
-    ContactsSort,
 )
 
 #: The narrowest the name lane shrinks to (a very narrow terminal), so the header's ``NAME``
@@ -201,18 +200,18 @@ class ContactRow:
     """
 
     value: object
-    name: Optional[str]
+    name: str | None
     key: str = ""
-    node_type: Optional[int] = None
-    last_seen: Optional[datetime] = None
-    count: Optional[int] = None
-    last_traced: Optional[datetime] = None
-    archived_at: Optional[datetime] = None
+    node_type: int | None = None
+    last_seen: datetime | None = None
+    count: int | None = None
+    last_traced: datetime | None = None
+    archived_at: datetime | None = None
     you: bool = False
 
 
 def _header(
-    name_w: int, sort: ContactsSort, lanes: "tuple[ContactLane, ...]" = DEFAULT_LANES
+    name_w: int, sort: ContactsSort, lanes: tuple[ContactLane, ...] = DEFAULT_LANES
 ) -> Text:
     """Column labels over the contact lanes (see :func:`_lane`).
 
@@ -259,7 +258,7 @@ def _header(
     return header
 
 
-def _lane_cell(row: "ContactRow", lane: "ContactLane") -> Text:
+def _lane_cell(row: ContactRow, lane: ContactLane) -> Text:
     """One row's value for one lane, right-aligned into the lane's width and styled by kind.
 
     An ``age`` lane draws the relative age in the column form (:func:`_format_age`) under
@@ -277,8 +276,8 @@ def _lane_cell(row: "ContactRow", lane: "ContactLane") -> Text:
 
 
 def _you_lane(
-    row: "ContactRow", name_w: int, prefix_bytes: int, hash_w: int,
-    lanes: "tuple[ContactLane, ...]" = DEFAULT_LANES,
+    row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int,
+    lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
 ) -> Text:
     """Our own node's lane — laid out exactly like :func:`_lane`'s regular rows.
 
@@ -315,8 +314,8 @@ def _you_lane(
 
 
 def _lane(
-    row: "ContactRow", name_w: int, prefix_bytes: int, hash_w: int,
-    lanes: "tuple[ContactLane, ...]" = DEFAULT_LANES,
+    row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int,
+    lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
 ) -> Text:
     """One contact as fixed, colour-coded lanes under :func:`_header`'s columns.
 
@@ -364,9 +363,9 @@ def _lane(
 
 
 def _ordered(
-    rows: "list[ContactRow]", sort: ContactsSort,
-    lanes: "tuple[ContactLane, ...]" = DEFAULT_LANES,
-) -> "list[ContactRow]":
+    rows: list[ContactRow], sort: ContactsSort,
+    lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
+) -> list[ContactRow]:
     """Order the sortable rows by the active sort (own-node rows are pinned elsewhere).
 
     The two fixture columns sort on themselves — name A→Z, ``hash`` by the displayed key
@@ -382,10 +381,10 @@ def _ordered(
     """
     by_column = {lane.column: lane for lane in lanes}
 
-    def key_name(row: "ContactRow") -> str:
+    def key_name(row: ContactRow) -> str:
         return (row.name or "unknown").casefold()
 
-    def metric(row: "ContactRow"):  # noqa: ANN202 - homogeneous per sort
+    def metric(row: ContactRow):  # noqa: ANN202 - homogeneous per sort
         if sort.column == "name":
             return key_name(row)
         if sort.column == "hash":
@@ -470,10 +469,10 @@ class ContactListScreen(SelectScreen):
         prefix_bytes: int,
         sort: ContactsSort,
         prompt: str = "",
-        lead: Optional[list] = None,
-        tail: Optional[list] = None,
+        lead: list | None = None,
+        tail: list | None = None,
         footer_hint: str = _HINT,
-        lanes: "tuple[ContactLane, ...]" = DEFAULT_LANES,
+        lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
     ) -> None:
         """Build the list over already-resolved rows.
 
@@ -520,7 +519,8 @@ class ContactListScreen(SelectScreen):
 
         Own-node rows lead the lanes and stay first whatever the sort: only the block
         below them reorders (see :func:`_ordered`). Tail rows (a purge action, the exit
-        group) close the list, past every contact whatever the sort."""
+        group) close the list, past every contact whatever the sort.
+        """
         items: list = list(self._lead)
         # The lane names lead the contacts as their landmark, so they pin overhead while the
         # list scrolls — a row deep in the sort can still be read off its columns.

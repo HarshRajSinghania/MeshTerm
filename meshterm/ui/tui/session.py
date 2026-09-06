@@ -14,8 +14,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Optional, Sequence
+from typing import Any
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Size
@@ -44,8 +45,8 @@ from .prompt import (
     Validator,
 )
 from .screen import CANCEL, POP_ALL, BusyScreen, PopToMenu, Screen, ScrollScreen
-from .spinner import spinner_interval
 from .select import Choice, ReorderScreen, SelectScreen, Separator
+from .spinner import spinner_interval
 
 #: Every Ctrl-letter chord the app binds, keyed by the bare lowercase letter — the single
 #: source of truth for both halves of a chord's life: the ``Keys.Control*`` bindings folded
@@ -254,7 +255,7 @@ def _reclaim_last_column() -> bool:
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
 
-def _changed_rows(before: str, after: str) -> Optional[list[int]]:
+def _changed_rows(before: str, after: str) -> list[int] | None:
     """Which lines of a full-screen frame differ, or ``None`` when they can't be compared.
 
     Both frames are composed one line per terminal row (see
@@ -314,7 +315,7 @@ class _WidthExtendedOutput:
         return getattr(self._inner, name)
 
 
-def _message_border(message: "Text | str") -> str:
+def _message_border(message: Text | str) -> str:
     """Pick a message dialog's border style from the strongest tone in the text.
 
     Outcome notes carry their severity as theme spans (``[err]``, ``[warn]``, ``[ok]``),
@@ -347,7 +348,7 @@ class Visit:
 
     __slots__ = ("_session", "_screen")
 
-    def __init__(self, session: "TuiSession", screen: Screen) -> None:
+    def __init__(self, session: TuiSession, screen: Screen) -> None:
         """Bind a visit to its session and screen, and arm the screen's first round."""
         self._session = session
         self._screen = screen
@@ -394,7 +395,7 @@ class TuiSession:
 
     def __init__(
         self,
-        header: Optional[Callable[[int], RenderableType]] = None,
+        header: Callable[[int], RenderableType] | None = None,
         *,
         input: Any = None,  # noqa: A002 - matches prompt_toolkit's Application(input=) name
         output: Any = None,
@@ -413,13 +414,13 @@ class TuiSession:
         """
         self._stack: list[Screen] = []
         self._header = header or (lambda cols: Text("MeshTerm", style="brand"))
-        self._app: Optional[Application] = None
+        self._app: Application | None = None
         self._input = input
         self._output = output
         # The top-most floating "working" overlay (a skeleton card), or None when idle. It is
         # deliberately *not* on the screen stack: it hovers above every layer and is shown/
         # hidden by busy_overlay, independent of whatever screens are pushed.
-        self._overlay: Optional[BusyOverlay] = None
+        self._overlay: BusyOverlay | None = None
         # What each drawn layer last composed — ``layer -> (text, carries a wide glyph)`` — so
         # :meth:`_emit` can tell a frame that actually changed from one the 1 Hz refresh just
         # re-rendered identically, and can ask whether anything currently on screen needs the
@@ -432,12 +433,12 @@ class TuiSession:
         self._unwinding = False
         # The screen the unwind lands on (the main menu), so ^W can no-op when it is already
         # the top rather than pointlessly rebuilding it. ``None`` until the menu declares it.
-        self._root: Optional[Screen] = None
+        self._root: Screen | None = None
 
     # --- stack ---------------------------------------------------------------
 
     @property
-    def top(self) -> Optional[Screen]:
+    def top(self) -> Screen | None:
         """The active (top-most) screen, or ``None`` when the stack is empty."""
         return self._stack[-1] if self._stack else None
 
@@ -446,11 +447,11 @@ class TuiSession:
         self._stack.append(screen)
         self.invalidate()
 
-    def pop(self, screen: Optional[Screen] = None) -> None:
+    def pop(self, screen: Screen | None = None) -> None:
         """Pop ``screen`` (or the top) off the stack and repaint."""
         if not self._stack:
             return
-        popped: Optional[Screen] = None
+        popped: Screen | None = None
         if screen is None or self._stack[-1] is screen:
             popped = self._stack.pop()
         elif screen in self._stack:
@@ -495,7 +496,7 @@ class TuiSession:
 
     # --- navigation ----------------------------------------------------------
 
-    def set_root(self, screen: Optional[Screen]) -> None:
+    def set_root(self, screen: Screen | None) -> None:
         """Declare ``screen`` the navigation root — where an unwind lands.
 
         The main menu calls this with its own list. Only two things depend on it: ^W is a
@@ -587,7 +588,7 @@ class TuiSession:
         return result
 
     @asynccontextmanager
-    async def stay(self, screen: Screen) -> AsyncIterator["Visit"]:
+    async def stay(self, screen: Screen) -> AsyncIterator[Visit]:
         """Keep ``screen`` pushed for a whole visit while its sub-screens come and go.
 
         The counterpart to :meth:`run_screen`, and the shape every screen that *owns a loop*
@@ -719,7 +720,7 @@ class TuiSession:
 
     # --- async prompt helpers ------------------------------------------------
 
-    def run_detached(self, work: Any) -> "asyncio.Future":
+    def run_detached(self, work: Any) -> asyncio.Future:
         """Run ``work`` — a flow that opens a screen — off a key handler, unawaited.
 
         A screen's ``handle`` is synchronous, so a key that opens something over the
@@ -784,7 +785,7 @@ class TuiSession:
         prompt: str = "",
         default: Any = None,
         filterable: bool = True,
-        footer_hint: Optional[str] = None,
+        footer_hint: str | None = None,
         delete_hint: str = "",
     ) -> Any:
         """Show a select screen; return the chosen value or ``None`` if cancelled.
@@ -811,8 +812,8 @@ class TuiSession:
         items: list,
         *,
         default: Any = None,
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
+        banner: Any | None = None,
+        footnote: str | None = None,
         footer_hint: str = "↑↓ move · Enter select · Esc quit",
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
@@ -847,13 +848,13 @@ class TuiSession:
 
     async def confirm_startup(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         *,
         title: str = "",
         confirm_label: str = "Remove",
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
-        backdrop_items: Optional[list] = None,
+        banner: Any | None = None,
+        footnote: str | None = None,
+        backdrop_items: list | None = None,
         backdrop_default: Any = None,
         backdrop_title: str = "Select a companion device",
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
@@ -929,8 +930,8 @@ class TuiSession:
         renderable: RenderableType,
         *,
         title: str = "",
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
+        banner: Any | None = None,
+        footnote: str | None = None,
         footer_hint: str = "Enter continue",
     ) -> None:
         """Show a chromeless message splash (banner above a boxed renderable) until dismissed."""
@@ -946,9 +947,9 @@ class TuiSession:
         coro: Any,
         *,
         title: str = "",
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
-        interval: Optional[float] = None,
+        banner: Any | None = None,
+        footnote: str | None = None,
+        interval: float | None = None,
     ) -> Any:
         """Await ``coro`` while showing an animated spinner on the chromeless splash.
 
@@ -1006,9 +1007,9 @@ class TuiSession:
         *,
         error: str = "",
         help_text: str = "",
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        banner: Any | None = None,
+        footnote: str | None = None,
+    ) -> str | None:
         """Ask for a companion's Bluetooth PIN on the chromeless startup splash.
 
         Drawn like :meth:`notify_startup` / :meth:`select_startup` — a bordered box centered
@@ -1038,11 +1039,11 @@ class TuiSession:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
-        banner: Optional[Any] = None,
-        footnote: Optional[str] = None,
-    ) -> Optional[str]:
+        banner: Any | None = None,
+        footnote: str | None = None,
+    ) -> str | None:
         """Ask for a line of text on the chromeless startup splash (e.g. a TCP host:port).
 
         Drawn like :meth:`prompt_pin_startup` — a bordered :class:`TextScreen` centered under
@@ -1087,12 +1088,12 @@ class TuiSession:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
+        validate: Validator | None = None,
         help_text: str = "",
         password: bool = False,
-        byte_limit: Optional[int] = None,
+        byte_limit: int | None = None,
         floating: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Show a text prompt; return the string or ``None`` if cancelled.
 
         ``floating`` guarantees the prompt draws as a centered popup even on an empty stack
@@ -1118,19 +1119,19 @@ class TuiSession:
         result = await runner(screen)
         return None if result is CANCEL else result
 
-    async def confirm(self, title: str, *, default: bool = True) -> Optional[bool]:
+    async def confirm(self, title: str, *, default: bool = True) -> bool | None:
         """Show a yes/no prompt; return the bool or ``None`` if cancelled."""
         result = await self.run_screen(ConfirmScreen(title, default=default))
         return None if result is CANCEL else result
 
     async def button_dialog(
         self,
-        prompt: "str | Text",
+        prompt: str | Text,
         buttons: list[tuple[str, Any]],
         *,
         title: str = "",
         default: int = 0,
-        keys: Optional[dict[str, Any]] = None,
+        keys: dict[str, Any] | None = None,
         footer_hint: str = "←→ choose · Enter select · Esc cancel",
         prompt_style: str = "",
         button_style: str = "selected",
@@ -1168,7 +1169,7 @@ class TuiSession:
         (the trick the reconnect dialog and the message popup already use) and popped once
         it closes. With a background already present the dialog simply floats over it.
         """
-        backdrop: Optional[ScrollScreen] = None
+        backdrop: ScrollScreen | None = None
         if not self._stack:
             backdrop = ScrollScreen("", floating=False, footer_hint="")
             self.push(backdrop)
@@ -1199,8 +1200,8 @@ class TuiSession:
         *,
         prompt: str = "",
         default: str = "",
-        validate: Optional[Validator] = None,
-    ) -> Optional[str]:
+        validate: Validator | None = None,
+    ) -> str | None:
         """Show a free-text prompt with suggestions; return text or ``None`` if cancelled."""
         result = await self._run_dialog_screen(
             AutocompleteScreen(
@@ -1209,7 +1210,7 @@ class TuiSession:
         )
         return None if result is CANCEL else result
 
-    async def message_dialog(self, message: "Text | str", *, title: str = "") -> None:
+    async def message_dialog(self, message: Text | str, *, title: str = "") -> None:
         """Show a short outcome in a centered popup with a single OK button.
 
         The lightweight acknowledgement counterpart of :meth:`scroll`: a one-line result
@@ -1254,7 +1255,7 @@ class TuiSession:
         message: str = "",
         *,
         title: str = "",
-        interval: Optional[float] = None,
+        interval: float | None = None,
     ) -> AsyncIterator[BusyOverlay]:
         """Float a skeleton card on top of everything for the duration of a block.
 
@@ -1516,7 +1517,7 @@ class TuiSession:
                 return i
         return 0
 
-    def _base_screen(self) -> Optional[Screen]:
+    def _base_screen(self) -> Screen | None:
         """The screen drawn as the full-frame background, or ``None`` when the stack is empty."""
         if not self._stack:
             return None
@@ -1628,7 +1629,7 @@ class TuiSession:
             frame.compose_base(self._header(cols), base, footer, cols, rows, footer_lane=lane)
         )
 
-    def _plain_frame(self) -> Optional[str]:
+    def _plain_frame(self) -> str | None:
         """The whole frame as rows, when this paint is one the fast path may take.
 
         The background screen, with every floating dialog composited over it exactly where
@@ -1658,7 +1659,7 @@ class TuiSession:
         return "\n".join(rows_out)
 
     @staticmethod
-    def _fkey_lane(active: Screen) -> Optional[Callable[[], Text]]:
+    def _fkey_lane(active: Screen) -> Callable[[], Text] | None:
         """A deferred F-key lane row for ``active``, or ``None`` on a platform without one.
 
         Deferred because the frame resolves it *after* the body renders: a lane dims the

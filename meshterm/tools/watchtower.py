@@ -14,7 +14,7 @@ read the same history through ``monitor``/``nodes``.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -33,7 +33,7 @@ class WatchtowerTool(Tool):
     category = "Watch"
     order = 30  # after the live views: the section's always-on alerting eye
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the Watchtower screen; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so

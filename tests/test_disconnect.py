@@ -127,7 +127,7 @@ _OPEN_ADDR = "AA:BB:CC:DD:EE:FF"
 _A_PIN = "123456"
 
 
-async def _disable_windows_pairing(dev: "connection.MeshCoreDevice") -> None:
+async def _disable_windows_pairing(dev: connection.MeshCoreDevice) -> None:
     """Stub out the WinRT ProvidePin step so ``_create_ble`` stays hermetic in tests.
 
     On a real Windows host ``_pair_ble_windows`` would reach the OS Bluetooth stack (and the
@@ -623,7 +623,8 @@ def test_serial_port_present_platform_uart_by_path(monkeypatch) -> None:
     """A soldered platform UART (e.g. ``/dev/ttyS1`` on the Luckfox Lyra) is invisible to
     pyserial's ``comports()`` but its ``/dev`` char-device node persists — so an existing
     ``/dev`` character device reads as present, while a vanished node (a real USB unplug of
-    ``/dev/ttyUSB*``) still reads as absent."""
+    ``/dev/ttyUSB*``) still reads as absent.
+    """
     pytest.importorskip("serial")
     import os as _os
     import stat as _stat

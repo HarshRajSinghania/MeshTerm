@@ -30,15 +30,11 @@ styled ``ok``/``err``.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
-    Iterable,
-    Optional,
-    Sequence,
     Union,
 )
 
@@ -133,7 +129,7 @@ def icon_mark(icon: str, style: str, lane: int) -> Text:
     return text
 
 
-def marked_label(icon: str, label: str, style: str, *, lane: Optional[int] = None) -> Text:
+def marked_label(icon: str, label: str, style: str, *, lane: int | None = None) -> Text:
     """A command row whose icon carries a tint — the tint moving to the label if it goes.
 
     The app marks a destructive command by tinting its icon, not its words (``🗑`` in
@@ -230,7 +226,7 @@ def exit_rows(staged: int, *, apply_value: Any, back_value: Any) -> list:
     ]
 
 
-def menu_rows(rows: Iterable[tuple[Union[str, Text], str, Any]]) -> list:
+def menu_rows(rows: Iterable[tuple[str | Text, str, Any]]) -> list:
     """Label + description :class:`Choice` rows in two aligned lanes.
 
     The menu-style presentation shared by Device actions, the channel detail, and the
@@ -300,7 +296,7 @@ class Lane:
             Zero (the default) for a trailing lane, which just runs to the edge.
     """
 
-    label: Union[str, Sequence[str]]
+    label: str | Sequence[str]
     width: int = 0
 
     @property
@@ -376,7 +372,7 @@ def changes_phrase(count: int) -> str:
 
 
 async def confirm_discard(
-    ctx: "AppContext", staged: int, *, verb: str = "applying"
+    ctx: AppContext, staged: int, *, verb: str = "applying"
 ) -> bool:
     """Ask before dropping staged changes on the way out; ``True`` means discard.
 
@@ -402,7 +398,7 @@ async def confirm_discard(
     return choice == "discard"
 
 
-async def run_steps(steps: "Sequence[Callable[[list], Awaitable[Any]]]") -> "Optional[list]":
+async def run_steps(steps: Sequence[Callable[[list], Awaitable[Any]]]) -> list | None:
     """Run a chain of prompts as a stack — Esc on a step goes back to the one before it.
 
     An entry flow that asks two or more things in a row (pick a slot, then name the

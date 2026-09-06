@@ -22,7 +22,6 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .models import utcnow
 
@@ -68,9 +67,9 @@ class WatchedNode:
     name: str
     silence_hours: int = DEFAULT_SILENCE_HOURS
     snr_watch: bool = True
-    last_heard: Optional[datetime] = None
-    silent_since: Optional[datetime] = None
-    node_type: Optional[int] = None
+    last_heard: datetime | None = None
+    silent_since: datetime | None = None
+    node_type: int | None = None
 
 
 @dataclass(slots=True)
@@ -115,7 +114,7 @@ class WatchStore:
             path: Path to the JSON state file (created lazily on first write).
         """
         self._path = path
-        self._state: Optional[_State] = None
+        self._state: _State | None = None
         self._dirty = False
         self._last_flush = 0.0
 
@@ -189,8 +188,8 @@ class WatchStore:
         key: str,
         name: str,
         *,
-        last_seen: Optional[datetime] = None,
-        node_type: Optional[int] = None,
+        last_seen: datetime | None = None,
+        node_type: int | None = None,
     ) -> None:
         """Star a node with default rules.
 
@@ -236,7 +235,7 @@ class WatchStore:
             self._save()
 
     def note_heard(
-        self, key: str, *, when: Optional[datetime] = None, name: Optional[str] = None
+        self, key: str, *, when: datetime | None = None, name: str | None = None
     ) -> None:
         """Record that a watched node was heard (packet-driven; writes throttled).
 
@@ -256,7 +255,7 @@ class WatchStore:
         self._dirty = True
         self.flush(only_if_due=True)
 
-    def mark_silent(self, key: str, when: Optional[datetime] = None) -> None:
+    def mark_silent(self, key: str, when: datetime | None = None) -> None:
         """Latch a node's active silence alarm so it fires once per quiet spell.
 
         Packet/sweep-driven (like :meth:`note_heard`), so the write is throttled — the
@@ -307,7 +306,7 @@ class WatchStore:
     # --- alerts ---------------------------------------------------------------------
 
     def add_alert(
-        self, kind: str, label: str, message: str, *, when: Optional[datetime] = None
+        self, kind: str, label: str, message: str, *, when: datetime | None = None
     ) -> Alert:
         """Append an alert to the log (capped) and persist, throttled.
 
@@ -438,7 +437,7 @@ def _as_int(value: object, default: int) -> int:
     return number if number >= 0 else default
 
 
-def _as_time(value: object) -> Optional[datetime]:
+def _as_time(value: object) -> datetime | None:
     """Parse a stored ISO-8601 timestamp, or ``None`` if absent/corrupt.
 
     A timestamp without a zone is treated as corrupt too: the store only ever writes

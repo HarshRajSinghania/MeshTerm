@@ -14,12 +14,13 @@ import os
 import re
 from pathlib import Path
 from time import monotonic
+from typing import TYPE_CHECKING
 
 import pytest
 from rich.cells import cell_len
 from rich.console import Console
 
-from meshterm.core.geo import BBox, Viewport, haversine_km, lonlat_to_world, world_to_lonlat
+from meshterm.core.geo import Viewport, haversine_km, lonlat_to_world, world_to_lonlat
 from meshterm.core.models import (
     NODE_TYPE_REPEATER,
     Observation,
@@ -31,9 +32,11 @@ from meshterm.ui.map_screen import _PAN_DIRS, _PAN_STEP
 from meshterm.ui.map_screen import _TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 
+if TYPE_CHECKING:
+    from meshterm.ui.map_screen import MapScreen
+
 _FIXTURE = Path(__file__).parent / "fixtures" / "tile_14_4843_5861.mvt"
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
-
 
 # -- MVT decoding -------------------------------------------------------------
 
@@ -456,7 +459,10 @@ def test_street_labels_are_not_built_below_the_zoom_that_can_place_them() -> Non
     away a moment later, so the frame either side of it is the same frame.
     """
     from meshterm.ui.map_render import (
-        DRAWN_LAYERS, MapMarker, _STREET_LABEL_MIN_ZOOM, render_ground,
+        _STREET_LABEL_MIN_ZOOM,
+        DRAWN_LAYERS,
+        MapMarker,
+        render_ground,
     )
 
     layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
@@ -486,7 +492,7 @@ def test_street_labels_are_not_built_below_the_zoom_that_can_place_them() -> Non
 
 def _street_labels_queued(zoom: int, tiles) -> int:
     """How many street-name candidates a frame at ``zoom`` builds before placing anything."""
-    from meshterm.ui.map_render import _STREET_LABEL, _Frame, _draw_tile
+    from meshterm.ui.map_render import _STREET_LABEL, _draw_tile, _Frame
     from meshterm.ui.mapcanvas import MapCanvas
 
     vp = Viewport(45.5019, -73.5674, zoom, 53 * 2, 26 * 4)
@@ -522,7 +528,7 @@ def test_street_name_is_drawn_only_once() -> None:
 
 def test_line_label_anchors_on_the_visible_stretch() -> None:
     """A street crossing the view is named even with both its endpoints off screen."""
-    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.map_render import _add_line_label, _Frame
     from meshterm.ui.mapcanvas import MapCanvas
 
     vp = Viewport(45.5019, -73.5674, 14, 120, 80)
@@ -540,7 +546,7 @@ def test_line_label_anchors_on_the_visible_stretch() -> None:
 
 def test_line_label_off_screen_is_not_queued() -> None:
     """A feature with nothing on screen costs no label slot at all."""
-    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.map_render import _add_line_label, _Frame
     from meshterm.ui.mapcanvas import MapCanvas
 
     vp = Viewport(45.5019, -73.5674, 16, 120, 80)
@@ -554,7 +560,7 @@ def test_line_label_off_screen_is_not_queued() -> None:
 
 def test_line_label_offers_alternates_along_the_visible_run() -> None:
     """A crowded first choice falls back further along the street rather than vanishing."""
-    from meshterm.ui.map_render import _Frame, _add_line_label
+    from meshterm.ui.map_render import _add_line_label, _Frame
     from meshterm.ui.mapcanvas import MapCanvas
 
     vp = Viewport(45.5019, -73.5674, 14, 120, 80)
@@ -1216,7 +1222,7 @@ def _loaded_tile() -> list[Layer]:
     return [Layer(name="water", extent=4096)]
 
 
-def _map_screen_with_tiles(count: int) -> "MapScreen":
+def _map_screen_with_tiles(count: int) -> MapScreen:
     """A rendered map screen carrying ``count`` tiles' worth of pan history."""
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -1287,7 +1293,8 @@ def test_map_tile_cache_keeps_the_absent_tile_markers() -> None:
 class _CapturingSession(_StubSession):
     """Drives :func:`open_map` headless: captures the pushed screen, renders it once, then
     replays a canned key sequence — so a test can assert on where the map opened and what
-    it did (or didn't) persist as the view moves."""
+    it did (or didn't) persist as the view moves.
+    """
 
     def __init__(self, cols: int, rows: int, keys: tuple[str, ...] = ()) -> None:
         super().__init__(cols, rows)
@@ -1477,7 +1484,8 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
 
 def test_map_shifted_vertical_arrows_survive_the_console_keymap(monkeypatch) -> None:
     """Shift+↑ arrives as PgUp on the PicoCalc console; with Shift physically down it
-    must fine-pan, not zoom — and plain PgUp (the F-lane's zoom) stays a zoom."""
+    must fine-pan, not zoom — and plain PgUp (the F-lane's zoom) stays a zoom.
+    """
     from meshterm.services import modifier_watch
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
@@ -1528,7 +1536,6 @@ def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
 
 def test_map_screen_find_filters_frames_and_clears() -> None:
     """Typing builds the query; ^Enter frames matches; Enter/Esc drop it; Esc then leaves."""
-
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
@@ -1637,7 +1644,8 @@ async def test_open_map_focus_centres_on_the_node_without_clobbering_the_saved_v
 ) -> None:
     """Opening the full map focused on a node (from its detail page) centres there, at the
     inline preview's zoom — and, being a transient peek, never overwrites the persisted
-    'where you left the map' global view, even as the peek is panned and zoomed."""
+    'where you left the map' global view, even as the peek is panned and zoomed.
+    """
     from meshterm.core.geo import clamp_lat
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import open_map
@@ -1668,7 +1676,8 @@ async def test_open_map_without_focus_restores_and_persists_the_global_view(
     ctx, monkeypatch
 ) -> None:
     """With no focus the full map is unchanged: it reopens where the user left it and pans
-    persist straight back to that global view."""
+    persist straight back to that global view.
+    """
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import open_map
     from meshterm.ui.surface import TuiUi
@@ -1713,7 +1722,6 @@ def test_map_screen_scrubs_right_edge_after_move() -> None:
 
 def test_map_screen_escape_dismisses() -> None:
     """Esc resolves the screen's future with None (backs out to the menu)."""
-
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
@@ -1741,7 +1749,8 @@ def test_map_observation_round_trips_node_type(ctx) -> None:
 
 def test_render_map_labels_take_the_name_hue_ours_white() -> None:
     """Node labels carry their key-derived hue; our own label is white while the
-    ★ glyph stays yellow; a keyless label lands on the muted grey."""
+    ★ glyph stays yellow; a keyless label lands on the muted grey.
+    """
     from meshterm.ui.map_render import _SELF, MapMarker, render_map
     from meshterm.ui.widgets import name_rgb
 
@@ -1771,7 +1780,7 @@ def test_render_map_find_matches_still_label_white() -> None:
 # --- a tile nobody answered about is asked for again ----------------------------------
 
 
-def _map_over(source) -> "MapScreen":  # noqa: ANN001
+def _map_over(source) -> MapScreen:  # noqa: ANN001
     """A map screen fetching from ``source``, with an event loop it can hand work to."""
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen

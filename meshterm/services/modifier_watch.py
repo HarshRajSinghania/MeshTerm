@@ -30,8 +30,8 @@ from __future__ import annotations
 import struct
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 #: struct input_event on 32-bit ARM: struct timeval (2 × long = 8 bytes), then
 #: __u16 type, __u16 code, __s32 value.
@@ -46,7 +46,7 @@ _KEY_RIGHTSHIFT = 54
 _SYS_INPUT = Path("/sys/class/input")
 
 _shift_down = False
-_thread: Optional[threading.Thread] = None
+_thread: threading.Thread | None = None
 
 #: How long a resolved F6–F10 keycode keeps :func:`shift_down` latched ``True`` after the
 #: raw signal drops — long enough to bridge the MCU's release/re-assert flicker around a
@@ -54,7 +54,7 @@ _thread: Optional[threading.Thread] = None
 #: one held keypress. See :func:`note_shift_bank_key`.
 _SHIFT_BANK_GRACE_S = 0.6
 
-_last_shift_bank_at: Optional[float] = None
+_last_shift_bank_at: float | None = None
 
 
 def shift_down() -> bool:
@@ -83,7 +83,7 @@ def note_shift_bank_key() -> None:
     _last_shift_bank_at = time.monotonic()
 
 
-def _find_keyboard() -> Optional[Path]:
+def _find_keyboard() -> Path | None:
     """The PicoCalc keyboard's event device, or ``None`` when it isn't this machine."""
     try:
         for entry in sorted(_SYS_INPUT.glob("event*")):

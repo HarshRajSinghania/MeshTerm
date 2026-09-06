@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -95,7 +94,7 @@ def _variants() -> list[str]:
     return [name for _, name in sorted(named, reverse=True)]
 
 
-def _split_sauce(raw: bytes) -> tuple[bytes, Optional[int]]:
+def _split_sauce(raw: bytes) -> tuple[bytes, int | None]:
     """The art alone, and the canvas width SAUCE claims for it (``None`` when unsigned).
 
     A file with no record is returned whole and unmeasured: its newlines are its rows, and
@@ -211,7 +210,7 @@ def logo_width(rows: list[str]) -> int:
     return max((cell_len(Text.from_ansi(row).plain) for row in rows), default=0)
 
 
-def load_logo(max_cols: Optional[int] = None) -> list[str]:
+def load_logo(max_cols: int | None = None) -> list[str]:
     """Return the widest wordmark that fits ``max_cols``, as pre-coloured ANSI rows.
 
     Args:

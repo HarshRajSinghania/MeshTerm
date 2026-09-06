@@ -17,7 +17,7 @@ of the outbox screen's own Send-now, Cancel, and Clear-finished actions.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -37,7 +37,7 @@ class CourierTool(Tool):
     category = "Message"
     order = 30  # after Chat and Channels: the same conversations, minus the waiting around
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the outbox screen; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so
@@ -237,7 +237,7 @@ class CourierTool(Tool):
         def _queue_cmd(
             contact: str = typer.Argument(..., help="The recipient contact's name"),
             text: list[str] = typer.Argument(..., help="The message to queue"),
-            at: Optional[str] = typer.Option(
+            at: str | None = typer.Option(
                 None, "--at", help="Hold until this local time (HH:MM, next occurrence)"
             ),
         ) -> None:

@@ -44,7 +44,8 @@ Beyond timelines, the module owns the app's two other braille conventions:
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence, Union
+from collections.abc import Callable, Sequence
+from typing import Union
 
 from rich.text import Text
 
@@ -108,7 +109,7 @@ GAP = _Gap()
 
 
 def chart_span(
-    values: Sequence[Optional[float]], span: Optional[tuple[float, float]] = None
+    values: Sequence[float | None], span: tuple[float, float] | None = None
 ) -> tuple[float, float]:
     """The vertical range a chart of ``values`` draws over, zero always included.
 
@@ -135,13 +136,13 @@ def chart_span(
 
 
 def timeline_rows(
-    values: Sequence[Optional[float]],
+    values: Sequence[float | None],
     *,
     rows: int = 1,
-    span: Optional[tuple[float, float]] = None,
+    span: tuple[float, float] | None = None,
     style: CellStyle = "ok",
     baseline_style: str = "faint",
-    column_styles: Optional[Sequence[str]] = None,
+    column_styles: Sequence[str] | None = None,
 ) -> list[Text]:
     """Render a chronological series as a braille bar chart, newest at the right.
 
@@ -177,7 +178,7 @@ def timeline_rows(
     up = total - base  # dot rows available to a full-scale positive bar
     down = base + 1  # …and to a full-scale negative one (baseline row included)
 
-    bars: list[Optional[tuple[int, int]]] = []
+    bars: list[tuple[int, int] | None] = []
     for value in values:
         # GAP must short-circuit ahead of the numeric tests — it has no magnitude,
         # so ``value == 0`` / ``value > 0`` would misfire (or raise) on the sentinel.
@@ -196,9 +197,9 @@ def activity_sparkline(
     histogram: Sequence[int],
     buckets: int,
     *,
-    peak: Optional[float] = None,
+    peak: float | None = None,
     style: str = "ok",
-    column_styles: Optional[Sequence[str]] = None,
+    column_styles: Sequence[str] | None = None,
 ) -> Text:
     """A one-row activity sparkline over a newest-first histogram, "now" rightmost.
 
@@ -240,11 +241,11 @@ def activity_sparkline(
     # The window's own peak when the caller names none; a one-row chart is four dot
     # rows tall, so a bucket at the peak fills all four (see timeline_rows' up=total).
     scale = peak if peak is not None else max(window, default=0)
-    per_column: Optional[list[str]] = None
+    per_column: list[str] | None = None
     if column_styles is not None:
         padded = (list(column_styles) + [style] * buckets)[:buckets]
         per_column = list(reversed(padded))
-    bars: list[Optional[tuple[int, int]]] = []
+    bars: list[tuple[int, int] | None] = []
     for count in reversed(window):
         if count <= 0 or scale <= 0:
             bars.append(None)
@@ -344,12 +345,12 @@ _METER_SLIM = ("⠶", "⠆")
 
 
 def meter(
-    fraction: Optional[float],
+    fraction: float | None,
     width: int,
     *,
     style: str,
     slim: bool = False,
-    track: Optional[str] = None,
+    track: str | None = None,
 ) -> Text:
     """Render a single value as a horizontal braille meter, two fill steps per cell.
 
@@ -575,12 +576,12 @@ def axis_chart(
     chart_rows: list[Text],
     peak: float,
     chars: int,
-    label_at: Optional[Callable[[float], str]] = None,
+    label_at: Callable[[float], str] | None = None,
     *,
-    label_w: Optional[int] = None,
+    label_w: int | None = None,
     style: str = "muted",
     floor: float = 0.0,
-    ticks: Optional[Sequence[tuple[int, str]]] = None,
+    ticks: Sequence[tuple[int, str]] | None = None,
 ) -> list[Text]:
     """Frame :func:`timeline_rows` output with a mirrored y-axis and an x-axis caption.
 
@@ -671,7 +672,7 @@ def _baseline_row(lo: float, hi: float, total: int) -> int:
     return min(total - 2, max(1, round((total - 1) * -lo / (hi - lo))))
 
 
-def _column_bits(bar: Optional[tuple[int, int]], floor: int, table: tuple[int, ...]) -> int:
+def _column_bits(bar: tuple[int, int] | None, floor: int, table: tuple[int, ...]) -> int:
     """The braille bits one column's bar lights within a cell row.
 
     Args:
@@ -692,13 +693,13 @@ def _column_bits(bar: Optional[tuple[int, int]], floor: int, table: tuple[int, .
 
 
 def _assemble(
-    bars: list[Optional[tuple[int, int]]],
-    values: list[Optional[float]],
+    bars: list[tuple[int, int] | None],
+    values: list[float | None],
     rows: int,
     base: int,
     style: CellStyle,
     baseline_style: str,
-    column_styles: Optional[Sequence[str]] = None,
+    column_styles: Sequence[str] | None = None,
 ) -> list[Text]:
     """Assemble bar spans into styled braille rows (the shared cell walk).
 

@@ -19,7 +19,8 @@ device; anything else sends the user back to the list to choose another.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Awaitable, Callable, Mapping, Optional
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 #: the device needs a PIN (the picker then collects one and retries with it), or another
 #: :class:`DeviceCommandError` for a different actionable failure (shown verbatim). The second
 #: argument is the PIN to try, or ``None`` to use whatever default the caller holds.
-Verify = Callable[[DiscoveredDevice, Optional[str]], Awaitable[Optional[dict]]]
+Verify = Callable[[DiscoveredDevice, str | None], Awaitable[dict | None]]
 
 #: The Quit row's value. Selecting it — like pressing Esc — leaves the splash without a
 #: device, which the caller treats as "exit the program".
@@ -116,7 +117,7 @@ def _hardware_name(device: DiscoveredDevice) -> str:
 
 
 def _display_name(
-    device: DiscoveredDevice, registry: dict[str, "RememberedDevice"]
+    device: DiscoveredDevice, registry: dict[str, RememberedDevice]
 ) -> str:
     """The name to show for ``device``: its remembered mesh node name, else the hardware name.
 
@@ -137,7 +138,7 @@ def _where(device: DiscoveredDevice) -> str:
 
 
 def _hardware_label(
-    device: DiscoveredDevice, registry: dict[str, "RememberedDevice"]
+    device: DiscoveredDevice, registry: dict[str, RememberedDevice]
 ) -> str:
     """The HARDWARE column text: the remembered firmware model, else the USB vendor.
 
@@ -167,12 +168,12 @@ def _model_from(info: dict) -> str:
 
 
 async def _smoke_test(
-    ui: "Ui",
+    ui: Ui,
     chosen: DiscoveredDevice,
     name: str,
     where: str,
     verify: Verify,
-) -> Optional[dict]:
+) -> dict | None:
     """Smoke-test ``chosen`` behind the splash spinner, collecting a Bluetooth PIN if needed.
 
     Runs the ``verify`` probe on the chromeless splash (its wordmark and box unchanged, only an
@@ -193,7 +194,7 @@ async def _smoke_test(
         notice — to send the user back to the device list (not a MeshCore endpoint, an
         unrecoverable failure, or a cancelled PIN prompt).
     """
-    pin: Optional[str] = None
+    pin: str | None = None
     pin_error = ""  # empty on the first ask; set once a PIN has been rejected
     while True:
         # BLE connect and service discovery take a few seconds, so the spinner matters most here.
@@ -256,12 +257,12 @@ async def _smoke_test(
 
 
 async def prompt_device(
-    ui: "Ui",
+    ui: Ui,
     devices: list[DiscoveredDevice],
     store: DeviceStore,
     verify: Verify,
-    profiles: Optional[Mapping[str, DeviceProfile]] = None,
-) -> Optional[DiscoveredDevice]:
+    profiles: Mapping[str, DeviceProfile] | None = None,
+) -> DiscoveredDevice | None:
     """Prompt the user to choose a companion device on the startup splash.
 
     The chosen device is smoke-tested before it is accepted: only a device that answers the
@@ -385,7 +386,7 @@ def _remembered_tcp_devices(
 
 def _profile_tcp_devices(
     listed: list[DiscoveredDevice],
-    profiles: Optional[Mapping[str, DeviceProfile]],
+    profiles: Mapping[str, DeviceProfile] | None,
 ) -> list[DiscoveredDevice]:
     """Rebuild configured TCP profiles as :class:`DiscoveredDevice` rows for the picker.
 
@@ -423,7 +424,7 @@ def _profile_tcp_devices(
 
 def _profile_serial_devices(
     listed: list[DiscoveredDevice],
-    profiles: Optional[Mapping[str, DeviceProfile]],
+    profiles: Mapping[str, DeviceProfile] | None,
 ) -> list[DiscoveredDevice]:
     """Rebuild configured serial profiles as :class:`DiscoveredDevice` rows for the picker.
 
@@ -460,11 +461,11 @@ def _profile_serial_devices(
 
 
 async def _add_network_device(
-    ui: "Ui",
+    ui: Ui,
     store: DeviceStore,
     registry: dict[str, RememberedDevice],
     verify: Verify,
-) -> Optional[DiscoveredDevice]:
+) -> DiscoveredDevice | None:
     """Collect a ``host:port``, smoke-test the network companion there, and remember it.
 
     A network (TCP) companion is named by hand — it isn't attached and doesn't advertise — so
@@ -511,7 +512,7 @@ async def _add_network_device(
 
 
 async def _remove_network_device(
-    ui: "Ui",
+    ui: Ui,
     store: DeviceStore,
     registry: dict[str, RememberedDevice],
     device: DiscoveredDevice,
@@ -568,7 +569,7 @@ def _order(
 
 def _build_items(
     devices: list[DiscoveredDevice],
-    remembered: Optional[RememberedDevice],
+    remembered: RememberedDevice | None,
     registry: dict[str, RememberedDevice],
 ) -> list:
     """Build the aligned splash rows (a muted header + one :class:`Choice` per device).

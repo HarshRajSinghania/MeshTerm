@@ -12,7 +12,7 @@ importers of those modules are untouched.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 #: An ``(r, g, b)`` colour triple, 0–255 per channel (the raster/canvas colour type).
 RGB = tuple[int, int, int]
@@ -54,7 +54,7 @@ DST_NODE = "\x00dst"
 GlyphOf = Callable[[str], tuple[str, str]]
 
 #: A node's graph label, or ``None``/``""`` to leave the marker bare.
-LabelOf = Callable[[str], Optional[str]]
+LabelOf = Callable[[str], str | None]
 
 #: The colour a node's label is drawn in (usually the node's name hue).
 LabelRgbOf = Callable[[str], RGB]

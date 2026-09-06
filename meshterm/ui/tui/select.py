@@ -9,8 +9,9 @@ arbitrary objects, so the same screen drives the main menu (tool names), the dev
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -75,29 +76,29 @@ class Choice:
             wherever the builder's list ends up being shown.
     """
 
-    title: Union[str, Text, Callable[[], Union[str, Text]], Callable[[int], Union[str, Text]]]
+    title: str | Text | Callable[[], str | Text] | Callable[[int], str | Text]
     value: Any
     deletable: bool = False
-    detail: Union[str, Text, Callable[[], Union[str, Text]], None] = None
+    detail: str | Text | Callable[[], str | Text] | None = None
     hscroll_from: int = 0
 
     def __post_init__(self) -> None:
         # The callable form's arity, read once — see _wants_width.
         self._title_wants_width = callable(self.title) and _wants_width(self.title)
 
-    def text(self, width: int) -> Union[str, Text]:
+    def text(self, width: int) -> str | Text:
         """The row's content at ``width`` cells, resolving either callable form."""
         if not callable(self.title):
             return self.title
         return self.title(width) if self._title_wants_width else self.title()
 
     @property
-    def label(self) -> Union[str, Text]:
+    def label(self) -> str | Text:
         """The row's *natural* (unbounded) text — what filtering and measuring read."""
         return self.text(_UNBOUNDED)
 
     @property
-    def detail_label(self) -> Optional[Union[str, Text]]:
+    def detail_label(self) -> str | Text | None:
         """The row's current detail line, resolving a callable on each read."""
         return self.detail() if callable(self.detail) else self.detail
 
@@ -118,7 +119,7 @@ class DeleteRequest:
     value: Any
 
 
-def _plain(label: Union[str, Text]) -> str:
+def _plain(label: str | Text) -> str:
     """The plain-text form of a row label, for filtering (a :class:`Text` keeps its ``plain``)."""
     return label.plain if isinstance(label, Text) else label
 
@@ -201,12 +202,12 @@ class Separator:
             *is* its block's only landmark.
     """
 
-    title: Union[str, Text, Callable[[int], Union[str, Text]]]
+    title: str | Text | Callable[[int], str | Text]
     style: str = "muted"
     pinned: bool = False
     heading: bool = False
 
-    def text(self, width: int) -> Union[str, Text]:
+    def text(self, width: int) -> str | Text:
         """The row's content at ``width`` cells, resolving a width-aware title."""
         return self.title(width) if callable(self.title) else self.title
 
@@ -285,7 +286,7 @@ class SelectScreen(Screen):
         *,
         prompt: str = "",
         default: Any = None,
-        footer_hint: Optional[str] = None,
+        footer_hint: str | None = None,
         delete_hint: str = "",
         filterable: bool = True,
         hscroll: bool = False,
@@ -358,7 +359,7 @@ class SelectScreen(Screen):
                     break
 
     def replace_items(
-        self, items: list, *, title: Optional[str] = None, prompt: Optional[str] = None
+        self, items: list, *, title: str | None = None, prompt: str | None = None
     ) -> None:
         """Swap the list's rows (and optionally its title) in place, keeping the reader's place.
 
@@ -418,12 +419,12 @@ class SelectScreen(Screen):
             if isinstance(it, Separator) or needle in _plain(it.label).lower()
         ]
 
-    def _choices(self, rows: Optional[list] = None) -> list:
+    def _choices(self, rows: list | None = None) -> list:
         """Return just the selectable choices among ``rows`` (or the current rows)."""
         rows = self._rows() if rows is None else rows
         return [it for it in rows if isinstance(it, Choice)]
 
-    def _section_starts(self, rows: Optional[list] = None) -> list[int]:
+    def _section_starts(self, rows: list | None = None) -> list[int]:
         """Choice indices that begin a section — the first choice after each run of separators.
 
         Drives Ctrl+PageUp/PageDown section jumps. Computed over the *displayed* rows by
@@ -480,7 +481,7 @@ class SelectScreen(Screen):
             else:
                 self._index = at_or_before[-2] if len(at_or_before) >= 2 else 0
 
-    def _current_choice(self) -> Optional[Choice]:
+    def _current_choice(self) -> Choice | None:
         """The choice the highlight currently sits on, or ``None`` when the list is empty."""
         choices = self._choices()
         if not choices:
@@ -605,7 +606,7 @@ class SelectScreen(Screen):
 
         # One entry per body line: a finished string, or a callable that draws it when the
         # frame asks. Positions are exact either way, which is all the layout below reads.
-        lines: list[Union[str, Callable[[], str]]] = []
+        lines: list[str | Callable[[], str]] = []
         # A prompt (when set) sits above the list, offsetting every row below it; the cursor
         # line and sticky-header indices below are shifted by exactly this many lines.
         prefix = 0
@@ -627,12 +628,12 @@ class SelectScreen(Screen):
         # the pinning keeps working while the list narrows.
         self._sticky_headers = []
         self._pinned_header = None
-        block: Optional[list[str]] = None  # the heading block still taking rows, if any
+        block: list[str] | None = None  # the heading block still taking rows, if any
         if self._filter:
             lines.append(query_line(self._filter, width))
         # A row's detail line (see Choice.detail) can make it two lines tall, so the cursor
         # is tracked inline as rows are drawn rather than derived from the row index.
-        cursor_at: Optional[int] = None
+        cursor_at: int | None = None
         for item in rows:
             if isinstance(item, Separator):
                 # A Text title carries its own spans (a two-colour column header); a plain
@@ -680,7 +681,7 @@ class SelectScreen(Screen):
         self._cursor = None if cursor_at is None else cursor_at + prefix
         return LazyLines(lines)
 
-    def _row_drawer(self, item: "Choice", is_sel: bool, width: int) -> Callable[[], str]:
+    def _row_drawer(self, item: Choice, is_sel: bool, width: int) -> Callable[[], str]:
         """A callable that rasterizes one choice row — run only if the row is on screen."""
 
         def draw() -> str:
@@ -765,7 +766,7 @@ class SelectScreen(Screen):
         return out
 
     @staticmethod
-    def _detail_drawer(detail: Union[str, Text], width: int) -> Callable[[], str]:
+    def _detail_drawer(detail: str | Text, width: int) -> Callable[[], str]:
         """A callable that rasterizes a row's already-resolved detail line, on demand.
 
         Hangs under the row at the pointer's own indent — never scrolls or wraps, just
@@ -783,7 +784,7 @@ class SelectScreen(Screen):
 
         return draw
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Return the body line index of the highlighted row."""
         return getattr(self, "_cursor", None)
 
@@ -974,7 +975,7 @@ class ReorderScreen(Screen):
         self._cursor = self._index if self._index < n else self._index + 1
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Return the body line index of the cursor row, so the session keeps it in view."""
         return getattr(self, "_cursor", None)
 

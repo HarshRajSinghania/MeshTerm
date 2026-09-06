@@ -20,8 +20,7 @@ in the value lane instead of breaking the screen.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 #: Reply text (lowercased) that reads as the firmware refusing/unknowing a command.
 _ERRORISH = ("unknown", "error", "err:", "invalid", "denied", "bad ")
@@ -51,8 +50,8 @@ class RemoteSetting:
     kind: str = "str"
     writable: bool = True
     readable: bool = True
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
+    minimum: float | None = None
+    maximum: float | None = None
     unit: str = ""
 
     @property
@@ -180,7 +179,7 @@ def known_commands() -> list[str]:
     return sorted(commands)
 
 
-def get_setting(key: str) -> Optional[RemoteSetting]:
+def get_setting(key: str) -> RemoteSetting | None:
     """Look up a catalog setting by its CLI key."""
     return next((s for s in REPEATER_SETTINGS if s.key == key), None)
 
@@ -199,7 +198,7 @@ def reply_is_error(reply: str) -> bool:
     return any(marker in lowered for marker in _ERRORISH)
 
 
-def parse_reply_value(spec: RemoteSetting, reply: Optional[str]) -> Optional[str]:
+def parse_reply_value(spec: RemoteSetting, reply: str | None) -> str | None:
     """Extract a display value from a ``get`` reply, or ``None`` when unusable.
 
     Numeric settings pull the first number out of the terse, version-varying reply
@@ -237,7 +236,7 @@ def parse_reply_value(spec: RemoteSetting, reply: Optional[str]) -> Optional[str
     return text or None
 
 
-def validate_value(spec: RemoteSetting, raw: str) -> "bool | str":
+def validate_value(spec: RemoteSetting, raw: str) -> bool | str:
     """Validate a prompted value for ``spec``: ``True``, or the error message to show."""
     text = raw.strip()
     if not text:

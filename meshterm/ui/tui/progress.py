@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.table import Table
@@ -30,7 +30,7 @@ class _Task:
     """One tracked progress task."""
 
     description: str
-    total: Optional[float]
+    total: float | None
     completed: float = 0.0
 
 
@@ -64,7 +64,7 @@ class ProgressScreen(Screen):
         """Advance the working chip one frame (called from the dialog's animation timer)."""
         self.spinner.tick()
 
-    def add_task(self, description: str, total: Optional[float] = None) -> int:
+    def add_task(self, description: str, total: float | None = None) -> int:
         """Add a task and return its id (mirrors ``rich.progress.Progress.add_task``)."""
         task_id = self._next
         self._next += 1
@@ -79,9 +79,9 @@ class ProgressScreen(Screen):
         self,
         task_id: int,
         *,
-        description: Optional[str] = None,
-        completed: Optional[float] = None,
-        total: Optional[float] = None,
+        description: str | None = None,
+        completed: float | None = None,
+        total: float | None = None,
     ) -> None:
         """Update a task's fields (mirrors the ``Progress.update`` kwargs used)."""
         task = self._tasks[task_id]
@@ -147,11 +147,11 @@ class TuiProgress:
     mutate it and repaint; exiting cancels the timer and pops it.
     """
 
-    session: "TuiSession"
+    session: TuiSession
     title: str = "Working"
     interval: float = 0.1
     _screen: ProgressScreen = field(init=False, default=None)  # type: ignore[assignment]
-    _ticker: "asyncio.Task[None] | None" = field(init=False, default=None)
+    _ticker: asyncio.Task[None] | None = field(init=False, default=None)
 
     def __enter__(self) -> ProgressScreen:
         """Push the progress dialog and start its animation timer."""

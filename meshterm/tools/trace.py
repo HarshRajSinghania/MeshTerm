@@ -27,10 +27,9 @@ stored history reads the same no matter where it came from.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.text import Text
 
 from ..context import AppContext
 from ..core.models import LOCAL_DEVICE_LABEL, PATH_TRACE_TARGET, Contact, TraceStats
@@ -57,7 +56,7 @@ class TraceTool(Tool):
     category = "Explore"
     order = 30  # see a node above, walk to it here
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Nothing to gather here — the target picker lives inside :meth:`run`.
 
         The picker has to *stay pushed* while the live screen it opens runs: that is what
@@ -157,7 +156,7 @@ class TraceTool(Tool):
                 sessions += 1
                 picker.update_rows(self._picker_rows(ctx, contacts))
 
-    async def _prompt_target(self, ctx: AppContext) -> Optional[str]:
+    async def _prompt_target(self, ctx: AppContext) -> str | None:
         """Ask for a target by hand — the way in when there is no list to pick from.
 
         Reached with no known contacts at all (an empty list would be nothing to pick from)
@@ -175,7 +174,7 @@ class TraceTool(Tool):
 
     async def _build_picker(
         self, ctx: AppContext
-    ) -> Optional[tuple[ContactListScreen, list[Contact]]]:
+    ) -> tuple[ContactListScreen, list[Contact]] | None:
         """Build the trace-target picker, or ``None`` when there is no list to draw.
 
         The same ``NAME · TRACED · HEARD · PKTS · KEY`` lanes, Ctrl+arrow sort ring, and
@@ -289,7 +288,7 @@ class TraceTool(Tool):
         @app.command(name=self.name, help="Run a single path trace to a target and show per-hop SNR")
         def _trace(
             target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix"),
-            path: Optional[str] = typer.Option(
+            path: str | None = typer.Option(
                 None,
                 "--path",
                 "-p",
@@ -313,7 +312,7 @@ class TracePathTool(Tool):
     category = "Explore"
     order = 32
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """No parameters to gather — a path walk has no target to pick.
 
         Args:
@@ -383,7 +382,7 @@ class TracePathTool(Tool):
 
 
 async def _trace_once_cli(
-    ctx: AppContext, run_id: int, *, target: str, path_spec: Optional[str]
+    ctx: AppContext, run_id: int, *, target: str, path_spec: str | None
 ) -> ToolResult:
     """Run one persisted trace and print the route and per-hop summary (CLI body).
 
@@ -419,7 +418,7 @@ async def _trace_once_cli(
     # Resolve an optional forced path (names/hex) to the hex string the radio wants.
     # Leaving it blank is fully supported for a *target* trace: the device reuses the
     # route it already learned (or floods if it has none). A path walk always has one.
-    path: Optional[str] = None
+    path: str | None = None
     if path_spec:
         path = trace_runner.parse_trace_path(path_spec, contacts)
         ctx.ui.note(f"[muted]forcing path:[/muted] [brand]{path}[/brand]")

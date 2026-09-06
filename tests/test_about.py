@@ -20,7 +20,6 @@ from meshterm.ui.about import (
     join_discord,
     support_project,
 )
-
 from tests.conftest import plain
 
 
@@ -35,7 +34,8 @@ def _page(builder, *, viewport: int = 40, width: int = 72) -> str:
 
 def test_about_meshterm_leads_with_live_package_facts() -> None:
     """The version and copyright come from the package, so the page can't describe a
-    build it isn't running inside."""
+    build it isn't running inside.
+    """
     text = _page(about_meshterm)
 
     assert f"MeshTerm v{__version__}" in text
@@ -140,7 +140,8 @@ def test_the_licence_section_states_the_terms_and_the_credit_it_owes() -> None:
 
 def test_the_discord_page_carries_the_invite_link_and_a_code_to_scan_it_with() -> None:
     """The link is the whole page, and on a console with no clipboard the QR is how it
-    leaves the screen — so both have to survive the render."""
+    leaves the screen — so both have to survive the render.
+    """
     text = _page(join_discord)
 
     assert "https://discord.gg/AZwe5Uvb3S" in text
@@ -184,7 +185,8 @@ def test_each_section_heading_is_a_landmark_the_page_can_pin(builder, headings) 
 def test_the_console_lane_claims_the_section_step_only_while_the_page_scrolls() -> None:
     """On the PicoCalc the lane is the only place a chord can advertise itself — but it
     never advertises a key that would do nothing (``CLAUDE.md``), and a page you can see
-    whole has no section to step to."""
+    whole has no section to step to.
+    """
     from meshterm.platforms import PICOCALC, REGULAR, set_platform
 
     set_platform(PICOCALC)

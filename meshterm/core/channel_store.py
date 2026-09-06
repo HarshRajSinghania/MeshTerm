@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .channels import (
     CHANNEL_SECRET_BYTES,
@@ -76,7 +76,7 @@ class ChannelStore:
             path: Path to the JSON state file (created lazily on the first remembered channel).
         """
         self._path = path
-        self._devices: Optional[dict[str, list[RememberedChannel]]] = None
+        self._devices: dict[str, list[RememberedChannel]] | None = None
 
     @property
     def _state(self) -> dict[str, list[RememberedChannel]]:
@@ -162,7 +162,7 @@ class ChannelStore:
         tmp.replace(self._path)
 
 
-def _channel_from_json(entry: object) -> Optional[RememberedChannel]:
+def _channel_from_json(entry: object) -> RememberedChannel | None:
     """Parse one stored channel entry, or ``None`` if it is malformed."""
     if not isinstance(entry, dict):
         return None
@@ -177,7 +177,7 @@ def _channel_from_json(entry: object) -> Optional[RememberedChannel]:
     return RememberedChannel(idx=idx, name=name, secret=secret)
 
 
-async def reconcile(store: ChannelStore, device: "Device") -> int:
+async def reconcile(store: ChannelStore, device: Device) -> int:
     """Replay a device's remembered channels into any slots it isn't already reporting.
 
     Restores each remembered channel the device is missing (matched by intrinsic identity, so a
@@ -234,6 +234,6 @@ async def reconcile(store: ChannelStore, device: "Device") -> int:
     return restored
 
 
-def _next_free_slot(used: set[int]) -> Optional[int]:
+def _next_free_slot(used: set[int]) -> int | None:
     """The lowest slot index not in ``used`` within the stock capacity, or ``None`` if full."""
     return next((i for i in range(MAX_CHANNELS) if i not in used), None)

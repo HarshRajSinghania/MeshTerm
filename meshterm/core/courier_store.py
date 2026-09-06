@@ -18,7 +18,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .models import utcnow
 
@@ -58,11 +57,11 @@ class QueuedMessage:
     node_name: str
     text: str
     created: datetime
-    not_before: Optional[datetime] = None
+    not_before: datetime | None = None
     attempts: int = 0
-    last_attempt: Optional[datetime] = None
+    last_attempt: datetime | None = None
     status: str = QUEUED
-    finished: Optional[datetime] = None
+    finished: datetime | None = None
 
 
 class CourierStore:
@@ -75,7 +74,7 @@ class CourierStore:
             path: Path to the JSON state file (created lazily on first write).
         """
         self._path = path
-        self._messages: Optional[list[QueuedMessage]] = None
+        self._messages: list[QueuedMessage] | None = None
         self._next_id = 1
 
     # --- state ---------------------------------------------------------------------
@@ -123,7 +122,7 @@ class CourierStore:
         node_name: str,
         text: str,
         *,
-        not_before: Optional[datetime] = None,
+        not_before: datetime | None = None,
     ) -> QueuedMessage:
         """Add a message to the outbox.
 
@@ -154,7 +153,7 @@ class CourierStore:
         """Every entry — waiting and finished — newest first (the screen's order)."""
         return sorted(self._load(), key=lambda m: m.created, reverse=True)
 
-    def get(self, ident: int) -> Optional[QueuedMessage]:
+    def get(self, ident: int) -> QueuedMessage | None:
         """One entry by id, or ``None``."""
         return next((m for m in self._load() if m.ident == ident), None)
 
@@ -168,24 +167,25 @@ class CourierStore:
 
     # --- attempt bookkeeping -----------------------------------------------------------
 
-    def note_attempt(self, ident: int, *, when: Optional[datetime] = None) -> None:
+    def note_attempt(self, ident: int, *, when: datetime | None = None) -> None:
         """Record that a delivery attempt is being made (written *before* the send,
-        so a crash mid-transmission can never spend the retry budget twice)."""
+        so a crash mid-transmission can never spend the retry budget twice).
+        """
         message = self.get(ident)
         if message is not None:
             message.attempts += 1
             message.last_attempt = when or utcnow()
             self._save()
 
-    def mark_delivered(self, ident: int, *, when: Optional[datetime] = None) -> None:
+    def mark_delivered(self, ident: int, *, when: datetime | None = None) -> None:
         """Move an entry to :data:`DELIVERED`."""
         self._finish(ident, DELIVERED, when)
 
-    def mark_gave_up(self, ident: int, *, when: Optional[datetime] = None) -> None:
+    def mark_gave_up(self, ident: int, *, when: datetime | None = None) -> None:
         """Move an entry to :data:`GAVE_UP` (the retry budget is spent)."""
         self._finish(ident, GAVE_UP, when)
 
-    def _finish(self, ident: int, status: str, when: Optional[datetime]) -> None:
+    def _finish(self, ident: int, status: str, when: datetime | None) -> None:
         """Finish one entry and trim the done history to its cap."""
         message = self.get(ident)
         if message is None:
@@ -262,7 +262,7 @@ def _as_int(value: object, default: int) -> int:
     return number if number >= 0 else default
 
 
-def _as_time(value: object) -> Optional[datetime]:
+def _as_time(value: object) -> datetime | None:
     """Parse a stored ISO-8601 timestamp, or ``None`` if absent/corrupt.
 
     A timestamp without a zone is treated as corrupt too: the store only ever writes

@@ -102,10 +102,10 @@ theme concerns.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import permutations, product
 from math import ceil
-from typing import Callable, Optional, Sequence
 
 from .mapcanvas import MapCanvas
 from .marks import (  # noqa: F401 - canonical home; re-exported for existing importers
@@ -328,7 +328,7 @@ def _coalesce_prefixes(layers: Sequence[PathLayer]) -> list[PathLayer]:
     ]
 
 
-def _prefix_merge(nodes: set[str]) -> Optional[tuple[str, str]]:
+def _prefix_merge(nodes: set[str]) -> tuple[str, str] | None:
     """The next ``(short, long)`` id pair to fold among ``nodes``, or ``None`` when none.
 
     A short hex id (under a full 6-byte width) folds when the longer present ids that
@@ -415,7 +415,7 @@ def _unqualified(
     def glyph(node: str) -> tuple[str, str]:
         return glyph_of(_base_node(node))
 
-    def label(node: str) -> Optional[str]:
+    def label(node: str) -> str | None:
         return label_of(_base_node(node))
 
     def label_rgb(node: str) -> RGB:
@@ -437,7 +437,7 @@ def _draw_rank(layer: PathLayer) -> int:
 
 def _highlighted(
     drawn: Sequence[PathLayer], seqs: Sequence[tuple[str, ...]]
-) -> Optional[set[str]]:
+) -> set[str] | None:
     """The nodes on the one emphasised path, or ``None`` when no single path is singled out.
 
     A highlight is a *comparison*, so it takes at least two paths and exactly one winner: a
@@ -1074,7 +1074,7 @@ def _bypass_vias(
         for m in skipped:
             # The innermost free lane each side of the skipped node, then the better of the
             # two: shallower first, the side that keeps the band's height on a depth tie.
-            pick: Optional[tuple[int, int, int, int]] = None
+            pick: tuple[int, int, int, int] | None = None
             for side, sign in ((0, -1), (1, 1)):
                 for depth in range(1, high - low + 3):
                     cand = signed[m] + sign * depth
@@ -1131,8 +1131,8 @@ def _assign_lanes(
     others = [i for i in bearing if i != best]
 
     if n - 1 <= _MAX_EXACT_LANES:
-        best_order: Optional[tuple[int, ...]] = None
-        best_cost: Optional[int] = None
+        best_order: tuple[int, ...] | None = None
+        best_cost: int | None = None
         for perm in permutations(others):
             slots = list(perm)
             slots.insert(centre_slot, best)
@@ -1176,7 +1176,7 @@ def _compress_lanes(
     owner: dict[str, int],
     best: int,
     col_of: Callable[[str], int],
-    nests: Optional[dict[int, int]] = None,
+    nests: dict[int, int] | None = None,
 ) -> dict[str, int]:
     """Squeeze the per-path lanes onto the fewest rows, one node at a time within each column.
 
@@ -1325,8 +1325,8 @@ def _balance_sides(
     orig_above, orig_below = flanks(forced)
     ceiling = orig_above + orig_below  # the jog order's band height − 1; never draw taller
 
-    best_assign: Optional[dict[int, int]] = None
-    best_key: Optional[tuple[int, int, int]] = None
+    best_assign: dict[int, int] | None = None
+    best_key: tuple[int, int, int] | None = None
     for combo in product((-1, 1), repeat=len(routes)):
         assign = dict(zip(routes, combo))
         if any(assign[d] != assign[s] for d, s in tie.items()):  # a nest split off its sibling

@@ -14,7 +14,7 @@ per invocation, the trace tool's rule.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -35,7 +35,7 @@ class RepeaterAdminTool(Tool):
     category = "Other nodes"
     order = 10  # the remote sibling of the local config tools
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the interactive flow; there are never parameters to collect.
 
         The flow presents everything itself (the same pattern as ``device-actions``),
@@ -112,7 +112,7 @@ class RepeaterAdminTool(Tool):
         def _repeater_admin(
             node: str = typer.Argument(..., help="The remote contact's name"),
             command: list[str] = typer.Argument(..., help="The CLI command to send"),
-            password: Optional[str] = typer.Option(
+            password: str | None = typer.Option(
                 None, "--password", help="Admin password (else remembered)"
             ),
         ) -> None:

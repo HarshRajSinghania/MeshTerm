@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -23,13 +22,13 @@ class FakePortInfo:
     """Stand-in for ``serial.tools.list_ports_common.ListPortInfo``."""
 
     device: str
-    description: Optional[str] = None
-    hwid: Optional[str] = None
-    vid: Optional[int] = None
-    pid: Optional[int] = None
-    serial_number: Optional[str] = None
-    manufacturer: Optional[str] = None
-    product: Optional[str] = None
+    description: str | None = None
+    hwid: str | None = None
+    vid: int | None = None
+    pid: int | None = None
+    serial_number: str | None = None
+    manufacturer: str | None = None
+    product: str | None = None
 
 
 def _patch_ports(monkeypatch: pytest.MonkeyPatch, ports: list[FakePortInfo]) -> None:

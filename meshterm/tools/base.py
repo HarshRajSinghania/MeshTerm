@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # avoid importing typer/context at module load for fast startup
     import typer
@@ -29,7 +29,7 @@ class ToolResult:
     """
 
     summary: dict[str, Any] = field(default_factory=dict)
-    message: Optional[str] = None
+    message: str | None = None
     artifacts: list[str] = field(default_factory=list)
 
 
@@ -67,7 +67,7 @@ class Tool(ABC):
     popup: bool = False
 
     @abstractmethod
-    async def run(self, ctx: "AppContext", params: dict[str, Any]) -> ToolResult:
+    async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Execute the tool's work.
 
         Args:
@@ -78,7 +78,7 @@ class Tool(ABC):
             A :class:`ToolResult` describing the outcome.
         """
 
-    async def prompt_params(self, ctx: "AppContext") -> dict[str, Any]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any]:
         """Interactively gather parameters for the menu.
 
         The default implementation requires no parameters. Tools override this to ask
@@ -92,7 +92,7 @@ class Tool(ABC):
         """
         return {}
 
-    def register_cli(self, app: "typer.Typer") -> None:
+    def register_cli(self, app: typer.Typer) -> None:
         """Register this tool as a Typer subcommand.
 
         The default registers a no-argument command. Tools with parameters override this
@@ -107,7 +107,7 @@ class Tool(ABC):
         def _command() -> None:
             run_tool_command(self, {})
 
-    async def execute(self, ctx: "AppContext", params: dict[str, Any]) -> ToolResult:
+    async def execute(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Run the tool wrapped in run-logging and error capture.
 
         Opens a ``runs`` row before execution and closes it with the final status and
@@ -221,7 +221,7 @@ def all_tools() -> list[Tool]:
     )
 
 
-def get_tool(name: str) -> Optional[Tool]:
+def get_tool(name: str) -> Tool | None:
     """Look up a registered tool by name.
 
     Args:

@@ -50,9 +50,9 @@ self-calibrating, needs no legend, and stays comparable when the weights change.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from statistics import median
-from typing import Optional, Sequence
 
 from .geo import haversine_km
 from .models import Contact
@@ -181,16 +181,16 @@ class ContactSignals:
     """
 
     node: str
-    heard_age_days: Optional[float] = None
+    heard_age_days: float | None = None
     packets: int = 0
     dm_total: int = 0
     dm_outbound: int = 0
-    dm_age_days: Optional[float] = None
+    dm_age_days: float | None = None
     channel_posts: int = 0
     channel_attributed: bool = False
-    hops: Optional[float] = None
-    distance_km: Optional[float] = None
-    known_days: Optional[float] = None
+    hops: float | None = None
+    distance_km: float | None = None
+    known_days: float | None = None
     watched: bool = False
     has_admin: bool = False
 
@@ -219,7 +219,7 @@ class ScoredContact:
     signals: ContactSignals
     score: float
     percentile: int
-    protection: Optional[str] = None
+    protection: str | None = None
     reasons: tuple[str, ...] = ()
 
     @property
@@ -239,7 +239,7 @@ class ScoredContact:
 # evidence" — which the caller resolves to the population median rather than to zero.
 
 
-def _decay(age_days: Optional[float], half_life: float) -> Optional[float]:
+def _decay(age_days: float | None, half_life: float) -> float | None:
     """Exponential decay from ``1.0`` at age zero, halving every ``half_life`` days.
 
     Args:
@@ -273,7 +273,7 @@ def _saturating(count: float, ceiling: float) -> float:
     return min(1.0, math.log1p(count) / math.log1p(ceiling))
 
 
-def term_recency(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
+def term_recency(signals: ContactSignals, weights: ScoreWeights) -> float | None:
     """How lately the contact was heard, decaying with a two-week half-life.
 
     A contact never heard at all scores ``0.0`` rather than unknown: unlike a missing
@@ -287,12 +287,12 @@ def term_recency(signals: ContactSignals, weights: ScoreWeights) -> Optional[flo
     return _decay(signals.heard_age_days, weights.recency_half_life_days)
 
 
-def term_volume(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
+def term_volume(signals: ContactSignals, weights: ScoreWeights) -> float | None:
     """How much traffic MeshTerm has heard from this node, on a saturating log ramp."""
     return _saturating(signals.packets, weights.volume_saturation)
 
 
-def term_dm(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
+def term_dm(signals: ContactSignals, weights: ScoreWeights) -> float | None:
     """Direct correspondence: mostly how much, partly how lately.
 
     Split 60/40 between volume and recency so that a long exchange which has gone quiet
@@ -307,7 +307,7 @@ def term_dm(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
     return 0.6 * volume + 0.4 * recency
 
 
-def term_channel(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
+def term_channel(signals: ContactSignals, weights: ScoreWeights) -> float | None:
     """How much this contact posts on the channels the device is configured for.
 
     Returns ``None`` when the contact could not be attributed at all — a channel message
@@ -321,7 +321,7 @@ def term_channel(signals: ContactSignals, weights: ScoreWeights) -> Optional[flo
     return _saturating(signals.channel_posts, weights.channel_saturation)
 
 
-def term_hops(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]:
+def term_hops(signals: ContactSignals, weights: ScoreWeights) -> float | None:
     """Topological closeness — a hyperbolic falloff, ``1.0`` direct and ``0.5`` at the midpoint.
 
     Hyperbolic rather than exponential because the difference between four hops and five
@@ -332,7 +332,7 @@ def term_hops(signals: ContactSignals, weights: ScoreWeights) -> Optional[float]
     return 1.0 / (1.0 + max(0.0, signals.hops) / weights.hops_midpoint)
 
 
-def term_distance(signals: ContactSignals, midpoint_km: Optional[float]) -> Optional[float]:
+def term_distance(signals: ContactSignals, midpoint_km: float | None) -> float | None:
     """Geographic closeness, scaled against *this mesh's own* median distance.
 
     The midpoint is the population's median known distance rather than a constant, so the
@@ -361,7 +361,7 @@ def term_grace(signals: ContactSignals, weights: ScoreWeights) -> float:
 # -- protections ------------------------------------------------------------------------
 
 
-def protection_for(signals: ContactSignals) -> Optional[str]:
+def protection_for(signals: ContactSignals) -> str | None:
     """Why this contact can never be swept, or ``None`` if the score decides its fate.
 
     Checked in :data:`PROTECTION_ORDER` — most deliberate claim first — so a contact that
@@ -398,7 +398,7 @@ _MIN_LOCATED = 4
 _TERM_NAMES = ("dm", "recency", "volume", "channel", "hops", "distance")
 
 
-def _fill_unknowns(column: list[Optional[float]]) -> list[float]:
+def _fill_unknowns(column: list[float | None]) -> list[float]:
     """Replace every ``None`` in one term's column with the median of the known values.
 
     THE rule that keeps the sweep honest (see the module docstring): a contact that could
@@ -419,8 +419,8 @@ def _fill_unknowns(column: list[Optional[float]]) -> list[float]:
 
 
 def _self_distance(
-    contact: Contact, self_lat: Optional[float], self_lon: Optional[float]
-) -> Optional[float]:
+    contact: Contact, self_lat: float | None, self_lon: float | None
+) -> float | None:
     """Great-circle km from our own node to ``contact``, or ``None`` if either end is unplaced."""
     if self_lat is None or self_lon is None or not contact.has_location:
         return None
@@ -500,8 +500,8 @@ def rank_contacts(
     contacts: Sequence[Contact],
     signals: dict[str, ContactSignals],
     *,
-    self_lat: Optional[float] = None,
-    self_lon: Optional[float] = None,
+    self_lat: float | None = None,
+    self_lon: float | None = None,
     weights: ScoreWeights = DEFAULT_WEIGHTS,
 ) -> list[ScoredContact]:
     """Score and rank a whole contact table, strongest first.
@@ -540,7 +540,7 @@ def rank_contacts(
     located = [s.distance_km for s in gathered if s.distance_km is not None]
     midpoint = median(located) if len(located) >= _MIN_LOCATED else None
 
-    columns: dict[str, list[Optional[float]]] = {
+    columns: dict[str, list[float | None]] = {
         "dm": [term_dm(s, weights) for s in gathered],
         "recency": [term_recency(s, weights) for s in gathered],
         "volume": [term_volume(s, weights) for s in gathered],

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Optional, Sequence
+from typing import TYPE_CHECKING
 
 from rich import box
 from rich.console import Console, Group
@@ -23,7 +24,6 @@ from rich.text import Text
 
 from .. import __version__
 from ..core.channels import is_name_derived, is_public_channel, is_public_name
-from ..platforms import Platform, on_platform
 from ..core.models import (
     LOCAL_DEVICE_LABEL,
     NODE_TYPE_CHAT,
@@ -38,6 +38,7 @@ from ..core.models import (
     TxOptResult,
     utcnow,
 )
+from ..platforms import Platform, on_platform
 from .marks import (
     DST_NODE,
     NODE_MARK,
@@ -58,14 +59,14 @@ if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
 
 #: Maps a hop's raw key-prefix hash to a display label (a contact name when known).
-NodeResolver = Callable[[Optional[str]], Optional[str]]
+NodeResolver = Callable[[str | None], str | None]
 
 #: Maps a display name back to its node's key hex, or ``None`` for a name no known
 #: node carries (built by :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
-NameKeyResolver = Callable[[str], Optional[str]]
+NameKeyResolver = Callable[[str], str | None]
 
 
-def channel_glyph(name: str, secret: Optional[bytes]) -> str:
+def channel_glyph(name: str, secret: bytes | None) -> str:
     """The one-character openness marker for a channel, shared across channel-facing screens.
 
     ``＃`` marks a name-derived (``#``-style) channel, ``🌐`` a fixed-key well-known public
@@ -90,13 +91,13 @@ def channel_glyph(name: str, secret: Optional[bytes]) -> str:
         return glyph("🌐")
     return glyph("🔒")
 
-def _identity(label: Optional[str]) -> Optional[str]:
+def _identity(label: str | None) -> str | None:
     """Default node resolver: leave labels untouched."""
     return label
 
 
 def banner(
-    profile: Optional[str], mock: bool, selected_device: Optional["DiscoveredDevice"] = None
+    profile: str | None, mock: bool, selected_device: DiscoveredDevice | None = None
 ) -> Panel:
     """Build the application header panel.
 
@@ -145,12 +146,12 @@ def make_progress(console: Console) -> Progress:
 
 
 def _link_text(
-    origin: Optional[str],
-    destination: Optional[str],
+    origin: str | None,
+    destination: str | None,
     device_label: str,
     resolve: NodeResolver = _identity,
-    hash_bytes: Optional[int] = None,
-    device_hash: Optional[str] = None,
+    hash_bytes: int | None = None,
+    device_hash: str | None = None,
 ) -> Text:
     """Render an ``origin -> destination`` link through THE path widget.
 
@@ -184,7 +185,7 @@ def traces_table(
     traces: list[TraceResult],
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
-    device_hash: Optional[str] = None,
+    device_hash: str | None = None,
 ) -> Table:
     """Render every trace's per-hop SNR side by side, one column per trace.
 
@@ -256,16 +257,16 @@ def traces_table(
 
 
 def path_text(
-    hops: Sequence[Optional[str]],
+    hops: Sequence[str | None],
     resolve: NodeResolver = _identity,
     *,
     prefix_bytes: int = 0,
-    self_name: Optional[str] = None,
+    self_name: str | None = None,
     empty: str = "direct",
     show_hash: bool = False,
-    hash_bytes: Optional[int] = None,
-    device_hash: Optional[str] = None,
-    dim_from: Optional[int] = None,
+    hash_bytes: int | None = None,
+    device_hash: str | None = None,
+    dim_from: int | None = None,
     hash_as_name: bool = False,
 ) -> Text:
     """Render a hop sequence compactly on one line — THE path widget.
@@ -337,8 +338,8 @@ def revisit_note(
     resolve: NodeResolver = _identity,
     *,
     prefix_bytes: int = 0,
-    self_name: Optional[str] = None,
-) -> Optional[Text]:
+    self_name: str | None = None,
+) -> Text | None:
     """The warning a path that touches one hop twice owes its reader, or ``None`` for none.
 
     A route graph drawn with ``allow_duplicate_nodes``
@@ -383,14 +384,14 @@ def revisit_note(
 
 
 def _path_node(
-    hop: Optional[str],
+    hop: str | None,
     resolve: NodeResolver,
     *,
     prefix_bytes: int,
-    self_name: Optional[str],
+    self_name: str | None,
     show_hash: bool,
-    hash_bytes: Optional[int],
-    device_hash: Optional[str],
+    hash_bytes: int | None,
+    device_hash: str | None,
     dim: bool,
     hash_as_name: bool = False,
 ) -> Text:
@@ -435,7 +436,7 @@ def _path_node(
 
 
 def highlighted_hash(
-    value: str, prefix_bytes: int, width: Optional[int] = None, *, known: bool = True
+    value: str, prefix_bytes: int, width: int | None = None, *, known: bool = True
 ) -> Text:
     """Render a hex key with its leading path-hash prefix highlighted — THE hash widget.
 
@@ -495,7 +496,7 @@ def highlighted_hash(
     return text
 
 
-def name_chip(label: str, key: Optional[str] = None, *, you: bool = False) -> Text:
+def name_chip(label: str, key: str | None = None, *, you: bool = False) -> Text:
     """A node name drawn as a path line's single chip — THE way a surface *frames* a name.
 
     Not an imitation of the chip language but a use of it: this builds a one-hop
@@ -525,7 +526,7 @@ def name_chip(label: str, key: Optional[str] = None, *, you: bool = False) -> Te
     return PathLine([hop]).text()
 
 
-def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
+def _shorten_hash(value: str, hash_bytes: int | None) -> str:
     """Return ``value`` as bare hex truncated to ``hash_bytes`` bytes.
 
     Args:
@@ -544,7 +545,7 @@ def _shorten_hash(value: str, hash_bytes: Optional[int]) -> str:
 _SELF_RGB: RGB = (255, 255, 255)
 
 
-def _name_rgb(name: str, key: Optional[str] = None) -> RGB:
+def _name_rgb(name: str, key: str | None = None) -> RGB:
     """The RGB of a node's stable palette hue (``theme.name_style`` minus its bold).
 
     A name with no resolvable key styles ``node.unknown`` (a theme name, not a hex), so
@@ -554,7 +555,7 @@ def _name_rgb(name: str, key: Optional[str] = None) -> RGB:
     return parse_hex(hexpart) if hexpart.startswith("#") else mark_rgb(hexpart)
 
 
-def name_rgb(name: str, key: Optional[str] = None) -> RGB:
+def name_rgb(name: str, key: str | None = None) -> RGB:
     """The truecolour of a node's stable palette hue, for a braille canvas.
 
     The public face of :func:`_name_rgb` — the same hue :func:`~meshterm.ui.theme.name_style`
@@ -568,17 +569,17 @@ def name_rgb(name: str, key: Optional[str] = None) -> RGB:
 #: Maps a relay hash to its node type (see the ``NODE_TYPE_*`` constants), or ``None`` when
 #: the type is unknown — the hook that lets the route graph mark a repeater ``▲`` and not
 #: just a generic ``●``. Endpoint sentinels are never passed to it.
-TypeOf = Callable[[str], Optional[int]]
+TypeOf = Callable[[str], int | None]
 
 
 def route_graph_style(
     *,
     resolve: NodeResolver,
-    self_name: Optional[str],
-    source: Optional[str],
-    destination: Optional[str] = None,
-    type_of: Optional[TypeOf] = None,
-    key_of: Optional[NameKeyResolver] = None,
+    self_name: str | None,
+    source: str | None,
+    destination: str | None = None,
+    type_of: TypeOf | None = None,
+    key_of: NameKeyResolver | None = None,
 ) -> tuple[GlyphOf, LabelOf, LabelRgbOf]:
     """Build the per-node callbacks that draw a route on THE route graph (``pathgraph``).
 
@@ -633,7 +634,7 @@ def route_graph_style(
         named = resolve(node)
         return NODE_MARK if named and named != node else UNKNOWN_MARK
 
-    def label_of(node: str) -> Optional[str]:
+    def label_of(node: str) -> str | None:
         """Endpoints by name, relays by their first hash byte."""
         if node == DST_NODE:
             return (self_name or "you") if dst_is_self else destination
@@ -670,7 +671,7 @@ def _route_path(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
-    device_hash: Optional[str] = None,
+    device_hash: str | None = None,
     *,
     bare_self: bool = False,
     show_hash: bool = True,
@@ -717,7 +718,7 @@ def _route_text(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
-    device_hash: Optional[str] = None,
+    device_hash: str | None = None,
 ) -> Text:
     """Render a trace's walked route through THE path widget, on one line.
 
@@ -743,8 +744,8 @@ def _hop_medians_table(
     hop_snrs: list[HopAggregate],
     device_label: str,
     resolve: NodeResolver = _identity,
-    hash_bytes: Optional[int] = None,
-    device_hash: Optional[str] = None,
+    hash_bytes: int | None = None,
+    device_hash: str | None = None,
 ) -> Table:
     """Render the per-hop median SNR aggregated across a run's traces.
 
@@ -777,8 +778,8 @@ def stats_panel(
     stats: TraceStats,
     device_label: str = LOCAL_DEVICE_LABEL,
     resolve: NodeResolver = _identity,
-    route: Optional[TraceResult] = None,
-    device_hash: Optional[str] = None,
+    route: TraceResult | None = None,
+    device_hash: str | None = None,
 ) -> Panel:
     """Summarize aggregated trace statistics in a panel.
 
@@ -841,7 +842,7 @@ _NODE_GLYPHS: dict[int, tuple[str, str]] = {
 _DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], "type.node")
 
 
-def node_marker(node_type: Optional[int]) -> tuple[str, RGB]:
+def node_marker(node_type: int | None) -> tuple[str, RGB]:
     """The map-palette glyph and colour for a node type, as a ``(glyph, rgb)`` pair.
 
     The shared node-type marks (``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` plain
@@ -875,14 +876,14 @@ _HEAT_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
 _RECENCY_NEVER = "#64748b"       # never heard — the coldest slate
 
 
-def _age_seconds(when: Optional[datetime]) -> Optional[float]:
+def _age_seconds(when: datetime | None) -> float | None:
     """Seconds since ``when`` (aware UTC), or ``None`` when unknown/naive."""
     if when is None or getattr(when, "tzinfo", None) is None:
         return None
     return max(0.0, (utcnow() - when).total_seconds())
 
 
-def _format_age(secs: Optional[float]) -> str:
+def _format_age(secs: float | None) -> str:
     """A compact relative age — ``now``, ``5m``, ``3h``, ``2d``, ``4w`` — or ``never``."""
     if secs is None:
         return "never"
@@ -897,7 +898,7 @@ def _format_age(secs: Optional[float]) -> str:
     return f"{int(secs // 604800)}w"
 
 
-def format_ago(secs: Optional[float]) -> str:
+def format_ago(secs: float | None) -> str:
     """The relative-age *phrase* — ``now``, ``5m ago``, ``never`` — for running prose.
 
     The canonical grammar for every "heard … (…)" and "delivered …" row: a fresh
@@ -910,7 +911,7 @@ def format_ago(secs: Optional[float]) -> str:
     return age if age in ("now", "never") else f"{age} ago"
 
 
-def _recency_style(secs: Optional[float]) -> str:
+def _recency_style(secs: float | None) -> str:
     """The heat-map colour for a node's heard age of ``secs`` (hotter = more recent).
 
     Dispatches to the platform-bound implementation: the regular platform's continuous
@@ -919,7 +920,7 @@ def _recency_style(secs: Optional[float]) -> str:
     return _recency_impl(secs)
 
 
-def _recency_gradient(secs: Optional[float]) -> str:
+def _recency_gradient(secs: float | None) -> str:
     """The regular platform's heat: continuous interpolation over :data:`_HEAT_STOPS`.
 
     Interpolates the RGB channels between the two stops bracketing ``secs`` (in log-age
@@ -955,7 +956,7 @@ _HEAT_STEPS: tuple[tuple[float, str], ...] = (
 )                                # 1 year / never  — dark grey (heat.never)
 
 
-def _recency_quantized(secs: Optional[float]) -> str:
+def _recency_quantized(secs: float | None) -> str:
     """PicoCalc's heat: the gradient stepped onto the theme's ``heat.*`` rungs.
 
     Same scale as the regular platform's gradient and the same anchors — a console that
@@ -969,7 +970,7 @@ def _recency_quantized(secs: Optional[float]) -> str:
     return "heat.never"
 
 
-_recency_impl: Callable[[Optional[float]], str] = _recency_gradient
+_recency_impl: Callable[[float | None], str] = _recency_gradient
 
 
 @on_platform
@@ -984,7 +985,7 @@ def _key_id(value: str) -> str:
     return value.lower().removeprefix("0x")[:12]
 
 
-def _contact_pkts(contact: Contact, counts: dict[str, int]) -> Optional[int]:
+def _contact_pkts(contact: Contact, counts: dict[str, int]) -> int | None:
     """The overheard-packet tally for ``contact``, or ``None`` if never overheard."""
     ident = contact.public_key or contact.key_prefix
     return counts.get(_key_id(ident)) if ident else None
@@ -1022,8 +1023,8 @@ class ContactsSort:
         cls,
         name: str,
         columns: tuple[str, ...] = _SORT_COLUMNS,
-        opens_ascending: Optional[dict[str, bool]] = None,
-    ) -> "ContactsSort":
+        opens_ascending: dict[str, bool] | None = None,
+    ) -> ContactsSort:
         """Build a sort for ``name`` over ``columns``, opening in that column's natural direction.
 
         Falls back to the ring's first column when ``name`` isn't one of ``columns`` (so a
@@ -1170,7 +1171,8 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
 
     def bot_glyph(junction: int) -> str:
         """The bottom rule's glyph at this junction — a corner turning into/out of the
-        active tab's wall, else a flat pass-through. Always accent: see the docstring."""
+        active tab's wall, else a flat pass-through. Always accent: see the docstring.
+        """
         if junction == active:
             return "╯"
         if junction == active + 1:
@@ -1180,7 +1182,7 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
     top = Text(pad, no_wrap=True)
     mid = Text(pad, no_wrap=True)
     bot = Text("─" * margin, style="accent", no_wrap=True)
-    for i, label in enumerate(labels):
+    for i, _label in enumerate(labels):
         opens = i == 0 or i == active
         top.append("╭" if opens else "╮", style=top_style(i))
         mid.append("│", style=top_style(i))
@@ -1207,7 +1209,7 @@ def contacts_table(
     contacts: list[Contact],
     prefix_bytes: int,
     counts: dict[str, int],
-    sort: Optional[ContactsSort] = None,
+    sort: ContactsSort | None = None,
 ) -> Group:
     """List this node and its known contacts with recency, packets, type, key, and legend.
 

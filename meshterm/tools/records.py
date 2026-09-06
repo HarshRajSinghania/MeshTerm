@@ -13,7 +13,7 @@ The CLI face prints the stored boards: ``meshterm records`` reads the tables so 
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.table import Table
@@ -35,7 +35,7 @@ class TrophyCaseTool(Tool):
     category = "Explore"
     order = 40  # what the two walks above it score into
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Open the browser; returning ``None`` completes the invocation with no run row.
 
         The screen reads stored records and transmits nothing (and logs no rows of its
@@ -70,7 +70,7 @@ class TrophyCaseTool(Tool):
         )
 
     def _show_records(
-        self, ctx: AppContext, *, category: Optional[str], width: Optional[int]
+        self, ctx: AppContext, *, category: str | None, width: int | None
     ) -> ToolResult:
         """Print the stored record boards (no device, no transmissions).
 
@@ -132,14 +132,14 @@ class TrophyCaseTool(Tool):
             help="List the record-setting walks (reads the database; never transmits)",
         )
         def _records(
-            category: Optional[str] = typer.Option(
+            category: str | None = typer.Option(
                 None,
                 "--category",
                 "-c",
                 help="Only this discipline (long_haul, far_point, long_leg, "
                 "grand_tour, clean_trail, thin_thread, big_loop)",
             ),
-            width: Optional[int] = typer.Option(
+            width: int | None = typer.Option(
                 None, "--width", "-w", help="Only records at this hash width (1, 2, or 4)"
             ),
         ) -> None:

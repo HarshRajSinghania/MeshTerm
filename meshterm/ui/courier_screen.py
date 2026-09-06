@@ -23,14 +23,14 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
-from .menus import command_label, marked_label, run_steps, section_heading
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
+from .menus import command_label, marked_label, run_steps, section_heading
 from .theme import glyph
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
@@ -60,7 +60,7 @@ def _local_stamp(when: datetime) -> str:
     return when.astimezone().strftime("%b %d %H:%M")
 
 
-def parse_clock(text: str, now: Optional[datetime] = None) -> Optional[datetime]:
+def parse_clock(text: str, now: datetime | None = None) -> datetime | None:
     """Parse a local ``HH:MM`` into its *next* occurrence, as aware UTC.
 
     ``07:00`` typed at 23:40 means tomorrow morning; typed at 06:00 it means an hour
@@ -87,7 +87,7 @@ def parse_clock(text: str, now: Optional[datetime] = None) -> Optional[datetime]
     return candidate.astimezone(timezone.utc)
 
 
-async def open_courier(ctx: "AppContext") -> Optional[dict[str, Any]]:
+async def open_courier(ctx: AppContext) -> dict[str, Any] | None:
     """Run the Courier screen until dismissed.
 
     Args:
@@ -180,7 +180,7 @@ class CourierOutboxScreen(SelectScreen):
     idiom).
     """
 
-    def __init__(self, ctx: "AppContext", *, default: Any = None) -> None:
+    def __init__(self, ctx: AppContext, *, default: Any = None) -> None:
         self._ctx = ctx
         self._shape = self._fingerprint()
         super().__init__(
@@ -215,7 +215,7 @@ class CourierOutboxScreen(SelectScreen):
         self._index = max(0, min(self._index, len(choices) - 1)) if choices else 0
 
 
-def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
+def _menu_items(ctx: AppContext, entries: list[QueuedMessage]) -> list:
     """Build the screen's rows: the waiting outbox, then the finished history.
 
     Entry rows are zero-arg callables so their live state re-renders every repaint;
@@ -244,7 +244,7 @@ def _menu_items(ctx: "AppContext", entries: list[QueuedMessage]) -> list:
     return items
 
 
-def _waiting_row(ctx: "AppContext", message: QueuedMessage) -> Text:
+def _waiting_row(ctx: AppContext, message: QueuedMessage) -> Text:
     """One waiting entry: recipient, body, and what it is waiting for."""
     row = Text()
     row.append("⏳ ", style="warn")
@@ -350,7 +350,7 @@ class CourierRecipientScreen(ContactListScreen):
         )
 
 
-async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
+async def _queue_flow(ctx: AppContext, contacts: list[Contact]) -> None:
     """Float the queueing flow: recipient, message, schedule — as a stack.
 
     Three prompts, so Esc means "back one step", not "throw the whole thing away": from the
@@ -414,13 +414,13 @@ async def _queue_flow(ctx: "AppContext", contacts: list[Contact]) -> None:
     ctx.courier_store.queue(key, contact.name, text, not_before=not_before)
 
 
-async def _next_recipient(visit: Any) -> Optional[Contact]:
+async def _next_recipient(visit: Any) -> Contact | None:
     """One round of the visited recipient list: the picked contact, or ``None`` on Esc."""
     chosen = await visit.result()
     return chosen if isinstance(chosen, Contact) else None
 
 
-async def _schedule_step(ctx: "AppContext", name: str) -> Optional[object]:
+async def _schedule_step(ctx: AppContext, name: str) -> object | None:
     """The schedule step, in the shape :func:`~meshterm.ui.menus.run_steps` reads.
 
     A chain step signals *step back* with ``None``, which is exactly what
@@ -444,7 +444,7 @@ CANCEL_SCHEDULE = object()
 WHEN_HEARD = object()
 
 
-async def _pick_schedule(ctx: "AppContext", name: str):
+async def _pick_schedule(ctx: AppContext, name: str):
     """Float the when-to-send picker; return an aware UTC time, ``None``, or cancel.
 
     ``None`` means "no schedule — send on the next sign of life" (the explicit
@@ -491,7 +491,7 @@ async def _pick_schedule(ctx: "AppContext", name: str):
                 return when
 
 
-async def _entry_actions(ctx: "AppContext", ident: int) -> None:
+async def _entry_actions(ctx: AppContext, ident: int) -> None:
     """Float one entry's action menu: send now, cancel, or just look at it."""
     session = ctx.ui.session
     store = ctx.courier_store

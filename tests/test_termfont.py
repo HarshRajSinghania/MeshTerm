@@ -13,9 +13,9 @@ from pathlib import Path
 from meshterm.ui.termfont import (
     CORE,
     FULL,
+    NERD_FONT_GENERIC,
     NONE,
     UNKNOWN,
-    NERD_FONT_GENERIC,
     RecommendedFont,
     _powerline_support,
     _read_jsonc,
@@ -28,7 +28,6 @@ from meshterm.ui.termfont import (
     normalize_face,
     primary_family,
 )
-
 
 # --- name matching ----------------------------------------------------------------
 
@@ -55,7 +54,8 @@ def test_match_recommended_knows_the_nerd_font_spellings() -> None:
 
 def test_match_recommended_orders_full_patches_before_core_families() -> None:
     """``JetBrainsMono Nerd Font`` must hit its full entry, never the plain
-    ``JetBrains Mono`` core prefix — first match wins, so full entries lead."""
+    ``JetBrains Mono`` core prefix — first match wins, so full entries lead.
+    """
     assert match_recommended("JetBrainsMono Nerd Font Mono").coverage == FULL
     assert match_recommended("JetBrains Mono").coverage == CORE
 
@@ -142,7 +142,8 @@ def test_vscode_face_precedence_terminal_over_editor_workspace_over_user(
     tmp_path: Path,
 ) -> None:
     """``terminal.integrated.fontFamily`` beats ``editor.fontFamily``; within a key
-    the workspace file beats the user file; the value's head family is judged."""
+    the workspace file beats the user file; the value's head family is judged.
+    """
     workspace = tmp_path / "repo"
     (workspace / ".vscode").mkdir(parents=True)
     (workspace / ".vscode" / "settings.json").write_text(
@@ -168,7 +169,8 @@ def test_vscode_face_precedence_terminal_over_editor_workspace_over_user(
 
 def test_detect_terminal_font_ladder(tmp_path: Path) -> None:
     """WT markers first, then VS Code, then a genuine conhost; TERM disqualifies
-    the conhost probe (some other emulator is hosting the console)."""
+    the conhost probe (some other emulator is hosting the console).
+    """
     wt = detect_terminal_font(_wt_env(tmp_path, {"profiles": {"list": []}}))
     assert wt is not None and wt.source == "windows-terminal"
     code = detect_terminal_font(
@@ -203,7 +205,8 @@ def test_powerline_support_matched_font_sets_the_level(tmp_path: Path) -> None:
 
 def test_powerline_support_renderer_fallback_and_honest_none(tmp_path: Path) -> None:
     """An unmatched face on WT still earns core (the bundled-symbol fallback); the
-    same face on a bare conhost is an honest ``none``."""
+    same face on a bare conhost is an honest ``none``.
+    """
     env = _wt_env(tmp_path, {"profiles": {"list": [{"guid": "{abc-123}"}]}})
     wt = _powerline_support(env)  # face resolves to Cascadia Mono → no match
     assert (wt.level, wt.source) == (CORE, "renderer:windows-terminal")
@@ -213,7 +216,8 @@ def test_powerline_support_renderer_fallback_and_honest_none(tmp_path: Path) -> 
 
 def test_powerline_support_kitty_ssh_and_unknown() -> None:
     """Glyph-drawing terminals earn core by marker; ssh and strangers stay unknown
-    (the font lives on glass we cannot see)."""
+    (the font lives on glass we cannot see).
+    """
     kitty = _powerline_support({"TERM": "xterm-kitty"})
     assert (kitty.level, kitty.source) == (CORE, "renderer:kitty")
     ssh = _powerline_support({"TERM": "xterm", "SSH_CONNECTION": "1.2.3.4"})
@@ -224,6 +228,7 @@ def test_powerline_support_kitty_ssh_and_unknown() -> None:
 
 def test_installed_recommended_never_raises() -> None:
     """The machine scan is best-effort context for a future nudge screen — whatever
-    the platform answers, it is a RecommendedFont or None, never an exception."""
+    the platform answers, it is a RecommendedFont or None, never an exception.
+    """
     result = installed_recommended()
     assert result is None or isinstance(result, RecommendedFont)

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Iterable, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
 # PyCryptodome is imported inside the two functions that need it, never here. Importing
@@ -36,7 +36,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
 
 
-def split_channel_sender(text: str) -> tuple[Optional[str], str]:
+def split_channel_sender(text: str) -> tuple[str | None, str]:
     """Split a channel message into ``(sender_name, body)`` when it carries a name prefix.
 
     Channel messages have no sender field on the wire, so senders identify themselves by
@@ -278,7 +278,7 @@ def share_url(name: str, secret: bytes) -> str:
     return f"meshcore://channel/add?name={quote(name, safe='')}&secret={bytes(secret).hex()}"
 
 
-def parse_share_url(url: str) -> Optional[tuple[str, bytes]]:
+def parse_share_url(url: str) -> tuple[str, bytes] | None:
     """Parse a ``meshcore://channel/add`` link into ``(name, secret)``.
 
     Args:
@@ -322,7 +322,7 @@ class DecryptedText:
 
     channel_name: str
     text: str
-    sent_at: Optional[datetime]
+    sent_at: datetime | None
     attempt: int
 
 
@@ -331,7 +331,7 @@ def identify_channel(
     cipher_mac: str,
     crypted: str,
     channels: Iterable[tuple[str, bytes]],
-) -> Optional[tuple[str, bytes]]:
+) -> tuple[str, bytes] | None:
     """Name the channel an overheard frame belongs to, confirming the key by its MAC.
 
     The frame names its channel only by :func:`channel_hash`'s one-byte fingerprint, and
@@ -356,7 +356,8 @@ def identify_channel(
         The channel's ``(name, effective key)``, or ``None`` when no known channel's MAC
         matches — a channel we don't hold the key for, or a bare fingerprint collision.
     """
-    from Crypto.Hash import HMAC, SHA256 as _SHA256  # deferred: see the module header
+    from Crypto.Hash import HMAC  # deferred: see the module header
+    from Crypto.Hash import SHA256 as _SHA256
 
     try:
         mac = bytes.fromhex(cipher_mac)
@@ -381,7 +382,7 @@ def decrypt_channel_text(
     cipher_mac: str,
     crypted: str,
     channels: Iterable[tuple[str, bytes]],
-) -> Optional[DecryptedText]:
+) -> DecryptedText | None:
     """Recover a GRP_TXT frame's plaintext against a set of known channels.
 
     Mirrors the firmware's own decode of an overheard channel-text packet: the channel is

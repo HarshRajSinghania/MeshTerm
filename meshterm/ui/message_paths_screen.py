@@ -40,8 +40,6 @@ the radio already heard.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from rich.text import Text
 
 from ..core.models import ChatMessage
@@ -103,12 +101,12 @@ class MessagePathsScreen(Screen):
         matched: bool,
         resolve: NodeResolver,
         prefix_bytes: int,
-        self_name: Optional[str],
+        self_name: str | None,
         summary: str,
-        source: Optional[str] = None,
-        destination: Optional[str] = None,
-        type_of: Optional[TypeOf] = None,
-        key_of: Optional["NameKeyResolver"] = None,
+        source: str | None = None,
+        destination: str | None = None,
+        type_of: TypeOf | None = None,
+        key_of: NameKeyResolver | None = None,
     ) -> None:
         """Build the dialog over one message's matched arrivals.
 
@@ -155,7 +153,7 @@ class MessagePathsScreen(Screen):
         #: how far it *can* shift, measured against the width of the last render.
         self._hshift = 0
         self._hmax = 0
-        self._cursor: Optional[int] = None
+        self._cursor: int | None = None
         #: The arrival list's window over the rows the pinned head leaves (its ``page`` is
         #: the PgUp/PgDn stride), and whether it currently hides any rows — which is what
         #: makes the paging keys worth advertising.
@@ -223,9 +221,10 @@ class MessagePathsScreen(Screen):
         elif action in ("escape", "enter"):
             self.resolve(None)
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """The selected row's body line. The window already keeps it inside the dialog, so
-        this only bites on a terminal too short for even the compressed head."""
+        this only bites on a terminal too short for even the compressed head.
+        """
         return self._cursor
 
     # --- rendering -------------------------------------------------------------

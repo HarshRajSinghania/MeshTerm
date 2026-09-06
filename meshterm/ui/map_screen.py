@@ -32,8 +32,9 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import OrderedDict
+from collections.abc import Callable
 from time import monotonic
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_lat
 from ..core.mvt import Layer
@@ -188,8 +189,8 @@ class MapScreen(Screen):
         source: BasemapSource,
         max_tile_zoom: int,
         *,
-        saved_view: Optional[tuple[float, float, int]] = None,
-        on_view_change: Optional[Callable[[Viewport], None]] = None,
+        saved_view: tuple[float, float, int] | None = None,
+        on_view_change: Callable[[Viewport], None] | None = None,
         view_fraction: float = DEFAULT_VIEW_FRACTION,
         find: str = "",
     ) -> None:
@@ -227,7 +228,7 @@ class MapScreen(Screen):
         #: matching markers while dimming the rest. A caller may seed it (``find``), which
         #: behaves exactly like a query the user had already typed.
         self._filter = find
-        self._viewport: Optional[Viewport] = None
+        self._viewport: Viewport | None = None
         self._size: tuple[int, int] = (0, 0)  # (dot_w, dot_h) the viewport is built for
         # Ask the session to scrub the panel's right edge on the next paint (see
         # :meth:`consume_edge_scrub`). Seeded ``True`` so the first braille frame's edge is
@@ -235,35 +236,35 @@ class MapScreen(Screen):
         self._needs_scrub = True
         # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`. A stored
         # ``None`` is the source's own answer that there is nothing at those coordinates.
-        self._tiles: OrderedDict[tuple[int, int, int], Optional[list[Layer]]] = OrderedDict()
+        self._tiles: OrderedDict[tuple[int, int, int], list[Layer] | None] = OrderedDict()
         self._pending: set[tuple[int, int, int]] = set()
         # Tiles the source gave no answer about, and when each may be asked for again —
         # a cooldown, not a verdict (see :meth:`_load`).
         self._unanswered: dict[tuple[int, int, int], float] = {}
         # Anticipation (see :meth:`_prefetch_plan`): which way the view has been moving and
         # for how many steps, the tiles already speculated on, and the one fetch in flight.
-        self._heading: Optional[str] = None
+        self._heading: str | None = None
         self._momentum = 0
         # When the view last stopped changing, and which view that was (monotonic).
         self._settled_at = 0.0
-        self._settled_view: Optional[Viewport] = None
+        self._settled_view: Viewport | None = None
         self._speculated: OrderedDict[tuple[int, int, int], None] = OrderedDict()
         self._speculating = False
         # The last finished ground frame and what it was drawn for — see :meth:`render_body`.
         # Rasterizing a downtown view is ~0.5-1 s of pure Python (tens of thousands of
         # vector features), far too slow to sit on a keystroke, so it happens off the paint
         # path and the paint serves whatever is ready.
-        self._frame: Optional[list[str]] = None
-        self._frame_key: Optional[tuple] = None
+        self._frame: list[str] | None = None
+        self._frame_key: tuple | None = None
         # Whether that frame is only the coarse first pass, and so still owes its detail.
         self._frame_coarse = False
         # That frame's ground, kept so a view that has moved on can stand on it until its
         # own is drawn (see :meth:`_ground`).
-        self._ghost: Optional[Ghost] = None
-        self._drawing: Optional[tuple] = None  # the key currently being rasterized
+        self._ghost: Ghost | None = None
+        self._drawing: tuple | None = None  # the key currently being rasterized
         # The next raster to draw: its key plus the whole scene it stands for — viewport,
         # markers, find query — snapshotted at request time (see :meth:`_schedule_ground`).
-        self._wanted: Optional[tuple[tuple, Viewport, list[MapMarker], str]] = None
+        self._wanted: tuple[tuple, Viewport, list[MapMarker], str] | None = None
 
     # --- rendering -----------------------------------------------------------
 
@@ -712,7 +713,7 @@ class MapScreen(Screen):
         self._remember_speculation(tile)
         asyncio.ensure_future(self._prefetch(tile, vp))
 
-    def _next_speculation(self, vp: Viewport) -> Optional[tuple[int, int, int]]:
+    def _next_speculation(self, vp: Viewport) -> tuple[int, int, int] | None:
         """The first tile in :meth:`_prefetch_plan` we have neither got nor guessed at.
 
         A tile serving out its silence (:attr:`_unanswered`) is passed over as well, and
@@ -974,7 +975,7 @@ class MapScreen(Screen):
         self._needs_scrub = True
         self._persist()
 
-    def _self_marker(self) -> Optional[MapMarker]:
+    def _self_marker(self) -> MapMarker | None:
         """Our own node among the markers, or ``None`` when the map can't place us.
 
         A device with no location fix of its own is simply absent from the marker list, so
@@ -1098,7 +1099,7 @@ class LocationPickScreen(MapScreen):
         source: BasemapSource,
         max_tile_zoom: int,
         *,
-        initial: Optional[tuple[float, float]] = None,
+        initial: tuple[float, float] | None = None,
         zoom: int = 13,
     ) -> None:
         """Create the picker.
@@ -1197,8 +1198,8 @@ class LocationPickScreen(MapScreen):
 
 
 async def pick_location(
-    ctx: "AppContext", *, initial: Optional[tuple[float, float]] = None
-) -> Optional[tuple[float, float]]:
+    ctx: AppContext, *, initial: tuple[float, float] | None = None
+) -> tuple[float, float] | None:
     """Open the full-screen map as a coordinate picker; return ``(lat, lon)`` or ``None``.
 
     Gathers the mesh's located nodes for context (best-effort — an unreachable radio just
@@ -1240,7 +1241,7 @@ async def pick_location(
     return None if result is CANCEL or result is None else result
 
 
-def basemap_source(ctx: "AppContext") -> BasemapSource:
+def basemap_source(ctx: AppContext) -> BasemapSource:
     """The session's shared vector-tile source (see :attr:`AppContext.basemap_source`).
 
     Memoized on the context, so the one-off TileJSON resolve is paid once for the whole
@@ -1250,11 +1251,11 @@ def basemap_source(ctx: "AppContext") -> BasemapSource:
 
 
 async def open_map(
-    ctx: "AppContext",
+    ctx: AppContext,
     markers: list[MapMarker],
     *,
-    focus: Optional[tuple[float, float]] = None,
-    find: Optional[str] = None,
+    focus: tuple[float, float] | None = None,
+    find: str | None = None,
     fraction: float = DEFAULT_VIEW_FRACTION,
 ) -> None:
     """Open the interactive full-screen map over ``markers`` and run until dismissed.

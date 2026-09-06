@@ -20,8 +20,9 @@ handlers should stay cheap; a handler that returns a coroutine is scheduled as a
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, Union
+from typing import TYPE_CHECKING
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 #: A subscriber callback. Invoked with each matching :class:`MeshEvent`. Keep it cheap;
 #: it runs inline on the event loop as packets arrive. It may return a coroutine, which
 #: the hub schedules as a task rather than awaiting inline.
-EventHandler = Callable[[MeshEvent], Union[None, Awaitable[None]]]
+EventHandler = Callable[[MeshEvent], None | Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -59,7 +60,7 @@ class EventHub:
     lifecycle methods (:meth:`start`, :meth:`stop`, :meth:`aclose`) to control the pump.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize an idle hub bound to an application context.
 
         Args:
@@ -67,7 +68,7 @@ class EventHub:
                 to log. No device is opened until :meth:`start` is called.
         """
         self._ctx = ctx
-        self._device_unsubscribe: Optional[Unsubscribe] = None
+        self._device_unsubscribe: Unsubscribe | None = None
         self._subs: list[_Subscription] = []
         self._tasks: set[asyncio.Task] = set()
 
@@ -187,9 +188,9 @@ class EventHub:
     async def wait_for(
         self,
         *kinds: EventKind,
-        predicate: Optional[Callable[[MeshEvent], bool]] = None,
-        timeout: Optional[float] = None,
-    ) -> Optional[MeshEvent]:
+        predicate: Callable[[MeshEvent], bool] | None = None,
+        timeout: float | None = None,
+    ) -> MeshEvent | None:
         """Await the next event matching ``kinds`` (and ``predicate``), or time out.
 
         A one-shot convenience for consumers that want to block for a specific event

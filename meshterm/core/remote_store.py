@@ -15,7 +15,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .admin_store import admin_key
 from .models import Contact, utcnow
@@ -34,7 +33,7 @@ class CachedValue:
     """
 
     value: str
-    read_at: Optional[datetime]
+    read_at: datetime | None
 
 
 class RemoteStore:
@@ -68,7 +67,7 @@ class RemoteStore:
         for key, entry in raw.items():
             if not isinstance(entry, dict) or "value" not in entry:
                 continue
-            read_at: Optional[datetime] = None
+            read_at: datetime | None = None
             stamp = entry.get("read_at")
             if isinstance(stamp, str):
                 try:

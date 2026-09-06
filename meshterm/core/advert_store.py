@@ -19,7 +19,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .models import utcnow
 
@@ -51,18 +50,18 @@ class AdvertPolicy:
 
     direct_hours: int = DEFAULT_DIRECT_HOURS
     flood_hours: int = DEFAULT_FLOOD_HOURS
-    last_direct: Optional[datetime] = None
-    last_flood: Optional[datetime] = None
+    last_direct: datetime | None = None
+    last_flood: datetime | None = None
 
     def cadence(self, flood: bool) -> int:
         """The cadence in hours for one advert type (:data:`OFF` when disabled)."""
         return self.flood_hours if flood else self.direct_hours
 
-    def last_sent(self, flood: bool) -> Optional[datetime]:
+    def last_sent(self, flood: bool) -> datetime | None:
         """When an advert of one type last went out, or ``None`` if never recorded."""
         return self.last_flood if flood else self.last_direct
 
-    def due(self, flood: bool, now: Optional[datetime] = None) -> bool:
+    def due(self, flood: bool, now: datetime | None = None) -> bool:
         """Whether an advert of one type is due at ``now``.
 
         Never-sent is *not* due: the scheduler arms the clock by recording "now" on its
@@ -150,7 +149,7 @@ class AdvertStore:
         """
         self._update(public_key, {"flood_hours" if flood else "direct_hours": int(hours)})
 
-    def mark_sent(self, public_key: str, *, flood: bool, when: Optional[datetime] = None) -> None:
+    def mark_sent(self, public_key: str, *, flood: bool, when: datetime | None = None) -> None:
         """Record that an advert went out, resetting that type's countdown.
 
         Called for scheduled *and* manual sends alike, so the next background advert
@@ -164,7 +163,7 @@ class AdvertStore:
         stamp = (when or utcnow()).isoformat()
         self._update(public_key, {"last_flood" if flood else "last_direct": stamp})
 
-    def arm(self, public_key: str, *, flood: bool, when: Optional[datetime] = None) -> None:
+    def arm(self, public_key: str, *, flood: bool, when: datetime | None = None) -> None:
         """Start a never-sent advert type's countdown from ``when`` without sending.
 
         Only writes when no last-sent mark exists, so it is safe to call on every
@@ -206,7 +205,7 @@ def _as_hours(value: object, default: int) -> int:
     return hours if hours >= 0 else default
 
 
-def _as_time(value: object) -> Optional[datetime]:
+def _as_time(value: object) -> datetime | None:
     """Parse a stored ISO-8601 timestamp, or ``None`` if absent/corrupt.
 
     A timestamp without a zone is treated as corrupt too: the store only ever writes

@@ -9,8 +9,6 @@ indicator across the toolkit can reuse the same animation.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from rich.text import Text
 
 from ...platforms import get_platform
@@ -43,7 +41,7 @@ class Spinner:
     #: A plain ASCII cycle for terminals/fonts without Braille glyphs.
     LINE = "|/-\\"
 
-    def __init__(self, frames: Optional[str] = None, *, style: str = "accent") -> None:
+    def __init__(self, frames: str | None = None, *, style: str = "accent") -> None:
         """Create a spinner resting on its first frame.
 
         Args:
@@ -80,7 +78,7 @@ class Spinner:
         """Return the spinner to its first frame."""
         self._index = 0
 
-    def text(self, style: Optional[str] = None) -> Text:
+    def text(self, style: str | None = None) -> Text:
         """Return the current glyph as a styled Rich :class:`~rich.text.Text`.
 
         Args:

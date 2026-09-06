@@ -24,7 +24,7 @@ the radio, the history store, and the reply plumbing) and feeds replies back thr
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from rich.console import Group
 from rich.text import Text
@@ -86,7 +86,7 @@ class RemoteCliScreen(Screen):
         self._editor = _LineEditor()
         self._log: list[Text] = []
         self._history = list(history)
-        self._recall: Optional[int] = None  # index into history while ↑/↓ browse it
+        self._recall: int | None = None  # index into history while ↑/↓ browse it
         self._draft = ""  # what was typed before recall began, restored on ↓ past the end
         self._completions = known_commands()
         self.busy = False
@@ -180,7 +180,7 @@ class RemoteCliScreen(Screen):
         self._recall = max(0, self._recall)
         self._editor = _LineEditor(self._history[self._recall])
 
-    def _completion(self) -> Optional[str]:
+    def _completion(self) -> str | None:
         """The first known command extending the current text, or ``None``."""
         prefix = self._editor.text.lstrip()
         if not prefix:
@@ -203,7 +203,7 @@ class RemoteCliScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Pin the prompt into view, so the transcript follows itself as it grows."""
         return self._prompt_line
 

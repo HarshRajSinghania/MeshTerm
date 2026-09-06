@@ -40,9 +40,9 @@ top gets the stream. Same two stops, same keys, as the feed underneath.
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional, Sequence
 
 from rich.console import RenderableType
 from rich.table import Table
@@ -184,21 +184,21 @@ class PacketEntry:
 
     when: datetime
     kind: str
-    node: Optional[str] = None
-    name: Optional[str] = None
-    snr: Optional[float] = None
-    rssi: Optional[float] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    node_type: Optional[int] = None
-    path: Optional[str] = None
-    where: Optional[str] = None
-    channel: Optional[int] = None
-    text: Optional[str] = None
-    raw: Optional[dict] = None
+    node: str | None = None
+    name: str | None = None
+    snr: float | None = None
+    rssi: float | None = None
+    lat: float | None = None
+    lon: float | None = None
+    node_type: int | None = None
+    path: str | None = None
+    where: str | None = None
+    channel: int | None = None
+    text: str | None = None
+    raw: dict | None = None
 
     @classmethod
-    def from_observation(cls, obs: Observation) -> "PacketEntry":
+    def from_observation(cls, obs: Observation) -> PacketEntry:
         """Capture an overheard observation (the monitor's event family) as an entry."""
         return cls(
             when=obs.observed_at,
@@ -225,7 +225,7 @@ def kind_icon(kind: str) -> str:
     return glyph(emoji)
 
 
-def payload_class(raw: Optional[dict]) -> Optional[str]:
+def payload_class(raw: dict | None) -> str | None:
     """The friendly payload-class label for a raw ``packet`` frame, or ``None`` if unknown.
 
     Maps the frame's ``payload_typename`` (``GRP_TXT``, ``TRACE``, …) through
@@ -274,7 +274,7 @@ def class_chrome(entry: PacketEntry) -> tuple[str, str]:
 
 
 def node_label(
-    entry: PacketEntry, resolve: NodeResolver, self_name: Optional[str] = None
+    entry: PacketEntry, resolve: NodeResolver, self_name: str | None = None
 ) -> tuple[str, str]:
     """The display name and style for an entry's node — the app-wide naming rule.
 
@@ -325,8 +325,8 @@ class _Reception:
         rssi: Reception strength in dBm, if measured.
     """
 
-    snr: Optional[float]
-    rssi: Optional[float]
+    snr: float | None
+    rssi: float | None
 
     def _line(self, separator: str) -> Text:
         """The row drawn with ``separator`` between the two atoms."""
@@ -400,13 +400,13 @@ class PacketViewer(Screen):
         *,
         resolve: NodeResolver,
         prefix_bytes: int = 0,
-        self_name: Optional[str] = None,
-        on_navigate: Optional[Callable[[PacketEntry], None]] = None,
-        on_pin: Optional[Callable[[], None]] = None,
+        self_name: str | None = None,
+        on_navigate: Callable[[PacketEntry], None] | None = None,
+        on_pin: Callable[[], None] | None = None,
         channels: Sequence[tuple[str, bytes]] = (),
-        source: Optional[Callable[[], Sequence[PacketEntry]]] = None,
-        type_of: Optional[TypeOf] = None,
-        key_of: Optional[NameKeyResolver] = None,
+        source: Callable[[], Sequence[PacketEntry]] | None = None,
+        type_of: TypeOf | None = None,
+        key_of: NameKeyResolver | None = None,
     ) -> None:
         """Open the viewer over a packet list.
 
@@ -442,7 +442,7 @@ class PacketViewer(Screen):
         self._entries = list(entries)
         self._index = max(0, min(index, len(self._entries) - 1))
         # Composed cards per (entry, width, age-minute) — see render_body.
-        self._body_cache: "OrderedDict[tuple, list[str]]" = OrderedDict()
+        self._body_cache: OrderedDict[tuple, list[str]] = OrderedDict()
         self._resolve = resolve
         self._prefix_bytes = prefix_bytes
         self._self_name = self_name
@@ -454,7 +454,7 @@ class PacketViewer(Screen):
         self._key_of = key_of
         #: The packet currently shown, tracked by identity so a live prepend to the
         #: source (which shifts every index) never slides the view onto another packet.
-        self._current: Optional[PacketEntry] = (
+        self._current: PacketEntry | None = (
             self._entries[self._index] if self._entries else None
         )
         #: Whether the view is on the *pin* — the stop above the newest packet, which
@@ -715,7 +715,8 @@ class PacketViewer(Screen):
 
     def _head_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """The rows above the route graph: the class headline, the common core, then a
-        packet's parsed frame."""
+        packet's parsed frame.
+        """
         rows: list[tuple[str, RenderableType]] = []
 
         icon, class_label = class_chrome(entry)
@@ -825,7 +826,7 @@ class PacketViewer(Screen):
             allow_duplicate_nodes=True,
         )
 
-    def _graph_source(self, entry: PacketEntry) -> Optional[str]:
+    def _graph_source(self, entry: PacketEntry) -> str | None:
         """The origin's display name for the graph's left endpoint, or ``None`` if unknown.
 
         The naming rule the ``from`` row follows (a resolved contact wins, then the name the

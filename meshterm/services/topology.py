@@ -34,9 +34,8 @@ import heapq
 import math
 import statistics
 from dataclasses import dataclass, field
-from itertools import chain
 from datetime import datetime
-from typing import Optional
+from itertools import chain
 
 from ..core.models import Contact, utcnow
 from ..persistence.repository import NeighbourLink, PacketPath, TracedPath
@@ -179,15 +178,15 @@ class Link:
     b: str
     samples: int = 0
     snrs: list[float] = field(default_factory=list)
-    last_seen: Optional[datetime] = None
+    last_seen: datetime | None = None
     sources: set[str] = field(default_factory=set)
 
     @property
-    def median_snr(self) -> Optional[float]:
+    def median_snr(self) -> float | None:
         """Median SNR (dB) across the link's readings, or ``None`` without any."""
         return statistics.median(self.snrs) if self.snrs else None
 
-    def strength(self, now: Optional[datetime] = None) -> float:
+    def strength(self, now: datetime | None = None) -> float:
         """Score the link's observed reliability for ranking (higher = stronger).
 
         Three factors multiply: *evidence* (log-scaled sample count, so ten sightings
@@ -260,7 +259,7 @@ class PathScenario:
     hops: tuple[str, ...]
     source: str
     score: float
-    weakest_snr: Optional[float] = None
+    weakest_snr: float | None = None
     samples: int = 0
 
     def spec(self, target_hash: str, width_bytes: int) -> str:
@@ -306,8 +305,8 @@ class MeshTopology:
         # ``_known`` never changes after construction, and a build feeds the same few
         # dozen distinct hashes through canonical() thousands of times (every hop of
         # every stored packet path), so both identity lookups memoize per instance.
-        self._canonical_memo: dict[str, Optional[str]] = {}
-        self._name_memo: dict[str, Optional[str]] = {}
+        self._canonical_memo: dict[str, str | None] = {}
+        self._name_memo: dict[str, str | None] = {}
         # Route search results per (target, k), valid for one graph shape: every link
         # mutation bumps the version, so a memoized Yen's run can never outlive the
         # evidence it ranked. Callers ask for the same target twice per screen open
@@ -318,7 +317,7 @@ class MeshTopology:
 
     # --- identity ----------------------------------------------------------------
 
-    def canonical(self, hop: Optional[str]) -> Optional[str]:
+    def canonical(self, hop: str | None) -> str | None:
         """Collapse a hop hash of any width onto a stable node id.
 
         Trace hops arrive at the command's path-hash width (1-8 bytes), observation ids
@@ -341,7 +340,7 @@ class MeshTopology:
             return cached
         needle = hop.lower().removeprefix("0x")
         if not _is_hex(needle):
-            result: Optional[str] = None
+            result: str | None = None
         else:
             matches = {
                 canonical
@@ -352,7 +351,7 @@ class MeshTopology:
         self._canonical_memo[hop] = result
         return result
 
-    def display_name(self, node: str) -> Optional[str]:
+    def display_name(self, node: str) -> str | None:
         """The contact name for a canonical id, or ``None`` when unknown."""
         cached = self._name_memo.get(node, _MISS)
         if cached is not _MISS:
@@ -367,10 +366,10 @@ class MeshTopology:
 
     def add_walk(
         self,
-        nodes: list[Optional[str]],
+        nodes: list[str | None],
         *,
-        snrs: Optional[list[Optional[float]]] = None,
-        when: Optional[datetime] = None,
+        snrs: list[float | None] | None = None,
+        when: datetime | None = None,
         source: str,
     ) -> None:
         """Record one walked node sequence as a set of link readings.
@@ -492,7 +491,7 @@ class MeshTopology:
 
     def _next_prefix_merge(
         self, shorts: list[str], ordered: list[str]
-    ) -> Optional[tuple[str, str]]:
+    ) -> tuple[str, str] | None:
         """The next ``(short, long)`` pair to fold, or ``None`` when none remains.
 
         A short id (under a full 6-byte canonical width) folds when the graph's longer
@@ -542,7 +541,7 @@ class MeshTopology:
 
     def _next_corroborated_merge(
         self, shorts: list[str], ordered: list[str], adjacency: dict[str, set[str]]
-    ) -> Optional[tuple[str, str]]:
+    ) -> tuple[str, str] | None:
         """The next ambiguous stub the *neighbourhood evidence* resolves, or ``None``.
 
         Where :meth:`_next_prefix_merge` folds only what the hash alone settles, this
@@ -595,7 +594,7 @@ class MeshTopology:
     @staticmethod
     def _corroborated_owner(
         short: str, candidates: list[str], adjacency: dict[str, set[str]]
-    ) -> Optional[str]:
+    ) -> str | None:
         """Which candidate the stub's discriminating neighbours elect, if any.
 
         A neighbour votes only when it separates the field — it neighbours exactly one
@@ -625,7 +624,7 @@ class MeshTopology:
         return winner
 
     def _merge_node(
-        self, src: str, dst: str, *, adjacency: Optional[dict[str, set[str]]] = None
+        self, src: str, dst: str, *, adjacency: dict[str, set[str]] | None = None
     ) -> None:
         """Relabel every link touching ``src`` onto ``dst``, folding shared links together.
 
@@ -691,7 +690,7 @@ class MeshTopology:
         """
         return list(self._links.values())
 
-    def link(self, a: str, b: str) -> Optional[Link]:
+    def link(self, a: str, b: str) -> Link | None:
         """The evidence for the undirected link between ``a`` and ``b``, if any."""
         return self._links.get((a, b) if a < b else (b, a))
 
@@ -719,7 +718,7 @@ class MeshTopology:
         out.sort(key=lambda s: (-s.strength, s.node))
         return out
 
-    def scenarios(self, target: str, *, device_route: Optional[tuple[str, ...]] = None) -> list[PathScenario]:
+    def scenarios(self, target: str, *, device_route: tuple[str, ...] | None = None) -> list[PathScenario]:
         """Rank the candidate outbound routes for reaching ``target``.
 
         Three families, deduplicated in this priority order:
@@ -774,7 +773,7 @@ class MeshTopology:
         )
         return (head + rest)[:_MAX_SCENARIOS]
 
-    def suggested(self, target: str) -> Optional[PathScenario]:
+    def suggested(self, target: str) -> PathScenario | None:
         """The single best *evidence-backed* outbound route to ``target``, if one exists.
 
         The data-driven answer to "what's the best way to reach this node?": the highest-
@@ -805,7 +804,7 @@ class MeshTopology:
 
     def _score_route(
         self, hops: tuple[str, ...], target: str
-    ) -> tuple[float, Optional[float], int]:
+    ) -> tuple[float, float | None, int]:
         """Score one outbound route by its weakest observed link.
 
         A chain is only as reliable as its weakest link, so the route's score is the
@@ -821,8 +820,8 @@ class MeshTopology:
             ``(score, weakest_median_snr, total_samples)``.
         """
         chain = [self.self_id, *hops, target]
-        weakest_strength: Optional[float] = None
-        weakest_snr: Optional[float] = None
+        weakest_strength: float | None = None
+        weakest_snr: float | None = None
         samples = 0
         for a, b in zip(chain, chain[1:]):
             link = self.link(a, b)
@@ -882,7 +881,7 @@ class MeshTopology:
 
         def shortest(
             source: str, banned_nodes: set[str], banned_edges: set[tuple[str, str]]
-        ) -> Optional[tuple[float, list[str]]]:
+        ) -> tuple[float, list[str]] | None:
             """Dijkstra ``source``→``target`` avoiding the banned nodes/edges, or ``None``."""
             dist: dict[str, float] = {source: 0.0}
             prev: dict[str, str] = {}
@@ -1004,8 +1003,8 @@ def build_topology(
     us = topo.self_id
 
     for traced in trace_paths:
-        nodes: list[Optional[str]] = [us]
-        snrs: list[Optional[float]] = []
+        nodes: list[str | None] = [us]
+        snrs: list[float | None] = []
         for hop, snr in traced.hops:
             # The final hash-less hop is the reply landing back at us.
             nodes.append(topo.canonical(hop) if hop is not None else us)

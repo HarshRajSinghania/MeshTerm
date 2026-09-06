@@ -62,19 +62,23 @@ so the route under construction never leaves the screen.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from rich.cells import cell_len
 from rich.text import Text
 
 from ..services.records import first_repeated_edge
 from ..services.topology import (
-    HopSuggestion, Link, MeshTopology, _is_hex, render_custom_spec, render_forced_spec,
+    HopSuggestion,
+    Link,
+    MeshTopology,
+    _is_hex,
+    render_custom_spec,
+    render_forced_spec,
 )
+from .pathline import PathLine, cut_to, path_line
 from .theme import snr_style
 from .tui.render import query_line, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .pathline import PathLine, cut_to, path_line
 from .widgets import NodeResolver, _age_seconds, _format_age, _identity, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
@@ -166,12 +170,12 @@ class PathComposerScreen(Screen):
         device_label: str,
         topology: MeshTopology,
         width_bytes: int,
-        target_id: Optional[str] = None,
-        target_hash: Optional[str] = None,
-        target_label: Optional[str] = None,
-        device_hash: Optional[str] = None,
-        hops: Optional[list[str]] = None,
-        cursor: Optional[int] = None,
+        target_id: str | None = None,
+        target_hash: str | None = None,
+        target_label: str | None = None,
+        device_hash: str | None = None,
+        hops: list[str] | None = None,
+        cursor: int | None = None,
         fetch_nodes: frozenset[str] = frozenset(),
         resolve: NodeResolver = _identity,
     ) -> None:
@@ -382,7 +386,7 @@ class PathComposerScreen(Screen):
             ]
         return merged[:_MAX_SUGGESTIONS]
 
-    def _custom_hex(self) -> Optional[str]:
+    def _custom_hex(self) -> str | None:
         """The typed entry as an addable hex hop, or ``None`` when it isn't one."""
         needle = self._entry.strip().lower().removeprefix("0x")
         return needle if _is_hex(needle) else None
@@ -432,7 +436,7 @@ class PathComposerScreen(Screen):
 
     # --- rendering ---------------------------------------------------------------
 
-    def _path_entry(self, node: str) -> Optional[str]:
+    def _path_entry(self, node: str) -> str | None:
         """A canonical id as a :func:`path_text` hop entry (``None`` = our device).
 
         The pinned target rides as its full hash when one is known, so its hash
@@ -493,7 +497,7 @@ class PathComposerScreen(Screen):
             dim_from=0 if dim else None,
         )
 
-    def _route_preview(self) -> "PathLine":
+    def _route_preview(self) -> PathLine:
         """The route under construction, endpoints filled in automatically.
 
         THE path widget, drawn exactly as the trace screen that opened this dialog
@@ -521,7 +525,7 @@ class PathComposerScreen(Screen):
         arrows for the sake of a seam to sit in — and lets a wrapped route carry the
         cursor like any other hop instead of stranding it on a line break.
         """
-        entries: list[Optional[str]] = [None]
+        entries: list[str | None] = [None]
         entries.extend(self._path_entry(hop) for hop in self._hops)
         if self._mirrored:
             entries.append(self._path_entry(self._target_id))
@@ -624,7 +628,7 @@ class PathComposerScreen(Screen):
 
         # Each windowable entry is one rendered line tagged with its row index
         # (``None`` = a spacer or note line the cursor can't land on).
-        entries: list[tuple[Optional[int], str]] = []
+        entries: list[tuple[int | None, str]] = []
         for i, (kind, payload) in enumerate(rows):
             if kind == "action" and (i == 0 or rows[i - 1][0] != "action"):
                 entries.append((None, ""))  # a spacer sets the action group apart
@@ -667,7 +671,7 @@ class PathComposerScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """The body line of the highlighted row, so the session keeps it visible."""
         return getattr(self, "_cursor_row", None)
 

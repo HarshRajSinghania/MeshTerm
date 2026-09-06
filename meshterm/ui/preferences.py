@@ -25,7 +25,7 @@ ever written by the one action at the bottom.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from rich import box
 from rich.cells import cell_len
@@ -61,7 +61,7 @@ _APPLY = "__apply__"
 _CANCEL = "__cancel__"
 
 
-async def edit_preferences(ctx: "AppContext") -> Optional[dict[str, Any]]:
+async def edit_preferences(ctx: AppContext) -> dict[str, Any] | None:
     """Run the Preferences editor and return the values to save.
 
     Nothing is written here: the staged map goes back to
@@ -303,7 +303,7 @@ def preferences_table(prefs: Preferences, width: int = _DESCRIBE_FROM) -> Table:
 
 
 async def _stage_preference(
-    ctx: "AppContext", prefs: Preferences, key: str, pending: dict[str, Any]
+    ctx: AppContext, prefs: Preferences, key: str, pending: dict[str, Any]
 ) -> None:
     """Prompt for one preference's new value and stage it.
 
@@ -320,7 +320,7 @@ async def _stage_preference(
         pending[key] = value
 
 
-async def _prompt_value(ctx: "AppContext", spec: PrefSpec, current: Any) -> Any:
+async def _prompt_value(ctx: AppContext, spec: PrefSpec, current: Any) -> Any:
     """Prompt for a typed value for ``spec`` in the fitting dialog; ``None`` on cancel."""
     if spec.value_type == "bool":
         # A straight two-state choice reads best as a button pair, with the current state
@@ -363,7 +363,7 @@ async def _prompt_value(ctx: "AppContext", spec: PrefSpec, current: Any) -> Any:
 
 
 async def _stage_reset(
-    ctx: "AppContext", prefs: Preferences, pending: dict[str, Any]
+    ctx: AppContext, prefs: Preferences, pending: dict[str, Any]
 ) -> None:
     """Confirm, then stage every changed preference back to its built-in default.
 

@@ -14,7 +14,7 @@ subcommands cover scripted inspection.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -33,7 +33,7 @@ class DashboardTool(Tool):
     category = "Watch"
     order = 10  # the section's overview, above the tools it summarizes
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the live dashboard; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so

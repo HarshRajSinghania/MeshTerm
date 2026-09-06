@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from io import StringIO
-from typing import Optional
 
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
@@ -44,7 +43,7 @@ _COLOR_SYSTEM = "truecolor"
 #: paints almost every row is byte-identical, so this cache turns the per-row console
 #: render (~0.15 ms each) into a dict hit. Tables, panels and groups have no cheap content
 #: key and skip the cache (their callers memoize at their own level where it matters).
-_ANSI_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+_ANSI_CACHE: OrderedDict[tuple, str] = OrderedDict()
 
 #: Entries the ANSI cache holds before evicting least-recently-used ones. Sized for a few
 #: screenfuls of distinct rows (a busy list, its filtered variants, a dialog over it) at
@@ -67,7 +66,7 @@ def _bind(platform: Platform) -> None:
     _CACHE_GEN += 1
 
 
-def _cache_key(renderable: RenderableType, width: int, no_wrap: bool) -> Optional[tuple]:
+def _cache_key(renderable: RenderableType, width: int, no_wrap: bool) -> tuple | None:
     """A content key for a cacheable renderable, or ``None`` when it has no cheap one.
 
     A ``str`` *is* its own content (markup included). A :class:`Text` renders as a pure

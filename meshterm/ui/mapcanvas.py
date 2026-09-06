@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from typing import Optional
 
 from ..platforms import Platform, on_platform
 from .marks import RGB, parse_hex  # noqa: F401 - canonical home; re-exported for importers
@@ -132,7 +131,7 @@ class Raster:
     cell_w: int
     cell_h: int
     bits: list[list[int]]
-    color: list[list[Optional[RGB]]]
+    color: list[list[RGB | None]]
 
 
 class MapCanvas:
@@ -150,7 +149,7 @@ class MapCanvas:
         self.dot_w = self.cell_w * 2
         self.dot_h = self.cell_h * 4
         self._bits = [[0] * self.cell_w for _ in range(self.cell_h)]
-        self._color: list[list[Optional[RGB]]] = [
+        self._color: list[list[RGB | None]] = [
             [None] * self.cell_w for _ in range(self.cell_h)
         ]
         self._prio = [[-1] * self.cell_w for _ in range(self.cell_h)]
@@ -365,7 +364,7 @@ class MapCanvas:
         text: str,
         color: RGB,
         *,
-        label_color: Optional[RGB] = None,
+        label_color: RGB | None = None,
         avoid_dots: bool = False,
     ) -> bool:
         """Place a label beside the marker at dot ``(x, y)``, only if it fits cleanly.
@@ -458,7 +457,6 @@ class MapCanvas:
         """
         if not (0 <= cy < self.cell_h):
             return False
-        cells = range(start_cx, start_cx + len(text))
         if checked:
             if start_cx < 0 or start_cx + len(text) > self.cell_w:
                 return False
@@ -505,7 +503,7 @@ class MapCanvas:
         lines: list[str] = []
         for cy in range(self.cell_h):
             parts: list[str] = []
-            cur: Optional[tuple[RGB, bool]] = None
+            cur: tuple[RGB, bool] | None = None
             for cx in range(self.cell_w):
                 overlay = self._overlay.get((cx, cy))
                 if overlay is not None:

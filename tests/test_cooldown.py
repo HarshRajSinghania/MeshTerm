@@ -9,7 +9,7 @@ so the gate can never be a number nothing sets.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -176,14 +176,14 @@ class _Session:
 class _Ui:
     """A UI surface carrying nothing but a session (all the wait helper reads)."""
 
-    def __init__(self, session: Optional[_Session]) -> None:
+    def __init__(self, session: _Session | None) -> None:
         self.session = session
 
 
 class _Ctx:
     """The slice of :class:`~meshterm.context.AppContext` the wait helper touches."""
 
-    def __init__(self, session: Optional[_Session]) -> None:
+    def __init__(self, session: _Session | None) -> None:
         self.ui = _Ui(session)
 
 

@@ -14,7 +14,7 @@ blank grid instead, and the tool still works offline.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Group
@@ -105,14 +105,14 @@ class MapTool(Tool):
 
     # -- marker gathering -------------------------------------------------------
 
-    async def _gather(self, ctx: AppContext) -> list["MapMarker"]:
+    async def _gather(self, ctx: AppContext) -> list[MapMarker]:
         """Collect every located node to plot (see :func:`gather_markers`)."""
         return await gather_markers(ctx)
 
     # -- static (CLI) render ----------------------------------------------------
 
     async def _render_static(
-        self, ctx: AppContext, markers: list["MapMarker"], params: dict[str, Any]
+        self, ctx: AppContext, markers: list[MapMarker], params: dict[str, Any]
     ) -> None:
         """Fetch tiles synchronously and print a one-shot map fitted to the nodes."""
         import asyncio
@@ -161,13 +161,13 @@ class MapTool(Tool):
 
         @app.command(name=self.name, help=self.help)
         def _map(
-            width: Optional[int] = typer.Option(
+            width: int | None = typer.Option(
                 None, "--width", "-w", help="Map width in character cells"
             ),
-            zoom: Optional[int] = typer.Option(
+            zoom: int | None = typer.Option(
                 None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)"
             ),
-            fraction: Optional[float] = typer.Option(
+            fraction: float | None = typer.Option(
                 None,
                 "--fraction",
                 "-f",
@@ -193,7 +193,7 @@ class MapTool(Tool):
             run_tool_command(self, params)
 
 
-async def gather_markers(ctx: AppContext) -> list["MapMarker"]:
+async def gather_markers(ctx: AppContext) -> list[MapMarker]:
     """Collect every located node to plot: the device's contacts, plus our own node.
 
     The companion's **contact list** is the authoritative source for a node's name,
@@ -259,7 +259,7 @@ async def _contacts(ctx: AppContext) -> list:
         return []
 
 
-async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
+async def _self_marker(ctx: AppContext) -> MapMarker | None:
     """Build a marker for our own node from the device, if its location is known."""
     from ..ui.map_render import MapMarker
 
@@ -280,7 +280,7 @@ async def _self_marker(ctx: AppContext) -> Optional["MapMarker"]:
     )
 
 
-def _legend(markers: list["MapMarker"]) -> Table:
+def _legend(markers: list[MapMarker]) -> Table:
     """A compact legend: self → repeaters → leaf nodes, with coordinates and detail.
 
     Names take their key-derived hue (our own the pure-white ``you``), matching the
@@ -319,7 +319,7 @@ def _signal_detail(node: object) -> str:
     return detail
 
 
-def _as_float(value: object) -> Optional[float]:
+def _as_float(value: object) -> float | None:
     """Best-effort float conversion, returning ``None`` on missing/garbage values."""
     if value is None:
         return None

@@ -13,8 +13,8 @@ the winner — measurement proposes, the user disposes.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
 
 from ..core.connection import Device
 from ..core.models import TraceResult, TraceStats
@@ -53,7 +53,8 @@ class ProbeOutcome:
     @property
     def sort_key(self) -> tuple:
         """Ranking key, best-first under ascending sort: reliability, then bottleneck
-        SNR, then RTT — the same priority order the TX optimizer applies."""
+        SNR, then RTT — the same priority order the TX optimizer applies.
+        """
         snr = self.stats.median_min_snr
         rtt = self.stats.median_rtt_ms
         return (
@@ -70,9 +71,9 @@ async def probe_paths(
     *,
     samples: int = 1,
     cooldown_s: float = 1.0,
-    on_result: Optional[ProbeProgress] = None,
-    persist_trace: Optional[Callable[[TraceResult], Awaitable[None] | None]] = None,
-    persist_candidate: Optional[PersistCandidate] = None,
+    on_result: ProbeProgress | None = None,
+    persist_trace: Callable[[TraceResult], Awaitable[None] | None] | None = None,
+    persist_candidate: PersistCandidate | None = None,
 ) -> list[ProbeOutcome]:
     """Trace every candidate path and return the outcomes ranked best-first.
 

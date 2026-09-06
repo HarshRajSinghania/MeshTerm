@@ -85,7 +85,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Callable
+from collections.abc import Callable
 
 from prompt_toolkit.layout.controls import FormattedTextControl
 
@@ -431,7 +431,7 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
 
 def _make_pt_cache(
     narrow: frozenset[str], wide: frozenset[str], *, flags: bool = True
-) -> "object":
+) -> object:
     """Build a prompt_toolkit char-width cache that measures every ``narrow`` glyph as one.
 
     prompt_toolkit is the authority that *places the panel's right border*: it lays the
@@ -616,7 +616,7 @@ class ClusterTextControl(FormattedTextControl):
     path (a test, a piped run, a terminal we could not measure) this is its base class exactly.
     """
 
-    def create_content(self, width: int, height: "int | None"):  # type: ignore[override]
+    def create_content(self, width: int, height: int | None):  # type: ignore[override]
         content = super().create_content(width, height)
         # The base class caches its ``UIContent`` per (fragments, width, cursor), so the same
         # object comes back paint after paint: wrap its line lookup once, and memoise the merge

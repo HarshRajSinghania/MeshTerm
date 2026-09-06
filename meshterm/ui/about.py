@@ -152,7 +152,7 @@ class AboutPage(ScrollScreen):
         return lines
 
 
-async def open_about_page(ctx: "AppContext", title: str, doc: MarkdownDoc) -> None:
+async def open_about_page(ctx: AppContext, title: str, doc: MarkdownDoc) -> None:
     """Open one About page full-screen and hold it until the reader backs out.
 
     Args:

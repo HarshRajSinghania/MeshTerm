@@ -10,8 +10,9 @@ key is offerable, since holding a password is a fact about the *user*, not the n
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def admin_picker_rows(
-    ctx: "AppContext", contacts: list[Contact]
+    ctx: AppContext, contacts: list[Contact]
 ) -> tuple[list, list[Contact]]:
     """Build the admin-node picker's grouped rows and the contacts they map to.
 
@@ -87,12 +88,12 @@ def admin_picker_rows(
 
 
 async def pick_admin_node(
-    ctx: "AppContext",
+    ctx: AppContext,
     contacts: list[Contact],
     *,
     title: str,
     prompt: str,
-) -> Optional[Contact]:
+) -> Contact | None:
     """Pick a remote node to administer, credentialed and infrastructure nodes first.
 
     The one-shot form: the list comes down as soon as a node is picked. A caller whose next
@@ -119,12 +120,12 @@ async def pick_admin_node(
 
 @asynccontextmanager
 async def admin_node_visit(
-    ctx: "AppContext",
+    ctx: AppContext,
     contacts: list[Contact],
     *,
     title: str,
     prompt: str,
-) -> "AsyncIterator[Optional[_AdminNodePicker]]":
+) -> AsyncIterator[_AdminNodePicker | None]:
     """Keep the node picker pushed for a whole visit, yielding a picker to draw from.
 
     The list stays on the stack for the duration of the block, so everything the caller does
@@ -165,7 +166,7 @@ class _AdminNodePicker:
         self._visit = visit
         self._candidates = candidates
 
-    async def pick(self) -> Optional[Contact]:
+    async def pick(self) -> Contact | None:
         """Await one pick: the chosen contact, or ``None`` on Esc."""
         from .tui.screen import CANCEL
 
@@ -173,13 +174,13 @@ class _AdminNodePicker:
         return _resolve(self._candidates, None if choice is CANCEL else choice)
 
 
-async def _note_nothing_to_pick(ctx: "AppContext", title: str) -> None:
+async def _note_nothing_to_pick(ctx: AppContext, title: str) -> None:
     """Say there is no offerable node and show it — no list is opened at all."""
     ctx.ui.note("[err]no contacts with a key — receive an advert first[/err]")
     await ctx.ui.present(title=title)
 
 
-def _resolve(candidates: list[Contact], choice: Any) -> Optional[Contact]:
+def _resolve(candidates: list[Contact], choice: Any) -> Contact | None:
     """The contact a picked row's name stands for, or ``None`` when nothing was picked."""
     if choice is None:
         return None

@@ -32,8 +32,8 @@ collision odds — a 1-byte board and a 4-byte board are different games.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
 
 from ..core.geo import haversine_km
 from ..core.models import Hop, TraceResult
@@ -49,7 +49,7 @@ def max_hops(width_bytes: int) -> int:
     return MAX_PATH_BYTES // max(1, width_bytes)
 
 
-def first_repeated_edge(nodes: Sequence[str]) -> Optional[tuple[str, str]]:
+def first_repeated_edge(nodes: Sequence[str]) -> tuple[str, str] | None:
     """The first link a walk crosses twice in the same direction, or ``None``.
 
     The trophy case's no-cheat rule, shared by the arbiter and every screen that
@@ -112,14 +112,14 @@ class WalkStats:
     hop_count: int
     distinct_nodes: int
     repeats: bool
-    min_snr: Optional[float]
-    rtt_ms: Optional[float]
+    min_snr: float | None
+    rtt_ms: float | None
     km_travelled: float
     km_complete: bool
-    far_km: Optional[float]
-    area_km2: Optional[float]
-    leg_km: Optional[float] = None
-    leg_link: Optional[tuple[Optional[str], Optional[str]]] = None
+    far_km: float | None
+    area_km2: float | None
+    leg_km: float | None = None
+    leg_link: tuple[str | None, str | None] | None = None
 
     def as_dict(self) -> dict:
         """The stats as a JSON-serializable dict (the ``stats_json`` column)."""
@@ -164,7 +164,7 @@ class Category:
     icon: str
     description: str
     unit: str
-    score: Callable[[WalkStats], Optional[float]]
+    score: Callable[[WalkStats], float | None]
     ascending: bool = False
     needs_positions: bool = False
 
@@ -178,33 +178,33 @@ class Category:
         return f"{value:.1f} {self.unit}"
 
 
-def _score_long_haul(stats: WalkStats) -> Optional[float]:
+def _score_long_haul(stats: WalkStats) -> float | None:
     return stats.km_travelled if stats.km_travelled > 0 else None
 
 
-def _score_far_point(stats: WalkStats) -> Optional[float]:
+def _score_far_point(stats: WalkStats) -> float | None:
     return stats.far_km
 
 
-def _score_long_leg(stats: WalkStats) -> Optional[float]:
+def _score_long_leg(stats: WalkStats) -> float | None:
     return stats.leg_km if stats.leg_km else None
 
 
-def _score_grand_tour(stats: WalkStats) -> Optional[float]:
+def _score_grand_tour(stats: WalkStats) -> float | None:
     return float(stats.distinct_nodes) if stats.distinct_nodes else None
 
 
-def _score_clean_trail(stats: WalkStats) -> Optional[float]:
+def _score_clean_trail(stats: WalkStats) -> float | None:
     if stats.repeats or not stats.distinct_nodes:
         return None
     return float(stats.distinct_nodes)
 
 
-def _score_thin_thread(stats: WalkStats) -> Optional[float]:
+def _score_thin_thread(stats: WalkStats) -> float | None:
     return stats.min_snr
 
 
-def _score_big_loop(stats: WalkStats) -> Optional[float]:
+def _score_big_loop(stats: WalkStats) -> float | None:
     if stats.area_km2 is None or stats.area_km2 <= 0:
         return None
     return stats.area_km2
@@ -272,9 +272,9 @@ def compute_walk_stats(
     node_ids: Sequence[str],
     hops: Sequence[Hop],
     *,
-    rtt_ms: Optional[float],
+    rtt_ms: float | None,
     positions: dict[str, tuple[float, float]],
-    self_pos: Optional[tuple[float, float]],
+    self_pos: tuple[float, float] | None,
 ) -> WalkStats:
     """Measure one successful walk for every category at once.
 
@@ -293,19 +293,19 @@ def compute_walk_stats(
     ids = tuple(node_ids)
     snrs = [h.snr for h in hops if h.snr is not None]
     # The walked circuit for geometry: us, every hop in order, us again.
-    points: list[Optional[tuple[float, float]]] = [self_pos]
+    points: list[tuple[float, float] | None] = [self_pos]
     points.extend(positions.get(node) for node in ids)
     points.append(self_pos)
 
     # The circuit's segments carry their endpoints alongside their positions, so the
     # longest one can name the link it was: ``None`` at either end is our own node,
     # which the walk leaves from and comes home to.
-    ends: list[Optional[str]] = [None, *ids, None]
+    ends: list[str | None] = [None, *ids, None]
 
     km = 0.0
     complete = True
-    leg_km: Optional[float] = None
-    leg_link: Optional[tuple[Optional[str], Optional[str]]] = None
+    leg_km: float | None = None
+    leg_link: tuple[str | None, str | None] | None = None
     for i, (a, b) in enumerate(zip(points, points[1:])):
         if a is None or b is None:
             complete = False
@@ -315,7 +315,7 @@ def compute_walk_stats(
         if leg_km is None or span > leg_km:
             leg_km, leg_link = span, (ends[i], ends[i + 1])
 
-    far: Optional[float] = None
+    far: float | None = None
     if self_pos is not None:
         dists = [
             haversine_km(self_pos[0], self_pos[1], p[0], p[1])
@@ -324,7 +324,7 @@ def compute_walk_stats(
         ]
         far = max(dists) if dists else None
 
-    area: Optional[float] = None
+    area: float | None = None
     if self_pos is not None:
         placed = [p for p in points[:-1] if p is not None]  # circuit closes itself
         if len(placed) >= 3:
@@ -375,10 +375,10 @@ def walk_scores(stats: WalkStats) -> dict[str, float]:
 def walk_from_trace(
     result: TraceResult,
     *,
-    canonical: Callable[[str], Optional[str]],
+    canonical: Callable[[str], str | None],
     positions: dict[str, tuple[float, float]],
-    self_pos: Optional[tuple[float, float]],
-) -> Optional[tuple[str, tuple[str, ...], WalkStats]]:
+    self_pos: tuple[float, float] | None,
+) -> tuple[str, tuple[str, ...], WalkStats] | None:
     """Derive the walk a successful trace just made: its spec, route, and stats.
 
     Every trace is a walk (it starts and ends at us — see the module docstring), so a

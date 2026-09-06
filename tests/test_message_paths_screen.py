@@ -45,7 +45,8 @@ def _arrivals() -> list[Arrival]:
 
 def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     """The quoted text, the graph endpoints, and two lines per arrival: the route you
-    pick, and the reception facts hanging under it."""
+    pick, and the reception facts hanging under it.
+    """
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
     assert "“on my way”" in body
@@ -91,7 +92,8 @@ def test_paths_screen_stays_quiet_when_no_path_revisits() -> None:
 
 def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
     """Graph relays carry their first hash byte, both paths at once; the rows carry the
-    names alone — no hash repeated after one, the two tied together by the node's hue."""
+    names alone — no hash repeated after one, the two tied together by the node's hue.
+    """
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
     graph = body.split("origin →")[0]
@@ -104,7 +106,8 @@ def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
 
 def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
     """An unnamed relay stands in its own hash at the device's path-hash width, muted
-    grey — not the bare one-byte prefix, lit, and never a hash annotated onto itself."""
+    grey — not the bare one-byte prefix, lit, and never a hash annotated onto itself.
+    """
     now = utcnow()
     arrivals = [
         Arrival(when=now, hops=("3d63",), snr=4.0),  # selected: a named relay
@@ -191,7 +194,8 @@ def test_paths_screen_scrolls_the_selected_route_sideways() -> None:
 def test_paths_screen_cracks_the_chips_the_scroll_cuts(monkeypatch) -> None:  # noqa: ANN001
     """Where the terminal draws chips, each edge the route runs past breaks the chip off
     on a half block in its own colour rather than behind an ellipsis: the row is sliding
-    over a route that continues, not shortening a word."""
+    over a route that continues, not shortening a word.
+    """
     monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
     now = utcnow()
     long = Arrival(when=now, hops=tuple(f"{i:02x}{i:02x}" for i in range(12)), snr=1.0)
@@ -228,7 +232,8 @@ def test_paths_screen_route_runs_origin_to_us_not_relay_to_relay() -> None:
 
 def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> None:
     """The head is named exactly as the graph's left endpoint is: our own ``★`` on a
-    message we sent, a bare ``?`` where the frame named nobody — never a guessed name."""
+    message we sent, a bare ``?`` where the frame named nobody — never a guessed name.
+    """
     now = utcnow()
     one = [Arrival(when=now, hops=("3d63",), snr=1.0)]
     ours = _plain(_screen(one, source="Homestead").render_body(76))
@@ -239,7 +244,8 @@ def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> Non
 
 def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  # noqa: ANN001
     """A row you are not on runs off the lane exactly as the selected one does, so it owes
-    the reader the same cracked chip — it just cannot slide to read the rest."""
+    the reader the same cracked chip — it just cannot slide to read the rest.
+    """
     monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
     now = utcnow()
     long = tuple(f"{i:02x}{i:02x}" for i in range(12))
@@ -388,7 +394,8 @@ def test_a_short_list_advertises_no_paging() -> None:
 
 def test_the_selection_clamps_at_both_ends() -> None:
     """↑ on the first arrival and ↓ on the last stay put: the window follows the highlight,
-    so a wrap would haul the whole list end to end instead of moving one row."""
+    so a wrap would haul the whole list end to end instead of moving one row.
+    """
     screen = _screen(_many(6))
     screen.note_viewport(24)
     screen.render_body(72)

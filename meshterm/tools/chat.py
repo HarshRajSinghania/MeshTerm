@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.table import Table
@@ -61,7 +62,7 @@ class ChatTool(Tool):
     category = "Message"
     order = 10
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Nothing to gather here — the conversation picker lives inside :meth:`run`.
 
         The picker has to *stay pushed* while a chat runs, so backing out of a thread lands
@@ -391,8 +392,8 @@ class ChatTool(Tool):
         @chat_app.command("send", help="Send a message to a contact or channel")
         def _send_cmd(
             text: str = typer.Argument(..., help="The message body"),
-            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix"),
-            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index"),
+            to: str | None = typer.Option(None, "--to", help="Contact name or key prefix"),
+            channel: int | None = typer.Option(None, "--channel", help="Channel slot index"),
         ) -> None:
             if (to is None) == (channel is None):
                 raise typer.BadParameter("Pass exactly one of --to / --channel.")
@@ -402,8 +403,8 @@ class ChatTool(Tool):
 
         @chat_app.command("history", help="Show a conversation's stored history")
         def _history_cmd(
-            to: Optional[str] = typer.Option(None, "--to", help="Contact name or key prefix"),
-            channel: Optional[int] = typer.Option(None, "--channel", help="Channel slot index"),
+            to: str | None = typer.Option(None, "--to", help="Contact name or key prefix"),
+            channel: int | None = typer.Option(None, "--channel", help="Channel slot index"),
             limit: int = typer.Option(_HISTORY_LIMIT, "--limit", help="Max messages to show"),
         ) -> None:
             if (to is None) == (channel is None):
@@ -454,7 +455,7 @@ def _enable_receive_debug() -> None:
         log.addHandler(handler)
 
 
-def _channels_from_slots(slots: list["ChannelSlot"]) -> list[Conversation]:
+def _channels_from_slots(slots: list[ChannelSlot]) -> list[Conversation]:
     """Turn cached channel slots into channel conversations, always offering Public (slot 0).
 
     The picker reads its channels through the session cache
@@ -576,7 +577,7 @@ def _recency_key(conversation: Conversation, lasts: dict) -> tuple:
     Returns:
         A tuple usable as a ``sorted`` key.
     """
-    last: Optional[ChatMessage] = lasts.get(conversation.key)
+    last: ChatMessage | None = lasts.get(conversation.key)
     if last is not None:
         return (0, -last.created_at.timestamp())
     return (1, conversation.label.casefold())
@@ -599,7 +600,7 @@ class _LiveLasts:
         self._cache = seed
         self._at = time.monotonic()
 
-    def get(self, key: str) -> Optional[ChatMessage]:
+    def get(self, key: str) -> ChatMessage | None:
         """Return the latest message for ``key``, refreshing the cache once its TTL lapses."""
         now = time.monotonic()
         if now - self._at >= self._ttl:
@@ -651,9 +652,9 @@ def _picker_header(width: int) -> str:
 def _row_title(
     ctx: AppContext,
     conversation: Conversation,
-    lasts: "_LiveLasts",
+    lasts: _LiveLasts,
     key_of: NameKeyResolver,
-) -> Callable[[], Union[str, Text]]:
+) -> Callable[[], str | Text]:
     """Return a picker-row title *callable* the select screen re-renders on each repaint.
 
     Both the unread badge and the last-message preview are read live, so a message arriving
@@ -675,9 +676,9 @@ def _row_title(
 def _title(
     ctx: AppContext,
     conversation: Conversation,
-    lasts: "_LiveLasts",
+    lasts: _LiveLasts,
     key_of: NameKeyResolver,
-) -> Union[str, Text]:
+) -> str | Text:
     """Build a picker row as fixed-width, colour-coded lanes.
 
     Alignment carries the readability — marker, label, unread badge, relative age, and preview
@@ -734,7 +735,7 @@ def _title(
 _COMPANION_DOT_STYLE = _NODE_GLYPHS[NODE_TYPE_CHAT][1]
 
 
-def _append_marker(text: Text, conversation: Conversation, last: Optional[ChatMessage]) -> None:
+def _append_marker(text: Text, conversation: Conversation, last: ChatMessage | None) -> None:
     """Prepend the row's leading marker (3 display cells) — a channel glyph or a contact dot.
 
     A channel keeps its openness marker (＃ / 🌐 / 🔒). A contact gets a small circle in the
@@ -781,7 +782,8 @@ def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
 
 def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
     """Append ``body`` to ``text``, muted, with each ``@[Name]`` mention drawn in the
-    mentioned node's key-derived hue (muted when the name resolves to no known node)."""
+    mentioned node's key-derived hue (muted when the name resolves to no known node).
+    """
     pos = 0
     for match in _MENTION.finditer(body):
         if match.start() > pos:

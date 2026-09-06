@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import colorsys
 import re as _re
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable, Optional
 
 from rich.cells import cell_len
 from rich.console import Console
@@ -600,7 +600,7 @@ def is_identity_style(style: str) -> bool:
     return style in _IDENTITY_STYLES
 
 
-def name_style(name: str, key: Optional[str] = None) -> str:
+def name_style(name: str, key: str | None = None) -> str:
     """The stable colour a node or sender name is drawn in — keyed on the node's key.
 
     One rule on every platform: the hue is :func:`node_style`'s key-derived spectrum, so a
@@ -762,7 +762,7 @@ _FOLD_SINGLES: dict[str, str] = {
 #: Built lazily on first fold: ``str.translate`` table = accent folds (NFKD, computed
 #: over the Latin ranges once) + :data:`_FOLD_SINGLES` + the emoji map padded to each
 #: emoji's measured cell width.
-_FOLD_TABLE: Optional[dict[int, str]] = None
+_FOLD_TABLE: dict[int, str] | None = None
 
 #: Truecolor / 256-colour SGR sequences embedded in *pre-rendered* ANSI. The rasterizer
 #: console downsamples everything it renders itself, but the braille canvases

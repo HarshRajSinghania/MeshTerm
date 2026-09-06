@@ -27,7 +27,6 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 from rich.text import Text
 
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
-from meshterm.ui.tui import frame as frame_mod
 from meshterm.ui.tui.session import TuiSession
 
 

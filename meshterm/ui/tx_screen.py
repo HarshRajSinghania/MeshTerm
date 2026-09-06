@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Group, RenderableType
 from rich.table import Table
@@ -106,13 +107,13 @@ class TxSweepScreen(Screen):
         admin_label: str,
         target_label: str,
         device_label: str,
-        device_hash: Optional[str],
+        device_hash: str | None,
         resolve: NodeResolver,
         session: Any,
         tx_min: int,
         tx_max: int,
-        admin_key: Optional[str] = None,
-        target_key: Optional[str] = None,
+        admin_key: str | None = None,
+        target_key: str | None = None,
         step: int = 3,
         samples: int = 3,
         run_sweep: Callable[[], None] = lambda: None,
@@ -175,15 +176,15 @@ class TxSweepScreen(Screen):
 
         self.running = False
         self._dialog_open = False
-        self._phase: Optional[str] = None
+        self._phase: str | None = None
         self._done = 0
         self._total = 0
         self._levels: dict[int, TxLevelResult] = {}
-        self._best_tx: Optional[int] = None
-        self._result: Optional[TxOptResult] = None
+        self._best_tx: int | None = None
+        self._result: TxOptResult | None = None
         self._applied = False
-        self._error: Optional[str] = None
-        self._worker: Optional[asyncio.Task] = None
+        self._error: str | None = None
+        self._worker: asyncio.Task | None = None
         self._index = self._actions.index("sweep")
         self._pin_cursor = False  # only pin the view while ↑/↓ are actually in use
 
@@ -358,7 +359,7 @@ class TxSweepScreen(Screen):
         """Render the header, the action list, the level chart, and the outcome."""
         lines = self._header_lines(width)
         lines.append("")
-        self._cursor: Optional[int] = None
+        self._cursor: int | None = None
         actions = self._actions
         self._index = min(self._index, len(actions) - 1)
         for i, key in enumerate(actions):
@@ -384,7 +385,7 @@ class TxSweepScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """The highlighted action row while ↑/↓ are in use; free scrolling otherwise."""
         return getattr(self, "_cursor", None) if self._pin_cursor else None
 
@@ -516,7 +517,7 @@ class TxSweepScreen(Screen):
             )
         return table
 
-    def _outcome(self) -> Optional[Text]:
+    def _outcome(self) -> Text | None:
         """The completed sweep's verdict and apply status, or the in-flight error."""
         if self._error is not None:
             return Text(f"✗ sweep failed: {self._error}", style="err")
@@ -556,7 +557,7 @@ def _nth(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def parse_tx_range(text: str) -> Optional[tuple[int, int]]:
+def parse_tx_range(text: str) -> tuple[int, int] | None:
     """Parse a typed TX window like ``"12-28"`` / ``"12 28"`` into ``(low, high)``.
 
     Clamped to the remote firmware's representable window; ``None`` when the text
@@ -572,7 +573,7 @@ def parse_tx_range(text: str) -> Optional[tuple[int, int]]:
 
 
 async def open_tx_optimize(
-    ctx: "AppContext",
+    ctx: AppContext,
     *,
     admin_node: Contact,
     target_label: str,
@@ -860,7 +861,7 @@ async def open_tx_optimize(
 
     async def sweep() -> None:
         """One Sweep commit: log in if needed, then drive the optimizer under a dialog."""
-        run_id: Optional[int] = None
+        run_id: int | None = None
         try:
             if not await ensure_login():
                 return

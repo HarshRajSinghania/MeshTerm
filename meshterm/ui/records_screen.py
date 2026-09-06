@@ -36,8 +36,9 @@ Nothing here transmits: it reads the boards the trace tools filled.
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -47,7 +48,7 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
-from .menus import command_icon, fit_cells, marked_label, section_heading
+from .menus import fit_cells, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
 from .pathline import path_line
 from .theme import name_style, snr_style
@@ -169,12 +170,12 @@ class RecordDialog(Screen):
         *,
         resolve: NodeResolver,
         device_label: str,
-        device_hash: Optional[str],
-        far_label: Optional[str] = None,
-        far_id: Optional[str] = None,
-        shape: Optional[Sequence[WalkVertex]] = None,
-        reliability: Optional[tuple[float, int, int]] = None,
-        type_of: Optional[TypeOf] = None,
+        device_hash: str | None,
+        far_label: str | None = None,
+        far_id: str | None = None,
+        shape: Sequence[WalkVertex] | None = None,
+        reliability: tuple[float, int, int] | None = None,
+        type_of: TypeOf | None = None,
     ) -> None:
         """Build the dialog for one stored record.
 
@@ -211,9 +212,9 @@ class RecordDialog(Screen):
         self._type_of = type_of
         self._actions = ("trace", "delete")
         self._index = 0
-        self._cursor: Optional[int] = None
+        self._cursor: int | None = None
         # The composed card above the action rows, per width (see render_body).
-        self._upper_cache: Optional[tuple[int, list[str]]] = None
+        self._upper_cache: tuple[int, list[str]] | None = None
         # The card opens at the top, reading down; the arrows drive (and follow) the action
         # cursor, while PgUp/PgDn/Home/End scroll the body free of it (see cursor_line).
         self._follow = False
@@ -250,7 +251,7 @@ class RecordDialog(Screen):
         elif action == "escape":
             self.resolve(None)
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """Keep the selected action visible while arrowing; scroll free once paging."""
         return self._cursor if self._follow else None
 
@@ -533,7 +534,7 @@ class RecordDialog(Screen):
         return lines
 
 
-async def open_records(ctx: "AppContext") -> dict:
+async def open_records(ctx: AppContext) -> dict:
     """Open the Trophy case browser and run it until dismissed.
 
     Wires the browser to the database and the observed contacts: records come straight
@@ -565,7 +566,7 @@ async def open_records(ctx: "AppContext") -> dict:
     device_label = str(self_info.get("name") or "us")
     device_hash = str(self_info.get("public_key") or "") or None
 
-    def _as_float(value) -> Optional[float]:  # noqa: ANN001
+    def _as_float(value) -> float | None:  # noqa: ANN001
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -581,7 +582,7 @@ async def open_records(ctx: "AppContext") -> dict:
     # Node positions and types for a record's area drawing, gathered live the same way the
     # trace tools gather them to score a walk: adverts we've heard, contacts over them. A
     # record stores canonical ids, so match those the resolver's way (a prefix either side).
-    node_entries: list[tuple[str, Optional[tuple[float, float]], Optional[int]]] = []
+    node_entries: list[tuple[str, tuple[float, float] | None, int | None]] = []
     for heard in ctx.repo.heard_nodes():
         if not heard.node:
             continue
@@ -599,16 +600,16 @@ async def open_records(ctx: "AppContext") -> dict:
     # Memoized: the boards ask for the same route nodes over and over (every hop of
     # every record, records sharing hops), and the entry list is fixed for this open —
     # so each distinct id pays the prefix scan once.
-    geo_memo: dict[str, tuple[Optional[tuple[float, float]], Optional[int]]] = {}
+    geo_memo: dict[str, tuple[tuple[float, float] | None, int | None]] = {}
 
-    def node_geo(node_id: str) -> tuple[Optional[tuple[float, float]], Optional[int]]:
+    def node_geo(node_id: str) -> tuple[tuple[float, float] | None, int | None]:
         """A route node's best-known position and type across the heard/contact entries."""
         cached = geo_memo.get(node_id)
         if cached is not None:
             return cached
         needle = node_id.lower().removeprefix("0x")
-        pos: Optional[tuple[float, float]] = None
-        ntype: Optional[int] = None
+        pos: tuple[float, float] | None = None
+        ntype: int | None = None
         for ident, epos, etype in node_entries:
             if not (ident.startswith(needle) or needle.startswith(ident)):
                 continue
@@ -623,7 +624,7 @@ async def open_records(ctx: "AppContext") -> dict:
 
     def walk_drawing(
         record: DiscoveredPath,
-    ) -> tuple[Optional[str], Optional[str], Optional[list[WalkVertex]]]:
+    ) -> tuple[str | None, str | None, list[WalkVertex] | None]:
         """The farthest node (name and id) and the walk's projected polygon.
 
         Mirrors the scoring geometry (see :mod:`~meshterm.services.records`): our node at
@@ -637,8 +638,8 @@ async def open_records(ctx: "AppContext") -> dict:
             return None, None, None
         glyph, color = self_marker()
         verts = [WalkVertex(0.0, 0.0, glyph, color, True)]
-        far_label: Optional[str] = None
-        far_id: Optional[str] = None
+        far_label: str | None = None
+        far_id: str | None = None
         far_dist = -1.0
         for node_id in record.route:
             pos, ntype = node_geo(node_id)
@@ -660,8 +661,8 @@ async def open_records(ctx: "AppContext") -> dict:
         return far_label, far_id, (verts if len(verts) >= 3 else None)
 
     def walk_reliability(
-        far_id: Optional[str], far_label: Optional[str]
-    ) -> Optional[tuple[float, int, int]]:
+        far_id: str | None, far_label: str | None
+    ) -> tuple[float, int, int] | None:
         """A record's observed reliability: the success rate of traces to its far node.
 
         A walk's route can't be counted from history — a timed-out trace records no path —

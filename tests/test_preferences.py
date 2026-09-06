@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from rich.console import Console
@@ -246,7 +246,7 @@ def test_an_in_memory_set_refuses_to_save() -> None:
 _WIDE = 100
 
 
-def _rows(prefs: Preferences, pending: Optional[dict] = None) -> tuple[str, list[str]]:
+def _rows(prefs: Preferences, pending: dict | None = None) -> tuple[str, list[str]]:
     """The page's title and the lines it draws, as the reader sees them."""
     from meshterm.ui.tui import SelectScreen
 
@@ -362,7 +362,7 @@ def test_the_printed_table_never_elides_a_key() -> None:
 class _FakeVisit:
     """One round of a visited screen: the script's next ``select`` answer."""
 
-    def __init__(self, ui: "_ScriptedUi") -> None:
+    def __init__(self, ui: _ScriptedUi) -> None:
         self._ui = ui
 
     async def result(self) -> Any:
@@ -375,7 +375,7 @@ class _FakeVisit:
 class _FakeSession:
     """Enough of :class:`TuiSession` for the page's ``stay`` loop."""
 
-    def __init__(self, ui: "_ScriptedUi") -> None:
+    def __init__(self, ui: _ScriptedUi) -> None:
         self.ui = ui
         self.pushed: list = []
 
@@ -404,7 +404,7 @@ class _ScriptedUi:
     async def dialog(self, prompt: str, buttons: list, **kwargs: Any) -> Any:
         return self._answer("dialog")
 
-    async def text(self, title: str, **kwargs: Any) -> Optional[str]:
+    async def text(self, title: str, **kwargs: Any) -> str | None:
         return self._answer("text")
 
     def show(self, *renderables: Any) -> None:

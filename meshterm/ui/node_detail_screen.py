@@ -78,7 +78,7 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -87,8 +87,8 @@ from ..core.connection import ContactNotOnDeviceError
 from ..core.geo import EARTH_RADIUS_KM, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
-from .mapcanvas import RGB
 from . import menus
+from .mapcanvas import RGB
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -100,8 +100,6 @@ from .pathgraph import (
     bidir_clusters,
     render_path_graph,
 )
-from .theme import mark_rgb, name_style, snr_style
-from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
 from .pathline import (
     ELIDE_HEAD,
     ELIDE_TAIL,
@@ -113,6 +111,8 @@ from .pathline import (
     hops_atom,
     with_action_mark,
 )
+from .theme import mark_rgb, name_style, snr_style
+from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
     _DEFAULT_GLYPH,
@@ -335,9 +335,9 @@ class _RoutesView:
     """
 
     routes: list[_Route] = field(default_factory=list)
-    glyph_of: Optional[GlyphOf] = None
-    label_of: Optional[LabelOf] = None
-    label_rgb_of: Optional[LabelRgbOf] = None
+    glyph_of: GlyphOf | None = None
+    label_of: LabelOf | None = None
+    label_rgb_of: LabelRgbOf | None = None
     legend: bool = False
     note: str = ""
 
@@ -409,11 +409,11 @@ class NodeDetailScreen(Screen):
         header: Text,
         info_rows: list[tuple[str, Text]],
         tabs: list[_Tab],
-        minimap: Optional[MiniMap] = None,
-        map_caption: Optional[Text] = None,
-        routes: Optional[_RoutesView] = None,
-        info_actions: Optional[list[_Action]] = None,
-        trace_action: Optional[_Action] = None,
+        minimap: MiniMap | None = None,
+        map_caption: Text | None = None,
+        routes: _RoutesView | None = None,
+        info_actions: list[_Action] | None = None,
+        trace_action: _Action | None = None,
     ) -> None:
         """Build the page over resolved display data.
 
@@ -460,8 +460,8 @@ class NodeDetailScreen(Screen):
         #: keeps showing the last pick.
         self._route_sel = 0
         #: The composed route fan for one (width, rows, selection) — see _routes_stage.
-        self._stage_memo: Optional[tuple[tuple, list[str]]] = None
-        self._cursor: Optional[int] = None
+        self._stage_memo: tuple[tuple, list[str]] | None = None
+        self._cursor: int | None = None
         #: The route list's window over the leftover rows (its ``page`` is the PgUp/PgDn
         #: stride), and whether any rows are hidden by it (gates the footer's scroll atom).
         self._list = ListWindow()
@@ -534,7 +534,7 @@ class NodeDetailScreen(Screen):
         tab = self._tabs[self._tab_index] if self._tabs else None
         return tab is not None and tab.kind == "info"
 
-    def _key_value(self) -> Optional[Text]:
+    def _key_value(self) -> Text | None:
         """The Info tab's key value — the one vital rendered as a scrolling lane, or ``None``.
 
         Found by its label rather than its position: the block is assembled elsewhere
@@ -581,7 +581,8 @@ class NodeDetailScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Switch tab, move the cursor within a tab, commit a row, page the list, scroll
         whichever over-wide lane the active tab owns (the highlighted route's pathline, the
-        Info tab's key), or leave."""
+        Info tab's key), or leave.
+        """
         focus = self._focusables()
         n = len(focus)
         if action in _HSHIFT_RESET_ACTIONS:
@@ -648,9 +649,10 @@ class NodeDetailScreen(Screen):
         """Whether the cursor currently rests on a route row (as opposed to an action row)."""
         return bool(focus) and focus[self._row_index % len(focus)][0] == "path"
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """The highlighted row's body line — the frame keeps it in view, which only matters
-        on a terminal too short for the pinned layout's minimums."""
+        on a terminal too short for the pinned layout's minimums.
+        """
         return self._cursor
 
     def _switch_tab(self, delta: int) -> None:
@@ -1052,7 +1054,7 @@ def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
 
 
 def _range_text(
-    lat: float, lon: float, self_lat: Optional[float], self_lon: Optional[float]
+    lat: float, lon: float, self_lat: float | None, self_lon: float | None
 ) -> Text:
     """A location value: the coordinates, plus range + bearing from us when we're placed."""
     text = Text(f"{lat:.4f}, {lon:.4f}", style="")
@@ -1063,7 +1065,7 @@ def _range_text(
     return text
 
 
-def _as_float(value: object) -> Optional[float]:
+def _as_float(value: object) -> float | None:
     """Best-effort float coercion for the raw lat/lon a device reports (``None`` on junk)."""
     try:
         return float(value)  # type: ignore[arg-type]
@@ -1071,7 +1073,7 @@ def _as_float(value: object) -> Optional[float]:
         return None
 
 
-def _located(lat: Optional[float], lon: Optional[float]) -> bool:
+def _located(lat: float | None, lon: float | None) -> bool:
     """Whether a coordinate is a real, plottable fix (see :func:`~meshterm.core.geo.usable_fix`).
 
     Rejects both the 0/0 null-island a no-GPS node reports and the out-of-range nonsense a
@@ -1085,7 +1087,7 @@ def _located(lat: Optional[float], lon: Optional[float]) -> bool:
 
 
 async def open_node_detail(
-    ctx: "AppContext", contact: Optional["Contact"], *, manage: bool = True
+    ctx: AppContext, contact: Contact | None, *, manage: bool = True
 ) -> bool:
     """Open the Node detail page for a contact (or our own node) and run its action loop.
 
@@ -1123,12 +1125,12 @@ async def open_node_detail(
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
+    from ..services.topology import _is_hex, build_topology
     from ..services.trace_runner import (
         make_name_key_resolver,
         make_node_resolver,
         make_node_type_resolver,
     )
-    from ..services.topology import build_topology, _is_hex
     from ..tools.map import gather_markers
     from .config_editor import show_contact_card
     from .map_screen import basemap_source, open_map
@@ -1173,7 +1175,7 @@ async def open_node_detail(
 
     if you:
         node_id = (self_key.lower().removeprefix("0x")[:12]) or ""
-        name: Optional[str] = self_name
+        name: str | None = self_name
         key = self_key
         node_type = info.get("adv_type")
         lat, lon = self_lat, self_lon
@@ -1226,7 +1228,7 @@ async def open_node_detail(
         packet_paths=ctx.repo.packet_paths(),
         neighbour_links=ctx.repo.neighbour_links(),
     )
-    device_route: Optional[tuple[str, ...]] = None
+    device_route: tuple[str, ...] | None = None
     if not you and contact is not None and contact.route_hops is not None:
         device_route = tuple(topo.canonical(h) or h for h in contact.route_hops)
     canonical_target = (
@@ -1269,8 +1271,8 @@ async def open_node_detail(
         info_rows.append(("where", _range_text(lat, lon, self_lat, self_lon)))
 
     # -- the location preview (only when the node advertised a fix).
-    minimap: Optional[MiniMap] = None
-    map_caption: Optional[Text] = None
+    minimap: MiniMap | None = None
+    map_caption: Text | None = None
     markers: list = []
     if lat is not None and lon is not None:
         try:
@@ -1289,7 +1291,7 @@ async def open_node_detail(
         map_caption = Text(f"{label} · centred here", style="faint")
 
     # -- the "routes heard" route list + graph (node → us), best-evidence path white.
-    routes_view: Optional[_RoutesView] = None
+    routes_view: _RoutesView | None = None
     if not you:
         routes_view = _routes_view(
             topo, scenarios, suggested, device_route, canonical_target, target_hash, width_bytes,
@@ -1351,7 +1353,7 @@ async def open_node_detail(
         adv_type = 1
     # With routes listed, each route row is its own trace entry point (Enter arms it); the
     # dedicated action only stands in when there is no route evidence to list.
-    trace_action: Optional[_Action] = None
+    trace_action: _Action | None = None
     if not you and node_id and not (routes_view is not None and routes_view.routes):
         trace_action = _Action("trace", "🎯", "", "Trace — auto route …")
     title = f"Node — {label}" if not you else f"Node — {label} (you)"
@@ -1440,7 +1442,7 @@ async def open_node_detail(
 
 
 def _is_archived(
-    ctx: "AppContext", contact: "Optional[Contact]", self_key: str
+    ctx: AppContext, contact: Contact | None, self_key: str
 ) -> bool:
     """Whether this contact was swept off the device and is being kept by MeshTerm.
 
@@ -1457,7 +1459,7 @@ def _is_archived(
 
 
 async def _archive_contact(
-    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+    ctx: AppContext, contact: Contact, self_key: str, label: str
 ) -> bool:
     """Confirm and archive one contact off the device; ``True`` once it is gone from the radio.
 
@@ -1523,7 +1525,7 @@ async def _archive_contact(
 
 
 async def _restore_archived(
-    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+    ctx: AppContext, contact: Contact, self_key: str, label: str
 ) -> bool:
     """Write an archived contact back onto the device; ``True`` once it is live again.
 
@@ -1570,7 +1572,7 @@ async def _restore_archived(
 
 
 async def _remove_contact(
-    ctx: "AppContext", contact: "Contact", self_key: str, label: str
+    ctx: AppContext, contact: Contact, self_key: str, label: str
 ) -> bool:
     """Confirm and drop one contact from the device; ``True`` once it is gone.
 
@@ -1662,7 +1664,7 @@ async def _remove_contact(
     return True
 
 
-def _signal_row(hn) -> Optional[Text]:  # noqa: ANN001 - Optional[HeardNode]
+def _signal_row(hn) -> Text | None:  # noqa: ANN001 - Optional[HeardNode]
     """Median/best reception SNR and last RSSI, or ``None`` when nothing was measured."""
     if hn is None:
         return None
@@ -1680,7 +1682,7 @@ def _signal_row(hn) -> Optional[Text]:  # noqa: ANN001 - Optional[HeardNode]
     return text if text.plain else None
 
 
-def _hop_hash(key: Optional[str], fallback: str, hash_bytes: int) -> str:
+def _hop_hash(key: str | None, fallback: str, hash_bytes: int) -> str:
     """A key's hash at ``hash_bytes`` width, or ``fallback`` when there is no usable key."""
     hex_key = (key or "").lower().removeprefix("0x")
     return hex_key[: hash_bytes * 2] if hex_key else fallback
@@ -1691,12 +1693,12 @@ def _route_line(
     name_key: str,
     hops_out: tuple[str, ...],
     tag: str,
-    weakest: Optional[float],
+    weakest: float | None,
     samples: int,
     *,
     resolve,  # noqa: ANN001 - NodeResolver, kept loose like the graph callbacks
     node_known: bool,
-    self_name: Optional[str],
+    self_name: str | None,
     hash_bytes: int,
 ) -> tuple[Text, Text]:
     """One route as ``(path, context)`` — the pathline, and the line it hangs its context under.
@@ -1885,10 +1887,10 @@ def _routes_view(
         best_hops = ()
 
     # The ordered, de-duplicated selectable routes (outbound hops us → target).
-    entries: list[tuple[tuple[str, ...], str, Optional[float], int]] = []
+    entries: list[tuple[tuple[str, ...], str, float | None, int]] = []
     seen: set[tuple[str, ...]] = set()
 
-    def add(hops_out: tuple[str, ...], tag: str, weakest: Optional[float], samples: int) -> None:
+    def add(hops_out: tuple[str, ...], tag: str, weakest: float | None, samples: int) -> None:
         key = tuple(hops_out)
         if key in seen:
             return
@@ -1935,7 +1937,7 @@ def _routes_view(
     # the names live now, and a relay's byte and its row chip cross-reference by hue rather
     # than by spelling the same node twice. A contracted cluster keeps its own count-and-type
     # label — it stands for no single hash.
-    def label_of(node: str) -> Optional[str]:
+    def label_of(node: str) -> str | None:
         cluster = clusters.get(node)
         return cluster.label if cluster is not None else byte_label_of(node)
 

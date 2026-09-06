@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.panel import Panel
@@ -164,7 +164,7 @@ async def _status_panel(device: Device, snapshot: dict) -> Panel:
     return Panel(body, title="[accent]Status[/accent]", border_style="accent", expand=False)
 
 
-async def _try(read) -> Optional[Any]:
+async def _try(read) -> Any | None:
     """Await a device read, returning ``None`` when the firmware doesn't support it."""
     try:
         return await read()

@@ -147,7 +147,8 @@ def test_record_graph_marks_a_repeater_relay_with_its_triangle() -> None:
 
 def test_record_graph_collapses_a_revisited_route_to_distinct_nodes() -> None:
     """A boomerang that doubles back seats each node once — the depth graph can't stack a
-    node on itself — so the revisiting route draws the same graph as its distinct one."""
+    node on itself — so the revisiting route draws the same graph as its distinct one.
+    """
     looping = _dialog(_record(route=(HUB_ID, FAR_ID, HUB_ID)))
     distinct = _dialog(_record(route=(HUB_ID, FAR_ID)))
     assert looping._graph_lines(60) == distinct._graph_lines(60)

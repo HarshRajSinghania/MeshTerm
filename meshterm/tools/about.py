@@ -19,7 +19,7 @@ The pages themselves are written in markdown under ``meshterm/assets/pages`` (se
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from ..context import AppContext
 from .base import Tool, ToolResult, register
@@ -39,7 +39,7 @@ class _AboutTool(Tool):
     category = "This app"
 
     @staticmethod
-    def page() -> "MarkdownDoc":
+    def page() -> MarkdownDoc:
         """Build this page's content.
 
         Overridden by each page. Subclasses import their builder *inside* the override
@@ -49,7 +49,7 @@ class _AboutTool(Tool):
         """
         raise NotImplementedError
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Open the page; returning ``None`` completes the invocation with no run row.
 
         The page transmits nothing and stores nothing, so — like the Trophy case and the
@@ -91,7 +91,7 @@ class AboutMeshTermTool(_AboutTool):
     order = 10  # the question a stranger asks first
 
     @staticmethod
-    def page() -> "MarkdownDoc":
+    def page() -> MarkdownDoc:
         """The *About MeshTerm* page."""
         from ..ui.about import about_meshterm
 
@@ -109,7 +109,7 @@ class AboutAuthorTool(_AboutTool):
     order = 20  # who made the thing you just read about
 
     @staticmethod
-    def page() -> "MarkdownDoc":
+    def page() -> MarkdownDoc:
         """The *About the author* page."""
         from ..ui.about import about_author
 
@@ -127,7 +127,7 @@ class JoinDiscordTool(_AboutTool):
     order = 25  # where everyone else is, once you know what this is and who made it
 
     @staticmethod
-    def page() -> "MarkdownDoc":
+    def page() -> MarkdownDoc:
         """The *Join Discord* page."""
         from ..ui.about import join_discord
 
@@ -145,7 +145,7 @@ class SupportProjectTool(_AboutTool):
     order = 30  # the ask, and only once the pages before it have earned it
 
     @staticmethod
-    def page() -> "MarkdownDoc":
+    def page() -> MarkdownDoc:
         """The *Support MeshTerm* page."""
         from ..ui.about import support_project
 

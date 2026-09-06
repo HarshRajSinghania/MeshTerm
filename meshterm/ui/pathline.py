@@ -68,8 +68,8 @@ earned, and a cursor can never be stranded on a line break.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
 
 from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -207,12 +207,12 @@ class PathHop:
     """
 
     label: str
-    key: Optional[str] = None
+    key: str | None = None
     you: bool = False
-    annotation: Optional[str] = None
+    annotation: str | None = None
     lit_bytes: int = 0
     dim: bool = False
-    style: Optional[str] = None
+    style: str | None = None
     cursor: bool = False
     gap: bool = False
 
@@ -227,7 +227,7 @@ def elision_hop() -> PathHop:
     return PathHop(_ELISION, dim=True, gap=True)
 
 
-def _style_hex(style: str) -> Optional[str]:
+def _style_hex(style: str) -> str | None:
     """The ``#rrggbb`` a style string or theme name resolves to, else ``None``."""
     for token in reversed(style.split()):
         if token.startswith("#") and len(token) == 7:
@@ -248,9 +248,9 @@ def _style_hex(style: str) -> Optional[str]:
 _ON_FILL = re.compile(r"\bon\s+(#[0-9a-fA-F]{6})\b")
 
 
-def _fills(line: Text) -> list[Optional[str]]:
+def _fills(line: Text) -> list[str | None]:
     """The chip fill under each *character* of a rendered line (``None`` off a chip)."""
-    fills: list[Optional[str]] = [None] * len(line.plain)
+    fills: list[str | None] = [None] * len(line.plain)
     for span in line.spans:
         style = span.style if isinstance(span.style, str) else str(span.style)
         found = _ON_FILL.search(style)
@@ -710,7 +710,7 @@ class PathLine:
             at += size
         return groups
 
-    def _turn_seam(self) -> Optional[int]:
+    def _turn_seam(self) -> int | None:
         """The hop index a fold would read best at — where the route turns — or ``None``.
 
         Two things mark a turn. A dimmed *tail* is one: the composed outbound leg ends
@@ -726,7 +726,7 @@ class PathLine:
         automatic landing back on us never widows it onto a line of its own; that lone
         hop marks no turn, and the walk's own mirror still gets to name one.
         """
-        seam: Optional[int] = len(self._hops)
+        seam: int | None = len(self._hops)
         while seam and self._hops[seam - 1].dim:
             seam -= 1
         if seam == len(self._hops):  # nothing faded at the tail
@@ -963,27 +963,27 @@ class PathLine:
         return text
 
 
-def _shorten(value: str, hash_bytes: Optional[int]) -> str:
+def _shorten(value: str, hash_bytes: int | None) -> str:
     """Bare lowercase hex, truncated to ``hash_bytes`` bytes (whole when falsy)."""
     raw = value.lower().removeprefix("0x")
     return raw[: hash_bytes * 2] if hash_bytes else raw
 
 
 def path_line(
-    hops: Sequence[Optional[str]],
-    resolve: Callable[[str], Optional[str]] = lambda hop: hop,
+    hops: Sequence[str | None],
+    resolve: Callable[[str], str | None] = lambda hop: hop,
     *,
     prefix_bytes: int = 0,
-    self_name: Optional[str] = None,
+    self_name: str | None = None,
     empty: str = "direct",
     show_hash: bool = False,
-    hash_bytes: Optional[int] = None,
-    device_hash: Optional[str] = None,
-    dim_from: Optional[int] = None,
+    hash_bytes: int | None = None,
+    device_hash: str | None = None,
+    dim_from: int | None = None,
     hash_as_name: bool = False,
     bare_self: bool = False,
     dim_self: bool = True,
-    cursor: Optional[int] = None,
+    cursor: int | None = None,
     mode: str = "auto",
 ) -> PathLine:
     """Build a :class:`PathLine` from raw hop hashes — ``path_text``'s vocabulary.

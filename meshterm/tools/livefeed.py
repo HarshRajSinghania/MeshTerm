@@ -14,7 +14,7 @@ covers scripted packet-watching.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -33,7 +33,7 @@ class LiveFeedTool(Tool):
     category = "Watch"
     order = 20  # right under the dashboard it was promoted out of
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the live feed; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so

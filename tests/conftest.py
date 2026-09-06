@@ -19,7 +19,7 @@ always see the colours the app really emits.
 from __future__ import annotations
 
 import re
-from typing import Callable, Iterable, Iterator, Union
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 
@@ -30,7 +30,7 @@ from meshterm.ui.termfont import powerline_support
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def plain(rendered: Union[str, Iterable[str]]) -> str:
+def plain(rendered: str | Iterable[str]) -> str:
     """The plain-text form of rendered screen output, for content assertions.
 
     Takes what a render handed back — a list of ANSI lines (joined with newlines) or a

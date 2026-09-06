@@ -54,8 +54,8 @@ can never swallow a key that would have worked.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Optional, Sequence
 
 from rich.text import Text
 
@@ -95,7 +95,7 @@ class FPair:
 
 
 #: A lane is five slots, F1..F5 left to right; ``None`` leaves a slot unassigned.
-Lane = Sequence[Optional[FPair]]
+Lane = Sequence[FPair | None]
 
 #: The default lane, in the vocabulary of a screen that is one scrolling body: move
 #: through it a page at a time (F4/F5), or — behind Shift, on those same two keys — jump
@@ -113,7 +113,7 @@ Lane = Sequence[Optional[FPair]]
 #: own Shift companion follows the same rule *along its slot*: the jump behind ``Page ↑``
 #: is the one Page ↑ is heading for, so F10 is Top and F9 Bottom. A screen relabelling a
 #: pair keeps its order (a chat's ``Latest``/``Oldest``).
-DEFAULT_LANE: tuple[Optional[FPair], ...] = (
+DEFAULT_LANE: tuple[FPair | None, ...] = (
     None,
     None,
     None,
@@ -125,10 +125,10 @@ DEFAULT_LANE: tuple[Optional[FPair], ...] = (
 #: prompt. Nothing there pages or jumps, so the shared pager is not dim-but-real, it is
 #: simply *not a thing here* — the distinction the module docstring draws — and every slot
 #: renders as a bare, unfilled key number.
-EMPTY_LANE: tuple[Optional[FPair], ...] = (None, None, None, None, None)
+EMPTY_LANE: tuple[FPair | None, ...] = (None, None, None, None, None)
 
 
-def default_lane(*, nav: bool = True) -> tuple[Optional[FPair], ...]:
+def default_lane(*, nav: bool = True) -> tuple[FPair | None, ...]:
     """:data:`DEFAULT_LANE`, with its pager slots dimmed unless ``nav``.
 
     Both shared slots *move* something — the page, and the jump behind it — so on a screen
@@ -152,7 +152,7 @@ def default_lane(*, nav: bool = True) -> tuple[Optional[FPair], ...]:
     )
 
 
-def action_for(lane: Lane, number: int) -> Optional[str]:
+def action_for(lane: Lane, number: int) -> str | None:
     """The action F-key ``number`` (1-10) resolves to on this lane, or ``None``.
 
     F1-F5 take the slot's plain-key action, F6-F10 (the physical Shift bank) take its

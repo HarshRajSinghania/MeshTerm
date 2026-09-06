@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from .models import Ack, Message, Observation, utcnow
 
@@ -60,31 +59,31 @@ class MeshEvent:
     received_at: datetime = field(default_factory=utcnow)
 
     @property
-    def observation(self) -> Optional[Observation]:
+    def observation(self) -> Observation | None:
         """The carried :class:`Observation`, or ``None`` if this isn't an observation."""
         return self.payload if isinstance(self.payload, Observation) else None
 
     @property
-    def message(self) -> Optional[Message]:
+    def message(self) -> Message | None:
         """The carried :class:`Message`, or ``None`` if this isn't a message."""
         return self.payload if isinstance(self.payload, Message) else None
 
     @property
-    def ack(self) -> Optional[Ack]:
+    def ack(self) -> Ack | None:
         """The carried :class:`Ack`, or ``None`` if this isn't an acknowledgement."""
         return self.payload if isinstance(self.payload, Ack) else None
 
     @classmethod
-    def observation_event(cls, obs: Observation) -> "MeshEvent":
+    def observation_event(cls, obs: Observation) -> MeshEvent:
         """Wrap an :class:`Observation` as an :attr:`EventKind.OBSERVATION` event."""
         return cls(kind=EventKind.OBSERVATION, payload=obs)
 
     @classmethod
-    def message_event(cls, message: Message) -> "MeshEvent":
+    def message_event(cls, message: Message) -> MeshEvent:
         """Wrap a :class:`Message` as an :attr:`EventKind.MESSAGE` event."""
         return cls(kind=EventKind.MESSAGE, payload=message)
 
     @classmethod
-    def ack_event(cls, ack: Ack) -> "MeshEvent":
+    def ack_event(cls, ack: Ack) -> MeshEvent:
         """Wrap an :class:`Ack` as an :attr:`EventKind.ACK` event."""
         return cls(kind=EventKind.ACK, payload=ack)

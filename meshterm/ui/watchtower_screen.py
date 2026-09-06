@@ -15,7 +15,8 @@ is opened before that ever happened). Nothing transmits.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
@@ -49,13 +50,13 @@ _ACK_ALL = ("ack-all",)
 _CLEAR = ("clear",)
 
 
-def contact_watch_key(contact: Contact) -> Optional[str]:
+def contact_watch_key(contact: Contact) -> str | None:
     """The watch-store key for a contact: the 12-hex id observations carry."""
     ident = (contact.public_key or contact.key_prefix or "").lower().removeprefix("0x")
     return ident[:12] or None
 
 
-async def open_watchtower(ctx: "AppContext") -> Optional[dict[str, Any]]:
+async def open_watchtower(ctx: AppContext) -> dict[str, Any] | None:
     """Run the Watchtower screen until dismissed.
 
     Args:
@@ -159,9 +160,9 @@ def _menu_items(
     watched: dict[str, WatchedNode],
     new_node_alerts: bool,
     *,
-    type_of: Callable[[str], Optional[int]] = lambda key: None,
-    key_of: Callable[[str], Optional[str]] = lambda name: None,
-    alert_type_of: Callable[[str], Optional[int]] = lambda label: None,
+    type_of: Callable[[str], int | None] = lambda key: None,
+    key_of: Callable[[str], str | None] = lambda name: None,
+    alert_type_of: Callable[[str], int | None] = lambda label: None,
 ) -> list:
     """Build the screen's rows: alerts, then the watchlist, then the actions.
 
@@ -179,7 +180,7 @@ def _menu_items(
     """
     watched_keys = {entry.name.casefold(): entry.key for entry in watched.values()}
 
-    def label_key(label: str) -> Optional[str]:
+    def label_key(label: str) -> str | None:
         return key_of(label) or watched_keys.get(label.casefold())
 
     items: list = [section_heading("Alerts")]
@@ -226,8 +227,8 @@ def _menu_items(
 
 def _alert_lanes(
     alert: Alert,
-    key_of: Callable[[str], Optional[str]],
-    type_of: Callable[[str], Optional[int]] = lambda label: None,
+    key_of: Callable[[str], str | None],
+    type_of: Callable[[str], int | None] = lambda label: None,
 ) -> Text:
     """An alert's fixed head: marker, age, kind, type glyph, node — and the ``—`` lead-in.
 
@@ -270,7 +271,7 @@ def _alert_row(lanes: Text, alert: Alert) -> Text:
     return row
 
 
-def _watched_row(entry: WatchedNode, type_of: Callable[[str], Optional[int]]) -> Text:
+def _watched_row(entry: WatchedNode, type_of: Callable[[str], int | None]) -> Text:
     """One watched node as a row: type glyph, hued name, its rules, and last heard.
 
     The leading glyph is the node's shared type marker (``▲`` repeater, ``●`` node, …)
@@ -295,7 +296,7 @@ def _watched_row(entry: WatchedNode, type_of: Callable[[str], Optional[int]]) ->
 # --- the flows --------------------------------------------------------------------------
 
 
-async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
+async def _pick_node(ctx: AppContext, contacts: list[Contact]) -> None:
     """Float the star-a-node picker: unwatched contacts, most recently heard first."""
     session = ctx.ui.session
     store = ctx.watch_store
@@ -341,7 +342,7 @@ async def _pick_node(ctx: "AppContext", contacts: list[Contact]) -> None:
     )
 
 
-async def _node_rules(ctx: "AppContext", key: str) -> None:
+async def _node_rules(ctx: AppContext, key: str) -> None:
     """Float one watched node's rule editor until dismissed (or the node is unstarred)."""
     session = ctx.ui.session
     store = ctx.watch_store
@@ -373,7 +374,7 @@ async def _node_rules(ctx: "AppContext", key: str) -> None:
             return
 
 
-async def _pick_silence(ctx: "AppContext", key: str, entry: WatchedNode) -> None:
+async def _pick_silence(ctx: AppContext, key: str, entry: WatchedNode) -> None:
     """Float the silence-threshold picker for one watched node."""
     session = ctx.ui.session
     items = [Choice("Off — never alarm on silence", OFF)]

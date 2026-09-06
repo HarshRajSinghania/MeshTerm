@@ -12,7 +12,7 @@ Menu-only: the explorer is interactive by nature (subjects, windows, scrolling);
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -31,7 +31,7 @@ class TimeMachineTool(Tool):
     category = "Watch"
     order = 40  # the past tense of the Dashboard above it
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the explorer; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so

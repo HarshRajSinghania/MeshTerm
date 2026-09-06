@@ -15,7 +15,7 @@ already print path evidence in scripted runs.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -39,7 +39,7 @@ class WalkTool(Tool):
     category = "Explore"
     order = 20  # beside Map: the logical shape next to the geographic one
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the walk; there are never parameters to collect.
 
         The screen presents everything itself and returns when dismissed, so

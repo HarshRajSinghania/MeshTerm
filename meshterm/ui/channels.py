@@ -35,9 +35,10 @@ depend on the context and services; it owns no persistence of its own.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
@@ -142,7 +143,7 @@ class ChannelSlot:
         )
 
 
-async def manage_channels(ctx: "AppContext") -> int:
+async def manage_channels(ctx: AppContext) -> int:
     """Run the interactive channel manager until the user backs out.
 
     Args:
@@ -162,7 +163,7 @@ async def manage_channels(ctx: "AppContext") -> int:
     capacity = await ctx.devstate.channel_capacity() or MAX_CHANNELS
     stats = _LiveStats(ctx)
     changes = 0
-    highlight: Optional[object] = None
+    highlight: object | None = None
 
     slots: list = []
 
@@ -238,7 +239,7 @@ async def manage_channels(ctx: "AppContext") -> int:
 
 
 async def _menu_round(
-    ctx: "AppContext",
+    ctx: AppContext,
     title: str,
     items: list,
     *,
@@ -267,7 +268,7 @@ async def _menu_round(
     return await handle(await ctx.ui.select(title, items, default=default))
 
 
-async def _refresh_chat_channels(ctx: "AppContext") -> None:
+async def _refresh_chat_channels(ctx: AppContext) -> None:
     """Rebuild the chat service's slot→identity cache after a channel mutation.
 
     Best-effort: a device read hiccup here must never break the channel manager, and the
@@ -322,7 +323,7 @@ async def read_channel_slots(device: Device) -> list[ChannelSlot]:
     return slots
 
 
-def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
+def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> int | None:
     """Return the lowest unused slot index, or ``None`` when every slot is full."""
     used = {s.idx for s in slots}
     return next((i for i in range(capacity) if i not in used), None)
@@ -332,7 +333,7 @@ def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> Optional[int]:
 
 
 async def write_channel(
-    ctx: "AppContext", device: Device, idx: int, name: str, secret: Optional[bytes]
+    ctx: AppContext, device: Device, idx: int, name: str, secret: bytes | None
 ) -> None:
     """Write a channel to a device slot, remembering it so a forgetful device can be restored.
 
@@ -380,12 +381,12 @@ def _slot_label(slot: ChannelSlot) -> str:
 # --- notifications -------------------------------------------------------------
 
 
-def _is_muted(ctx: "AppContext", slot: ChannelSlot) -> bool:
+def _is_muted(ctx: AppContext, slot: ChannelSlot) -> bool:
     """Whether this channel's new-message notifications are muted (see :class:`MuteStore`)."""
     return ctx.mute_store.is_muted(slot.identity)
 
 
-def _toggle_mute(ctx: "AppContext", slot: ChannelSlot) -> None:
+def _toggle_mute(ctx: AppContext, slot: ChannelSlot) -> None:
     """Flip a channel's notification mute, zeroing its unread the moment it is muted.
 
     Muting is a remembered per-channel preference (keyed by the channel's intrinsic
@@ -422,15 +423,15 @@ class _LiveStats:
     idle frame would still land one repository query — the throttle would gate nothing.
     """
 
-    def __init__(self, ctx: "AppContext", *, ttl: float = 3.0) -> None:
+    def __init__(self, ctx: AppContext, *, ttl: float = 3.0) -> None:
         """Bind to a context; the first read populates the cache."""
         self._ctx = ctx
         self._ttl = ttl
-        self._cache: Optional[dict[str, "ChannelStats"]] = None
-        self._peak: Optional[float] = None
+        self._cache: dict[str, ChannelStats] | None = None
+        self._peak: float | None = None
         self._at = 0.0
 
-    def _snapshot(self) -> dict[str, "ChannelStats"]:
+    def _snapshot(self) -> dict[str, ChannelStats]:
         """Every channel's stats, re-reading the repository at most once per ``ttl``."""
         now = time.monotonic()
         if self._cache is None or now - self._at >= self._ttl:
@@ -442,7 +443,7 @@ class _LiveStats:
             self._at = now
         return self._cache
 
-    def get(self, channel_id: str) -> Optional["ChannelStats"]:
+    def get(self, channel_id: str) -> ChannelStats | None:
         """Return the stats for one channel identity, refreshing once the TTL lapses."""
         return self._snapshot().get(channel_id)
 
@@ -478,7 +479,7 @@ _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
 @lru_cache(maxsize=32)
-def _activity_sparkline(histogram: "tuple[int, ...]", peak: float) -> Text:
+def _activity_sparkline(histogram: tuple[int, ...], peak: float) -> Text:
     """The channel's braille activity sparkline over the trailing two hours, now at the right.
 
     The shared :func:`~meshterm.ui.braillechart.activity_sparkline` over the newest
@@ -520,7 +521,7 @@ def _lanes_header(name_w: int) -> str:
 
 
 def _slot_row(
-    ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats, name_w: int
+    ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: int
 ) -> Callable[[], Text]:
     """Return a list-row title *callable* the select screen re-renders on each repaint.
 
@@ -532,7 +533,7 @@ def _slot_row(
 
 
 def _slot_text(
-    ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats, name_w: int
+    ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: int
 ) -> Text:
     """Build one channel's list row as fixed-width, colour-coded lanes.
 
@@ -580,7 +581,7 @@ def _slot_text(
 
 
 def _menu_items(
-    ctx: "AppContext", slots: list[ChannelSlot], capacity: int, stats: _LiveStats
+    ctx: AppContext, slots: list[ChannelSlot], capacity: int, stats: _LiveStats
 ) -> tuple[str, list]:
     """Build the channel manager's title and rows for the current slot table.
 
@@ -629,7 +630,7 @@ def _menu_items(
     return f"Channels — {len(slots)}/{capacity} slots", items
 
 
-def _detail_summary(ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats) -> str:
+def _detail_summary(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats) -> str:
     """One line of vital signs for the detail screen: slot, totals, unread, mute, last activity."""
     st = stats.get(slot.identity)
     unread = ctx.chat.unread(slot.conversation.key)
@@ -647,7 +648,7 @@ def _detail_summary(ctx: "AppContext", slot: ChannelSlot, stats: _LiveStats) -> 
     return " · ".join(parts)
 
 
-def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
+def _detail_items(ctx: AppContext, slot: ChannelSlot) -> list:
     """Build the channel-detail rows: label and description in two aligned lanes.
 
     The Device actions presentation (menu-style lanes, no header line — these are commands,
@@ -692,7 +693,7 @@ def _detail_items(ctx: "AppContext", slot: ChannelSlot) -> list:
 
 
 async def _channel_detail(
-    ctx: "AppContext", device: Device, slot: ChannelSlot, stats: _LiveStats
+    ctx: AppContext, device: Device, slot: ChannelSlot, stats: _LiveStats
 ) -> int:
     """Show one channel's actions (QR, key, chat, rename, clear); return changes made.
 
@@ -708,7 +709,7 @@ async def _channel_detail(
     kind = "public" if slot.is_public else "private"
     title = f"{slot.name}  ({kind}, hash {slot.hash})"
 
-    async def handle(choice: object) -> Optional[int]:
+    async def handle(choice: object) -> int | None:
         """Run one action; an int closes the detail with that many changes, ``None`` stays."""
         if choice is None:  # Esc
             return 0
@@ -759,7 +760,7 @@ async def _channel_detail(
 
 
 async def _create_private(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Create a private channel with a fresh random key on the next free slot."""
     idx = await _pick_free_slot(ctx, slots, capacity)
@@ -776,7 +777,7 @@ async def _create_private(
 
 
 async def _add_default_public(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Add MeshCore's built-in fixed-key ``Public`` channel on the next free slot."""
     idx = await _pick_free_slot(ctx, slots, capacity)
@@ -788,7 +789,7 @@ async def _add_default_public(
 
 
 async def _add_public(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Create a public channel whose key is derived from its (``#``-prefixed) name."""
     idx = await _pick_free_slot(ctx, slots, capacity)
@@ -812,7 +813,7 @@ async def _add_public(
 
 
 async def _join_with_key(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Join an existing private channel by entering its name and 16-byte key.
 
@@ -845,7 +846,7 @@ async def _join_with_key(
 
 
 async def _import_link(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], capacity: int
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Import a channel from a pasted ``meshcore://channel/add`` link."""
     idx = await _pick_free_slot(ctx, slots, capacity)
@@ -866,7 +867,7 @@ async def _import_link(
     return 1
 
 
-async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
+async def _edit(ctx: AppContext, device: Device, slot: ChannelSlot) -> bool:
     """Rename and/or re-key an existing channel; return whether it changed.
 
     Name then key, as a stack (:func:`~meshterm.ui.menus.run_steps`): Esc on the key steps
@@ -903,7 +904,7 @@ async def _edit(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
     return True
 
 
-async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
+async def _clear(ctx: AppContext, device: Device, slot: ChannelSlot) -> bool:
     """Clear a channel slot after confirmation; return whether it was cleared.
 
     A red data-loss dialog (Cancel left, the verb right and default, ``destructive``
@@ -930,7 +931,7 @@ async def _clear(ctx: "AppContext", device: Device, slot: ChannelSlot) -> bool:
 
 
 async def _write_slot(
-    ctx: "AppContext", device: Device, idx: int, slot: ChannelSlot
+    ctx: AppContext, device: Device, idx: int, slot: ChannelSlot
 ) -> None:
     """Write ``slot``'s contents into slot ``idx`` (name-derived channels re-derive their key)."""
     secret = None if slot.is_name_derived else slot.secret
@@ -938,7 +939,7 @@ async def _write_slot(
 
 
 async def _apply_order(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot], order: list[int]
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], order: list[int]
 ) -> int:
     """Rewrite the channel slots so they display in ``order``; return the writes made.
 
@@ -960,7 +961,7 @@ async def _apply_order(
 
 
 async def _reorder_channels(
-    ctx: "AppContext", device: Device, slots: list[ChannelSlot]
+    ctx: AppContext, device: Device, slots: list[ChannelSlot]
 ) -> int:
     """Let the user drag channels into a new order with the arrows; return writes made."""
     if len(slots) < 2:  # pragma: no cover - the menu only offers reorder with 2+ channels
@@ -980,13 +981,13 @@ async def _reorder_channels(
 
 
 async def _show_share(
-    ctx: "AppContext", name: str, secret: bytes, *, intro: str = "Scan to add this channel:"
+    ctx: AppContext, name: str, secret: bytes, *, intro: str = "Scan to add this channel:"
 ) -> None:
     """Show the channel's QR code and its share URL in a dismissable window."""
     await share_popup(ctx, name=name, url=share_url(name, secret), intro=intro)
 
 
-async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
+async def _show_key(ctx: AppContext, slot: ChannelSlot) -> None:
     """Show a channel's name, type, hash, key, and share link as labelled blocks.
 
     Deliberately not a table: a bordered grid inside a popup is visual noise and wastes
@@ -1022,7 +1023,7 @@ async def _show_key(ctx: "AppContext", slot: ChannelSlot) -> None:
     await ctx.ui.view(Group(*blocks), title=f"Key — {slot.name}", footer_hint="Esc close")
 
 
-async def _open_chat(ctx: "AppContext", slot: ChannelSlot) -> None:
+async def _open_chat(ctx: AppContext, slot: ChannelSlot) -> None:
     """Open this channel in the live chat screen."""
     from .chat import open_chat
 
@@ -1030,8 +1031,8 @@ async def _open_chat(ctx: "AppContext", slot: ChannelSlot) -> None:
 
 
 async def _pick_free_slot(
-    ctx: "AppContext", slots: list[ChannelSlot], capacity: int
-) -> Optional[int]:
+    ctx: AppContext, slots: list[ChannelSlot], capacity: int
+) -> int | None:
     """Return the next free slot, warning (and returning ``None``) if all are full."""
     idx = _next_free_slot(slots, capacity)
     if idx is None:

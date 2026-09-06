@@ -8,7 +8,7 @@ never open a serial port.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
@@ -16,30 +16,31 @@ from .core.admin_store import AdminStore
 from .core.advert_store import AdvertStore
 from .core.channel_store import ChannelStore
 from .core.config import DeviceProfile, Settings
+from .core.connection import Device, make_device
 from .core.contact_store import ContactStore
 from .core.courier_store import CourierStore
-from .core.mute_store import MuteStore
-from .core.preferences import Preferences, install as install_preferences
-from .core.remote_store import RemoteStore
-from .core.settings_store import SettingsStore
-from .core.watch_store import WatchStore
-from .core.connection import Device, make_device
 from .core.device_store import DeviceStore
 from .core.discovery import DiscoveredDevice, discover_devices
+from .core.mute_store import MuteStore
+from .core.preferences import Preferences
+from .core.preferences import install as install_preferences
+from .core.remote_store import RemoteStore
 from .core.selection import resolve_device
+from .core.settings_store import SettingsStore
+from .core.watch_store import WatchStore
 from .persistence.logging import get_logger
 from .persistence.repository import Repository
 
 if TYPE_CHECKING:
     from .services.advert_scheduler import AdvertScheduler
-    from .services.chat_service import ChatService
-    from .services.event_hub import EventHub
-    from .services.courier import CourierService
-    from .services.monitor_service import MonitorService
-    from .services.watchtower import WatchtowerService
     from .services.basemap import BasemapSource
     from .services.battery_service import BatteryService
+    from .services.chat_service import ChatService
+    from .services.courier import CourierService
     from .services.device_state import DeviceState
+    from .services.event_hub import EventHub
+    from .services.monitor_service import MonitorService
+    from .services.watchtower import WatchtowerService
     from .ui.surface import Ui
 
 
@@ -102,53 +103,53 @@ class AppContext:
     repo: Repository
     device_store: DeviceStore
     admin_store: AdminStore
-    preferences: Optional[Preferences] = None
-    advert_store: Optional[AdvertStore] = None
-    remote_store: Optional[RemoteStore] = None
-    watch_store: Optional[WatchStore] = None
-    courier_store: Optional[CourierStore] = None
-    mute_store: Optional[MuteStore] = None
-    channel_store: Optional[ChannelStore] = None
-    settings_store: Optional[SettingsStore] = None
-    contact_store: Optional[ContactStore] = None
-    profile: Optional[DeviceProfile] = None
+    preferences: Preferences | None = None
+    advert_store: AdvertStore | None = None
+    remote_store: RemoteStore | None = None
+    watch_store: WatchStore | None = None
+    courier_store: CourierStore | None = None
+    mute_store: MuteStore | None = None
+    channel_store: ChannelStore | None = None
+    settings_store: SettingsStore | None = None
+    contact_store: ContactStore | None = None
+    profile: DeviceProfile | None = None
     mock: bool = False
-    port_override: Optional[str] = None
-    ble_override: Optional[str] = None
-    tcp_override: Optional[str] = None
-    ble_pin: Optional[str] = None
+    port_override: str | None = None
+    ble_override: str | None = None
+    tcp_override: str | None = None
+    ble_pin: str | None = None
     json_output: bool = False
-    selected_device: Optional[DiscoveredDevice] = None
+    selected_device: DiscoveredDevice | None = None
     explicit_selection: bool = False
-    _device: Optional[Device] = field(default=None, init=False, repr=False)
-    _active_port: Optional[str] = field(default=None, init=False, repr=False)
-    _active_transport: Optional[str] = field(default=None, init=False, repr=False)
-    _active_address: Optional[str] = field(default=None, init=False, repr=False)
-    _active_endpoint: Optional[str] = field(default=None, init=False, repr=False)
+    _device: Device | None = field(default=None, init=False, repr=False)
+    _active_port: str | None = field(default=None, init=False, repr=False)
+    _active_transport: str | None = field(default=None, init=False, repr=False)
+    _active_address: str | None = field(default=None, init=False, repr=False)
+    _active_endpoint: str | None = field(default=None, init=False, repr=False)
     #: A live ``bleak.BLEDevice`` handed to :meth:`reconnect` by the flow that just heard the
     #: companion advertise again. Preferred over the startup scan's handle when reopening the
     #: link, because a device that dropped and came back is a *new* peripheral to the OS and
     #: the older handle no longer names it. Typed ``object`` so ``bleak`` stays optional.
-    _ble_handle: Optional[object] = field(default=None, init=False, repr=False)
+    _ble_handle: object | None = field(default=None, init=False, repr=False)
     unpair_on_exit: bool = field(default=False, init=False, repr=False)
     #: Set by the config editor just before it sends a reboot command, so the session's
     #: disconnect watcher can label the ensuing (expected) link drop as a reboot in
     #: progress rather than a surprise unplug. Cleared by the reconnect dialog that
     #: consumes it (see :func:`meshterm.ui.menu._handle_disconnect`).
     reboot_in_progress: bool = field(default=False, init=False, repr=False)
-    _resume_intent: Optional[tuple[bool, bool, bool]] = field(
+    _resume_intent: tuple[bool, bool, bool] | None = field(
         default=None, init=False, repr=False
     )
-    _events: "Optional[EventHub]" = field(default=None, init=False, repr=False)
-    _monitor: "Optional[MonitorService]" = field(default=None, init=False, repr=False)
-    _chat: "Optional[ChatService]" = field(default=None, init=False, repr=False)
-    _adverts: "Optional[AdvertScheduler]" = field(default=None, init=False, repr=False)
-    _watchtower: "Optional[WatchtowerService]" = field(default=None, init=False, repr=False)
-    _courier: "Optional[CourierService]" = field(default=None, init=False, repr=False)
-    _battery: "Optional[BatteryService]" = field(default=None, init=False, repr=False)
-    _devstate: "Optional[DeviceState]" = field(default=None, init=False, repr=False)
-    _basemap_source: "Optional[BasemapSource]" = field(default=None, init=False, repr=False)
-    _ui: "Optional[Ui]" = field(default=None, init=False, repr=False)
+    _events: EventHub | None = field(default=None, init=False, repr=False)
+    _monitor: MonitorService | None = field(default=None, init=False, repr=False)
+    _chat: ChatService | None = field(default=None, init=False, repr=False)
+    _adverts: AdvertScheduler | None = field(default=None, init=False, repr=False)
+    _watchtower: WatchtowerService | None = field(default=None, init=False, repr=False)
+    _courier: CourierService | None = field(default=None, init=False, repr=False)
+    _battery: BatteryService | None = field(default=None, init=False, repr=False)
+    _devstate: DeviceState | None = field(default=None, init=False, repr=False)
+    _basemap_source: BasemapSource | None = field(default=None, init=False, repr=False)
+    _ui: Ui | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Load the preferences and derive the stores' default locations, where not injected.
@@ -180,7 +181,7 @@ class AppContext:
             self.contact_store = ContactStore(self.settings.config_dir / "contacts.json")
 
     @property
-    def profile_name(self) -> Optional[str]:
+    def profile_name(self) -> str | None:
         """Name of the active profile, if any."""
         return self.profile.name if self.profile else None
 
@@ -190,7 +191,7 @@ class AppContext:
         return self._device is not None
 
     @property
-    def active_port(self) -> Optional[str]:
+    def active_port(self) -> str | None:
         """The serial port the current connection is open on, if any (``None`` for --mock/BLE).
 
         Set when a real *serial* connection is opened so the reconnect flow knows which OS
@@ -203,7 +204,7 @@ class AppContext:
         return self._active_port or self.port_override
 
     @property
-    def active_address(self) -> Optional[str]:
+    def active_address(self) -> str | None:
         """The Bluetooth address of the current BLE connection, if any (``None`` otherwise).
 
         Set when a real *BLE* connection is opened, so post-session teardown (e.g. the quit
@@ -215,7 +216,7 @@ class AppContext:
         return self._active_address or self.ble_override
 
     @property
-    def active_endpoint(self) -> Optional[str]:
+    def active_endpoint(self) -> str | None:
         """The network ``host:port`` of the current TCP connection, if any (``None`` otherwise).
 
         Set when a real *TCP* connection is opened, so the reconnect flow and header can name
@@ -227,7 +228,7 @@ class AppContext:
         return self._active_endpoint or self.tcp_override
 
     @property
-    def active_transport(self) -> Optional[str]:
+    def active_transport(self) -> str | None:
         """The transport of the current/selected connection: ``"serial"``, ``"ble"``, ``"tcp"``,
         or ``None``.
 
@@ -261,7 +262,7 @@ class AppContext:
             return True
 
     @property
-    def ui(self) -> "Ui":
+    def ui(self) -> Ui:
         """The active UI surface, defaulting to the plain console surface for the CLI.
 
         The interactive menu replaces this with a full-screen TUI surface for the session;
@@ -275,12 +276,12 @@ class AppContext:
         return self._ui
 
     @ui.setter
-    def ui(self, value: "Ui") -> None:
+    def ui(self, value: Ui) -> None:
         """Install a UI surface (used by the menu to switch to the full-screen TUI)."""
         self._ui = value
 
     @property
-    def events(self) -> "EventHub":
+    def events(self) -> EventHub:
         """Return the session's always-on event hub, creating it on first use.
 
         The hub owns the single device event subscription and fans events out to any
@@ -294,7 +295,7 @@ class AppContext:
         return self._events
 
     @property
-    def monitor(self) -> "MonitorService":
+    def monitor(self) -> MonitorService:
         """Return the session's passive-monitor service, creating it on first use.
 
         The service is built lazily so the (cheap) database read for the "total"
@@ -307,7 +308,7 @@ class AppContext:
         return self._monitor
 
     @property
-    def chat(self) -> "ChatService":
+    def chat(self) -> ChatService:
         """Return the session's chat service, creating it on first use.
 
         The service records inbound messages to history (as a subscriber of the always-on
@@ -322,7 +323,7 @@ class AppContext:
         return self._chat
 
     @property
-    def adverts(self) -> "AdvertScheduler":
+    def adverts(self) -> AdvertScheduler:
         """Return the session's background-advert scheduler, creating it on first use.
 
         Created idle here; the interactive session starts it alongside the other
@@ -336,7 +337,7 @@ class AppContext:
         return self._adverts
 
     @property
-    def watchtower(self) -> "WatchtowerService":
+    def watchtower(self) -> WatchtowerService:
         """Return the session's Watchtower sentinel, creating it on first use.
 
         Created idle here; the interactive session starts it alongside the other
@@ -350,7 +351,7 @@ class AppContext:
         return self._watchtower
 
     @property
-    def courier(self) -> "CourierService":
+    def courier(self) -> CourierService:
         """Return the session's store-and-forward courier, creating it on first use.
 
         Created idle here; the interactive session starts it alongside the other
@@ -364,7 +365,7 @@ class AppContext:
         return self._courier
 
     @property
-    def battery(self) -> "BatteryService":
+    def battery(self) -> BatteryService:
         """Return the session's battery poller, creating it on first use.
 
         Created idle here; the interactive session starts it alongside the other
@@ -378,7 +379,7 @@ class AppContext:
         return self._battery
 
     @property
-    def devstate(self) -> "DeviceState":
+    def devstate(self) -> DeviceState:
         """Return the session's device-state cache, creating it on first use.
 
         Holds the stable facts screens read from the companion on open (contacts, self-info,
@@ -393,7 +394,7 @@ class AppContext:
         return self._devstate
 
     @property
-    def basemap_source(self) -> "BasemapSource":
+    def basemap_source(self) -> BasemapSource:
         """Return the session's shared map tile source, built once and reused.
 
         The map, the location picker, and the Node-detail location preview all draw the
@@ -538,7 +539,7 @@ class AppContext:
         await self._reconcile_channels()
         return self._device
 
-    def _resolve_tcp_endpoint(self) -> tuple[Optional[str], Optional[int]]:
+    def _resolve_tcp_endpoint(self) -> tuple[str | None, int | None]:
         """Return the ``(host, port)`` to open over TCP, or ``(None, None)`` for other transports.
 
         Resolves a network endpoint in priority order — an explicit ``--tcp``, a TCP
@@ -581,7 +582,7 @@ class AppContext:
             return host, port
         return None, None
 
-    def _resolve_ble_endpoint(self) -> tuple[Optional[str], Optional[str]]:
+    def _resolve_ble_endpoint(self) -> tuple[str | None, str | None]:
         """Return the ``(address, pin)`` to open over Bluetooth, or ``(None, None)`` for serial.
 
         Resolves a BLE endpoint in priority order — an explicit ``--ble``, a BLE
@@ -685,7 +686,7 @@ class AppContext:
         if self._devstate is not None:
             self._devstate.reset()
 
-    async def reconnect(self, *, ble_device: Optional[object] = None) -> None:
+    async def reconnect(self, *, ble_device: object | None = None) -> None:
         """Drop a lost device connection and rebuild it, restoring live services.
 
         Called after the companion link is detected as gone (see

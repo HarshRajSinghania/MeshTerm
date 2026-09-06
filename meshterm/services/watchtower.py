@@ -27,7 +27,7 @@ import asyncio
 import statistics
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
@@ -61,18 +61,18 @@ class WatchtowerService:
     the synchronous :meth:`note` / :meth:`evaluate` so tests can drive it directly.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize the (idle) service.
 
         Args:
             ctx: The shared application context (store, repository, event hub).
         """
         self._ctx = ctx
-        self._unsubscribe: Optional[Unsubscribe] = None
-        self._task: Optional[asyncio.Task] = None
+        self._unsubscribe: Unsubscribe | None = None
+        self._task: asyncio.Task | None = None
         #: Every node id ever seen (DB history + store memory + this session), the
         #: baseline the new-node rule compares against. ``None`` until started.
-        self._known: Optional[set[str]] = None
+        self._known: set[str] | None = None
         #: Rolling SNR readings per watched node, session-scoped.
         self._snr: dict[str, deque[float]] = {}
         #: When the sag rule last fired per node (the cooldown clock).
@@ -210,7 +210,7 @@ class WatchtowerService:
 
     # --- time-driven rules ---------------------------------------------------------------
 
-    def evaluate(self, now: Optional[datetime] = None) -> None:
+    def evaluate(self, now: datetime | None = None) -> None:
         """Run the silence rule over every watched node and flush the store.
 
         Args:

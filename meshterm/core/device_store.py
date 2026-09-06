@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from .discovery import (
     TRANSPORT_BLE,
@@ -78,7 +77,8 @@ class RememberedDevice:
     @property
     def target(self) -> str:
         """The connection target: ``host:port`` for TCP, the BLE address for Bluetooth, else
-        the serial port."""
+        the serial port.
+        """
         if self.is_tcp:
             return f"{self.host}:{self.tcp_port}"
         return self.address or self.port if self.is_ble else self.port
@@ -99,7 +99,7 @@ class DeviceStore:
         """
         self._path = path
 
-    def _read(self) -> tuple[dict[str, RememberedDevice], Optional[str]]:
+    def _read(self) -> tuple[dict[str, RememberedDevice], str | None]:
         """Return the parsed ``(registry, last_id)``; empty on a missing/corrupt file.
 
         A missing or corrupt file is treated as "nothing remembered" rather than an error,
@@ -132,7 +132,7 @@ class DeviceStore:
         return registry, last
 
     @staticmethod
-    def _record_from(entry: object) -> Optional[RememberedDevice]:
+    def _record_from(entry: object) -> RememberedDevice | None:
         """Build a :class:`RememberedDevice` from one raw JSON entry, or ``None`` if invalid."""
         if not isinstance(entry, dict):
             return None
@@ -152,7 +152,7 @@ class DeviceStore:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def load(self) -> Optional[RememberedDevice]:
+    def load(self) -> RememberedDevice | None:
         """Return the most recently connected device, or ``None`` if none is remembered.
 
         This is the "last known good" default used to preselect and star a row on the
@@ -239,7 +239,7 @@ class DeviceStore:
         self._write(registry, last)
         return True
 
-    def _write(self, registry: dict[str, RememberedDevice], last: Optional[str]) -> None:
+    def _write(self, registry: dict[str, RememberedDevice], last: str | None) -> None:
         """Persist the registry, marking ``last`` as the most recently connected device."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {

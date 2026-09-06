@@ -12,28 +12,28 @@ import io
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from rich.console import Console
 
 from meshterm.context import AppContext
 from meshterm.core.admin_store import AdminStore
+from meshterm.core.advert_store import AdvertPolicy
 from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
 from meshterm.platforms import PICOCALC, REGULAR, set_platform
-from meshterm.core.advert_store import AdvertPolicy
 from meshterm.ui.config_editor import (
     _ConfigMenu,
     _menu_items,
     _parse_coords,
     _valid_coords,
     config_table,
-    has_pin,
     contact_share_url,
     device_actions,
     edit_config,
+    has_pin,
     send_advert,
 )
 from meshterm.ui.device_info_screen import REVEAL_KEY, DeviceInfoScreen
@@ -344,7 +344,8 @@ def test_contact_share_url_defaults_to_companion_type() -> None:
 
 async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
     """The share popup is one floating view: a scannable QR code over the raw
-    ``meshcore://`` link, titled with the node's name."""
+    ``meshcore://`` link, titled with the node's name.
+    """
     from types import SimpleNamespace
 
     from meshterm.ui.config_editor import show_contact_card
@@ -570,7 +571,7 @@ class _FakeSession:
     exercised without a real full-screen session.
     """
 
-    def __init__(self, ui: "_ScriptedUi") -> None:
+    def __init__(self, ui: _ScriptedUi) -> None:
         self.ui = ui
         self.pushed: list = []
 
@@ -597,7 +598,7 @@ class _FakeSession:
 class _FakeVisit:
     """One round of a visited screen: the script's next ``select`` answer."""
 
-    def __init__(self, session: "_FakeSession", screen: Any) -> None:
+    def __init__(self, session: _FakeSession, screen: Any) -> None:
         self._session = session
         self.screen = screen
 
@@ -638,16 +639,16 @@ class _ScriptedUi:
     async def typed_confirm(self, warning: str, word: str, **kwargs: Any) -> bool:
         return self._answer("typed_confirm")
 
-    async def text(self, title: str, **kwargs: Any) -> Optional[str]:
+    async def text(self, title: str, **kwargs: Any) -> str | None:
         return self._answer("text")
 
-    async def path(self, title: str, **kwargs: Any) -> Optional[str]:
+    async def path(self, title: str, **kwargs: Any) -> str | None:
         return self._answer("path")
 
-    async def autocomplete(self, title: str, choices: list, **kwargs: Any) -> Optional[str]:
+    async def autocomplete(self, title: str, choices: list, **kwargs: Any) -> str | None:
         return self._answer("autocomplete")
 
-    async def confirm(self, title: str, **kwargs: Any) -> Optional[bool]:
+    async def confirm(self, title: str, **kwargs: Any) -> bool | None:
         return self._answer("confirm")
 
     async def view(self, renderable: Any, **kwargs: Any) -> None:

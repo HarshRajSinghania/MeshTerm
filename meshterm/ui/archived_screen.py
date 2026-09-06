@@ -23,7 +23,7 @@ are about to act on.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .contactlist import (
     ARCHIVED_LANES,
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 _HINT = "↑↓ move · ^←→↑↓ sort · type to filter · Enter open · Esc back"
 
 
-def _archived_time(stamp: Optional[int]) -> Optional[datetime]:
+def _archived_time(stamp: int | None) -> datetime | None:
     """A stored archive stamp as an aware UTC datetime, or ``None`` if it carries none.
 
     Stored as unix seconds (see :class:`~meshterm.core.contact_store.RememberedContact`) and
@@ -60,7 +60,7 @@ def _archived_time(stamp: Optional[int]) -> Optional[datetime]:
         return None  # a corrupt stamp reads "never", not a crash
 
 
-def archived_rows(archived: "list[RememberedContact]") -> list[ContactRow]:
+def archived_rows(archived: list[RememberedContact]) -> list[ContactRow]:
     """Turn remembered contacts into the shared list's row data.
 
     Args:
@@ -109,7 +109,7 @@ class ArchivedScreen(ContactListScreen):
         )
 
 
-async def open_archived(ctx: "AppContext", self_key: str, prefix_bytes: int) -> bool:
+async def open_archived(ctx: AppContext, self_key: str, prefix_bytes: int) -> bool:
     """Open the archived list; Enter opens Node detail, Esc leaves. ``True`` if anything changed.
 
     The list stays pushed for the whole visit, so a detail page nests above it and Esc from

@@ -22,7 +22,6 @@ no radio, no real address, and no real pairing code is involved.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import pytest
 
@@ -41,7 +40,7 @@ class _FakeTransport:
     makes the peripheral believe it still has a peer and stop advertising.
     """
 
-    last: Optional["_FakeTransport"] = None
+    last: _FakeTransport | None = None
 
     def __init__(self, address=None, device=None, pin=None) -> None:
         self.address = address
@@ -79,7 +78,7 @@ class _FakeMeshCore:
     """
 
     #: Every instance built during a test, in order (a retry builds a second one).
-    built: list["_FakeMeshCore"] = []
+    built: list[_FakeMeshCore] = []
     #: Consumed one entry per connect attempt.
     outcomes: list = []
 
@@ -131,7 +130,7 @@ def _fake_meshcore(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-def _device(pin: Optional[str] = None) -> MeshCoreDevice:
+def _device(pin: str | None = None) -> MeshCoreDevice:
     return MeshCoreDevice(transport="ble", address=_ADDR, pin=pin, connect_timeout=5.0)
 
 

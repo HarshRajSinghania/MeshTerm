@@ -12,7 +12,7 @@ duplicate subcommand is registered here (the same pattern as ``device-actions``)
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -32,7 +32,7 @@ class SendAdvertTool(Tool):
     order = 40  # your own node announcing itself: a device action, not a view
     popup = True  # dialog-sized: float over the menu instead of replacing it
 
-    async def prompt_params(self, ctx: AppContext) -> Optional[dict[str, Any]]:
+    async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the interactive advert flow; there are never parameters to collect.
 
         The flow presents its own result (the sent-advert note or the contact-card

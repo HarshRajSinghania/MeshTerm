@@ -84,7 +84,8 @@ previous-route line.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
@@ -97,11 +98,11 @@ from ..services.records import first_repeated_edge
 from ..services.topology import render_forced_spec
 from .braillechart import meter
 from .menus import icon_lane, icon_mark, marked_label, section_heading
+from .pathline import PathHop, PathLine, cut_to, hops_atom, path_line
 from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner, spinner_interval
-from .pathline import PathHop, PathLine, cut_to, hops_atom, path_line
 from .widgets import NodeResolver, _link_text, _route_path, highlighted_hash
 
 if TYPE_CHECKING:
@@ -127,7 +128,7 @@ SAMPLE_CHOICES = (1, 2, 3, 5, 8)
 OPEN_TROPHY_CASE = "records"
 
 
-def _trophy_case_opener(ctx: "AppContext") -> Callable[[], Awaitable[None]]:
+def _trophy_case_opener(ctx: AppContext) -> Callable[[], Awaitable[None]]:
     """A zero-argument opener for the trophy case, for the new-record dialog's left button.
 
     Imported inside the closure because the trophy case imports *this* module back (its
@@ -154,7 +155,7 @@ TraceOnce = Callable[
 #: A path picker flow: takes the current spec, runs its own dialogs over the screen, and
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
 #: The sample-count flow shares the shape and simply always resolves ``None``.
-PathFlow = Callable[[str], Awaitable[Optional[str]]]
+PathFlow = Callable[[str], Awaitable[str | None]]
 
 #: The route lane's label column: the word plus its padding. Its width is the column
 #: the route's wrapped continuations (and its provenance note) hang under.
@@ -230,7 +231,7 @@ def _spec_line(spec: str) -> PathLine:
     return PathLine(hops, mode="plain", separator=",")
 
 
-def snr_bar(snr: Optional[float], width: int = _BAR_WIDTH) -> Text:
+def snr_bar(snr: float | None, width: int = _BAR_WIDTH) -> Text:
     """Render an SNR reading as a horizontal quality bar in the shared SNR colours.
 
     The slim-on-a-track flavour of the app's braille :func:`~meshterm.ui.braillechart.meter`:
@@ -287,7 +288,7 @@ class TracingDialog(Screen):
         #: One-line progress, updated by the owner as replies land.
         self.status = "transmitting…"
         #: The most recent trace result, echoed beneath the status line.
-        self.last: Optional[TraceResult] = None
+        self.last: TraceResult | None = None
         #: Whether to render the last-reply line. Trace/probe owners stream replies
         #: through it; request-shaped owners (a neighbour fetch) have none to show.
         self.show_last = True
@@ -371,7 +372,7 @@ class TraceScreen(Screen):
         *,
         mode: str = "target",
         device_label: str,
-        device_hash: Optional[str],
+        device_hash: str | None,
         resolve: NodeResolver,
         session: Any,
         trace: TraceOnce,
@@ -380,13 +381,13 @@ class TraceScreen(Screen):
         pick_samples: PathFlow,
         width_bytes: Callable[[], int],
         sample_count: Callable[[], int],
-        explore: Optional[PathFlow] = None,
+        explore: PathFlow | None = None,
         pace_s: float = 1.0,
-        previous: Optional[TraceResult] = None,
+        previous: TraceResult | None = None,
         auto_spec: Callable[[], str] = lambda: "",
         auto_source: str = "",
         initial_spec: str = "",
-        open_trophy_case: Optional[Callable[[], Awaitable[None]]] = None,
+        open_trophy_case: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Create the screen (nothing transmits until the user commits Trace).
 
@@ -468,21 +469,21 @@ class TraceScreen(Screen):
         # The aggregate stats and the windowed results block, each valid for one
         # traces revision (see render_body / _tail_lines): a repaint that changed
         # nothing re-reads them instead of re-aggregating every stored trace.
-        self._stats_memo: Optional[tuple[int, TraceStats]] = None
-        self._tail_memo: Optional[tuple[tuple, list[str]]] = None
+        self._stats_memo: tuple[int, TraceStats] | None = None
+        self._tail_memo: tuple[tuple, list[str]] | None = None
         #: Every trace this screen ever ran, across path changes — the session
         #: count the owner reports, immune to the per-route clears above.
         self._total_traces = 0
         self._running = False
         self._dialog_open = False
         self._status = ""
-        self._progress: Optional[tuple[int, int]] = None  # (current, total) mid-run
+        self._progress: tuple[int, int] | None = None  # (current, total) mid-run
         self._spinner = Spinner()
         #: Loop clock at this screen's last transmission — what :meth:`_pace_remaining`
         #: measures the cooldown from, so pacing survives an abort-and-retry.
-        self._last_tx: Optional[float] = None
-        self._worker: Optional[asyncio.Task] = None
-        self._flight: Optional[TracingDialog] = None
+        self._last_tx: float | None = None
+        self._worker: asyncio.Task | None = None
+        self._flight: TracingDialog | None = None
         # The action rows, in display order. The build-path group leads: Compose,
         # then Explore (target mode) or Reverse (path mode). Explore needs a
         # destination to rank candidates for, so path mode drops it; and only a path
@@ -728,7 +729,7 @@ class TraceScreen(Screen):
             self._open_flow(self._explore)
 
     def _open_flow(
-        self, flow: PathFlow, seed: Optional[str] = None, focus_trace: bool = False
+        self, flow: PathFlow, seed: str | None = None, focus_trace: bool = False
     ) -> None:
         """Float a path-picking flow over the screen (one at a time, not mid-trace).
 
@@ -824,7 +825,7 @@ class TraceScreen(Screen):
         lines.extend(render_lines(Group(Text(), self._summary(stats)), width))
         lines.extend(_lane_lines(_PATH_LANE, self._path_value(current, width), width))
         lines.append("")
-        self._cursor: Optional[int] = None
+        self._cursor: int | None = None
         for i, key in enumerate(self._actions):
             selected = i == self._index
             text = self._action_text(key, selected)
@@ -855,7 +856,7 @@ class TraceScreen(Screen):
         return lines
 
     def _tail_lines(
-        self, stats: TraceStats, current: Optional[TraceResult], width: int
+        self, stats: TraceStats, current: TraceResult | None, width: int
     ) -> list[str]:
         """The windowed results block: per-hop medians, then the trace log.
 
@@ -883,7 +884,7 @@ class TraceScreen(Screen):
             self._tail_memo = (key, lines)
         return lines
 
-    def cursor_line(self) -> Optional[int]:
+    def cursor_line(self) -> int | None:
         """The highlighted action row while ↑/↓ are in use; free scrolling otherwise.
 
         Returning ``None`` between navigations matters: the frame force-keeps a
@@ -929,7 +930,7 @@ class TraceScreen(Screen):
             text.style = "cursor"
         return text
 
-    def _route_value(self, current: Optional[TraceResult], width: int) -> list[Text]:
+    def _route_value(self, current: TraceResult | None, width: int) -> list[Text]:
         """The route lane's value lines: the path, hop-wrapped, then its provenance.
 
         The route itself is live once a reply has landed, else the plan the next Trace
@@ -1044,7 +1045,7 @@ class TraceScreen(Screen):
 
         asyncio.ensure_future(run())
 
-    def _planned_route(self) -> Optional[PathLine]:
+    def _planned_route(self) -> PathLine | None:
         """The route the next Trace walks as a preview, or ``None`` without one.
 
         Renders the literal wire spec through THE path widget — the whole walk, since
@@ -1077,7 +1078,7 @@ class TraceScreen(Screen):
             bare_self=True,
         )
 
-    def _displayed_hop_count(self, current: Optional[TraceResult]) -> Optional[int]:
+    def _displayed_hop_count(self, current: TraceResult | None) -> int | None:
         """How many nodes the displayed route passes through, endpoints excluded.
 
         Follows the route line's precedence — the live route, else the planned spec,
@@ -1109,7 +1110,7 @@ class TraceScreen(Screen):
             ("median RTT      ", "muted"), (rtt, ""),
         )
 
-    def _path_value(self, current: Optional[TraceResult], width: int) -> list[Text]:
+    def _path_value(self, current: TraceResult | None, width: int) -> list[Text]:
         """The ``path`` lane's value lines: the wire spec (or its note) + hop count.
 
         A pinned spec is the verbatim string the radio is handed, drawn through THE
@@ -1144,7 +1145,7 @@ class TraceScreen(Screen):
                 lines.append(_note(count, indent, style="muted"))
         return lines
 
-    def _hops_table(self, stats: TraceStats, hash_bytes: Optional[int]) -> Table:
+    def _hops_table(self, stats: TraceStats, hash_bytes: int | None) -> Table:
         """The per-hop median SNRs with quality bars, in path order."""
         table = Table(box=None, padding=(0, 1, 0, 0), expand=False, show_header=False)
         table.add_column(justify="right", style="muted")  # hop index
@@ -1215,8 +1216,8 @@ def _collapse_trace_width(mode: int) -> int:
 
 
 def _previous_outbound(
-    previous: Optional[TraceResult], target_hash: str
-) -> Optional[tuple[str, ...]]:
+    previous: TraceResult | None, target_hash: str
+) -> tuple[str, ...] | None:
     """Extract the outbound repeaters from the last successful walk to a target.
 
     A target-mode trace walks the symmetric boomerang, so its stored hop hashes
@@ -1246,7 +1247,7 @@ def _previous_outbound(
     return tuple(tokens[:mid])
 
 
-def _previous_walk(previous: Optional[TraceResult]) -> Optional[tuple[str, ...]]:
+def _previous_walk(previous: TraceResult | None) -> tuple[str, ...] | None:
     """Extract the whole walked route from the last successful stored path walk.
 
     A path walk has no destination to route to, but its stored spec is a route the
@@ -1268,7 +1269,7 @@ def _previous_walk(previous: Optional[TraceResult]) -> Optional[tuple[str, ...]]
     return tokens or None
 
 
-def _best_observed(topo: Any, target_hash: str) -> Optional[tuple[tuple[str, ...], str]]:
+def _best_observed(topo: Any, target_hash: str) -> tuple[tuple[str, ...], str] | None:
     """The strongest evidence-backed outbound route to ``target_hash``, if the data has one.
 
     The observed-topology counterpart to the firmware's learned route: when the device
@@ -1298,7 +1299,7 @@ def _best_observed(topo: Any, target_hash: str) -> Optional[tuple[tuple[str, ...
 
 def _scenario_path(
     scenario: Any, topo: Any, target_id: str, *, device_label: str, width_bytes: int,
-    width: Optional[int] = None,
+    width: int | None = None,
 ) -> Text:
     """A scenario's pathline: us, the candidate hops, and the target — one line.
 
@@ -1361,7 +1362,7 @@ def _scenario_detail(scenario: Any) -> Text:
     return detail
 
 
-async def open_trace(ctx: "AppContext", target: str, *, initial_spec: str = "") -> int:
+async def open_trace(ctx: AppContext, target: str, *, initial_spec: str = "") -> int:
     """Open the live *Trace target* screen for ``target`` and run it until dismissed.
 
     The symmetric feature: can I reach this node? Routes turn at the target and come
@@ -1386,7 +1387,7 @@ async def open_trace(ctx: "AppContext", target: str, *, initial_spec: str = "") 
     return await _open_session(ctx, target, initial_spec=initial_spec)
 
 
-async def open_trace_path(ctx: "AppContext", spec: str = "") -> int:
+async def open_trace_path(ctx: AppContext, spec: str = "") -> int:
     """Open the live *Trace path* screen and run it until dismissed.
 
     The hand-routed feature: how far can a route I build carry? There is no target —
@@ -1410,7 +1411,7 @@ async def open_trace_path(ctx: "AppContext", spec: str = "") -> int:
 
 
 async def _open_session(
-    ctx: "AppContext", target: Optional[str], *, initial_spec: str = ""
+    ctx: AppContext, target: str | None, *, initial_spec: str = ""
 ) -> int:
     """Wire and run one live trace session (both features share this plumbing).
 
@@ -1485,9 +1486,9 @@ async def _open_session(
     # prefix itself. A non-hex unknown target can still be traced device-routed, but
     # composing/exploring needs a destination hash to pin the path on. A path walk has
     # no target at all — every target_* stays None and the composer runs hand-routed.
-    target_contact: Optional[Contact] = None
-    target_hash: Optional[str] = None
-    target_label: Optional[str] = None
+    target_contact: Contact | None = None
+    target_hash: str | None = None
+    target_label: str | None = None
     if target is not None:
         needle = target.casefold()
         target_contact = next(
@@ -1530,7 +1531,7 @@ async def _open_session(
     # learned route when it genuinely has one, else the outbound leg of the last
     # successful stored walk (the route the screen shows), else the bare
     # destination — a direct attempt, honest about being one.
-    device_route: Optional[tuple[str, ...]] = None
+    device_route: tuple[str, ...] | None = None
     if target_contact is not None and target_contact.route_hops is not None:
         # Canonicalizing hop hashes needs only the contact index, so an *empty*
         # graph does it — not the full evidence build (stored traces, packet paths,
@@ -1538,7 +1539,7 @@ async def _open_session(
         # discard unread.
         ident = MeshTopology(device_hash or "local", contacts)
         device_route = tuple(ident.canonical(h) or h for h in target_contact.route_hops)
-    auto_hops: Optional[tuple[str, ...]] = None
+    auto_hops: tuple[str, ...] | None = None
     auto_source = ""
     if target_hash is not None:
         if device_route is not None:
@@ -1650,7 +1651,7 @@ async def _open_session(
 
         ticker = asyncio.ensure_future(animate())
         session.push(dialog)
-        error: Optional[BaseException] = None
+        error: BaseException | None = None
         aborted = False
         entries: list[NeighbourInfo] = []
         try:
@@ -1699,7 +1700,7 @@ async def _open_session(
             return False
         return True
 
-    async def compose(current: str) -> Optional[str]:
+    async def compose(current: str) -> str | None:
         """Open the hop-by-hop composer seeded with the current spec's hops.
 
         Runs the composer in a loop: a :class:`FetchNeighbours` resolution performs the
@@ -1731,7 +1732,7 @@ async def _open_session(
             seed = ids[: ids.index(target_id)]  # a stale hand walk: keep the outbound
         else:
             seed = ids
-        seed_cursor: Optional[int] = None  # first open parks the cursor at the end
+        seed_cursor: int | None = None  # first open parks the cursor at the end
         while True:
             # Nodes whose neighbour table can be asked for: repeater contacts with a
             # public key to log in against (our own node has nothing new to tell us).
@@ -1769,7 +1770,7 @@ async def _open_session(
                 continue
             return result
 
-    async def pick_width(current: str) -> Optional[str]:
+    async def pick_width(current: str) -> str | None:
         """Float the path-hash width picker and re-render the standing spec to match.
 
         Each row previews a key with the addressed slice lit at that width, so the
@@ -1815,7 +1816,7 @@ async def _open_session(
         width = collapse_width(*full, ceiling=width_bytes)
         return ",".join(f[: width * 2] for f in full)
 
-    async def pick_samples(current: str) -> Optional[str]:
+    async def pick_samples(current: str) -> str | None:
         """Float the sample-count picker: how many traces one Trace action runs.
 
         Multi-trace runs are paced by the configured cooldown between transmissions,
@@ -1877,7 +1878,7 @@ async def _open_session(
 
     async def run_probe(
         candidates: list[ProbeCandidate],
-    ) -> Optional[list[ProbeOutcome]]:
+    ) -> list[ProbeOutcome] | None:
         """Measure every candidate — one trace each — under an abortable dialog.
 
         One ``runs`` row spans the sweep; each trace and each candidate aggregate is
@@ -1933,7 +1934,7 @@ async def _open_session(
 
         ticker = asyncio.ensure_future(animate())
         session.push(dialog)
-        error: Optional[BaseException] = None
+        error: BaseException | None = None
         aborted = False
         outcomes: list[ProbeOutcome] = []
         try:
@@ -1978,7 +1979,7 @@ async def _open_session(
         )
         return outcomes
 
-    async def explore(current: str) -> Optional[str]:
+    async def explore(current: str) -> str | None:
         """The scenario flow: browse ranked candidate routes, adopt one, or probe all."""
         if target_hash is None:
             await unaddressable()
@@ -2077,7 +2078,7 @@ async def _open_session(
     # Trace target boomerang just the same), so every successful reply is scored against
     # the six trophy-case disciplines and offered to their boards. See services/records.
 
-    def _as_float(value) -> Optional[float]:  # noqa: ANN001
+    def _as_float(value) -> float | None:  # noqa: ANN001
         try:
             return float(value)
         except (TypeError, ValueError):

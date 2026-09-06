@@ -7,12 +7,11 @@ import re
 import pytest
 
 from meshterm.ui.pathgraph import (
-    DST_NODE,
-    SRC_NODE,
     _GRAPH_PAD_DOTS,
-    _OFF_ROUTE as OFF_ROUTE,
     _LANE_PITCH_ROWS,
     _OCCURRENCE_SEP,
+    DST_NODE,
+    SRC_NODE,
     PathLayer,
     _assign_lanes,
     _balanced_x,
@@ -25,6 +24,9 @@ from meshterm.ui.pathgraph import (
     _split_revisits,
     render_path_graph,
     revisited_hops,
+)
+from meshterm.ui.pathgraph import (
+    _OFF_ROUTE as OFF_ROUTE,
 )
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -77,7 +79,8 @@ def test_identical_paths_collapse_to_the_top_layer() -> None:
 
 def test_emphasis_moves_the_highlight_not_the_layout() -> None:
     """Emphasis re-colours the drawn fan on top of a fixed geometry: the same layout, painted
-    in different colours, so a caller can light a different route without it reflowing."""
+    in different colours, so a caller can light a different route without it reflowing.
+    """
     # A two-route fan whose spine (priority) is pinned to route 0. Only emphasis differs
     # between the two renders — were emphasis to drive geometry (as raising priority would),
     # route 1 becoming the highlight would seize the centre lane and shuffle the markers.
@@ -98,7 +101,8 @@ def test_emphasis_moves_the_highlight_not_the_layout() -> None:
 
 def test_bidir_clusters_finds_knots_not_pairs() -> None:
     """Three-plus mutually-bidirectional nodes are a cluster to contract; a tidy two-way pair
-    (and any lone node) is not."""
+    (and any lone node) is not.
+    """
     from meshterm.ui.pathgraph import bidir_clusters
 
     # A single two-way pair draws fine on its own — not a cluster.
@@ -114,7 +118,8 @@ def test_bidir_clusters_finds_knots_not_pairs() -> None:
 
 def test_emphasis_wins_a_shared_edge_over_a_higher_priority_spine() -> None:
     """A highlighted alternative paints its whole run — even the edge it shares with the spine —
-    rather than dropping out where the higher-priority spine would otherwise own the colour."""
+    rather than dropping out where the higher-priority spine would otherwise own the colour.
+    """
     # Both routes leave SRC through the same first relay (aa), so they share the SRC–aa edge;
     # the spine (priority 2, grey) would win that shared edge by priority, but the emphasised
     # alternative (priority 1, white) must win it by draw rank so its highlight stays unbroken.
@@ -823,7 +828,8 @@ def test_the_emphasised_path_is_the_only_one_drawn_in_colour() -> None:
 
 def test_a_fan_with_nothing_emphasised_fades_nothing() -> None:
     """No emphasis is no selection: with every layer equal there is no route to recede from,
-    and the caller's colours are used exactly as given."""
+    and the caller's colours are used exactly as given.
+    """
     layers = [
         PathLayer(hops=("aa",), color=WHITE, priority=2),
         PathLayer(hops=("bb",), color=GREY, priority=1),
@@ -848,7 +854,8 @@ def test_a_lone_path_is_never_faded() -> None:
 
 def test_the_highlight_lights_a_relay_reached_by_a_short_hash() -> None:
     """Membership is decided in the graph's own id space, after the prefix coalesce: a route
-    that names a relay ``3d`` still lights the wide marker its hop is folded into."""
+    that names a relay ``3d`` still lights the wide marker its hop is folded into.
+    """
     layers = [
         PathLayer(hops=("3d63c6429436",), color=GREY, priority=2),
         PathLayer(hops=("3d",), color=WHITE, priority=1, emphasis=1),

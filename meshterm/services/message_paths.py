@@ -35,9 +35,10 @@ Nothing here transmits; it is a read-model over the repository.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING
 
 from ..core.channels import decrypt_channel_text, split_channel_sender
 from ..core.frames import ENDPOINT_HASH_BYTES
@@ -106,9 +107,9 @@ class Arrival:
 
     when: datetime
     hops: tuple[str, ...]
-    snr: Optional[float]
+    snr: float | None
     resend: int = 0
-    routed: Optional[bool] = None
+    routed: bool | None = None
     copies: int = 1
 
     @property
@@ -128,7 +129,7 @@ def _frame_hops(observation: Observation) -> tuple[str, ...]:
     return tuple(h for h in (observation.path or "").split(",") if h)
 
 
-def _frame_routed(raw: dict) -> Optional[bool]:
+def _frame_routed(raw: dict) -> bool | None:
     """Whether a frame was direct-routed, or ``None`` where its route type wasn't kept."""
     name = str(raw.get("route_typename") or "").upper()
     return name in _ROUTED_TYPES if name and name != "UNK" else None
@@ -153,7 +154,7 @@ def _texts_match(wire: str, stored: str) -> bool:
 
 
 def channel_arrivals(
-    repo: "Repository",
+    repo: Repository,
     message: ChatMessage,
     *,
     channel_name: str,
@@ -201,14 +202,14 @@ def channel_arrivals(
     return arrivals
 
 
-def _endpoint_hash(key: Optional[str]) -> str:
+def _endpoint_hash(key: str | None) -> str:
     """A node's endpoint hash — the leading byte of its key, as a frame addresses it."""
     text = (key or "").strip().lower()
     return text[:_HASH_CHARS] if len(text) >= _HASH_CHARS else ""
 
 
 def direct_window(
-    repo: "Repository", message: ChatMessage
+    repo: Repository, message: ChatMessage
 ) -> tuple[datetime, datetime]:
     """The span of log to search for one direct message's frames.
 
@@ -268,7 +269,7 @@ def _addressed(raw: dict) -> tuple[str, str]:
 
 
 def _pick_group(
-    groups: "dict[str, list[Arrival]]", message: ChatMessage
+    groups: dict[str, list[Arrival]], message: ChatMessage
 ) -> list[Arrival]:
     """The MAC group that is this message, out of the ones in the window.
 
@@ -290,11 +291,11 @@ def _pick_group(
 
 
 def direct_arrivals(
-    repo: "Repository",
+    repo: Repository,
     message: ChatMessage,
     *,
-    self_key: Optional[str] = None,
-    peer_key: Optional[str] = None,
+    self_key: str | None = None,
+    peer_key: str | None = None,
 ) -> tuple[list[Arrival], bool]:
     """Every logged frame of one direct message, and whether they were matched exactly.
 

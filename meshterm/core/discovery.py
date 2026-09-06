@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 _log = logging.getLogger(__name__)
 
@@ -114,17 +113,17 @@ class DiscoveredDevice:
     port: str = ""
     description: str = ""
     hwid: str = ""
-    vid: Optional[int] = None
-    pid: Optional[int] = None
-    serial_number: Optional[str] = None
-    manufacturer: Optional[str] = None
-    product: Optional[str] = None
+    vid: int | None = None
+    pid: int | None = None
+    serial_number: str | None = None
+    manufacturer: str | None = None
+    product: str | None = None
     transport: str = TRANSPORT_SERIAL
-    address: Optional[str] = None
-    name: Optional[str] = None
-    ble_device: Optional[object] = None
-    host: Optional[str] = None
-    tcp_port: Optional[int] = None
+    address: str | None = None
+    name: str | None = None
+    ble_device: object | None = None
+    host: str | None = None
+    tcp_port: int | None = None
 
     @property
     def is_ble(self) -> bool:
@@ -139,7 +138,8 @@ class DiscoveredDevice:
     @property
     def target(self) -> str:
         """The identifier a connection opens on: the network ``host:port`` for TCP, the BLE
-        address for Bluetooth, else the serial port."""
+        address for Bluetooth, else the serial port.
+        """
         if self.is_tcp:
             return f"{self.host}:{self.tcp_port}"
         return self.address or self.port if self.is_ble else self.port
@@ -414,7 +414,7 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
 
 async def find_ble_device(
     address: str, timeout: float = BLE_PRESENCE_TIMEOUT_S
-) -> Optional[object]:
+) -> object | None:
     """Watch for one known companion's advertisement, returning its live ``BLEDevice``.
 
     The Bluetooth counterpart to :func:`~meshterm.core.connection.serial_port_present`, and it

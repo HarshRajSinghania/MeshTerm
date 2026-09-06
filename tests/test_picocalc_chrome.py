@@ -16,7 +16,6 @@ from meshterm.ui.tui.fkeys import (
     strip_lane_atoms,
 )
 from meshterm.ui.tui.screen import ScrollScreen
-
 from tests.conftest import plain as _plain
 
 
@@ -145,7 +144,8 @@ def test_bordered_frame_is_unchanged_on_regular() -> None:
 
 def test_picocalc_header_brands_the_app_not_the_device() -> None:
     """The header_atoms wiring, per JP's spec: picocalc shows ``MeshTerm vX`` (a soldered
-    radio's port never changes, so the device segment earns nothing), regular keeps both."""
+    radio's port never changes, so the device segment earns nothing), regular keeps both.
+    """
     from meshterm.ui.menu import _header_segments
 
     class _Badges:
@@ -258,7 +258,7 @@ def test_scroll_screen_lane_tracks_whether_its_body_overflows() -> None:
 
 def test_select_lane_promotes_the_section_jumps_only_where_there_are_sections() -> None:
     """Ctrl+PgUp/PgDn is unreachable on a keyboard with no PgUp, so a grouped list lanes it."""
-    from meshterm.ui.tui.select import Choice, Separator, SelectScreen
+    from meshterm.ui.tui.select import Choice, SelectScreen, Separator
 
     flat = SelectScreen("Flat", [Choice("one", 1), Choice("two", 2)])
     # No headings anywhere: sections are not a thing on this list, so the slots are empty

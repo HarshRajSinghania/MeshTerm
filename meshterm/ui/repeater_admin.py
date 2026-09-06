@@ -24,7 +24,7 @@ the catalog doesn't spell.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -68,7 +68,7 @@ _APPLY = "__apply__"
 _CANCEL = "__cancel__"
 
 
-async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
+async def open_repeater_admin(ctx: AppContext) -> dict[str, Any] | None:
     """Run the repeater-admin flow: pick a node, log in, and administer it.
 
     The picker stays up for the whole flow, so leaving a node's admin session lands back on
@@ -110,7 +110,7 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
     ) as picker:
         if picker is None:  # nothing offerable; the reader has been told
             return None
-        summary: Optional[dict[str, Any]] = None
+        summary: dict[str, Any] | None = None
         while True:
             node = await picker.pick()
             if node is None:
@@ -120,7 +120,7 @@ async def open_repeater_admin(ctx: "AppContext") -> Optional[dict[str, Any]]:
             summary = await _admin_session(ctx, device, node)
 
 
-async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
+async def _login(ctx: AppContext, device: Device, node: Contact) -> bool:
     """Log in to ``node``: remembered password silently, else one floating prompt.
 
     A working password is remembered. A *rejected* one is forgotten so the next attempt
@@ -173,7 +173,7 @@ async def _login(ctx: "AppContext", device: "Device", node: Contact) -> bool:
 
 
 async def _admin_session(
-    ctx: "AppContext", device: "Device", node: Contact
+    ctx: AppContext, device: Device, node: Contact
 ) -> dict[str, Any]:
     """Run the editor loop for one logged-in node.
 
@@ -321,7 +321,7 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
 
 
 async def _stage_setting(
-    ctx: "AppContext", key: str, cache: dict, pending: dict[str, str]
+    ctx: AppContext, key: str, cache: dict, pending: dict[str, str]
 ) -> None:
     """Prompt for one setting's new value and stage it (nothing is sent yet)."""
     from ..core.remote_config import get_setting, validate_value
@@ -369,7 +369,7 @@ async def _stage_setting(
 
 
 async def _apply(
-    ctx: "AppContext", device: "Device", node: Contact, pending: dict[str, str]
+    ctx: AppContext, device: Device, node: Contact, pending: dict[str, str]
 ) -> int:
     """Send every staged ``set`` command, paced, under an abortable progress dialog.
 
@@ -435,7 +435,7 @@ async def _apply(
     return applied
 
 
-async def _read_all(ctx: "AppContext", device: "Device", node: Contact) -> None:
+async def _read_all(ctx: AppContext, device: Device, node: Contact) -> None:
     """Refresh every readable setting from the node, one paced ``get`` at a time.
 
     Values that parse land in the cache (and on screen); firmware that doesn't know a
@@ -469,7 +469,7 @@ async def _read_all(ctx: "AppContext", device: "Device", node: Contact) -> None:
     )
 
 
-async def _run_under_dialog(ctx: "AppContext", title: str, work) -> bool:
+async def _run_under_dialog(ctx: AppContext, title: str, work) -> bool:
     """Run an async remote batch under a floating spinner dialog with Abort.
 
     Args:
@@ -519,8 +519,8 @@ async def _run_under_dialog(ctx: "AppContext", title: str, work) -> bool:
 
 
 async def _simple_action(
-    ctx: "AppContext",
-    device: "Device",
+    ctx: AppContext,
+    device: Device,
     node: Contact,
     command: str,
     *,
@@ -548,7 +548,7 @@ async def _simple_action(
     await ctx.ui.session.message_dialog(body, title=title)
 
 
-async def _change_password(ctx: "AppContext", device: "Device", node: Contact) -> None:
+async def _change_password(ctx: AppContext, device: Device, node: Contact) -> None:
     """Change the node's admin password (and re-remember it on success)."""
     new = await ctx.ui.text(
         f"New admin password for {node.name}",
@@ -587,13 +587,13 @@ async def _change_password(ctx: "AppContext", device: "Device", node: Contact) -
 # --- the command line ---------------------------------------------------------------
 
 
-async def _command_line(ctx: "AppContext", device: "Device", node: Contact) -> None:
+async def _command_line(ctx: AppContext, device: Device, node: Contact) -> None:
     """Open the readline-style remote CLI for ``node`` (history persists per node)."""
     from .remote_cli import RemoteCliScreen
 
     session = ctx.ui.session
-    worker: Optional[asyncio.Task] = None
-    ticker: Optional[asyncio.Task] = None
+    worker: asyncio.Task | None = None
+    ticker: asyncio.Task | None = None
 
     def send(command: str) -> None:
         nonlocal worker

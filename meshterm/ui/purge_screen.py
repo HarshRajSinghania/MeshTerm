@@ -50,7 +50,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 
@@ -175,7 +175,7 @@ def _rung_desc(kept: int, archived: int) -> str:
     return f"keeps {kept} · archives {archived}"
 
 
-async def _rank(ctx: "AppContext", contacts: list[Contact]) -> list[ScoredContact]:
+async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]:
     """Gather every signal these contacts have and rank them, strongest first.
 
     Five grouped scans of the history (:meth:`
@@ -239,7 +239,7 @@ async def _rank(ctx: "AppContext", contacts: list[Contact]) -> list[ScoredContac
     return rank_contacts(contacts, signals, self_lat=self_lat, self_lon=self_lon)
 
 
-async def purge_contacts(ctx: "AppContext", self_key: str) -> int:
+async def purge_contacts(ctx: AppContext, self_key: str) -> int:
     """Run the whole sweep — rank, pick a target, preview, confirm, archive. Returns the count.
 
     Runs over the pushed Contacts list as its backdrop, so every step floats and Esc walks
@@ -285,7 +285,7 @@ async def purge_contacts(ctx: "AppContext", self_key: str) -> int:
             return await _sweep(ctx, self_key, victims)
 
 
-def _age_seconds(scored: ScoredContact) -> Optional[float]:
+def _age_seconds(scored: ScoredContact) -> float | None:
     """A scored contact's last-heard age in seconds, or ``None`` if it was never heard."""
     days = scored.signals.heard_age_days
     return None if days is None else days * _DAY
@@ -421,7 +421,7 @@ def _preview_screen(victims: list[ScoredContact]):
     )
 
 
-async def _preview(ctx: "AppContext", victims: list[ScoredContact]) -> bool:
+async def _preview(ctx: AppContext, victims: list[ScoredContact]) -> bool:
     """Show exactly who would go, weakest first; return whether the reader committed.
 
     The audit step, and the reason the sweep is safe to offer at all: archiving several
@@ -491,7 +491,7 @@ def _count_desc(n: int) -> str:
 
 
 async def _sweep(
-    ctx: "AppContext", self_key: str, victims: list[ScoredContact]
+    ctx: AppContext, self_key: str, victims: list[ScoredContact]
 ) -> int:
     """Confirm, then remove each victim from the device and archive it here. Returns the count.
 

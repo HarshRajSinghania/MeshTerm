@@ -40,7 +40,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .watch_store import DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
 
@@ -95,9 +95,9 @@ class PrefSpec:
     group: str
     value_type: str
     default: Any
-    choices: Optional[dict[Any, str]] = None
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
+    choices: dict[Any, str] | None = None
+    minimum: float | None = None
+    maximum: float | None = None
     unit: str = ""
     relaunch: bool = False
 
@@ -446,7 +446,7 @@ class Preferences:
     """
 
     def __init__(
-        self, path: Optional[Path] = None, values: Optional[Mapping[str, Any]] = None
+        self, path: Path | None = None, values: Mapping[str, Any] | None = None
     ) -> None:
         """Build a preferences view over an optional file and an optional set of overrides.
 
@@ -462,7 +462,7 @@ class Preferences:
             self.update(values)
 
     @classmethod
-    def load(cls, path: Path) -> "Preferences":
+    def load(cls, path: Path) -> Preferences:
         """Read ``path``, returning all-defaults for a missing, empty, or corrupt file.
 
         Args:
@@ -480,7 +480,7 @@ class Preferences:
         return cls(path, data if isinstance(data, Mapping) else None)
 
     @property
-    def path(self) -> Optional[Path]:
+    def path(self) -> Path | None:
         """Where :meth:`save` writes, or ``None`` for an in-memory set."""
         return self._path
 

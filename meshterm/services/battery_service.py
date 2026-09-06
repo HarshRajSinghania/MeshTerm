@@ -42,7 +42,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..platforms import get_platform
 
@@ -144,7 +144,7 @@ class BatteryService:
     happens on the loop's own schedule.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize an idle poller bound to an application context.
 
         Args:
@@ -152,8 +152,8 @@ class BatteryService:
                 Nothing is touched until :meth:`start`.
         """
         self._ctx = ctx
-        self._task: Optional[asyncio.Task] = None
-        self._reading: Optional[BatteryReading] = None
+        self._task: asyncio.Task | None = None
+        self._reading: BatteryReading | None = None
         #: Recent ``(monotonic_time, millivolts)`` samples, for the charging trend.
         self._history: deque[tuple[float, int]] = deque(maxlen=_TREND_SAMPLES)
 
@@ -162,7 +162,7 @@ class BatteryService:
         """Whether the poll loop is running."""
         return self._task is not None and not self._task.done()
 
-    def reading(self) -> Optional[BatteryReading]:
+    def reading(self) -> BatteryReading | None:
         """The latest battery snapshot, or ``None`` when unknown or no battery is present."""
         return self._reading
 

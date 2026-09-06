@@ -12,11 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import plain as _strip_ansi  # THE strip-and-join screen reader
-
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.config import Settings
-from meshterm.core.preferences import Preferences
 from meshterm.core.connection import MockDevice
 from meshterm.core.events import MeshEvent
 from meshterm.core.models import (
@@ -26,6 +23,7 @@ from meshterm.core.models import (
     Message,
     conversation_key,
 )
+from meshterm.core.preferences import Preferences
 from meshterm.persistence.repository import Repository
 from meshterm.services.chat_service import ChatService
 from meshterm.services.event_hub import EventHub
@@ -33,6 +31,7 @@ from meshterm.tools.chat import _PREVIEW_WIDTH, _LiveLasts, _preview_text, _titl
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.tui import fkeys
 from meshterm.ui.tui.screen import CANCEL
+from tests.conftest import plain as _strip_ansi  # THE strip-and-join screen reader
 
 
 class _StubSession:
@@ -513,7 +512,8 @@ def test_title_leads_with_openness_glyph(repo: Repository) -> None:
 
 def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> None:
     """A contact's dot fills ● once we've talked, hollow ○ before — companion pink both
-    ways — while the name itself carries the contact's key-derived hue."""
+    ways — while the name itself carries the contact's key-derived hue.
+    """
     from meshterm.tools.chat import _COMPANION_DOT_STYLE
     from meshterm.ui.theme import node_style
 
@@ -805,7 +805,6 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
     # The budget is pinned to the input line's right edge (padded out from the compose text,
     # not trailing the cursor), while still sharing the input's own row so a full transcript
     # can never push it off the bottom of the viewport.
-    import re
 
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(80)))
     input_row = next(line for line in body.splitlines() if "5/150" in line)
@@ -822,9 +821,8 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
 
 def test_byte_counter_stays_bottom_right_when_the_compose_wraps() -> None:
     """A compose line long enough to wrap keeps the counter pinned to the last line's
-    right edge — not trailing the cursor down onto the second row."""
-    import re
-
+    right edge — not trailing the cursor down onto the second row.
+    """
     screen = _screen(_StubSession(), send=None)
     text = "this is a long compose line that certainly wraps onto several rows here ok"
     for ch in text:
@@ -1738,7 +1736,6 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
     repo: Repository,
 ) -> None:
     """Scrolled into Direct, the lane names stay overhead with ``👤 Direct`` under them."""
-    import re
     from types import SimpleNamespace
 
     from meshterm.tools.chat import ChatTool
@@ -1770,11 +1767,11 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
 
 async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:
     """Del on a contacted thread: red destructive confirm, history gone, unread cleared,
-    and the rebuilt rows show the thread hollow (no longer deletable)."""
+    and the rebuilt rows show the thread hollow (no longer deletable).
+    """
     from types import SimpleNamespace
 
     from meshterm.tools.chat import ChatTool
-    from meshterm.ui.tui import Choice
 
     ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
     conv = Conversation(label="Ally", is_channel=False, contact=ally)

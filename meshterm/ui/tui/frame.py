@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
@@ -22,7 +22,6 @@ from ..theme import fold_text, hint_style, title_style
 from . import fkeys
 from .render import crop_cells, render_lines, render_to_ansi
 from .screen import Screen
-
 
 #: How many times :func:`_visible_slice` re-settles the scroll against the rows a screen
 #: pins above it. Each pin costs a content row, so gaining one can push the highlighted row
@@ -177,7 +176,7 @@ def _panel_box(
 #: screen every second — only the header above it moves. One slot suffices: there is only
 #: ever one base screen per paint, and any content change (a keystroke, a scroll, new
 #: rows) simply misses and re-renders.
-_BASE_BOX_CACHE: Optional[tuple[tuple, list[str]]] = None
+_BASE_BOX_CACHE: tuple[tuple, list[str]] | None = None
 
 
 #: The screen's own way out, lifted off the end of its footer hint. The grammar is
@@ -519,7 +518,7 @@ def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int,
 #: stack (a confirm over a picker over a menu), and each layer recomposes on every
 #: repaint of the frame beneath it, so a single slot would thrash — a handful covers the
 #: deepest realistic stack, LRU-evicted as dialogs change.
-_DIALOG_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+_DIALOG_CACHE: OrderedDict[tuple, str] = OrderedDict()
 
 #: Dialog compositions the memo keeps.
 _DIALOG_CACHE_MAX = 12
@@ -558,7 +557,7 @@ def _dialog_hint(screen: Screen) -> str:
 
 def _dialog_subtitle(
     hint: str, more_above: bool, more_below: bool, border: str
-) -> Optional[str]:
+) -> str | None:
     """A floating box's bottom-border legend: the clip arrows, the hint, or both.
 
     With no hint to carry (the desktop — see :func:`_dialog_hint`) the arrows keep the
@@ -622,7 +621,7 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
 #: row identical to the last paint (only the highlight moved, or nothing did but the header's
 #: pulse), and each unchanged row then costs a dict hit instead of two ANSI parses, two cell
 #: crops and a render.
-_OVERLAY_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+_OVERLAY_CACHE: OrderedDict[tuple, str] = OrderedDict()
 
 #: Composited rows the memo holds — a few dialogs' worth of rows.
 _OVERLAY_CACHE_MAX = 256

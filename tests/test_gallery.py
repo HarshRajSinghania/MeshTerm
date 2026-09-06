@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 import pytest
 from rich.cells import cell_len
@@ -49,8 +49,6 @@ from meshterm.core.preferences import Preferences
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
 from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
-from meshterm.ui.fontset import FONT_CODEPOINTS
-from meshterm.ui.tui import fkeys
 from meshterm.services.courier import CourierService
 from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
@@ -70,6 +68,7 @@ from meshterm.ui.contacts_screen import ContactsScreen
 from meshterm.ui.courier_screen import CourierOutboxScreen
 from meshterm.ui.dashboard_screen import DashboardScreen
 from meshterm.ui.device_info_screen import DeviceInfoScreen
+from meshterm.ui.fontset import FONT_CODEPOINTS
 from meshterm.ui.livefeed_screen import LiveFeedScreen
 from meshterm.ui.map_render import MapMarker
 from meshterm.ui.map_screen import MapScreen
@@ -78,17 +77,16 @@ from meshterm.ui.node_detail_screen import NodeDetailScreen, _Action, _RoutesVie
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 from meshterm.ui.path_composer import PathComposerScreen
 from meshterm.ui.preferences import _menu_items as _preference_items
-from meshterm.ui.tui.prompt import CountdownDialog
 from meshterm.ui.records_screen import RecordDialog
 from meshterm.ui.remote_cli import RemoteCliScreen
+from meshterm.ui.theme import name_style
 from meshterm.ui.timemachine_screen import TimeMachineScreen
 from meshterm.ui.trace_screen import TraceScreen
-from meshterm.ui.tui import Screen, SelectScreen, frame
+from meshterm.ui.tui import Screen, SelectScreen, fkeys, frame
+from meshterm.ui.tui.prompt import CountdownDialog
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
-from meshterm.ui.theme import name_style
 from meshterm.ui.widgets import _NODE_GLYPHS, ContactsSort, highlighted_hash
-
 from tests.conftest import plain as _plain
 
 _HUB_KEY = "3d63c6429436" + "0" * 52

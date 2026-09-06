@@ -18,9 +18,10 @@ import logging
 import random
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 from . import transmit_gate
 from .channels import CHANNEL_SLOT_PROBE_CAP
@@ -75,7 +76,7 @@ _BATTERY_SERVICE_UUID = "0000180f-0000-1000-8000-00805f9b34fb"
 _BATTERY_LEVEL_STATUS_UUID = "00002bed-0000-1000-8000-00805f9b34fb"
 
 
-def charging_from_battery_level_status(data: bytes) -> Optional[bool]:
+def charging_from_battery_level_status(data: bytes) -> bool | None:
     """Decode the charging state from a GATT *Battery Level Status* value (0x2BED).
 
     Per the Bluetooth GATT Specification Supplement the characteristic opens with a 1-byte
@@ -243,7 +244,7 @@ def _clip_utf8(text: str, limit: int) -> str:
     return encoded[:limit].decode("utf-8", "ignore")
 
 
-def error_code(result) -> Optional[int]:  # noqa: ANN001
+def error_code(result) -> int | None:  # noqa: ANN001
     """Return the companion error code carried by a rejected command's event, if any.
 
     Args:
@@ -348,7 +349,7 @@ def is_connection_lost(exc: BaseException) -> bool:
         ``True`` if the exception (or any it was raised from) looks like a dropped link.
     """
     seen: set[int] = set()
-    current: Optional[BaseException] = exc
+    current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if type(current).__name__ in _CONNECTION_LOST_TYPES:
@@ -386,7 +387,7 @@ def _is_ble_auth_error(exc: BaseException) -> bool:
         ``True`` if the failure is a missing/rejected pairing rather than a dropped link.
     """
     seen: set[int] = set()
-    current: Optional[BaseException] = exc
+    current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         text = str(current).lower()
@@ -549,7 +550,7 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def get_tx_power(self) -> Optional[int]:
+    async def get_tx_power(self) -> int | None:
         """Return the current TX power level, or ``None`` if unknown."""
 
     @abstractmethod
@@ -582,7 +583,7 @@ class Device(ABC):
     @abstractmethod
     async def send_remote_command(
         self, node: Contact, command: str, *, timeout: float = 8.0
-    ) -> Optional[str]:
+    ) -> str | None:
         """Send one CLI command to a logged-in remote node and await its text reply.
 
         The generic remote-administration primitive: repeaters and room servers are
@@ -604,7 +605,7 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:
+    async def get_remote_tx_power(self, node: Contact) -> int | None:
         """Read a remote (admin) node's current transmit power.
 
         Args:
@@ -654,8 +655,8 @@ class Device(ABC):
         self,
         target: str,
         *,
-        path: Optional[str] = None,
-        timeout: Optional[float] = None,
+        path: str | None = None,
+        timeout: float | None = None,
     ) -> TraceResult:
         """Run a single path trace to ``target`` and return per-hop SNR.
 
@@ -678,7 +679,7 @@ class Device(ABC):
     # -- passive event stream ----------------------------------------------------
 
     @abstractmethod
-    async def subscribe_events(self, on_event: "EventCallback") -> "Unsubscribe":
+    async def subscribe_events(self, on_event: EventCallback) -> Unsubscribe:
         """Begin streaming the device's unsolicited inbound events, without blocking.
 
         Subscribes to everything the companion surfaces on its own: overheard adverts and
@@ -706,7 +707,7 @@ class Device(ABC):
     # -- messaging ---------------------------------------------------------------
 
     @abstractmethod
-    async def send_direct_message(self, contact: Contact, text: str) -> Optional[Ack]:
+    async def send_direct_message(self, contact: Contact, text: str) -> Ack | None:
         """Send a direct text message to a contact.
 
         Args:
@@ -747,7 +748,7 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def get_autoadd_config(self) -> Optional[int]:
+    async def get_autoadd_config(self) -> int | None:
         """Return the contact auto-add bitmask, or ``None`` if the firmware predates it.
 
         The finer-grained sibling of :meth:`set_manual_add_contacts`: a bitmask of which
@@ -755,7 +756,7 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def get_default_flood_scope(self) -> Optional[str]:
+    async def get_default_flood_scope(self) -> str | None:
         """Return the persisted default flood scope's name (``""`` when unset).
 
         Returns:
@@ -764,7 +765,7 @@ class Device(ABC):
         """
 
     @abstractmethod
-    async def get_time(self) -> Optional[int]:
+    async def get_time(self) -> int | None:
         """Return the device clock as a UNIX epoch timestamp, or ``None`` if unknown."""
 
     @abstractmethod
@@ -776,7 +777,7 @@ class Device(ABC):
             ``used_kb``/``total_kb``. Empty when the read is unsupported.
         """
 
-    async def get_hw_charging(self) -> Optional[bool]:
+    async def get_hw_charging(self) -> bool | None:
         """Return a firmware-reported charging flag, or ``None`` when the device has none.
 
         The companion protocol carries only a battery voltage, so almost every device answers
@@ -808,7 +809,7 @@ class Device(ABC):
         """Return the device's experimental custom key/value variables."""
 
     @abstractmethod
-    async def get_channel(self, index: int) -> Optional[dict]:
+    async def get_channel(self, index: int) -> dict | None:
         """Return one channel's configuration, or ``None`` if unset.
 
         Args:
@@ -917,7 +918,7 @@ class Device(ABC):
         """Set an experimental custom variable."""
 
     @abstractmethod
-    async def set_channel(self, index: int, name: str, secret: Optional[bytes]) -> None:
+    async def set_channel(self, index: int, name: str, secret: bytes | None) -> None:
         """Configure a channel slot.
 
         Args:
@@ -952,7 +953,7 @@ class Device(ABC):
     async def factory_reset(self) -> None:
         """Erase all device data and restore factory defaults (destructive)."""
 
-    async def __aenter__(self) -> "Device":
+    async def __aenter__(self) -> Device:
         """Enter the async context manager, connecting the device."""
         await self.connect()
         return self
@@ -979,16 +980,16 @@ class MeshCoreDevice(Device):
 
     def __init__(
         self,
-        port: Optional[str] = None,
+        port: str | None = None,
         baudrate: int = 115200,
-        connect_timeout: Optional[float] = None,
+        connect_timeout: float | None = None,
         *,
         transport: str = "serial",
-        address: Optional[str] = None,
-        pin: Optional[str] = None,
-        ble_device: Optional[object] = None,
-        host: Optional[str] = None,
-        tcp_port: Optional[int] = None,
+        address: str | None = None,
+        pin: str | None = None,
+        ble_device: object | None = None,
+        host: str | None = None,
+        tcp_port: int | None = None,
     ) -> None:
         """Initialize the device wrapper.
 
@@ -1042,7 +1043,7 @@ class MeshCoreDevice(Device):
         return self._transport
 
     @property
-    def endpoint(self) -> Optional[str]:
+    def endpoint(self) -> str | None:
         """The connection endpoint: ``host:port`` for TCP, the BLE address, else the port."""
         if self._transport == "tcp":
             return f"{self._host}:{self._tcp_port}"
@@ -1189,7 +1190,7 @@ class MeshCoreDevice(Device):
         Raises:
             ConnectionError: If every attempt failed to open the link.
         """
-        last_exc: Optional[ConnectionError] = None
+        last_exc: ConnectionError | None = None
         for attempt in range(_BLE_CONNECT_ATTEMPTS):
             if attempt:
                 await asyncio.sleep(_BLE_CONNECT_RETRY_DELAY_S)
@@ -1425,7 +1426,7 @@ class MeshCoreDevice(Device):
             MeshCoreDevice._close_ble_device(device)
 
     @staticmethod
-    def _ble_address_int(address: str) -> Optional[int]:
+    def _ble_address_int(address: str) -> int | None:
         """Parse a ``AA:BB:CC:DD:EE:FF`` (or dash-separated) MAC into the ulong WinRT wants.
 
         Args:
@@ -1824,7 +1825,7 @@ class MeshCoreDevice(Device):
                 f"couldn't remove {node.name} from the device: {reject_reason(result)}"
             )
 
-    async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+    async def get_tx_power(self) -> int | None:  # noqa: D102 - inherited docstring
         info = await self.get_self_info()
         value = info.get("tx_power")
         return int(value) if value is not None else None
@@ -2038,11 +2039,11 @@ class MeshCoreDevice(Device):
 
     async def send_remote_command(  # noqa: D102 - inherited docstring
         self, node: Contact, command: str, *, timeout: float = 8.0
-    ) -> Optional[str]:
+    ) -> str | None:
         transmit_gate.mark()
         return await self._send_admin_cmd(node, command, timeout=timeout)
 
-    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
+    async def get_remote_tx_power(self, node: Contact) -> int | None:  # noqa: D102
         reply = await self._send_admin_cmd(node, "get tx")
         return _parse_tx_reply(reply)
 
@@ -2088,8 +2089,8 @@ class MeshCoreDevice(Device):
         self,
         target: str,
         *,
-        path: Optional[str] = None,
-        timeout: Optional[float] = None,
+        path: str | None = None,
+        timeout: float | None = None,
     ) -> TraceResult:
         transmit_gate.mark()
         from meshcore import EventType  # local import keeps mock path dependency-free
@@ -2104,7 +2105,7 @@ class MeshCoreDevice(Device):
         # A trace packet has no destination field — it walks an explicit path of
         # repeater hops. Send the path as raw bytes so any uniform hash width
         # transmits; ``flags`` carries the path-hash mode (size - 1).
-        path_bytes: Optional[bytes] = None
+        path_bytes: bytes | None = None
         flags = 0
         if path:
             hops = [h.strip() for h in path.split(",") if h.strip()]
@@ -2196,7 +2197,7 @@ class MeshCoreDevice(Device):
 
     async def _trace_path_to_contact(
         self, mc, target: str
-    ) -> Optional[tuple[bytes, int]]:  # noqa: ANN001
+    ) -> tuple[bytes, int] | None:  # noqa: ANN001
         """Resolve a target contact into a trace ``(path_bytes, flags)``.
 
         A trace reply only comes back when the *destination's own hash* is the final
@@ -2428,7 +2429,7 @@ class MeshCoreDevice(Device):
 
     async def send_direct_message(  # noqa: D102 - inherited docstring
         self, contact: Contact, text: str
-    ) -> Optional[Ack]:
+    ) -> Ack | None:
         transmit_gate.mark()
         from meshcore import EventType
 
@@ -2491,19 +2492,19 @@ class MeshCoreDevice(Device):
             "airtime_factor": int(payload.get("airtime_factor", 0)) / 1000.0,
         }
 
-    async def get_autoadd_config(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+    async def get_autoadd_config(self) -> int | None:  # noqa: D102 - inherited docstring
         event = self._ok(await self._require().commands.get_autoadd_config())
         payload = getattr(event, "payload", {}) or {}
         config = payload.get("config")
         return None if config is None else int(config)
 
-    async def get_default_flood_scope(self) -> Optional[str]:  # noqa: D102
+    async def get_default_flood_scope(self) -> str | None:  # noqa: D102
         event = self._ok(await self._require().commands.get_default_flood_scope())
         payload = getattr(event, "payload", {}) or {}
         name = payload.get("scope_name")
         return None if name is None else str(name)
 
-    async def get_time(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+    async def get_time(self) -> int | None:  # noqa: D102 - inherited docstring
         event = self._ok(await self._require().commands.get_time())
         payload = getattr(event, "payload", {}) or {}
         value = payload.get("time")
@@ -2513,7 +2514,7 @@ class MeshCoreDevice(Device):
         event = self._ok(await self._require().commands.get_bat())
         return dict(getattr(event, "payload", {}) or {})
 
-    async def get_hw_charging(self) -> Optional[bool]:  # noqa: D102 - inherited docstring
+    async def get_hw_charging(self) -> bool | None:  # noqa: D102 - inherited docstring
         # BLE only, and only when a device exposes the standard Battery Level Status
         # characteristic — no MeshCore firmware does today, so this returns None on every
         # current device and the battery poller falls back to its voltage-trend inference. It
@@ -2567,7 +2568,7 @@ class MeshCoreDevice(Device):
         event = self._ok(await self._require().commands.get_custom_vars())
         return dict(getattr(event, "payload", {}) or {})
 
-    async def get_channel(self, index: int) -> Optional[dict]:  # noqa: D102
+    async def get_channel(self, index: int) -> dict | None:  # noqa: D102
         # The read is serialized (see self._channel_read_lock) so the uncorrelated
         # CHANNEL_INFO response can't be stolen by a concurrent read. We still verify the
         # response is for the slot we asked about: a stray CHANNEL_INFO (from another source,
@@ -2640,7 +2641,7 @@ class MeshCoreDevice(Device):
     async def set_custom_var(self, key: str, value: str) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_custom_var(key, value))
 
-    async def set_channel(self, index: int, name: str, secret: Optional[bytes]) -> None:  # noqa: D102
+    async def set_channel(self, index: int, name: str, secret: bytes | None) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_channel(index, name, secret))
 
     async def set_time(self, epoch: int) -> None:  # noqa: D102 - inherited docstring
@@ -2776,7 +2777,7 @@ class MockDevice(Device):
         self._flood_scope = ""
         # Simulated clock skew (seconds behind the host), so the sync-clock flow has a
         # visible drift to correct until set_time is called.
-        self._clock_offset: Optional[int] = -125
+        self._clock_offset: int | None = -125
         self._path_hash_mode = 0
         self._custom_vars: dict[str, str] = {}
         self._channels: dict[int, dict] = {}
@@ -2832,7 +2833,7 @@ class MockDevice(Device):
             raise ContactNotOnDeviceError(node)
         self._contacts = [c for c in self._contacts if self._mock_key(c) != key]
 
-    async def get_tx_power(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+    async def get_tx_power(self) -> int | None:  # noqa: D102 - inherited docstring
         return self._tx_power
 
     async def set_tx_power(self, value: int) -> None:  # noqa: D102 - inherited docstring
@@ -2840,7 +2841,7 @@ class MockDevice(Device):
 
     async def send_direct_message(  # noqa: D102 - inherited docstring
         self, contact: Contact, text: str
-    ) -> Optional[Ack]:
+    ) -> Ack | None:
         transmit_gate.mark()
         await asyncio.sleep(0)
         # Firmware can only address a contact it holds, so a recipient this simulated device
@@ -2878,7 +2879,7 @@ class MockDevice(Device):
 
     async def send_remote_command(  # noqa: D102 - inherited docstring
         self, node: Contact, command: str, *, timeout: float = 8.0
-    ) -> Optional[str]:
+    ) -> str | None:
         transmit_gate.mark()
         await asyncio.sleep(0)
         key = self._mock_key(node)
@@ -2920,7 +2921,7 @@ class MockDevice(Device):
             return f"ERR: unknown config: {param}"
         return f"ERR: unknown command: {command.strip()}"
 
-    async def get_remote_tx_power(self, node: Contact) -> Optional[int]:  # noqa: D102
+    async def get_remote_tx_power(self, node: Contact) -> int | None:  # noqa: D102
         key = self._mock_key(node)
         if key not in self._admin_sessions:
             return None
@@ -2961,7 +2962,7 @@ class MockDevice(Device):
         """Return the lookup key for a remote node (its public key, else key prefix)."""
         return (node.public_key or node.key_prefix or node.name).lower().removeprefix("0x")
 
-    def _remote_tx_for(self, hop_hex: str) -> Optional[int]:
+    def _remote_tx_for(self, hop_hex: str) -> int | None:
         """Resolve the simulated remote TX power set on a forced-path hop, if any.
 
         The optimizer stores a node's power under its full public key; a trace addresses
@@ -2983,13 +2984,13 @@ class MockDevice(Device):
     async def get_tuning(self) -> dict:  # noqa: D102 - inherited docstring
         return dict(self._tuning)
 
-    async def get_autoadd_config(self) -> Optional[int]:  # noqa: D102
+    async def get_autoadd_config(self) -> int | None:  # noqa: D102
         return self._autoadd_config
 
-    async def get_default_flood_scope(self) -> Optional[str]:  # noqa: D102
+    async def get_default_flood_scope(self) -> str | None:  # noqa: D102
         return self._flood_scope
 
-    async def get_time(self) -> Optional[int]:  # noqa: D102 - inherited docstring
+    async def get_time(self) -> int | None:  # noqa: D102 - inherited docstring
         import time as _time
 
         if self._clock_offset is None:
@@ -3025,7 +3026,7 @@ class MockDevice(Device):
     async def get_custom_vars(self) -> dict[str, str]:  # noqa: D102 - inherited docstring
         return dict(self._custom_vars)
 
-    async def get_channel(self, index: int) -> Optional[dict]:  # noqa: D102
+    async def get_channel(self, index: int) -> dict | None:  # noqa: D102
         if index >= self._max_channels:
             raise DeviceCommandError(f"channel index {index} out of range")
         return self._channels.get(index)
@@ -3082,7 +3083,7 @@ class MockDevice(Device):
     async def set_custom_var(self, key: str, value: str) -> None:  # noqa: D102
         self._custom_vars[key] = value
 
-    async def set_channel(self, index: int, name: str, secret: Optional[bytes]) -> None:  # noqa: D102
+    async def set_channel(self, index: int, name: str, secret: bytes | None) -> None:  # noqa: D102
         self._channels[index] = {
             "channel_idx": index,
             "channel_name": name,
@@ -3278,8 +3279,8 @@ class MockDevice(Device):
         self,
         target: str,
         *,
-        path: Optional[str] = None,
-        timeout: Optional[float] = None,
+        path: str | None = None,
+        timeout: float | None = None,
     ) -> TraceResult:
         transmit_gate.mark()
         await asyncio.sleep(0.05)  # mimic radio latency so progress bars are visible
@@ -3344,7 +3345,7 @@ def parse_trace_hops(payload: dict) -> list[Hop]:
     return hops
 
 
-def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: ANN001
+def observation_from_event(event, kind: str) -> Observation | None:  # noqa: ANN001
     """Map a meshcore advert/telemetry event into an :class:`Observation`.
 
     The companion reports a node identifier, optionally a name and shared location, and
@@ -3389,7 +3390,7 @@ def observation_from_event(event, kind: str) -> Optional[Observation]:  # noqa: 
     )
 
 
-def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN001
+def packet_observation_from_event(event) -> Observation | None:  # noqa: ANN001
     """Map a meshcore ``RX_LOG_DATA`` event into a ``packet``-kind :class:`Observation`.
 
     The companion's RX packet log reports every frame it overhears together with the
@@ -3482,7 +3483,7 @@ def packet_observation_from_event(event) -> Optional[Observation]:  # noqa: ANN0
     )
 
 
-def message_from_event(event) -> Optional[Message]:  # noqa: ANN001
+def message_from_event(event) -> Message | None:  # noqa: ANN001
     """Map a meshcore ``CONTACT_MSG_RECV`` / ``CHANNEL_MSG_RECV`` event into a message.
 
     Direct messages carry a ``pubkey_prefix`` sender; channel messages carry a
@@ -3523,7 +3524,7 @@ def ack_from_event(event) -> Ack:  # noqa: ANN001
     return Ack(code=payload.get("code"), raw=payload)
 
 
-def _as_float(value: object) -> Optional[float]:
+def _as_float(value: object) -> float | None:
     """Best-effort float conversion, returning ``None`` on missing/garbage values."""
     if value is None:
         return None
@@ -3533,7 +3534,7 @@ def _as_float(value: object) -> Optional[float]:
         return None
 
 
-def _as_int(value: object) -> Optional[int]:
+def _as_int(value: object) -> int | None:
     """Best-effort int conversion, returning ``None`` on missing/garbage values."""
     if value is None:
         return None
@@ -3543,7 +3544,7 @@ def _as_int(value: object) -> Optional[int]:
         return None
 
 
-def _contact_route(info: dict) -> Optional[tuple[str, ...]]:
+def _contact_route(info: dict) -> tuple[str, ...] | None:
     """Extract a contact's device-learned outbound route as per-hop hex hashes.
 
     The firmware distills the paths of received flood packets into each contact's
@@ -3577,7 +3578,7 @@ def _contact_route(info: dict) -> Optional[tuple[str, ...]]:
     return hops
 
 
-def _contact_location(info: dict) -> tuple[Optional[float], Optional[float]]:
+def _contact_location(info: dict) -> tuple[float | None, float | None]:
     """Extract a contact's advertised ``(lat, lon)``, or ``(None, None)`` if it has none.
 
     A node that has never set coordinates advertises ``0.0/0.0`` (null island), which the
@@ -3609,7 +3610,7 @@ def _mock_pub(prefix: str) -> str:
     return prefix + "0" * (64 - len(prefix))
 
 
-def _parse_tx_reply(reply: Optional[str]) -> Optional[int]:
+def _parse_tx_reply(reply: str | None) -> int | None:
     """Extract a TX-power integer from a repeater's ``get tx`` reply text.
 
     Repeater firmware answers tersely and inconsistently across versions (e.g.
@@ -3645,15 +3646,15 @@ def clamp_tx_power(value: int) -> int:
 def make_device(
     *,
     mock: bool,
-    port: Optional[str],
+    port: str | None,
     baudrate: int = 115200,
     mock_optimal_tx: int = 14,
     transport: str = "serial",
-    address: Optional[str] = None,
-    pin: Optional[str] = None,
-    ble_device: Optional[object] = None,
-    host: Optional[str] = None,
-    tcp_port: Optional[int] = None,
+    address: str | None = None,
+    pin: str | None = None,
+    ble_device: object | None = None,
+    host: str | None = None,
+    tcp_port: int | None = None,
 ) -> Device:
     """Construct the appropriate :class:`Device` for the current invocation.
 
@@ -3716,8 +3717,8 @@ _PROBE_TIMEOUT_TCP_S = 10.0
 
 
 async def probe_device(
-    device: "DiscoveredDevice", *, baudrate: int = 115200, pin: Optional[str] = None
-) -> Optional[tuple["MeshCoreDevice", dict]]:
+    device: DiscoveredDevice, *, baudrate: int = 115200, pin: str | None = None
+) -> tuple[MeshCoreDevice, dict] | None:
     """Open a discovered device, confirm a MeshCore companion answers, and keep it connected.
 
     Transport-agnostic front door for the startup smoke test: it opens the right connection
@@ -3776,7 +3777,7 @@ async def probe_device(
 
 async def probe_meshcore(
     port: str, baudrate: int = 115200, *, timeout: float = _PROBE_TIMEOUT_SERIAL_S
-) -> Optional[tuple["MeshCoreDevice", dict]]:
+) -> tuple[MeshCoreDevice, dict] | None:
     """Probe a serial ``port`` for a MeshCore companion (see :func:`probe_device`).
 
     Thin serial-only convenience wrapper retained for callers that hold a bare port string.
@@ -3796,8 +3797,8 @@ async def probe_meshcore(
 
 
 async def _probe(
-    device: "MeshCoreDevice", timeout: float
-) -> Optional[tuple["MeshCoreDevice", dict]]:
+    device: MeshCoreDevice, timeout: float
+) -> tuple[MeshCoreDevice, dict] | None:
     """Connect ``device`` and read its identity, returning it live or closing it on failure.
 
     Args:

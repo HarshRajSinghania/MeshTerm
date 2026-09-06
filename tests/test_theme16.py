@@ -124,7 +124,8 @@ def test_theme16_backgrounds_stay_in_the_dim_bank() -> None:
 def test_deploy_script_carries_the_archived_custom_palette() -> None:
     """The script's **opt-in** block matches ``theme.vtrgb_lines()`` byte for byte, and
     its no-kbd OSC fallback spells the same sixteen RGB values — so the archived custom
-    palette stays one environment variable away, in sync with `_VT_SLOTS_CUSTOM`."""
+    palette stays one environment variable away, in sync with `_VT_SLOTS_CUSTOM`.
+    """
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
     assert "MESHTERM_CUSTOM_PALETTE" in script, "the opt-in gate vanished"
     assert theme.vtrgb_lines() in script, "scripts/calculinux-console-font.sh vtrgb drifted"
@@ -280,7 +281,6 @@ def test_heat_ladder_walks_jps_seven_slots_in_order() -> None:
     from meshterm.ui.widgets import _recency_style
 
     set_platform(PICOCALC)
-    slots = {hex_: slot for slot, _, hex_ in theme._VT_SLOTS}
     expected = [
         (60, 15), (299, 15),          # under 5 minutes  — white
         (300, 11), (3599, 11),        # 5 minutes        — yellow
@@ -323,7 +323,8 @@ def test_canvas_drops_emphasis_where_bold_means_brightness() -> None:
 
 def test_font_script_marks_and_fontset_move_together() -> None:
     """Every codepoint the script draws or aliases is in the frozen inventory, and every
-    donor it consumes is out — the two files must change in the same commit."""
+    donor it consumes is out — the two files must change in the same commit.
+    """
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
     marks = {int(m, 16) for m in re.findall(r"^    (0x[0-9A-Fa-f]{4}): art\(", script, re.M)}
     assert marks, "could not parse MARKS out of the font script"
@@ -352,7 +353,8 @@ def test_font_script_marks_and_fontset_move_together() -> None:
 
 def test_specimen_renders_clean_on_picocalc() -> None:
     """`meshterm specimen` under picocalc obeys every contract it demonstrates:
-    ≤53 cells per line, 16-slot SGR only, console-font characters only."""
+    ≤53 cells per line, 16-slot SGR only, console-font characters only.
+    """
     from io import StringIO
 
     from rich.console import Console

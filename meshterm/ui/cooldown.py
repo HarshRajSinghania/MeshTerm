@@ -36,7 +36,7 @@ _TICK_S = 0.2
 
 
 async def wait_for_cooldown(
-    ctx: "AppContext", *, action: str, flood_advert: bool = False
+    ctx: AppContext, *, action: str, flood_advert: bool = False
 ) -> bool:
     """Hold until the transmit cooldown has passed; ``False`` if the reader gave up.
 

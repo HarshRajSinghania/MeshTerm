@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from .device_config import DeviceConfigError, format_value, get_spec, parse_value
 
@@ -63,7 +63,7 @@ class SettingsStore:
             path: Path to the JSON state file (created lazily on the first remembered setting).
         """
         self._path = path
-        self._devices: Optional[dict[str, dict[str, Any]]] = None
+        self._devices: dict[str, dict[str, Any]] | None = None
 
     @property
     def _state(self) -> dict[str, dict[str, Any]]:
@@ -212,7 +212,7 @@ def _ordered_specs() -> list:
 
 
 async def restore(
-    store: SettingsStore, device: "Device", snapshot: dict, keys: list[str]
+    store: SettingsStore, device: Device, snapshot: dict, keys: list[str]
 ) -> int:
     """Write remembered values for ``keys`` back onto the device, updating ``snapshot`` in place.
 

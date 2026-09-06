@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import gzip
 import marshal
+from collections.abc import Container
 from dataclasses import dataclass, field
-from typing import Any, Container, Optional
+from typing import Any
 
 # MVT geometry types (Feature.type).
 GEOM_POINT = 1
@@ -110,7 +111,7 @@ class Feature:
         return self.tags.get(key, default)
 
     @property
-    def name(self) -> Optional[str]:
+    def name(self) -> str | None:
         """The feature's display name, preferring a romanized form over the local script.
 
         The terminal map draws labels in a fixed-width cell grid with whatever font the
@@ -214,7 +215,7 @@ def _packed_uints(buf: bytes) -> list[int]:
     return out
 
 
-def _decode_feature(buf: bytes, keys: list[str], values: list[Any]) -> Optional[Feature]:
+def _decode_feature(buf: bytes, keys: list[str], values: list[Any]) -> Feature | None:
     """Decode a single Feature message, resolving its tags against the layer's key/value pools."""
     r = _Reader(buf)
     geom_type = 0
@@ -239,7 +240,7 @@ def _decode_feature(buf: bytes, keys: list[str], values: list[Any]) -> Optional[
     return Feature(geom_type=geom_type, rings=_decode_geometry(geom_ints), tags=tags)
 
 
-def _decode_layer(buf: bytes, wanted: Optional[Container[str]] = None) -> Layer:
+def _decode_layer(buf: bytes, wanted: Container[str] | None = None) -> Layer:
     """Decode a single Layer message, and its features unless the caller doesn't want them.
 
     The name arrives in field 1, which in practice is the first thing written, so once it
@@ -290,7 +291,7 @@ def _decode_layer(buf: bytes, wanted: Optional[Container[str]] = None) -> Layer:
     return layer
 
 
-def decode_tile(data: bytes, *, layers: Optional[Container[str]] = None) -> list[Layer]:
+def decode_tile(data: bytes, *, layers: Container[str] | None = None) -> list[Layer]:
     """Decode a vector tile (optionally gzip-compressed) into its layers.
 
     Args:
@@ -358,7 +359,7 @@ def dumps_layers(layers: list[Layer], *, stamp: str = "") -> bytes:
     return marshal.dumps((_WIRE_VERSION, marshal.version, stamp, payload))
 
 
-def loads_layers(blob: bytes, *, stamp: str = "") -> Optional[list[Layer]]:
+def loads_layers(blob: bytes, *, stamp: str = "") -> list[Layer] | None:
     """Restore layers written by :func:`dumps_layers`, or ``None`` if they can't be used.
 
     Every way the blob can fail to be what this build expects — a bumped wire version, a

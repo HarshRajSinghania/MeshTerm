@@ -57,7 +57,8 @@ columns — reads them exactly as it reads the two classes the library decoded i
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 #: Payload classes MeshCore addresses with a pair of one-byte key hashes: the recipient
 #: first, the sender second, then the MAC and the ciphertext. A direct message, a request

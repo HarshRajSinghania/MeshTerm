@@ -48,7 +48,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from .models import Contact, advert_time
 
@@ -58,7 +57,7 @@ def _norm(pubkey: str) -> str:
     return (pubkey or "").lower().removeprefix("0x")
 
 
-def _opt_int(value: object) -> Optional[int]:
+def _opt_int(value: object) -> int | None:
     """Coerce a JSON value to ``int``, or ``None`` if absent/unparseable."""
     if value is None:
         return None
@@ -68,7 +67,7 @@ def _opt_int(value: object) -> Optional[int]:
         return None
 
 
-def _opt_float(value: object) -> Optional[float]:
+def _opt_float(value: object) -> float | None:
     """Coerce a JSON value to ``float``, or ``None`` if absent/unparseable."""
     if value is None:
         return None
@@ -100,11 +99,11 @@ class RememberedContact:
 
     public_key: str
     name: str
-    node_type: Optional[int] = None
-    last_advert: Optional[int] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    archived_at: Optional[int] = None
+    node_type: int | None = None
+    last_advert: int | None = None
+    lat: float | None = None
+    lon: float | None = None
+    archived_at: int | None = None
 
     @property
     def archived(self) -> bool:
@@ -112,7 +111,7 @@ class RememberedContact:
         return self.archived_at is not None
 
     @classmethod
-    def from_contact(cls, contact: Contact) -> "RememberedContact":
+    def from_contact(cls, contact: Contact) -> RememberedContact:
         """Distil a live :class:`~meshterm.core.models.Contact` into the fields we persist."""
         epoch = int(contact.last_seen.timestamp()) if contact.last_seen else None
         return cls(
@@ -162,7 +161,7 @@ class ContactStore:
             path: Path to the JSON state file (created lazily on the first remembered contact).
         """
         self._path = path
-        self._devices: Optional[dict[str, dict[str, RememberedContact]]] = None
+        self._devices: dict[str, dict[str, RememberedContact]] | None = None
 
     @property
     def _state(self) -> dict[str, dict[str, RememberedContact]]:
@@ -272,7 +271,7 @@ class ContactStore:
         self._state[dev] = current
         self._save()
 
-    def restore(self, device_pubkey: str, contact_pubkey: str) -> Optional[RememberedContact]:
+    def restore(self, device_pubkey: str, contact_pubkey: str) -> RememberedContact | None:
         """Clear one contact's archived mark, returning what was archived.
 
         Only the *store* side: the caller writes the contact back onto the device (see
@@ -354,7 +353,7 @@ def _contact_to_json(contact: RememberedContact) -> dict:
     return entry
 
 
-def _contact_from_json(entry: object) -> Optional[RememberedContact]:
+def _contact_from_json(entry: object) -> RememberedContact | None:
     """Parse one stored contact entry, or ``None`` if it is malformed (no key or name)."""
     if not isinstance(entry, dict):
         return None

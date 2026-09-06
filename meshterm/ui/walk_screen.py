@@ -57,13 +57,13 @@ from __future__ import annotations
 import math
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.text import Text
 
-from ..platforms import get_platform
 from ..core.models import NODE_TYPE_REPEATER, Contact, utcnow
+from ..platforms import get_platform
 from ..services.topology import Link, MeshTopology
 from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
@@ -192,7 +192,7 @@ _NO_READING: RGB = (100, 116, 139)
 _SOURCE_TAGS = {"trace": "T", "route": "R", "packet": "P", "neighbour": "N"}
 
 
-def _snr_rgb(snr: Optional[float]) -> RGB:
+def _snr_rgb(snr: float | None) -> RGB:
     """The edge colour for a link's median SNR (see :data:`_SNR_STOPS`)."""
     if snr is None:
         return _NO_READING
@@ -212,7 +212,7 @@ def _scaled(rgb: RGB, factor: float) -> RGB:
     return tuple(max(0, min(255, round(c * factor))) for c in rgb)  # type: ignore[return-value]
 
 
-def _freshness(last_seen: Optional[datetime], now: datetime) -> float:
+def _freshness(last_seen: datetime | None, now: datetime) -> float:
     """How brightly a link draws for its evidence age: 1.0 fresh → 0.5 stale."""
     if last_seen is None or getattr(last_seen, "tzinfo", None) is None:
         return 0.55
@@ -292,7 +292,7 @@ class WalkScreen(Screen):
         self._trail_scroll = 0
         #: ``((width, trail) → the furthest that can scroll)``, settled at render (see
         #: :meth:`_trail_max_scroll`) so a keypress can clamp itself without a width.
-        self._trail_fit: Optional[tuple[tuple, int]] = None
+        self._trail_fit: tuple[tuple, int] | None = None
         #: The width the trail last rendered at, for that same clamp.
         self._trail_width = 0
         #: Index of the highlighted row in the current list (neighbours or matches).
@@ -309,8 +309,8 @@ class WalkScreen(Screen):
         # once per key instead of once per repaint. Nothing ever invalidates these:
         # they live exactly as long as the frozen graph they describe.
         self._links_of_memo: dict[str, list[tuple[str, Link]]] = {}
-        self._all_nodes_memo: Optional[set[str]] = None
-        self._hops_out_memo: Optional[dict[str, int]] = None
+        self._all_nodes_memo: set[str] | None = None
+        self._hops_out_memo: dict[str, int] | None = None
         self._onward_memo: dict[str, dict[str, int]] = {}
 
     # --- state -------------------------------------------------------------------
@@ -321,7 +321,7 @@ class WalkScreen(Screen):
         return self._trail[-1]
 
     @property
-    def _came_from(self) -> Optional[str]:
+    def _came_from(self) -> str | None:
         """The node the trail arrived from, or ``None`` at the trail's start."""
         return self._trail[-2] if len(self._trail) > 1 else None
 
@@ -771,7 +771,7 @@ class WalkScreen(Screen):
     # -- the canvas --
 
     def _canvas_lines(
-        self, width: int, canvas_h: int, selected: Optional[str]
+        self, width: int, canvas_h: int, selected: str | None
     ) -> list[str]:
         """Draw the focus neighbourhood: focus at the far west, the strongest fan east.
 
@@ -1053,7 +1053,8 @@ class WalkScreen(Screen):
     def _clip(label: str, room: int, cap: int = _LABEL_W) -> str:
         """``label`` fit to ``room`` cells: whole if it fits, else ellipsized (``…`` alone
         at one cell, nothing at zero). The cap and the room-to-edge both flow through here,
-        so a name is only ever shortened as far as it truly must be."""
+        so a name is only ever shortened as far as it truly must be.
+        """
         room = min(room, cap)
         if room <= 0:
             return ""
@@ -1069,7 +1070,8 @@ class WalkScreen(Screen):
 
         The label is clamped to whichever side has more room — the cells free to the
         right of the marker, or to its left — so the selection keeps as much of its name
-        as the canvas allows before ellipsizing."""
+        as the canvas allows before ellipsizing.
+        """
         cx = x >> 1
         room = max(canvas.cell_w - (cx + 2), cx - 1)  # the roomier of right / left
         label = self._clip(label, room)
@@ -1418,7 +1420,7 @@ class WalkScreen(Screen):
         return self._topo.display_name(node) or node[:8]
 
 
-async def open_walk(ctx: "AppContext") -> None:
+async def open_walk(ctx: AppContext) -> None:
     """Build the evidence graph and run the full-screen mesh walk until dismissed.
 
     Contacts and our own identity come from the device when one is reachable
@@ -1442,7 +1444,7 @@ async def open_walk(ctx: "AppContext") -> None:
 
     contacts: list[Contact] = []
     self_label = "you"
-    self_hash: Optional[str] = None
+    self_hash: str | None = None
     try:
         if ctx.is_connected or ctx.settings.connect_on_start:
             contacts = await ctx.devstate.contacts()

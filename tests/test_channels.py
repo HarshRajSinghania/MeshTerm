@@ -32,8 +32,8 @@ from meshterm.core.channels import (
 from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
-from meshterm.tools.channels import ChannelsTool
 from meshterm.services.chat_service import ChatService
+from meshterm.tools.channels import ChannelsTool
 from meshterm.ui.channels import (
     ChannelSlot,
     _apply_order,
@@ -272,7 +272,8 @@ async def test_channel_capacity_tracks_a_larger_ceiling(ctx: AppContext) -> None
 
 async def test_read_channel_slots_bounds_a_never_rejecting_probe() -> None:
     """On firmware that answers every slot (never rejecting an index), the configured-slot
-    scan stops after a run of empty slots instead of walking all CHANNEL_SLOT_PROBE_CAP."""
+    scan stops after a run of empty slots instead of walking all CHANNEL_SLOT_PROBE_CAP.
+    """
 
     class NeverRejects:
         """A device that reports two channels then empty slots forever, never raising."""

@@ -22,7 +22,7 @@ its job.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -40,7 +40,7 @@ class AdvertScheduler:
     :meth:`aclose`); everything else happens on the loop's own schedule.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize an idle scheduler bound to an application context.
 
         Args:
@@ -48,10 +48,10 @@ class AdvertScheduler:
                 device and the advert store. Nothing is touched until :meth:`start`.
         """
         self._ctx = ctx
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         # The connected device's public key, learned once per connection. Keyed by the
         # device object's identity so a reconnect (a fresh Device) re-probes it.
-        self._key_for: Optional[tuple[int, str]] = None
+        self._key_for: tuple[int, str] | None = None
 
     @property
     def active(self) -> bool:

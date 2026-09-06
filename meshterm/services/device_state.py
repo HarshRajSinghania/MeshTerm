@@ -41,11 +41,11 @@ import asyncio
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..core.models import Contact
     from ..context import AppContext
+    from ..core.models import Contact
     from ..ui.channels import ChannelSlot
 
 #: How long a cached contacts list is served before a read triggers a background refresh
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 _CONTACTS_TTL_S = 90.0
 
 
-def _aware(when: "Optional[datetime]") -> "Optional[datetime]":
+def _aware(when: datetime | None) -> datetime | None:
     """Read a stored timestamp as UTC, so two of them can be compared.
 
     Timestamps are stored as UTC (rendered local only at the very edge), but a row written
@@ -81,7 +81,7 @@ class DeviceState:
     changing how it handles failure.
     """
 
-    def __init__(self, ctx: "AppContext") -> None:
+    def __init__(self, ctx: AppContext) -> None:
         """Initialize an empty cache bound to an application context.
 
         Args:
@@ -89,12 +89,12 @@ class DeviceState:
                 device is opened until a getter is first called.
         """
         self._ctx = ctx
-        self._contacts: Optional[list["Contact"]] = None
+        self._contacts: list[Contact] | None = None
         self._contacts_at: float = 0.0
-        self._self_info: Optional[dict] = None
-        self._path_hash_mode: Optional[int] = None
-        self._channels: Optional[list["ChannelSlot"]] = None
-        self._channel_capacity: Optional[int] = None
+        self._self_info: dict | None = None
+        self._path_hash_mode: int | None = None
+        self._channels: list[ChannelSlot] | None = None
+        self._channel_capacity: int | None = None
         # One lock per slow fetch so overlapping first-access callers (two screens opened in
         # quick succession) collapse onto a single round-trip instead of each firing their own.
         self._contacts_lock = asyncio.Lock()
@@ -106,7 +106,7 @@ class DeviceState:
 
     # -- contacts (stale-while-revalidate) --------------------------------------
 
-    async def contacts(self, *, force: bool = False) -> list["Contact"]:
+    async def contacts(self, *, force: bool = False) -> list[Contact]:
         """Return the device's contacts, cached for the session and refreshed lazily.
 
         The first call reads the table from the radio (a slow round-trip on a busy node) and
@@ -131,7 +131,7 @@ class DeviceState:
             self._spawn(self._refresh_contacts_quietly())
         return self._contacts
 
-    async def _fetch_contacts(self, *, force: bool = False) -> list["Contact"]:
+    async def _fetch_contacts(self, *, force: bool = False) -> list[Contact]:
         """Read the contacts table from the device and cache it (blocking, deduplicated).
 
         Args:
@@ -150,7 +150,7 @@ class DeviceState:
             self._contacts_at = time.monotonic()
             return self._contacts
 
-    async def _remember_and_merge(self, fetched: list["Contact"]) -> list["Contact"]:
+    async def _remember_and_merge(self, fetched: list[Contact]) -> list[Contact]:
         """Record the contacts just read, then union in any the device has since forgotten.
 
         A firmware-less radio bridge loses its contact table on restart, so MeshTerm remembers
@@ -174,7 +174,7 @@ class DeviceState:
         store.remember_all(pubkey, fetched)
         return merge_contacts(store, pubkey, fetched)
 
-    def _merge_heard(self, contacts: list["Contact"]) -> list["Contact"]:
+    def _merge_heard(self, contacts: list[Contact]) -> list[Contact]:
         """Give each contact the *later* of the device's advert time and our own receptions.
 
         A contact's ``last_seen`` arrives as the firmware's ``last_advert``, which the
@@ -204,7 +204,7 @@ class DeviceState:
         except Exception as exc:  # noqa: BLE001 - never block a contacts read on history
             self._ctx.log.debug("devstate: last-heard merge skipped: %s", exc)
             return contacts
-        merged: list["Contact"] = []
+        merged: list[Contact] = []
         for contact in contacts:
             ident = (contact.public_key or contact.key_prefix or "").lower()
             ident = ident.removeprefix("0x")
@@ -268,7 +268,7 @@ class DeviceState:
 
     # -- channel slots (held until the channel editor invalidates them) --------
 
-    async def channel_slots(self) -> list["ChannelSlot"]:
+    async def channel_slots(self) -> list[ChannelSlot]:
         """Return the configured channel slots, cached until a channel edit invalidates them.
 
         The underlying probe (:func:`~meshterm.ui.channels.read_channel_slots`) walks every

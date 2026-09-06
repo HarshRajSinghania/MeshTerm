@@ -43,8 +43,8 @@ headings pin to the top row as their prose scrolls under them.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence
 
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
@@ -207,8 +207,8 @@ def _landmark_tag(nodes: Sequence[SyntaxTreeNode]) -> str:
 
 
 def _frame_paragraph(
-    node: SyntaxTreeNode, previous: Optional[SyntaxTreeNode], *, last: bool
-) -> Optional[RenderableType]:
+    node: SyntaxTreeNode, previous: SyntaxTreeNode | None, *, last: bool
+) -> RenderableType | None:
     """The page frame's two flush muted lines, or ``None`` for an ordinary block.
 
     The standfirst is the paragraph directly under the page title; the colophon is the

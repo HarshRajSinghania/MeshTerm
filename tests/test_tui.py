@@ -19,7 +19,6 @@ from rich.table import Table
 from rich.text import Text
 
 from meshterm import copyright_notice
-from tests.conftest import plain as _plain
 from meshterm.ui.menus import section_heading
 from meshterm.ui.pathline import CRACK_TAIL, PathHop, PathLine
 from meshterm.ui.tui import frame
@@ -32,9 +31,10 @@ from meshterm.ui.tui.prompt import (
 )
 from meshterm.ui.tui.render import render_lines, render_to_ansi
 from meshterm.ui.tui.screen import CANCEL, Screen, ScrollScreen
-from meshterm.ui.tui.spinner import spinner_interval
 from meshterm.ui.tui.select import Choice, ReorderScreen, SelectScreen, Separator
 from meshterm.ui.tui.session import TuiSession
+from meshterm.ui.tui.spinner import spinner_interval
+from tests.conftest import plain as _plain
 
 _UNSET = object()
 
@@ -193,7 +193,8 @@ def test_select_callable_title_re_renders_live() -> None:
 
 def test_select_width_aware_title_fits_itself_to_the_row() -> None:
     """A title taking the render width fits itself (a route middle-elides); the natural
-    form still feeds filtering and the dialog's own width measure."""
+    form still feeds filtering and the dialog's own width measure.
+    """
     seen: list[int] = []
 
     def fitted(width: int) -> str:
@@ -213,7 +214,8 @@ def test_select_row_cracks_a_chip_path_and_ellipsizes_everything_else() -> None:
     """A row too wide for the list is *cut*, not truncated: a row carrying a path line
     (a trophy walk, a probe candidate) breaks its chip off on the crack, while an
     ordinary prose row keeps the ellipsis. The row itself decides which — the list has
-    no idea it is ever holding a route."""
+    no idea it is ever holding a route.
+    """
     route = PathLine(
         [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(8)], mode="powerline"
     ).text()
@@ -227,7 +229,8 @@ def test_select_row_cracks_a_chip_path_and_ellipsizes_everything_else() -> None:
 
 def test_select_hscroll_highlight_keeps_the_natural_row() -> None:
     """In an hscroll list the highlighted row skips self-fitting — ←→ slide the full
-    line — while every other row still elides itself to the width."""
+    line — while every other row still elides itself to the width.
+    """
 
     def fitted(width: int) -> str:
         return "start middle end" if width >= 20 else "start ⋯ end"
@@ -674,7 +677,8 @@ def test_reorder_ignores_typed_characters_including_space() -> None:
 
 def test_reorder_dialog_width_is_stable_across_states() -> None:
     """The natural width fits the widest of rows, hints, and dirty actions — and never
-    changes as the user grabs a row or dirties the order, so the popup doesn't resize."""
+    changes as the user grabs a row or dirties the order, so the popup doesn't resize.
+    """
     screen = ReorderScreen("order", ["🔒 alpha", "＃ b"])
     w = screen.dialog_width
     screen.handle("enter")  # grab
@@ -866,7 +870,8 @@ def test_logo_takes_the_widest_mark_that_fits_the_columns() -> None:
 
 def test_compose_startup_shows_footnote_under_logo() -> None:
     """A footnote (e.g. a copyright) is drawn muted, immediately under the logo and
-    right-aligned to the logo's right edge, so the two read as one signed block."""
+    right-aligned to the logo's right edge, so the two read as one signed block.
+    """
     screen = SelectScreen("pick", [Choice("a", 1)])
     screen.chrome = False
     screen.banner = ["A" * 40, "B" * 40]  # a wide wordmark to hang the note off
@@ -907,7 +912,8 @@ _ACCENT = (129, 140, 248)  # the theme's accent border, #818cf8
 
 def _find(plain: str, glyphs: frozenset[str]) -> int:
     """Index of the first box glyph from ``glyphs`` (the render console may substitute
-    rounded corners with square ones on legacy Windows, so tests match the whole family)."""
+    rounded corners with square ones on legacy Windows, so tests match the whole family).
+    """
     return next(i for i, ch in enumerate(plain) if ch in glyphs)
 
 
@@ -1350,7 +1356,8 @@ def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
 
 def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
     """A ``[profiles.*]`` serial entry (a soldered ``/dev/ttyS1``) shows up in the picker under
-    its alias, ready to select — even though pyserial's scan never produces that platform port."""
+    its alias, ready to select — even though pyserial's scan never produces that platform port.
+    """
     from meshterm.core.config import DeviceProfile
     from meshterm.core.device_store import DeviceStore
     from meshterm.ui.device_picker import prompt_device
@@ -1378,7 +1385,8 @@ def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
 
 def test_device_picker_serial_profile_yields_to_scanned_port(tmp_path) -> None:
     """A serial profile whose port pyserial DOES enumerate is not double-listed — the scanned
-    row (with real USB metadata) wins over the bare profile."""
+    row (with real USB metadata) wins over the bare profile.
+    """
     from meshterm.core.config import DeviceProfile
     from meshterm.core.device_store import DeviceStore
     from meshterm.core.discovery import DiscoveredDevice
@@ -1867,7 +1875,7 @@ def test_progress_completed_task_shows_check_and_indeterminate_has_no_track() ->
     screen = ProgressScreen("work")
     done = screen.add_task("tracing", total=2)
     screen.advance(done, 2)
-    indet = screen.add_task("optimizing", total=None)
+    screen.add_task("optimizing", total=None)
     plain = RichText.from_ansi("\n".join(screen.render_body(60))).plain
     assert "✓ tracing" in plain
     # The indeterminate row carries only the spinning chip + its count, never a track glyph.
@@ -2049,7 +2057,8 @@ def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> 
     Ctrl chord — the rescue for layouts (Canadian Multilingual Standard) that claim right
     Ctrl as a character modifier and strip the ctrl flag from the console's arrow event.
     Actions with no Ctrl sibling pass through untouched, as does everything once the key
-    is released."""
+    is released.
+    """
     from meshterm.ui.tui import session as session_mod
 
     session = TuiSession()
@@ -2077,7 +2086,8 @@ def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -
     chord — the same rescue as the nav keys, for the ^R/^P shortcuts a layout-claimed right
     Ctrl would otherwise strip to plain text. Only the mapped letters promote (case-folded,
     with the now-stale data dropped); other text — and everything once the key is released —
-    stays text."""
+    stays text.
+    """
     from meshterm.ui.tui import session as session_mod
 
     session = TuiSession()
@@ -2102,7 +2112,8 @@ def test_right_ctrl_rescue_covers_the_sessions_own_chords(monkeypatch) -> None:
     """The rescue is app-wide, not screen-actions-only: ^V and ^C are answered by the session
     itself, and a layout-claimed right Ctrl must reach them too — right Ctrl-V pastes the
     clipboard into a compose line rather than typing a ``v``, right Ctrl-C quits. Neither
-    pseudo-action is ever forwarded to a screen."""
+    pseudo-action is ever forwarded to a screen.
+    """
     from meshterm.ui.tui import session as session_mod
 
     session = TuiSession()
@@ -2141,7 +2152,8 @@ def test_right_ctrl_rescue_covers_the_sessions_own_chords(monkeypatch) -> None:
 def test_every_ctrl_letter_chord_is_bound_on_both_ctrl_keys() -> None:
     """The chord table drives the prompt_toolkit bindings, so a chord can never be bound for
     the left Ctrl without its right-Ctrl rescue (the drift the two used to be able to develop
-    when the letter map was maintained by hand)."""
+    when the letter map was maintained by hand).
+    """
     from prompt_toolkit.keys import Keys
 
     from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS
@@ -2157,7 +2169,8 @@ def test_every_ctrl_letter_chord_is_bound_on_both_ctrl_keys() -> None:
 def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
     """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
     emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
-    must not trip the check (that they seemed to was the earlier misdiagnosis)."""
+    must not trip the check (that they seemed to was the earlier misdiagnosis).
+    """
     from meshterm.ui.tui.session import _has_wide_glyph
 
     assert _has_wide_glyph("👋")
@@ -2203,7 +2216,8 @@ def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
     stale cells to its right. With no remembered frame to compare against, a composed frame
     carrying such a glyph drops pt's cached frame, upgrading the next paint to a full
     erase_down + redraw. A frame of only width-1 glyphs keeps the fast differential paint —
-    this holds wherever the glyph is, floating dialog or not."""
+    this holds wherever the glyph is, floating dialog or not.
+    """
     session, _remembered = _repaint_harness()
     session._emit("Bob 👋 says hi")
     assert session._app.renderer._last_screen is None
@@ -2454,7 +2468,7 @@ async def test_session_busy_overlay_shows_between_screens_and_clears() -> None:
 # --- horizontal scroll (opt-in) -------------------------------------------------------
 
 
-def _hscroll_screen(width_of_rows: int = 60) -> "SelectScreen":
+def _hscroll_screen(width_of_rows: int = 60) -> SelectScreen:
     from meshterm.ui.tui.select import Choice, SelectScreen, Separator
 
     return SelectScreen(

@@ -19,7 +19,6 @@ from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.fontset import FONT_CODEPOINTS
 from meshterm.ui.markdown import MarkdownDoc, render_markdown
 from meshterm.ui.tui.render import render_lines
-
 from tests.conftest import plain
 
 #: One page exercising every construct the renderer knows, used wherever a test wants
@@ -100,7 +99,8 @@ def _spans(source: str) -> list[tuple[str, str]]:
 )
 def test_each_heading_level_takes_the_hue_its_rank_calls_for(source, style) -> None:  # noqa: ANN001
     """``#`` is the page's own name, ``##`` a section in the app's body accent, ``###``
-    a sub-heading inside one."""
+    a sub-heading inside one.
+    """
     assert _spans(source)[0][1] == style
 
 
@@ -123,7 +123,8 @@ def test_emphasis_inside_a_heading_is_its_qualifier() -> None:
 
 def test_the_page_frame_sits_flush_and_muted() -> None:
     """The standfirst under the title and the colophon under the closing rule describe
-    the page rather than saying anything in it, so both recede and neither is indented."""
+    the page rather than saying anything in it, so both recede and neither is indented.
+    """
     source = "# Title\n\nthe standfirst\n\n## Section\n\nbody\n\n---\n\nthe colophon\n"
     lines = _lines(source)
     styles = dict(_spans(source))
@@ -177,7 +178,8 @@ def test_a_numbered_list_counts_from_its_own_start() -> None:
 
 def test_a_quote_keeps_its_rail_down_every_line_it_wraps_to() -> None:
     """A rail that only marked the first line would make a three-line quote look like
-    one quoted line followed by two loose ones."""
+    one quoted line followed by two loose ones.
+    """
     lines = [line for line in _lines("> " + "word " * 20, 30) if line.strip()]
 
     assert len(lines) > 2
@@ -233,7 +235,8 @@ def test_each_inline_mark_takes_its_own_style() -> None:
 
 def test_a_link_shows_where_it_goes() -> None:
     """Nothing is clickable on a framebuffer console, so a link that reads "the repo"
-    has to name the repo or it says nothing at all — scheme stripped, it is noise."""
+    has to name the repo or it says nothing at all — scheme stripped, it is noise.
+    """
     text = _texts("see [the repo](https://www.github.com/example/meshterm/)\n")[0]
 
     assert text.plain == "see the repo github.com/example/meshterm"
