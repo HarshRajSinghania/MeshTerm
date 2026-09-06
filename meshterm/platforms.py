@@ -157,7 +157,7 @@ REGULAR = Platform(
 #: The PicoCalc/Lyra/Calculinux framebuffer console. Field values not yet consumed by a
 #: binding point (header_atoms, ascii_fold, truecolor, effects beyond the
 #: two P1 bindings, tick_s, battery, modifier_watch) are P2–P5's targets, recorded here
-#: now so the seam exists before the flavour work lands — see .claude/plans/picocalc-platform.md.
+#: now so the seam exists before the flavour work lands.
 PICOCALC = Platform(
     name="picocalc",
     readable_cols=53,

@@ -7,9 +7,13 @@ dist/
 
 # Ignore all dot-directories (.venv, .pytest_cache, .ruff_cache, .vscode, ...)
 .*/
-# ...except the project's tracked Claude config (settings.local.json stays ignored).
+# ...except the project's tracked Claude config. Private working notes stay out:
+# settings.local.json is per-machine, and plans/ + housekeeping.md are internal
+# planning that names hardware and unshipped ideas.
 !.claude/
 .claude/settings.local.json
+.claude/plans/
+.claude/housekeeping.md
 
 # Other virtual environments
 venv/

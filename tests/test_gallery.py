@@ -8,7 +8,7 @@ individual screen's own test file already uses — then renders it, both directl
 72x24 and at PICOCALC's two live/lux row counts (53x26, the actual on-device floor; 53x40,
 the boot-font/6x8-font-B case). No rendered line may exceed its terminal's width.
 
-This is the harness described in .claude/plans/picocalc-platform.md's "Parity" section: a
+This is the platform-parity harness the PicoCalc work was built around: a
 screen added here without surviving both platforms is meant to fail CI by default, so the
 suite polices new work automatically instead of relying on someone remembering to check
 by eye. It intentionally starts already covering every screen the interactive menu can
@@ -661,7 +661,7 @@ def _cases():
                 marks.append(pytest.mark.xfail(
                     reason=(
                         f"{entry.name} overflows picocalc's {PICOCALC.readable_cols} cols "
-                        "today -- P6 worklist (.claude/plans/picocalc-platform.md)"
+                        "today -- see _KNOWN_WIDE, the width-reduction worklist"
                     ),
                     strict=False,
                 ))
