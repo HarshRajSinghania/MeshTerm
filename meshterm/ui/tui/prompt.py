@@ -662,7 +662,7 @@ class CountdownDialog(_KeylessDialog):
             cell_len(self._reason),
             len("  Cancel  "),
         )
-        return inner + 8
+        return inner + 12  # panel padding + border, plus breathing room (see ButtonDialog)
 
     @staticmethod
     def _clock_text(remaining: float) -> str:
@@ -671,18 +671,20 @@ class CountdownDialog(_KeylessDialog):
         return f"Ready in {seconds}s"
 
     def render_body(self, width: int) -> list[str]:
-        """Draw the clock, its reason, and the Cancel chip."""
-        lines: list[Text] = [Text(self._clock_text(self._remaining), style="warn")]
+        """Draw the clock and its reason centered above a centered Cancel chip.
+
+        Centered line by line, the way :class:`ButtonDialog` and :class:`ProgressDialog`
+        draw theirs: a chip is a chip wherever it appears, and one shoved against the left
+        border read as an afterthought beside its siblings' centered rows.
+        """
+        parts: list[Text] = [
+            _center(Text(self._clock_text(self._remaining), style="warn"), width)
+        ]
         if self._reason:
-            lines.append(Text(self._reason, style="muted"))
-        lines.append(Text(""))
-        lines.append(Text("  Cancel  ", style="selected"))
-        rendered: list[str] = []
-        for line in lines:
-            # An empty Text renders to no lines at all on its own, so the spacer above the
-            # chip has to be asked for explicitly or the chip rides up against the reason.
-            rendered.extend(render_lines(line, width) or [""])
-        return rendered
+            parts.append(_center(Text(self._reason, style="muted"), width))
+        parts.append(Text(""))
+        parts.append(_center(Text("  Cancel  ", style="selected"), width))
+        return render_lines(Group(*parts), width)
 
     def handle(self, action: str, data: str = "") -> None:
         """Enter and Esc both abandon: the only chip on the dialog is Cancel."""

@@ -110,6 +110,18 @@ def test_the_countdown_shows_the_clock_its_reason_and_the_way_out() -> None:
     assert dialog.footer_hint == "Enter/Esc cancel"
 
 
+def test_the_clock_its_reason_and_the_chip_are_all_centered() -> None:
+    """Centered like every other dialog's body — a chip against the left border read as odd."""
+    dialog = CountdownDialog("Flood advert", 47.0, reason="reaches the whole mesh")
+    width = dialog.dialog_width - 8
+    for line in _lines(dialog):
+        if not line.strip():
+            continue
+        left = len(line) - len(line.lstrip(" "))
+        right = width - len(line.rstrip(" "))
+        assert abs(left - right) <= 1, line
+
+
 def test_a_part_second_still_reads_as_a_second() -> None:
     """The clock counts the way a person would say it: 0.2s left is still "1s"."""
     assert "Ready in 1s" in _lines(CountdownDialog("Advert", 0.2))[0]
