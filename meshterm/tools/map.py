@@ -181,7 +181,7 @@ class MapTool(Tool):
                 True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap"
             ),
         ) -> None:
-            if not 0.0 < fraction <= 1.0:
+            if fraction is not None and not 0.0 < fraction <= 1.0:
                 raise typer.BadParameter("--fraction must be greater than 0 and at most 1")
             params: dict[str, Any] = {
                 "static": True, "basemap": basemap, "fraction": fraction,

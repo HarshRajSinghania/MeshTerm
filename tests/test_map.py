@@ -2414,3 +2414,45 @@ def test_each_road_class_keeps_its_own_colour_through_the_per_tile_style_memo() 
         else:
             expected = _ROAD_STYLE.get(cls or "", _ROAD_DEFAULT)
         assert mark_rgb(expected[0]) in painted, f"{cls} lost its own colour"
+
+
+def _run_map_cli(monkeypatch, *args: str):
+    """Invoke the ``map`` subcommand with the tool itself stubbed out.
+
+    Returns the params dict the command would have handed :func:`run_tool_command`,
+    or ``None`` if the invocation failed before getting there.
+    """
+    import typer
+    from typer.testing import CliRunner
+
+    from meshterm import cli
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        cli, "run_tool_command", lambda tool, params: captured.update(params)
+    )
+    app = typer.Typer()
+    MapTool().register_cli(app)
+    result = CliRunner().invoke(app, list(args))
+    return result, (captured or None)
+
+
+def test_map_cli_fraction_defaults_to_the_preference(monkeypatch) -> None:
+    """No ``--fraction`` means *ask the preferences*, which is a ``None`` to pass on.
+
+    The bounds check used to compare that ``None`` against 0.0, so the plain
+    ``meshterm map`` — the one invocation nobody passes a flag to — was the one that
+    raised.
+    """
+    result, params = _run_map_cli(monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert params is not None and params["fraction"] is None
+
+
+@pytest.mark.parametrize("value,ok", [("0", False), ("0.5", True), ("1.0", True)])
+def test_map_cli_fraction_bounds(monkeypatch, value: str, ok: bool) -> None:
+    """A fraction of zero frames nothing, so it is refused; anything up to 1.0 stands."""
+    result, params = _run_map_cli(monkeypatch, "--fraction", value)
+    assert (result.exit_code == 0) is ok, result.output
+    if ok:
+        assert params is not None and params["fraction"] == float(value)
