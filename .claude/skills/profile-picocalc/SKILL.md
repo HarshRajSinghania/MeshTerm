@@ -156,5 +156,7 @@ have to come from touching fewer rows, not from composing faster.
 
 ## Where the numbers live
 
-`.claude/plans/responsiveness.md` records the 2026-08-09 baseline, the per-stage breakdown,
-and what is still open. Update it after a profiling pass rather than starting a new file.
+There is no tracked results file. Put the baseline you measure, the per-stage breakdown,
+and anything left open into the commit message of the change they justify — a number that
+travels with its diff stays true, and one in a side file drifts. Quote the before/after
+pair and the tour you ran, so the next pass can A/B against it.
