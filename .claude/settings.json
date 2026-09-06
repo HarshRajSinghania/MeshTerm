@@ -26,9 +26,6 @@
       "Bash(.venv/Scripts/python.exe -m meshterm --mock trace --target Alice --profile yagi)",
       "Bash(echo \"=== EXIT: $? ===\")"
     ],
-    "defaultMode": "dontAsk",
-    "additionalDirectories": [
-      "C:\\Users\\user\\.config\\meshterm\\output"
-    ]
+    "defaultMode": "dontAsk"
   }
 }
