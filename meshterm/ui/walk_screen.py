@@ -36,7 +36,7 @@ only its immediate neighbourhood:
 
 **Enter walks**: the highlighted neighbour becomes the new focus, the breadcrumb trail
 across the top grows (a :mod:`~meshterm.ui.pathline` path line — powerline chips where the
-terminal draws them, ``you › YUL-Cartierville › …`` where it doesn't, each name in its
+terminal draws them, ``you › Hilltop-Repeater › …`` where it doesn't, each name in its
 node's own hue), and **⌫ steps back** along it. Walking to a node already on the trail
 truncates the stack to its first appearance — the loop you walked to get back there is
 dropped rather than recorded. The trail never wraps: it is one line read through a
@@ -271,7 +271,7 @@ class WalkScreen(Screen):
         """
         super().__init__()
         # The screen's name, and nothing else (JP, 2026-08-30). It carried the focus and
-        # the graph's size — ``Mesh walk — YUL-Cartierville · 42 nodes · 61 links`` — which
+        # the graph's size — ``Mesh walk — Hilltop-Repeater · 42 nodes · 61 links`` — which
         # ran past a 53-column title bar, and every atom of it was already on the screen
         # below: the trail ends on the focus, the line under it names that node in colour
         # with its hash and its ring, and how big the neighbourhood is, is what the canvas

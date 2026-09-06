@@ -23,7 +23,7 @@ from .widgets import _recency_style, channel_glyph, name_chip
 #: Demo identities for the name-colour row: ``(name, key)``. The keys are synthetic, and
 #: chosen so their first bytes land in three different sectors of the hue wheel — on the
 #: console that means three different palette slots (see ``theme._NODE_SLOT_HEXES``).
-_DEMO_NAMES = (("Alice", "a1b2"), ("YUL-Poly", "3d63"), ("Lounge", "cc10"))
+_DEMO_NAMES = (("Alice", "a1b2"), ("Lakeside", "3d63"), ("Lounge", "cc10"))
 
 
 def _palette_row() -> Text:

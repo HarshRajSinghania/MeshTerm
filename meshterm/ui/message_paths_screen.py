@@ -17,7 +17,7 @@ detail read together:
   and introduced by nothing, the **route** as a path line (:mod:`~meshterm.ui.pathline`):
   the origin, every relay, and us — the same two endpoints the graph draws between, so
   the row and the picture start and finish in the same places. Each node is a chip in its
-  own hue, named where we know it (``YUL-Poly``) and standing in its own hash at the
+  own hue, named where we know it (``Lakeside``) and standing in its own hash at the
   device's path-hash width where we don't (``e839f2``, keyless grey); our own end is the
   app-wide ``★``. No hash is repeated after a name — the graph above is where the hash
   bytes live, and a chip and its label share the node's colour, so the two halves

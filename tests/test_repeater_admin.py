@@ -193,11 +193,11 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
     from meshterm.ui.widgets import _NODE_GLYPHS
 
     contacts = [
-        Contact(name="YUL-North", public_key="a1" * 32, key_prefix="a1b2c3d4", node_type=2),
-        Contact(name="YUL-South", public_key="d4" * 32, key_prefix="d4c3b2a1", node_type=2),
+        Contact(name="Hub-North", public_key="a1" * 32, key_prefix="a1b2c3d4", node_type=2),
+        Contact(name="Hub-South", public_key="d4" * 32, key_prefix="d4c3b2a1", node_type=2),
     ]
     rows, candidates = admin_picker_rows(tui_ctx, contacts)
-    assert [c.name for c in candidates] == ["YUL-North", "YUL-South"]
+    assert [c.name for c in candidates] == ["Hub-North", "Hub-South"]
 
     glyph, glyph_style = _NODE_GLYPHS[2]
     titles = {

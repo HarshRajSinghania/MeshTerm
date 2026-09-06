@@ -34,7 +34,7 @@ def _service(tmp_path: Path) -> WatchtowerService:
     return service
 
 
-def _obs(node=NODE, name="YUL", snr=None, age_s=0, kind="advert") -> Observation:
+def _obs(node=NODE, name="Hub", snr=None, age_s=0, kind="advert") -> Observation:
     return Observation(
         node=node, name=name, kind=kind, snr=snr,
         observed_at=utcnow() - timedelta(seconds=age_s),
@@ -49,13 +49,13 @@ def test_store_watch_round_trips_and_persists(tmp_path: Path) -> None:
     path = tmp_path / "watchtower.json"
     store = WatchStore(path)
     seen = utcnow() - timedelta(hours=2)
-    store.watch(NODE, "YUL", last_seen=seen)
+    store.watch(NODE, "Hub", last_seen=seen)
     store.set_silence(NODE, 24)
     store.set_snr_watch(NODE, False)
 
     again = WatchStore(path)
     entry = again.watched()[NODE]
-    assert entry.name == "YUL" and entry.silence_hours == 24 and not entry.snr_watch
+    assert entry.name == "Hub" and entry.silence_hours == 24 and not entry.snr_watch
     assert entry.last_heard == seen
     again.unwatch(NODE)
     assert not WatchStore(path).watched()
@@ -64,8 +64,8 @@ def test_store_watch_round_trips_and_persists(tmp_path: Path) -> None:
 def test_store_alert_log_caps_acks_and_clears(tmp_path: Path) -> None:
     """Alerts append newest-first, cap, acknowledge, and clear."""
     store = WatchStore(tmp_path / "watchtower.json")
-    first = store.add_alert("silence", "YUL", "quiet")
-    store.add_alert("snr", "YUL", "sagging")
+    first = store.add_alert("silence", "Hub", "quiet")
+    store.add_alert("snr", "Hub", "sagging")
     assert [a.kind for a in store.alerts()] == ["snr", "silence"]
     assert store.unacked_count() == 2
 
@@ -87,9 +87,9 @@ def test_store_note_heard_updates_and_refreshes_name(tmp_path: Path) -> None:
     store = WatchStore(tmp_path / "watchtower.json")
     store.watch(NODE, NODE)
     later = utcnow() + timedelta(minutes=5)
-    store.note_heard(NODE, when=later, name="YUL-Cartierville")
+    store.note_heard(NODE, when=later, name="Hilltop-Repeater")
     entry = store.watched()[NODE]
-    assert entry.last_heard == later and entry.name == "YUL-Cartierville"
+    assert entry.last_heard == later and entry.name == "Hilltop-Repeater"
 
 
 # --- the silence rule ---------------------------------------------------------------------
@@ -99,7 +99,7 @@ def test_silence_fires_once_then_rearms_on_recovery(tmp_path: Path) -> None:
     """Quiet past the threshold alarms once; hearing again notes the recovery."""
     service = _service(tmp_path)
     store = service._ctx.watch_store
-    store.watch(NODE, "YUL", last_seen=utcnow() - timedelta(hours=13))
+    store.watch(NODE, "Hub", last_seen=utcnow() - timedelta(hours=13))
 
     service.evaluate()  # default threshold is 12 h — already past it
     service.evaluate()  # latched: no duplicate
@@ -120,7 +120,7 @@ def test_silence_respects_off_and_unheard(tmp_path: Path) -> None:
     """An OFF rule never alarms, however stale the mark."""
     service = _service(tmp_path)
     store = service._ctx.watch_store
-    store.watch(NODE, "YUL", last_seen=utcnow() - timedelta(days=30))
+    store.watch(NODE, "Hub", last_seen=utcnow() - timedelta(days=30))
     store.set_silence(NODE, OFF)
     service.evaluate()
     assert store.alerts() == []
@@ -133,7 +133,7 @@ def test_snr_sag_alerts_with_cooldown(tmp_path: Path) -> None:
     """A clear drop in median SNR alerts once, not on every subsequent packet."""
     service = _service(tmp_path)
     store = service._ctx.watch_store
-    store.watch(NODE, "YUL")
+    store.watch(NODE, "Hub")
 
     for _ in range(SNR_WINDOW):
         service.note(_obs(snr=8.0))
@@ -151,7 +151,7 @@ def test_snr_ignores_packet_rows_and_disabled_watch(tmp_path: Path) -> None:
     """Relay-measured packet SNR and an off switch both keep the rule quiet."""
     service = _service(tmp_path)
     store = service._ctx.watch_store
-    store.watch(NODE, "YUL")
+    store.watch(NODE, "Hub")
     store.set_snr_watch(NODE, False)
     for snr in (9.0,) * SNR_WINDOW + (-9.0,) * SNR_WINDOW:
         service.note(_obs(snr=snr))

@@ -138,7 +138,7 @@ class _Entry:
 def _dashboard(cols: int, rows: int) -> Screen:
     return DashboardScreen(
         session=_GallerySession(cols, rows),
-        resolve=lambda h: {"a1b2c3d4": "Alice", "3d63c642": "YUL-Cartierville"}.get(h, ""),
+        resolve=lambda h: {"a1b2c3d4": "Alice", "3d63c642": "Hilltop-Repeater"}.get(h, ""),
         window=[
             Observation(node="a1b2c3d4", name="a1b2c3d4", kind="advert", snr=5.0, rssi=-90.0,
                         observed_at=utcnow()),
@@ -182,7 +182,7 @@ def _purge_ranked():  # noqa: ANN201
          dict(heard_age_days=95.0, packets=3, known_days=200.0, hops=2.0)),
         ("hop-9", "9a" * 32, dict(heard_age_days=400.0, packets=1, known_days=420.0,
                                   hops=4.0)),
-        ("YUL-Poly", "3d" * 32, dict(heard_age_days=30.0, packets=22, known_days=250.0,
+        ("Lakeside", "3d" * 32, dict(heard_age_days=30.0, packets=22, known_days=250.0,
                                      hops=1.0)),
         ("sensor-2", "7c" * 32, dict(heard_age_days=210.0, packets=2, known_days=260.0)),
     ]
@@ -245,14 +245,14 @@ def _node_detail_header() -> Text:
     # a specimen of what the platform draws, so a stub colour would hide a palette bug.
     glyph, glyph_style = _NODE_GLYPHS[NODE_TYPE_REPEATER]
     header = Text(f"{glyph} ", style=glyph_style)
-    header.append("YUL-Cartierville", style=name_style("YUL-Cartierville", _HUB_KEY))
+    header.append("Hilltop-Repeater", style=name_style("Hilltop-Repeater", _HUB_KEY))
     header.append("   repeater", style="muted")
     return header
 
 
 def _node_detail(cols: int, rows: int) -> Screen:
     return NodeDetailScreen(
-        title="Node — YUL-Cartierville",
+        title="Node — Hilltop-Repeater",
         header=_node_detail_header(),
         info_rows=[
             ("key", highlighted_hash(_HUB_KEY, 1)),
@@ -291,7 +291,7 @@ def _map(cols: int, rows: int) -> Screen:
     session = _GallerySession(cols, rows)
     markers = [
         MapMarker("Homestead", 45.50, -73.60, is_self=True),
-        MapMarker("YUL-Cartierville", 45.40, -73.50, is_repeater=True),
+        MapMarker("Hilltop-Repeater", 45.40, -73.50, is_repeater=True),
         MapMarker("A Rather Long Node Name For Width", 45.55, -73.65),
     ]
     return MapScreen(session, markers, _StubTileSource(), 14)
@@ -323,7 +323,7 @@ def _livefeed(cols: int, rows: int) -> Screen:
 
 
 def _walk_topo() -> tuple[MeshTopology, dict[str, Contact]]:
-    hub = Contact(name="YUL-Cartierville", public_key=_HUB_KEY, key_prefix="3d63c6429436")
+    hub = Contact(name="Hilltop-Repeater", public_key=_HUB_KEY, key_prefix="3d63c6429436")
     far = Contact(name="Alice", public_key=_FAR_KEY, key_prefix="f2c24f54551e")
     topo = MeshTopology("aa" * 6, contacts=[hub, far])
     hub_id, far_id = topo.canonical(hub.public_key), topo.canonical(far.public_key)
@@ -342,10 +342,10 @@ def _walk(cols: int, rows: int) -> Screen:
 
 def _timemachine(cols: int, rows: int) -> Screen:
     def build(window, width):  # noqa: ANN001
-        return [Text("YUL-Cartierville  5m ago  advert"), Text("Alice  12m ago  packet")]
+        return [Text("Hilltop-Repeater  5m ago  advert"), Text("Alice  12m ago  packet")]
 
     return TimeMachineScreen(
-        session=_GallerySession(cols, rows), label="YUL-Cartierville", build=build,
+        session=_GallerySession(cols, rows), label="Hilltop-Repeater", build=build,
     )
 
 
@@ -364,14 +364,14 @@ def _message_paths(cols: int, rows: int) -> Screen:
 
 def _remote_cli(cols: int, rows: int) -> Screen:
     return RemoteCliScreen(
-        node_label="YUL-Cartierville",
-        history=["get name", "get name -> YUL-Cartierville"],
+        node_label="Hilltop-Repeater",
+        history=["get name", "get name -> Hilltop-Repeater"],
         send=lambda c: None, session=_GallerySession(cols, rows),
     )
 
 
 def _path_composer(cols: int, rows: int) -> Screen:
-    hub = Contact(name="YUL-Cartierville", public_key=_HUB_KEY, key_prefix="3d63c6429436")
+    hub = Contact(name="Hilltop-Repeater", public_key=_HUB_KEY, key_prefix="3d63c6429436")
     far = Contact(name="Alice", public_key=_FAR_KEY, key_prefix="f2c24f54551e")
     topo = build_topology(
         self_id="aaaaaaaaaaaa" + "0" * 52, contacts=[hub, far],
@@ -415,7 +415,7 @@ def _courier_outbox(cols: int, rows: int) -> Screen:
     config_dir = Path(tempfile.mkdtemp(prefix="meshterm-gallery-courier-"))
     ctx = _CourierStubContext(config_dir)
     ctx.courier = CourierService(ctx)
-    ctx.courier_store.queue("aa" * 6, "YUL-Cartierville", "battery reading requested please")
+    ctx.courier_store.queue("aa" * 6, "Hilltop-Repeater", "battery reading requested please")
     ctx.courier_store.queue("bb" * 6, "A Rather Long Contact Name For Width", "hello there")
     return CourierOutboxScreen(ctx)
 
@@ -439,7 +439,7 @@ def _record_dialog(cols: int, rows: int) -> Screen:
     record = _record()
     return RecordDialog(
         record, CATEGORY_BY_ID[record.category], 1,
-        resolve=lambda h: {"3d63c6429436": "YUL-Cartierville", "f2c24f54551e": "Alice"}.get(h, h),
+        resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater", "f2c24f54551e": "Alice"}.get(h, h),
         device_label="Homestead", device_hash=None,
     )
 
@@ -450,7 +450,7 @@ def _packet_viewer(cols: int, rows: int) -> Screen:
         raw={"payload_typename": "GRP_TXT", "route_typename": "FLOOD"},
     )
     return PacketViewer(
-        [entry], 0, resolve=lambda h: {"3d63c6429436": "YUL-Cartierville"}.get(h, h),
+        [entry], 0, resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater"}.get(h, h),
     )
 
 
@@ -479,7 +479,7 @@ def _trace(cols: int, rows: int) -> Screen:
 
 def _tx_sweep(cols: int, rows: int) -> Screen:
     screen = TxSweepScreen(
-        admin_label="YUL-Cartierville", target_label="Alice", device_label="Homestead",
+        admin_label="Hilltop-Repeater", target_label="Alice", device_label="Homestead",
         device_hash="00" * 32, resolve=lambda h: h, session=_GallerySession(cols, rows),
         tx_min=12, tx_max=28, step=3, samples=3,
         run_sweep=lambda: None, apply_winner=lambda: None,

@@ -48,7 +48,7 @@ def _seeded_repo(tmp_path: Path) -> Repository:
         repo.record_observation(
             run,
             Observation(
-                node=NODE, name="YUL", kind="advert",
+                node=NODE, name="Hub", kind="advert",
                 snr=8.0 if hours_ago > 24 else -2.0, rssi=-95.0,
                 observed_at=now - timedelta(hours=hours_ago),
             ),
@@ -107,7 +107,7 @@ def test_daily_activity_counts_packets_and_nodes(tmp_path: Path) -> None:
     repo = _seeded_repo(tmp_path)
     days = repo.daily_activity()
     assert sum(d[1] for d in days) == 26  # 24 adverts + newcomer + the packet row
-    assert max(d[2] for d in days) == 2  # at most YUL + Newcomer on one day
+    assert max(d[2] for d in days) == 2  # at most Hub + Newcomer on one day
     assert days == sorted(days)  # oldest first
     repo.close()
 
@@ -413,7 +413,7 @@ def test_node_page_renders_all_sections(tmp_path: Path) -> None:
     """Volume, SNR band, rhythm, and the record roll-up all render."""
     repo = _seeded_repo(tmp_path)
     ctx = SimpleNamespace(repo=repo)
-    body = _plain(_node_sections(ctx, NODE, "YUL", None, 90))
+    body = _plain(_node_sections(ctx, NODE, "Hub", None, 90))
     assert "Volume" in body and "24 receptions" in body
     assert "SNR" in body and "-2.0" in body and "+8.0" in body
     assert "Rhythm" in body and "10-min" in body  # the finest slice 90 cols affords
@@ -426,7 +426,7 @@ def test_node_page_rhythm_spans_the_day_and_shares_the_volume_gutter(tmp_path: P
     """The node rhythm matches the mesh's: a full-day sweep, gutter-aligned to Volume."""
     repo = _seeded_repo(tmp_path)
     ctx = SimpleNamespace(repo=repo)
-    lines = _plain(_node_sections(ctx, NODE, "YUL", None, 90), width=90).split("\n")
+    lines = _plain(_node_sections(ctx, NODE, "Hub", None, 90), width=90).split("\n")
 
     def border_col(heading: str) -> int:
         start = next(i for i, line in enumerate(lines) if heading in line)
@@ -929,7 +929,7 @@ def test_screen_cycles_windows_and_caches(tmp_path: Path) -> None:
 
         return [Text("page")]
 
-    screen = TimeMachineScreen(session=_FakeSession(), label="YUL", build=build)
+    screen = TimeMachineScreen(session=_FakeSession(), label="Hub", build=build)
     assert "7 d" in screen.title
     screen.render_body(80)
     screen.render_body(80)
@@ -958,7 +958,7 @@ def test_picocalc_window_ring_stops_at_30_days() -> None:
 
     set_platform(PICOCALC)
     screen = TimeMachineScreen(
-        session=_FakeSession(), label="YUL", build=lambda window, width: []
+        session=_FakeSession(), label="Hub", build=lambda window, width: []
     )
     assert "7 d" in screen.title  # opens on 7 d, as everywhere
     screen.handle("text", "w")
@@ -993,10 +993,10 @@ def _activity_repo(tmp_path: Path) -> Repository:
             path_hash_bytes=1, timestamp=now - timedelta(minutes=mins),
         )
 
-    repo.record_trace(trun, trace("YUL-A", True, [5.0, 8.0], 40))       # min 5.0, 2 hops
-    repo.record_trace(trun, trace("YUL-A", True, [2.0], 30))            # min 2.0, 1 hop
-    repo.record_trace(trun, trace("YUL-B", True, [-3.0, 1.0, 4.0], 20))  # min -3.0, 3 hops
-    repo.record_trace(trun, trace("YUL-B", False, [], 15))             # timed out, no SNR
+    repo.record_trace(trun, trace("Hub-A", True, [5.0, 8.0], 40))       # min 5.0, 2 hops
+    repo.record_trace(trun, trace("Hub-A", True, [2.0], 30))            # min 2.0, 1 hop
+    repo.record_trace(trun, trace("Hub-B", True, [-3.0, 1.0, 4.0], 20))  # min -3.0, 3 hops
+    repo.record_trace(trun, trace("Hub-B", False, [], 15))             # timed out, no SNR
     repo.record_trace(trun, trace(PATH_TRACE_TARGET, True, [6.0], 10))   # path walk: no target
 
     crun = repo.start_run("chat", {}, None)
@@ -1019,7 +1019,7 @@ def _activity_repo(tmp_path: Path) -> Repository:
         "INSERT INTO tx_samples "
         "(run_id, target, tx_power, median_min_snr, success_rate, samples, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (trun, "YUL-A", 20, 3.0, 0.8, 5, (now - timedelta(minutes=20)).isoformat()),
+        (trun, "Hub-A", 20, 3.0, 0.8, 5, (now - timedelta(minutes=20)).isoformat()),
     )
     repo._conn.commit()
     return repo
@@ -1046,7 +1046,7 @@ def test_self_trace_reach_carries_outcomes(tmp_path: Path) -> None:
     timed_out = [r for r in reach if not r[1]]
     assert len(homed) == 4 and len(timed_out) == 1
     assert timed_out[0][2] is None  # nothing came back to measure
-    assert min(r[2] for r in homed) == -3.0  # the YUL-B path's bottleneck
+    assert min(r[2] for r in homed) == -3.0  # the Hub-B path's bottleneck
     repo.close()
 
 
@@ -1055,7 +1055,7 @@ def test_self_activity_ledger_tallies(tmp_path: Path) -> None:
     repo = _activity_repo(tmp_path)
     led = repo.self_activity_ledger()
     assert led.trace_total == 5 and led.trace_ok == 4
-    assert led.trace_targets == 2  # YUL-A + YUL-B; the (path) walk names no target
+    assert led.trace_targets == 2  # Hub-A + Hub-B; the (path) walk names no target
     assert led.msg_channel == 2 and led.msg_dm == 3
     assert led.dm_acked == 1 and led.dm_ackable == 2  # 2 dm sends had a verdict; 1 acked
     assert led.dm_peers == 2  # aa + bb
@@ -1087,11 +1087,11 @@ def test_self_row_leads_the_node_list_as_a_lane() -> None:
     from meshterm.ui.timemachine_screen import SELF
 
     named = _lane(
-        ContactRow(value=SELF, name="YUL-Johputer", key="3d" * 32, you=True),
+        ContactRow(value=SELF, name="Homestead", key="3d" * 32, you=True),
         name_w=30, prefix_bytes=1, hash_w=30,
     ).plain
     assert named.startswith("★")
-    assert "YUL-Johputer" in named and "(you)" in named
+    assert "Homestead" in named and "(you)" in named
     assert "—" in named  # heard and packets have nothing to show for us
     assert "3d3d" in named  # our key hash, its routing prefix lit
     # No reachable device: a bare "you" name and a "?" hash, no "(you)" tag.

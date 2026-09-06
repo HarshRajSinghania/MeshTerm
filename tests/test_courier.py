@@ -25,7 +25,7 @@ from meshterm.ui.courier_screen import (
 )
 
 NODE = "3d" * 6
-CONTACT = Contact(name="YUL", public_key="3d" * 32)
+CONTACT = Contact(name="Hub", public_key="3d" * 32)
 
 
 class _StubChat:
@@ -73,7 +73,7 @@ def test_store_queue_round_trips_and_persists(tmp_path: Path) -> None:
     path = tmp_path / "courier.json"
     store = CourierStore(path)
     when = utcnow() + timedelta(hours=8)
-    queued = store.queue(NODE, "YUL", "hello there", not_before=when)
+    queued = store.queue(NODE, "Hub", "hello there", not_before=when)
     assert queued.ident == 1 and queued.status == QUEUED
 
     again = CourierStore(path)
@@ -86,8 +86,8 @@ def test_store_queue_round_trips_and_persists(tmp_path: Path) -> None:
 def test_store_lifecycle_attempts_finish_cancel_clear(tmp_path: Path) -> None:
     """Attempt marks, delivery, cancellation, and clearing all behave."""
     store = CourierStore(tmp_path / "courier.json")
-    a = store.queue(NODE, "YUL", "one")
-    b = store.queue(NODE, "YUL", "two")
+    a = store.queue(NODE, "Hub", "one")
+    b = store.queue(NODE, "Hub", "two")
     store.note_attempt(a.ident)
     assert store.get(a.ident).attempts == 1
     store.mark_delivered(a.ident)
@@ -102,9 +102,9 @@ def test_store_lifecycle_attempts_finish_cancel_clear(tmp_path: Path) -> None:
 def test_store_caps_the_finished_history(tmp_path: Path) -> None:
     """Old finished entries fall off; the waiting queue is never trimmed."""
     store = CourierStore(tmp_path / "courier.json")
-    keeper = store.queue(NODE, "YUL", "still waiting")
+    keeper = store.queue(NODE, "Hub", "still waiting")
     for i in range(DONE_CAP + 5):
-        entry = store.queue(NODE, "YUL", f"m{i}")
+        entry = store.queue(NODE, "Hub", f"m{i}")
         store.mark_delivered(entry.ident)
     done = [m for m in store.entries() if m.status != QUEUED]
     assert len(done) == DONE_CAP
@@ -120,14 +120,14 @@ def test_eligibility_waits_for_freshness_and_schedule(tmp_path: Path) -> None:
     store = service._ctx.courier_store
     now = utcnow()
 
-    plain = store.queue(NODE, "YUL", "hi")
+    plain = store.queue(NODE, "Hub", "hi")
     assert not service.eligible(plain, now)  # never heard this session
     service._heard[NODE] = now - timedelta(seconds=FRESH_S + 1)
     assert not service.eligible(plain, now)  # heard, but too long ago
     service._heard[NODE] = now
     assert service.eligible(plain, now)
 
-    scheduled = store.queue(NODE, "YUL", "later", not_before=now + timedelta(hours=1))
+    scheduled = store.queue(NODE, "Hub", "later", not_before=now + timedelta(hours=1))
     assert not service.eligible(scheduled, now)  # the schedule holds it
     # Past its time, a scheduled entry's *first* shot fires even unheard-of.
     service._heard.clear()
@@ -139,7 +139,7 @@ def test_eligibility_backs_off_after_failures(tmp_path: Path) -> None:
     service = _service(tmp_path, [])
     store = service._ctx.courier_store
     now = utcnow()
-    entry = store.queue(NODE, "YUL", "hi")
+    entry = store.queue(NODE, "Hub", "hi")
     service._heard[NODE] = now
     store.note_attempt(entry.ident, when=now)
     entry = store.get(entry.ident)
@@ -155,11 +155,11 @@ async def test_attempt_delivers_and_raises_the_good_news(tmp_path: Path) -> None
     """An acknowledged send settles the entry and lights the Watchtower badge."""
     service = _service(tmp_path, [True])
     ctx = service._ctx
-    entry = ctx.courier_store.queue(NODE, "YUL", "hello")
+    entry = ctx.courier_store.queue(NODE, "Hub", "hello")
     service._heard[NODE] = utcnow()
 
     await service._pass()
-    assert ctx.chat.sent == [("YUL", "hello")]
+    assert ctx.chat.sent == [("Hub", "hello")]
     settled = ctx.courier_store.get(entry.ident)
     assert settled.status == "delivered" and settled.attempts == 1
     alerts = ctx.watch_store.alerts()
@@ -171,7 +171,7 @@ async def test_attempt_gives_up_after_the_budget(tmp_path: Path) -> None:
     """Unacknowledged attempts exhaust the budget and say so, exactly once."""
     service = _service(tmp_path, [False] * MAX_ATTEMPTS)
     ctx = service._ctx
-    entry = ctx.courier_store.queue(NODE, "YUL", "hello")
+    entry = ctx.courier_store.queue(NODE, "Hub", "hello")
     for _ in range(MAX_ATTEMPTS):
         message = ctx.courier_store.get(entry.ident)
         await service._attempt(message)
@@ -185,8 +185,8 @@ async def test_pass_attempts_at_most_one_entry(tmp_path: Path) -> None:
     """A backlog drains one message per pass — the courier never bursts."""
     service = _service(tmp_path, [True, True])
     ctx = service._ctx
-    ctx.courier_store.queue(NODE, "YUL", "first")
-    ctx.courier_store.queue(NODE, "YUL", "second")
+    ctx.courier_store.queue(NODE, "Hub", "first")
+    ctx.courier_store.queue(NODE, "Hub", "second")
     service._heard[NODE] = utcnow()
     await service._pass()
     assert len(ctx.chat.sent) == 1
@@ -212,7 +212,7 @@ async def test_attempt_now_forces_a_send(tmp_path: Path) -> None:
     service = _service(tmp_path, [True])
     ctx = service._ctx
     entry = ctx.courier_store.queue(
-        NODE, "YUL", "hello", not_before=utcnow() + timedelta(hours=8)
+        NODE, "Hub", "hello", not_before=utcnow() + timedelta(hours=8)
     )
     assert await service.attempt_now(entry.ident) == "delivered"
     assert await service.attempt_now(entry.ident) == "gone"  # already settled
@@ -265,8 +265,8 @@ async def test_cli_list_renders_waiting_and_finished(tmp_path: Path) -> None:
     from meshterm.tools.courier import CourierTool
 
     ctx = _ToolCtx(tmp_path)
-    ctx.courier_store.queue(NODE, "YUL", "still waiting")
-    done = ctx.courier_store.queue(NODE, "YUL", "landed")
+    ctx.courier_store.queue(NODE, "Hub", "still waiting")
+    done = ctx.courier_store.queue(NODE, "Hub", "landed")
     ctx.courier_store.mark_delivered(done.ident)
 
     result = await CourierTool().run(ctx, {"cli_action": "list"})
@@ -289,7 +289,7 @@ async def test_cli_cancel_removes_a_waiting_entry(tmp_path: Path) -> None:
     from meshterm.tools.courier import CourierTool
 
     ctx = _ToolCtx(tmp_path)
-    entry = ctx.courier_store.queue(NODE, "YUL", "nope")
+    entry = ctx.courier_store.queue(NODE, "Hub", "nope")
     tool = CourierTool()
 
     result = await tool.run(ctx, {"cli_action": "cancel", "id": entry.ident})
@@ -305,7 +305,7 @@ async def test_cli_send_forces_one_attempt(tmp_path: Path) -> None:
     from meshterm.tools.courier import CourierTool
 
     ctx = _ToolCtx(tmp_path, outcome="delivered")
-    entry = ctx.courier_store.queue(NODE, "YUL", "hello")
+    entry = ctx.courier_store.queue(NODE, "Hub", "hello")
     result = await CourierTool().run(ctx, {"cli_action": "send", "id": entry.ident})
     assert result.summary == {"id": entry.ident, "outcome": "delivered"}
 
@@ -325,8 +325,8 @@ async def test_cli_clear_drops_finished_only(tmp_path: Path) -> None:
     from meshterm.tools.courier import CourierTool
 
     ctx = _ToolCtx(tmp_path)
-    ctx.courier_store.queue(NODE, "YUL", "still here")
-    done = ctx.courier_store.queue(NODE, "YUL", "gone soon")
+    ctx.courier_store.queue(NODE, "Hub", "still here")
+    done = ctx.courier_store.queue(NODE, "Hub", "gone soon")
     ctx.courier_store.mark_delivered(done.ident)
 
     result = await CourierTool().run(ctx, {"cli_action": "clear"})
@@ -377,7 +377,7 @@ async def test_pick_schedule_when_next_heard_returns_no_schedule() -> None:
     returns on Esc, so choosing it read as a cancel and the message was never queued.
     """
     ctx = _ScheduleCtx(_StubScheduleSession(lambda items: items[0].value))
-    result = await _pick_schedule(ctx, "YUL")
+    result = await _pick_schedule(ctx, "Hub")
     assert result is None
     assert result is not CANCEL_SCHEDULE
     assert WHEN_HEARD is not None  # the row's own sentinel, distinct from Esc's None
@@ -386,13 +386,13 @@ async def test_pick_schedule_when_next_heard_returns_no_schedule() -> None:
 async def test_pick_schedule_esc_cancels_the_queueing() -> None:
     """Esc on the picker (``select`` returns ``None``) backs out without queueing anything."""
     ctx = _ScheduleCtx(_StubScheduleSession(lambda items: None))
-    assert await _pick_schedule(ctx, "YUL") is CANCEL_SCHEDULE
+    assert await _pick_schedule(ctx, "Hub") is CANCEL_SCHEDULE
 
 
 async def test_pick_schedule_a_fixed_delay_holds_until_its_time() -> None:
     """A concrete offset row (e.g. In 1 h) comes back as its aware future datetime."""
     ctx = _ScheduleCtx(_StubScheduleSession(lambda items: items[1].value))  # In 1 h
-    result = await _pick_schedule(ctx, "YUL")
+    result = await _pick_schedule(ctx, "Hub")
     assert result is not None and result is not CANCEL_SCHEDULE
     assert result > utcnow()
 
@@ -417,15 +417,15 @@ def test_outbox_refresh_moves_a_delivered_entry_without_a_keypress(tmp_path: Pat
     from meshterm.ui.courier_screen import CourierOutboxScreen
 
     ctx = _outbox_ctx(tmp_path)
-    entry = ctx.courier_store.queue(NODE, "YUL", "hold this")
+    entry = ctx.courier_store.queue(NODE, "Hub", "hold this")
     screen = CourierOutboxScreen(ctx)
     before = _outbox_plain(screen)
-    assert "⏳ YUL" in before and "Finished" not in before
+    assert "⏳ Hub" in before and "Finished" not in before
 
     ctx.courier_store.mark_delivered(entry.ident)
     screen.refresh()
     after = _outbox_plain(screen)
-    assert "Finished" in after and "✓ YUL" in after and "⏳" not in after
+    assert "Finished" in after and "✓ Hub" in after and "⏳" not in after
 
 
 def test_outbox_refresh_keeps_the_highlight_on_its_entry(tmp_path: Path) -> None:
@@ -433,8 +433,8 @@ def test_outbox_refresh_keeps_the_highlight_on_its_entry(tmp_path: Path) -> None
     from meshterm.ui.courier_screen import CourierOutboxScreen
 
     ctx = _outbox_ctx(tmp_path)
-    first = ctx.courier_store.queue(NODE, "YUL", "first")
-    second = ctx.courier_store.queue(NODE, "YUL", "second")
+    first = ctx.courier_store.queue(NODE, "Hub", "first")
+    second = ctx.courier_store.queue(NODE, "Hub", "second")
     screen = CourierOutboxScreen(ctx, default=("msg", second.ident))
     assert screen._current_choice().value == ("msg", second.ident)
 
@@ -448,7 +448,7 @@ def test_outbox_refresh_without_change_recomposes_nothing(tmp_path: Path) -> Non
     from meshterm.ui.courier_screen import CourierOutboxScreen
 
     ctx = _outbox_ctx(tmp_path)
-    ctx.courier_store.queue(NODE, "YUL", "steady")
+    ctx.courier_store.queue(NODE, "Hub", "steady")
     screen = CourierOutboxScreen(ctx)
     items = screen._items
     screen.refresh()
@@ -460,7 +460,7 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
     from meshterm.ui.courier_screen import CourierOutboxScreen
 
     ctx = _outbox_ctx(tmp_path)
-    entry = ctx.courier_store.queue(NODE, "YUL", "patience")
+    entry = ctx.courier_store.queue(NODE, "Hub", "patience")
     screen = CourierOutboxScreen(ctx)
     assert "waiting to hear the contact" in _outbox_plain(screen)
 

@@ -146,8 +146,8 @@ async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkey
     from meshterm.ui.surface import TuiUi
 
     contacts = [
-        Contact(name="YUL-Poly", public_key="a1" + "0" * 62, key_prefix="a1"),
-        Contact(name="YUL-Cartierville", public_key="3d" + "0" * 62, key_prefix="3d"),
+        Contact(name="Lakeside", public_key="a1" + "0" * 62, key_prefix="a1"),
+        Contact(name="Hilltop-Repeater", public_key="3d" + "0" * 62, key_prefix="3d"),
     ]
 
     class _Repo:
@@ -221,10 +221,10 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
 
     contacts = [
         Contact(
-            name="YUL-Cartierville", public_key="3d" + "0" * 62, key_prefix="3d",
+            name="Hilltop-Repeater", public_key="3d" + "0" * 62, key_prefix="3d",
             node_type=NODE_TYPE_REPEATER,
         ),
-        Contact(name="YUL-Poly", public_key="a1" + "0" * 62, key_prefix="a1"),
+        Contact(name="Lakeside", public_key="a1" + "0" * 62, key_prefix="a1"),
     ]
 
     class _Ctx:
@@ -248,9 +248,9 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
         async def main() -> None:
             run = asyncio.ensure_future(TxOptimizeTool()._run_live(ctx))
             node_list = await _screen_at(session, 1)
-            node_list.resolve("YUL-Cartierville")
+            node_list.resolve("Hilltop-Repeater")
             target_list = await _screen_at(session, 2)
-            target_list.resolve("YUL-Poly")
+            target_list.resolve("Lakeside")
             while not swept:
                 await asyncio.sleep(0)
             # Esc from the sweep leaves the target list up; Esc there, the node list.
@@ -261,7 +261,7 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
 
         await asyncio.wait_for(session.run(main()), timeout=5)
 
-    assert swept == [("YUL-Cartierville", "YUL-Poly", 2)], "both pickers under the sweep"
+    assert swept == [("Hilltop-Repeater", "Lakeside", 2)], "both pickers under the sweep"
     assert session._stack == [], "and both visits pop on the way out"
 
 

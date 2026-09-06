@@ -48,7 +48,7 @@ def _row(*, selected: bool) -> Text:
     """A list row in the shape every screen builds: pointer, name, age, key lane."""
     row = Text()
     row.append("❯ " if selected else "  ", style="cursor" if selected else "")
-    row.append("YUL-Poly", style=name_style("YUL-Poly", _KEY))
+    row.append("Lakeside", style=name_style("Lakeside", _KEY))
     row.append("  ")
     row.append("5m", style="heat.minutes")
     row.append("  ")
@@ -72,7 +72,7 @@ def _hues(ansi: str) -> set[str]:
 
 def test_a_selected_row_draws_its_node_name_in_the_cursor_white() -> None:
     """THE ask: the row you are on says "this one", not "this one is mauve"."""
-    hue = name_style("YUL-Poly", _KEY).removeprefix("bold ")
+    hue = name_style("Lakeside", _KEY).removeprefix("bold ")
 
     hues = _hues(render_to_ansi(_row(selected=True), 60))
 
@@ -82,7 +82,7 @@ def test_a_selected_row_draws_its_node_name_in_the_cursor_white() -> None:
 
 def test_an_unselected_row_keeps_every_name_in_its_own_hue() -> None:
     """The fold is the *highlight's* doing; the column below it still reads as identities."""
-    hue = name_style("YUL-Poly", _KEY).removeprefix("bold ")
+    hue = name_style("Lakeside", _KEY).removeprefix("bold ")
 
     assert hue in _hues(render_to_ansi(_row(selected=False), 60))
 
@@ -140,7 +140,7 @@ def test_a_path_line_s_chips_keep_their_fills_on_the_cursor_row() -> None:
     """
     fill = node_style(_KEY).removeprefix("bold ")
     row = Text("  ")
-    row.append(" YUL-Poly ", style=f"#0f172a on {fill}")
+    row.append(" Lakeside ", style=f"#0f172a on {fill}")
     row.style = "cursor"
 
     assert f"48;2;{int(fill[1:3], 16)};" in render_to_ansi(row, 40)
@@ -155,7 +155,7 @@ def test_a_path_line_keeps_every_hop_s_hue_on_the_cursor_row() -> None:
     different things on the two platforms. The widget stamps its own extent and the fold
     spares what lies inside it.
     """
-    hops = [PathHop("YUL-Poly", key=_KEY), PathHop("Waymarker", key="77" * 6)]
+    hops = [PathHop("Lakeside", key=_KEY), PathHop("Waymarker", key="77" * 6)]
     row = Text("❯ ", style="cursor")
     row.append_text(PathLine(hops, mode="plain").text())
     row.style = "cursor"
@@ -169,14 +169,14 @@ def test_a_path_line_keeps_every_hop_s_hue_on_the_cursor_row() -> None:
 def test_a_name_beside_a_path_line_still_folds() -> None:
     """The exception is the route, not the row: a name lane next to one is still a name."""
     row = Text("  ")
-    row.append("YUL-Poly", style=name_style("YUL-Poly", _KEY))
+    row.append("Lakeside", style=name_style("Lakeside", _KEY))
     row.append("  ")
     row.append_text(PathLine([PathHop("Waymarker", key="77" * 6)], mode="plain").text())
     row.style = "cursor"
 
     hues = _hues(render_to_ansi(row, 60))
 
-    assert name_style("YUL-Poly", _KEY).removeprefix("bold ") not in hues  # the lane folded
+    assert name_style("Lakeside", _KEY).removeprefix("bold ") not in hues  # the lane folded
     assert node_style("77").removeprefix("bold ") in hues  # …the route did not
 
 
@@ -203,7 +203,7 @@ def test_the_message_paths_dialog_colours_its_picked_route_like_its_graph(platfo
         ChatMessage(text="on my way", is_channel=True, created_at=now),
         arrivals,
         matched=True,
-        resolve=lambda hop: {"3d63": "YUL-Cartierville", "a1b2": "Waymarker"}.get(hop, hop),
+        resolve=lambda hop: {"3d63": "Hilltop-Repeater", "a1b2": "Waymarker"}.get(hop, hop),
         prefix_bytes=1, self_name="Homestead", summary="heard twice", source="Alice",
     )
     picked = next(line for line in screen.render_body(72) if "❯" in line)
@@ -245,18 +245,18 @@ def test_the_fold_speaks_whichever_hue_vocabulary_is_bound(platform) -> None:  #
     """PicoCalc quantizes the hue to a palette slot; the rule above it is the same rule."""
     set_platform(platform)
     row = Text("  ")
-    row.append("YUL-Poly", style=name_style("YUL-Poly", _KEY))
+    row.append("Lakeside", style=name_style("Lakeside", _KEY))
     row.style = "cursor"
 
     lit = render_to_ansi(row, 30)
-    unlit = render_to_ansi(Text("  YUL-Poly"), 30)
+    unlit = render_to_ansi(Text("  Lakeside"), 30)
 
     assert lit != unlit
-    assert "YUL-Poly" in re.sub(r"\x1b\[[\d;]*m", "", lit)
+    assert "Lakeside" in re.sub(r"\x1b\[[\d;]*m", "", lit)
     if platform is PICOCALC:
-        assert "\x1b[1;97mYUL-Poly" in lit, lit  # slot 15, the console's white
+        assert "\x1b[1;97mLakeside" in lit, lit  # slot 15, the console's white
     else:
-        assert "38;2;255;255;255mYUL-Poly" in lit, lit
+        assert "38;2;255;255;255mLakeside" in lit, lit
 
 
 # -- the vocabulary itself ------------------------------------------------------------

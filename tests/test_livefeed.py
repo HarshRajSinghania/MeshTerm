@@ -50,7 +50,7 @@ class _Fut:
 
 #: Nodes the feed's resolver can name, by the hash a frame addresses them with (one byte)
 #: and by the wider prefixes an advert carries.
-_KNOWN = {"a1b2": "Alice", "3d63": "YUL", "a1": "Alice", "3d": "YUL", "c0": "Us"}
+_KNOWN = {"a1b2": "Alice", "3d63": "Hub", "a1": "Alice", "3d": "Hub", "c0": "Us"}
 
 
 def _screen(seed=None, **kwargs) -> LiveFeedScreen:
@@ -127,7 +127,7 @@ def test_livefeed_rows_leave_the_relay_path_to_the_viewer() -> None:
         MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0))
     )
     row = _rows(screen, 72)[0]
-    assert "via" not in row and "YUL" not in row  # no route, not even a stub of one
+    assert "via" not in row and "Hub" not in row  # no route, not even a stub of one
     assert "📦 packet" in row                      # the class still reads in words at 72
     assert "+1.0 dB" in row and "-90 dBm" in row   # …as does the reception it was heard at
     assert len(row.rstrip()) <= 72
@@ -222,14 +222,14 @@ def test_livefeed_addressed_frame_is_about_its_two_ends() -> None:
     # A pair too wide for the lane spends its cells on the addressee: the sender drops to
     # the hash it was named by rather than the recipient being the half cut off.
     wide = _screen()
-    wide._resolve = lambda h: {"a1": "Alice-With-A-Long-Name", "3d": "YUL-Cartierville"}.get(h, "")
+    wide._resolve = lambda h: {"a1": "Alice-With-A-Long-Name", "3d": "Hilltop-Repeater"}.get(h, "")
     wide.on_event(
         MeshEvent.observation_event(
             _obs(node="", kind="packet",
                  raw={"payload_typename": "REQ", "dest_hash": "3d", "src_hash": "a1"})
         )
     )
-    assert "a1 → YUL-Cartierv" in _rows(wide, 100)[0]
+    assert "a1 → Hilltop-Repe" in _rows(wide, 100)[0]
 
 
 def test_livefeed_tokened_classes_are_about_their_token() -> None:
@@ -265,7 +265,7 @@ def test_livefeed_column_header_sits_over_the_lanes_it_names() -> None:
     assert stamp is not None
     assert _col(header, "TIME") == _col(row, stamp.group(0))
     assert _col(header, "CLASS") == _col(row, "telemetry") - _ICON_LANE
-    assert _col(header, "SUBJECT") == _col(row, "YUL")
+    assert _col(header, "SUBJECT") == _col(row, "Hub")
     # The two readings right-align their number, so their labels end where the digits do.
     assert _col(header, "SNR") + 3 == _col(row, "+12.8") + 5
     assert _col(header, "RSSI") + 4 == _col(row, "-105") + 4

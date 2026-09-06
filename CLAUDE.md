@@ -175,7 +175,7 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 
 ### Titles
 
-- Sentence case, always ("Trace — YUL-Poly", "Nodes", "Path width", "Admin login").
+- Sentence case, always ("Trace — Lakeside", "Nodes", "Path width", "Admin login").
 - **No emoji in any screen or dialog title** — icons live in menu/list rows. (A terminal
   that draws an emoji narrower than Rich measures leaves a content-sized dialog's border
   short.)

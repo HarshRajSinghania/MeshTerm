@@ -319,16 +319,16 @@ def test_packet_viewer_from_row_leads_with_the_node_type_mark() -> None:
         return next(l for l in _stripped(viewer.render_body(80)) if l.startswith("from"))
 
     advertised = PacketEntry(
-        when=utcnow(), kind="advert", node="3d63", name="YUL", node_type=NODE_TYPE_REPEATER
+        when=utcnow(), kind="advert", node="3d63", name="Hub", node_type=NODE_TYPE_REPEATER
     )
-    assert "▲ YUL" in from_row(_viewer(advertised))  # the type the packet itself carried
+    assert "▲ Hub" in from_row(_viewer(advertised))  # the type the packet itself carried
 
-    bare = PacketEntry(when=utcnow(), kind="packet", node="3d63", name="YUL")
-    assert "○ YUL" in from_row(_viewer(bare))  # nothing can type it: the unknown ring
+    bare = PacketEntry(when=utcnow(), kind="packet", node="3d63", name="Hub")
+    assert "○ Hub" in from_row(_viewer(bare))  # nothing can type it: the unknown ring
     typed = PacketViewer(
         [bare], 0, resolve=lambda h: "", type_of=lambda h: NODE_TYPE_REPEATER
     )
-    assert "▲ YUL" in from_row(typed)  # …until the contacts can
+    assert "▲ Hub" in from_row(typed)  # …until the contacts can
 
     mine = PacketEntry(when=utcnow(), kind="advert", node="3d63", name="Waymarker")
     ours = PacketViewer([mine], 0, resolve=lambda h: "", self_name="Waymarker")

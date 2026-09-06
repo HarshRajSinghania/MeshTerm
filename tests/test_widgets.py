@@ -50,13 +50,13 @@ def test_format_ago_speaks_grammatical_prose() -> None:
 
 
 def _resolve(hop: str) -> str:
-    return {"aa": "Alice", "3d": "YUL"}.get(hop, hop)
+    return {"aa": "Alice", "3d": "Hub"}.get(hop, hop)
 
 
 def test_path_text_names_hops_and_keeps_hashes_bare() -> None:
     """Named hops read as their name alone; unnamed ones as their bare hash."""
     text = path_text(["aa", "77", "3d"], _resolve)
-    assert text.plain == "Alice → 77 → YUL"  # no parenthesized hash after a name
+    assert text.plain == "Alice → 77 → Hub"  # no parenthesized hash after a name
 
 
 def test_path_text_marks_us_white_and_names_in_their_hue() -> None:
@@ -64,7 +64,7 @@ def test_path_text_marks_us_white_and_names_in_their_hue() -> None:
     text = path_text(["aa", "3d"], _resolve, self_name="Alice")
     styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
     assert styles.get("Alice") == "you"
-    assert "YUL" in styles and styles["YUL"] != "you"
+    assert "Hub" in styles and styles["Hub"] != "you"
 
 
 def test_path_text_empty_reads_as_direct() -> None:
@@ -127,7 +127,7 @@ def test_path_text_dims_the_tail_from_dim_from() -> None:
     assert ("us", "you") in styles  # the departure keeps the white you
     assert ("us", "faint") in styles  # the landing back on us is faint
     assert any(run.startswith("Alice") and style == "faint" for run, style in styles)
-    assert any(run.startswith("YUL") and style != "faint" for run, style in styles)
+    assert any(run.startswith("Hub") and style != "faint" for run, style in styles)
 
 
 # --- the name→key resolver and the keyless-stays-muted rule --------------------------
@@ -196,7 +196,7 @@ def test_revisit_note_lists_every_repeated_hop() -> None:
     """More than one hop repeated names them all, comma-joined, still one sentence."""
     note = revisit_note(["aa", "3d"], _resolve)
     assert note is not None
-    assert note.plain.startswith("⚠ Alice, YUL repeats — ")
+    assert note.plain.startswith("⚠ Alice, Hub repeats — ")
     assert len(note.plain) <= 72  # the footer/row budget every surface renders it inside
 
 

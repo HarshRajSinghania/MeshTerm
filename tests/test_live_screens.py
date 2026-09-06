@@ -706,7 +706,7 @@ def test_route_lane_wraps_at_hop_boundaries_under_its_own_column() -> None:
     line it continues from ends on the ``→`` cue, and every name survives whole — the
     lane names nodes and leaves the hex to the ``path`` lane below it.
     """
-    names = {"3d": "YUL-Cartierville", "f2": "Mile-End-Rooftop", "27": "Beaubien-Sud"}
+    names = {"3d": "Hilltop-Repeater", "f2": "Mile-End-Rooftop", "27": "Beaubien-Sud"}
     screen, _ = _trace_screen(mode="path")
     screen._resolve = lambda h: names.get(h, h)
     screen._path_spec = "3d,f2,27"
@@ -1194,7 +1194,7 @@ def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
         label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
     )
     text = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
     )
     assert text.plain == "★ → Hub → Far"
 
@@ -1204,7 +1204,7 @@ def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
     topo = _scenario_topo()
     scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
     text = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
     )
     assert text.plain == "★ → Far"
 
@@ -1223,10 +1223,10 @@ def test_scenario_path_cuts_a_long_candidate_rather_than_eliding_its_middle() ->
         label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
     )
     full = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1
+        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
     )
     narrow = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="YUL-Me", width_bytes=1,
+        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1,
         width=full.cell_len - 3,
     )
     assert narrow.cell_len <= full.cell_len - 3

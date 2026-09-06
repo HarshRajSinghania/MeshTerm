@@ -29,7 +29,7 @@ class _FakeSession:
 def _screen(window=None, histogram=None, kinds=None) -> DashboardScreen:
     screen = DashboardScreen(
         session=_FakeSession(),
-        resolve=lambda h: {"a1b2": "Alice", "3d63": "YUL"}.get(h, ""),
+        resolve=lambda h: {"a1b2": "Alice", "3d63": "Hub"}.get(h, ""),
         window=list(window or []),
         activity=lambda: tuple(histogram or (0,) * ACTIVITY_BUCKETS),
         activity_flags=lambda: (True,) * ACTIVITY_BUCKETS,

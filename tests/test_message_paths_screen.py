@@ -17,7 +17,7 @@ from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL
 
 
 def _resolve(hop: str) -> str:
-    return {"3d63": "YUL-Cartierville", "a1b2": "Waymarker"}.get(hop, hop)
+    return {"3d63": "Hilltop-Repeater", "a1b2": "Waymarker"}.get(hop, hop)
 
 
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
@@ -53,7 +53,7 @@ def test_paths_screen_renders_graph_rows_and_cursor() -> None:
     assert "via" not in body  # the route lane holds nothing but the route
     rows = body.split("sensor\n\n")[1].split("\n")
     assert len(rows) == 2 * len(_arrivals())
-    assert rows[0].startswith("❯ ") and "YUL-Cartierville" in rows[0]  # the picked route
+    assert rows[0].startswith("❯ ") and "Hilltop-Repeater" in rows[0]  # the picked route
     # …with its length, time and SNR tucked beneath it, the hop count leading
     assert rows[1].strip().startswith("1 hop  ")
     assert _arrivals()[0].when.astimezone().strftime("%H:%M") in rows[1]
@@ -77,7 +77,7 @@ def test_paths_screen_warns_once_for_a_path_that_revisits_a_hop() -> None:
     ])
     body = _plain(screen.render_body(76))
     assert body.count("⚠") == 1
-    assert "YUL-Cartierville repeats — a loop, or two nodes sharing one hash" in body
+    assert "Hilltop-Repeater repeats — a loop, or two nodes sharing one hash" in body
     graph = body.split("origin →")[0]
     assert graph.count("3d") == 2  # both visits marked
     assert graph.count("a1") == 1  # the relay the two paths *share* stays one marker
@@ -97,8 +97,8 @@ def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
     graph = body.split("origin →")[0]
     for byte in ("3d", "a1", "77"):  # every relay labelled, selected or not
         assert byte in graph
-    assert "YUL-Cartier" not in graph and "Waymarker" not in graph
-    assert "YUL-Cartierville" in body and "Waymarker" in body
+    assert "Hilltop-Rep" not in graph and "Waymarker" not in graph
+    assert "Hilltop-Repeater" in body and "Waymarker" in body
     assert "(3d)" not in body and "(a1)" not in body  # the hex lives on the graph
 
 
@@ -222,7 +222,7 @@ def test_paths_screen_route_runs_origin_to_us_not_relay_to_relay() -> None:
     """
     screen = _screen(_arrivals())
     rows = _plain(screen.render_body(76)).split("sensor\n\n")[1].split("\n")
-    assert rows[0] == "❯ Alice → YUL-Cartierville → ★"
+    assert rows[0] == "❯ Alice → Hilltop-Repeater → ★"
     assert rows[2] == "  Alice → Waymarker → 77 → ★"  # an unnamed relay still stands in its hash
 
 
@@ -232,9 +232,9 @@ def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> Non
     now = utcnow()
     one = [Arrival(when=now, hops=("3d63",), snr=1.0)]
     ours = _plain(_screen(one, source="Homestead").render_body(76))
-    assert "❯ ★ → YUL-Cartierville → ★" in ours
+    assert "❯ ★ → Hilltop-Repeater → ★" in ours
     nameless = _plain(_screen(one, source=None).render_body(76))
-    assert "❯ ? → YUL-Cartierville → ★" in nameless
+    assert "❯ ? → Hilltop-Repeater → ★" in nameless
 
 
 def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  # noqa: ANN001
@@ -293,7 +293,7 @@ def test_an_outgoing_message_ends_on_its_recipient_not_on_us() -> None:
         summary="heard once", source="Homestead", destination="Bob",
     )
     body = _plain(screen.render_body(72))
-    assert "YUL-Cartierville" in body
+    assert "Hilltop-Repeater" in body
     assert body.count("Homestead") == 1, "our name belongs at one end of a send, not both"
     assert "Bob" in body, "the far end is the recipient"
     # The caption names the same far end the line ends on.

@@ -275,8 +275,8 @@ Four screens carry a live find-as-you-type filter and draw it through the one
 | **Select list** | **leaves the screen, filter and all** ([`select.py:773-774`](../meshterm/ui/tui/select.py#L773)) | deletes a char |
 | **Path composer** | **leaves the screen, filter and all** ([`path_composer.py:717-718`](../meshterm/ui/path_composer.py#L717)) | deletes a char, then pops a hop |
 
-So on the map, typing `yul` then Esc shows you the map again. On a contact list, typing
-`yul` then Esc drops you back to the menu. Same affordance, same glyphs, opposite outcome —
+So on the map, typing `hub` then Esc shows you the map again. On a contact list, typing
+`hub` then Esc drops you back to the menu. Same affordance, same glyphs, opposite outcome —
 and the select list is by far the most-used of the four.
 
 Chat is a fifth member of the family with a different peelable thing

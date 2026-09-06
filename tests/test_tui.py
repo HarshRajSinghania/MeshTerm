@@ -2342,8 +2342,8 @@ def test_default_text_prompt_is_the_full_frame_base() -> None:
         assert not session._has_float()  # no float — the prompt is the background
         assert session._base_screen() is session.top
 
-        session.top.resolve("YUL")
-        assert await task == "YUL"
+        session.top.resolve("Hub")
+        assert await task == "Hub"
 
     asyncio.run(main())
 

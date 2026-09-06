@@ -125,15 +125,15 @@ def test_the_esc_hint_gives_way_before_it_crowds_the_title() -> None:
     Two rungs down, in order — a long title keeps the key without its verb, a longer one
     takes the cells back altogether. The title is what the reader came for.
     """
-    verbless = _bar("Trace — YUL-Cartierville over a spec", "↑↓ move · Esc back")
+    verbless = _bar("Trace — Hilltop-Repeater over a spec", "↑↓ move · Esc back")
     assert verbless.rstrip().endswith(" Esc")  # the verb went, the key stayed
     assert "Esc back" not in verbless
 
-    crowded = _bar("Trace — YUL-Cartierville over a longer spec", "↑↓ move · Esc back")
+    crowded = _bar("Trace — Hilltop-Repeater over a longer spec", "↑↓ move · Esc back")
     assert "Esc" not in crowded
 
     for bar in (verbless, crowded):
-        assert "YUL-Cartierville" in bar and cell_len(bar) <= 53
+        assert "Hilltop-Repeater" in bar and cell_len(bar) <= 53
 
 
 def test_bordered_frame_is_unchanged_on_regular() -> None:

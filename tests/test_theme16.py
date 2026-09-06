@@ -222,12 +222,12 @@ def test_names_colour_by_key_on_both_platforms() -> None:
     """One rule everywhere: the key picks the hue, and only its first byte does."""
     for platform in (REGULAR, PICOCALC):
         set_platform(platform)
-        hue = name_style("YUL-Cartierville", "3d63c6429436")
+        hue = name_style("Hilltop-Repeater", "3d63c6429436")
         assert hue.startswith("bold #"), platform.name
         # Any prefix of the key agrees, a rename does not move the colour, and a sender
         # we could not place falls to the unknown-node grey — colour is reserved for
         # keyed identities.
-        assert name_style("YUL-Cartierville", "3d") == hue
+        assert name_style("Hilltop-Repeater", "3d") == hue
         assert name_style("renamed", "3d63c6429436") == hue
         assert name_style("nameless", None) == "node.unknown"
 

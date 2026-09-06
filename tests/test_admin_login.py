@@ -367,7 +367,7 @@ def test_the_reply_budget_is_sized_to_the_route_the_login_has_to_walk() -> None:
     trace_runner.trace_timeout = spy
     try:
         two_hops = Contact(
-            name="YUL-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2")
+            name="Hub-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2")
         )
         asyncio.run(_device(_FakeMeshCore()).admin_login(two_hops, "hunter2"))
         asyncio.run(_device(_FakeMeshCore()).admin_login(_NODE, "hunter2"))
@@ -401,7 +401,7 @@ def test_a_known_short_route_never_buys_less_patience_than_no_route_at_all() -> 
 
     trace_runner.trace_timeout = spy
     try:
-        near = Contact(name="YUL-Near", public_key="a1b2c3d4" * 8, route_hops=("3d",))
+        near = Contact(name="Hub-Near", public_key="a1b2c3d4" * 8, route_hops=("3d",))
         asyncio.run(_device(_FakeMeshCore()).admin_login(near, "hunter2"))
     finally:
         trace_runner.trace_timeout = real

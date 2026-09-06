@@ -247,7 +247,7 @@ def render_lines(renderable: RenderableType, width: int, *, no_wrap: bool = Fals
 
 
 def query_line(query: str, width: int) -> str:
-    """The live find/filter query echoed as one body line: ``/yul``, warn-styled.
+    """The live find/filter query echoed as one body line: ``/hub``, warn-styled.
 
     THE way a find-as-you-type screen shows what has been typed. Every such screen draws
     this same line above whatever the query narrows — the select list above its rows, the

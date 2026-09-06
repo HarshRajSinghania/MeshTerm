@@ -50,7 +50,7 @@ from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _resolve(hop: str) -> str:
-    return {HUB_ID: "YUL-Cartierville", FAR_ID: "Far"}.get(hop, hop)
+    return {HUB_ID: "Hilltop-Repeater", FAR_ID: "Far"}.get(hop, hop)
 
 
 def _record(**kw) -> DiscoveredPath:
@@ -79,7 +79,7 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     """Score in the category's unit, the resolved route bracketed by us, and actions."""
     body = _plain(_dialog(_record()).render_body(60))
     assert "2 nodes" in body            # the score, in the discipline's own unit
-    assert "YUL-Cartierville" in body   # a resolved relay on the route
+    assert "Hilltop-Repeater" in body   # a resolved relay on the route
     assert "Homestead" in body          # us, bracketing the walked route
     assert "Trace this path" in body    # the renamed action (was "Walk again")
     assert "Walk again" not in body
@@ -126,7 +126,7 @@ def test_record_dialog_route_runs_unlabelled_across_the_whole_card() -> None:
     assert route[0].startswith("★")  # our end opens the walk on the app-wide star…
     assert route[-1].endswith("★")  # …and closes it on the same
     assert "Homestead" not in "".join(route)  # never our name, and never our key
-    assert "YUL-Cartierville" in "".join(route)  # the hops themselves are named in full
+    assert "Hilltop-Repeater" in "".join(route)  # the hops themselves are named in full
     assert len(route) > 1  # it folded rather than truncating…
     # …every fold hanging under the step, and the labelled lanes resume at the spec.
     assert all(line.startswith("  ") for line in route[1:])
@@ -202,7 +202,7 @@ def test_record_dialog_names_the_link_the_longest_leg_spanned() -> None:
                "km_complete": True, "leg_km": 12.4, "leg_link": [HUB_ID, FAR_ID]},
     )
     body = _plain(_dialog(record).render_body(60))
-    assert re.search(r"longest leg\s+12\.4 km\s+YUL-Cartierville → Far", body)
+    assert re.search(r"longest leg\s+12\.4 km\s+Hilltop-Repeater → Far", body)
 
 
 def test_record_dialog_stars_our_own_end_of_the_longest_leg() -> None:
@@ -216,7 +216,7 @@ def test_record_dialog_stars_our_own_end_of_the_longest_leg() -> None:
         line for line in _plain(_dialog(record).render_body(60)).splitlines()
         if "longest leg" in line
     )
-    assert "★ → YUL-Cartierville" in lane and "Homestead" not in lane
+    assert "★ → Hilltop-Repeater" in lane and "Homestead" not in lane
 
 
 def test_record_dialog_skips_the_leg_lane_for_a_record_stored_without_one() -> None:

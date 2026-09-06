@@ -514,7 +514,7 @@ def test_street_name_is_drawn_only_once() -> None:
     layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
     vp = Viewport(45.5019, -73.5674, 16, 53 * 2, 22 * 4)
     out = _plain(render_map(vp, {(14, 4843, 5861): layers},
-                            [MapMarker("YUL", 45.5040, -73.5700, is_repeater=True)]))
+                            [MapMarker("Hub", 45.5040, -73.5700, is_repeater=True)]))
 
     # René-Lévesque arrives as several segments and used to be drawn twice on one screen.
     assert out.count("René-Lévesque") <= 1, "a street was named more than once"
@@ -1413,7 +1413,7 @@ def test_map_locate_recenters_on_our_own_node_at_the_current_zoom() -> None:
     from meshterm.ui.map_screen import MapScreen
 
     markers = [
-        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Hilltop-Repeater", 45.53, -73.71, is_repeater=True),
         MapMarker("Homestead", 45.40, -73.50, is_self=True),
     ]
     screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
@@ -1442,32 +1442,32 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
-    markers = [MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True)]
+    markers = [MapMarker("Hilltop-Repeater", 45.53, -73.71, is_repeater=True)]
 
     try:
         set_platform(REGULAR)
         desktop = MapScreen(_StubSession(72, 20), markers, _StubSource(), 14)
         assert len(desktop.render_body(72)) == 20
-        for ch in "yul":
+        for ch in "hil":
             desktop.handle("text", ch)
         # Unchanged: the footer already shows it, so the canvas keeps the whole body.
-        assert "/yul" not in _plain(desktop.render_body(72))
+        assert "/hil" not in _plain(desktop.render_body(72))
         assert len(desktop.render_body(72)) == 20
-        assert "find: yul" in desktop.footer_hint
+        assert "find: hil" in desktop.footer_hint
 
         set_platform(PICOCALC)
         device = MapScreen(_StubSession(53, 23), markers, _StubSource(), 14)
         assert len(device.render_body(53)) == 23
-        for ch in "yul":
+        for ch in "hil":
             device.handle("text", ch)
         lines = device.render_body(53)
         # The echo overlays the canvas's *last* row — directly above the F-key lane —
         # so the ground never shifts: same body height, same viewport, top anchor held.
-        assert _plain(lines[-1]).strip() == "/yul"
-        assert "/yul" not in _plain(lines[0])
+        assert _plain(lines[-1]).strip() == "/hil"
+        assert "/hil" not in _plain(lines[0])
         assert len(lines) == 23
         # Clearing the find hands the row back to the canvas, still without a reflow.
-        for _ in "yul":
+        for _ in "hil":
             device.handle("backspace")
         assert len(device.render_body(53)) == 23
         assert "/" not in _plain(device.render_body(53))
@@ -1505,7 +1505,7 @@ def test_map_frame_chip_lights_only_with_matches_to_frame() -> None:
     from meshterm.ui.map_screen import MapScreen
 
     markers = [
-        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Hilltop-Repeater", 45.53, -73.71, is_repeater=True),
         MapMarker("Alice", 45.40, -73.50),
     ]
     screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
@@ -1533,31 +1533,31 @@ def test_map_screen_find_filters_frames_and_clears() -> None:
     from meshterm.ui.map_screen import MapScreen
 
     markers = [
-        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Hilltop-Repeater", 45.53, -73.71, is_repeater=True),
         MapMarker("Alice", 45.40, -73.50),
         MapMarker("Yagi-North", 45.60, -73.65),
     ]
     screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 14)
     screen.render_body(80)
 
-    for ch in "yu":
+    for ch in "hi":
         screen.handle("text", ch)
-    assert screen._filter == "yu"
-    assert [m.label for m in screen._matches()] == ["YUL-Cartierville"]
+    assert screen._filter == "hi"
+    assert [m.label for m in screen._matches()] == ["Hilltop-Repeater"]
     screen.render_body(80)
     assert "1 of 3 match" in screen.title
-    assert "find: yu" in screen.footer_hint
+    assert "find: hi" in screen.footer_hint
 
     # Only the match keeps a label; the others dim to bare context glyphs.
     body = _plain(screen.render_body(80))
-    assert "YUL-Cartierville" in body
+    assert "Hilltop-Repeater" in body
     assert "Alice" not in body and "Yagi-North" not in body
 
-    # ^Enter frames the matches: the view centres on YUL, and the query survives it.
+    # ^Enter frames the matches: the view centres on the repeater, and the query survives.
     screen.handle("ctrl_enter")
     assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.05)
     assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.05)
-    assert screen._filter == "yu"
+    assert screen._filter == "hi"
 
     # Plain Enter is the other way out: the query goes, the view stays exactly where the
     # frame left it.
@@ -1567,10 +1567,10 @@ def test_map_screen_find_filters_frames_and_clears() -> None:
     assert (screen._viewport.center_lat, screen._viewport.center_lon) == centre
 
     # Backspace edits; Esc clears the filter first and only then dismisses.
-    for ch in "yu":
+    for ch in "hi":
         screen.handle("text", ch)
     screen.handle("backspace")
-    assert screen._filter == "y"
+    assert screen._filter == "h"
 
     async def drive() -> object:
         screen.future = asyncio.get_running_loop().create_future()
@@ -1588,14 +1588,14 @@ def test_map_screen_frame_zooms_in_on_a_single_match() -> None:
     from meshterm.ui.map_screen import _FIND_ZOOM, MapScreen
 
     markers = [
-        MapMarker("YUL-Cartierville", 45.53, -73.71, is_repeater=True),
+        MapMarker("Hilltop-Repeater", 45.53, -73.71, is_repeater=True),
         MapMarker("Alice", 45.40, -73.50),
     ]
     screen = MapScreen(_StubSession(80, 24), markers, _StubSource(), 19)  # source max 19
     screen.render_body(80)
-    for ch in "yul":
+    for ch in "hil":
         screen.handle("text", ch)
-    assert [m.label for m in screen._matches()] == ["YUL-Cartierville"]
+    assert [m.label for m in screen._matches()] == ["Hilltop-Repeater"]
     screen.handle("ctrl_enter")
     assert screen._viewport.center_lat == pytest.approx(45.53, abs=0.01)
     assert screen._viewport.center_lon == pytest.approx(-73.71, abs=0.01)

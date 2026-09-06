@@ -455,7 +455,7 @@ class PathComposerScreen(Screen):
         knows no name for it. The owning screen's resolver
         (:func:`~meshterm.services.trace_runner.make_node_resolver`) is the same
         first-match lookup the trace screens name their walked hops by, so falling back
-        to it means a node the trace window shows as *YUL-Poly* is *YUL-Poly* here too,
+        to it means a node the trace window shows as *Lakeside* is *Lakeside* here too,
         instead of a bare ``3d`` the reader has to decode. Nothing is invented: an
         unmatched hash comes back unchanged and renders as a hash.
 

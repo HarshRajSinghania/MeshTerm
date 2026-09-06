@@ -18,7 +18,7 @@ from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import _HSCROLL_STEP, WalkScreen
 
 US = "aa" * 6
-YUL = Contact(name="YUL-Cartierville", public_key="3d" * 32, node_type=2)
+Hub = Contact(name="Hilltop-Repeater", public_key="3d" * 32, node_type=2)
 ALICE = Contact(name="Alice", public_key="b2" * 32, last_seen=utcnow() - timedelta(minutes=5))
 
 
@@ -31,13 +31,13 @@ class _FakeSession:
 
 
 def _topo(*, with_island: bool = False) -> MeshTopology:
-    """us — YUL — Alice as a two-ring chain, optionally plus a detached island pair."""
-    topo = MeshTopology(US, contacts=[YUL, ALICE])
-    yul = topo.canonical(YUL.public_key)
+    """us — Hub — Alice as a two-ring chain, optionally plus a detached island pair."""
+    topo = MeshTopology(US, contacts=[Hub, ALICE])
+    hub = topo.canonical(Hub.public_key)
     alice = topo.canonical(ALICE.public_key)
     when = utcnow()
-    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
-    topo.add_walk([yul, alice], snrs=[-2.0], when=when, source="packet")
+    topo.add_walk([topo.self_id, hub], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([hub, alice], snrs=[-2.0], when=when, source="packet")
     if with_island:
         topo.add_walk(["c3" * 6, "d4" * 6], snrs=[1.0], when=when, source="neighbour")
     return topo
@@ -48,7 +48,7 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
         session=_FakeSession(),
         topo=topo,
         contacts={
-            topo.canonical(YUL.public_key): YUL,
+            topo.canonical(Hub.public_key): Hub,
             topo.canonical(ALICE.public_key): ALICE,
         },
         self_label="Homestead",
@@ -69,7 +69,7 @@ def test_walk_opens_focused_on_us_with_the_link_list() -> None:
     body = _plain(screen.render_body(80))
     assert "Homestead" in body and "this device" in body
     assert "Links" in body and "strongest observed first" in body
-    assert "YUL-Cartierville" in body  # our one neighbour, as a selectable row
+    assert "Hilltop-Repeater" in body  # our one neighbour, as a selectable row
     assert "edge = SNR" in body  # the canvas legend
     # The screen's name, and nothing else: the focus, and how big the neighbourhood is,
     # are what the body under it is for.
@@ -80,11 +80,11 @@ def test_walk_link_rows_carry_snr_evidence_and_onward_count() -> None:
     """A neighbour row reads SNR, samples, source tags, age, and its onward links."""
     screen = _screen(_topo())
     body = _plain(screen.render_body(80))
-    row = next(line for line in body.split("\n") if "YUL-Cartierville" in line and "❯" in line)
+    row = next(line for line in body.split("\n") if "Hilltop-Repeater" in line and "❯" in line)
     assert "+6.0" in row  # the link's median SNR
     assert "1×" in row  # samples
     assert "T" in row  # trace evidence tag
-    assert "⋯ 1" in row  # one link onward (YUL — Alice)
+    assert "⋯ 1" in row  # one link onward (Hub — Alice)
     assert "3d" * 6 in row  # the whole 12-hex id, not a truncated prefix…
     assert "…" not in row  # …and nothing about it elided
 
@@ -127,7 +127,7 @@ def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     long contact name keeps its letters wherever the canvas can hold it.
     """
     long_names = [
-        Contact(name="YUL-Polytechnique", public_key="e8" * 32, node_type=2),
+        Contact(name="Lakesidetechnique", public_key="e8" * 32, node_type=2),
         Contact(name="Repeater-Downtown-01", public_key="d4" * 32, node_type=2),
     ]
     topo = MeshTopology(US, contacts=long_names)
@@ -145,7 +145,7 @@ def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     # The canvas rows are everything above the legend line.
     lines = _plain(screen.render_body(80)).split("\n")
     canvas = "\n".join(lines[: next(i for i, l in enumerate(lines) if "edge = SNR" in l)])
-    assert "YUL-Polytechnique" in canvas  # 17 chars, drawn whole — no "YUL-Polytechniq…"
+    assert "Lakesidetechnique" in canvas  # 17 chars, drawn whole — no "Lakesidetechniq…"
     assert "Repeater-Downtown-01" in canvas  # 20 chars, whole
 
 
@@ -159,23 +159,23 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     from meshterm.ui.walk_screen import _snr_rgb
 
     stale = utcnow() - timedelta(days=10)  # older than a week → _freshness 0.5
-    yul = Contact(name="YUL", public_key="3d" * 32, node_type=2)
+    hub = Contact(name="Hub", public_key="3d" * 32, node_type=2)
     alice = Contact(name="Alice", public_key="b2" * 32)
     bob = Contact(name="Bob", public_key="c4" * 32)
-    topo = MeshTopology(US, contacts=[yul, alice, bob])
-    y = topo.canonical(yul.public_key)
+    topo = MeshTopology(US, contacts=[hub, alice, bob])
+    y = topo.canonical(hub.public_key)
     topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")   # approach: green
     topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")   # amber
     topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")   # red
     screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
-        contacts={topo.canonical(c.public_key): c for c in (yul, alice, bob)},
+        contacts={topo.canonical(c.public_key): c for c in (hub, alice, bob)},
         self_label="Homestead",
     )
     screen.note_viewport(24)
     screen.render_body(80)
-    screen.handle("enter")  # walk to YUL — now came_from is us, the approach edge
+    screen.handle("enter")  # walk to Hub — now came_from is us, the approach edge
     # Land the selection on Alice (a fan neighbour, not the ⌫-back row).
     while screen._rows()[screen._index] != topo.canonical(alice.public_key):
         screen.handle("down")
@@ -212,13 +212,13 @@ def test_walk_enter_walks_and_grows_the_trail() -> None:
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
-    screen.handle("enter")  # walk to YUL (our only neighbour)
-    assert screen._focus == topo.canonical(YUL.public_key)
+    screen.handle("enter")  # walk to Hub (our only neighbour)
+    assert screen._focus == topo.canonical(Hub.public_key)
     body = _plain(screen.render_body(80))
-    assert "★ › YUL-Cartierville" in body  # the trail, our end on the app-wide star
+    assert "★ › Hilltop-Repeater" in body  # the trail, our end on the app-wide star
     # The focus line reads name (hash) — the glyph carries the type, not a spelled-out kind.
-    assert "YUL-Cartierville (3d)" in body and "1 hop out" in body
-    assert "Alice" in body  # YUL's onward neighbour is now a row
+    assert "Hilltop-Repeater (3d)" in body and "1 hop out" in body
+    assert "Alice" in body  # Hub's onward neighbour is now a row
     # The node we walked in from is not offered back as a link — ⌫ is the way back — so
     # the list holds only ways *onward* and opens on the strongest of them.
     assert screen._rows() == [topo.canonical(ALICE.public_key)]
@@ -247,7 +247,7 @@ def test_walk_the_node_walked_in_from_is_not_offered_back_as_a_link() -> None:
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
-    screen.handle("enter")  # us → YUL
+    screen.handle("enter")  # us → Hub
 
     assert topo.self_id not in screen._rows()
     assert screen._rows() == screen._fan_nodes()  # the canvas draws the same set
@@ -266,12 +266,12 @@ def test_walk_the_node_walked_in_from_is_not_offered_back_as_a_link() -> None:
 def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
     """Revisiting a node already on the trail truncates the stack to its first appearance,
     dropping the circular stretch walked to get back there."""
-    topo = MeshTopology(US, contacts=[YUL, ALICE])
-    yul = topo.canonical(YUL.public_key)
+    topo = MeshTopology(US, contacts=[Hub, ALICE])
+    hub = topo.canonical(Hub.public_key)
     alice = topo.canonical(ALICE.public_key)
     when = utcnow()
-    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
-    topo.add_walk([yul, alice], snrs=[-2.0], when=when, source="packet")
+    topo.add_walk([topo.self_id, hub], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([hub, alice], snrs=[-2.0], when=when, source="packet")
     topo.add_walk([topo.self_id, alice], snrs=[3.0], when=when, source="trace")  # closes the loop
     screen = _screen(topo)
 
@@ -280,11 +280,11 @@ def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
         screen._index = screen._rows().index(node)
         screen.handle("enter")
 
-    walk_to(yul)  # us → YUL
-    walk_to(alice)  # YUL → Alice
-    assert screen._trail == [topo.self_id, yul, alice]
+    walk_to(hub)  # us → Hub
+    walk_to(alice)  # Hub → Alice
+    assert screen._trail == [topo.self_id, hub, alice]
     # Alice → us closes the loop. It is a real link onward (not the node we arrived from,
-    # which is YUL), so it is on offer — and taking it drops the stretch walked to get here.
+    # which is Hub), so it is on offer — and taking it drops the stretch walked to get here.
     walk_to(topo.self_id)
     assert screen._trail == [topo.self_id]
 
@@ -293,10 +293,10 @@ def test_walk_trail_crops_its_head_not_its_tail_when_narrow() -> None:
     """A trail too long for the line is cropped at its *start*, the trophy case's crop."""
     screen = _screen(_topo())
     us = screen._topo.self_id
-    yul = screen._topo.canonical(YUL.public_key)
+    hub = screen._topo.canonical(Hub.public_key)
     alice = screen._topo.canonical(ALICE.public_key)
-    screen._trail = [us, yul, alice]
-    width = 20  # too narrow for the whole "Homestead › YUL-Cartierville › Alice"
+    screen._trail = [us, hub, alice]
+    width = 20  # too narrow for the whole "Homestead › Hilltop-Repeater › Alice"
     text = screen._trail_text(width).plain
     assert text[0] in ("…", CRACK_HEAD)  # cut, not elided: no whole hop bought the mark
     assert "⋯" not in text
@@ -346,13 +346,13 @@ def test_walk_trail_names_carry_their_node_hues() -> None:
 
     screen = _screen(_topo())
     us = screen._topo.self_id
-    yul = screen._topo.canonical(YUL.public_key)
-    screen._trail = [us, yul]
+    hub = screen._topo.canonical(Hub.public_key)
+    screen._trail = [us, hub]
     text = screen._trail_text(80)
     plain = text.plain
-    yul_at = plain.index("YUL-Cartierville")
+    hub_at = plain.index("Hilltop-Repeater")
     assert any(
-        s.start <= yul_at < s.end and "bold" in str(s.style) and node_style(yul) in str(s.style)
+        s.start <= hub_at < s.end and "bold" in str(s.style) and node_style(hub) in str(s.style)
         for s in text.spans
     )
 
@@ -360,24 +360,24 @@ def test_walk_trail_names_carry_their_node_hues() -> None:
 def test_walk_locate_refocuses_us_and_home_end_walk_the_list() -> None:
     """^U resets the walk to our own node from anywhere; Home/End are the list's ends."""
     # A hub of spokes off one of our neighbours: a walked-away focus with a list to move in.
-    topo = MeshTopology(US, contacts=[YUL])
-    yul = topo.canonical(YUL.public_key)
+    topo = MeshTopology(US, contacts=[Hub])
+    hub = topo.canonical(Hub.public_key)
     when = utcnow()
-    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([topo.self_id, hub], snrs=[6.0], when=when, source="trace")
     for i in range(5):
-        topo.add_walk([yul, f"{i:02x}" * 6], snrs=[5.0 - i], when=when, source="trace")
+        topo.add_walk([hub, f"{i:02x}" * 6], snrs=[5.0 - i], when=when, source="trace")
     screen = _screen(topo)
     screen.render_body(80)
-    screen.handle("enter")  # us → YUL
+    screen.handle("enter")  # us → Hub
     screen.render_body(80)
     rows = screen._rows()
     assert len(rows) > 1 and topo.self_id not in rows
 
     # Home/End move the highlight — they no longer abandon the walk.
     screen.handle("end")
-    assert screen._index == len(rows) - 1 and screen._trail == [topo.self_id, yul]
+    assert screen._index == len(rows) - 1 and screen._trail == [topo.self_id, hub]
     screen.handle("home")
-    assert screen._index == 0 and screen._trail == [topo.self_id, yul]
+    assert screen._index == 0 and screen._trail == [topo.self_id, hub]
 
     screen.handle("locate")
     assert screen._trail == [topo.self_id]
@@ -454,7 +454,7 @@ def test_walk_the_fan_is_all_east_and_holds_no_came_from() -> None:
     topo = _topo()
     screen = _screen(topo)
     screen.render_body(80)
-    screen.handle("enter")  # focus YUL; we came from us
+    screen.handle("enter")  # focus Hub; we came from us
     alice = topo.canonical(ALICE.public_key)
     fx, _fy = screen._focus_pos(80, 12)
     placed = screen._place_neighbours(80, 12, screen._fan_nodes(), False)
@@ -736,23 +736,23 @@ def test_walk_trail_scroll_is_inert_on_a_walk_that_fits() -> None:
 def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
     """Typing thins the ways onward; the focus and the node walked from hold their place."""
     bob = Contact(name="Bob-Tower", public_key="c7" * 32)
-    topo = MeshTopology(US, contacts=[YUL, ALICE, bob])
-    yul, alice = topo.canonical(YUL.public_key), topo.canonical(ALICE.public_key)
+    topo = MeshTopology(US, contacts=[Hub, ALICE, bob])
+    hub, alice = topo.canonical(Hub.public_key), topo.canonical(ALICE.public_key)
     bob_id = topo.canonical(bob.public_key)
     when = utcnow()
-    topo.add_walk([topo.self_id, yul], snrs=[6.0], when=when, source="trace")
-    topo.add_walk([yul, alice], snrs=[-2.0], when=when, source="packet")
-    topo.add_walk([yul, bob_id], snrs=[1.0], when=when, source="packet")
+    topo.add_walk([topo.self_id, hub], snrs=[6.0], when=when, source="trace")
+    topo.add_walk([hub, alice], snrs=[-2.0], when=when, source="packet")
+    topo.add_walk([hub, bob_id], snrs=[1.0], when=when, source="packet")
 
     screen = WalkScreen(
         session=_FakeSession(), topo=topo,
-        contacts={yul: YUL, alice: ALICE, bob_id: bob},
+        contacts={hub: Hub, alice: ALICE, bob_id: bob},
         self_label="Homestead",
     )
     screen.note_viewport(24)
     screen.render_body(80)
-    screen._index = screen._rows().index(yul)
-    screen.handle("enter")  # focus YUL, came from us
+    screen._index = screen._rows().index(hub)
+    screen.handle("enter")  # focus Hub, came from us
 
     canvas = _plain(screen._canvas_lines(80, 12, None))
     assert "Alice" in canvas and "Bob-Tower" in canvas  # the whole fan, unfiltered
@@ -763,7 +763,7 @@ def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
     assert "Alice" in canvas          # the way onward the query is about
     assert "Bob-Tower" not in canvas  # and the one it isn't
     # The focus is not a candidate: it is the walk so far, and holds through any query.
-    assert "YUL-Cartierville" in canvas
+    assert "Hilltop-Repeater" in canvas
 
 
 def test_walk_marks_wear_their_node_type_colour_not_the_key_hue() -> None:
@@ -773,15 +773,15 @@ def test_walk_marks_wear_their_node_type_colour_not_the_key_hue() -> None:
 
     topo = _topo()
     screen = _screen(topo)
-    yul, alice = topo.canonical(YUL.public_key), topo.canonical(ALICE.public_key)
+    hub, alice = topo.canonical(Hub.public_key), topo.canonical(ALICE.public_key)
 
-    assert screen._glyph(yul) == (REPEATER_MARK[0], "type.repeater")
+    assert screen._glyph(hub) == (REPEATER_MARK[0], "type.repeater")
     assert screen._glyph(alice) == (NODE_MARK[0], "type.node")
-    assert screen._marker_rgb(yul) == mark_rgb("type.repeater")
+    assert screen._marker_rgb(hub) == mark_rgb("type.repeater")
     assert screen._marker_rgb(topo.self_id) == mark_rgb(SELF_MARK[1])
     # Identity has its own lane and keeps it: the *name* is what carries the key hue.
-    assert screen._marker_rgb(yul) != screen._label_rgb(yul)
-    assert screen._label_rgb(yul) == _plain_rgb(node_style(yul))
+    assert screen._marker_rgb(hub) != screen._label_rgb(hub)
+    assert screen._label_rgb(hub) == _plain_rgb(node_style(hub))
     # The legend is a sample of those very marks, so it keys colour as well as shape.
     legend = screen._legend()
     hues = {

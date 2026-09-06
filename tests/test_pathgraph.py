@@ -413,7 +413,7 @@ def test_detour_nests_outside_its_sibling_when_rows_allow() -> None:
     ``cc`` inserts a relay before the ``bb`` its sibling also converges through. With rows to
     spare the detour *nests*: ``cc`` takes the lane just outside ``bb``'s on the same flank, so
     the sibling's straight SRC → bb run never passes over ``cc``'s marker and the detour reads
-    as the wider arc through ``cc`` it really is. This is the real YUL-Poly shape:
+    as the wider arc through ``cc`` it really is. This is the real Lakeside shape:
     CDN-FENDALL1 → UpperSalaberry.
     """
     layers = [
@@ -431,7 +431,7 @@ def test_detour_nests_outside_its_sibling_when_rows_allow() -> None:
 def test_detour_folds_onto_its_siblings_lane_when_rows_are_tight() -> None:
     """The nested lane is given up — cc rides bb's lane — only when the rows can't afford it.
 
-    The same YUL-Poly shape at a row budget too short for the nested third lane falls back to
+    The same Lakeside shape at a row budget too short for the nested third lane falls back to
     the single-lane picture: ``cc`` is re-owned onto ``bb``'s lane as a waypoint the branch
     dips through, and the band stays two lanes tall. The last resort, not the default.
     """
@@ -649,7 +649,7 @@ def test_subset_route_bypasses_the_relay_it_skips() -> None:
 
     The spine runs SRC → c1 → c2 → us with a balanced flank each side, so the endpoints ride
     the spine's own lane and the subset route's SRC → c2 edge is a level run straight through
-    ``c1``'s marker — the Furthur → YUL-Cartierville shape, where the selected route lit the
+    ``c1``'s marker — the Furthur → Hilltop-Repeater shape, where the selected route lit the
     spine's run through C14903 it never rides. The edge must bend around ``c1`` through a
     virtual waypoint in its column — and on the flank ``x1`` does *not* occupy, since ``x1``
     shares ``c1``'s column and its lane there is taken.

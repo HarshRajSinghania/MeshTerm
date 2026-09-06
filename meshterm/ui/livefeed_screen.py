@@ -108,7 +108,7 @@ _FEED_SEED_FLOOR = datetime.min.replace(tzinfo=timezone.utc)
 
 #: The feed's fixed subject-lane width; anything longer ellipsizes so the columns hold.
 #: Sized for a node name, which is what most classes put here — and wide enough that the
-#: two endpoints of an addressed frame still read as ``a1 → YUL-Cartierv…`` rather than
+#: two endpoints of an addressed frame still read as ``a1 → Hilltop-Repe…`` rather than
 #: collapsing to bare hashes. Widening it would push the row past the 72-column screen
 #: the lanes are budgeted for, so the cells the lane can't hold are the viewer's to spend.
 _FEED_SUBJECT_WIDTH = 18

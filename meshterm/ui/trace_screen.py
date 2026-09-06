@@ -274,7 +274,7 @@ class TracingDialog(Screen):
         """Build the dialog.
 
         Args:
-            title: Heading for the dialog border (e.g. ``Tracing — YUL-Poly``).
+            title: Heading for the dialog border (e.g. ``Tracing — Lakeside``).
             spinner: The spinner to animate (shared with the owner's ticker).
             on_abort: Invoked when the user asks to abort (idempotent expected).
         """

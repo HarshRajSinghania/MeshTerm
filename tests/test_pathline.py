@@ -66,11 +66,11 @@ def test_plain_mode_annotation_dim_and_custom_separator() -> None:
     """The trace ``(3d)`` note rides muted; a dim hop (and the arrow into it) fades;
     a surface's own separator — the mesh walk trail's ``›`` — passes straight through."""
     line = PathLine(
-        [PathHop("YUL", key="3d", annotation="3d"), PathHop("home", you=True, dim=True)],
+        [PathHop("Hub", key="3d", annotation="3d"), PathHop("home", you=True, dim=True)],
         mode="plain",
     )
     text = line.text()
-    assert text.plain == "YUL (3d) → home"
+    assert text.plain == "Hub (3d) → home"
     styles = _styles(text)
     assert styles[" (3d)"] == "muted"  # the annotation note, space included
     assert styles["home"] == "faint"
@@ -107,7 +107,7 @@ def test_chips_are_joined_by_one_interlocked_chevron() -> None:
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
     """Chips change colours and separators, never the words; an explicit style
     override (hex or theme name) becomes the chip fill."""
-    hops = [PathHop("YUL", key="3d", annotation="3d"), PathHop("you", you=True)]
+    hops = [PathHop("Hub", key="3d", annotation="3d"), PathHop("you", you=True)]
     plain = PathLine(hops, mode="plain").text().plain
     chips = PathLine(hops, mode="powerline").text().plain
     assert plain.replace(" → ", " ") == chips.replace(POWERLINE_SEP, "").replace("  ", " ").strip()
@@ -378,7 +378,7 @@ def test_path_line_factory_matches_path_text_character_for_character() -> None:
     """The migration bridge: the trace flavour — device endpoints with annotated
     hashes, a named hop, a prefix-lit unnamed hop, a dimmed tail — renders through
     ``path_line`` exactly as ``path_text`` renders it, character and style alike."""
-    names = {"aa11bb": "Alice", "3d63ab": "YUL"}
+    names = {"aa11bb": "Alice", "3d63ab": "Hub"}
     hops = [None, "aa11bb", "77ccddee", "3d63ab", None]
     kwargs = dict(
         prefix_bytes=2, self_name="Me", show_hash=True, hash_bytes=3,
@@ -392,7 +392,7 @@ def test_path_line_factory_matches_path_text_character_for_character() -> None:
 def test_path_line_factory_matches_path_text_hash_as_name_flavour() -> None:
     """The message-paths flavour: an unnamed hop standing as its own muted identity
     hash, annotated with its addressed byte — same parity guarantee."""
-    names = {"3d63abcdef00": "YUL"}
+    names = {"3d63abcdef00": "Hub"}
     hops = ["3d63abcdef00", "e839f2aabb11"]
     kwargs = dict(prefix_bytes=3, show_hash=True, hash_bytes=1, hash_as_name=True)
     old = path_text(hops, lambda h: names.get(h, h), **kwargs)
