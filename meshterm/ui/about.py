@@ -13,11 +13,10 @@ for what each construct becomes). Filling a page in means editing its ``.md`` fi
 no screen, menu row, or CLI face has to follow — and everything markdown offers is
 available while doing it: sections, sub-headings, lists, quotes, links, tables.
 
-Every page is **scaffolding** today. The headings are the real shape — that is the part
-worth settling first — and each carries one lowercase muted ``placeholder — …`` line
-where its prose will go, in the same empty-state voice the rest of the app uses, so an
-unwritten page reads as deliberately unwritten rather than as a screen that failed to
-load.
+All four are written. The ``##`` headings are the shape each page was written into,
+and they are load-bearing beyond the eye: the screen records where each one landed while
+rendering, which is what lets it pin the heading a reader is under and step the section
+jump from one to the next — so a page is navigable the way a grouped list is.
 
 What is *not* written into those files: the version, the author, and the copyright span.
 Each page names them with a ``{version}`` / ``{author}`` / ``{copyright}`` placeholder
