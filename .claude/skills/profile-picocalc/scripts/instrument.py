@@ -1,7 +1,7 @@
 """Run the real MeshTerm with per-keystroke stage timing, logged to a CSV.
 
 Wraps the stages a keystroke passes through and appends one row per repaint to
-$MESHTERM_TRACE (default $HOME/tmp/keytrace.csv):
+$MESHTERM_TRACE (default ~/tmp/keytrace.csv):
 
     t, screen, action, dispatch_ms, handle_ms, header_ms, compose_ms, dialog_ms,
     parse_ms, render_ms, flush_ms, total_ms, out_bytes, rta_calls, rta_ms
@@ -19,7 +19,7 @@ import os
 import sys
 import time
 
-TRACE = os.environ.get("MESHTERM_TRACE", "$HOME/tmp/keytrace.csv")
+TRACE = os.environ.get("MESHTERM_TRACE") or os.path.expanduser("~/tmp/keytrace.csv")
 
 _acc: dict[str, float] = {}
 _rows: list[str] = []

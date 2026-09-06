@@ -14,18 +14,23 @@ on came from the real app on `/dev/tty1`.
 
 ## Reaching the device
 
-`ssh -i $DEV_PICOCALC_SSH_KEY $DEV_PICOCALC_USER@$DEV_PICOCALC_HOST` (key installed; `scp` with the same flags
-pushes files byte-exact). Password fallback: `plink -batch -pw $DEV_PICOCALC_PASSWORD`. `sudo` needs the
-password piped: `echo $DEV_PICOCALC_PASSWORD | sudo -S …`.
+The address, login, key and password are **not in this file**. Read `dev.env` at the
+repo root first (gitignored; `dev.env.example` shows the shape) — the `$DEV_*` names
+below are its keys, and everything here is written to be run with them substituted.
 
-The repo lives at `$HOME/MeshTerm`, venv at `.venv`. Push changed modules with `scp`
+`ssh -i $DEV_PICOCALC_SSH_KEY $DEV_PICOCALC_USER@$DEV_PICOCALC_HOST` (key installed;
+`scp` with the same flags pushes files byte-exact). Password fallback:
+`plink -batch -pw "$DEV_PICOCALC_PASSWORD"`. `sudo` needs the password piped:
+`echo "$DEV_PICOCALC_PASSWORD" | sudo -S …`.
+
+The repo lives at `$DEV_PICOCALC_REPO`, venv at `.venv`. Push changed modules with `scp`
 straight into the tree — no reinstall, it is a `pip install -e .`.
 
 **One-time**: reading the console back needs the `tty` group. Busybox's `addgroup $DEV_PICOCALC_USER tty`
-misparses; edit `/etc/group` instead:
+misparses; edit `/etc/group` instead (the trailing name is the deploy user):
 
 ```sh
-echo $DEV_PICOCALC_PASSWORD | sudo -S sed -i 's/^tty:\(.*\):\(.*\)$/tty:\1:\2,$DEV_PICOCALC_USER/' /etc/group
+echo "$DEV_PICOCALC_PASSWORD" | sudo -S sed -i 's/^tty:\(.*\):\(.*\)$/tty:\1:\2,'"$DEV_PICOCALC_USER"'/' /etc/group
 ```
 
 Re-open the SSH session for it to take effect. Verify: `dd if=/dev/vcs1 bs=1378 count=1 | wc -c`
@@ -34,9 +39,9 @@ should print `1378` (53×26).
 ## Running a tour
 
 ```sh
-scp -i $DEV_PICOCALC_SSH_KEY scripts/drive_console.py tours/nav_all.txt $DEV_PICOCALC_USER@…:$HOME/MeshTerm/
-ssh -i … $DEV_PICOCALC_USER@… 'cd $HOME/MeshTerm && .venv/bin/python drive_console.py \
-    --script nav_all.txt --boot-wait 20 --shots $HOME/tmp/shots'
+scp -i $DEV_PICOCALC_SSH_KEY scripts/drive_console.py tours/nav_all.txt "$DEV_PICOCALC_USER@$DEV_PICOCALC_HOST:$DEV_PICOCALC_REPO/"
+ssh -i $DEV_PICOCALC_SSH_KEY "$DEV_PICOCALC_USER@$DEV_PICOCALC_HOST" "cd $DEV_PICOCALC_REPO && .venv/bin/python drive_console.py \
+    --script nav_all.txt --boot-wait 20 --shots ~/tmp/shots"
 ```
 
 `drive_console.py` forks a pty sized to the panel, runs MeshTerm inside it, mirrors every
@@ -106,12 +111,12 @@ When a page is slow and you need to know *which stage*, run the app under `instr
 instead of the binary:
 
 ```sh
-ssh … 'cd $HOME/MeshTerm && .venv/bin/python drive_console.py --script nav_all.txt \
-    --exe $HOME/MeshTerm/run_instrumented.sh --boot-wait 20'
+ssh … "cd $DEV_PICOCALC_REPO && .venv/bin/python drive_console.py --script nav_all.txt \
+    --exe $DEV_PICOCALC_REPO/run_instrumented.sh --boot-wait 20"
 ```
 
 where `run_instrumented.sh` is a two-line wrapper `exec .venv/bin/python instrument.py "$@"`.
-It appends a CSV row per repaint to `$HOME/tmp/keytrace.csv`: handle, header, compose,
+It appends a CSV row per repaint to `~/tmp/keytrace.csv` on the device: handle, header, compose,
 dialog, parse, paint, total, and the `render_to_ansi` call count. Rows tagged `~tick` are
 idle repaints — what the app burns doing nothing.
 

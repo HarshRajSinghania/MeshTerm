@@ -32,7 +32,9 @@ sh calculinux-setup.sh
 
 Two prerequisites the setup script checks for but cannot embed:
 
-- **Deploy key** — place the read-only GitHub deploy key at `$HOME/.ssh/id_ed25519`
+- **Deploy key** — place the read-only GitHub deploy key at
+  `/home/$DEPLOY_USER/.ssh/id_ed25519` (`DEPLOY_USER` defaults to `meshterm`; `KEY_PATH`
+  overrides the location outright)
   (mode 600) before running; the clone uses it over SSH.
 - **Wi-Fi credentials** — the kick only nudges a network iwd already knows. Either connect
   once by hand (`iwctl station wlan0 connect <SSID>`) or export `WIFI_SSID` and `WIFI_PSK`

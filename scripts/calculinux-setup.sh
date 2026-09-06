@@ -34,7 +34,7 @@
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
 # Two prerequisites this script cannot safely embed and will check for / guide you through:
-#   * the read-only deploy key at $HOME/.ssh/id_ed25519 (never commit a private key);
+#   * the read-only deploy key at $KEY_PATH (never commit a private key);
 #   * Wi-Fi credentials known to iwd. The kick only nudges an ALREADY-known network. Either
 #     provision it once by hand (`iwctl station wlan0 connect <SSID>`), or export
 #     WIFI_SSID and WIFI_PSK before running and this script writes the iwd config for you.

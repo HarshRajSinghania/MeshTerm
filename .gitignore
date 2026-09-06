@@ -22,6 +22,10 @@ venv/
 *.db
 output/
 
+# Developer environment: the machine-specific half of the .claude/ skills (device
+# addresses, logins, the local venv path). dev.env.example is tracked and shows the shape.
+dev.env
+
 # Built radio firmware (scripts/xiao-radio/build-firmware.sh writes it here)
 scripts/xiao-radio/*.uf2
 scripts/xiao-radio/_meshcore-build/

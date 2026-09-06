@@ -8,13 +8,16 @@ model: haiku
 
 ## Launch
 
+- Machine-specific values (this venv, the BLE companions below) live in `dev.env` at
+  the repo root — gitignored, with `dev.env.example` showing the shape. Read it first;
+  the `$DEV_*` names here are its keys.
 - Venv interpreter: `$DEV_VENV_PYTHON`
 - Run the app as a module: `python -m meshterm …` (no install step needed).
 - `--mock` swaps in the `MockDevice` simulator (four fake nodes streaming
   adverts/telemetry, packets within a second) — no hardware required. It still
   writes to the **real default database**, so expect run ids / totals to grow.
-- Real hardware is available too: two BLE MeshCore companions
-  (`$DEV_BLE_COMPANION_PAIRED` is PIN-protected, `$DEV_BLE_COMPANION_OPEN` is open).
+- Real hardware is available too: two BLE MeshCore companions —
+  `$DEV_BLE_COMPANION_PAIRED` is PIN-protected, `$DEV_BLE_COMPANION_OPEN` is open.
 
 ## Surfaces
 

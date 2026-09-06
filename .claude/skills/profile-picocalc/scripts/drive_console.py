@@ -89,7 +89,7 @@ def main():
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--boot-wait", type=float, default=12.0)
     ap.add_argument("--out", default="")
-    ap.add_argument("--exe", default="$HOME/MeshTerm/.venv/bin/meshterm")
+    ap.add_argument("--exe", default=os.path.expanduser("~/MeshTerm/.venv/bin/meshterm"))
     ap.add_argument("--quiet-ms", type=float, default=QUIET_S * 1000,
                     help="silence that ends a keystroke; raise it to time screen opens")
     ap.add_argument("--tee", default="", help="also copy the app's output to this file")
