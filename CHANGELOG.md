@@ -39,12 +39,12 @@ allowed to change behaviour, not just add to it.
   move there. One keypress, nothing installed, nothing changed — and you get the app as
   it was drawn: icons, charts, path chips and all.
 
-- **MeshTerm can install a font its charts will actually draw in.** For anyone who stays
-  in the classic console. The classic Windows
-  console does no font fallback at all, and none of the fonts it offers can draw braille
-  — which every timeline and activity graph in MeshTerm is made of. Neither can Hack Nerd
-  Font, JetBrains Mono, Fira Code, Source Code Pro, or even DejaVu Sans Mono; the usual
-  advice works only because most terminals quietly fall back to a proportional font.
+- **MeshTerm can install a font its charts will actually draw in** — for anyone who stays
+  in the classic console. That console does no font fallback at all, and none of the fonts
+  it offers can draw braille, which every timeline and activity graph in MeshTerm is made
+  of. Neither can Hack Nerd Font, JetBrains Mono, Fira Code, Source Code Pro, or even
+  DejaVu Sans Mono; the usual advice works only because most terminals quietly fall back
+  to a proportional font.
 
   So MeshTerm now ships Cascadia Mono PL — Microsoft's console font, SIL OFL — and on
   that console offers to use it. If you already have Cascadia (every Windows 11 machine,
