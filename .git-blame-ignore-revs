@@ -1,0 +1,13 @@
+# Commits that changed how the code is spelled, never what it does. `git blame` skips
+# them so a line's history points at whoever last had something to say about it.
+#
+# GitHub reads this file by itself. Locally it has to be wired up once:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only whole-tree, provably behaviour-free commits belong here.
+
+# Whole-repo `ruff format .` before the public release: 153 files, 152 of them verified
+# AST-identical, the suite green at 1888, and `meshterm specimen` byte-identical on both
+# platforms.
+92d31a31913b036a76ed27c20863f65a53b0e14d

@@ -34,6 +34,7 @@ this repository.
 2. Set up a dev install:
    ```bash
    pip install -e ".[dev]"
+   git config blame.ignoreRevsFile .git-blame-ignore-revs   # skip the formatting sweeps
    ```
 3. Before opening the PR, make sure these all pass:
    ```bash
