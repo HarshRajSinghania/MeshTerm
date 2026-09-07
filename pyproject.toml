@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "meshterm"
 version = "0.1.0"
-description = "A modern command-line toolkit for tuning and exploring a MeshCore mesh."
+description = "MeshTerm is a full-featured TUI-based MeshCore client for your terminal. Supports USB, BLE and TCP companion connection. For Windows, MacOS and Linux."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Jean-Pierre Martineau" }]

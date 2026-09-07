@@ -1,4 +1,7 @@
-"""MeshTerm: a modern command-line toolkit for tuning and exploring a MeshCore mesh."""
+"""MeshTerm is a full-featured TUI-based MeshCore client for your terminal.
+
+Supports USB, BLE and TCP companion connection. For Windows, MacOS and Linux.
+"""
 
 from datetime import datetime
 
