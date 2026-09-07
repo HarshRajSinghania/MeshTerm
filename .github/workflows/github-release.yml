@@ -1,0 +1,103 @@
+# Puts the downloadable builds on the repository's Releases page.
+#
+# Nothing here leaves GitHub. While the repository is private the release is private too,
+# visible and downloadable only by people who can see the repo. This is *not* the PyPI
+# publish — that is `release.yml`, it is a separate act, and it does not run from here.
+#
+# Triggered by pushing a version tag, which is the moment a release exists in git anyway:
+#
+#     git tag -a v0.3.0 -m "MeshTerm 0.3.0"
+#     git push origin v0.3.0
+#
+# The binaries are built by `installers.yml`, called rather than copied, so the files
+# people download are made exactly the way the ones CI checks on every push are.
+name: GitHub release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build a release from (e.g. v0.2.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as a pre-release (keeps it out of 'Latest')"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/installers.yml
+
+  publish:
+    name: create the release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # The one job that needs it: creating a release writes to the repository.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      # Every platform's artifact, flattened into one directory of files to attach.
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Gather the binaries and their checksums
+        id: gather
+        shell: bash
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          ls -lh release/
+          # One combined checksum file is easier to verify against than five loose ones.
+          (cd release && cat *.sha256 > SHA256SUMS && rm -f *.sha256)
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Take the release notes from the changelog
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.gather.outputs.version }}
+        run: |
+          # The section for this version, between its own heading and the next one. If the
+          # changelog has nothing for it, say so plainly rather than inventing notes.
+          if awk -v v="$VERSION" '
+                $0 ~ "^## \\[" v "\\]" {found=1; next}
+                found && /^## \[/ {exit}
+                found {print}
+              ' CHANGELOG.md | sed '/^$/d' | head -1 | grep -q .; then
+            awk -v v="$VERSION" '
+                $0 ~ "^## \\[" v "\\]" {found=1; next}
+                found && /^## \[/ {exit}
+                found {print}
+              ' CHANGELOG.md > notes.md
+          else
+            echo "No changelog entry for $VERSION." > notes.md
+          fi
+          echo "--- notes ---"; cat notes.md
+
+      - name: Create it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.gather.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease && '--prerelease' || '' }}
+        run: |
+          gh release create "$TAG" release/* \
+            --title "MeshTerm ${TAG#v}" \
+            --notes-file notes.md \
+            --verify-tag \
+            $PRERELEASE
+          echo "https://github.com/${{ github.repository }}/releases/tag/$TAG"

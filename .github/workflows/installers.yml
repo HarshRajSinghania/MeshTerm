@@ -11,6 +11,9 @@ name: Installers
 
 on:
   workflow_dispatch:
+  # Callable, so the release workflow builds these binaries rather than keeping a second
+  # copy of the matrix that would drift from this one.
+  workflow_call:
   # Only when the packaging itself changes. Three operating systems is not something to
   # spend on every commit while the repository is private and minutes are metered.
   push:

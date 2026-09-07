@@ -38,6 +38,9 @@ allowed to change behaviour, not just add to it.
   it on purpose and types the version.
 - A security policy, a code of conduct, issue and pull request templates, weekly
   dependency updates, and the funding links the app's own support page already offers.
+- A Releases page. Pushing a version tag builds the binaries and attaches them, with a
+  combined `SHA256SUMS` and release notes taken from this file. It stays inside GitHub
+  and is not the PyPI publish, which remains a separate and deliberate act.
 - Standalone builds. A PyInstaller spec and a workflow that builds a single runnable
   file for Windows, macOS (Intel and Apple silicon) and Linux (x64 and ARM64), checks
   each one runs from outside the source tree, and writes a checksum beside it. Nothing

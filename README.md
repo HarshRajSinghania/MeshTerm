@@ -19,6 +19,7 @@ your mesh's history is worth.
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-green"></a>
   <img alt="For MeshCore" src="https://img.shields.io/badge/for-MeshCore-8A2BE2">
   <img alt="Interface: TUI + CLI" src="https://img.shields.io/badge/interface-TUI%20%2B%20CLI-orange">
+  <a href="https://github.com/jpmartineau/MeshTerm/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest-brightgreen"></a>
   <a href="https://discord.gg/AZwe5Uvb3S"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865F2"></a>
 </p>
 
@@ -54,6 +55,28 @@ your mesh's history is worth.
 
 ## Install
 
+### Download a build
+
+**[⬇ Latest release](https://github.com/jpmartineau/MeshTerm/releases/latest)** — one file,
+no Python needed. Windows, macOS (Apple silicon) and Linux (x64 and ARM64, so the uConsole
+is covered).
+
+Download it, make it runnable, and run it:
+
+```bash
+chmod +x meshterm-*            # macOS and Linux only
+./meshterm-*
+```
+
+> **Your system will complain the first time.** These builds aren't code-signed — signing
+> costs money on both platforms and this is a free side project. macOS says *"cannot be
+> opened because the developer cannot be verified"*; clear it with
+> `xattr -d com.apple.quarantine meshterm-*` and run it again. Windows shows *"Windows
+> protected your PC"*; click **More info → Run anyway**. Each release ships a `SHA256SUMS`
+> file if you'd rather check the download yourself.
+
+### Or install with pip
+
 You need **Python 3.10 or newer**. That's the only requirement — MeshTerm pulls in
 everything else itself.
 
@@ -76,11 +99,8 @@ can have a look around before you buy anything.
 
 ### Coming
 
-- **Downloadable installers** for Windows, macOS and Linux, so you won't need Python at
-  all. They'll show up on the [Releases](https://github.com/jpmartineau/MeshTerm/releases)
-  page.
-- **`pip install mesh-term`**, once the package is published. It isn't yet — the name
-  question is still being sorted out ([why](https://github.com/pypi/support/issues/12162)).
+**`pip install mesh-term`**, once the package is published. It isn't yet — the name
+question is still being sorted out ([why](https://github.com/pypi/support/issues/12162)).
 
 Setting up for development instead? That's in [CONTRIBUTING.md](CONTRIBUTING.md).
 
