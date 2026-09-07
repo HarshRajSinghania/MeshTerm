@@ -26,6 +26,11 @@ allowed to change behaviour, not just add to it.
   it on purpose and types the version.
 - A security policy, a code of conduct, issue and pull request templates, weekly
   dependency updates, and the funding links the app's own support page already offers.
+- Standalone builds. A PyInstaller spec and a workflow that builds a single runnable
+  file for Windows, macOS (Intel and Apple silicon) and Linux (x64 and ARM64), checks
+  each one runs from outside the source tree, and writes a checksum beside it. Nothing
+  is published; the files are workflow artifacts until someone attaches them to a
+  release.
 
 ## [0.2.0] — 2026-09-07
 
@@ -49,6 +54,8 @@ deliberately not reconstructed here.
   which is the only handle a tile operator has on a client.
 - `macOS` and `Bluetooth` are spelled one way across the project. `BLE` stays where it is
   an identifier — the transport name, the config keys, the CLI.
+- `meshterm --help` opens with the same description as the package summary and the
+  PyPI page, instead of a fourth wording of its own.
 
 ### Fixed
 

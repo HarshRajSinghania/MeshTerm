@@ -1,0 +1,93 @@
+# Standalone builds — a single file you download and run, with no Python installed.
+#
+# For most people who want MeshTerm, this is the install. They have a radio and a
+# terminal, not a Python toolchain.
+#
+# Frozen builds cannot be cross-compiled: each one is made on the system it targets, so
+# the matrix is the point of this file rather than an optimisation. Everything here
+# uploads artifacts and nothing publishes — attaching them to a release stays a separate,
+# deliberate act.
+name: Installers
+
+on:
+  workflow_dispatch:
+  # Only when the packaging itself changes. Three operating systems is not something to
+  # spend on every commit while the repository is private and minutes are metered.
+  push:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/installers.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, label: windows-x64, ext: ".exe" }
+          - { os: macos-latest, label: macos-arm64, ext: "" }
+          # Apple silicon builds do not run on Intel Macs, and plenty of people still
+          # have one. macos-13 is the last x86_64 runner image.
+          - { os: macos-13, label: macos-x64, ext: "" }
+          - { os: ubuntu-22.04, label: linux-x64, ext: "" }
+          # For the uConsole and other 64-bit ARM handhelds. ARM runners are free on
+          # public repositories; on a private one this leg may sit unclaimed until the
+          # repo is public. Drop the line if it blocks you.
+          - { os: ubuntu-22.04-arm, label: linux-arm64, ext: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Oldest supported version on purpose: a binary built against an older glibc
+          # and an older Python runs on more machines than one built against the newest.
+          python-version: "3.10"
+
+      - run: pip install . pyinstaller
+
+      - name: Build
+        working-directory: packaging
+        run: pyinstaller --clean --noconfirm meshterm.spec
+
+      - name: Check it actually runs
+        shell: bash
+        run: |
+          bin="packaging/dist/meshterm${{ matrix.ext }}"
+          chmod +x "$bin" || true
+          # Run it from somewhere else entirely, so a build that only works next to the
+          # source tree fails here rather than on someone's laptop.
+          cd "$(mktemp -d)"
+          "$GITHUB_WORKSPACE/$bin" --help > /dev/null
+          "$GITHUB_WORKSPACE/$bin" specimen > /dev/null
+          echo "runs, and finds its assets"
+
+      - name: Name it after the version and the platform
+        shell: bash
+        run: |
+          version=$(python -c "import meshterm; print(meshterm.__version__)")
+          out="meshterm-${version}-${{ matrix.label }}${{ matrix.ext }}"
+          mv "packaging/dist/meshterm${{ matrix.ext }}" "$out"
+          # A checksum beside the binary, so anyone can tell they got what we built.
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$out" > "$out.sha256"
+          else
+            shasum -a 256 "$out" > "$out.sha256"
+          fi
+          cat "$out.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meshterm-${{ matrix.label }}
+          path: |
+            meshterm-*
+          if-no-files-found: error

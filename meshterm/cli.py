@@ -68,7 +68,13 @@ app = typer.Typer(
     # section panels flattened to plain headings by _unframe_help_panels() above — a
     # splash of colour, none of the framing.
     rich_markup_mode="rich",
-    help="MeshTerm — a modern toolkit for tuning and exploring your MeshCore mesh",
+    # The one description, same as the package summary and the PyPI page. See
+    # `meshterm.__doc__` — if this drifts from that, one of them is lying.
+    help=(
+        "MeshTerm is a full-featured TUI-based MeshCore client for your terminal. "
+        "Supports USB, Bluetooth and TCP companion connection. "
+        "For Windows, macOS and Linux."
+    ),
 )
 
 # The context built by the callback and consumed by subcommands within one process.
