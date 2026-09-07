@@ -22,9 +22,9 @@ from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
 from .core.device_store import DeviceStore
 from .core.instancelock import InstanceBusy, hold_instance_lock
-from .core.preferences import PreferenceError
+from .core.preferences import PreferenceError, Preferences
 from .core.selection import DeviceSelectionError
-from .persistence.logging import configure_logging
+from .persistence.logging import configure_logging, get_logger, level_from_name, log_path
 from .persistence.repository import Repository
 from .platforms import Resolution, resolve, set_platform
 from .tools import all_tools
@@ -143,9 +143,19 @@ def main_callback(
         settings.db_path = db_path
 
     console = make_console()
-    configure_logging(console, settings.config_dir, level=logging.INFO, quiet=quiet or json_output)
+    # Loaded before logging is configured, because how much goes in the file is one of
+    # them — and handed to the context afterwards so the file is not read twice.
+    prefs = Preferences.load(settings.config_dir / "preferences.yaml")
+    configure_logging(
+        console,
+        settings.config_dir,
+        level=logging.INFO,
+        file_level=level_from_name(prefs.log_level),
+        quiet=quiet or json_output,
+    )
 
     app_ctx = AppContext(
+        preferences=prefs,
         console=console,
         settings=settings,
         repo=Repository(settings.db_path),
@@ -186,6 +196,14 @@ def main_callback(
             # when the answer is "open a different terminal", so answer that instead.
             _report_no_windows_console(console)
             raise typer.Exit(code=1) from None
+
+
+def _report_log_location(console: Console, config_dir: Path) -> None:
+    """Point at the log after a fault, since it is the copy that outlives the terminal."""
+    console.print()
+    console.print(f"[muted]The details are in {log_path(config_dir)}[/muted]")
+    console.print("[muted]Attach it to a bug report. For more detail next time, raise[/muted]")
+    console.print("[muted]'Log detail' on the Preferences page.[/muted]")
 
 
 def _report_no_windows_console(console: Console) -> None:
@@ -258,20 +276,30 @@ def run_tool_command(tool: Tool, params: dict) -> None:
         asyncio.run(_drive(_execute_and_render(tool, params, _state), _state))
     except (DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError) as exc:
         # Expected user-facing error (ambiguous/absent device, a bad config or preference
-        # value, or a transient command failure): show the message, not a traceback.
+        # value, or a transient command failure): show the message, not a traceback. Logged
+        # at warning because it is a thing that went wrong, even though it is an ordinary
+        # one — a log that only holds crashes cannot answer "what happened before it".
+        get_logger().warning("%s failed: %s", tool.name, exc)
         _state.console.print(f"[err]✗[/err] {exc}")
         raise typer.Exit(1) from exc
     except Exception as exc:
         # A dropped serial link (device unplugged/powered off mid-command) can't be recovered
         # from in a one-shot scripted run the way the interactive menu offers — but it should
-        # still read as a clean message, not a traceback. Anything else propagates as before.
-        if not is_connection_lost(exc):
-            raise
-        _state.console.print(
-            "[err]✗[/err] the connection to your device was lost "
-            "(it may have been unplugged or powered off)."
-        )
-        raise typer.Exit(1) from exc
+        # still read as a clean message, not a traceback.
+        if is_connection_lost(exc):
+            get_logger().warning("%s lost the device connection: %s", tool.name, exc)
+            _state.console.print(
+                "[err]✗[/err] the connection to your device was lost "
+                "(it may have been unplugged or powered off)."
+            )
+            raise typer.Exit(1) from exc
+        # Anything else is a real fault. It still reaches the terminal as a traceback,
+        # because a person looking at one wants to see it — but it also lands in the log,
+        # which is the copy that survives the terminal being closed and is the one thing
+        # worth attaching to a bug report.
+        get_logger().exception("%s raised an unhandled error", tool.name)
+        _report_log_location(_state.console, _state.settings.config_dir)
+        raise
 
 
 async def _drive(coro, ctx: AppContext) -> None:

@@ -57,6 +57,7 @@ GROUPS: tuple[str, ...] = (
     "Map",
     "History",
     "Display",
+    "Diagnostics",
 )
 
 
@@ -124,6 +125,16 @@ _WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 #: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
 #: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
 #: default — nothing else has to follow.
+#: What the log file keeps. Named rather than numeric, because those names are what every
+#: other tool calls these and the reader is often being talked through it by someone else.
+_LOG_LEVEL_CHOICES: dict[str, str] = {
+    "ERROR": "Errors only",
+    "WARNING": "Warnings and errors",
+    "INFO": "Also what the app is doing",
+    "DEBUG": "Everything, for chasing a bug",
+}
+
+
 PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Sending -----------------------------------------------------------------
     PrefSpec(
@@ -282,6 +293,20 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         value_type="enum",
         default="auto",
         choices=_WIDTH_CHOICES,
+    ),
+    # --- Diagnostics ---------------------------------------------------------------
+    PrefSpec(
+        key="log_level",
+        label="Log detail",
+        help="How much MeshTerm writes to its log file",
+        group="Diagnostics",
+        value_type="enum",
+        # Problems, not a narration of a working session. The file used to take
+        # everything, which buried the dozen interesting lines under twenty thousand
+        # dull ones and made it awkward to attach to a bug report.
+        default="WARNING",
+        choices=_LOG_LEVEL_CHOICES,
+        relaunch=True,
     ),
 )
 

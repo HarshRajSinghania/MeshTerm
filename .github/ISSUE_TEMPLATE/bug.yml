@@ -164,6 +164,17 @@ body:
       render: text
 
   - type: textarea
+    id: log
+    attributes:
+      label: The log file
+      description: >
+        MeshTerm keeps one at `~/.meshterm/meshterm.log` (or wherever `MESHTERM_HOME`
+        points). Attach it, or paste the last twenty lines. If the problem is hard to
+        catch, set **Log detail** to `DEBUG` on the Preferences page, do it once more,
+        and send that instead — it records a great deal more.
+      render: text
+
+  - type: textarea
     id: extra
     attributes:
       label: Anything else

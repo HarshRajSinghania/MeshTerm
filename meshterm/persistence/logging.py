@@ -1,13 +1,28 @@
-"""Structured logging setup.
+"""Logging setup: a plain text file you can open, and a console that stays out of the way.
 
-Two sinks are configured: a Rich-formatted console handler for human-readable output,
-and a JSON-lines file handler that captures every record for later replay/analysis.
+Two sinks. The console handler is Rich-formatted and shows what a person watching the
+terminal should see. The file handler writes ordinary log lines to
+``<config_dir>/meshterm.log`` — one record per line, timestamp, level, logger, message,
+with a traceback indented under the line that raised it.
+
+Plain text on purpose. The file used to be JSON Lines, on the theory that something might
+replay it; nothing ever did, and the one job it actually has is being opened by a person
+who has hit a problem — often the person reporting it, who then pastes the last twenty
+lines into an issue. That reader has a text editor, not a JSON parser.
+
+The file rotates. It used to be a single :class:`~logging.FileHandler`, which grows
+without limit: a real one reached 11MB over ten weeks, which is both a lot of disk on a
+handheld and an unreasonable thing to attach to a bug report.
+
+How much is written is a preference — ``log_level``, defaulting to ``WARNING``, so the
+file holds the problems rather than a narration of a working session. Turn it down to
+``INFO`` or ``DEBUG`` when chasing something.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from rich.console import Console
@@ -15,28 +30,49 @@ from rich.logging import RichHandler
 
 _LOGGER_NAME = "meshterm"
 
+#: The log file, in the config directory beside the data it describes.
+LOG_FILENAME = "meshterm.log"
 
-class JsonlFormatter(logging.Formatter):
-    """Format log records as one JSON object per line."""
+#: Keep this much before rolling over, and this many rolled files. Roughly a fortnight of
+#: a chatty session at DEBUG, and small enough that the whole set can be attached to an
+#: issue without apology.
+_MAX_BYTES = 2 * 1024 * 1024
+_BACKUP_COUNT = 3
 
-    def format(self, record: logging.LogRecord) -> str:
-        """Serialize a log record to a compact JSON string.
+#: ``2026-09-07 14:23:11 WARNING  meshterm.core.connection: link lost, retrying``
+#: Level is padded so the messages line up; the logger name says which part spoke.
+_LINE_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-        Args:
-            record: The record to format.
 
-        Returns:
-            A single-line JSON document.
-        """
-        payload = {
-            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
-        return json.dumps(payload)
+#: The levels the ``log_level`` preference offers, by their own names. Spelled out rather
+#: than taken from ``logging.getLevelName``, whose string-to-number direction is deprecated,
+#: or ``getLevelNamesMapping``, which arrived in 3.11 and this package supports 3.10.
+_LEVELS: dict[str, int] = {
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+}
+
+
+def level_from_name(name: str, *, fallback: int = logging.WARNING) -> int:
+    """Turn a ``log_level`` preference value into a level number.
+
+    Args:
+        name: A level name, in any case.
+        fallback: Used when the name is unrecognised — a hand-edited ``preferences.yaml``
+            with a typo in it should lose some log detail, not stop the app from starting.
+
+    Returns:
+        The matching level number.
+    """
+    return _LEVELS.get(name.strip().upper(), fallback)
+
+
+def log_path(log_dir: Path) -> Path:
+    """Return the log file's path, for an error message that wants to name it."""
+    return log_dir / LOG_FILENAME
 
 
 def configure_logging(
@@ -44,14 +80,16 @@ def configure_logging(
     log_dir: Path,
     *,
     level: int = logging.INFO,
+    file_level: int = logging.WARNING,
     quiet: bool = False,
 ) -> logging.Logger:
     """Configure and return the application logger.
 
     Args:
         console: The Rich console the handler should render to.
-        log_dir: Directory for the ``meshterm.log.jsonl`` event file.
+        log_dir: Directory for the ``meshterm.log`` file.
         level: Console log level.
+        file_level: File log level, from the ``log_level`` preference.
         quiet: When ``True``, suppress console output (file logging continues).
 
     Returns:
@@ -70,9 +108,14 @@ def configure_logging(
         logger.addHandler(rich_handler)
 
     log_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_dir / "meshterm.log.jsonl", encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(JsonlFormatter())
+    file_handler = RotatingFileHandler(
+        log_path(log_dir),
+        maxBytes=_MAX_BYTES,
+        backupCount=_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(file_level)
+    file_handler.setFormatter(logging.Formatter(_LINE_FORMAT, datefmt=_TIME_FORMAT))
     logger.addHandler(file_handler)
 
     _quiet_library_console(file_handler)
@@ -100,8 +143,8 @@ def _quiet_library_console(file_handler: logging.Handler) -> None:
     1. Give the root logger a :class:`~logging.NullHandler` so ``basicConfig`` — which only
        acts when the root has no handlers — becomes a no-op and never adds its stream handler.
     2. Take each known library logger off propagation and attach only ``file_handler``, so
-       its records are still captured to the JSON-lines log but never reach the console, even
-       if some other code path installs a root stream handler anyway.
+       its records are still captured to the log but never reach the console, even if some
+       other code path installs a root stream handler anyway.
 
     Args:
         file_handler: The application's file handler to also capture library records to.

@@ -17,12 +17,30 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Changed
+
+- The log is a plain text file, `~/.meshterm/meshterm.log`, one readable line per record
+  with the traceback under the line that raised it. It was JSON Lines on the theory that
+  something would replay it; nothing ever did, and the job it actually has is being opened
+  by a person who has hit a problem.
+- It rotates, at 2 MB across three files. It used to grow without limit — a real one
+  reached 11 MB in ten weeks, which is a lot of disk on a handheld and an unreasonable
+  thing to attach to an issue.
+- **How much it keeps is a preference** — `log_level`, under a new Diagnostics group,
+  defaulting to `WARNING`. The file now holds the problems rather than a narration of a
+  working session: of the last twenty thousand records in a real log, twelve were a
+  warning or an error.
+
 ### Added
 
 - One interactive MeshTerm per data directory. A second one is turned away with the way
   out in the message, rather than quietly overwriting the first one's contacts and
   settings. The lock is held by the operating system, so a crash releases it — a process
   id in a file would leave a lock nobody could explain.
+- Failures are written down. Every unhandled error reaches the log with its traceback and
+  the terminal says where to find it; expected errors go in as warnings, because a log
+  that only holds crashes cannot answer "what happened just before". The bug report form
+  asks for the file.
 - A readable answer when there is no Windows console. Git Bash, MSYS and Cygwin are not
   Windows consoles, and prompt_toolkit's own error says so in the language of its
   internals, arriving as a traceback that reads like a broken app rather than the
