@@ -423,7 +423,7 @@ def _street_labels_placed(cols: int, rows: int, zoom: int) -> int:
     _draw_tile(frame, layers, 14, 4843, 5861)
 
     placed = 0
-    for label in sorted(frame.labels, key=lambda l: l.rank):
+    for label in sorted(frame.labels, key=lambda lab: lab.rank):
         if vp.zoom < label.min_zoom:
             continue
         for ax, ay in ((label.x, label.y), *label.alts):
@@ -905,7 +905,7 @@ def test_decoded_layers_survive_a_round_trip() -> None:
     restored = loads_layers(dumps_layers(original, stamp="x"), stamp="x")
 
     assert restored is not None
-    assert [(l.name, l.extent) for l in restored] == [(l.name, l.extent) for l in original]
+    assert [(layer.name, layer.extent) for layer in restored] == [(layer.name, layer.extent) for layer in original]
     for before, after in zip(original, restored, strict=True):
         assert after.features == before.features
 
@@ -946,8 +946,8 @@ def test_basemap_source_writes_and_reuses_a_decoded_sidecar(tmp_path: Path) -> N
     tile.write_bytes(b"junk that cannot decode")
     second = src.load_tile(14, 4843, 5861)
     assert second is not None
-    assert [(l.name, len(l.features)) for l in second] == [
-        (l.name, len(l.features)) for l in first
+    assert [(layer.name, len(layer.features)) for layer in second] == [
+        (layer.name, len(layer.features)) for layer in first
     ]
 
 

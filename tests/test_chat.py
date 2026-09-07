@@ -926,7 +926,7 @@ def test_wrapped_body_hangs_under_the_first_line() -> None:
     text = " ".join(["word"] * 20)
     messages = [ChatMessage(text=text, peer="d4e5f6a7", created_at=base)]
     screen = _screen(_StubSession(), send=None, messages=messages)
-    body_lines = [_strip_ansi(l) for l in screen._body_lines(text, messages[0], 30)]
+    body_lines = [_strip_ansi(ln) for ln in screen._body_lines(text, messages[0], 30)]
 
     assert len(body_lines) > 1  # it actually wrapped
     stamp = base.astimezone().strftime("%H:%M")

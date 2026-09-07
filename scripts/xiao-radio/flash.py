@@ -26,7 +26,7 @@ def find_uf2_drive():
     if os.name == "nt":
         import string
 
-        candidates = ["%s:\\" % d for d in string.ascii_uppercase]
+        candidates = [f"{d}:\\" for d in string.ascii_uppercase]
     else:
         for base in ("/media", "/run/media", "/mnt", "/Volumes"):
             candidates += glob.glob(os.path.join(base, "*"))
@@ -57,7 +57,7 @@ def touch_1200():
         if "2886" in (p.hwid or ""):  # Seeed Studio USB VID
             try:
                 serial.Serial(p.device, 1200).close()
-                print("   sent 1200-baud bootloader touch to %s" % p.device)
+                print(f"   sent 1200-baud bootloader touch to {p.device}")
                 time.sleep(0.3)
             except Exception:
                 pass
@@ -101,18 +101,17 @@ def check_drive_is_ours(drive, force=False):
     info = read_uf2_info(drive)
     model = info.get("Model", "?")
     softdev = info.get("SoftDevice", "?")
-    print("   %s reports: %s / %s" % (drive, model, softdev))
+    print(f"   {drive} reports: {model} / {softdev}")
 
     problems = []
     if "xiao" not in model.lower():
-        problems.append("this is a %r bootloader, not a XIAO" % model)
+        problems.append(f"this is a {model!r} bootloader, not a XIAO")
     if "6." in softdev:
-        problems.append("%s expects the app at 0x26000; this build is linked for S140 v7" % softdev)
+        problems.append(f"{softdev} expects the app at 0x26000; this build is linked for S140 v7")
     if problems and not force:
         sys.exit(
-            "ERROR: refusing to flash %s --\n  - %s\n"
-            "Unplug the other board, or re-run with --force if you are sure."
-            % (drive, "\n  - ".join(problems))
+            "ERROR: refusing to flash {} --\n  - {}\n"
+            "Unplug the other board, or re-run with --force if you are sure.".format(drive, "\n  - ".join(problems))
         )
     return True
 
@@ -122,7 +121,7 @@ def main():
     force = "--force" in sys.argv[1:]
     uf2 = args[0] if args else os.path.join(HERE, "meshcore-xiao-radio.uf2")
     if not os.path.exists(uf2):
-        sys.exit("ERROR: firmware not found: %s\n(run build-firmware.sh first)" % uf2)
+        sys.exit(f"ERROR: firmware not found: {uf2}\n(run build-firmware.sh first)")
 
     print(">> looking for XIAO bootloader drive ...")
     drive = find_uf2_drive()
@@ -137,16 +136,15 @@ def main():
     if drive and drive == before:
         # The letter was already there before we touched anything, so it may belong to some
         # other board entirely -- check what it says rather than trusting the letter.
-        print("   note: %s was already mounted before the touch" % drive)
+        print(f"   note: {drive} was already mounted before the touch")
     if not drive:
         port = bootloader_port()
         if port:
             sys.exit(
-                "ERROR: the XIAO is in its bootloader on %s but exposes no UF2 drive.\n"
+                f"ERROR: the XIAO is in its bootloader on {port} but exposes no UF2 drive.\n"
                 "This bootloader presents a serial port only, so copy-to-drive can't work.\n"
                 "Flash it over serial DFU instead, from your MeshCore checkout:\n"
-                "    pio run -e Xiao_nrf52_companion_radio_serial -t upload --upload-port %s"
-                % (port, port)
+                f"    pio run -e Xiao_nrf52_companion_radio_serial -t upload --upload-port {port}"
             )
         sys.exit(
             "ERROR: no UF2 bootloader drive and no XIAO bootloader serial port found.\n"
@@ -154,7 +152,7 @@ def main():
         )
 
     check_drive_is_ours(drive, force=force)
-    print(">> flashing %s -> %s" % (os.path.basename(uf2), drive))
+    print(f">> flashing {os.path.basename(uf2)} -> {drive}")
     with open(uf2, "rb") as src:
         data = src.read()
     with open(os.path.join(drive, "firmware.uf2"), "wb") as dst:

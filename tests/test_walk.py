@@ -147,7 +147,7 @@ def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     screen.note_viewport(24)
     # The canvas rows are everything above the legend line.
     lines = _plain(screen.render_body(80)).split("\n")
-    canvas = "\n".join(lines[: next(i for i, l in enumerate(lines) if "edge = SNR" in l)])
+    canvas = "\n".join(lines[: next(i for i, ln in enumerate(lines) if "edge = SNR" in ln)])
     assert "Lakesidetechnique" in canvas  # 17 chars, drawn whole — no "Lakesidetechniq…"
     assert "Repeater-Downtown-01" in canvas  # 20 chars, whole
 
@@ -184,7 +184,7 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
         screen.handle("down")
 
     ansi_lines = screen.render_body(80)
-    legend = next(i for i, l in enumerate(ansi_lines) if "edge = SNR" in _plain([l]))
+    legend = next(i for i, ln in enumerate(ansi_lines) if "edge = SNR" in _plain([ln]))
     canvas = "".join(ansi_lines[:legend])
 
     def code(rgb: tuple[int, int, int]) -> str:
@@ -415,7 +415,7 @@ def test_walk_echoes_the_find_query_above_the_matches_it_narrows() -> None:
         for _ in "al":
             device.handle("backspace")
         assert not any(line.strip().startswith("/") for line in
-                       (_plain(l) for l in device.render_body(53)))
+                       (_plain(ln) for ln in device.render_body(53)))
     finally:
         set_platform(REGULAR)
 

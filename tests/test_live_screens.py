@@ -332,7 +332,7 @@ async def test_previous_stamp_sits_on_its_own_line() -> None:
     old = _trace(4.0)
     old.timestamp = utcnow() - timedelta(hours=3)
     screen, _ = _trace_screen(previous=old)
-    stamp_line = next(l for l in screen.render_body(100) if "(previous" in l)
+    stamp_line = next(ln for ln in screen.render_body(100) if "(previous" in ln)
     assert "→" not in stamp_line  # the route stays on the line above
 
 

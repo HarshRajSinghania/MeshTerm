@@ -249,10 +249,14 @@ def test_invalidation_forces_a_re_read() -> None:
     ds = _devstate(dev)
 
     async def run() -> None:
-        await ds.self_info(); await ds.path_hash_mode(); await ds.channel_slots(); await ds.contacts()
+        await ds.self_info()
+        await ds.path_hash_mode()
+        await ds.channel_slots()
+        await ds.contacts()
         # invalidate_config drops self-info + path-hash mode together (the config editor's write).
         ds.invalidate_config()
-        await ds.self_info(); await ds.path_hash_mode()
+        await ds.self_info()
+        await ds.path_hash_mode()
         assert dev.self_info_calls == 2 and dev.mode_calls == 2
         # channels and contacts were untouched by that invalidation.
         assert dev.channel_calls == 2 and dev.contacts_calls == 1
@@ -269,9 +273,15 @@ def test_reset_clears_everything() -> None:
     ds = _devstate(dev)
 
     async def run() -> None:
-        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode(); await ds.channel_capacity()
+        await ds.self_info()
+        await ds.contacts()
+        await ds.path_hash_mode()
+        await ds.channel_capacity()
         ds.reset()
-        await ds.self_info(); await ds.contacts(); await ds.path_hash_mode(); await ds.channel_capacity()
+        await ds.self_info()
+        await ds.contacts()
+        await ds.path_hash_mode()
+        await ds.channel_capacity()
 
     asyncio.run(run())
     assert dev.self_info_calls == 2

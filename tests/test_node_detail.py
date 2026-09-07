@@ -687,9 +687,9 @@ def test_node_detail_routes_stage_spends_the_caption_and_top_air_on_the_fan() ->
         screen.handle("tab")  # onto Routes
         screen.note_viewport(viewport)
         lines = screen.render_body(49)
-        strip_idx = next(i for i, l in enumerate(lines) if "Routes" in _plain([l]) and "│" in _plain([l]))
-        rule_idx = next(i for i, l in enumerate(lines) if set(_plain([l])) == {"─"} and i > strip_idx)
-        return [_plain([l]) for l in lines[strip_idx + 2 : rule_idx]]  # past the strip's own rule
+        strip_idx = next(i for i, ln in enumerate(lines) if "Routes" in _plain([ln]) and "│" in _plain([ln]))
+        rule_idx = next(i for i, ln in enumerate(lines) if set(_plain([ln])) == {"─"} and i > strip_idx)
+        return [_plain([ln]) for ln in lines[strip_idx + 2 : rule_idx]]  # past the strip's own rule
 
     set_platform(PICOCALC)
     pico = _stage(22)
@@ -702,7 +702,7 @@ def test_node_detail_routes_stage_spends_the_caption_and_top_air_on_the_fan() ->
     assert any("node → you, as heard" in line for line in desktop)  # …and its caption
     # Both rows land in the drawing, not in the chrome: from the same viewport the console
     # grants this ceiling-bound fan two more canvas rows than the captioned desktop stage.
-    drawn = [l for l in desktop if "node → you" not in l]
+    drawn = [ln for ln in desktop if "node → you" not in ln]
     assert len(pico) == len(drawn) + 2
 
 
@@ -726,7 +726,7 @@ def test_node_detail_screen_context_hangs_under_the_pathline() -> None:
     body = _plain(lines)
     assert "f2 3d aa …" in body  # the pathline, opens-marked
     assert "weakest -6.0 dB" in body and "★ best" in body  # the context, drawn too
-    path_idx = next(i for i, l in enumerate(lines) if "f2 3d aa" in _plain([l]))
+    path_idx = next(i for i, ln in enumerate(lines) if "f2 3d aa" in _plain([ln]))
     assert _plain([lines[path_idx]]).startswith("❯ f2 3d aa")  # the pointer leads the pathline
     context_line = _plain([lines[path_idx + 1]])
     assert context_line.startswith("  weakest")  # hanging two columns under it, no pointer
@@ -745,7 +745,7 @@ def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() ->
     screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
     lines = screen.render_body(72)
-    path_idx = next(i for i, l in enumerate(lines) if "f2 aa" in _plain([l]))
+    path_idx = next(i for i, ln in enumerate(lines) if "f2 aa" in _plain([ln]))
     # Nothing at all hangs under a route that earned no context: the pathline is the last
     # thing the page draws (the tab carries no action rows), not a muted context line.
     rest = _plain(lines[path_idx + 1:]).strip()
@@ -772,14 +772,14 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     assert "f2 00 01 02" in body  # unscrolled, the chain's start shows
     assert "←→ scroll" in screen.footer_hint  # the overflow earns the footer atom
 
-    row = next(l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯"))
+    row = next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯"))
     assert row.rstrip().endswith("…")  # the right edge marks the remainder, before any scroll
 
     screen.handle("right")
     screen.handle("right")
     body = _plain(screen.render_body(72))
     assert "f2 00 01 02" not in body  # the view has shifted away from the start
-    row = next(l for l in body.splitlines() if l.startswith("❯"))
+    row = next(ln for ln in body.splitlines() if ln.startswith("❯"))
     assert row.startswith("❯ …")  # …and now a mark says the line continues behind us, too
 
     screen.handle("left")
@@ -788,7 +788,7 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
 
     for _ in range(20):  # run the scroll to its stop
         screen.handle("right")
-    row = next(l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯"))
+    row = next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯"))
     # The clamp lands where the tail is actually readable: the line's own end — its last hop
     # — is on screen rather than cropped behind a right-hand edge mark promising a remainder
     # the keys can no longer reach. Only the left mark is left drawn; the opens-further `…`
@@ -796,7 +796,7 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     assert row.rstrip().endswith("aa") and row.count("…") == 1
     screen.handle("right")  # …and the stop holds: nothing moves past it
     assert next(
-        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
     ) == row
 
     screen.handle("down")  # onto route 1 — abandons route 0's scroll, short row can't scroll
@@ -832,7 +832,7 @@ def test_node_detail_route_row_cracks_a_chip_path_at_both_edges() -> None:
 
     def selected_row() -> str:
         return next(
-            l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+            ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
         )
 
     row = selected_row()
@@ -864,7 +864,7 @@ def test_node_detail_route_row_spends_no_lane_cells_on_the_opens_marker() -> Non
     screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
     row = next(
-        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
     )
     assert row == "❯ " + "x" * avail  # whole, uncut, and no mark squeezed in
     # …and with nothing to scroll, ←→ stay inert and unadvertised.
@@ -881,7 +881,7 @@ def test_node_detail_route_row_spends_no_lane_cells_on_the_opens_marker() -> Non
     screen = _screen(routes=roomy, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
     row = next(
-        l for l in _plain(screen.render_body(72)).splitlines() if l.startswith("❯")
+        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
     )
     assert row == "❯ " + "x" * (avail - 2) + " …"
 

@@ -62,7 +62,7 @@ def _row(*, selected: bool) -> Text:
 def _hues(ansi: str) -> set[str]:
     """The truecolor foregrounds the rendered row actually emitted, as ``#rrggbb``."""
     return {
-        "#%02x%02x%02x" % tuple(int(part) for part in match.groups())
+        "#{:02x}{:02x}{:02x}".format(*tuple(int(part) for part in match.groups()))
         for match in re.finditer(r"\x1b\[[\d;]*?38;2;(\d+);(\d+);(\d+)m", ansi)
     }
 

@@ -316,7 +316,7 @@ def test_packet_viewer_from_row_leads_with_the_node_type_mark() -> None:
     from meshterm.core.models import NODE_TYPE_REPEATER
 
     def from_row(viewer: PacketViewer) -> str:
-        return next(l for l in _stripped(viewer.render_body(80)) if l.startswith("from"))
+        return next(ln for ln in _stripped(viewer.render_body(80)) if ln.startswith("from"))
 
     advertised = PacketEntry(
         when=utcnow(), kind="advert", node="3d63", name="Hub", node_type=NODE_TYPE_REPEATER
@@ -366,8 +366,8 @@ def test_packet_viewer_lays_out_what_a_frame_addressed() -> None:
         prefix_bytes=1, self_name="Waymarker",
     )
     lines = _stripped(viewer.render_body(80))
-    to_row = next(l for l in lines if l.startswith("to"))
-    from_row = next(l for l in lines if l.startswith("from"))
+    to_row = next(ln for ln in lines if ln.startswith("to"))
+    from_row = next(ln for ln in lines if ln.startswith("from"))
     assert "Waymarker" in to_row and "c0" in to_row  # the name, then the hash it was named by
     assert "Alice" in from_row and "a1" in from_row
     # …and neither is repeated by the generic raw dump at the foot of the card.

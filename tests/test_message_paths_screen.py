@@ -274,7 +274,7 @@ def test_paths_screen_direct_arrival_and_empty_state() -> None:
     screen = _screen([Arrival(when=now, hops=(), snr=2.5)])
     body = _plain(screen.render_body(76))
     assert "❯ Alice → ★" in body
-    route = next(l for l in body.splitlines() if l.startswith("❯"))
+    route = next(ln for ln in body.splitlines() if ln.startswith("❯"))
     assert "direct" not in route
     assert body.splitlines()[body.splitlines().index(route) + 1].strip().startswith("direct")
     empty = _screen([], matched=False)

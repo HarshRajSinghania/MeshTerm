@@ -442,7 +442,7 @@ def _compose(
     # ever taking space from a street that has none, so a name is drawn once per frame.
     placed = 0
     named: set[str] = set()
-    for label in sorted(frame.labels, key=lambda l: l.rank):
+    for label in sorted(frame.labels, key=lambda lab: lab.rank):
         if placed >= max_labels:
             break
         if viewport.zoom < label.min_zoom or label.text in named:

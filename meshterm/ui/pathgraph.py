@@ -186,7 +186,7 @@ _ARROW_GAP_DOTS = 2
 #: value in this range folds to the console's dark-grey slot, so the rule survives the
 #: 16-colour quantizer unchanged.
 _OFF_ROUTE: RGB = (110, 110, 110)
-_OFF_ROUTE_HEX = "#%02x%02x%02x" % _OFF_ROUTE
+_OFF_ROUTE_HEX = "#{:02x}{:02x}{:02x}".format(*_OFF_ROUTE)
 
 #: Most distinct paths the lane order is optimised over by exhaustive search. Beyond it the
 #: search space (``(n-1)!`` orders of the non-central lanes) is too large, so a barycentre

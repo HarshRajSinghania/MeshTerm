@@ -45,7 +45,6 @@ Beyond timelines, the module owns the app's two other braille conventions:
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Union
 
 from rich.text import Text
 
@@ -88,7 +87,7 @@ _RIGHT_BITS = (0x80, 0x20, 0x10, 0x08)
 #: How a lit cell is styled: a fixed Rich style name, or a callable given the
 #: cell's present readings (one or two values) returning the style — the hook the
 #: Time Machine uses to colour an SNR band by each slice's quality.
-CellStyle = Union[str, Callable[[list[float]], str]]
+CellStyle = str | Callable[[list[float]], str]
 
 
 class _Gap:

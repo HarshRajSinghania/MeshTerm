@@ -35,7 +35,6 @@ from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
-    Union,
 )
 
 from rich.cells import cell_len
@@ -50,7 +49,7 @@ if TYPE_CHECKING:
 
 #: What a command row's label may be: plain text, or styled text whose spans survive the
 #: icon cut (an err-tinted destructive row, a live unread badge).
-LabelT = Union[str, Text]
+LabelT = str | Text
 
 
 #: The app's status-atom separator, in its two widths. ``·`` chains atoms (the standards'

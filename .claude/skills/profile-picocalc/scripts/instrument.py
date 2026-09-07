@@ -179,8 +179,7 @@ def install():
             total = (time.perf_counter() - t_disp) * 1000
             _state["t_dispatch"] = None
         _rows.append(
-            "%.3f,%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f"
-            % (
+            "{:.3f},{},{},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f},{:d},{:.2f}".format(
                 time.time(), _state["screen"] or "-", action,
                 handle, ms("header"), ms("compose"), ms("dialog"),
                 ms("parse"), dt * 1000, total,
@@ -206,10 +205,10 @@ def _flush():
 
 def main():
     with open(TRACE + ".log", "a") as fh:
-        fh.write("install start %.3f argv=%r\n" % (time.time(), sys.argv))
+        fh.write(f"install start {time.time():.3f} argv={sys.argv!r}\n")
     install()
     with open(TRACE + ".log", "a") as fh:
-        fh.write("install done %.3f\n" % time.time())
+        fh.write(f"install done {time.time():.3f}\n")
     import atexit
 
     atexit.register(_flush)

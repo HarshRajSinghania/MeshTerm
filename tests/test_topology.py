@@ -657,7 +657,7 @@ def test_composer_use_row_names_the_action_not_the_path() -> None:
 
     def use_row(screen: PathComposerScreen) -> str:
         body = plain(screen.render_body(90))
-        row = next(l for l in body.splitlines() if "Use this path" in l)
+        row = next(ln for ln in body.splitlines() if "Use this path" in ln)
         return row.replace("❯", "").strip()
 
     armed = _composer(_topo(trace_paths=walks), hops=["3d63c6429436"])
