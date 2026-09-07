@@ -17,6 +17,8 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-09-07
+
 ### Changed
 
 - The log is a plain text file, `~/.meshterm/meshterm.log`, one readable line per record
@@ -152,7 +154,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jpmartineau/MeshTerm/tree/v0.2.0

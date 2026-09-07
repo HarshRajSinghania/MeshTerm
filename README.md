@@ -68,14 +68,14 @@ if anything goes wrong at startup the window closes before you can read why.
 **Windows** — open Windows Terminal or PowerShell, `cd` to your downloads, then:
 
 ```powershell
-.\meshterm-0.2.2-windows-x64.exe
+.\meshterm-0.2.3-windows-x64.exe
 ```
 
 **macOS and Linux** — open Terminal, `cd` to your downloads, then:
 
 ```bash
-chmod +x meshterm-0.2.2-*
-./meshterm-0.2.2-*
+chmod +x meshterm-0.2.3-*
+./meshterm-0.2.3-*
 ```
 
 Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
@@ -86,7 +86,7 @@ becomes just `meshterm` from anywhere.
 > project.
 >
 > - **macOS**: *"cannot be opened because the developer cannot be verified"*. Clear it with
->   `xattr -d com.apple.quarantine meshterm-0.2.2-*` and run it again.
+>   `xattr -d com.apple.quarantine meshterm-0.2.3-*` and run it again.
 > - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
 >
 > Every release ships a `SHA256SUMS` file if you'd rather check the download first.
@@ -96,10 +96,10 @@ becomes just `meshterm` from anywhere.
 > MeshTerm uses that same folder. Set `MESHTERM_HOME` to try one in isolation:
 >
 > ```bash
-> MESHTERM_HOME=~/meshterm-test ./meshterm-0.2.2-*      # macOS, Linux
+> MESHTERM_HOME=~/meshterm-test ./meshterm-0.2.3-*      # macOS, Linux
 > ```
 > ```powershell
-> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.2.2-windows-x64.exe
+> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.2.3-windows-x64.exe
 > ```
 >
 > Same variable if you run two radios and want them kept apart.
