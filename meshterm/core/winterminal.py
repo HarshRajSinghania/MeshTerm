@@ -61,6 +61,45 @@ def own_command() -> list[str]:
     return [sys.executable, "-m", "meshterm", *sys.argv[1:]]
 
 
+def child_environment() -> dict[str, str]:
+    """The environment for a fresh launch of MeshTerm, minus this bundle's bookkeeping.
+
+    A PyInstaller one-file build runs in two stages: the executable unpacks itself into a
+    temporary directory and then runs itself again as a child, the two halves coordinating
+    through ``_PYI*`` environment variables. Those must not reach a *new* launch of the
+    executable. The bootloader would find them, conclude it is the second stage of a launch
+    it never made, check that its parent is the same program — find Windows Terminal
+    instead — and abort::
+
+        [PYI-33368:ERROR] Security validation failure: parent process has different
+        executable!
+
+    Which is the whole session gone, in a brand new window holding a message nobody can act
+    on, while the window that offered the move has already closed. Removing them makes the
+    new process a first stage, which is what it actually is.
+
+    Returns:
+        The environment to start the new process with.
+    """
+    environment = dict(os.environ)
+    environment[REOPENED_ENV] = "1"
+    if not getattr(sys, "frozen", False):
+        return environment
+
+    for key in [key for key in environment if key.startswith("_PYI")]:
+        del environment[key]
+    environment.pop("_MEIPASS2", None)  # the name older bootloaders used
+    # The bootloader points the loader at the unpacked bundle and parks the caller's own
+    # value beside it. The new process unpacks its own copy, so it wants the original.
+    for name in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"):
+        original = environment.pop(f"{name}_ORIG", None)
+        if original is not None:
+            environment[name] = original
+        else:
+            environment.pop(name, None)
+    return environment
+
+
 def reopen() -> bool:
     """Start this session again in Windows Terminal, in the same directory.
 
@@ -74,7 +113,6 @@ def reopen() -> bool:
     terminal = available()
     if terminal is None:
         return False
-    environment = dict(os.environ, **{REOPENED_ENV: "1"})
     try:
         # `--` ends wt's own option parsing, so MeshTerm's flags reach MeshTerm rather
         # than being read as Windows Terminal's (verified: `--mock` and `--profile x`
@@ -82,7 +120,7 @@ def reopen() -> bool:
         # on the command line depend on.
         subprocess.Popen(  # noqa: S603 - the argv is ours, not the reader's
             [terminal, "-d", os.getcwd(), "--", *own_command()],
-            env=environment,
+            env=child_environment(),
             close_fds=True,
         )
         return True

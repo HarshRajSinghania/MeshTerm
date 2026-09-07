@@ -17,6 +17,23 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-09-07
+
+### Fixed
+
+- **Accepting "reopen in Windows Terminal" killed the session** in the downloadable
+  builds. A new window opened, printed `Security validation failure: parent process has
+  different executable!`, and exited — while the window that made the offer had already
+  closed. Worse than never offering.
+
+  A one-file build unpacks itself and re-runs itself, the two halves coordinating through
+  private environment variables. Those were being handed to the new copy, which concluded
+  it was the second half of a launch it never made, checked that its parent was the same
+  program, found Windows Terminal instead, and stopped. They are stripped now.
+
+  It worked perfectly when run from source, which is the whole lesson: the packaged build
+  is its own platform.
+
 ## [0.2.5] — 2026-09-07
 
 ### Fixed

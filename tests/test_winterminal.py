@@ -73,3 +73,61 @@ def test_the_program_name_is_never_passed_on_as_an_argument(
     monkeypatch.setattr(sys, "executable", r"C:\meshterm.exe")
     monkeypatch.setattr(sys, "argv", [r"C:\some\other\name.exe"])
     assert winterminal.own_command() == [r"C:\meshterm.exe"]
+
+
+def test_the_bundles_own_bookkeeping_never_reaches_the_new_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug the frozen build found, and the only one the source build could not.
+
+    A PyInstaller one-file executable unpacks itself and re-runs itself, the two halves
+    talking through ``_PYI*`` variables. Passing those on made the reopened MeshTerm think
+    it was the second half of a launch it never made; it checked its parent, found Windows
+    Terminal, and killed itself with a bootloader error in a window that had just opened.
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", r"C:\Downloads\meshterm.exe")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "0")
+    monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI123")
+    monkeypatch.setenv("MESHTERM_HOME", r"C:\mine")
+
+    environment = winterminal.child_environment()
+
+    assert not [key for key in environment if key.startswith("_PYI")]
+    assert "_MEIPASS2" not in environment
+    assert environment["MESHTERM_HOME"] == r"C:\mine"  # the reader's own settings survive
+    assert environment[winterminal.REOPENED_ENV] == "1"
+
+
+def test_a_source_run_keeps_the_environment_it_was_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing is stripped when there is no bundle, so a dev run is passed through whole.
+
+    ``LD_LIBRARY_PATH`` is the one to watch: unfrozen it is the reader's, and dropping it
+    would change how the new process loads its libraries for no reason at all.
+    """
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/mine/lib")
+    assert winterminal.child_environment()["LD_LIBRARY_PATH"] == "/opt/mine/lib"
+
+
+def test_the_loader_path_the_bootloader_replaced_is_put_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bootloader points the loader at its own unpacked copy and parks the original.
+
+    The new process unpacks a bundle of its own, so it wants the value the reader started
+    with — and where there was none, none.
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEI999")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/mine/lib")
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/tmp/_MEI999")
+    monkeypatch.delenv("DYLD_LIBRARY_PATH_ORIG", raising=False)
+
+    environment = winterminal.child_environment()
+
+    assert environment["LD_LIBRARY_PATH"] == "/opt/mine/lib"
+    assert "LD_LIBRARY_PATH_ORIG" not in environment
+    assert "DYLD_LIBRARY_PATH" not in environment
