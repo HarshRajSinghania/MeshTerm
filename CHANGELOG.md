@@ -32,7 +32,15 @@ allowed to change behaviour, not just add to it.
 
 ### Added
 
-- **MeshTerm can install a font its charts will actually draw in.** The classic Windows
+- **MeshTerm offers to reopen itself in Windows Terminal.** The classic Windows console —
+  what you get from a double-click — can't show the emoji icons at all, whatever font it
+  is given: the only two Windows fonts with emoji in them are proportional, and a console
+  won't take one. A terminal is the only thing that fixes it, so MeshTerm now offers to
+  move there. One keypress, nothing installed, nothing changed — and you get the app as
+  it was drawn: icons, charts, path chips and all.
+
+- **MeshTerm can install a font its charts will actually draw in.** For anyone who stays
+  in the classic console. The classic Windows
   console does no font fallback at all, and none of the fonts it offers can draw braille
   — which every timeline and activity graph in MeshTerm is made of. Neither can Hack Nerd
   Font, JetBrains Mono, Fira Code, Source Code Pro, or even DejaVu Sans Mono; the usual
@@ -43,7 +51,8 @@ allowed to change behaviour, not just add to it.
   and anyone with Windows Terminal) it just switches to it. If not, it offers to install
   it for you: no administrator rights, nothing downloaded, 723 KB. Saying no explains
   what saying no looks like and asks once more; a second no is remembered and never
-  raised again. Preferences → Display → Console font changes your mind either way.
+  raised again. Preferences → Display → Console setup changes your mind about either
+  offer.
 
 ## [0.2.4] — 2026-09-07
 

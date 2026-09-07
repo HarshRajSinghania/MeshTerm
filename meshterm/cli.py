@@ -188,9 +188,11 @@ def main_callback(
     if ctx.invoked_subcommand is None:
         from .ui.menu import run_menu
 
-        # Before prompt_toolkit takes the screen, because this changes the console's own
-        # font and the full-screen frame should be drawn once, in whatever it ends up.
-        _offer_a_font_this_console_can_draw(console, prefs)
+        # Before prompt_toolkit takes the screen: this can change the console's own font,
+        # or hand the whole session to a better terminal, and the full-screen frame should
+        # be drawn once, in whatever it ends up in.
+        if _offer_a_console_that_can_draw_meshterm(console, prefs):
+            return
 
         # The interactive session is the one that holds the stores in memory and rewrites
         # them whole, so it is the one that claims the directory. One-shot subcommands are
@@ -219,13 +221,75 @@ def main_callback(
             raise
 
 
-def _offer_a_font_this_console_can_draw(console: Console, prefs: Preferences) -> None:
-    """On the classic Windows console, offer a font that can actually draw MeshTerm.
+def _offer_a_console_that_can_draw_meshterm(console: Console, prefs: Preferences) -> bool:
+    """On the classic Windows console, offer the reader something better than it.
 
-    That console does no font fallback: whatever its font lacks is a box, and its default
+    Two offers, in the order of how much they buy. **Windows Terminal** first, because it
+    is the only one that gets the whole app: emoji icons included, which no font can put
+    on the classic console — the only Windows fonts carrying emoji are proportional, and
+    a console will not take one. Then, for a reader who stays, **a font** that can at
+    least draw the charts and the marks.
+
+    Args:
+        console: The console to ask on.
+        prefs: The preference set, read for a previous refusal and written on a new one.
+
+    Returns:
+        ``True`` when the session is being reopened elsewhere and this one should stop.
+    """
+    from .ui.termfont import classic_console
+
+    if not classic_console() or prefs.get("console_setup") == "off":
+        return False
+    if _offer_windows_terminal(console):
+        return True
+    _offer_a_font_this_console_can_draw(console, prefs)
+    return False
+
+
+def _offer_windows_terminal(console: Console) -> bool:
+    """Offer to reopen the session in Windows Terminal, where the app looks like itself.
+
+    Asked with yes as the default, which is not how the font offer is asked: this one
+    changes nothing on the machine — no install, no setting, one new window — and it is
+    the only answer that gets the reader the app as it was drawn.
+
+    Args:
+        console: The console to ask on.
+
+    Returns:
+        Whether Windows Terminal was started and this session should stand down.
+    """
+    from .core import winterminal
+
+    if winterminal.available() is None:
+        return False
+
+    console.print()
+    console.print("[accent]•[/accent]  This is the classic Windows console, and it can only")
+    console.print("   draw part of MeshTerm — no icons, and no charts.")
+    console.print()
+    console.print("   [accent]Windows Terminal[/accent] draws all of it, and you have it.")
+    console.print("   MeshTerm can reopen itself there now. Nothing is installed")
+    console.print("   and nothing is changed; it is just a better window.")
+    console.print()
+    if not _asks_yes(console, "   Reopen in Windows Terminal? [Y/n] ", default=True):
+        return False
+    if winterminal.reopen():
+        console.print("[ok]✓[/ok]  Reopening in Windows Terminal.")
+        get_logger().info("reopened the session in Windows Terminal")
+        return True
+    console.print("[warn]⚠[/warn]  Windows Terminal would not start. Staying here.")
+    get_logger().warning("could not start Windows Terminal")
+    return False
+
+
+def _offer_a_font_this_console_can_draw(console: Console, prefs: Preferences) -> None:
+    """Offer a font that can at least draw the charts and marks, for a reader who stays.
+
+    The console does no font fallback: whatever its font lacks is a box, and its default
     — Consolas, or Lucida Console under Windows PowerShell — lacks most of what MeshTerm
     is drawn with, including every one of the 44 braille cells the timelines are made of.
-    Nothing at the app's end fixes that, so this is the one thing left to offer.
 
     Two shapes, depending on what is already there: a machine with Windows Terminal (and
     every Windows 11 machine) already has Cascadia, so the offer is only to *use* it; a
@@ -234,17 +298,15 @@ def _offer_a_font_this_console_can_draw(console: Console, prefs: Preferences) ->
     Declining is answered with a plain description of what declining looks like, and then
     asked once more — a reader who has never seen the app has no way to know what "some
     glyphs may not render" is going to mean. A second decline is remembered, in the
-    ``console_font`` preference, so the question is asked twice in total and never again.
+    ``console_setup`` preference, so the question is asked twice in total and never again.
 
     Args:
         console: The console to ask on.
         prefs: The preference set, read for a previous refusal and written on a new one.
     """
     from .core import consolefont
-    from .ui.termfont import classic_console, face_draws_charts, installed_chart_font
+    from .ui.termfont import face_draws_charts, installed_chart_font
 
-    if not classic_console() or prefs.get("console_font") == "off":
-        return
     if face_draws_charts(consolefont.current_face()):
         return
 
@@ -281,14 +343,14 @@ def _offer_a_font_this_console_can_draw(console: Console, prefs: Preferences) ->
             _use_a_better_console_font(console, installed)
             return
 
-    prefs.set("console_font", "off")
+    prefs.set("console_setup", "off")
     try:
         prefs.save()
     except (OSError, RuntimeError) as exc:  # a read-only config dir is not fatal here
-        get_logger().warning("could not remember the console font choice: %s", exc)
+        get_logger().warning("could not remember the console setup choice: %s", exc)
     console.print()
     console.print("[muted]   Leaving it as it is. Change your mind on the Preferences[/muted]")
-    console.print("[muted]   page, under Display → Console font.[/muted]")
+    console.print("[muted]   page, under Display → Console setup.[/muted]")
     console.print()
 
 
@@ -316,26 +378,30 @@ def _use_a_better_console_font(console: Console, installed: str | None) -> None:
         get_logger().warning("console refused the font %s", face)
 
 
-def _asks_yes(console: Console, prompt: str) -> bool:
-    """Ask a yes/no question on the console, defaulting to no.
+def _asks_yes(console: Console, prompt: str, *, default: bool = False) -> bool:
+    """Ask a yes/no question on the console.
 
     Not a TUI dialog: this runs before prompt_toolkit owns the screen, alongside the other
-    plain-console reports here. An unanswerable prompt — no stdin, a closed pipe — reads as
-    "no", which is the answer that changes nothing.
+    plain-console reports here. An unanswerable prompt — no stdin, a closed pipe — takes
+    the default, and each caller's default is the answer that costs the reader least.
 
     Args:
         console: The console to ask on.
         prompt: The question, ending in its own spacing.
+        default: The answer an empty line means, and the one an unreadable stdin takes.
 
     Returns:
         Whether the reader said yes.
     """
     console.print(prompt, end="")
     try:
-        return input().strip().lower() in {"y", "yes"}
+        answer = input().strip().lower()
     except (EOFError, KeyboardInterrupt, OSError):
         console.print()
-        return False
+        return default
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
 
 
 def _report_log_location(console: Console, config_dir: Path) -> None:
