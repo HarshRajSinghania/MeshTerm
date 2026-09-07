@@ -9,6 +9,8 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-07
+
 ### Fixed
 
 - The formatter is pinned. `ruff>=0.4` meant CI installed a newer ruff than a laptop had,
@@ -81,5 +83,6 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.0
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.1
+[0.2.0]: https://github.com/jpmartineau/MeshTerm/tree/v0.2.0
