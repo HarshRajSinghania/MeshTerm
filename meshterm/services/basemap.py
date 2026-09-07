@@ -52,13 +52,22 @@ from collections.abc import Container
 from pathlib import Path
 from typing import NamedTuple
 
+from .. import __version__
 from ..core.mvt import Layer, decode_tile, dumps_layers, loads_layers
 
 #: OpenFreeMap planet TileJSON — its ``tiles`` array holds the current versioned template.
 DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
 
-#: Sent on every request; identifies the client per common tile-usage etiquette.
-_USER_AGENT = "MeshTerm/0.1 (+https://github.com/; mesh node map)"
+#: Sent on every tile request. OpenFreeMap asks for no API key, so the user agent is the
+#: only thing telling one client from another — which is how an operator reaches whoever is
+#: costing them bandwidth, and why a stub URL or a version that has drifted is worse than
+#: none at all. The version is the package's own :data:`~meshterm.__version__` rather than
+#: an ``importlib.metadata`` lookup: MeshTerm is routinely run straight from a checkout
+#: (this repo's venv, the PicoCalc's deploy) with no installed distribution to read, so the
+#: metadata call would be the one that raises, and it would be a second version to keep in
+#: step with the first. Built once at import because it never changes and cannot fail —
+#: the tile path is no place to discover either.
+_USER_AGENT = f"MeshTerm/{__version__} (+https://github.com/jpmartineau/MeshTerm; mesh node map)"
 
 #: Fallback max tile zoom if the TileJSON doesn't declare one (OpenFreeMap serves 14).
 _DEFAULT_MAX_ZOOM = 14

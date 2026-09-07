@@ -12,6 +12,8 @@ import asyncio
 import io
 import os
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
@@ -724,6 +726,76 @@ def test_the_ghost_ground_is_dropped_once_it_says_nothing() -> None:
 
 
 # -- basemap source (offline behaviour) ---------------------------------------
+
+
+def test_basemap_user_agent_is_contactable() -> None:
+    """The tile user agent names a repository that exists and the version actually running.
+
+    OpenFreeMap issues no API key, so this string is the whole of what a tile operator has
+    to tell one client from another and to reach whoever is costing them bandwidth. It read
+    ``MeshTerm/0.1 (+https://github.com/; mesh node map)`` — a host nobody can visit, and a
+    number that was already wrong — which is the shape of traffic that gets a project
+    blocked rather than emailed.
+    """
+    from meshterm import __version__
+    from meshterm.services.basemap import _USER_AGENT
+
+    assert _USER_AGENT == (
+        f"MeshTerm/{__version__} (+https://github.com/jpmartineau/MeshTerm; mesh node map)"
+    )
+    assert "https://github.com/;" not in _USER_AGENT, "the stub URL is back"
+    assert "mesh node map" in _USER_AGENT, "the operator can no longer tell what the traffic is"
+
+
+def test_basemap_sends_its_user_agent_on_every_fetch(tmp_path: Path) -> None:
+    """The string is not decoration: it rides the header of the request that leaves."""
+    from meshterm.services import basemap as basemap_mod
+
+    src = _offline_source(tmp_path / "cache")
+    seen: list[urllib.request.Request] = []
+
+    def _urlopen(req: urllib.request.Request, timeout: float | None = None):
+        seen.append(req)
+        raise urllib.error.URLError("no network in tests")
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = _urlopen  # type: ignore[assignment]
+    try:
+        assert src._http_get("http://tiles.invalid/x") == basemap_mod._Response(False, b"")
+    finally:
+        urllib.request.urlopen = original  # type: ignore[assignment]
+
+    assert seen, "no request was ever built"
+    assert seen[0].get_header("User-agent") == basemap_mod._USER_AGENT
+
+
+def test_basemap_user_agent_needs_no_installed_distribution() -> None:
+    """Importing the module must not depend on package metadata being on disk.
+
+    MeshTerm is run straight from a checkout as often as from a wheel — this repo's own
+    venv and the PicoCalc's deploy both are — so a version read through
+    ``importlib.metadata`` would raise :class:`PackageNotFoundError` on the tile path in
+    exactly the setups it is developed in. The version comes from the package instead, and
+    this pins that: with the metadata lookup made to fail outright, the module still
+    imports and still carries a real version.
+    """
+    import importlib
+    import importlib.metadata
+
+    from meshterm import __version__
+    from meshterm.services import basemap as basemap_mod
+
+    def _raise(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    original = importlib.metadata.version
+    importlib.metadata.version = _raise  # type: ignore[assignment]
+    try:
+        reloaded = importlib.reload(basemap_mod)
+        assert f"MeshTerm/{__version__}" in reloaded._USER_AGENT
+    finally:
+        importlib.metadata.version = original  # type: ignore[assignment]
+        importlib.reload(basemap_mod)
 
 
 def test_basemap_source_offline_is_graceful(tmp_path: Path) -> None:
