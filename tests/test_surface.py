@@ -130,8 +130,10 @@ async def test_message_dialog_floats_over_a_blank_backdrop_end_to_end() -> None:
 
 
 async def test_confirm_floats_over_an_existing_popup_end_to_end() -> None:
-    """A confirm opened over a floating detail popup renders and resolves — the render
-    loop runs the multi-layer float pool for real (base + detail + confirm), the case
+    """A confirm floats over an existing popup, end to end.
+
+    Opened over a floating detail popup, it renders and resolves: the render loop runs
+    the multi-layer float pool for real (base + detail + confirm), which is the case
     the old single-float compositor stretched the detail to full-frame.
     """
     from prompt_toolkit.input.defaults import create_pipe_input

@@ -382,8 +382,9 @@ def test_contact_share_url_defaults_to_companion_type() -> None:
 
 
 async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
-    """The share popup is one floating view: a scannable QR code over the raw
-    ``meshcore://`` link, titled with the node's name.
+    """The contact card pops a QR code over its link, in one floating view.
+
+    A scannable code above the raw ``meshcore://`` link, titled with the node's name.
     """
     from types import SimpleNamespace
 

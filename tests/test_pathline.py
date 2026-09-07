@@ -61,8 +61,9 @@ def _char_styles(text) -> list[tuple[str, str]]:  # noqa: ANN001
 
 
 def test_plain_mode_matches_the_app_wide_arrow_presentation() -> None:
-    """Names in their key hue, us white, keyless muted, arrows muted — the
-    ``path_text`` look, reproduced exactly.
+    """Plain mode reproduces the app-wide ``path_text`` look exactly.
+
+    Names in their key hue, us white, keyless muted, arrows muted.
     """
     line = PathLine(
         [
@@ -81,7 +82,9 @@ def test_plain_mode_matches_the_app_wide_arrow_presentation() -> None:
 
 
 def test_plain_mode_annotation_dim_and_custom_separator() -> None:
-    """The trace ``(3d)`` note rides muted; a dim hop (and the arrow into it) fades;
+    """Annotations, dimming, and a caller's own separator all survive plain mode.
+
+    The trace ``(3d)`` note rides muted; a dim hop (and the arrow into it) fades;
     a surface's own separator — the mesh walk trail's ``›`` — passes straight through.
     """
     line = PathLine(
@@ -109,9 +112,11 @@ def test_empty_path_reads_as_the_callers_word() -> None:
 
 
 def test_chips_are_joined_by_one_interlocked_chevron() -> None:
-    """A seam is one cell, not two: the previous chip's point laid *on* the next chip's
-    fill, so the route reads as a ribbon whose segments meet on a chevron. The closing
-    edge keeps its lone taper — nothing follows it to lay the point on.
+    """A seam is one cell, not two.
+
+    The previous chip's point is laid *on* the next chip's fill, so the route reads as
+    a ribbon whose segments meet on a chevron. The closing edge keeps its lone taper —
+    nothing follows it to lay the point on.
     """
     alice_fill = node_style("aa").split()[-1]
     line = PathLine(
@@ -125,8 +130,9 @@ def test_chips_are_joined_by_one_interlocked_chevron() -> None:
 
 
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
-    """Chips change colours and separators, never the words; an explicit style
-    override (hex or theme name) becomes the chip fill.
+    """Chips change colours and separators, never the words.
+
+    An explicit style override (hex or theme name) becomes the chip fill.
     """
     hops = [PathHop("Hub", key="3d", annotation="3d"), PathHop("you", you=True)]
     plain = PathLine(hops, mode="plain").text().plain
@@ -148,8 +154,9 @@ def test_auto_mode_follows_the_terminal_verdict(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
-    """The composer's insertion point is a slot *in* the route, not a gap between two
-    hops: it renders as a hop, so chips stay chips and arrows stay arrows.
+    """The composer's insertion point is a slot *in* the route, not a gap between hops.
+
+    It renders as a hop, so chips stay chips and arrows stay arrows.
     """
     hops = [PathHop("a"), PathHop(CURSOR_GLYPH, cursor=True), PathHop("b")]
     plain = PathLine(hops, mode="plain").text()
@@ -163,8 +170,10 @@ def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
 
 
 def test_ellipsized_elides_the_middle_and_keeps_both_endpoints() -> None:
-    """A route reads origin and destination first, so the fit drops middle hops
-    behind ``⋯`` — never the tail a right-edge truncation would amputate.
+    """The fit drops middle hops behind ``⋯`` and keeps both endpoints.
+
+    A route reads origin and destination first, so the tail a right-edge truncation
+    would amputate is exactly what must survive.
     """
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF")]
     line = PathLine(hops, mode="plain")
@@ -177,8 +186,10 @@ def test_ellipsized_elides_the_middle_and_keeps_both_endpoints() -> None:
 
 
 def test_ellipsized_eats_the_head_when_told_to() -> None:
-    """A breadcrumb's news is where the walk *is*, so ``ELIDE_HEAD`` spares the origin
-    nothing: the fit keeps as much of the tail as the width holds, behind a ``⋯``.
+    """``ELIDE_HEAD`` spares the origin nothing and keeps the tail instead.
+
+    A breadcrumb's news is where the walk *is*, so the fit keeps as much of the tail
+    as the width holds, behind a ``⋯``.
     """
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF")]
     line = PathLine(hops, mode="plain")
@@ -208,9 +219,10 @@ def _chips() -> PathLine:
 
 
 def test_cut_to_cracks_a_chip_in_its_own_fill_instead_of_ellipsizing() -> None:
-    """A chip caught by the cut breaks off on the half block, coloured by the very chip
-    it shears — the crack reads as a segment that continues, where ``…`` would claim a
-    word was shortened.
+    """A chip caught by the cut breaks off on a half block in its own fill.
+
+    The crack reads as a segment that continues, where ``…`` would claim a word was
+    shortened.
     """
     full = _chips().text()
     fitted = cut_to(full, 14)
@@ -223,8 +235,10 @@ def test_cut_to_cracks_a_chip_in_its_own_fill_instead_of_ellipsizing() -> None:
 
 
 def test_cut_to_leaves_arrow_lines_on_the_ellipsis() -> None:
-    """Only chips crack: an arrow line has no fill to shear, so shortening it is exactly
-    what happened and the classic mark still says so.
+    """Only chips crack; an arrow line keeps the ellipsis.
+
+    It has no fill to shear, so shortening is exactly what happened, and the classic
+    mark still says so.
     """
     fitted = cut_to(PathLine(_chips().hops, mode="plain").text(), 10)
     assert fitted.cell_len <= 10
@@ -233,8 +247,9 @@ def test_cut_to_leaves_arrow_lines_on_the_ellipsis() -> None:
 
 
 def test_cut_mark_mirrors_itself_and_reads_the_visible_side() -> None:
-    """The head mark is the tail's mirror, and each takes the fill of the nearest cell
-    still *drawn* — scanning back for a tail cut, forward for a head cut.
+    """The head mark is the tail's mirror, and each takes the nearest drawn cell's fill.
+
+    That means scanning back for a tail cut, and forward for a head cut.
     """
     full = _chips().text()
     body = full.plain.index("AAAA")  # inside the first chip, either way you scan
@@ -250,8 +265,10 @@ def test_cut_mark_mirrors_itself_and_reads_the_visible_side() -> None:
 
 
 def test_cut_mark_falls_back_to_the_ellipsis_off_a_chip() -> None:
-    """An arrow line asks the same question and gets the muted ``…`` — the fallback is
-    the whole mode test, so no caller has to know which mode drew the line.
+    """Off a chip, the same question answers with the muted ``…``.
+
+    The fallback is the whole mode test, so no caller has to know which mode drew the
+    line.
     """
     arrows = PathLine(_chips().hops, mode="plain").text()
     for side in (ELIDE_HEAD, ELIDE_TAIL):
@@ -284,16 +301,20 @@ def test_the_elision_sits_between_chips_rather_than_being_one() -> None:
 
 
 def test_elision_hop_is_the_one_definition_both_surfaces_share() -> None:
-    """The widget and the mesh walk's trail elide with the same mark *and* the same
-    gap semantics, so a head the widget hid reads as a tail the scroll hid.
+    """One elision definition serves both surfaces.
+
+    The widget and the mesh walk's trail elide with the same mark *and* the same gap
+    semantics, so a head the widget hid reads as a tail the scroll hid.
     """
     mark = elision_hop()
     assert (mark.label, mark.gap, mark.dim) == ("⋯", True, True)
 
 
 def test_wrapped_cracks_an_over_wide_lone_chip() -> None:
-    """The one place a chip line is cut mid-hop rather than folded: a hop wider than the
-    content column stands alone, cracked, still inside the budget.
+    """A chip wider than the content column is cracked rather than folded.
+
+    It is the one place a chip line is cut mid-hop: the hop stands alone, cracked, and
+    still inside the budget.
     """
     lines = PathLine([PathHop("N" * 40, key="11aa")], mode="powerline").wrapped(20)
     assert len(lines) == 1
@@ -302,8 +323,10 @@ def test_wrapped_cracks_an_over_wide_lone_chip() -> None:
 
 
 def test_wrapped_breaks_at_hops_under_a_hanging_indent() -> None:
-    """Plain lines that continue end with the ``→`` cue; continuations hang at the
-    indent, stepped in by :data:`WRAP_OFFSET`; every line respects the full width.
+    """A wrapped plain path breaks at hops, under a hanging indent.
+
+    Lines that continue end with the ``→`` cue; continuations hang at the indent,
+    stepped in by :data:`WRAP_OFFSET`; every line respects the full width.
     """
     hops = [PathHop(label) for label in ("AAAA", "BBBB", "CCCC", "DDDD")]
     lines = PathLine(hops, mode="plain").wrapped(16, indent=2)
@@ -396,8 +419,10 @@ def test_wrapped_lines_always_fit_their_width() -> None:
 
 
 def test_wrapped_continuation_cue_follows_the_separator() -> None:
-    """A comma-joined line (the trace screen's wire spec) continues on a comma, not an
-    arrow — the cue is the separator's own mark, so the spec stays verbatim.
+    """The continuation cue is the separator's own mark, not always an arrow.
+
+    A comma-joined line (the trace screen's wire spec) continues on a comma, so the
+    spec stays verbatim.
     """
     hops = [PathHop(label) for label in ("3d63ab99", "7f21cd01", "27aa1122")]
     lines = PathLine(hops, mode="plain", separator=",").wrapped(20, indent=2)
@@ -407,9 +432,10 @@ def test_wrapped_continuation_cue_follows_the_separator() -> None:
 
 
 def test_path_line_factory_matches_path_text_character_for_character() -> None:
-    """The migration bridge: the trace flavour — device endpoints with annotated
-    hashes, a named hop, a prefix-lit unnamed hop, a dimmed tail — renders through
-    ``path_line`` exactly as ``path_text`` renders it, character and style alike.
+    """``path_line`` renders the trace flavour exactly as ``path_text`` did.
+
+    The migration bridge: device endpoints with annotated hashes, a named hop, a
+    prefix-lit unnamed hop, and a dimmed tail, matching character and style alike.
     """
     names = {"aa11bb": "Alice", "3d63ab": "Hub"}
     hops = [None, "aa11bb", "77ccddee", "3d63ab", None]
@@ -423,8 +449,10 @@ def test_path_line_factory_matches_path_text_character_for_character() -> None:
 
 
 def test_path_line_factory_matches_path_text_hash_as_name_flavour() -> None:
-    """The message-paths flavour: an unnamed hop standing as its own muted identity
-    hash, annotated with its addressed byte — same parity guarantee.
+    """The message-paths flavour matches ``path_text`` too.
+
+    An unnamed hop stands as its own muted identity hash, annotated with its addressed
+    byte — the same parity guarantee.
     """
     names = {"3d63abcdef00": "Hub"}
     hops = ["3d63abcdef00", "e839f2aabb11"]
@@ -436,8 +464,10 @@ def test_path_line_factory_matches_path_text_hash_as_name_flavour() -> None:
 
 
 def test_path_line_factory_splices_the_cursor_slot_at_a_hop_index() -> None:
-    """``cursor`` names the position a chosen hop would take, counted over the rendered
-    hops and applied after them — so the slot never shifts what its neighbours show.
+    """``cursor`` splices the insertion slot in at a hop index.
+
+    It names the position a chosen hop would take, counted over the rendered hops and
+    applied after them, so the slot never shifts what its neighbours show.
     """
     hops = [None, "aa11bb", "3d63ab", None]
 
@@ -452,8 +482,10 @@ def test_path_line_factory_splices_the_cursor_slot_at_a_hop_index() -> None:
 
 
 def test_wrapped_carries_the_cursor_like_any_other_hop() -> None:
-    """A folded route can't strand its insertion point: the slot is a hop, so it lands
-    on a line of its own accord — wherever it stands, and whatever the mode.
+    """A folded route can't strand its insertion point.
+
+    The slot is a hop, so it lands on a line of its own accord — wherever it stands,
+    and whatever the mode.
     """
     labels = ("AAAA", "BBBB", "CCCC", "DDDD")
     for at in range(len(labels) + 1):
@@ -467,10 +499,12 @@ def test_wrapped_carries_the_cursor_like_any_other_hop() -> None:
 
 
 def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
-    """Chip wrapping never splits a chip; every line ends on the pointed edge, and
-    every line *but the first* opens on the break's other half — the point notched out
-    of its own fill in reverse video, so the page shows through and not a trace of the
-    line above bleeds down. The point always faces the way the path flows.
+    """Chip wrapping never splits a chip; each line opens on the break it continues.
+
+    Every line ends on the pointed edge, and every line *but the first* opens on the
+    break's other half — the point notched out of its own fill in reverse video, so the
+    page shows through and not a trace of the line above bleeds down. The point always
+    faces the way the path flows.
     """
     hops = [PathHop(label, key=key) for label, key in
             (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))]
@@ -490,7 +524,9 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
 
 
 def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) -> None:  # noqa: ANN001
-    """A full Nerd Font rounds the path's two *outer* ends into a lozenge; a core-only
+    """Rounded caps finish a path only where the font actually has them.
+
+    A full Nerd Font rounds the path's two *outer* ends into a lozenge; a core-only
     terminal squares the opening and points the close, never drawing tofu. Interior
     breaks stay angled either way — a rounded end would read as the path stopping.
     """
@@ -515,8 +551,10 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
 
 
 def test_a_seam_between_two_of_one_colour_falls_back_to_the_page() -> None:
-    """The interlock can't draw a chevron in its own background, so where two chips land
-    on the same fill the point drops its background and the page cuts the wedge instead.
+    """Where two chips land on the same fill, the seam falls back to the bare page.
+
+    The interlock can't draw a chevron in its own background, so the point drops its
+    background and the page cuts the wedge instead.
 
     Not a rare accident, either: a mirrored return leg is a run of identically faded hops
     by construction, and a stretch of keyless hops shares one grey. Either way it stays a
@@ -540,10 +578,11 @@ def test_a_seam_between_two_of_one_colour_falls_back_to_the_page() -> None:
 
 
 def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
-    """``bare_self`` replaces our name and hash with the app-wide ★ at both ends, and
-    both fade: setting out from us and landing back on us are fixtures of the route,
-    not choices, so they wear the same automatic grey as a mirrored return leg —
-    and, in chips, the same dark slate rather than the loud you white.
+    """``bare_self`` stands us on a ★ at both ends, and fades both.
+
+    Setting out from us and landing back on us are fixtures of the route, not choices,
+    so they wear the same automatic grey as a mirrored return leg — and, in chips, the
+    same dark slate rather than the loud you white.
     """
     hops = [None, *(f"{i:02x}aa" for i in range(6)), None]
     line = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,

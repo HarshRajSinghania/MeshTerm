@@ -1198,8 +1198,10 @@ def _scenario_topo() -> object:
 
 
 def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
-    """The pathline draws the whole boomerang leg, not just the stored intermediate
-    hops — our own end bare, since every candidate starts from us.
+    """A scenario path leads and ends with us and the target.
+
+    The pathline draws the whole boomerang leg, not just the stored intermediate hops,
+    with our own end bare since every candidate starts from us.
     """
     topo = _scenario_topo()
     scenario = PathScenario(

@@ -135,10 +135,12 @@ def test_bare_text_default_emoji_are_left_exactly_as_measured() -> None:
 
 
 def test_flags_measure_two_cells_in_both_authorities() -> None:
-    """A country flag is a Regional Indicator pair: prompt_toolkit's wcwidth calls it four
-    cells, Rich and the terminal draw it as one two-cell glyph. Narrowing the indicators as a
-    category makes every flag sum to two in both authorities — no per-country allowlist entry,
-    and flags sharing an indicator (🇨🇦 / 🇨🇳) are all fixed at once.
+    """A country flag measures two cells in both width authorities.
+
+    A flag is a Regional Indicator pair: prompt_toolkit's wcwidth calls it four cells,
+    while Rich and the terminal draw it as one two-cell glyph. Narrowing the
+    indicators as a category makes every flag sum to two in both — no per-country
+    allowlist entry, and flags sharing an indicator (🇨🇦 / 🇨🇳) are fixed at once.
     """
     # Only the lone-emoji allowlist is passed; flags are handled by category, not by listing.
     cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
@@ -192,8 +194,10 @@ def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> N
 
 
 def test_calibrate_width2_narrows_nothing_but_still_joins_clusters(monkeypatch) -> None:
-    """On a terminal that draws emoji two wide, narrowing would itself break the border — but
-    a joined sequence is over-measured at *every* width, so that one correction still lands.
+    """A width-2 terminal narrows nothing, but still gets the cluster join.
+
+    Narrowing would itself break the border there — but a joined sequence is
+    over-measured at *every* width, so that one correction still lands.
 
     prompt_toolkit sums a ZWJ sequence's codepoints wherever it runs, which no terminal draws:
     the family is one two-cell glyph on the widest terminal as surely as on the narrowest. So

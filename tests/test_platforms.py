@@ -1,5 +1,7 @@
-"""The platform seam: resolution order, the active-platform singleton, and the two
-platform specs' own sanity (PicoCalc is strictly the narrower, plainer flavour).
+"""Tests for the platform seam.
+
+Resolution order, the active-platform singleton, and the two platform specs' own
+sanity — PicoCalc being strictly the narrower, plainer flavour.
 """
 
 from __future__ import annotations

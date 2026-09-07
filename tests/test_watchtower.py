@@ -203,8 +203,10 @@ def test_store_round_trips_node_type(tmp_path: Path) -> None:
 
 
 def test_watched_row_type_glyph_and_hued_name(tmp_path: Path) -> None:
-    """The watchlist row leads with the shared type glyph (own colour) and hues the
-    name by the entry's key; silence still reads from the trailing tail.
+    """A watched row leads with its type glyph and hues the name by key.
+
+    The glyph keeps its own colour and the name takes the entry's key-derived hue;
+    silence still reads from the trailing tail.
     """
     from meshterm.core.watch_store import WatchedNode
     from meshterm.ui.theme import name_style

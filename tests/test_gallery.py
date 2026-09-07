@@ -1,5 +1,7 @@
-"""The dual-platform gallery: every screen the interactive menu can open, checked for
-width discipline under both flavours this app runs as.
+"""The dual-platform gallery.
+
+Every screen the interactive menu can open, checked for width discipline under both
+flavours this app runs as.
 
 Each entry below builds one full-screen :class:`~meshterm.ui.tui.screen.Screen` against
 hand-built (simulator-shaped) data — the same "fake session, real screen" approach every
@@ -94,8 +96,10 @@ _FAR_KEY = "f2c24f54551e" + "0" * 52
 
 
 class _GallerySession:
-    """A minimal TuiSession stand-in every gallery screen is happy with (the same shape
-    each screen's own test file rolls independently as ``_FakeSession``/``_StubSession``).
+    """A minimal TuiSession stand-in every gallery screen is happy with.
+
+    The same shape each screen's own test file rolls independently as ``_FakeSession``
+    or ``_StubSession``.
     """
 
     def __init__(self, cols: int = 80, rows: int = 24) -> None:

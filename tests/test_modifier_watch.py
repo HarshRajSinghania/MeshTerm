@@ -22,8 +22,11 @@ def test_shift_down_reflects_the_raw_flag() -> None:
 
 
 def test_shift_bank_key_latches_over_the_release_flicker(monkeypatch) -> None:
-    """An F6-F10 press keeps the lane's shifted read for a grace window, even if the raw
-    watcher (wrongly, per the MCU quirk) reports Shift already back up.
+    """A shift-bank key latches over the release flicker.
+
+    An F6-F10 press keeps the lane's shifted read for a grace window, even if the raw
+    watcher reports Shift already back up — which, per the MCU quirk, it may do
+    wrongly.
     """
     _reset()
     try:

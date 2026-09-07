@@ -1,5 +1,7 @@
-"""Repeater-admin tests: the settings catalog, the per-node store, the simulated
-remote CLI, and the command-line screen's readline behavior.
+"""Tests for repeater admin.
+
+The settings catalog, the per-node store, the simulated remote CLI, and the
+command-line screen's readline behavior.
 """
 
 from __future__ import annotations

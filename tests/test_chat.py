@@ -515,8 +515,10 @@ def test_title_leads_with_openness_glyph(repo: Repository) -> None:
 
 
 def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> None:
-    """A contact's dot fills ● once we've talked, hollow ○ before — companion pink both
-    ways — while the name itself carries the contact's key-derived hue.
+    """The title's contact dot reflects whether there is history with them.
+
+    It fills ● once we've talked and is hollow ○ before, companion pink both ways,
+    while the name itself carries the contact's key-derived hue.
     """
     from meshterm.tools.chat import _COMPANION_DOT_STYLE
     from meshterm.ui.theme import node_style
@@ -824,8 +826,10 @@ def test_byte_counter_shows_used_over_limit_and_colors_only_used() -> None:
 
 
 def test_byte_counter_stays_bottom_right_when_the_compose_wraps() -> None:
-    """A compose line long enough to wrap keeps the counter pinned to the last line's
-    right edge — not trailing the cursor down onto the second row.
+    """The byte counter stays bottom-right when the compose line wraps.
+
+    It stays pinned to the last line's right edge, rather than trailing the cursor
+    down onto the second row.
     """
     screen = _screen(_StubSession(), send=None)
     text = "this is a long compose line that certainly wraps onto several rows here ok"
@@ -1772,8 +1776,10 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
 
 
 async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:
-    """Del on a contacted thread: red destructive confirm, history gone, unread cleared,
-    and the rebuilt rows show the thread hollow (no longer deletable).
+    """Del on a contacted thread deletes its history, behind a red confirm.
+
+    The confirm is the destructive one; afterwards the history is gone, unread is
+    cleared, and the rebuilt rows show the thread hollow and no longer deletable.
     """
     from types import SimpleNamespace
 

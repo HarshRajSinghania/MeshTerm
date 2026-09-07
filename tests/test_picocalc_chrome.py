@@ -149,8 +149,11 @@ def test_bordered_frame_is_unchanged_on_regular() -> None:
 
 
 def test_picocalc_header_brands_the_app_not_the_device() -> None:
-    """The header_atoms wiring, per JP's spec: picocalc shows ``MeshTerm vX`` (a soldered
-    radio's port never changes, so the device segment earns nothing), regular keeps both.
+    """The PicoCalc header brands the app, not the device.
+
+    Per JP's spec for the ``header_atoms`` wiring: picocalc shows ``MeshTerm vX``,
+    because a soldered radio's port never changes and so the device segment earns
+    nothing. Regular keeps both.
     """
     from meshterm.ui.menu import _header_segments
 

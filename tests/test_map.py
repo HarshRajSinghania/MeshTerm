@@ -1295,9 +1295,11 @@ def test_map_tile_cache_keeps_the_absent_tile_markers() -> None:
 
 
 class _CapturingSession(_StubSession):
-    """Drives :func:`open_map` headless: captures the pushed screen, renders it once, then
-    replays a canned key sequence — so a test can assert on where the map opened and what
-    it did (or didn't) persist as the view moves.
+    """Drives :func:`open_map` headless, so a test can watch what it does.
+
+    Captures the pushed screen, renders it once, then replays a canned key sequence —
+    which is enough to assert on where the map opened and what it did (or didn't)
+    persist as the view moves.
     """
 
     def __init__(self, cols: int, rows: int, keys: tuple[str, ...] = ()) -> None:
@@ -1487,7 +1489,9 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
 
 
 def test_map_shifted_vertical_arrows_survive_the_console_keymap(monkeypatch) -> None:
-    """Shift+↑ arrives as PgUp on the PicoCalc console; with Shift physically down it
+    """Shifted vertical arrows survive the console keymap flattening them.
+
+    Shift+↑ arrives as PgUp on the PicoCalc console; with Shift physically down it
     must fine-pan, not zoom — and plain PgUp (the F-lane's zoom) stays a zoom.
     """
     from meshterm.services import modifier_watch
@@ -1646,9 +1650,11 @@ def test_map_screen_restores_and_persists_view() -> None:
 async def test_open_map_focus_centres_on_the_node_without_clobbering_the_saved_view(
     ctx, monkeypatch
 ) -> None:
-    """Opening the full map focused on a node (from its detail page) centres there, at the
-    inline preview's zoom — and, being a transient peek, never overwrites the persisted
-    'where you left the map' global view, even as the peek is panned and zoomed.
+    """A focused map centres on its node without clobbering the saved view.
+
+    Opening the full map from a node's detail page centres there at the inline
+    preview's zoom and, being a transient peek, never overwrites the persisted "where
+    you left the map" global view — even as the peek is panned and zoomed.
     """
     from meshterm.core.geo import clamp_lat
     from meshterm.ui.map_render import MapMarker
@@ -1679,8 +1685,9 @@ async def test_open_map_focus_centres_on_the_node_without_clobbering_the_saved_v
 async def test_open_map_without_focus_restores_and_persists_the_global_view(
     ctx, monkeypatch
 ) -> None:
-    """With no focus the full map is unchanged: it reopens where the user left it and pans
-    persist straight back to that global view.
+    """With no focus, the full map restores and persists the global view.
+
+    It reopens where the user left it, and pans persist straight back to that view.
     """
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import open_map
@@ -1752,8 +1759,10 @@ def test_map_observation_round_trips_node_type(ctx) -> None:
 
 
 def test_render_map_labels_take_the_name_hue_ours_white() -> None:
-    """Node labels carry their key-derived hue; our own label is white while the
-    ★ glyph stays yellow; a keyless label lands on the muted grey.
+    """Map labels take the node hue, and ours takes the you white.
+
+    Our own label is white while the ★ glyph stays yellow, and a keyless label lands
+    on the muted grey.
     """
     from meshterm.ui.map_render import _SELF, MapMarker, render_map
     from meshterm.ui.widgets import name_rgb

@@ -192,8 +192,10 @@ def test_select_callable_title_re_renders_live() -> None:
 
 
 def test_select_width_aware_title_fits_itself_to_the_row() -> None:
-    """A title taking the render width fits itself (a route middle-elides); the natural
-    form still feeds filtering and the dialog's own width measure.
+    """A width-aware title fits itself to the row it is drawn on.
+
+    A route middle-elides, while the natural form still feeds filtering and the
+    dialog's own width measure.
     """
     seen: list[int] = []
 
@@ -211,10 +213,11 @@ def test_select_width_aware_title_fits_itself_to_the_row() -> None:
 
 
 def test_select_row_cracks_a_chip_path_and_ellipsizes_everything_else() -> None:
-    """A row too wide for the list is *cut*, not truncated: a row carrying a path line
-    (a trophy walk, a probe candidate) breaks its chip off on the crack, while an
-    ordinary prose row keeps the ellipsis. The row itself decides which — the list has
-    no idea it is ever holding a route.
+    """A row too wide for the list is cut, not truncated.
+
+    A row carrying a path line (a trophy walk, a probe candidate) breaks its chip off
+    on the crack, while an ordinary prose row keeps the ellipsis. The row itself
+    decides which — the list has no idea it is ever holding a route.
     """
     route = PathLine(
         [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(8)], mode="powerline"
@@ -228,8 +231,10 @@ def test_select_row_cracks_a_chip_path_and_ellipsizes_everything_else() -> None:
 
 
 def test_select_hscroll_highlight_keeps_the_natural_row() -> None:
-    """In an hscroll list the highlighted row skips self-fitting — ←→ slide the full
-    line — while every other row still elides itself to the width.
+    """In an hscroll list the highlighted row keeps its natural, unfitted text.
+
+    ←→ slide the full line there, while every other row still elides itself to the
+    width.
     """
 
     def fitted(width: int) -> str:
@@ -676,7 +681,9 @@ def test_reorder_ignores_typed_characters_including_space() -> None:
 
 
 def test_reorder_dialog_width_is_stable_across_states() -> None:
-    """The natural width fits the widest of rows, hints, and dirty actions — and never
+    """The reorder dialog is one width in every state it can be in.
+
+    The natural width fits the widest of rows, hints, and dirty actions, and never
     changes as the user grabs a row or dirties the order, so the popup doesn't resize.
     """
     screen = ReorderScreen("order", ["🔒 alpha", "＃ b"])
@@ -869,8 +876,10 @@ def test_logo_takes_the_widest_mark_that_fits_the_columns() -> None:
 
 
 def test_compose_startup_shows_footnote_under_logo() -> None:
-    """A footnote (e.g. a copyright) is drawn muted, immediately under the logo and
-    right-aligned to the logo's right edge, so the two read as one signed block.
+    """The startup footnote sits directly under the logo.
+
+    A footnote (a copyright, say) is drawn muted and right-aligned to the logo's own
+    right edge, so the two read as one signed block.
     """
     screen = SelectScreen("pick", [Choice("a", 1)])
     screen.chrome = False
@@ -911,8 +920,10 @@ _ACCENT = (129, 140, 248)  # the theme's accent border, #818cf8
 
 
 def _find(plain: str, glyphs: frozenset[str]) -> int:
-    """Index of the first box glyph from ``glyphs`` (the render console may substitute
-    rounded corners with square ones on legacy Windows, so tests match the whole family).
+    """The index of the first box glyph from ``glyphs``.
+
+    The render console may substitute square corners for rounded ones on legacy
+    Windows, so a test matches the whole family rather than one character.
     """
     return next(i for i, ch in enumerate(plain) if ch in glyphs)
 
@@ -1355,8 +1366,10 @@ def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
 
 
 def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
-    """A ``[profiles.*]`` serial entry (a soldered ``/dev/ttyS1``) shows up in the picker under
-    its alias, ready to select — even though pyserial's scan never produces that platform port.
+    """A configured serial profile is listed in the picker under its alias.
+
+    A soldered ``/dev/ttyS1`` is ready to select even though pyserial's scan never
+    produces that platform port.
     """
     from meshterm.core.config import DeviceProfile
     from meshterm.core.device_store import DeviceStore
@@ -1384,8 +1397,10 @@ def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
 
 
 def test_device_picker_serial_profile_yields_to_scanned_port(tmp_path) -> None:
-    """A serial profile whose port pyserial DOES enumerate is not double-listed — the scanned
-    row (with real USB metadata) wins over the bare profile.
+    """A serial profile yields to the scanned port when both name the same thing.
+
+    The row pyserial found wins, because it carries real USB metadata the bare profile
+    does not.
     """
     from meshterm.core.config import DeviceProfile
     from meshterm.core.device_store import DeviceStore
@@ -2053,11 +2068,12 @@ def test_session_background_is_the_topmost_full_frame_screen() -> None:
 
 
 def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> None:
-    """A bare navigation key arriving while the physical right Ctrl is down becomes its
-    Ctrl chord — the rescue for layouts (Canadian Multilingual Standard) that claim right
-    Ctrl as a character modifier and strip the ctrl flag from the console's arrow event.
-    Actions with no Ctrl sibling pass through untouched, as does everything once the key
-    is released.
+    """A bare navigation key becomes its Ctrl chord while right Ctrl is held.
+
+    This is the rescue for layouts (Canadian Multilingual Standard) that claim right
+    Ctrl as a character modifier and strip the ctrl flag from the console's arrow
+    event. Actions with no Ctrl sibling pass through untouched, as does everything
+    once the key is released.
     """
     from meshterm.ui.tui import session as session_mod
 
@@ -2082,11 +2098,12 @@ def test_dispatch_promotes_nav_actions_while_right_ctrl_is_held(monkeypatch) -> 
 
 
 def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -> None:
-    """A bare letter typed while the physical right Ctrl is down becomes its Ctrl-letter
-    chord — the same rescue as the nav keys, for the ^R/^P shortcuts a layout-claimed right
-    Ctrl would otherwise strip to plain text. Only the mapped letters promote (case-folded,
-    with the now-stale data dropped); other text — and everything once the key is released —
-    stays text.
+    """A bare letter becomes its Ctrl-letter chord while right Ctrl is held.
+
+    The same rescue as the nav keys, for the ^R/^P shortcuts a layout-claimed right
+    Ctrl would otherwise strip to plain text. Only the mapped letters promote
+    (case-folded, with the now-stale data dropped); other text — and everything once
+    the key is released — stays text.
     """
     from meshterm.ui.tui import session as session_mod
 
@@ -2109,10 +2126,12 @@ def test_dispatch_promotes_letter_chords_while_right_ctrl_is_held(monkeypatch) -
 
 
 def test_right_ctrl_rescue_covers_the_sessions_own_chords(monkeypatch) -> None:
-    """The rescue is app-wide, not screen-actions-only: ^V and ^C are answered by the session
-    itself, and a layout-claimed right Ctrl must reach them too — right Ctrl-V pastes the
-    clipboard into a compose line rather than typing a ``v``, right Ctrl-C quits. Neither
-    pseudo-action is ever forwarded to a screen.
+    """The right-Ctrl rescue reaches the session's own chords, not just screen actions.
+
+    ^V and ^C are answered by the session itself, and a layout-claimed right Ctrl must
+    reach them too — right Ctrl-V pastes the clipboard into a compose line rather than
+    typing a ``v``, right Ctrl-C quits. Neither pseudo-action is ever forwarded to a
+    screen.
     """
     from meshterm.ui.tui import session as session_mod
 
@@ -2150,9 +2169,11 @@ def test_right_ctrl_rescue_covers_the_sessions_own_chords(monkeypatch) -> None:
 
 
 def test_every_ctrl_letter_chord_is_bound_on_both_ctrl_keys() -> None:
-    """The chord table drives the prompt_toolkit bindings, so a chord can never be bound for
-    the left Ctrl without its right-Ctrl rescue (the drift the two used to be able to develop
-    when the letter map was maintained by hand).
+    """Every Ctrl-letter chord is bound on both Ctrl keys.
+
+    The chord table drives the prompt_toolkit bindings, so a chord can never be bound
+    for the left Ctrl without its right-Ctrl rescue — the drift the two used to be
+    able to develop when the letter map was maintained by hand.
     """
     from prompt_toolkit.keys import Keys
 
@@ -2167,9 +2188,11 @@ def test_every_ctrl_letter_chord_is_bound_on_both_ctrl_keys() -> None:
 
 
 def test_wide_glyph_detection_flags_emoji_not_marks() -> None:
-    """The desync only ever comes from a width-2 glyph the terminal may draw narrower — an
-    emoji. Node-type marks, status marks and chart braille are width-1 everywhere, so they
-    must not trip the check (that they seemed to was the earlier misdiagnosis).
+    """The wide-glyph check flags emoji, and leaves the app's own marks alone.
+
+    The desync only ever comes from a width-2 glyph the terminal may draw narrower.
+    Node-type marks, status marks and chart braille are width-1 everywhere, so they
+    must not trip the check — that they seemed to was the earlier misdiagnosis.
     """
     from meshterm.ui.tui.session import _has_wide_glyph
 
@@ -2210,12 +2233,14 @@ def _row_text(screen, row: int) -> str:
 
 
 def test_a_wide_glyph_frame_upgrades_to_a_full_repaint() -> None:
-    """prompt_toolkit paints differentially with a *relative* cursor — sound only while every
-    glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji in a chat line)
-    leaves the row's cursor model off; a later paint that skips the unchanged emoji then strands
-    stale cells to its right. With no remembered frame to compare against, a composed frame
-    carrying such a glyph drops pt's cached frame, upgrading the next paint to a full
-    erase_down + redraw. A frame of only width-1 glyphs keeps the fast differential paint —
+    """A frame carrying a wide glyph upgrades the next paint to a full repaint.
+
+    prompt_toolkit paints differentially with a *relative* cursor — sound only while
+    every glyph is one cell. A width-2 glyph the terminal draws in one cell (an emoji
+    in a chat line) leaves the row's cursor model off; a later paint that skips the
+    unchanged emoji then strands stale cells to its right. With no remembered frame to
+    compare against, such a frame drops pt's cached frame and takes the erase_down +
+    redraw instead. A frame of only width-1 glyphs keeps the fast differential paint —
     this holds wherever the glyph is, floating dialog or not.
     """
     session, _remembered = _repaint_harness()

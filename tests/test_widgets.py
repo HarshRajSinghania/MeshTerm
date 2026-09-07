@@ -75,8 +75,11 @@ def test_path_text_empty_reads_as_direct() -> None:
 
 
 def test_path_text_greys_an_unnamed_hop_whole() -> None:
-    """An unresolvable hop is an unknown node: its hash reads ``node.unknown`` whole,
-    the prefix never lit — colour marks an identified node, as in the path graph.
+    """``path_text`` greys an unnamed hop whole.
+
+    An unresolvable hop is an unknown node: its hash reads ``node.unknown`` end to
+    end, the prefix never lit, because colour marks an identified node — the path
+    graph's rule.
     """
     from meshterm.ui.theme import node_style
 

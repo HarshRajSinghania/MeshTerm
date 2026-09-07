@@ -258,8 +258,10 @@ def test_y_axis_labels_blanks_a_repeated_mark() -> None:
 
 
 def test_axis_chart_mirrors_marks_where_the_platform_affords_them() -> None:
-    """The desktop frames a chart with marks on both gutters; the console keeps the
-    right ``├`` tick but spends the mirrored label's cells on the chart instead.
+    """An axis chart mirrors its marks only where the platform can afford them.
+
+    The desktop frames a chart with marks on both gutters; the console keeps the right
+    ``├`` tick but spends the mirrored label's cells on the chart instead.
     """
     from meshterm.platforms import PICOCALC, set_platform
     from meshterm.ui.braillechart import axis_chrome

@@ -72,8 +72,10 @@ def test_path_hash_mode_is_strict_enum() -> None:
 
 
 def test_highlighted_hash_highlights_path_hash_prefix() -> None:
-    """The full key is shown with only its path-hash prefix bytes highlighted, lit in
-    the node's hash-derived palette hue (the same hue the node's name wears).
+    """A key lane lights only its path-hash prefix.
+
+    The full key is shown, with those bytes lit in the node's hash-derived palette
+    hue — the same hue the node's name wears.
     """
     from meshterm.ui.theme import node_style
     from meshterm.ui.widgets import highlighted_hash
@@ -88,8 +90,10 @@ def test_highlighted_hash_highlights_path_hash_prefix() -> None:
 
 
 def test_highlighted_hash_truncates_on_a_byte_boundary() -> None:
-    """A key too long for the budget keeps whole leading bytes (an even digit count) plus
-    an ellipsis, padding to the exact width — a half-byte digit never shows.
+    """A key too long for its budget is truncated on a byte boundary.
+
+    It keeps whole leading bytes (an even digit count) plus an ellipsis, padded to the
+    exact width, so a half-byte digit never shows.
     """
     from meshterm.ui.widgets import highlighted_hash
 
@@ -250,8 +254,10 @@ def _contacts_sort(name: str = "name"):
 
 
 def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
-    """Ctrl+←/→ walk the shared four-column ring (wrapping); Ctrl+↑/↓ force the direction —
-    the Time Machine picker's keys, now the Contacts screen's too.
+    """Ctrl+arrows steer the Contacts sort.
+
+    Ctrl+←/→ walk the shared four-column ring, wrapping, and Ctrl+↑/↓ force the
+    direction — the Time Machine picker's keys, now the Contacts screen's too.
     """
     from meshterm.ui.contacts_screen import ContactsScreen
 
@@ -275,8 +281,10 @@ def test_contacts_screen_ctrl_arrows_steer_the_sort() -> None:
 
 
 def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
-    """Contacts render in the shared NAME/HEARD/PKTS/KEY lanes, our node pinned first;
-    plain arrows only move the highlight, and Enter resolves the highlighted node.
+    """Contacts are listed in the shared lanes, with our own node pinned first.
+
+    They render in NAME/HEARD/PKTS/KEY; plain arrows only move the highlight, and
+    Enter resolves the highlighted node.
     """
     import re
 

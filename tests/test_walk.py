@@ -268,8 +268,10 @@ def test_walk_the_node_walked_in_from_is_not_offered_back_as_a_link() -> None:
 
 
 def test_walk_walking_to_an_earlier_node_drops_the_loop() -> None:
-    """Revisiting a node already on the trail truncates the stack to its first appearance,
-    dropping the circular stretch walked to get back there.
+    """Walking back to an earlier node drops the loop.
+
+    Revisiting a node already on the trail truncates the stack to its first
+    appearance, dropping the circular stretch walked to get back there.
     """
     topo = MeshTopology(US, contacts=[Hub, ALICE])
     hub = topo.canonical(Hub.public_key)
@@ -980,8 +982,10 @@ def test_walk_collapsed_stand_in_wears_the_selection_white() -> None:
 
 
 def test_walk_link_cursor_clamps_at_both_ends() -> None:
-    """The windowed link list does not wrap: ↑ on the first row and ↓ past the last stay
-    where they are, rather than hauling the window end to end.
+    """The windowed link list does not wrap.
+
+    ↑ on the first row and ↓ past the last stay where they are, rather than hauling
+    the window end to end.
     """
     screen = WalkScreen(
         session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"

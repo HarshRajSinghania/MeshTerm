@@ -44,8 +44,9 @@ def _arrivals() -> list[Arrival]:
 
 
 def test_paths_screen_renders_graph_rows_and_cursor() -> None:
-    """The quoted text, the graph endpoints, and two lines per arrival: the route you
-    pick, and the reception facts hanging under it.
+    """The screen draws the quote, the graph, and two lines for every arrival.
+
+    The route you pick, and the reception facts hanging under it.
     """
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
@@ -91,8 +92,10 @@ def test_paths_screen_stays_quiet_when_no_path_revisits() -> None:
 
 
 def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
-    """Graph relays carry their first hash byte, both paths at once; the rows carry the
-    names alone — no hash repeated after one, the two tied together by the node's hue.
+    """Graph relays carry their first hash byte, both paths at once.
+
+    The rows carry the names alone — no hash repeated after one, the two tied
+    together by the node's hue.
     """
     screen = _screen(_arrivals())
     body = _plain(screen.render_body(76))
@@ -105,8 +108,10 @@ def test_paths_screen_labels_every_relay_with_its_hash_byte() -> None:
 
 
 def test_paths_screen_shows_unknown_relay_as_grey_mode_width_hash() -> None:
-    """An unnamed relay stands in its own hash at the device's path-hash width, muted
-    grey — not the bare one-byte prefix, lit, and never a hash annotated onto itself.
+    """An unnamed relay stands in its own hash, in muted grey.
+
+    It is drawn at the device's path-hash width — not the bare one-byte prefix, lit,
+    and never a hash annotated onto itself.
     """
     now = utcnow()
     arrivals = [
@@ -192,9 +197,10 @@ def test_paths_screen_scrolls_the_selected_route_sideways() -> None:
 
 
 def test_paths_screen_cracks_the_chips_the_scroll_cuts(monkeypatch) -> None:  # noqa: ANN001
-    """Where the terminal draws chips, each edge the route runs past breaks the chip off
-    on a half block in its own colour rather than behind an ellipsis: the row is sliding
-    over a route that continues, not shortening a word.
+    """Where the terminal draws chips, the scroll cracks them rather than ellipsizing.
+
+    Each edge the route runs past breaks the chip off on a half block in its own
+    colour: the row is sliding over a route that continues, not shortening a word.
     """
     monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
     now = utcnow()
@@ -231,8 +237,11 @@ def test_paths_screen_route_runs_origin_to_us_not_relay_to_relay() -> None:
 
 
 def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> None:
-    """The head is named exactly as the graph's left endpoint is: our own ``★`` on a
-    message we sent, a bare ``?`` where the frame named nobody — never a guessed name.
+    """The origin is a ``★`` for us and a ``?`` for nobody.
+
+    The head is named exactly as the graph's left endpoint is: our own star on a
+    message we sent, a bare question mark where the frame named nobody — never a
+    guessed name.
     """
     now = utcnow()
     one = [Arrival(when=now, hops=("3d63",), snr=1.0)]
@@ -243,8 +252,10 @@ def test_paths_screen_origin_is_a_star_for_us_and_a_question_for_nobody() -> Non
 
 
 def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  # noqa: ANN001
-    """A row you are not on runs off the lane exactly as the selected one does, so it owes
-    the reader the same cracked chip — it just cannot slide to read the rest.
+    """An unselected row is cut the same way the selected one is.
+
+    It runs off the lane exactly as the selected row does, so it owes the reader the
+    same cracked chip — it just cannot slide to read the rest.
     """
     monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
     now = utcnow()
@@ -261,8 +272,9 @@ def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  #
 
 
 def test_paths_screen_direct_arrival_and_empty_state() -> None:
-    """A hop-less arrival draws its two endpoints and nothing between; no arrivals at all
-    explain themselves.
+    """A hop-less arrival draws its two endpoints and nothing between.
+
+    With no arrivals at all, the screen explains itself instead.
 
     The route no longer collapses to the word *direct*: with both ends on the line,
     ``Alice → ★`` **is** what a direct delivery looks like, and it reads on the same rails
@@ -393,8 +405,10 @@ def test_a_short_list_advertises_no_paging() -> None:
 
 
 def test_the_selection_clamps_at_both_ends() -> None:
-    """↑ on the first arrival and ↓ on the last stay put: the window follows the highlight,
-    so a wrap would haul the whole list end to end instead of moving one row.
+    """↑ on the first arrival and ↓ on the last stay put.
+
+    The window follows the highlight, so a wrap would haul the whole list end to end
+    instead of moving one row.
     """
     screen = _screen(_many(6))
     screen.note_viewport(24)

@@ -80,8 +80,10 @@ def test_identical_paths_collapse_to_the_top_layer() -> None:
 
 
 def test_emphasis_moves_the_highlight_not_the_layout() -> None:
-    """Emphasis re-colours the drawn fan on top of a fixed geometry: the same layout, painted
-    in different colours, so a caller can light a different route without it reflowing.
+    """Emphasis moves the highlight, never the layout.
+
+    It re-colours the drawn fan on top of a fixed geometry — the same layout, painted
+    differently — so a caller can light another route without it reflowing.
     """
     # A two-route fan whose spine (priority) is pinned to route 0. Only emphasis differs
     # between the two renders — were emphasis to drive geometry (as raising priority would),
@@ -102,8 +104,10 @@ def test_emphasis_moves_the_highlight_not_the_layout() -> None:
 
 
 def test_bidir_clusters_finds_knots_not_pairs() -> None:
-    """Three-plus mutually-bidirectional nodes are a cluster to contract; a tidy two-way pair
-    (and any lone node) is not.
+    """Bidirectional clustering finds knots, not pairs.
+
+    Three or more mutually-bidirectional nodes are a cluster to contract; a tidy
+    two-way pair, and any lone node, is not.
     """
     from meshterm.ui.pathgraph import bidir_clusters
 
@@ -119,8 +123,10 @@ def test_bidir_clusters_finds_knots_not_pairs() -> None:
 
 
 def test_emphasis_wins_a_shared_edge_over_a_higher_priority_spine() -> None:
-    """A highlighted alternative paints its whole run — even the edge it shares with the spine —
-    rather than dropping out where the higher-priority spine would otherwise own the colour.
+    """On a shared edge, emphasis beats a higher-priority spine.
+
+    A highlighted alternative paints its whole run, including the edge it shares,
+    rather than dropping out where the spine would otherwise own the colour.
     """
     # Both routes leave SRC through the same first relay (aa), so they share the SRC–aa edge;
     # the spine (priority 2, grey) would win that shared edge by priority, but the emphasised
@@ -830,8 +836,10 @@ def test_the_emphasised_path_is_the_only_one_drawn_in_colour() -> None:
 
 
 def test_a_fan_with_nothing_emphasised_fades_nothing() -> None:
-    """No emphasis is no selection: with every layer equal there is no route to recede from,
-    and the caller's colours are used exactly as given.
+    """A fan with nothing emphasised fades nothing.
+
+    No emphasis is no selection: with every layer equal there is no route to recede
+    from, and the caller's colours are used exactly as given.
     """
     layers = [
         PathLayer(hops=("aa",), color=WHITE, priority=2),
@@ -856,8 +864,10 @@ def test_a_lone_path_is_never_faded() -> None:
 
 
 def test_the_highlight_lights_a_relay_reached_by_a_short_hash() -> None:
-    """Membership is decided in the graph's own id space, after the prefix coalesce: a route
-    that names a relay ``3d`` still lights the wide marker its hop is folded into.
+    """The highlight lights a relay a route reached by a short hash.
+
+    Membership is decided in the graph's own id space, after the prefix coalesce, so a
+    route naming a relay ``3d`` still lights the wide marker its hop folded into.
     """
     layers = [
         PathLayer(hops=("3d63c6429436",), color=GREY, priority=2),

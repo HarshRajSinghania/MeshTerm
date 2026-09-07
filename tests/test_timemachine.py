@@ -491,9 +491,11 @@ def test_mesh_page_renders_days_rhythm_arrivals_and_ledger(tmp_path: Path) -> No
 
 
 def test_mesh_page_arrivals_key_lane_flexes_with_width(tmp_path: Path) -> None:
-    """The arrivals key lane fills the terminal: a resolvable full key shows more
-    than the stored 12 hex, truncating on a byte boundary with an ellipsis; a
-    narrow terminal floors the lane at its old fixed width.
+    """The arrivals key lane flexes with the terminal width.
+
+    A resolvable full key shows more than the stored 12 hex, truncating on a byte
+    boundary with an ellipsis; a narrow terminal floors the lane at its old fixed
+    width.
     """
     from meshterm.ui.timemachine_screen import _PICK_HASH_W
 
@@ -606,8 +608,10 @@ def test_mesh_page_rhythm_left_edge_aligns_with_the_day_charts(tmp_path: Path) -
 
 
 def test_picker_row_lanes_align_under_the_header() -> None:
-    """Picker rows lane up under the header; the heard age glows hot, the hash prefix
-    lights in the key's own hue, and a nameless node's placeholder stays muted.
+    """Picker row lanes align under the header.
+
+    The heard age glows hot, the hash prefix lights in the key's own hue, and a
+    nameless node's placeholder stays muted.
     """
     from meshterm.core.models import HeardNode
     from meshterm.ui.contactlist import ContactRow, _header, _lane
@@ -913,7 +917,9 @@ def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:
 
 
 def test_picker_name_lane_is_content_sized_and_hash_lane_flexes() -> None:
-    """Columns anchor left: the name lane hugs its content and stays put as the window
+    """The name lane is content-sized, and the hash lane takes what is left.
+
+    Columns anchor left: the name lane hugs its content and stays put as the window
     widens, and the freed width flows to the hash lane so more of each key shows.
     """
     from meshterm.ui.contactlist import _GAP, _LEAD
@@ -985,8 +991,10 @@ def test_picocalc_window_ring_stops_at_30_days() -> None:
 
 
 def _activity_repo(tmp_path: Path) -> Repository:
-    """A repository seeded with our own outbound life: traces (homed, timed-out, one path
-    walk), channel + direct messages (some acked, one inbound), and a tx-power sample.
+    """A repository seeded with our own outbound life.
+
+    Traces (homed, timed-out, one path walk), channel and direct messages (some
+    acked, one inbound), and a tx-power sample.
     """
     from meshterm.core.models import (
         PATH_TRACE_TARGET,
@@ -1134,8 +1142,10 @@ def test_picker_lists_you_first_in_the_node_block() -> None:
 
 
 def test_picker_hash_lane_shows_a_heard_nodes_full_key_when_a_contact_holds_it() -> None:
-    """A heard node stored as a 12-hex prefix shows its whole key when a contact carries it,
-    so a wide screen reveals more than the twelve stored digits (its stored id still selects).
+    """A heard node shows its full key when a contact holds it.
+
+    A node stored as a 12-hex prefix reveals more than those twelve digits on a wide
+    screen, and its stored id still selects it.
     """
     from meshterm.core.models import HeardNode
 

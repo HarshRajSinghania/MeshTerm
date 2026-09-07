@@ -122,9 +122,11 @@ def test_theme16_backgrounds_stay_in_the_dim_bank() -> None:
 
 
 def test_deploy_script_carries_the_archived_custom_palette() -> None:
-    """The script's **opt-in** block matches ``theme.vtrgb_lines()`` byte for byte, and
-    its no-kbd OSC fallback spells the same sixteen RGB values — so the archived custom
-    palette stays one environment variable away, in sync with `_VT_SLOTS_CUSTOM`.
+    """The deploy script still carries the archived custom palette, in sync.
+
+    The script's **opt-in** block matches ``theme.vtrgb_lines()`` byte for byte, and
+    its no-kbd OSC fallback spells the same sixteen RGB values, so the archived
+    palette stays one environment variable away and in step with `_VT_SLOTS_CUSTOM`.
     """
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
     assert "MESHTERM_CUSTOM_PALETTE" in script, "the opt-in gate vanished"
@@ -334,8 +336,10 @@ def test_canvas_drops_emphasis_where_bold_means_brightness() -> None:
 
 
 def test_font_script_marks_and_fontset_move_together() -> None:
-    """Every codepoint the script draws or aliases is in the frozen inventory, and every
-    donor it consumes is out — the two files must change in the same commit.
+    """The font script and the fontset inventory move together.
+
+    Every codepoint the script draws or aliases is in the frozen inventory, and every
+    donor it consumes is out, so the two files must change in the same commit.
     """
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
     marks = {int(m, 16) for m in re.findall(r"^    (0x[0-9A-Fa-f]{4}): art\(", script, re.M)}
@@ -364,8 +368,9 @@ def test_font_script_marks_and_fontset_move_together() -> None:
 
 
 def test_specimen_renders_clean_on_picocalc() -> None:
-    """`meshterm specimen` under picocalc obeys every contract it demonstrates:
-    ≤53 cells per line, 16-slot SGR only, console-font characters only.
+    """`meshterm specimen` obeys on picocalc every contract it demonstrates.
+
+    At most 53 cells per line, 16-slot SGR only, and console-font characters only.
     """
     from io import StringIO
 

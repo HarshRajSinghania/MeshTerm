@@ -272,8 +272,10 @@ async def test_channel_capacity_tracks_a_larger_ceiling(ctx: AppContext) -> None
 
 
 async def test_read_channel_slots_bounds_a_never_rejecting_probe() -> None:
-    """On firmware that answers every slot (never rejecting an index), the configured-slot
-    scan stops after a run of empty slots instead of walking all CHANNEL_SLOT_PROBE_CAP.
+    """A probe that is never rejected still bounds itself.
+
+    On firmware that answers every slot, the configured-slot scan stops after a run of
+    empty slots instead of walking all of ``CHANNEL_SLOT_PROBE_CAP``.
     """
 
     class NeverRejects:

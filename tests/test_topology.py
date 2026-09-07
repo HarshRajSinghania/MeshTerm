@@ -568,8 +568,10 @@ def test_composer_suggestions_follow_the_cursor_anchor() -> None:
 
 
 def test_composer_preview_stands_the_cursor_in_the_route() -> None:
-    """The insertion point is a hop of the route — the ``+`` slot the next node takes —
-    and ←/→ slide it along, one position at a time.
+    """The composer preview stands the cursor in the route itself.
+
+    The insertion point is a hop — the ``+`` slot the next node takes — and ←/→ slide
+    it along, one position at a time.
     """
     screen = _composer(_topo(), hops=["3d63c6429436"], target=False)
 
@@ -980,8 +982,10 @@ def test_a_stub_whose_only_link_was_its_owner_takes_the_owner_out_with_it() -> N
 
 
 def test_composer_row_cursor_clamps_at_both_ends() -> None:
-    """The windowed suggestion list does not wrap: ↑ on the first row and ↓ past the last
-    stay where they are, rather than hauling the window end to end.
+    """The windowed suggestion list does not wrap.
+
+    ↑ on the first row and ↓ past the last stay where they are, rather than hauling
+    the window end to end.
     """
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
     screen = _composer(_topo(trace_paths=walks))
