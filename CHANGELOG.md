@@ -7,6 +7,14 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — wi
 SemVer itself makes for a leading zero: while the major version is `0`, a **minor** bump is
 allowed to change behaviour, not just add to it.
 
+<!--
+  At 0.9.0 — the first public release — everything below collapses into a single entry
+  reading "first public release", with the headline features under it. Nobody arriving at
+  a project on its launch day wants a changelog of the fortnight before it: the versions
+  under 0.9.0 were never released anywhere, and their entries are notes to ourselves about
+  getting ready. Keep the dates and the tags; replace the prose.
+-->
+
 ## [Unreleased]
 
 ## [0.2.1] — 2026-09-07
