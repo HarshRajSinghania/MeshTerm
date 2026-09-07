@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshterm"
-version = "0.1.0"
+dynamic = ["version"]
 description = "MeshTerm is a full-featured TUI-based MeshCore client for your terminal. Supports USB, Bluetooth and TCP companion connection. For Windows, macOS and Linux."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,6 +36,11 @@ dev = [
 
 [project.scripts]
 meshterm = "meshterm.cli:main"
+
+# The one place a version is written; `[project] version` is dynamic so the package
+# attribute and the distribution metadata cannot drift apart.
+[tool.hatch.version]
+path = "meshterm/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["meshterm"]
