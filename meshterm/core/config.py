@@ -15,6 +15,7 @@ keys used to sit in this file with no screen behind them.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,15 +27,31 @@ else:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib
 
 
+#: Points MeshTerm's config and data somewhere other than the home directory. For trying a
+#: build without letting it near a real history, for a portable install on a stick, and for
+#: running two radios out of two directories. Read every time rather than cached, so a test
+#: can move it between cases.
+CONFIG_DIR_ENV = "MESHTERM_HOME"
+
+
 def default_config_dir() -> Path:
     """Return the directory MeshTerm uses for config and data.
 
-    Resolves to ``.meshterm`` under the OS-defined home directory (``%USERPROFILE%``
-    on Windows, ``$HOME`` on Unix), as reported by :meth:`Path.home`.
+    ``$MESHTERM_HOME`` wins if it is set and not empty. Otherwise this resolves to
+    ``.meshterm`` under the OS-defined home directory (``%USERPROFILE%`` on Windows,
+    ``$HOME`` on Unix), as reported by :meth:`Path.home`.
+
+    The override exists because the database is the valuable part of an install — a
+    running record of everything the radio has overheard — and there was no way to point a
+    second copy of MeshTerm at a different one. A downloaded build would happily open the
+    same 34MB file as the checkout it was built from.
 
     Returns:
         The resolved configuration directory path (not guaranteed to exist).
     """
+    override = os.environ.get(CONFIG_DIR_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path.home() / ".meshterm"
 
 

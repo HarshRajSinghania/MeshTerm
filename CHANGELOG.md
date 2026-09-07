@@ -17,6 +17,23 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The downloadable builds were missing every tool.** They started, printed help and drew
+  the specimen card, and had a menu with nothing in it but Quit — no contacts, no map, no
+  trace, no chat. Tools are found at runtime with `pkgutil.iter_modules`, which finds
+  nothing inside a frozen bundle, so none of them registered. The packaging now collects
+  them, and the smoke tests run a tool-provided subcommand instead of only `--help`, which
+  a gutted build passes perfectly well.
+
+### Added
+
+- `MESHTERM_HOME` points config and data somewhere other than `~/.meshterm`. Every copy of
+  MeshTerm shared one directory, so trying a downloaded build meant letting it open the
+  same history database as the one you use — the valuable half of an install, with no way
+  to keep a second copy away from it. Also useful for a portable install, or two radios
+  kept apart.
+
 ## [0.2.1] — 2026-09-07
 
 ### Fixed

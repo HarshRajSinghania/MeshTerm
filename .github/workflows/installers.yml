@@ -78,8 +78,14 @@ jobs:
           # source tree fails here rather than on someone's laptop.
           cd "$(mktemp -d)"
           "$GITHUB_WORKSPACE/$bin" --help > /dev/null
+          # Reads the asset files, so a bundle missing its pages fails here.
           "$GITHUB_WORKSPACE/$bin" specimen > /dev/null
-          echo "runs, and finds its assets"
+          # And a tool-provided subcommand, which is the check that matters. Every tool is
+          # found at runtime by `pkgutil.iter_modules`, so a bundle that omits them still
+          # starts, still prints help, still draws the specimen — and has an empty menu
+          # with nothing in it but Quit. `--help` passing proves almost nothing on its own.
+          "$GITHUB_WORKSPACE/$bin" contacts --help > /dev/null
+          echo "runs, finds its assets, and its tools registered"
 
       - name: Name it after the version and the platform
         shell: bash

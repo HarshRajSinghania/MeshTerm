@@ -18,6 +18,11 @@ datas = [
 ]
 
 hiddenimports = [
+    # Every tool module. `meshterm.tools` finds these with `pkgutil.iter_modules` at
+    # import time, so nothing static ever names one, and a frozen build without this line
+    # starts with an empty registry: no menu entries but Quit, and no CLI subcommands.
+    # The app launches and looks like it works, which is the worst way for this to fail.
+    *collect_submodules("meshterm.tools"),
     # bleak picks its backend at runtime by platform, so static analysis never sees the
     # one that actually gets used. Collect all of them and let the unused ones sit.
     *collect_submodules("bleak.backends"),

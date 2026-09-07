@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meshterm.core.config import Settings
+import pytest
+
+from meshterm.core.config import CONFIG_DIR_ENV, Settings, default_config_dir
 
 
 def test_connect_on_start_defaults_true() -> None:
@@ -42,3 +44,30 @@ def test_tcp_profile_defaults_port(tmp_path: Path) -> None:
     config.write_text('[profiles.wifi]\nhost = "meshcore.local"\n', encoding="utf-8")
     profile = Settings.load(config).profiles["wifi"]
     assert profile.is_tcp and profile.tcp_endpoint == "meshcore.local:5000"
+
+
+def test_config_dir_defaults_to_the_home_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no override set, config and data live in ``.meshterm`` under the user's home."""
+    monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
+    assert default_config_dir() == Path.home() / ".meshterm"
+
+
+def test_config_dir_follows_the_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``$MESHTERM_HOME`` moves the whole directory, so a build can run beside a real one.
+
+    This is what keeps a downloaded binary from opening the same database as the checkout
+    it was built from — the history is the valuable half of an install, and there was no
+    way to point a second copy somewhere else.
+    """
+    monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert default_config_dir() == tmp_path / "elsewhere"
+
+
+def test_config_dir_ignores_an_empty_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unset-but-present or whitespace value falls back rather than resolving to nowhere.
+
+    A shell that exports the variable empty is common enough that treating "" as "put the
+    data in the current directory" would be a nasty way to scatter someone's history.
+    """
+    monkeypatch.setenv(CONFIG_DIR_ENV, "   ")
+    assert default_config_dir() == Path.home() / ".meshterm"

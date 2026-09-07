@@ -58,22 +58,51 @@ your mesh's history is worth.
 ### Download a build
 
 **[⬇ Latest release](https://github.com/jpmartineau/MeshTerm/releases/latest)** — one file,
-no Python needed. Windows, macOS (Apple silicon) and Linux (x64 and ARM64, so the uConsole
-is covered).
+no Python needed. Windows, macOS (Intel and Apple silicon), and Linux (x64 and ARM64, so
+the uConsole is covered).
 
-Download it, make it runnable, and run it:
+MeshTerm is a terminal program, so **open a terminal and run it from there.** You can
+double-click it and it will work, but you'll get whatever console your system picks, and
+if anything goes wrong at startup the window closes before you can read why.
 
-```bash
-chmod +x meshterm-*            # macOS and Linux only
-./meshterm-*
+**Windows** — open Windows Terminal or PowerShell, `cd` to your downloads, then:
+
+```powershell
+.\meshterm-0.2.1-windows-x64.exe
 ```
 
-> **Your system will complain the first time.** These builds aren't code-signed — signing
-> costs money on both platforms and this is a free side project. macOS says *"cannot be
-> opened because the developer cannot be verified"*; clear it with
-> `xattr -d com.apple.quarantine meshterm-*` and run it again. Windows shows *"Windows
-> protected your PC"*; click **More info → Run anyway**. Each release ships a `SHA256SUMS`
-> file if you'd rather check the download yourself.
+**macOS and Linux** — open Terminal, `cd` to your downloads, then:
+
+```bash
+chmod +x meshterm-0.2.1-*
+./meshterm-0.2.1-*
+```
+
+Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
+becomes just `meshterm` from anywhere.
+
+> **Your system will complain the first time, and it's right to.** These builds aren't
+> code-signed — signing costs real money on both platforms and this is a free side
+> project.
+>
+> - **macOS**: *"cannot be opened because the developer cannot be verified"*. Clear it with
+>   `xattr -d com.apple.quarantine meshterm-0.2.1-*` and run it again.
+> - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
+>
+> Every release ships a `SHA256SUMS` file if you'd rather check the download first.
+
+> **Trying a build without touching your real data.** MeshTerm keeps everything in
+> `~/.meshterm` — your history database, contacts, channel keys — and *every* copy of
+> MeshTerm uses that same folder. Set `MESHTERM_HOME` to try one in isolation:
+>
+> ```bash
+> MESHTERM_HOME=~/meshterm-test ./meshterm-0.2.1-*      # macOS, Linux
+> ```
+> ```powershell
+> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.2.1-windows-x64.exe
+> ```
+>
+> Same variable if you run two radios and want them kept apart.
 
 ### Or install with pip
 

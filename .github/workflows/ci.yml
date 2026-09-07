@@ -111,5 +111,9 @@ jobs:
         run: |
           python -m venv /tmp/fresh
           /tmp/fresh/bin/pip install --quiet dist/*.whl
-          cd /tmp && /tmp/fresh/bin/meshterm --help > /dev/null
-          echo "the wheel installs and the console script runs"
+          cd /tmp
+          /tmp/fresh/bin/meshterm --help > /dev/null
+          # A tool-provided subcommand, not just --help: the tools are discovered at
+          # runtime, so a broken package still answers --help perfectly well.
+          /tmp/fresh/bin/meshterm contacts --help > /dev/null
+          echo "the wheel installs, the console script runs, and its tools registered"
