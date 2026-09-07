@@ -1,0 +1,26 @@
+# Weekly, and small on purpose. A solo maintainer reviewing five open dependency PRs
+# every Monday stops reviewing them at all, so the caps are low enough to stay readable.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the routine noise; anything major still arrives on its own so it
+      # gets read on its own.
+      minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci

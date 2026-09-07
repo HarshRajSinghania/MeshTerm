@@ -24,6 +24,8 @@ allowed to change behaviour, not just add to it.
   from outside the source tree.
 - A release workflow with no automatic trigger, which publishes nothing until a human runs
   it on purpose and types the version.
+- A security policy, a code of conduct, issue and pull request templates, weekly
+  dependency updates, and the funding links the app's own support page already offers.
 
 ## [0.2.0] — 2026-09-07
 

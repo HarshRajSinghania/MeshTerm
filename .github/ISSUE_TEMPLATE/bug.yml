@@ -1,0 +1,99 @@
+name: Bug report
+description: Something MeshTerm does wrong, and how to see it happen
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The fields below are the ones that get asked in every single bug thread, so
+        answering them up front usually saves a day of back-and-forth.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to see it happen
+      description: >
+        The screens and keys, in order. "Contacts, Enter on a node, Routes tab, Enter on
+        the second route" beats "open a trace".
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: MeshTerm version
+      description: Shown on the splash screen and on the About page.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Which flavour
+      description: >
+        MeshTerm draws itself differently on a PicoCalc — 53 columns, sixteen colours, a
+        different font. A bug in one flavour often does not exist in the other.
+      options:
+        - Regular (desktop or ssh)
+        - PicoCalc
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How the companion is connected
+      options:
+        - USB / serial
+        - Bluetooth
+        - TCP
+        - No companion (simulator / --mock)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and Python version
+      placeholder: "Windows 11, Python 3.12"
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal, and its size in columns x rows
+      description: >
+        Layout bugs are usually terminal bugs. Which terminal, and how big, decides
+        whether anyone can reproduce what you are seeing.
+      placeholder: "Windows Terminal, 120x40"
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Companion device and firmware version
+      description: Leave blank if no radio was involved.
+      placeholder: "Heltec V3, MeshCore 1.15.0"
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        A screenshot of the screen, the traceback if it crashed, or what the radio was
+        doing at the time. Paste text rather than a photo of text where you can.
