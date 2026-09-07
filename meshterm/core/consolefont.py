@@ -92,8 +92,7 @@ def install_bundled_font() -> bool:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(BUNDLED_FONT, target)
 
-        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
-        if not gdi32.AddFontResourceW(ctypes.c_wchar_p(str(target))):
+        if not _add_font_resource(target):
             return False
 
         # The registration is what survives a logout; AddFontResourceW alone lasts only
@@ -120,6 +119,54 @@ def install_bundled_font() -> bool:
         return True
     except Exception:  # pragma: no cover - an install that fails leaves the old font
         return False
+
+
+def _add_font_resource(path: Path) -> bool:
+    """Make a font file usable by this process, without installing anything.
+
+    ``AddFontResourceW`` adds to the font table for the running process; the ``HKCU``
+    registration beside it is what makes the font permanent, and Windows reads that at the
+    *next logon*. Between those two facts sits the case this exists for: a second MeshTerm
+    launch in the same session finds its own registration and believes the font is ready,
+    when nothing has loaded it into this new process yet.
+
+    Args:
+        path: The font file, wherever it is.
+
+    Returns:
+        Whether at least one face was added.
+    """
+    if sys.platform != "win32" or not path.is_file():
+        return False
+    try:
+        import ctypes
+
+        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        return bool(gdi32.AddFontResourceW(ctypes.c_wchar_p(str(path))))
+    except Exception:  # pragma: no cover - best effort, like everything else here
+        return False
+
+
+def use(face: str) -> bool:
+    """Draw this console with ``face``, loading our own copy first if that is what it is.
+
+    The plain :func:`select` is enough for a font the system installed — the Cascadia that
+    comes with Windows 11 or with Windows Terminal. It is *not* enough for the copy
+    MeshTerm installed itself in an earlier run of the same session: that one is registered
+    but not yet loaded (see :func:`_add_font_resource`), and selecting it silently keeps
+    the old font. So a refusal is retried once, after loading it.
+
+    Args:
+        face: The family to draw with.
+
+    Returns:
+        Whether the console is now drawing with ``face``.
+    """
+    if select(face):
+        return True
+    if face == BUNDLED_FACE and _add_font_resource(user_font_dir() / BUNDLED_FONT.name):
+        return select(face)
+    return False
 
 
 def current_face() -> str | None:

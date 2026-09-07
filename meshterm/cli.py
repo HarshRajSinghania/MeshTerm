@@ -305,7 +305,7 @@ def _use_a_better_console_font(console: Console, installed: str | None) -> None:
             return
         face = consolefont.BUNDLED_FACE
 
-    if consolefont.select(face):
+    if consolefont.use(face):
         console.print(f"[ok]✓[/ok]  Now drawing with [accent]{face}[/accent].")
         get_logger().info("console font set to %s", face)
     else:

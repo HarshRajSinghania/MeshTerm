@@ -205,3 +205,9 @@ def test_installing_is_a_no_op_where_there_are_no_windows_fonts() -> None:
     """Off Windows the offer is never made, and the install refuses rather than pretends."""
     assert consolefont.install_bundled_font() is False
     assert consolefont.select("Cascadia Mono PL") is False
+    assert consolefont.use("Cascadia Mono PL") is False
+
+
+def test_a_font_resource_is_only_added_from_a_file_that_exists(tmp_path: Path) -> None:
+    """The retry path takes a path that may well not be there, and must not raise on it."""
+    assert consolefont._add_font_resource(tmp_path / "nothing.ttf") is False
