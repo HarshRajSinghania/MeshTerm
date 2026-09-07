@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 
 import typer
@@ -189,13 +190,20 @@ def main_callback(
             console.print(f"[err]✗[/err] {exc}")
             raise typer.Exit(code=1) from None
         except Exception as exc:
-            if type(exc).__name__ != "NoConsoleScreenBufferError":
-                raise
-            # prompt_toolkit needs a real Win32 console and reports its absence in the
-            # language of its own internals. A traceback reads as "this app is broken"
-            # when the answer is "open a different terminal", so answer that instead.
-            _report_no_windows_console(console)
-            raise typer.Exit(code=1) from None
+            if type(exc).__name__ == "NoConsoleScreenBufferError":
+                # prompt_toolkit needs a real Win32 console and reports its absence in the
+                # language of its own internals. A traceback reads as "this app is broken"
+                # when the answer is "open a different terminal", so answer that instead.
+                get_logger().warning("no Windows console available: %s", exc)
+                _report_no_windows_console(console)
+                raise typer.Exit(code=1) from None
+            # Logged before it is re-raised, and this is the case the log matters most for:
+            # a session launched by double-clicking the executable owns its console window,
+            # so when it dies the window closes with it and takes the traceback along. The
+            # file is the only thing left to read afterwards.
+            get_logger().exception("the interactive session raised an unhandled error")
+            _report_log_location(console, settings.config_dir)
+            raise
 
 
 def _report_log_location(console: Console, config_dir: Path) -> None:
@@ -348,9 +356,59 @@ def _register_all() -> None:
 _register_all()
 
 
+def _owns_its_console() -> bool:
+    """Whether this process is the only one on its console — i.e. it was double-clicked.
+
+    Windows gives a console to a process launched from Explorer and destroys it the moment
+    that process ends, so an error message is displayed and erased in the same instant.
+    Launched from a shell instead, the console belongs to the shell and survives.
+
+    ``GetConsoleProcessList`` tells the two apart: it reports how many processes are
+    attached to this console. One is us, alone, holding a window that dies with us.
+
+    Returns:
+        ``True`` only on Windows, and only when nothing else shares the console.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        buffer = (ctypes.c_uint * 4)()
+        count = ctypes.windll.kernel32.GetConsoleProcessList(buffer, 4)  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - no console at all, or a stubbed kernel32
+        return False
+    return count == 1
+
+
 def main() -> None:
-    """Console-script entry point."""
-    app()
+    """Console-script entry point.
+
+    Holds the window open after a failure when MeshTerm owns it, because otherwise the
+    error is drawn and destroyed together and the person who needs to read it sees a
+    flash. Only on that path: a successful run should not make anyone press a key, and a
+    run from a shell leaves its output on the screen anyway.
+    """
+    try:
+        app()
+    except SystemExit as exit_request:
+        if exit_request.code and _owns_its_console():
+            _wait_before_the_window_closes()
+        raise
+    except BaseException:
+        if _owns_its_console():
+            _wait_before_the_window_closes()
+        raise
+
+
+def _wait_before_the_window_closes() -> None:
+    """Ask for a keypress so a message stays readable, and never fail doing it."""
+    try:
+        print()
+        print("-- Press Enter to close this window --")
+        input()
+    except Exception:  # pragma: no cover - stdin closed, redirected, or gone
+        pass
 
 
 if __name__ == "__main__":

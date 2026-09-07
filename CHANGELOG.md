@@ -41,6 +41,11 @@ allowed to change behaviour, not just add to it.
   the terminal says where to find it; expected errors go in as warnings, because a log
   that only holds crashes cannot answer "what happened just before". The bug report form
   asks for the file.
+- The window stays open after a crash when MeshTerm owns it. Double-clicking the
+  executable on Windows gives the process its own console, which is destroyed the instant
+  the process ends — so an error was drawn and erased together and all anyone saw was a
+  flash. It now waits for a keypress, but only on that path: a run from a shell leaves its
+  output on screen already, and a successful run should not make anyone press a key.
 - A readable answer when there is no Windows console. Git Bash, MSYS and Cygwin are not
   Windows consoles, and prompt_toolkit's own error says so in the language of its
   internals, arriving as a traceback that reads like a broken app rather than the
