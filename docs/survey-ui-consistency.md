@@ -1,5 +1,10 @@
 # UI consistency survey — what is off, and what turned out to be fine
 
+> **A historical record.** This was a snapshot of the code on the date below, kept
+> because a project that writes down its own problems is easier to trust than one
+> that doesn't. Some of what's here has since been fixed and some hasn't; nothing in
+> it is a to-do list. Read it as "what this looked like then", not "what is wrong now".
+
 Written 2026-08-22 against `main` @ `4b29248`. Companion to
 [`survey-navigation.md`](survey-navigation.md), which covers navigation exceptions; this one
 covers everything else in the CLAUDE.md UX standard. A catalogue, not a change.

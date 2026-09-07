@@ -1,5 +1,5 @@
 name: Feature request
-description: Something MeshTerm should be able to do
+description: Suggest a feature or an improvement
 labels: [enhancement]
 body:
   - type: markdown

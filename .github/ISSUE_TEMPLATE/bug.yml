@@ -1,28 +1,47 @@
 name: Bug report
-description: Something MeshTerm does wrong, and how to see it happen
+description: Report a problem with MeshTerm
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        The fields below are the ones that get asked in every single bug thread, so
-        answering them up front usually saves a day of back-and-forth.
+        Hopefully you never need this form.
+
+        If you do: how much of this you fill in really does decide what happens next. A
+        report I can act on gets worked on. A vague one usually doesn't, because I can't
+        do anything with it. If it isn't worth describing properly, it's probably not
+        worth fixing.
+
+        Most of these take ten seconds each.
 
   - type: textarea
-    id: what-happened
+    id: problem
     attributes:
-      label: What happened
-      description: What you saw, and what you expected instead.
+      label: What's the problem
+      description: What happens, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-often
+    attributes:
+      label: How often does it happen
+      options:
+        - Every single time
+        - Often, but not always
+        - Now and then, no pattern I can see
+        - Once, and I haven't seen it since
     validations:
       required: true
 
   - type: textarea
     id: repro
     attributes:
-      label: How to see it happen
+      label: How do I make it happen
       description: >
-        The screens and keys, in order. "Contacts, Enter on a node, Routes tab, Enter on
-        the second route" beats "open a trace".
+        The steps, in order, starting from launching MeshTerm. Screens and keys beat
+        descriptions — "Contacts, Enter on a node, Routes tab, Enter on the second route"
+        is worth more than "open a trace".
       placeholder: |
         1.
         2.
@@ -30,70 +49,124 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Is there a way around it
+      description: Anything that avoids it, or gets you unstuck. Say so even if it's ugly.
+
   - type: input
     id: version
     attributes:
       label: MeshTerm version
-      description: Shown on the splash screen and on the About page.
+      description: It's on the splash screen when you start, and on the About page.
       placeholder: "0.2.0"
     validations:
       required: true
 
-  - type: dropdown
-    id: platform
+  - type: input
+    id: hardware
     attributes:
-      label: Which flavour
+      label: What are you running MeshTerm on
       description: >
-        MeshTerm draws itself differently on a PicoCalc — 53 columns, sixteen colours, a
-        different font. A bug in one flavour often does not exist in the other.
-      options:
-        - Regular (desktop or ssh)
-        - PicoCalc
-    validations:
-      required: true
-
-  - type: dropdown
-    id: transport
-    attributes:
-      label: How the companion is connected
-      options:
-        - USB / serial
-        - Bluetooth
-        - TCP
-        - No companion (simulator / --mock)
+        Desktop, laptop, Mac, or a handheld — and if it's a handheld, which one.
+      placeholder: "ClockworkPi uConsole (CM4), or: desktop PC"
     validations:
       required: true
 
   - type: input
     id: os
     attributes:
-      label: Operating system and Python version
-      placeholder: "Windows 11, Python 3.12"
+      label: Which OS, exact version
+      placeholder: "Windows 11 24H2 / macOS 15.3 / Debian 12"
     validations:
       required: true
 
   - type: input
     id: terminal
     attributes:
-      label: Terminal, and its size in columns x rows
+      label: Which terminal, and how big
       description: >
-        Layout bugs are usually terminal bugs. Which terminal, and how big, decides
-        whether anyone can reproduce what you are seeing.
+        PowerShell, Windows Terminal, iTerm2, the PicoCalc console, ssh from something.
+        Size in columns x rows if you know it — a lot of layout bugs are really terminal
+        bugs.
       placeholder: "Windows Terminal, 120x40"
     validations:
       required: true
 
   - type: input
+    id: companion
+    attributes:
+      label: Which companion device
+      description: >
+        Be precise. There are a lot of these and they don't behave the same. "A Xiao"
+        doesn't narrow it down — "Seeed XIAO nRF52840 + Wio-SX1262" does. Leave blank if
+        no radio was involved.
+      placeholder: "Heltec V3 / RAK4631 / XIAO nRF52840 + Wio-SX1262"
+
+  - type: input
     id: firmware
     attributes:
-      label: Companion device and firmware version
-      description: Leave blank if no radio was involved.
-      placeholder: "Heltec V3, MeshCore 1.15.0"
+      label: Which firmware version is on it
+      placeholder: "MeshCore 1.15.0"
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How is it connected
+      options:
+        - USB / serial
+        - Bluetooth
+        - TCP
+        - SPI-to-TCP bridge
+        - Something else (say so below)
+        - No radio — simulator / --mock
+    validations:
+      required: true
+
+  - type: dropdown
+    id: flavour
+    attributes:
+      label: Regular or PicoCalc
+      description: >
+        MeshTerm draws itself differently on a PicoCalc — narrower, fewer colours, a
+        different font. A bug in one often doesn't exist in the other, so this saves a
+        round of guessing.
+      options:
+        - Regular (desktop, laptop, ssh)
+        - PicoCalc handheld
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mock
+    attributes:
+      label: Does it still happen with `meshterm --mock`
+      description: >
+        `--mock` runs the whole app against a fake radio. If the bug survives that, it's
+        in MeshTerm and I can chase it without hardware. If it doesn't, it's in the link
+        or the radio, which is a different hunt. Skip it if the bug is about connecting
+        in the first place.
+      options:
+        - "Yes, still happens with --mock"
+        - "No, --mock is fine"
+        - "Haven't tried"
+        - "Doesn't apply"
+
+  - type: textarea
+    id: error
+    attributes:
+      label: The exact error, if there was one
+      description: >
+        Copy it as text rather than photographing the screen — text can be searched, and
+        a photo of a terminal is hard to read. Paste the whole traceback if it crashed.
+      render: text
 
   - type: textarea
     id: extra
     attributes:
       label: Anything else
       description: >
-        A screenshot of the screen, the traceback if it crashed, or what the radio was
-        doing at the time. Paste text rather than a photo of text where you can.
+        Did it used to work? Did it start after an update? Screenshots of a wrong-looking
+        screen are genuinely useful here, even though text is better for errors.

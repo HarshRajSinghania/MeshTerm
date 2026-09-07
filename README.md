@@ -14,10 +14,16 @@ radio overhears is recorded to a local SQLite database, so the longer you run it
 your mesh's history is worth.
 
 <p>
+  <a href="https://github.com/jpmartineau/MeshTerm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jpmartineau/MeshTerm/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-green"></a>
   <img alt="For MeshCore" src="https://img.shields.io/badge/for-MeshCore-8A2BE2">
   <img alt="Interface: TUI + CLI" src="https://img.shields.io/badge/interface-TUI%20%2B%20CLI-orange">
+  <a href="https://discord.gg/AZwe5Uvb3S"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865F2"></a>
 </p>
+
+> MeshTerm is a side project, not a product. Bug reports are very welcome — but please
+> open an issue before writing a pull request. [More on how it's run](#how-this-project-is-run).
 
 <!--
   Screenshots welcome here. Drop PNGs into docs/ and reference them, e.g.:
@@ -48,18 +54,35 @@ your mesh's history is worth.
 
 ## Install
 
-```bash
-git clone <your-fork-url> meshterm
-cd meshterm
-pip install -e ".[dev]"
-```
-
-Python **3.10+** is required (matching the `meshcore` library). The `[dev]` extra adds
-pytest and ruff; drop it for a runtime-only install (`pip install -e .`).
+You need **Python 3.10 or newer**. That's the only requirement — MeshTerm pulls in
+everything else itself.
 
 ```bash
-python -m pytest -q      # run the test suite
+pip install git+https://github.com/jpmartineau/MeshTerm
+meshterm
 ```
+
+`meshterm` opens the full-screen menu. That's the whole install.
+
+**Rather not touch your system Python?** [pipx](https://pipx.pypa.io/) puts the app in its
+own private environment and still gives you a plain `meshterm` command:
+
+```bash
+pipx install git+https://github.com/jpmartineau/MeshTerm
+```
+
+**No radio yet?** `meshterm --mock` runs the entire app against a simulated mesh, so you
+can have a look around before you buy anything.
+
+### Coming
+
+- **Downloadable installers** for Windows, macOS and Linux, so you won't need Python at
+  all. They'll show up on the [Releases](https://github.com/jpmartineau/MeshTerm/releases)
+  page.
+- **`pip install mesh-term`**, once the package is published. It isn't yet — the name
+  question is still being sorted out ([why](https://github.com/pypi/support/issues/12162)).
+
+Setting up for development instead? That's in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick start
 
@@ -252,6 +275,41 @@ ui/           Rich theme/widgets + the full-screen TUI (screens, dialogs, map, c
 Adding a feature means subclassing `Tool`, decorating it with `@register`, and
 implementing `run()`. The same registry builds both the CLI and the menu, and the base
 class wraps every execution in a logged `runs` row automatically.
+
+## How this project is run
+
+MeshTerm is one person working evenings and weekends. I'd rather tell you that up front
+than have you guess from how long things take.
+
+**Issues are welcome — all of them.** Bugs, questions, "is this supposed to do that". The
+[bug form](.github/ISSUE_TEMPLATE/bug.yml) asks for a fair bit, and that's on purpose: how
+well a problem is described really does decide whether I can do anything with it. If I can
+reproduce it, I'll usually chase it. If I can't, I'm mostly guessing.
+
+**Ask before you write a pull request.** Open an issue first and wait for a yes. I'm not
+being precious — MeshTerm has firm house rules about how screens get built (they're in
+[CLAUDE.md](CLAUDE.md)), and I'd hate for you to spend a weekend on something I then ask
+you to rewrite. A quick conversation first saves us both.
+
+**I can't promise timelines.** Some things get fixed the same night. Some sit for a month
+because life happened. If your issue goes quiet, a nudge is completely fine — it's not
+rude, it's helpful.
+
+**Where to report things.** Either works:
+
+- **[GitHub issues](https://github.com/jpmartineau/MeshTerm/issues)** if you have an
+  account. This is where things get tracked and fixed, so it's the shortest path.
+- **[Discord](https://discord.gg/AZwe5Uvb3S)** if you don't, or if you're not sure it's a
+  bug yet. Ask in the support forum, or drop reproducible defects in `#bugs`. I move the
+  real ones over to GitHub myself.
+
+Don't worry about picking the wrong one. Getting told about a problem beats filing it
+tidily.
+
+Also here: [CONTRIBUTING.md](CONTRIBUTING.md) ·
+[SECURITY.md](SECURITY.md) ·
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) ·
+[CHANGELOG.md](CHANGELOG.md)
 
 ## Development
 

@@ -1,7 +1,13 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Questions, setup help, and general mesh chat
+  - name: Not sure it's a bug? Ask on Discord
     url: https://discord.gg/AZwe5Uvb3S
     about: >
-      Not sure whether it's a bug? Ask on Discord first — it's faster, and someone
-      running the same radio has probably hit it.
+      Setup trouble, "is it supposed to do this", or anything you want a second opinion
+      on. The support forum is the place. Someone running your radio has probably hit it.
+
+  - name: No GitHub account? Report it on Discord instead
+    url: https://discord.gg/AZwe5Uvb3S
+    about: >
+      Drop reproducible bugs in #bugs and they'll get moved here. Being told beats
+      filing it tidily.
