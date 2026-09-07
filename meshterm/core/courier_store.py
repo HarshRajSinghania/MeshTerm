@@ -168,8 +168,10 @@ class CourierStore:
     # --- attempt bookkeeping -----------------------------------------------------------
 
     def note_attempt(self, ident: int, *, when: datetime | None = None) -> None:
-        """Record that a delivery attempt is being made (written *before* the send,
-        so a crash mid-transmission can never spend the retry budget twice).
+        """Record that a delivery attempt is being made.
+
+        Written *before* the send, so a crash mid-transmission can never spend the
+        retry budget twice.
         """
         message = self.get(ident)
         if message is not None:

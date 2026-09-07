@@ -803,8 +803,10 @@ class TuiUi(Ui):
         danger: bool = False,
         destructive: bool = False,
     ) -> Any:
-        """Delegate to the session's button dialog, themed cautionary when ``danger``,
-        or in the reserved error red when ``destructive`` (irreversible data loss).
+        """Delegate to the session's button dialog, in the caution tier the caller asked for.
+
+        ``danger`` themes the frame cautionary; ``destructive`` uses the reserved error
+        red, and is only for irreversible data loss.
         """
         tier = "err" if destructive else "warn" if danger else ""
         return await self.session.button_dialog(

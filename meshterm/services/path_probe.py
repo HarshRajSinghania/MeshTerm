@@ -52,8 +52,10 @@ class ProbeOutcome:
 
     @property
     def sort_key(self) -> tuple:
-        """Ranking key, best-first under ascending sort: reliability, then bottleneck
-        SNR, then RTT — the same priority order the TX optimizer applies.
+        """A ranking key that sorts the best path first.
+
+        Reliability, then bottleneck SNR, then RTT — the same priority order the TX
+        optimizer applies.
         """
         snr = self.stats.median_min_snr
         rtt = self.stats.median_rtt_ms

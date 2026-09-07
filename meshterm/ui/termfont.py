@@ -290,8 +290,10 @@ def _read_jsonc(path: Path) -> dict | None:
 
 
 def _profile_face(profile: object) -> str | None:
-    """A Windows Terminal profile's configured face — new ``font.face`` or legacy
-    ``fontFace`` — or ``None`` when the profile leaves it to the defaults chain.
+    """A Windows Terminal profile's configured font face.
+
+    Reads the new ``font.face`` or the legacy ``fontFace``, and answers ``None`` when
+    the profile leaves the choice to the defaults chain.
     """
     if not isinstance(profile, dict):
         return None
@@ -309,8 +311,9 @@ def _profile_face(profile: object) -> str | None:
 
 
 def _wt_settings_paths(environ: Mapping[str, str]) -> list[Path]:
-    """Candidate Windows Terminal ``settings.json`` locations (packaged, preview,
-    unpackaged), existing files only.
+    """Where Windows Terminal might keep its ``settings.json``.
+
+    The packaged, preview, and unpackaged locations — existing files only.
     """
     local = environ.get("LOCALAPPDATA")
     if not local:
@@ -367,8 +370,10 @@ def _windows_terminal_face(environ: Mapping[str, str]) -> str:
 def _vscode_settings_paths(
     environ: Mapping[str, str], start: Path | None
 ) -> list[Path]:
-    """VS Code settings files in precedence order: nearest workspace, then user
-    (stable and Insiders, per-platform locations), existing files only.
+    """VS Code's settings files, nearest first.
+
+    The closest workspace, then the user's own (stable and Insiders, in their
+    per-platform locations) — existing files only.
     """
     paths: list[Path] = []
     try:

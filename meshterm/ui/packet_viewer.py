@@ -714,8 +714,9 @@ class PacketViewer(Screen):
         return render_lines(grid, width)
 
     def _head_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
-        """The rows above the route graph: the class headline, the common core, then a
-        packet's parsed frame.
+        """The rows above the route graph.
+
+        The class headline, the common core, then a packet's parsed frame.
         """
         rows: list[tuple[str, RenderableType]] = []
 
@@ -881,8 +882,10 @@ class PacketViewer(Screen):
         return "direct — no relays"
 
     def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
-        """A raw ``packet`` entry's addressing, parsed class/route, relay path, and — for a
-        channel frame naming a channel we hold the key for — its channel and plaintext.
+        """What a raw ``packet`` entry has to say for itself.
+
+        Its addressing, parsed class and route, and relay path — plus, for a channel
+        frame naming a channel we hold the key for, its channel and plaintext.
         """
         raw = entry.raw if isinstance(entry.raw, dict) else {}
         rows: list[tuple[str, RenderableType]] = []

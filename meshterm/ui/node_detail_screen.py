@@ -484,8 +484,7 @@ class NodeDetailScreen(Screen):
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """Tab switch (when there are tabs to switch), move, open, whatever ``←→`` reads here,
-        Esc last.
+        """The hint line: tab switch, move, open, whatever ``←→`` reads here, Esc last.
 
         The scroll atom folds ``PgUp/PgDn`` and ``←→`` into one when both apply (a busy node's
         list is windowed *and* its highlighted route overflows) rather than stacking two atoms
@@ -581,9 +580,11 @@ class NodeDetailScreen(Screen):
         return 2 if self._tabs[self._tab_index].kind == "info" else 0
 
     def handle(self, action: str, data: str = "") -> None:
-        """Switch tab, move the cursor within a tab, commit a row, page the list, scroll
-        whichever over-wide lane the active tab owns (the highlighted route's pathline, the
-        Info tab's key), or leave.
+        """Answer one key press on the page.
+
+        Switch tab, move the cursor within a tab, commit a row, page the list, scroll
+        whichever over-wide lane the active tab owns (the highlighted route's pathline,
+        the Info tab's key), or leave.
         """
         focus = self._focusables()
         n = len(focus)
@@ -652,8 +653,9 @@ class NodeDetailScreen(Screen):
         return bool(focus) and focus[self._row_index % len(focus)][0] == "path"
 
     def cursor_line(self) -> int | None:
-        """The highlighted row's body line — the frame keeps it in view, which only matters
-        on a terminal too short for the pinned layout's minimums.
+        """The highlighted row's body line, which the frame keeps in view.
+
+        That only matters on a terminal too short for the pinned layout's minimums.
         """
         return self._cursor
 

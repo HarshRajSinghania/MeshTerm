@@ -222,8 +222,10 @@ class MessagePathsScreen(Screen):
             self.resolve(None)
 
     def cursor_line(self) -> int | None:
-        """The selected row's body line. The window already keeps it inside the dialog, so
-        this only bites on a terminal too short for even the compressed head.
+        """The selected row's body line.
+
+        The window already keeps it inside the dialog, so this only bites on a terminal
+        too short for even the compressed head.
         """
         return self._cursor
 

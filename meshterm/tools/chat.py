@@ -781,8 +781,10 @@ def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
 
 
 def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
-    """Append ``body`` to ``text``, muted, with each ``@[Name]`` mention drawn in the
-    mentioned node's key-derived hue (muted when the name resolves to no known node).
+    """Append ``body`` to ``text``, muted, lighting up the names it mentions.
+
+    Each ``@[Name]`` is drawn in that node's key-derived hue, or left muted when the
+    name resolves to no node we know.
     """
     pos = 0
     for match in _MENTION.finditer(body):

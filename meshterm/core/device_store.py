@@ -76,8 +76,9 @@ class RememberedDevice:
 
     @property
     def target(self) -> str:
-        """The connection target: ``host:port`` for TCP, the BLE address for Bluetooth, else
-        the serial port.
+        """Where this device is reached.
+
+        ``host:port`` for TCP, the BLE address for Bluetooth, else the serial port.
         """
         if self.is_tcp:
             return f"{self.host}:{self.tcp_port}"

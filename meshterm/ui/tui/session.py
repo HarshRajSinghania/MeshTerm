@@ -1539,8 +1539,10 @@ class TuiSession:
         return bool(self._float_layers())
 
     def _emit(self, text: str, layer: str = "base") -> ANSI:
-        r"""Wrap a composed frame as prompt_toolkit :class:`ANSI`, repainting whole *rows*
-        when it holds a glyph the terminal may draw narrower than pt reserves for it.
+        r"""Wrap a composed frame as prompt_toolkit :class:`ANSI`.
+
+        A row holding a glyph the terminal may draw narrower than pt reserves for it is
+        repainted whole, rather than differentially.
 
         prompt_toolkit paints differentially: it rewrites only the cells that changed since
         the last frame, and it steps the cursor *relative* to its own width model. That is

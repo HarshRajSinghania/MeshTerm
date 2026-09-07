@@ -137,8 +137,10 @@ class DiscoveredDevice:
 
     @property
     def target(self) -> str:
-        """The identifier a connection opens on: the network ``host:port`` for TCP, the BLE
-        address for Bluetooth, else the serial port.
+        """The identifier a connection opens on.
+
+        The network ``host:port`` for TCP, the BLE address for Bluetooth, else the
+        serial port.
         """
         if self.is_tcp:
             return f"{self.host}:{self.tcp_port}"

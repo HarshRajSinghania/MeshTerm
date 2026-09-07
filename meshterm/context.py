@@ -229,12 +229,12 @@ class AppContext:
 
     @property
     def active_transport(self) -> str | None:
-        """The transport of the current/selected connection: ``"serial"``, ``"ble"``, ``"tcp"``,
-        or ``None``.
+        """Which transport the current or selected connection uses.
 
-        ``None`` for the simulator. For a real device it reflects the open connection when
-        one exists, otherwise the transport implied by the pending selection (an explicit
-        ``--tcp`` selects TCP, ``--ble`` selects BLE), defaulting to serial.
+        One of ``"serial"``, ``"ble"``, ``"tcp"``, or ``None`` for the simulator. For a
+        real device it reflects the open connection when one exists, otherwise the
+        transport implied by the pending selection (an explicit ``--tcp`` selects TCP,
+        ``--ble`` selects BLE), defaulting to serial.
         """
         if self.mock:
             return None

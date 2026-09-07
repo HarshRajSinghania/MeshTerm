@@ -1053,9 +1053,11 @@ class WalkScreen(Screen):
 
     @staticmethod
     def _clip(label: str, room: int, cap: int = _LABEL_W) -> str:
-        """``label`` fit to ``room`` cells: whole if it fits, else ellipsized (``…`` alone
-        at one cell, nothing at zero). The cap and the room-to-edge both flow through here,
-        so a name is only ever shortened as far as it truly must be.
+        """``label`` fit to ``room`` cells.
+
+        Whole if it fits, else ellipsized (``…`` alone at one cell, nothing at zero).
+        The cap and the room-to-edge both flow through here, so a name is only ever
+        shortened as far as it truly must be.
         """
         room = min(room, cap)
         if room <= 0:
@@ -1067,8 +1069,9 @@ class WalkScreen(Screen):
     def _place_label(
         self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
     ) -> None:
-        """Place one marker label (right of the marker when it fits, else left),
-        retrying a row below then above on collision.
+        """Place one marker label, retrying a row below then above on collision.
+
+        It goes to the right of the marker where that fits, else to the left.
 
         The label is clamped to whichever side has more room — the cells free to the
         right of the marker, or to its left — so the selection keeps as much of its name

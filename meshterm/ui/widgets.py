@@ -1171,8 +1171,10 @@ def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
         return "accent" if top_owner(junction) == active else "faint"
 
     def bot_glyph(junction: int) -> str:
-        """The bottom rule's glyph at this junction — a corner turning into/out of the
-        active tab's wall, else a flat pass-through. Always accent: see the docstring.
+        """The bottom rule's glyph at this junction.
+
+        A corner turning into or out of the active tab's wall, else a flat
+        pass-through. Always accent — see the enclosing docstring for why.
         """
         if junction == active:
             return "╯"
