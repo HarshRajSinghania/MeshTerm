@@ -17,6 +17,8 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-09-07
+
 ### Fixed
 
 - **Every icon was a box in the classic Windows console.** That console — which is what a
