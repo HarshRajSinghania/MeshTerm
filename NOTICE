@@ -22,3 +22,12 @@ project and its original author. A fork that keeps soliciting
 donations through that link, or through a lookalike of it, without
 clearly redirecting them to itself, is not affiliated with this
 project and is not authorized to do so.
+
+--------------------------------------------------------------------------------
+
+Bundled font: meshterm/assets/fonts/CascadiaMonoPL.ttf is Cascadia Mono PL,
+Copyright (c) 2019 - Present, Microsoft Corporation, with Reserved Font Name
+Cascadia Code. It is redistributed here unmodified under the SIL Open Font
+License, Version 1.1, which is included beside it as CascadiaMono-OFL.txt and
+is its only license -- the Apache License above does not apply to it. The
+inclusion of this font does not imply that Microsoft endorses MeshTerm.

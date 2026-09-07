@@ -78,22 +78,33 @@ chmod +x meshterm-0.2.4-*
 ./meshterm-0.2.4-*
 ```
 
-### A word about fonts
+### A word about terminals, on Windows
 
-MeshTerm draws its charts out of braille characters — that's how a timeline fits in one
-row of text. Most terminals handle that without being asked, because when the font you
-picked is missing a character they quietly borrow it from another one.
+MeshTerm is drawn with emoji icons, braille charts and powerline path chips. Whether you
+see them is up to your *terminal*, not really your font: a modern terminal, asked for a
+character its font doesn't have, quietly borrows it from another font on the machine.
+That's why the app looks right in Windows Terminal, in VS Code's terminal, and on macOS
+and Linux — usually with a font that contains almost none of it.
 
-The classic Windows console (the black `cmd.exe` window) doesn't do that. Whatever its
-font is missing comes out as an empty box, and its fonts are missing rather a lot of
-what MeshTerm draws. So when MeshTerm sees that console, it offers to fix it: it ships
+The classic Windows console — the black `cmd.exe` window you get from a double-click —
+doesn't borrow. It draws what its one font holds and empty boxes for everything else, and
+no font fixes the icons there: the only two fonts on a Windows machine with emoji in them
+are proportional, and a console won't take a proportional font.
+
+So when MeshTerm lands in that console it offers to move: **reopen in Windows Terminal**,
+one keypress, nothing installed and nothing changed. That's the whole app, exactly as the
+screenshots show it. Windows Terminal is already on every Windows 11 machine and is a free
+install on Windows 10.
+
+Stay in the classic console and MeshTerm offers the next best thing instead — the charts
+and marks, without the icons. It ships
 [Cascadia Mono PL](https://github.com/microsoft/cascadia-code), Microsoft's own console
-font, and will install it just for you — no administrator rights, nothing downloaded.
-If you already have Cascadia, it simply switches to it.
+font and one of the very few monospace faces that carries braille at all, and will install
+it just for you: no administrator rights, nothing downloaded. If you already have Cascadia
+it simply switches to it.
 
-You can decline, and MeshTerm will still run. Preferences → Display → Console font is
-where you change your mind. Running in **Windows Terminal** instead of the classic
-console avoids the whole question, and gets you the emoji icons as well.
+You can decline both and MeshTerm still runs. Preferences → Display → Console setup is
+where you change your mind.
 
 Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
 becomes just `meshterm` from anywhere.
@@ -403,6 +414,15 @@ tiles by [OpenFreeMap](https://openfreemap.org/). OpenStreetMap data is availabl
 with a small built-in reader for the [Mapbox Vector Tile](https://github.com/mapbox/vector-tile-spec)
 format.
 
+### Bundled font
+
+MeshTerm ships **Cascadia Mono PL**, © 2019–present Microsoft Corporation, redistributed
+unmodified under the [SIL Open Font License 1.1](meshterm/assets/fonts/CascadiaMono-OFL.txt).
+It's offered to Windows users whose console can't draw the charts — see
+[A word about fonts](#a-word-about-fonts). Microsoft doesn't endorse MeshTerm; the font is
+simply the right tool, being one of the very few monospace faces that carries the braille
+block the timelines are drawn from.
+
 ### Open-source dependencies
 
 MeshTerm is built with these libraries; each is used under its own license (see the
@@ -431,3 +451,9 @@ license (see [NOTICE](NOTICE)); a redistributed fork should go by its own name. 
 donate link built into the app supports this project and its original author —
 forks that keep soliciting through it without redirecting it to themselves aren't
 affiliated with this project.
+
+The bundled font is **not** covered by that license. `meshterm/assets/fonts/CascadiaMonoPL.ttf`
+is Microsoft's Cascadia Mono PL, redistributed unmodified under the SIL Open Font License
+1.1, which travels with it as
+[CascadiaMono-OFL.txt](meshterm/assets/fonts/CascadiaMono-OFL.txt) and stays its only
+license.
