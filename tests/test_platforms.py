@@ -6,12 +6,20 @@ sanity — PicoCalc being strictly the narrower, plainer flavour.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
 import meshterm.platforms as platforms_mod
-from meshterm.platforms import PICOCALC, REGULAR, get_platform, resolve, set_platform
+from meshterm.platforms import (
+    PICOCALC,
+    REGULAR,
+    get_platform,
+    resolve,
+    set_platform,
+    without_emoji,
+)
 
 
 def test_regular_is_todays_behaviour() -> None:
@@ -142,3 +150,52 @@ def test_resolve_auto_detect_is_conservative(monkeypatch: pytest.MonkeyPatch) ->
     r = resolve()
     assert r.platform is REGULAR
     assert r.detected_model == "Raspberry Pi 4 Model B"
+
+
+# -- the emoji-less variant ------------------------------------------------------------
+
+
+def test_without_emoji_moves_one_flag_and_nothing_else() -> None:
+    """A terminal that can't draw emoji is not a different flavour.
+
+    The classic Windows console has the desktop's width, colour depth, borders and
+    keyboard — only the icons have to change. Every other field must survive, and
+    ``ascii_fold`` above all: folding there would strip accents from names the console
+    renders perfectly well.
+    """
+    plain = without_emoji(REGULAR)
+    assert plain.emoji is False
+    assert plain.ascii_fold is False
+    assert plain.truecolor is True
+    assert plain.readable_cols == REGULAR.readable_cols
+    assert plain.footer_fkeys is REGULAR.footer_fkeys
+
+    changed = {
+        f.name
+        for f in dataclasses.fields(REGULAR)
+        if getattr(plain, f.name) != getattr(REGULAR, f.name)
+    }
+    assert changed == {"emoji"}
+
+
+def test_without_emoji_leaves_an_already_compact_platform_alone() -> None:
+    """A platform whose icons are already compact comes back untouched.
+
+    The same object, not a copy that would compare equal but break every ``is`` check
+    the suite makes against PICOCALC.
+    """
+    assert without_emoji(PICOCALC) is PICOCALC
+
+
+def test_the_emoji_less_variant_still_drives_the_theme() -> None:
+    """The derived platform is a real one: binding it routes icons through the table.
+
+    This is the whole point — the seam's flags are independent, so clearing one reaches
+    the glyph funnel without dragging the console font's fold along with it.
+    """
+    from meshterm.ui.theme import fold_text, glyph
+
+    set_platform(without_emoji(REGULAR))
+    assert glyph("📡") == "☼"  # the advert icon, compacted
+    assert fold_text("café Montréal") == "café Montréal"  # no fold
+    assert get_platform().readable_cols == 72

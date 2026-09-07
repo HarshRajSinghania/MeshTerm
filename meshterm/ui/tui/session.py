@@ -283,13 +283,20 @@ def _has_wide_glyph(text: str) -> bool:
     ``>= 0x1100`` guard skips the ASCII/Latin bulk of a frame before the width lookup, which
     matters because this runs over the whole composed frame on every repaint.
 
-    On a platform that draws no emoji the answer is ``False`` by construction — its console
-    font is a fixed 512-glyph set with no wide glyph in it, so nothing a frame can contain
-    would return ``True``. Answering from the platform instead of the text skips a
-    per-character scan of the entire frame on every repaint, and with it the scrub machinery
-    that a ``True`` would arm, leaving the cheap differential paint permanently in play.
+    On a platform that folds its frames to a fixed font the answer is ``False`` by
+    construction — that font is a 512-glyph set with no wide glyph in it, so nothing a
+    composed frame can contain would return ``True``. Answering from the platform instead
+    of the text skips a per-character scan of the entire frame on every repaint, and with
+    it the scrub machinery that a ``True`` would arm, leaving the cheap differential paint
+    permanently in play.
+
+    The fold is the guarantee, not the icon table: a terminal that merely can't draw
+    *emoji* (the classic Windows console — see :func:`meshterm.ui.termfont.emoji_support`)
+    still renders the rest of the BMP, and a contact named in CJK is two cells wide there
+    like anywhere else. Reading ``emoji`` here instead would have skipped the scan on a
+    frame that genuinely needed it, and smeared the row.
     """
-    if not get_platform().emoji:
+    if get_platform().ascii_fold:
         return False
     return any(ord(ch) >= 0x1100 and get_cwidth(ch) == 2 for ch in text)
 

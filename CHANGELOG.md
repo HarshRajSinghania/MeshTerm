@@ -17,6 +17,19 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every icon was a box in the classic Windows console.** That console — which is what a
+  double-clicked build still gets — draws no emoji at all, whatever font it is set to, so
+  the menu came up as rows of replacement characters.
+
+  MeshTerm now works out which console it is running in and, on that one, draws its icons
+  through the compact single-character table it already keeps for the PicoCalc: `☼` for an
+  advert, `¶` for a message, `★` for the trophy case. Nothing else about the desktop
+  layout changes — same width, same colours, same accented names. Running in Windows
+  Terminal or VS Code's terminal keeps the emoji, and `MESHTERM_EMOJI=1` or `=0` forces
+  the matter either way. `meshterm platform` reports which it chose and why.
+
 ## [0.2.4] — 2026-09-07
 
 ### Fixed

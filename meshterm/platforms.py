@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -342,10 +342,30 @@ def resolve(flag: str | None = None) -> Resolution:
     return Resolution(flag, env, model, "default", REGULAR)
 
 
+def without_emoji(platform: Platform) -> Platform:
+    """The same platform with its icons routed through the compact glyph table.
+
+    A terminal that cannot draw emoji is not a different *flavour* — the classic Windows
+    console has the desktop's width, colour depth and keyboard, and wants every other
+    thing :data:`REGULAR` says. Only the one flag moves, which is what the seam's flags
+    being independent is for: ``ascii_fold`` stays off, so accents and the rest of the
+    BMP still come through.
+
+    Args:
+        platform: The resolved platform.
+
+    Returns:
+        ``platform`` itself when its icons are already compact, else a copy with
+        ``emoji`` cleared.
+    """
+    return platform if not platform.emoji else replace(platform, emoji=False)
+
+
 __all__ = [
     "Platform",
     "REGULAR",
     "PICOCALC",
+    "without_emoji",
     "PLATFORM",
     "get_platform",
     "set_platform",

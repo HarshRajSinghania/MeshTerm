@@ -28,9 +28,10 @@ from .core.preferences import PreferenceError, Preferences
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging, get_logger, level_from_name, log_path
 from .persistence.repository import Repository
-from .platforms import Resolution, resolve, set_platform
+from .platforms import Resolution, resolve, set_platform, without_emoji
 from .tools import all_tools
 from .tools.base import Tool, ToolResult
+from .ui.termfont import emoji_support
 from .ui.theme import make_console
 
 
@@ -138,7 +139,14 @@ def main_callback(
         _platform_resolution = resolve(platform)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--platform") from exc
-    set_platform(_platform_resolution.platform)
+    # A terminal that cannot draw emoji is asked about here rather than in resolve(),
+    # which answers "which flavour" from the flag, the env and the device tree and should
+    # stay that pure — this is the *terminal's* limit, and it applies whichever flavour
+    # those three chose. See meshterm.ui.termfont.emoji_support.
+    active = _platform_resolution.platform
+    if not emoji_support().supported:
+        active = without_emoji(active)
+    set_platform(active)
 
     settings = Settings.load()
     if db_path is not None:
@@ -244,6 +252,10 @@ def platform_command() -> None:
     flavour a given invocation would run as, and why — the ``--platform``/
     ``MESHTERM_PLATFORM`` inputs, what ``/proc/device-tree/model`` reports (``None`` off
     the actual hardware), and which of those decided it.
+
+    It also reports the terminal's own emoji verdict, which is a separate question from
+    the flavour and the usual reason a Windows session looks plainer than the screenshots
+    (see :func:`meshterm.ui.termfont.emoji_support`).
     """
     assert _platform_resolution is not None  # set by the callback that always runs first
     r = _platform_resolution
@@ -252,6 +264,16 @@ def platform_command() -> None:
     console.print(f"  --platform:              {r.flag or '(not passed)'}")
     console.print(f"  MESHTERM_PLATFORM:       {r.env or '(not set)'}")
     console.print(f"  /proc/device-tree/model: {r.detected_model or '(unavailable)'}")
+
+    emoji = emoji_support()
+    verdict = "yes" if emoji.supported else "no — icons use the compact glyphs"
+    console.print(f"icons:    [accent]{verdict}[/accent]  (source: {emoji.source})")
+    if not emoji.supported and emoji.source == "console":
+        console.print(
+            "  this is the classic Windows console, which draws no emoji whatever font\n"
+            "  it is set to. Windows Terminal and VS Code's terminal both do — running\n"
+            "  MeshTerm in one gets the icons back. MESHTERM_EMOJI=1 overrides this."
+        )
 
 
 @app.command(name="specimen")

@@ -1,4 +1,25 @@
-"""Terminal font detection — can this terminal draw powerline path separators?
+"""Terminal capability detection — what can this terminal actually draw?
+
+Two questions, both answered out-of-band because a terminal cannot be asked in-band: a
+glyph it does not have still occupies its cell, so the screen looks the same whether the
+character arrived or not.
+
+**Powerline separators**, below, are a *font* question — read the terminal's configured
+face and match it against fonts known to carry the block.
+
+**Emoji** (:func:`emoji_support`) are a *host* question, and only on Windows. The classic
+console — ``conhost``, which is what a double-clicked program still gets — rasterises
+through GDI with the console font and nothing behind it, so an emoji lands as a
+replacement box however the font is configured. Everything that replaced it draws them
+fine. So the verdict identifies the host, structurally rather than from the environment
+(``WT_SESSION`` is inherited across process launches, so a program started from Windows
+Terminal into a console of its own still claims to be in one), and a ``False`` routes
+every icon through the compact single-glyph table :func:`meshterm.ui.theme.glyph` already
+keeps for the PicoCalc — that whole vocabulary is BMP, so it draws wherever the plain
+status marks already do.
+
+Both verdicts are hints that pick a default, and both have an override for the reader who
+knows better than the probe: ``MESHTERM_POWERLINE`` and ``MESHTERM_EMOJI``.
 
 The path-line widget (:mod:`~meshterm.ui.pathline`) can render a hop sequence as
 interlocking powerline segments — each hop a colour-filled chip, joined by the solid
@@ -677,3 +698,166 @@ def installed_recommended() -> RecommendedFont | None:
             return matched
         best = best or matched
     return best
+
+
+# --- emoji support ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EmojiSupport:
+    """Whether this terminal can show an emoji at all, and what decided that.
+
+    Attributes:
+        supported: ``True`` when an emoji icon reaches the screen as itself.
+        source: ``"env"`` (the ``MESHTERM_EMOJI`` override), ``"platform"`` (not Windows,
+            so not the classic console's problem), ``"console"`` (the host was identified
+            — see :func:`_is_classic_console`), or ``"no-console"`` (nothing to identify:
+            output is redirected, or the call failed).
+    """
+
+    supported: bool
+    source: str
+
+
+def _is_classic_console() -> bool | None:
+    """Whether this process is drawing into a genuine ``conhost`` window.
+
+    Which is the whole question, because that host renders through GDI with the console
+    font and no emoji font behind it, while everything that replaced it — Windows
+    Terminal, VS Code's terminal, anything over ssh — draws emoji as a matter of course.
+
+    It cannot be asked in band. A missing glyph still occupies its cell, so the screen
+    reads back exactly as it would have if the character had drawn: measured on Windows 10
+    22H2, a classic console stores ``📡`` intact and advances two cells while showing a
+    single replacement box, and a ConPTY (which does draw it) reads back as U+FFFD because
+    the buffer behind it is updated asynchronously. A write-and-read-back probe answers
+    both hosts *backwards*, which is the trap this docstring exists to record.
+
+    Nor can the environment be trusted alone: ``WT_SESSION`` is inherited by child
+    processes, so a program launched from Windows Terminal into a console of its own still
+    carries it and would answer for the wrong host.
+
+    So the host is identified structurally, from two independent facts, and both must
+    agree before anything is dimmed (the costly mistake is stripping icons from a terminal
+    that could draw them):
+
+    * **The console font has a real pixel width.** A ConPTY's hidden conhost reports a
+      stub — face ``Consolas``, cell width ``0`` — because nothing is rasterised there.
+    * **The buffer is taller than its window.** A classic console owns its scrollback
+      (9001 rows by default); under a ConPTY the terminal owns it, so the buffer is
+      exactly the window.
+
+    Returns:
+        ``True`` for a genuine classic console, ``False`` for anything else drawing to a
+        console, and ``None`` when there is no console on stdout (redirected output, not
+        Windows, or the call failed) — an unknown is never a reason to degrade.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _COORD(ctypes.Structure):
+            _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+
+        class _SMALL_RECT(ctypes.Structure):
+            _fields_ = [
+                ("Left", wintypes.SHORT),
+                ("Top", wintypes.SHORT),
+                ("Right", wintypes.SHORT),
+                ("Bottom", wintypes.SHORT),
+            ]
+
+        class _CSBI(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", _COORD),
+                ("dwCursorPosition", _COORD),
+                ("wAttributes", wintypes.WORD),
+                ("srWindow", _SMALL_RECT),
+                ("dwMaximumWindowSize", _COORD),
+            ]
+
+        class _CONSOLE_FONT_INFOEX(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.ULONG),
+                ("nFont", wintypes.DWORD),
+                ("dwFontSize", _COORD),
+                ("FontFamily", wintypes.UINT),
+                ("FontWeight", wintypes.UINT),
+                ("FaceName", ctypes.c_wchar * 32),
+            ]
+
+        # Safe to declare: this handle is ours alone (see meshterm.core.win32dll). The
+        # explicit restype matters — ctypes would assume a 32-bit int and truncate the
+        # 64-bit HANDLE, turning every later call into a silent failure.
+        kernel32 = win32dll.kernel32()
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleScreenBufferInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_CSBI)]
+        kernel32.GetConsoleScreenBufferInfo.restype = wintypes.BOOL
+        kernel32.GetCurrentConsoleFontEx.argtypes = [
+            wintypes.HANDLE,
+            wintypes.BOOL,
+            ctypes.POINTER(_CONSOLE_FONT_INFOEX),
+        ]
+        kernel32.GetCurrentConsoleFontEx.restype = wintypes.BOOL
+
+        handle = kernel32.GetStdHandle(wintypes.DWORD(-11).value)  # STD_OUTPUT_HANDLE
+        info = _CSBI()
+        # Fails when stdout is a pipe or a file — nothing is being drawn, so there is
+        # nothing to answer, and this is what keeps redirected and CI runs out of it.
+        if not kernel32.GetConsoleScreenBufferInfo(handle, ctypes.byref(info)):
+            return None
+
+        font = _CONSOLE_FONT_INFOEX()
+        font.cbSize = ctypes.sizeof(_CONSOLE_FONT_INFOEX)
+        if not kernel32.GetCurrentConsoleFontEx(handle, False, ctypes.byref(font)):
+            return None
+
+        rasterised = font.dwFontSize.X > 0
+        owns_scrollback = info.dwSize.Y > (info.srWindow.Bottom - info.srWindow.Top + 1)
+        return rasterised and owns_scrollback
+    except Exception:  # pragma: no cover - a probe that fails is an unknown, not a crash
+        return None
+
+
+def _emoji_support(
+    environ: Mapping[str, str] | None = None,
+    *,
+    console_probe: Callable[[], bool | None] = _is_classic_console,
+    system: str | None = None,
+) -> EmojiSupport:
+    """The uncached verdict (see :func:`emoji_support` for the ladder)."""
+    env = os.environ if environ is None else environ
+    override = (env.get("MESHTERM_EMOJI") or "").strip().lower()
+    if override in {"0", "off", "no", "none", "false"}:
+        return EmojiSupport(False, "env")
+    if override in {"1", "on", "yes", "true"}:
+        return EmojiSupport(True, "env")
+
+    if (sys.platform if system is None else system) != "win32":
+        return EmojiSupport(True, "platform")
+    classic = console_probe()
+    if classic is None:
+        return EmojiSupport(True, "no-console")
+    return EmojiSupport(not classic, "console")
+
+
+@lru_cache(maxsize=1)
+def emoji_support() -> EmojiSupport:
+    """Whether emoji icons can be drawn here, decided once and cached.
+
+    The ladder: the ``MESHTERM_EMOJI`` override, then everything that isn't Windows (where
+    a UTF-8 terminal draws them as a matter of course), then :func:`_is_classic_console`.
+    Cached because a session does not change host halfway through.
+
+    Returns:
+        The :class:`EmojiSupport` verdict.
+    """
+    return _emoji_support(os.environ)
+
+
+def emoji_enabled() -> bool:
+    """Whether icons should render as emoji rather than through the compact table."""
+    return emoji_support().supported

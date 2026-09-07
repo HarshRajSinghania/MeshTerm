@@ -150,6 +150,24 @@ def test_every_glyph_map_target_is_in_the_console_font() -> None:
             )
 
 
+def test_every_glyph_map_target_stays_inside_the_bmp() -> None:
+    """The table has a second consumer that the console font cannot speak for.
+
+    The classic Windows console keeps one 16-bit code unit per cell, so a character above
+    U+FFFF is replaced by U+FFFD before its font is ever consulted — which is why MeshTerm
+    routes icons through this table there too (see
+    :func:`meshterm.ui.termfont.emoji_support`). A substitute "improved" into an emoji
+    would draw fine on the PicoCalc's own font and silently break every Windows console,
+    so the plane is asserted here rather than left to the font whitelist to imply.
+    """
+    for emoji, compact in theme._GLYPH_MAP.items():
+        for ch in compact:
+            assert ord(ch) <= 0xFFFF, (
+                f"{emoji!r} maps to {compact!r}; {ch!r} is above U+FFFF and no classic "
+                f"Windows console can hold it"
+            )
+
+
 def test_glyph_map_targets_never_widen_their_icon() -> None:
     """A compact form at most matches its emoji's measured width (the fold pads the rest)."""
     for emoji, compact in theme._GLYPH_MAP.items():

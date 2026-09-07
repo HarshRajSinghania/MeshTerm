@@ -1,8 +1,9 @@
 """Terminal-font detection tests: the recommended list, the ladder, the verdict.
 
-Everything runs against injected environments and temp settings files — no test
-touches the real registry, the real Win32 console, or the machine's actual fonts —
-so the suite decides the same verdicts on any box.
+Every verdict runs against injected environments, temp settings files and injected
+probes, so the suite decides the same answers on any box. Two tests deliberately do
+touch the real machine — the installed-font scan and the console buffer probe — and both
+assert only that asking is safe, never what this particular box replies.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from meshterm.ui.termfont import (
     NONE,
     UNKNOWN,
     RecommendedFont,
+    _emoji_support,
+    _is_classic_console,
     _powerline_support,
     _read_jsonc,
     _vscode_default_face,
@@ -252,3 +255,83 @@ def test_installed_recommended_never_raises() -> None:
     """
     result = installed_recommended()
     assert result is None or isinstance(result, RecommendedFont)
+
+
+# --- emoji support ----------------------------------------------------------------
+
+
+def test_emoji_is_only_the_windows_consoles_problem() -> None:
+    """Everywhere but Windows, a terminal draws emoji and the question does not arise.
+
+    The probe is never even run there — a Linux or macOS session pays nothing for a limit
+    only the classic console has.
+    """
+
+    def never_called() -> bool | None:
+        raise AssertionError("the console probe must not run off Windows")
+
+    for system in ("linux", "darwin", "freebsd"):
+        verdict = _emoji_support({}, console_probe=never_called, system=system)
+        assert (verdict.supported, verdict.source) == (True, "platform")
+
+
+def test_a_classic_console_turns_the_icons_compact() -> None:
+    """The verdict that matters: conhost draws no emoji, so the icons go compact.
+
+    This is the double-clicked build on Windows — the case the whole check exists for.
+    """
+    verdict = _emoji_support({}, console_probe=lambda: True, system="win32")
+    assert (verdict.supported, verdict.source) == (False, "console")
+
+
+def test_every_other_windows_terminal_keeps_its_emoji() -> None:
+    """Windows Terminal, VS Code's terminal and ssh all draw them; nothing changes."""
+    verdict = _emoji_support({}, console_probe=lambda: False, system="win32")
+    assert (verdict.supported, verdict.source) == (True, "console")
+
+
+def test_an_unanswerable_probe_never_degrades_the_ui() -> None:
+    """No console to identify (redirected output, a failed call) leaves emoji on.
+
+    An unknown is not evidence of a limit. Degrading on one would strip the icons from
+    every piped or redirected run, which is most of the test suite and all of CI.
+    """
+    verdict = _emoji_support({}, console_probe=lambda: None, system="win32")
+    assert (verdict.supported, verdict.source) == (True, "no-console")
+
+
+def test_the_override_beats_the_probe_both_ways() -> None:
+    """``MESHTERM_EMOJI`` wins, as the powerline gate's override does.
+
+    Someone on a console this cannot recognise knows their own glass better than a probe
+    does — and the negative direction is how anyone asks for the compact icons on purpose.
+    """
+    forced_on = _emoji_support({"MESHTERM_EMOJI": "1"}, console_probe=lambda: True, system="win32")
+    assert (forced_on.supported, forced_on.source) == (True, "env")
+
+    def never_called() -> bool | None:
+        raise AssertionError("the override decides before the probe runs")
+
+    forced_off = _emoji_support({"MESHTERM_EMOJI": "0"}, console_probe=never_called, system="linux")
+    assert (forced_off.supported, forced_off.source) == (False, "env")
+
+
+def test_an_inherited_wt_session_cannot_speak_for_the_host() -> None:
+    """The environment is not consulted, and this is why.
+
+    ``WT_SESSION`` is inherited by child processes, so a program launched from Windows
+    Terminal into a console of its own still carries it — measured, not supposed. Reading
+    it would have answered for the terminal that did the launching.
+    """
+    env = {"WT_SESSION": "670f6626-8bdf-4c09-9164-b1eef91abe4f"}
+    verdict = _emoji_support(env, console_probe=lambda: True, system="win32")
+    assert verdict.supported is False
+
+
+def test_identifying_the_host_never_raises() -> None:
+    """Whatever this machine is, asking is safe and answers one of three things.
+
+    It runs on a startup path, so "it degrades rather than raises" is the property that
+    keeps an unusual host from taking the app down with it.
+    """
+    assert _is_classic_console() in (True, False, None)
