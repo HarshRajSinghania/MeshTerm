@@ -42,11 +42,10 @@ from meshterm.ui.widgets import highlighted_hash, route_graph_style, tab_strip
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 US = "aaaaaaaaaaaa"
-HUB = Contact(name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63c6429436",
-              node_type=2)
+HUB = Contact(
+    name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63c6429436", node_type=2
+)
 FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c24f54551e")
-
-
 
 
 class _FakeSession:
@@ -72,8 +71,12 @@ class _OfflineSource:
 def test_minimap_offline_renders_markers_on_a_blank_grid() -> None:
     """With no basemap the preview still fills its box and plots the node's marker."""
     mini = MiniMap(
-        _FakeSession(), _OfflineSource(), 14,
-        center_lat=45.5, center_lon=-73.6, zoom=13,
+        _FakeSession(),
+        _OfflineSource(),
+        14,
+        center_lat=45.5,
+        center_lon=-73.6,
+        zoom=13,
         markers=[MapMarker(label="Hub", lat=45.5, lon=-73.6, is_repeater=True, key="3d63aa")],
     )
     lines = mini.render(40, 6)
@@ -85,8 +88,13 @@ def test_minimap_offline_renders_markers_on_a_blank_grid() -> None:
 def test_minimap_clamps_zoom_to_the_source_ceiling() -> None:
     """A zoom past the source's max (plus overzoom) is clamped, never runs away."""
     mini = MiniMap(
-        _FakeSession(), _OfflineSource(), 10,
-        center_lat=0.0, center_lon=0.0, zoom=99, markers=[],
+        _FakeSession(),
+        _OfflineSource(),
+        10,
+        center_lat=0.0,
+        center_lon=0.0,
+        zoom=99,
+        markers=[],
     )
     assert mini._zoom == 12  # max_tile_zoom (10) + overzoom (2)
 
@@ -201,9 +209,16 @@ def test_route_line_names_its_hops() -> None:
     tag trails on the context line.
     """
     path, context = _route_line(
-        "Far", FAR.public_key, ("3d63c6429436",), "device", None, 0,
-        resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", hash_bytes=1,
+        "Far",
+        FAR.public_key,
+        ("3d63c6429436",),
+        "device",
+        None,
+        0,
+        resolve=make_node_resolver([HUB]),
+        node_known=True,
+        self_name="Us",
+        hash_bytes=1,
     )
     line = path.plain
     assert line.startswith("Far")  # the contact anchors the left, by name
@@ -225,15 +240,25 @@ def test_route_line_greys_hops_nobody_can_name() -> None:
     from meshterm.ui.theme import node_style
 
     path, _context = _route_line(
-        "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
-        resolve=make_node_resolver([HUB]), node_known=False,
-        self_name="Us", hash_bytes=1,
+        "f2c24f54551e",
+        FAR.public_key,
+        ("3d63c6429436", "abcd1234ef56"),
+        "",
+        None,
+        0,
+        resolve=make_node_resolver([HUB]),
+        node_known=False,
+        self_name="Us",
+        hash_bytes=1,
     )
     styles = {path.plain[s.start : s.end]: str(s.style) for s in path.spans}
     assert styles.get("ab") == "node.unknown"  # no contact names it → its hash, grey
     assert styles.get("f2") == "node.unknown"  # the nameless page node greys its own hash
-    hued = {path.plain[s.start : s.end] for s in path.spans
-            if str(s.style) == node_style("3d63c6429436")}
+    hued = {
+        path.plain[s.start : s.end]
+        for s in path.spans
+        if str(s.style) == node_style("3d63c6429436")
+    }
     assert "Hub" in hued  # the Hub is a named contact: its name, in its own hue
 
 
@@ -244,9 +269,16 @@ def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
     width — three bytes here, rather than the 1-byte default.
     """
     path, _context = _route_line(
-        "f2c24f54551e", FAR.public_key, ("3d63c6429436", "abcd1234ef56"), "", None, 0,
-        resolve=make_node_resolver([HUB]), node_known=False,
-        self_name="Us", hash_bytes=3,
+        "f2c24f54551e",
+        FAR.public_key,
+        ("3d63c6429436", "abcd1234ef56"),
+        "",
+        None,
+        0,
+        resolve=make_node_resolver([HUB]),
+        node_known=False,
+        self_name="Us",
+        hash_bytes=3,
     )
     line = path.plain
     assert "f2c24f" in line  # the nameless page node, at 3 bytes
@@ -257,9 +289,16 @@ def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
 def test_route_line_marks_the_best_route_and_its_context() -> None:
     """The winner wears ★ best and trails its bottleneck SNR and sample count on the context row."""
     _path, context = _route_line(
-        "Far", FAR.public_key, ("3d63c6429436",), "best", 6.5, 4,
-        resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", hash_bytes=1,
+        "Far",
+        FAR.public_key,
+        ("3d63c6429436",),
+        "best",
+        6.5,
+        4,
+        resolve=make_node_resolver([HUB]),
+        node_known=True,
+        self_name="Us",
+        hash_bytes=1,
     )
     line = context.plain
     assert "★ best" in line and "weakest" in line and "6.5" in line and "4×" in line
@@ -268,9 +307,16 @@ def test_route_line_marks_the_best_route_and_its_context() -> None:
 def test_route_line_direct_route_has_no_relay() -> None:
     """A zero-hop route reads contact → us with nothing between them."""
     path, _context = _route_line(
-        "Far", FAR.public_key, (), "best", None, 0,
-        resolve=make_node_resolver([HUB]), node_known=True,
-        self_name="Us", hash_bytes=1,
+        "Far",
+        FAR.public_key,
+        (),
+        "best",
+        None,
+        0,
+        resolve=make_node_resolver([HUB]),
+        node_known=True,
+        self_name="Us",
+        hash_bytes=1,
     )
     assert path.plain == f"Far → {SELF_GLYPH}"
 
@@ -287,20 +333,29 @@ def _topo_with_route():  # noqa: ANN202
         for _ in range(4)
     ]
     return build_topology(
-        self_id=US + "0" * 52, contacts=[HUB, FAR],
-        trace_paths=walks, packet_paths=[], neighbour_links=[],
+        self_id=US + "0" * 52,
+        contacts=[HUB, FAR],
+        trace_paths=walks,
+        packet_paths=[],
+        neighbour_links=[],
     )
 
 
 def _view(topo, suggested, device_route, target, node_label, contacts, name_key=None):  # noqa: ANN001
     """Build a routes view the way :func:`open_node_detail` does, over the given evidence."""
     return _routes_view(
-        topo, topo.scenarios(target, device_route=device_route), suggested, device_route,
-        target, target, 1,
+        topo,
+        topo.scenarios(target, device_route=device_route),
+        suggested,
+        device_route,
+        target,
+        target,
+        1,
         resolve=make_node_resolver(contacts),
         type_of=make_node_type_resolver(contacts),
         key_of=make_name_key_resolver(contacts),
-        style=route_graph_style, self_name="Us",
+        style=route_graph_style,
+        self_name="Us",
         node_label=node_label,
         name_key=name_key or (target + "0" * 52),
         node_known=True,
@@ -311,18 +366,30 @@ def _view(topo, suggested, device_route, target, node_label, contacts, name_key=
 def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
     """With route evidence the view carries selectable routes; without, a muted note stands in."""
     topo = _topo_with_route()
-    view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
-                 "f2c24f54551e", "Far", [HUB, FAR])
+    view = _view(
+        topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",), "f2c24f54551e", "Far", [HUB, FAR]
+    )
     assert view.routes and view.glyph_of is not None  # a graph, not a note
     assert view.legend is True  # the Hub is a repeater, so the type legend is earned
 
-    empty = build_topology(self_id=US + "0" * 52, contacts=[FAR],
-                           trace_paths=[], packet_paths=[], neighbour_links=[])
+    empty = build_topology(
+        self_id=US + "0" * 52, contacts=[FAR], trace_paths=[], packet_paths=[], neighbour_links=[]
+    )
     note = _routes_view(
-        empty, empty.scenarios("f2c24f54551e"), None, None, "f2c24f54551e", "f2c24f54551e", 1,
-        resolve=make_node_resolver([FAR]), type_of=make_node_type_resolver([FAR]),
-        key_of=make_name_key_resolver([FAR]), style=route_graph_style, self_name="Us",
-        node_label="Far", name_key=FAR.public_key,
+        empty,
+        empty.scenarios("f2c24f54551e"),
+        None,
+        None,
+        "f2c24f54551e",
+        "f2c24f54551e",
+        1,
+        resolve=make_node_resolver([FAR]),
+        type_of=make_node_type_resolver([FAR]),
+        key_of=make_name_key_resolver([FAR]),
+        style=route_graph_style,
+        self_name="Us",
+        node_label="Far",
+        name_key=FAR.public_key,
         node_known=True,
         hash_bytes=1,
     )
@@ -332,11 +399,12 @@ def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
 def test_routes_view_puts_the_contact_on_the_left_and_us_on_the_right() -> None:
     """The graph reads node → us (the inbound direction): the contact left, our star right."""
     topo = _topo_with_route()
-    view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
-                 "f2c24f54551e", "Far", [HUB, FAR])
-    assert view.label_of(SRC_NODE) == "Far"   # the left endpoint is the target contact
+    view = _view(
+        topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",), "f2c24f54551e", "Far", [HUB, FAR]
+    )
+    assert view.label_of(SRC_NODE) == "Far"  # the left endpoint is the target contact
     assert view.glyph_of(DST_NODE)[0] == "★"  # the right endpoint is our own star
-    assert view.label_of(DST_NODE) == "Us"    # …labelled as us
+    assert view.label_of(DST_NODE) == "Us"  # …labelled as us
 
 
 def test_routes_view_tags_every_relay_with_its_hash_byte_alone() -> None:
@@ -347,8 +415,9 @@ def test_routes_view_tags_every_relay_with_its_hash_byte_alone() -> None:
     Message paths graph's rule exactly.
     """
     topo = _topo_with_route()
-    view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
-                 "f2c24f54551e", "Far", [HUB, FAR])
+    view = _view(
+        topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",), "f2c24f54551e", "Far", [HUB, FAR]
+    )
     assert view.label_of("3d63c6429436") == "3d"  # the Hub is a known contact — still ``3d``
 
     unnamed = _view(topo, None, ("abcd1234ef56",), "f2c24f54551e", "Far", [FAR])
@@ -365,10 +434,22 @@ def test_routes_view_target_wears_its_node_type_glyph() -> None:
         TracedPath(when=utcnow(), hops=[("27d4", 8.0), ("3d", 6.0), ("27d4", 6.0), (None, 8.0)])
         for _ in range(3)
     ]
-    topo = build_topology(self_id=US + "0" * 52, contacts=[HUB, leaf],
-                          trace_paths=walks, packet_paths=[], neighbour_links=[])
-    view = _view(topo, topo.suggested("3d63c6429436"), None, "3d63c6429436", "Hub",
-                 [HUB, leaf], name_key=HUB.public_key)
+    topo = build_topology(
+        self_id=US + "0" * 52,
+        contacts=[HUB, leaf],
+        trace_paths=walks,
+        packet_paths=[],
+        neighbour_links=[],
+    )
+    view = _view(
+        topo,
+        topo.suggested("3d63c6429436"),
+        None,
+        "3d63c6429436",
+        "Hub",
+        [HUB, leaf],
+        name_key=HUB.public_key,
+    )
     assert view.glyph_of(SRC_NODE)[0] == "▲"  # the repeater target keeps its own glyph
 
 
@@ -376,8 +457,13 @@ def test_routes_view_draws_routes_inbound_reversing_the_hop_order() -> None:
     """A drawn route runs node → us: the outbound (us-outward) hops reverse into inbound order."""
     r1 = Contact(name="R1", public_key="111111111111" + "0" * 52, key_prefix="111111111111")
     r2 = Contact(name="R2", public_key="222222222222" + "0" * 52, key_prefix="222222222222")
-    topo = build_topology(self_id=US + "0" * 52, contacts=[r1, r2, FAR],
-                          trace_paths=[], packet_paths=[], neighbour_links=[])
+    topo = build_topology(
+        self_id=US + "0" * 52,
+        contacts=[r1, r2, FAR],
+        trace_paths=[],
+        packet_paths=[],
+        neighbour_links=[],
+    )
     route = ("111111111111", "222222222222")  # us → r1 → r2 → target, outward order
     view = _view(topo, None, route, "f2c24f54551e", "Far", [r1, r2, FAR])
     # Drawn contact→us, so the relay nearest the target leads and the one nearest us trails.
@@ -390,7 +476,8 @@ def test_routes_view_draws_a_direct_line_for_a_bare_neighbour() -> None:
 
     # A single overheard frame straight from Far to us — a direct link, no relays, no route.
     topo = build_topology(
-        self_id=US + "0" * 52, contacts=[FAR],
+        self_id=US + "0" * 52,
+        contacts=[FAR],
         trace_paths=[],
         packet_paths=[PacketPath(when=utcnow(), origin="f2c24f54551e", hops=[], snr=6.0)],
         neighbour_links=[],
@@ -411,8 +498,11 @@ def _topo_two_alternatives():  # noqa: ANN202
     ]
     weak = [TracedPath(when=now, hops=[("a1", -14.0), ("f2", -14.0), ("a1", -14.0), (None, -14.0)])]
     topo = build_topology(
-        self_id=US + "0" * 52, contacts=[HUB, alt, FAR],
-        trace_paths=strong + weak, packet_paths=[], neighbour_links=[],
+        self_id=US + "0" * 52,
+        contacts=[HUB, alt, FAR],
+        trace_paths=strong + weak,
+        packet_paths=[],
+        neighbour_links=[],
     )
     return topo
 
@@ -427,9 +517,9 @@ def test_good_alternatives_keeps_observed_routes_and_drops_outliers() -> None:
     topo = _topo_two_alternatives()
     scenarios = topo.scenarios("f2c24f54551e")
     kept = {s.hops for s in _good_alternatives(topo, scenarios, "f2c24f54551e")}
-    assert ("3d63c6429436",) in kept          # the strong observed route survives
-    assert ("a1a1a1a1a1a1",) not in kept      # the far weaker one is trimmed as an outlier
-    assert () not in kept                     # the bare direct family is never a grey lane
+    assert ("3d63c6429436",) in kept  # the strong observed route survives
+    assert ("a1a1a1a1a1a1",) not in kept  # the far weaker one is trimmed as an outlier
+    assert () not in kept  # the bare direct family is never a grey lane
 
 
 def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
@@ -442,15 +532,20 @@ def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
     now = utcnow()
     hops = [("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)]
     fresh = build_topology(
-        self_id=US + "0" * 52, contacts=[HUB, FAR],
-        trace_paths=[TracedPath(when=now, hops=hops)], packet_paths=[], neighbour_links=[],
+        self_id=US + "0" * 52,
+        contacts=[HUB, FAR],
+        trace_paths=[TracedPath(when=now, hops=hops)],
+        packet_paths=[],
+        neighbour_links=[],
     )
     assert _route_is_fresh(fresh, ("3d63c6429436",), "f2c24f54551e", now) is True
 
     stale = build_topology(
-        self_id=US + "0" * 52, contacts=[HUB, FAR],
+        self_id=US + "0" * 52,
+        contacts=[HUB, FAR],
         trace_paths=[TracedPath(when=now - timedelta(days=60), hops=hops)],
-        packet_paths=[], neighbour_links=[],
+        packet_paths=[],
+        neighbour_links=[],
     )
     assert _route_is_fresh(stale, ("3d63c6429436",), "f2c24f54551e", now) is False
 
@@ -468,7 +563,7 @@ def test_contract_bidir_clusters_folds_a_knot_but_keeps_the_rows() -> None:
         _Route(draw=("cc", "bb", "aa"), spec="s2", path=Text("C B A"), context=Text("")),
     ]
     new, clusters = _contract_bidir_clusters(routes, lambda _n: 2)  # all repeaters
-    (cid, cluster), = clusters.items()
+    ((cid, cluster),) = clusters.items()
     assert cluster.label == "3 repeaters" and cluster.glyph == "▲"
     assert [r.draw for r in new] == [(cid,), (cid,)]  # members folded to the one cluster stop
     assert [r.spec for r in new] == ["s1", "s2"]  # traces still arm on the real path
@@ -501,7 +596,7 @@ def test_contract_labels_a_mixed_cluster_generically() -> None:
         _Route(draw=("cc", "bb", "aa"), spec="", path=Text(""), context=Text("")),
     ]
     _new, clusters = _contract_bidir_clusters(routes, lambda n: {"aa": 2, "bb": 3, "cc": 4}[n[:2]])
-    (_cid, cluster), = clusters.items()
+    ((_cid, cluster),) = clusters.items()
     assert cluster.label == "3 nodes" and cluster.glyph == "●"
 
 
@@ -704,13 +799,13 @@ def test_node_detail_routes_stage_spends_the_caption_and_top_air_on_the_fan() ->
         screen.handle("tab")  # onto Routes
         screen.note_viewport(viewport)
         lines = screen.render_body(49)
+
         def is_strip(ln):
             return "Routes" in _plain([ln]) and "│" in _plain([ln])
 
         strip_idx = next(i for i, ln in enumerate(lines) if is_strip(ln))
         rule_idx = next(
-            i for i, ln in enumerate(lines)
-            if set(_plain([ln])) == {"─"} and i > strip_idx
+            i for i, ln in enumerate(lines) if set(_plain([ln])) == {"─"} and i > strip_idx
         )
         return [_plain([ln]) for ln in lines[strip_idx + 2 : rule_idx]]  # past the strip's own rule
 
@@ -734,7 +829,8 @@ def test_node_detail_screen_context_hangs_under_the_pathline() -> None:
     routes = _RoutesView(
         routes=[
             _Route(
-                draw=("3d63c6429436",), spec="3d,f2,3d",
+                draw=("3d63c6429436",),
+                spec="3d,f2,3d",
                 path=Text("f2 3d aa"),
                 context=Text("weakest -6.0 dB  ·  3×  ·  ★ best"),
             ),
@@ -772,7 +868,7 @@ def test_node_detail_screen_context_line_absent_when_theres_nothing_to_show() ->
     path_idx = next(i for i, ln in enumerate(lines) if "f2 aa" in _plain([ln]))
     # Nothing at all hangs under a route that earned no context: the pathline is the last
     # thing the page draws (the tab carries no action rows), not a muted context line.
-    rest = _plain(lines[path_idx + 1:]).strip()
+    rest = _plain(lines[path_idx + 1 :]).strip()
     assert not rest.startswith("weakest") and not rest
 
 
@@ -821,9 +917,9 @@ def test_node_detail_screen_hscrolls_the_selected_pathline() -> None:
     # rides outside the lane, so a window filled to its edge is exactly where it goes unshown.
     assert row.rstrip().endswith("aa") and row.count("…") == 1
     screen.handle("right")  # …and the stop holds: nothing moves past it
-    assert next(
-        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
-    ) == row
+    assert (
+        next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")) == row
+    )
 
     screen.handle("down")  # onto route 1 — abandons route 0's scroll, short row can't scroll
     screen.render_body(72)
@@ -858,9 +954,7 @@ def test_node_detail_route_row_cracks_a_chip_path_at_both_edges() -> None:
     screen.note_viewport(30)
 
     def selected_row() -> str:
-        return next(
-            ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
-        )
+        return next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯"))
 
     row = selected_row()
     assert row.rstrip().endswith(CRACK_TAIL) and "…" not in row  # cut at the lane's edge
@@ -890,26 +984,21 @@ def test_node_detail_route_row_spends_no_lane_cells_on_the_opens_marker() -> Non
     )
     screen = _screen(routes=routes, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
-    row = next(
-        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
-    )
+    row = next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯"))
     assert row == "❯ " + "x" * avail  # whole, uncut, and no mark squeezed in
     # …and with nothing to scroll, ←→ stay inert and unadvertised.
     assert "←→ scroll" not in screen.footer_hint
 
     # Two cells of slack is exactly what the mark costs, so there it is drawn.
     roomy = _RoutesView(
-        routes=[_Route(draw=("3d",), spec="s0", path=Text("x" * (avail - 2)),
-                       context=Text(""))],
+        routes=[_Route(draw=("3d",), spec="s0", path=Text("x" * (avail - 2)), context=Text(""))],
         glyph_of=lambda n: ("●", "#ffffff"),
         label_of=lambda n: n[:2],
         label_rgb_of=lambda n: (200, 200, 200),
     )
     screen = _screen(routes=roomy, tabs=[_Tab("Routes", "routes")])
     screen.note_viewport(30)
-    row = next(
-        ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯")
-    )
+    row = next(ln for ln in _plain(screen.render_body(72)).splitlines() if ln.startswith("❯"))
     assert row == "❯ " + "x" * (avail - 2) + " …"
 
 
@@ -1008,8 +1097,10 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
     routes = _RoutesView(
         routes=[
             _Route(
-                draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0",
-                path=Text("wide"), context=Text(""),
+                draw=("bf61f2fb1d9e", "3d63c6429436"),
+                spec="s0",
+                path=Text("wide"),
+                context=Text(""),
             ),
             _Route(draw=("bf61f2fb1d9e", "3d"), spec="s1", path=Text("short"), context=Text("")),
         ],
@@ -1033,8 +1124,10 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
     routes = _RoutesView(
         routes=[
             _Route(
-                draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}",
-                path=Text(f"route {i}"), context=Text(""),
+                draw=(f"{i:x}{i:x}" * 6,),
+                spec=f"s{i}",
+                path=Text(f"route {i}"),
+                context=Text(""),
             )
             for i in range(12)
         ],
@@ -1068,8 +1161,10 @@ def test_node_detail_route_cursor_clamps_at_both_ends() -> None:
     routes = _RoutesView(
         routes=[
             _Route(
-                draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}",
-                path=Text(f"route {i}"), context=Text(""),
+                draw=(f"{i:x}{i:x}" * 6,),
+                spec=f"s{i}",
+                path=Text(f"route {i}"),
+                context=Text(""),
             )
             for i in range(12)
         ],
@@ -1104,8 +1199,12 @@ def test_fit_blocks_walks_wrapped_rows_into_view() -> None:
 def test_node_detail_screen_tabs_switch_the_stage() -> None:
     """←→ (and Tab) swap which view fills the stage; the footer offers the switch only then."""
     mini = MiniMap(
-        _FakeSession(), _OfflineSource(), 14,
-        center_lat=45.5, center_lon=-73.6, zoom=13,
+        _FakeSession(),
+        _OfflineSource(),
+        14,
+        center_lat=45.5,
+        center_lon=-73.6,
+        zoom=13,
         markers=[MapMarker(label="Hub", lat=45.5, lon=-73.6, key="3d63aa")],
     )
     screen = _screen(

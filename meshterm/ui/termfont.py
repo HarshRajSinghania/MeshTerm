@@ -89,9 +89,16 @@ class RecommendedFont:
 RECOMMENDED_FONTS: tuple[RecommendedFont, ...] = (
     RecommendedFont(
         "MesloLGM Nerd Font",
-        ("meslolgm nerd font", "meslolgs nerd font", "meslolgl nerd font",
-         "meslolgm nf", "meslolgs nf", "meslolgl nf",
-         "meslo lgm nerd font", "meslo lgs nerd font"),
+        (
+            "meslolgm nerd font",
+            "meslolgs nerd font",
+            "meslolgl nerd font",
+            "meslolgm nf",
+            "meslolgs nf",
+            "meslolgl nf",
+            "meslo lgm nerd font",
+            "meslo lgs nerd font",
+        ),
         FULL,
     ),
     RecommendedFont(
@@ -101,8 +108,14 @@ RECOMMENDED_FONTS: tuple[RecommendedFont, ...] = (
     ),
     RecommendedFont(
         "CaskaydiaCove Nerd Font",
-        ("caskaydiacove nerd font", "caskaydiacove nf", "caskaydiacove nfm",
-         "caskaydiamono nerd font", "caskaydiamono nf", "caskaydia cove nerd font"),
+        (
+            "caskaydiacove nerd font",
+            "caskaydiacove nf",
+            "caskaydiacove nfm",
+            "caskaydiamono nerd font",
+            "caskaydiamono nf",
+            "caskaydia cove nerd font",
+        ),
         FULL,
     ),
     RecommendedFont(
@@ -117,8 +130,12 @@ RECOMMENDED_FONTS: tuple[RecommendedFont, ...] = (
     ),
     RecommendedFont(
         "JetBrainsMono Nerd Font",
-        ("jetbrainsmono nerd font", "jetbrainsmono nf", "jetbrainsmono nfm",
-         "jetbrains mono nerd font"),
+        (
+            "jetbrainsmono nerd font",
+            "jetbrainsmono nf",
+            "jetbrainsmono nfm",
+            "jetbrains mono nerd font",
+        ),
         FULL,
     ),
     RecommendedFont("Cascadia Code PL", ("cascadia code pl", "cascadia mono pl"), CORE),
@@ -353,13 +370,18 @@ def _windows_terminal_face(environ: Mapping[str, str]) -> str:
             defaults = profiles.get("defaults") or {}
         elif isinstance(profiles, list):  # the ancient flat-list schema
             plist = profiles
-        profile = next(
-            (
-                p for p in plist
-                if isinstance(p, dict) and str(p.get("guid", "")).strip().lower() == guid
-            ),
-            None,
-        ) if guid else None
+        profile = (
+            next(
+                (
+                    p
+                    for p in plist
+                    if isinstance(p, dict) and str(p.get("guid", "")).strip().lower() == guid
+                ),
+                None,
+            )
+            if guid
+            else None
+        )
         face = _profile_face(profile) or _profile_face(defaults)
         if face:
             return face
@@ -367,9 +389,7 @@ def _windows_terminal_face(environ: Mapping[str, str]) -> str:
     return "Cascadia Mono"
 
 
-def _vscode_settings_paths(
-    environ: Mapping[str, str], start: Path | None
-) -> list[Path]:
+def _vscode_settings_paths(environ: Mapping[str, str], start: Path | None) -> list[Path]:
     """VS Code's settings files, nearest first.
 
     The closest workspace, then the user's own (stable and Insiders, in their
@@ -523,8 +543,11 @@ def _renderer_backed(environ: Mapping[str, str]) -> str | None:
         return "wezterm"
     if environ.get("KITTY_WINDOW_ID") or environ.get("TERM") == "xterm-kitty":
         return "kitty"
-    if environ.get("ALACRITTY_WINDOW_ID") or environ.get("ALACRITTY_SOCKET") \
-            or environ.get("TERM") == "alacritty":
+    if (
+        environ.get("ALACRITTY_WINDOW_ID")
+        or environ.get("ALACRITTY_SOCKET")
+        or environ.get("TERM") == "alacritty"
+    ):
         return "alacritty"
     return None
 
@@ -548,14 +571,10 @@ def _powerline_support(
     detected = detect_terminal_font(env, cwd=cwd, conhost_probe=conhost_probe)
     matched = match_recommended(detected.face) if detected else None
     if detected and matched:
-        return PowerlineSupport(
-            matched.coverage, f"font:{detected.source}", detected.face, matched
-        )
+        return PowerlineSupport(matched.coverage, f"font:{detected.source}", detected.face, matched)
     backed = _renderer_backed(env)
     if backed:
-        return PowerlineSupport(
-            CORE, f"renderer:{backed}", detected.face if detected else None
-        )
+        return PowerlineSupport(CORE, f"renderer:{backed}", detected.face if detected else None)
     if detected:  # a face we could read, matching nothing, on a terminal with no fallback
         return PowerlineSupport(NONE, f"font:{detected.source}", detected.face)
     if env.get("SSH_CONNECTION") or env.get("SSH_TTY") or env.get("SSH_CLIENT"):

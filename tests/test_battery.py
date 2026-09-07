@@ -50,15 +50,15 @@ def _glyph_style(cell) -> str:
 
 def test_battery_cell_fills_in_eight_half_row_steps() -> None:
     """One rung per 12.5%: each dot row lights left first, then right, bottom to top."""
-    assert battery_cell(100).plain[0] == "⣿"                 # all 8 dots
+    assert battery_cell(100).plain[0] == "⣿"  # all 8 dots
     assert battery_cell(90).plain[0] == "⣿"
-    assert battery_cell(80).plain[0] == chr(0x2800 | 0xF7)   # 7 rungs: + the top row's left
-    assert battery_cell(70).plain[0] == chr(0x2800 | 0xF6)   # 6 rungs: the bottom three rows
-    assert battery_cell(60).plain[0] == chr(0x2800 | 0xE6)   # 5 rungs: + a left dot
-    assert battery_cell(45).plain[0] == chr(0x2800 | 0xE4)   # 4 rungs: the bottom two rows
-    assert battery_cell(30).plain[0] == chr(0x2800 | 0xC4)   # 3 rungs: + a left dot
-    assert battery_cell(20).plain[0] == chr(0x2800 | 0xC0)   # 2 rungs: the bottom row
-    assert battery_cell(5).plain[0] == chr(0x2800 | 0x40)    # 1 rung: the bottom-left dot
+    assert battery_cell(80).plain[0] == chr(0x2800 | 0xF7)  # 7 rungs: + the top row's left
+    assert battery_cell(70).plain[0] == chr(0x2800 | 0xF6)  # 6 rungs: the bottom three rows
+    assert battery_cell(60).plain[0] == chr(0x2800 | 0xE6)  # 5 rungs: + a left dot
+    assert battery_cell(45).plain[0] == chr(0x2800 | 0xE4)  # 4 rungs: the bottom two rows
+    assert battery_cell(30).plain[0] == chr(0x2800 | 0xC4)  # 3 rungs: + a left dot
+    assert battery_cell(20).plain[0] == chr(0x2800 | 0xC0)  # 2 rungs: the bottom row
+    assert battery_cell(5).plain[0] == chr(0x2800 | 0x40)  # 1 rung: the bottom-left dot
     # A dead-flat pack still lights that one dot rather than drawing an empty cell.
     assert battery_cell(0).plain[0] == chr(0x2800 | 0x40)
 
@@ -81,14 +81,15 @@ def test_battery_cell_colours_by_band_while_the_dots_carry_the_detail() -> None:
     """Three broad bands over half / over a quarter / below, each a block of its own hue."""
     assert _glyph_style(battery_cell(100)) == "batt.full"  # light green on green
     assert _glyph_style(battery_cell(50)) == "batt.full"
-    assert _glyph_style(battery_cell(49)) == "batt.mid"    # yellow on brown
+    assert _glyph_style(battery_cell(49)) == "batt.mid"  # yellow on brown
     assert _glyph_style(battery_cell(25)) == "batt.mid"
-    assert _glyph_style(battery_cell(24)) == "batt.low"    # light red on red
+    assert _glyph_style(battery_cell(24)) == "batt.low"  # light red on red
     assert _glyph_style(battery_cell(7)) == "batt.low"
     # The band holds across a band's worth of rungs, so only the fill moves inside it.
     # (Below 6.25% the alarm takes the cell over, which the next test covers.)
     turns = [
-        p for p in range(8, 101)
+        p
+        for p in range(8, 101)
         if _glyph_style(battery_cell(p)) != _glyph_style(battery_cell(p - 1))
     ]
     assert turns == [25, 50]
@@ -99,7 +100,7 @@ def test_battery_cell_alarm_drops_the_block_on_alternate_frames() -> None:
     """Under 6.25% the cell alternates black-on-red with the light red on the bare page."""
     # Half a rung: a rung is an eighth of the pack, so the alarm line is 6.25%.
     assert _BATTERY_FLASH_PCT == 6.25
-    assert _glyph_style(battery_cell(6, frame=0)) == "batt.flash"      # black dots on red
+    assert _glyph_style(battery_cell(6, frame=0)) == "batt.flash"  # black dots on red
     assert _glyph_style(battery_cell(6, frame=1)) == "batt.flash.off"  # light red, no ground
     assert _glyph_style(battery_cell(0, frame=1)) == "batt.flash.off"
     # Everything above the line holds its band, however low it is.
@@ -110,9 +111,9 @@ def test_battery_cell_alarm_drops_the_block_on_alternate_frames() -> None:
 def test_battery_cell_charging_sweeps_bottom_to_full_holding_the_percent() -> None:
     """Charging animates the fill empty→full on a loop while the % stays the true charge."""
     fills = [battery_cell(20, charging=True, frame=f).plain[0] for f in range(6)]
-    assert fills[0] == chr(0x2800)   # empty
-    assert fills[4] == "⣿"            # full
-    assert fills[5] == fills[0]       # loops back
+    assert fills[0] == chr(0x2800)  # empty
+    assert fills[4] == "⣿"  # full
+    assert fills[5] == fills[0]  # loops back
     assert battery_cell(20, charging=True, frame=4).plain.endswith(" 20%")
 
 
@@ -306,10 +307,10 @@ def _level_status(charge_state: int, *, flags: int = 0, extra: bytes = b"") -> b
 
 def test_charging_flag_decodes_the_charge_state_field() -> None:
     """The 2-bit Charge State enum maps to charging / not / unknown per the GSS."""
-    assert charging_from_battery_level_status(_level_status(1)) is True   # charging
+    assert charging_from_battery_level_status(_level_status(1)) is True  # charging
     assert charging_from_battery_level_status(_level_status(2)) is False  # discharging (active)
     assert charging_from_battery_level_status(_level_status(3)) is False  # discharging (inactive)
-    assert charging_from_battery_level_status(_level_status(0)) is None   # unknown → infer
+    assert charging_from_battery_level_status(_level_status(0)) is None  # unknown → infer
 
 
 def test_charging_flag_reads_only_the_power_state_word() -> None:

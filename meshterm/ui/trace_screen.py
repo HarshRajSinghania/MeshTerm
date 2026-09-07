@@ -143,14 +143,13 @@ def _trophy_case_opener(ctx: AppContext) -> Callable[[], Awaitable[None]]:
 
     return open_it
 
+
 #: A single-trace runner: ``(path_spec, on_trace)`` → runs exactly one trace, handing
 #: the result — plus any trophy-case disciplines the walk just placed in, as short
 #: ``"Title — score"`` labels — to ``on_trace`` when it lands. Provided by the session
 #: openers, which close over the device, repository, and settings so the screen stays
 #: free of persistence and scoring concerns.
-TraceOnce = Callable[
-    [str, Callable[[TraceResult, Sequence[str]], None]], Awaitable[None]
-]
+TraceOnce = Callable[[str, Callable[[TraceResult, Sequence[str]], None]], Awaitable[None]]
 
 #: A path picker flow: takes the current spec, runs its own dialogs over the screen, and
 #: resolves to the new spec (``""`` = device-routed) or ``None`` to keep the current one.
@@ -296,9 +295,13 @@ class TracingDialog(Screen):
     @property
     def dialog_width(self) -> int:
         """Natural outer width hugging the widest line (compositor still caps it)."""
-        widths = [cell_len(self.title), cell_len(self.footer_hint),
-                  cell_len(self.status) + 4, len("last  ✗ no reply — will retry"),
-                  len("  Abort  ")]
+        widths = [
+            cell_len(self.title),
+            cell_len(self.footer_hint),
+            cell_len(self.status) + 4,
+            len("last  ✗ no reply — will retry"),
+            len("  Abort  "),
+        ]
         return max(widths) + 8
 
     def _last_line(self) -> Text:
@@ -720,9 +723,7 @@ class TraceScreen(Screen):
             # (empty on first open) stored spec, so opening Compose always resumes
             # from the visible route. Committing the composer parks the cursor on
             # Trace (see _open_flow): compose, then plain Enter walks it.
-            self._open_flow(
-                self._compose_path, seed=self._effective_spec()[0], focus_trace=True
-            )
+            self._open_flow(self._compose_path, seed=self._effective_spec()[0], focus_trace=True)
         elif key == "reverse":
             self._reverse_path()
         elif key == "explore" and self._explore is not None:
@@ -855,9 +856,7 @@ class TraceScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def _tail_lines(
-        self, stats: TraceStats, current: TraceResult | None, width: int
-    ) -> list[str]:
+    def _tail_lines(self, stats: TraceStats, current: TraceResult | None, width: int) -> list[str]:
         """The windowed results block: per-hop medians, then the trace log.
 
         Memoized per traces revision while idle — the block re-renders every stored
@@ -865,11 +864,7 @@ class TraceScreen(Screen):
         the memo outright: its log row carries the live spinner glyph.
         """
         key = (self._traces_rev, self._status, width)
-        if (
-            not self._running
-            and self._tail_memo is not None
-            and self._tail_memo[0] == key
-        ):
+        if not self._running and self._tail_memo is not None and self._tail_memo[0] == key:
             return self._tail_memo[1]
         tail: list[RenderableType] = []
         if stats.hop_snrs:
@@ -957,8 +952,12 @@ class TraceScreen(Screen):
         indent = len(_ROUTE_LANE)
         if current is not None:
             route = _route_path(
-                current, self._device_label, self._resolve, self._device_hash,
-                bare_self=True, show_hash=False,
+                current,
+                self._device_label,
+                self._resolve,
+                self._device_hash,
+                bare_self=True,
+                show_hash=False,
             )
             return route.wrapped(width, indent=indent)
         planned = self._planned_route()
@@ -969,8 +968,12 @@ class TraceScreen(Screen):
             return lines
         if self._previous is not None:
             route = _route_path(
-                self._previous, self._device_label, self._resolve, self._device_hash,
-                bare_self=True, show_hash=False,
+                self._previous,
+                self._device_label,
+                self._resolve,
+                self._device_hash,
+                bare_self=True,
+                show_hash=False,
             )
             lines = route.wrapped(width, indent=indent)
             stamp = self._previous.timestamp.astimezone().strftime("%b %d %H:%M")
@@ -1020,8 +1023,12 @@ class TraceScreen(Screen):
                     # The hashes read at the width the screen addresses hops by, like
                     # every other node this session shows.
                     _link_text(
-                        edge[0], edge[1], self._device_label, self._resolve,
-                        self._width_bytes(), self._device_hash,
+                        edge[0],
+                        edge[1],
+                        self._device_label,
+                        self._resolve,
+                        self._width_bytes(),
+                        self._device_hash,
                     )
                 )
                 prompt.append(" twice in the same direction, ", style="warn")
@@ -1099,15 +1106,18 @@ class TraceScreen(Screen):
     def _summary(self, stats: TraceStats) -> Text:
         """The session's aggregate lanes, label-aligned (the path lane hangs apart)."""
         snr = stats.median_min_snr
-        snr_text = (
-            Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("—")
-        )
+        snr_text = Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("—")
         rtt = f"{stats.median_rtt_ms:.0f} ms" if stats.median_rtt_ms is not None else "—"
         rate = f"{stats.success_rate:.0%} ({stats.successes}/{stats.samples})"
         return Text.assemble(
-            ("success rate    ", "muted"), (rate if stats.samples else "—", ""), ("\n", ""),
-            ("median min SNR  ", "muted"), snr_text, ("\n", ""),
-            ("median RTT      ", "muted"), (rtt, ""),
+            ("success rate    ", "muted"),
+            (rate if stats.samples else "—", ""),
+            ("\n", ""),
+            ("median min SNR  ", "muted"),
+            snr_text,
+            ("\n", ""),
+            ("median RTT      ", "muted"),
+            (rtt, ""),
         )
 
     def _path_value(self, current: TraceResult | None, width: int) -> list[Text]:
@@ -1156,8 +1166,12 @@ class TraceScreen(Screen):
             table.add_row(
                 str(agg.index),
                 _link_text(
-                    agg.origin, agg.destination, self._device_label, self._resolve,
-                    hash_bytes, self._device_hash,
+                    agg.origin,
+                    agg.destination,
+                    self._device_label,
+                    self._resolve,
+                    hash_bytes,
+                    self._device_hash,
                 ),
                 Text(f"{agg.median_snr:+.1f} dB", style=snr_style(agg.median_snr)),
                 snr_bar(agg.median_snr),
@@ -1170,8 +1184,7 @@ class TraceScreen(Screen):
         if self._running:
             spin = self._spinner.text()
             if self._progress is not None and self._progress[1] > 1:
-                spin.append(f"  tracing {self._progress[0]}/{self._progress[1]}…",
-                            style="muted")
+                spin.append(f"  tracing {self._progress[0]}/{self._progress[1]}…", style="muted")
             else:
                 spin.append("  tracing…", style="muted")
             rows.append(spin)
@@ -1216,9 +1229,7 @@ def _collapse_trace_width(mode: int) -> int:
     return max(s for s in (1, 2, 4, 8) if s <= size)
 
 
-def _previous_outbound(
-    previous: TraceResult | None, target_hash: str
-) -> tuple[str, ...] | None:
+def _previous_outbound(previous: TraceResult | None, target_hash: str) -> tuple[str, ...] | None:
     """Extract the outbound repeaters from the last successful walk to a target.
 
     A target-mode trace walks the symmetric boomerang, so its stored hop hashes
@@ -1299,7 +1310,12 @@ def _best_observed(topo: Any, target_hash: str) -> tuple[tuple[str, ...], str] |
 
 
 def _scenario_path(
-    scenario: Any, topo: Any, target_id: str, *, device_label: str, width_bytes: int,
+    scenario: Any,
+    topo: Any,
+    target_id: str,
+    *,
+    device_label: str,
+    width_bytes: int,
     width: int | None = None,
 ) -> Text:
     """A scenario's pathline: us, the candidate hops, and the target — one line.
@@ -1411,9 +1427,7 @@ async def open_trace_path(ctx: AppContext, spec: str = "") -> int:
     return await _open_session(ctx, None, initial_spec=spec)
 
 
-async def _open_session(
-    ctx: AppContext, target: str | None, *, initial_spec: str = ""
-) -> int:
+async def _open_session(ctx: AppContext, target: str | None, *, initial_spec: str = "") -> int:
     """Wire and run one live trace session (both features share this plumbing).
 
     Wires the screen to the radio, the database, and the observed-topology services:
@@ -1502,10 +1516,10 @@ async def _open_session(
             None,
         )
         raw_hash = (
-            (target_contact.public_key or target_contact.key_prefix)
-            if target_contact
-            else target
-        ).lower().removeprefix("0x")
+            ((target_contact.public_key or target_contact.key_prefix) if target_contact else target)
+            .lower()
+            .removeprefix("0x")
+        )
         target_hash = raw_hash if _is_hex(raw_hash) else None
         target_label = target_contact.name if target_contact else target
 
@@ -1676,17 +1690,11 @@ async def _open_session(
         if error is not None:
             # The credential was already settled where the outcome was known (see ``work``
             # and AdminStore.record); an exception here is only ever a message to show.
-            ctx.repo.finish_run(
-                run_id, "error", {"error": str(error) or type(error).__name__}
-            )
-            await session.message_dialog(
-                Text(str(error), style="err"), title="Fetch neighbours"
-            )
+            ctx.repo.finish_run(run_id, "error", {"error": str(error) or type(error).__name__})
+            await session.message_dialog(Text(str(error), style="err"), title="Fetch neighbours")
             return False
         ctx.repo.record_neighbours(run_id, repeater_id, entries)
-        ctx.repo.finish_run(
-            run_id, "ok", {"repeater": repeater.name, "neighbours": len(entries)}
-        )
+        ctx.repo.finish_run(run_id, "ok", {"repeater": repeater.name, "neighbours": len(entries)})
         if not entries:
             # Verified on real firmware: an empty table is a normal answer (repeaters
             # forget neighbours across reboots and relearn them from adverts).
@@ -1714,9 +1722,7 @@ async def _open_session(
             return None
         topo = fresh_topology()
         target_id = (
-            (topo.canonical(target_hash) or target_hash[:12])
-            if target_hash is not None
-            else None
+            (topo.canonical(target_hash) or target_hash[:12]) if target_hash is not None else None
         )
         # Re-seed from the current spec. A target-mode spec is the symmetric boomerang
         # (hops, target, mirror): seed just the outbound hops and let the composer
@@ -1764,9 +1770,7 @@ async def _open_session(
                 seed = screen.hops  # resume mid-thought after the fetch
                 seed_cursor = screen.cursor
                 repeater = fetchable.get(result.node)
-                if repeater is not None and await fetch_neighbours_via(
-                    repeater, result.node
-                ):
+                if repeater is not None and await fetch_neighbours_via(repeater, result.node):
                     topo = fresh_topology()  # fold the new reports into suggestions
                 continue
             return result
@@ -1897,9 +1901,7 @@ async def _open_session(
             ctx.profile_name,
         )
         spinner = Spinner()
-        dialog = TracingDialog(
-            f"Probing — {target_label}", spinner=spinner, on_abort=lambda: None
-        )
+        dialog = TracingDialog(f"Probing — {target_label}", spinner=spinner, on_abort=lambda: None)
         dialog.status = f"path 1/{len(candidates)} · one trace each"
 
         def on_result(index: int, done: int, result: TraceResult) -> None:
@@ -1959,9 +1961,7 @@ async def _open_session(
             ctx.repo.finish_run(run_id, "error", {"error": "aborted"})
             return None
         if error is not None:
-            ctx.repo.finish_run(
-                run_id, "error", {"error": str(error) or type(error).__name__}
-            )
+            ctx.repo.finish_run(run_id, "error", {"error": str(error) or type(error).__name__})
             await session.message_dialog(
                 Text(f"probe failed: {error}", style="err"), title="Path probe"
             )
@@ -1990,8 +1990,11 @@ async def _open_session(
         scenarios = topo.scenarios(target_id, device_route=device_route)
         if not scenarios:
             await session.message_dialog(
-                Text("no observed evidence involving this target yet — run a trace or "
-                     "let monitoring accumulate paths first.", style="muted"),
+                Text(
+                    "no observed evidence involving this target yet — run a trace or "
+                    "let monitoring accumulate paths first.",
+                    style="muted",
+                ),
                 title="Explore paths",
             )
             return None
@@ -2006,8 +2009,11 @@ async def _open_session(
                     # and slides under ←→ instead of the row being redrawn as it lands.
                     title=(
                         lambda width, scenario=scenario: _scenario_path(
-                            scenario, topo, target_id,
-                            device_label=device_label, width_bytes=width_bytes,
+                            scenario,
+                            topo,
+                            target_id,
+                            device_label=device_label,
+                            width_bytes=width_bytes,
                             width=width,
                         )
                     ),
@@ -2046,9 +2052,7 @@ async def _open_session(
         outcomes = await run_probe(candidates)
         if not outcomes:
             return None
-        result_items: list = [
-            section_heading("Ranked · reliability, then bottleneck SNR")
-        ]
+        result_items: list = [section_heading("Ranked · reliability, then bottleneck SNR")]
         for rank, outcome in enumerate(outcomes, start=1):
             lanes = outcome_lanes(rank, outcome)
             result_items.append(
@@ -2096,8 +2100,11 @@ async def _open_session(
                 positions[heard.node] = (heard.lat, heard.lon)
         for contact in contacts:
             cid = topo.canonical(contact.public_key or contact.key_prefix)
-            if cid is not None and contact.lat is not None and contact.lon is not None and (
-                contact.lat or contact.lon
+            if (
+                cid is not None
+                and contact.lat is not None
+                and contact.lon is not None
+                and (contact.lat or contact.lon)
             ):
                 positions[cid] = (contact.lat, contact.lon)
         return positions
@@ -2115,8 +2122,10 @@ async def _open_session(
         try:
             topo = fresh_topology()
             derived = walk_from_trace(
-                result, canonical=topo.canonical,
-                positions=build_positions(topo), self_pos=self_pos,
+                result,
+                canonical=topo.canonical,
+                positions=build_positions(topo),
+                self_pos=self_pos,
             )
             if derived is None:
                 return []
@@ -2125,9 +2134,14 @@ async def _open_session(
             for cid, score in walk_scores(stats).items():
                 cat = CATEGORY_BY_ID[cid]
                 row_id = ctx.repo.record_discovery(
-                    cid, width_bytes, spec, route,
-                    score=score, stats=stats.as_dict(),
-                    app_version=__version__, ascending=cat.ascending,
+                    cid,
+                    width_bytes,
+                    spec,
+                    route,
+                    score=score,
+                    stats=stats.as_dict(),
+                    app_version=__version__,
+                    ascending=cat.ascending,
                 )
                 if row_id is not None:
                     placed.append(f"{cat.title} — {cat.format_score(score)}")

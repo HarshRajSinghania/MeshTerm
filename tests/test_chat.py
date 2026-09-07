@@ -438,9 +438,7 @@ def test_preview_colours_channel_sender_and_mentions() -> None:
     assert node_style("d4") in styles and node_style("60") in styles
     # The unresolvable @Zed takes the unknown-node grey, like any name we can't place.
     zed = preview.plain.index("@Zed")
-    assert any(
-        s.style == "node.unknown" and s.start <= zed < s.end for s in preview.spans
-    )
+    assert any(s.style == "node.unknown" and s.start <= zed < s.end for s in preview.spans)
 
 
 def test_preview_ellipsizes_long_text() -> None:
@@ -498,17 +496,17 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
 def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 public, 🔒 private."""
     ctx = _RowCtx(repo)
+
     def head(conv):
         return _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
+
     named = Conversation(
         label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
     )
     public = Conversation(
         label="Public", is_channel=True, channel_id="c1", secret=DEFAULT_PUBLIC_SECRET
     )
-    private = Conversation(
-        label="Ops", is_channel=True, channel_id="c2", secret=bytes(range(16))
-    )
+    private = Conversation(label="Ops", is_channel=True, channel_id="c2", secret=bytes(range(16)))
     assert head(named) == "＃"
     assert head(public) == "🌐"
     assert head(private) == "🔒"
@@ -539,9 +537,7 @@ def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> No
     assert fresh.plain.startswith("○") and dot_is_pink(fresh)
     # The name lane carries Alice's key-derived hue.
     name_at = fresh.plain.index("Alice")
-    assert any(
-        s.style == node_style("d4") and s.start <= name_at < s.end for s in fresh.spans
-    )
+    assert any(s.style == node_style("d4") and s.start <= name_at < s.end for s in fresh.spans)
 
     # Once we've exchanged messages the same pink dot fills in.
     last = ChatMessage(text="hi", peer=contact.peer)
@@ -730,7 +726,7 @@ async def test_chat_paste_confirms_amber_then_inserts() -> None:
     assert screen._editor.text == "hello world"
     prompt, buttons, kwargs = session.dialogs[0]
     assert "Paste 11 characters" in prompt.plain  # the folded, stripped run's length
-    assert kwargs.get("border_style") == "warn"   # the amber (danger) tier — "yellow"
+    assert kwargs.get("border_style") == "warn"  # the amber (danger) tier — "yellow"
     assert [label for label, _ in buttons] == ["Cancel", "Paste"]  # safe way out on the left
 
 
@@ -840,9 +836,9 @@ def test_byte_counter_stays_bottom_right_when_the_compose_wraps() -> None:
     counter_rows = [line for line in body.splitlines() if counter in line]
     assert len(counter_rows) == 1
     row = counter_rows[0]
-    assert row.rstrip().endswith(counter)      # flush right, not mid-line after the text
-    assert len(row.rstrip()) == 40             # reaches the render width's right edge
-    assert not row.lstrip().startswith("›")    # on a wrapped row, not the first input row
+    assert row.rstrip().endswith(counter)  # flush right, not mid-line after the text
+    assert len(row.rstrip()) == 40  # reaches the render width's right edge
+    assert not row.lstrip().startswith("›")  # on a wrapped row, not the first input row
 
 
 def test_byte_style_escalates_as_budget_runs_out() -> None:
@@ -959,11 +955,17 @@ def test_at_mention_renders_as_name_in_sender_hue() -> None:
     base = datetime(2026, 7, 5, 14, 24, tzinfo=timezone.utc)
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
     message = ChatMessage(
-        text="Bob: @[Alice] and @[Zed] around?", is_channel=True, channel_idx=0,
+        text="Bob: @[Alice] and @[Zed] around?",
+        is_channel=True,
+        channel_idx=0,
         created_at=base,
     )
     screen = ChatScreen(
-        conv, [message], send=None, names={}, session=_StubSession(),
+        conv,
+        [message],
+        send=None,
+        names={},
+        session=_StubSession(),
         key_of=_keys_of({"alice": "60" + "0" * 62}),
     )
     _, body = screen._sender_and_body(message)
@@ -995,11 +997,16 @@ def test_direct_chat_unknown_mention_stays_muted() -> None:
 
     # Direct chat with peer key d4… — the sender label may borrow this hue, mentions must not.
     conv = Conversation(
-        label="Alice", is_channel=False,
+        label="Alice",
+        is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
     screen = ChatScreen(
-        conv, [], send=None, names={"d4e5f6a7": "Alice"}, session=_StubSession(),
+        conv,
+        [],
+        send=None,
+        names={"d4e5f6a7": "Alice"},
+        session=_StubSession(),
         key_of=_keys_of({"alice": "60" + "0" * 62}),
     )
 
@@ -1047,9 +1054,7 @@ async def test_chat_screen_retry_resends_failed_message() -> None:
         is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
-    screen = ChatScreen(
-        conv, [failed], send=None, names={}, session=session, resend=resend
-    )
+    screen = ChatScreen(conv, [failed], send=None, names={}, session=session, resend=resend)
 
     screen.handle("retry")
     await asyncio.sleep(0)  # let the scheduled resend task run
@@ -1180,8 +1185,8 @@ def test_transcript_inscribes_the_sender_label_but_never_a_mention(powerline) ->
 
     # Built through the widget rather than spelled out: the caps are the path line's, and
     # what is being asserted here is the framing, not the glyph.
-    assert name_chip("Alice").plain in rendered   # the header, as a chip
-    assert "@Bob" in rendered                     # the mention, as it was typed
+    assert name_chip("Alice").plain in rendered  # the header, as a chip
+    assert "@Bob" in rendered  # the mention, as it was typed
     assert name_chip("Bob").plain not in rendered  # …and never framed mid-sentence
 
 
@@ -1204,10 +1209,16 @@ def _two_day_messages():
     from datetime import datetime, timedelta, timezone
 
     base = datetime(2026, 7, 5, 9, 0, tzinfo=timezone.utc)
-    day1 = [ChatMessage(text=f"day1-{i}", peer="d4e5f6a7", created_at=base + timedelta(minutes=i))
-            for i in range(4)]
-    day2 = [ChatMessage(text=f"day2-{i}", peer="d4e5f6a7",
-                        created_at=base + timedelta(days=1, minutes=i)) for i in range(4)]
+    day1 = [
+        ChatMessage(text=f"day1-{i}", peer="d4e5f6a7", created_at=base + timedelta(minutes=i))
+        for i in range(4)
+    ]
+    day2 = [
+        ChatMessage(
+            text=f"day2-{i}", peer="d4e5f6a7", created_at=base + timedelta(days=1, minutes=i)
+        )
+        for i in range(4)
+    ]
     return day1 + day2
 
 
@@ -1220,11 +1231,11 @@ def test_chat_sticky_block_pins_the_governing_day_divider() -> None:
     screen = _screen(_StubSession(), send=None, messages=_two_day_messages())
     screen.render_body(60)
     (idx0, day0), (idx1, day1) = screen._sticky_headers
-    assert len(day0) == 1 and len(day1) == 1          # one divider, no preamble under it
-    assert screen.sticky_block(0) == []               # first divider is itself the top row
-    assert screen.sticky_block(idx1 - 1) == day0      # still within day one — its divider pins
-    assert screen.sticky_block(idx1) == []            # day two's divider is now the top row
-    assert screen.sticky_block(idx1 + 1) == day1      # scrolled past it — day two's pins
+    assert len(day0) == 1 and len(day1) == 1  # one divider, no preamble under it
+    assert screen.sticky_block(0) == []  # first divider is itself the top row
+    assert screen.sticky_block(idx1 - 1) == day0  # still within day one — its divider pins
+    assert screen.sticky_block(idx1) == []  # day two's divider is now the top row
+    assert screen.sticky_block(idx1 + 1) == day1  # scrolled past it — day two's pins
 
 
 def test_chat_frame_pins_a_day_divider_when_stuck_to_the_newest() -> None:
@@ -1291,9 +1302,7 @@ async def test_chat_paths_key_needs_a_picked_message() -> None:
         is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
-    screen = ChatScreen(
-        conv, messages, send=None, names={}, session=_StubSession(), paths=paths
-    )
+    screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession(), paths=paths)
     # A path is one message's route, so with no pick there is nothing to show — the key
     # is inert and the footer and F-key lane both say so rather than guessing at the tail.
     screen.handle("paths")
@@ -1328,9 +1337,7 @@ async def test_chat_direct_enter_on_a_pick_opens_paths() -> None:
         is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
-    screen = ChatScreen(
-        conv, messages, send=None, names={}, session=_StubSession(), paths=paths
-    )
+    screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession(), paths=paths)
     screen.handle("up")
     assert "Enter paths" in screen.footer_hint
     screen.handle("enter")
@@ -1369,10 +1376,24 @@ def _two_day_channel_messages():
     from datetime import datetime, timedelta, timezone
 
     base = datetime(2026, 7, 5, 9, 0, tzinfo=timezone.utc)
-    day1 = [ChatMessage(text=f"Alice: d1-{i}", is_channel=True, channel_idx=0,
-                        created_at=base + timedelta(minutes=i)) for i in range(3)]
-    day2 = [ChatMessage(text=f"Alice: d2-{i}", is_channel=True, channel_idx=0,
-                        created_at=base + timedelta(days=1, minutes=i)) for i in range(3)]
+    day1 = [
+        ChatMessage(
+            text=f"Alice: d1-{i}",
+            is_channel=True,
+            channel_idx=0,
+            created_at=base + timedelta(minutes=i),
+        )
+        for i in range(3)
+    ]
+    day2 = [
+        ChatMessage(
+            text=f"Alice: d2-{i}",
+            is_channel=True,
+            channel_idx=0,
+            created_at=base + timedelta(days=1, minutes=i),
+        )
+        for i in range(3)
+    ]
     return day1 + day2
 
 
@@ -1436,7 +1457,11 @@ def _channel_screen(messages, session=None, key_of=None) -> ChatScreen:
     """Build a channel ChatScreen over ``messages`` for selection/reply tests."""
     conv = Conversation(label="#public", is_channel=True, channel_idx=0)
     return ChatScreen(
-        conv, messages, send=None, names={}, session=session or _StubSession(),
+        conv,
+        messages,
+        send=None,
+        names={},
+        session=session or _StubSession(),
         key_of=key_of,
     )
 
@@ -1691,9 +1716,7 @@ def test_delete_chat_history_removes_only_that_peer(repo: Repository) -> None:
     assert repo.delete_chat_history("aa") == 1
     assert repo.recent_chat_messages(is_channel=False, peer="aa") == []
     assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer="bb")] == ["b"]
-    assert [
-        m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")
-    ] == ["c"]
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")] == ["c"]
 
 
 class _PickerDevstate:
@@ -1735,9 +1758,7 @@ async def test_picker_lists_companions_only(repo: Repository) -> None:
     direct = [
         it.value.label
         for it in items
-        if isinstance(it, Choice)
-        and isinstance(it.value, Conversation)
-        and not it.value.is_channel
+        if isinstance(it, Choice) and isinstance(it.value, Conversation) and not it.value.is_channel
     ]
     assert "Ally" in direct and "Mystery" in direct and "Tower" not in direct
 
@@ -1799,9 +1820,7 @@ async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) 
             return True  # commit the Delete
 
     chat = _PickerChat()
-    ctx = SimpleNamespace(
-        devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
-    )
+    ctx = SimpleNamespace(devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat)
     tool = ChatTool()
     assert _direct_row(await tool._picker_items(ctx)).deletable  # there is history to delete
 
@@ -1812,9 +1831,9 @@ async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) 
     assert confirm["buttons"] == [("Cancel", False), ("Delete", True)]
 
     assert repo.recent_chat_messages(is_channel=False, peer=conv.peer) == []
-    assert [
-        m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")
-    ] == ["chan"]  # channel history survives
+    assert [m.text for m in repo.recent_chat_messages(is_channel=True, channel_id="c0")] == [
+        "chan"
+    ]  # channel history survives
     assert chat.cleared == [conv.key]
     # The swapped-in rows show it: history gone, so the row demotes to uncontacted.
     assert not _direct_row(await tool._picker_items(ctx)).deletable
@@ -1835,9 +1854,7 @@ async def test_picker_del_cancel_keeps_the_history(repo: Repository) -> None:
             return False  # Cancel backs out
 
     chat = _PickerChat()
-    ctx = SimpleNamespace(
-        devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat
-    )
+    ctx = SimpleNamespace(devstate=_PickerDevstate([ally]), repo=repo, ui=_Ui(), chat=chat)
     await ChatTool()._delete_history(ctx, conv)
     assert [m.text for m in repo.recent_chat_messages(is_channel=False, peer=conv.peer)] == ["hi"]
     assert chat.cleared == []
@@ -1850,9 +1867,7 @@ def _direct_row(items: list):
     return next(
         it
         for it in items
-        if isinstance(it, Choice)
-        and isinstance(it.value, Conversation)
-        and not it.value.is_channel
+        if isinstance(it, Choice) and isinstance(it.value, Conversation) and not it.value.is_channel
     )
 
 
@@ -1878,9 +1893,7 @@ async def test_the_conversation_picker_stays_pushed_under_an_open_chat(
     from meshterm.ui.tui.session import TuiSession
 
     ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
-    ctx = SimpleNamespace(
-        devstate=_PickerDevstate([ally]), repo=repo, chat=_PickerChat()
-    )
+    ctx = SimpleNamespace(devstate=_PickerDevstate([ally]), repo=repo, chat=_PickerChat())
     depths: list[int] = []
 
     with create_pipe_input() as inp:
@@ -1985,7 +1998,9 @@ async def test_badge_ignores_a_channel_the_device_has_no_slot_for(repo: Reposito
     device = MockDevice()
     await device.connect()
     device._channels[0] = {
-        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+        "channel_idx": 0,
+        "channel_name": "Public",
+        "channel_secret": DEFAULT_PUBLIC_SECRET,
     }
     ctx = _GatedContext(device, repo)
     chat = ChatService(ctx)
@@ -2006,7 +2021,9 @@ async def test_badge_counts_a_configured_channel_and_a_companion(repo: Repositor
     device = MockDevice()
     await device.connect()
     device._channels[0] = {
-        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+        "channel_idx": 0,
+        "channel_name": "Public",
+        "channel_secret": DEFAULT_PUBLIC_SECRET,
     }
     ctx = _GatedContext(device, repo)
     chat = ChatService(ctx)
@@ -2047,7 +2064,9 @@ async def test_badge_still_respects_a_muted_channel(tmp_path: Path, repo: Reposi
     device = MockDevice()
     await device.connect()
     device._channels[0] = {
-        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+        "channel_idx": 0,
+        "channel_name": "Public",
+        "channel_secret": DEFAULT_PUBLIC_SECRET,
     }
     public = channel_identity("Public", DEFAULT_PUBLIC_SECRET)
     ctx = _GatedContext(device, repo)
@@ -2078,7 +2097,9 @@ async def test_channel_slot_change_drops_the_cached_channel_list(repo: Repositor
     device = MockDevice()
     await device.connect()
     device._channels[0] = {
-        "channel_idx": 0, "channel_name": "Public", "channel_secret": DEFAULT_PUBLIC_SECRET,
+        "channel_idx": 0,
+        "channel_name": "Public",
+        "channel_secret": DEFAULT_PUBLIC_SECRET,
     }
     ctx = _StubContext(device, repo)
 
@@ -2099,7 +2120,8 @@ async def test_channel_slot_change_drops_the_cached_channel_list(repo: Repositor
 
     # Another client re-keys slot 0 under us.
     device._channels[0] = {
-        "channel_idx": 0, "channel_name": "#montreal",
+        "channel_idx": 0,
+        "channel_name": "#montreal",
         "channel_secret": derive_secret("#montreal"),
     }
     assert await chat.channel_id_for(0) != first
@@ -2131,7 +2153,8 @@ def test_chat_fkey_lane_steps_by_day_on_the_free_left_pair() -> None:
     assert not any(pair.enabled for pair in single.fkey_lane[:2])  # one day: nowhere to step
 
     spread = _screen(
-        _StubSession(), send=None,
+        _StubSession(),
+        send=None,
         messages=[
             ChatMessage(text="then", peer="d4e5f6a7", created_at=now - timedelta(days=2)),
             ChatMessage(text="now", peer="d4e5f6a7", created_at=now),

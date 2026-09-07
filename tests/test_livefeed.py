@@ -67,11 +67,14 @@ def _screen(seed=None, **kwargs) -> LiveFeedScreen:
 
 def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> Observation:
     return Observation(
-        node=node, name=node, kind=kind, snr=snr, rssi=rssi,
-        observed_at=utcnow() - timedelta(seconds=age_s), **extra,
+        node=node,
+        name=node,
+        kind=kind,
+        snr=snr,
+        rssi=rssi,
+        observed_at=utcnow() - timedelta(seconds=age_s),
+        **extra,
     )
-
-
 
 
 def _stripped(lines: list[str]) -> list[str]:
@@ -123,13 +126,11 @@ def test_livefeed_rows_leave_the_relay_path_to_the_viewer() -> None:
     screen with its class label intact.
     """
     screen = _screen()
-    screen.on_event(
-        MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0))
-    )
+    screen.on_event(MeshEvent.observation_event(_obs(kind="packet", path="3d63,a1b2", snr=1.0)))
     row = _rows(screen, 72)[0]
     assert "via" not in row and "Hub" not in row  # no route, not even a stub of one
-    assert "📦 packet" in row                      # the class still reads in words at 72
-    assert "+1.0 dB" in row and "-90 dBm" in row   # …as does the reception it was heard at
+    assert "📦 packet" in row  # the class still reads in words at 72
+    assert "+1.0 dB" in row and "-90 dBm" in row  # …as does the reception it was heard at
     assert len(row.rstrip()) <= 72
 
 
@@ -150,11 +151,11 @@ def test_livefeed_class_lane_names_the_payload_class_once() -> None:
         )
     )
     row = _rows(screen, 100)[0]
-    assert "🧩 multipart" in row       # the class lane, under the payload class's own icon
+    assert "🧩 multipart" in row  # the class lane, under the payload class's own icon
     assert row.count("multipart") == 1  # said once, not once per lane
-    assert "packet" not in row          # …and never as the generic event family
-    assert "—" in row                   # the subject lane: the class is about nothing
-    assert "?" not in row               # …but never the useless placeholder
+    assert "packet" not in row  # …and never as the generic event family
+    assert "—" in row  # the subject lane: the class is about nothing
+    assert "?" not in row  # …but never the useless placeholder
 
 
 def test_livefeed_names_a_channel_message_by_its_sender() -> None:
@@ -164,18 +165,16 @@ def test_livefeed_names_a_channel_message_by_its_sender() -> None:
         MeshEvent.message_event(Message(text="Alice: hi all", channel=3, is_channel=True))
     )
     body = _plain(screen.render_body(100))
-    assert "Alice" in body          # the parsed sender leads the row
-    assert "ch 3" in body           # …with the channel kept as the trailing context
+    assert "Alice" in body  # the parsed sender leads the row
+    assert "ch 3" in body  # …with the channel kept as the trailing context
 
 
 def test_livefeed_unsigned_channel_post_is_filed_under_its_channel() -> None:
     """With nobody signing it, a channel message is about the channel — named, once."""
     screen = _screen(channel_names={3: "Alerts"})
-    screen.on_event(
-        MeshEvent.message_event(Message(text="beep boop", channel=3, is_channel=True))
-    )
+    screen.on_event(MeshEvent.message_event(Message(text="beep boop", channel=3, is_channel=True)))
     row = _rows(screen, 100)[0]
-    assert "Alerts" in row          # the channel name, not its slot number
+    assert "Alerts" in row  # the channel name, not its slot number
     assert row.count("Alerts") == 1  # …and the trailing note doesn't say it again
     assert "ch 3" not in row
 
@@ -191,8 +190,10 @@ def test_livefeed_channel_frame_is_about_its_channel() -> None:
     mac = HMAC.new(secret, digestmod=SHA256)
     mac.update(crypted)
     raw = {
-        "payload_typename": "GRP_TXT", "chan_hash": channel_hash(secret),
-        "cipher_mac": mac.digest()[:2].hex(), "crypted": crypted.hex(),
+        "payload_typename": "GRP_TXT",
+        "chan_hash": channel_hash(secret),
+        "cipher_mac": mac.digest()[:2].hex(),
+        "crypted": crypted.hex(),
     }
     screen = _screen(channels=[("Public", secret)])
     screen.on_event(MeshEvent.observation_event(_obs(node="", kind="packet", raw=raw)))
@@ -225,8 +226,11 @@ def test_livefeed_addressed_frame_is_about_its_two_ends() -> None:
     wide._resolve = lambda h: {"a1": "Alice-With-A-Long-Name", "3d": "Hilltop-Repeater"}.get(h, "")
     wide.on_event(
         MeshEvent.observation_event(
-            _obs(node="", kind="packet",
-                 raw={"payload_typename": "REQ", "dest_hash": "3d", "src_hash": "a1"})
+            _obs(
+                node="",
+                kind="packet",
+                raw={"payload_typename": "REQ", "dest_hash": "3d", "src_hash": "a1"},
+            )
         )
     )
     assert "a1 → Hilltop-Repe" in _rows(wide, 100)[0]
@@ -237,14 +241,17 @@ def test_livefeed_tokened_classes_are_about_their_token() -> None:
     screen = _screen()
     screen.on_event(
         MeshEvent.observation_event(
-            _obs(node="", kind="packet", age_s=1,
-                 raw={"payload_typename": "TRACE", "trace_tag": "5f3c2a10"})
+            _obs(
+                node="",
+                kind="packet",
+                age_s=1,
+                raw={"payload_typename": "TRACE", "trace_tag": "5f3c2a10"},
+            )
         )
     )
     screen.on_event(
         MeshEvent.observation_event(
-            _obs(node="", kind="packet",
-                 raw={"payload_typename": "ACK", "ack_crc": "9b71e004"})
+            _obs(node="", kind="packet", raw={"payload_typename": "ACK", "ack_crc": "9b71e004"})
         )
     )
     acked, traced = _rows(screen, 100)[:2]
@@ -336,7 +343,7 @@ def test_livefeed_down_off_the_pin_selects_the_newest_packet_itself() -> None:
     screen.handle("up")
     assert screen._selected == 0 and not screen._pinned  # back on the newest packet…
     screen.handle("up")
-    assert screen._pinned                                # …and one more ↑ re-pins
+    assert screen._pinned  # …and one more ↑ re-pins
 
 
 def test_livefeed_home_resumes_following_from_deep_in_the_history() -> None:
@@ -413,10 +420,10 @@ def test_livefeed_carries_no_exit_row() -> None:
     screen = _screen(seed=seed)
     screen.note_viewport(24)
     lines = _stripped(screen.render_body(100))
-    assert len(lines) <= 24                          # the body fits, it doesn't grow
+    assert len(lines) <= 24  # the body fits, it doesn't grow
     assert "Back" not in " ".join(lines)
-    assert lines[-1].strip()                          # the last line is content, not a gap
-    assert "↓" in lines[-1] and "more" in lines[-1]   # …the marker counting what's below
+    assert lines[-1].strip()  # the last line is content, not a gap
+    assert "↓" in lines[-1] and "more" in lines[-1]  # …the marker counting what's below
 
     # The heading and column header stay put as the feed scrolls under them.
     screen.handle("end")
@@ -430,17 +437,17 @@ def test_livefeed_cursor_stops_on_the_oldest_packet() -> None:
     screen = _screen(seed=[_obs(node="n0", age_s=1), _obs(node="n1", age_s=0)])
     screen.future = _Fut()
 
-    screen.handle("down")                                 # off the pin, onto the newest
+    screen.handle("down")  # off the pin, onto the newest
     screen.handle("down")
-    assert screen._selected == 1                          # the oldest packet
+    assert screen._selected == 1  # the oldest packet
     screen.handle("down")
-    assert screen._selected == 1                          # …and the cursor stops there
+    assert screen._selected == 1  # …and the cursor stops there
     screen.handle("up")
     assert screen._selected == 0
     screen.handle("end")
-    assert screen._selected == 1                          # End is the oldest packet
+    assert screen._selected == 1  # End is the oldest packet
 
-    screen.handle("escape")                               # …and Esc is the way out
+    screen.handle("escape")  # …and Esc is the way out
     assert screen.future.done() and screen.future.value is None
 
 
@@ -526,4 +533,3 @@ def test_livefeed_advertises_line_scroll_only_where_it_acts() -> None:
     screen.render_body(_CRAMPED)
     assert "←→ scroll line" in screen.footer_hint
     assert len(screen.footer_hint) <= 72  # the screens-at-72 rule, fullest state
-

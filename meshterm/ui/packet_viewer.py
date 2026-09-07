@@ -389,10 +389,12 @@ class PacketViewer(Screen):
 
         lane = list(default_lane(nav=self.content_overflows))
         many = len(self._entries) > 1 or self._can_pin
-        lane[3] = FPair("Page ↓", "pagedown", "Oldest", "end",
-                        enabled=self.content_overflows, opp_enabled=many)
-        lane[4] = FPair("Page ↑", "pageup", "Newest", "home",
-                        enabled=self.content_overflows, opp_enabled=many)
+        lane[3] = FPair(
+            "Page ↓", "pagedown", "Oldest", "end", enabled=self.content_overflows, opp_enabled=many
+        )
+        lane[4] = FPair(
+            "Page ↑", "pageup", "Newest", "home", enabled=self.content_overflows, opp_enabled=many
+        )
         return lane
 
     def __init__(
@@ -456,9 +458,7 @@ class PacketViewer(Screen):
         self._key_of = key_of
         #: The packet currently shown, tracked by identity so a live prepend to the
         #: source (which shifts every index) never slides the view onto another packet.
-        self._current: PacketEntry | None = (
-            self._entries[self._index] if self._entries else None
-        )
+        self._current: PacketEntry | None = self._entries[self._index] if self._entries else None
         #: Whether the view is on the *pin* — the stop above the newest packet, which
         #: holds the top position rather than a packet. Implies ``_index == 0``: the pin
         #: is a mode on the newest entry, so everything that reads the view (the card,
@@ -699,15 +699,17 @@ class PacketViewer(Screen):
         return max(10, min(widest + 1, width - 20))
 
     @staticmethod
-    def _grid_lines(
-        rows: list[tuple[str, RenderableType]], width: int, label_w: int
-    ) -> list[str]:
+    def _grid_lines(rows: list[tuple[str, RenderableType]], width: int, label_w: int) -> list[str]:
         """Render one label/value grid to ANSI lines (empty rows → no lines)."""
         if not rows:
             return []
         grid = Table(
-            box=None, show_header=False, show_edge=False, pad_edge=False,
-            padding=(0, 0), expand=False,
+            box=None,
+            show_header=False,
+            show_edge=False,
+            pad_edge=False,
+            padding=(0, 0),
+            expand=False,
         )
         grid.add_column(width=label_w, no_wrap=True)
         grid.add_column(overflow="fold", max_width=max(20, width - label_w))
@@ -819,13 +821,18 @@ class PacketViewer(Screen):
         if not hops:
             return []
         glyph_of, label_of, label_rgb_of = route_graph_style(
-            resolve=self._resolve, self_name=self._self_name,
-            source=self._graph_source(entry), type_of=self._type_of,
+            resolve=self._resolve,
+            self_name=self._self_name,
+            source=self._graph_source(entry),
+            type_of=self._type_of,
             key_of=self._key_of,
         )
         return render_path_graph(
             [PathLayer(hops=hops, color=_ROUTE_EDGE, priority=3)],
-            width, glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+            width,
+            glyph_of=glyph_of,
+            label_of=label_of,
+            label_rgb_of=label_rgb_of,
             allow_duplicate_nodes=True,
         )
 
@@ -906,18 +913,24 @@ class PacketViewer(Screen):
         relayed = bool(
             [hop for hop in (entry.path or "").split(",") if hop] or raw.get("trace_snrs")
         )
-        rows.append((
-            "", Text(
-                "reception describes the last relay, not the origin" if relayed
-                else "reception describes the sender itself — nothing relayed it",
-                style="faint",
-            ),
-        ))
+        rows.append(
+            (
+                "",
+                Text(
+                    "reception describes the last relay, not the origin"
+                    if relayed
+                    else "reception describes the sender itself — nothing relayed it",
+                    style="faint",
+                ),
+            )
+        )
         # A chain that names one hop twice reads as a mistake until it is explained; the graph
         # below draws that hop twice too (see ``_graph_lines``), so the note covers both.
         revisits = revisit_note(
             revisited_hops([hop for hop in (entry.path or "").split(",") if hop]),
-            self._resolve, prefix_bytes=self._prefix_bytes, self_name=self._self_name,
+            self._resolve,
+            prefix_bytes=self._prefix_bytes,
+            self_name=self._self_name,
         )
         if revisits is not None:
             rows.append(("", revisits))
@@ -927,16 +940,20 @@ class PacketViewer(Screen):
             # A datagram's body is not text, so there is nothing to decode for a reader —
             # but the same MAC that would authorise decrypting it names its channel.
             named = identify_channel(
-                raw.get("chan_hash") or "", raw.get("cipher_mac") or "",
-                raw.get("crypted") or "", self._channels,
+                raw.get("chan_hash") or "",
+                raw.get("cipher_mac") or "",
+                raw.get("crypted") or "",
+                self._channels,
             )
             if named is not None:
                 rows.append(("channel", Text(named[0], style="brand")))
             elif raw.get("chan_hash"):
-                rows.append((
-                    "channel",
-                    Text(f"unknown (hash {raw['chan_hash']})", style="muted"),
-                ))
+                rows.append(
+                    (
+                        "channel",
+                        Text(f"unknown (hash {raw['chan_hash']})", style="muted"),
+                    )
+                )
         return rows
 
     def _addressing_rows(self, raw: dict) -> list[tuple[str, RenderableType]]:
@@ -1008,8 +1025,8 @@ class PacketViewer(Screen):
         named = self._resolve(value)
         known = bool(named and named != value)
         if known:
-            style = "you" if self._self_name and named == self._self_name else name_style(
-                named, value
+            style = (
+                "you" if self._self_name and named == self._self_name else name_style(named, value)
             )
             text.append(named, style=style)
             text.append("  ")
@@ -1032,10 +1049,12 @@ class PacketViewer(Screen):
             return []
         decrypted = decrypt_channel_text(chan_hash, cipher_mac, crypted, self._channels)
         if decrypted is None:
-            return [(
-                "channel",
-                Text(f"unknown (hash {chan_hash}) — can't decrypt", style="muted"),
-            )]
+            return [
+                (
+                    "channel",
+                    Text(f"unknown (hash {chan_hash}) — can't decrypt", style="muted"),
+                )
+            ]
         rows: list[tuple[str, RenderableType]] = [
             ("channel", Text(decrypted.channel_name, style="brand")),
         ]

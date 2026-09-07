@@ -327,8 +327,11 @@ class WatchStore:
         """
         state = self.state
         alert = Alert(
-            ident=state.next_id, when=when or utcnow(), kind=kind,
-            label=label, message=message,
+            ident=state.next_id,
+            when=when or utcnow(),
+            kind=kind,
+            label=label,
+            message=message,
         )
         state.next_id += 1
         state.alerts.append(alert)

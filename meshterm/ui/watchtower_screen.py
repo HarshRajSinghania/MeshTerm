@@ -214,10 +214,11 @@ def _menu_items(
     state = "[ok]on[/ok]" if new_node_alerts else "[muted]off[/muted]"
     items.append(
         Choice(
-            command_label(Text.from_markup(
-                f"🔔 New-node alerts: {state}"
-                "  [muted]— announce first-ever appearances[/muted]"
-            )),
+            command_label(
+                Text.from_markup(
+                    f"🔔 New-node alerts: {state}  [muted]— announce first-ever appearances[/muted]"
+                )
+            ),
             _TOGGLE_NEW,
         )
     )
@@ -337,9 +338,7 @@ async def _pick_node(ctx: AppContext, contacts: list[Contact]) -> None:
     if picked is None:
         return
     key, contact = picked
-    store.watch(
-        key, contact.name, last_seen=contact.last_seen, node_type=contact.node_type
-    )
+    store.watch(key, contact.name, last_seen=contact.last_seen, node_type=contact.node_type)
 
 
 async def _node_rules(ctx: AppContext, key: str) -> None:
@@ -353,14 +352,17 @@ async def _node_rules(ctx: AppContext, key: str) -> None:
         silence = "off" if entry.silence_hours == OFF else f"after {entry.silence_hours} h"
         items = [
             Choice(command_label(f"🕒 Silence alarm      {silence}"), "silence"),
-            Choice(command_label(
-                "📶 SNR watch          " + ("on" if entry.snr_watch else "off")
-            ), "snr"),
+            Choice(
+                command_label("📶 SNR watch          " + ("on" if entry.snr_watch else "off")),
+                "snr",
+            ),
             Separator(" "),
             Choice(marked_label("✗", "Stop watching this node", "err"), "unwatch"),
         ]
         picked = await session.select(
-            f"Rules — {entry.name}", items, filterable=False,
+            f"Rules — {entry.name}",
+            items,
+            filterable=False,
             footer_hint="↑↓ move · Enter change · Esc back",
         )
         if picked is None:  # Esc
@@ -384,8 +386,10 @@ async def _pick_silence(ctx: AppContext, key: str, entry: WatchedNode) -> None:
             label += "   (current)"
         items.append(Choice(label, hours))
     picked = await session.select(
-        f"Silence alarm — {entry.name}", items,
-        default=entry.silence_hours, filterable=False,
+        f"Silence alarm — {entry.name}",
+        items,
+        default=entry.silence_hours,
+        filterable=False,
         footer_hint="↑↓ move · Enter set · Esc keep",
     )
     if picked is not None:

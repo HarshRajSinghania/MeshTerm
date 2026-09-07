@@ -63,9 +63,12 @@ def _sgr(rgb: tuple[int, int, int]) -> str:
 
 def test_no_layers_render_nothing() -> None:
     """Nothing to draw means no rows at all, not a blank canvas."""
-    assert render_path_graph(
-        [], 60, glyph_of=_glyph, label_of=lambda n: None, label_rgb_of=lambda n: WHITE
-    ) == []
+    assert (
+        render_path_graph(
+            [], 60, glyph_of=_glyph, label_of=lambda n: None, label_rgb_of=lambda n: WHITE
+        )
+        == []
+    )
 
 
 def test_identical_paths_collapse_to_the_top_layer() -> None:
@@ -85,6 +88,7 @@ def test_emphasis_moves_the_highlight_not_the_layout() -> None:
     It re-colours the drawn fan on top of a fixed geometry — the same layout, painted
     differently — so a caller can light another route without it reflowing.
     """
+
     # A two-route fan whose spine (priority) is pinned to route 0. Only emphasis differs
     # between the two renders — were emphasis to drive geometry (as raising priority would),
     # route 1 becoming the highlight would seize the centre lane and shuffle the markers.
@@ -168,9 +172,7 @@ def test_endpoint_labels_may_leave_the_marker_row() -> None:
     layers = [PathLayer(tuple(f"{i:02x}" for i in range(6)), WHITE, 4)]
     lines = _render(
         layers,
-        label_of=lambda node: "VeryLongStationName"
-        if node in (SRC_NODE, DST_NODE)
-        else None,
+        label_of=lambda node: "VeryLongStationName" if node in (SRC_NODE, DST_NODE) else None,
     )
     plain = _ANSI.sub("", "\n".join(lines))
     # The name fits the 60-cell canvas, so it is kept whole — no fixed label budget clips it.
@@ -243,7 +245,9 @@ def test_allow_duplicate_nodes_spreads_a_revisited_path_evenly() -> None:
         "",
         "\n".join(
             render_path_graph(
-                layers, 60, glyph_of=_glyph,
+                layers,
+                60,
+                glyph_of=_glyph,
                 label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node[:2],
                 label_rgb_of=lambda _node: WHITE,
                 allow_duplicate_nodes=True,
@@ -271,8 +275,12 @@ def test_allow_duplicate_nodes_still_merges_a_relay_two_paths_share() -> None:
         "",
         "\n".join(
             render_path_graph(
-                layers, 60, glyph_of=_glyph, label_of=lambda node: node[:2],
-                label_rgb_of=lambda _node: WHITE, allow_duplicate_nodes=True,
+                layers,
+                60,
+                glyph_of=_glyph,
+                label_of=lambda node: node[:2],
+                label_rgb_of=lambda _node: WHITE,
+                allow_duplicate_nodes=True,
             )
         ),
     )
@@ -282,8 +290,13 @@ def test_allow_duplicate_nodes_still_merges_a_relay_two_paths_share() -> None:
 def test_split_revisits_qualifies_only_the_later_visits() -> None:
     """The first visit keeps the caller's bare id; later ones take a private qualifier."""
     [layer] = _split_revisits([PathLayer(("aa", "bb", "aa", "bb", "aa"), WHITE, 3)])
-    assert layer.hops == ("aa", "bb", f"aa{_OCCURRENCE_SEP}1", f"bb{_OCCURRENCE_SEP}1",
-                          f"aa{_OCCURRENCE_SEP}2")
+    assert layer.hops == (
+        "aa",
+        "bb",
+        f"aa{_OCCURRENCE_SEP}1",
+        f"bb{_OCCURRENCE_SEP}1",
+        f"aa{_OCCURRENCE_SEP}2",
+    )
     assert layer.color == WHITE and layer.priority == 3
     # Every qualified id maps back to the node the caller named it by.
     assert [_base_node(hop) for hop in layer.hops] == ["aa", "bb", "aa", "bb", "aa"]
@@ -335,7 +348,7 @@ def test_even_lane_count_centres_the_endpoints() -> None:
     """
     layers = [
         PathLayer(("aa",), WHITE, 4),  # best -> upper lane
-        PathLayer(("bb",), GREY, 2),   # -> lower lane
+        PathLayer(("bb",), GREY, 2),  # -> lower lane
     ]
     lines = _render(layers, label_of=lambda _n: None)  # markers only — no label rows to muddy
     (star,) = _marker_rows(lines, "★")  # both endpoints share the one centre row
@@ -353,8 +366,8 @@ def test_odd_lane_count_seats_endpoints_on_the_straight_middle_lane() -> None:
     """
     layers = [
         PathLayer(("mm",), WHITE, 4),  # best -> centre lane
-        PathLayer(("aa",), GREY, 2),   # -> a flanking lane
-        PathLayer(("bb",), GREY, 1),   # -> the other flanking lane
+        PathLayer(("aa",), GREY, 2),  # -> a flanking lane
+        PathLayer(("bb",), GREY, 1),  # -> the other flanking lane
     ]
     lines = _render(layers, label_of=lambda _n: None)
     (star,) = _marker_rows(lines, "★")
@@ -366,8 +379,13 @@ def test_odd_lane_count_seats_endpoints_on_the_straight_middle_lane() -> None:
 def test_every_label_shows_on_a_busy_graph() -> None:
     """Four distinct routes lay out as separated lanes — every relay label lands, none dropped."""
     names = {
-        "aa": "Alpha", "bb": "Bravo", "cc": "Charlie", "dd": "Delta",
-        "ee": "Echo", "ff": "Foxtrot", "gg": "Golf",
+        "aa": "Alpha",
+        "bb": "Bravo",
+        "cc": "Charlie",
+        "dd": "Delta",
+        "ee": "Echo",
+        "ff": "Foxtrot",
+        "gg": "Golf",
     }
     layers = [
         PathLayer(("aa", "bb"), WHITE, 4),
@@ -409,9 +427,7 @@ def _packed_lanes(layers, width=60, max_rows=15):  # noqa: ANN001
     route_lanes = max(_assign_lanes(drawn, seqs, owner, best).values()) + 1
     span = width * 2 - 2 * _GRAPH_PAD_DOTS
     col_of = lambda node: (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1  # noqa: E731
-    signed = _layout_lanes(
-        drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS
-    )
+    signed = _layout_lanes(drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS)
     columns = {node: col_of(node) for node in signed}
     return signed, columns, route_lanes
 
@@ -431,9 +447,9 @@ def test_detour_nests_outside_its_sibling_when_rows_allow() -> None:
     CDN-FENDALL1 → UpperSalaberry.
     """
     layers = [
-        PathLayer(("xx",), WHITE, 3),          # best spine: SRC -> xx -> DST
-        PathLayer(("bb",), GREY, 2),           # sibling:    SRC -> bb -> DST
-        PathLayer(("cc", "bb"), GREY, 2),      # detour:     SRC -> cc -> bb -> DST
+        PathLayer(("xx",), WHITE, 3),  # best spine: SRC -> xx -> DST
+        PathLayer(("bb",), GREY, 2),  # sibling:    SRC -> bb -> DST
+        PathLayer(("cc", "bb"), GREY, 2),  # detour:     SRC -> cc -> bb -> DST
     ]
     signed, _columns, _route_lanes = _packed_lanes(layers)
     assert signed["xx"] == 0  # the best route holds the spine
@@ -520,9 +536,9 @@ def test_routes_pack_onto_shared_flanks_when_their_columns_differ() -> None:
     """
     layers = [
         PathLayer(("aa", "bb", "cc"), WHITE, 4),  # spine
-        PathLayer(("xx", "bb", "cc"), GREY, 2),   # swaps the first relay  (col of aa)
-        PathLayer(("aa", "yy", "cc"), GREY, 2),   # swaps the middle relay (col of bb)
-        PathLayer(("aa", "bb", "zz"), GREY, 2),   # swaps the last relay   (col of cc)
+        PathLayer(("xx", "bb", "cc"), GREY, 2),  # swaps the first relay  (col of aa)
+        PathLayer(("aa", "yy", "cc"), GREY, 2),  # swaps the middle relay (col of bb)
+        PathLayer(("aa", "bb", "zz"), GREY, 2),  # swaps the last relay   (col of cc)
     ]
     signed, columns, route_lanes = _packed_lanes(layers)
     assert route_lanes == 4  # a lane per route before packing
@@ -544,9 +560,9 @@ def test_routes_stacking_in_one_column_keep_separate_lanes() -> None:
     """
     layers = [
         PathLayer(("aa", "zz"), WHITE, 4),  # spine relay aa, then shared zz near us
-        PathLayer(("bb", "zz"), GREY, 3),   # bb shares aa's column
-        PathLayer(("cc", "zz"), GREY, 2),   # cc shares aa's column
-        PathLayer(("dd", "zz"), GREY, 1),   # dd shares aa's column
+        PathLayer(("bb", "zz"), GREY, 3),  # bb shares aa's column
+        PathLayer(("cc", "zz"), GREY, 2),  # cc shares aa's column
+        PathLayer(("dd", "zz"), GREY, 1),  # dd shares aa's column
     ]
     signed, columns, _route_lanes = _packed_lanes(layers)
     diverging = ("aa", "bb", "cc", "dd")
@@ -566,11 +582,11 @@ def test_balancing_splits_same_column_pairs_across_both_flanks() -> None:
     This is the 7bc505 shape drawn tight — the win the straight-spine-only pack left on the table.
     """
     layers = [
-        PathLayer(("c1", "c2"), WHITE, 4),   # spine: SRC -> c1 -> c2 -> us
-        PathLayer(("x1", "c2"), GREY, 2),    # swaps c1 -> x1 (x1 in c1's column)
-        PathLayer(("y1", "c2"), GREY, 2),    # swaps c1 -> y1 (shares x1's column)
-        PathLayer(("c1", "x2"), GREY, 2),    # swaps c2 -> x2 (x2 in c2's column)
-        PathLayer(("c1", "y2"), GREY, 2),    # swaps c2 -> y2 (shares x2's column)
+        PathLayer(("c1", "c2"), WHITE, 4),  # spine: SRC -> c1 -> c2 -> us
+        PathLayer(("x1", "c2"), GREY, 2),  # swaps c1 -> x1 (x1 in c1's column)
+        PathLayer(("y1", "c2"), GREY, 2),  # swaps c1 -> y1 (shares x1's column)
+        PathLayer(("c1", "x2"), GREY, 2),  # swaps c2 -> x2 (x2 in c2's column)
+        PathLayer(("c1", "y2"), GREY, 2),  # swaps c2 -> y2 (shares x2's column)
     ]
     signed, columns, route_lanes = _packed_lanes(layers)
     assert route_lanes == 5  # five full-width lanes before packing
@@ -591,11 +607,11 @@ def test_balancing_never_draws_a_taller_band_than_the_jog_order() -> None:
     lanes), not two-up-two-down (five). This is the c5ba shape — the ceiling that guards it.
     """
     layers = [
-        PathLayer(("bf", "tt"), WHITE, 4),         # spine: SRC -> bf -> tt -> us
-        PathLayer(("bf", "ee", "dd"), GREY, 2),    # ee in the mid column, on to dd
-        PathLayer(("bf", "ee", "ww"), GREY, 2),    # reuses ee, on to ww
-        PathLayer(("bf", "ff", "dd"), GREY, 2),    # ff shares ee's column, rejoins dd
-        PathLayer(("bf", "gg", "ww"), GREY, 2),    # gg shares ee's column, rejoins ww
+        PathLayer(("bf", "tt"), WHITE, 4),  # spine: SRC -> bf -> tt -> us
+        PathLayer(("bf", "ee", "dd"), GREY, 2),  # ee in the mid column, on to dd
+        PathLayer(("bf", "ee", "ww"), GREY, 2),  # reuses ee, on to ww
+        PathLayer(("bf", "ff", "dd"), GREY, 2),  # ff shares ee's column, rejoins dd
+        PathLayer(("bf", "gg", "ww"), GREY, 2),  # gg shares ee's column, rejoins ww
     ]
     signed, columns, _route_lanes = _packed_lanes(layers)
     mid = ("ee", "ff", "gg")
@@ -650,9 +666,7 @@ def _vias_for(layers, width=60, max_rows=15):  # noqa: ANN001
             owner.setdefault(node, i)
     span = width * 2 - 2 * _GRAPH_PAD_DOTS
     col_of = lambda node: (_GRAPH_PAD_DOTS + round(xfrac[node] * span)) >> 1  # noqa: E731
-    signed = _layout_lanes(
-        drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS
-    )
+    signed = _layout_lanes(drawn, seqs, ordered, owner, best, col_of, max_rows, _LANE_PITCH_ROWS)
     bidir = {frozenset((u, v)) for (u, v) in edges if (v, u) in edges}
     vias = _bypass_vias(seqs, bidir, signed, col_of, max_rows, _LANE_PITCH_ROWS)
     return vias, signed
@@ -669,10 +683,10 @@ def test_subset_route_bypasses_the_relay_it_skips() -> None:
     shares ``c1``'s column and its lane there is taken.
     """
     layers = [
-        PathLayer(("c1", "c2"), WHITE, 4),   # spine: SRC -> c1 -> c2 -> us
-        PathLayer(("x1", "c2"), GREY, 3),    # swaps c1 (x1 shares c1's column, one flank)
-        PathLayer(("c1", "y2"), GREY, 2),    # swaps c2 (the other flank — spine stays centred)
-        PathLayer(("c2",), GREY, 1),         # the subset: skips c1, rides c2
+        PathLayer(("c1", "c2"), WHITE, 4),  # spine: SRC -> c1 -> c2 -> us
+        PathLayer(("x1", "c2"), GREY, 3),  # swaps c1 (x1 shares c1's column, one flank)
+        PathLayer(("c1", "y2"), GREY, 2),  # swaps c2 (the other flank — spine stays centred)
+        PathLayer(("c2",), GREY, 1),  # the subset: skips c1, rides c2
     ]
     vias, signed = _vias_for(layers)
     [(skipped, lane)] = vias[frozenset((SRC_NODE, "c2"))]
@@ -684,7 +698,7 @@ def test_bypass_opens_a_lane_when_the_rows_afford_it() -> None:
     """With no flank to borrow, the bypass opens one — the band grows and the arc rides it."""
     layers = [
         PathLayer(("aa", "bb", "cc"), WHITE, 4),  # the whole graph on one straight lane
-        PathLayer(("aa", "cc"), GREY, 2),         # the shortcut skipping bb
+        PathLayer(("aa", "cc"), GREY, 2),  # the shortcut skipping bb
     ]
     vias, _signed = _vias_for(layers)
     [(skipped, lane)] = vias[frozenset(("aa", "cc"))]
@@ -818,12 +832,15 @@ def test_the_emphasised_path_is_the_only_one_drawn_in_colour() -> None:
         PathLayer(hops=("aa",), color=WHITE, priority=2, emphasis=1),
         PathLayer(hops=("bb", "cc"), color=GREY, priority=1),
     ]
-    body = "\n".join(render_path_graph(
-        layers, 60,
-        glyph_of=_glyph,
-        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
-        label_rgb_of=lambda _node: GREEN,
-    ))
+    body = "\n".join(
+        render_path_graph(
+            layers,
+            60,
+            glyph_of=_glyph,
+            label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
+            label_rgb_of=lambda _node: GREEN,
+        )
+    )
     lit = [ln for ln in body.split("\n") if "aa" in _ANSI.sub("", ln)]
     dim = [ln for ln in body.split("\n") if "bb" in _ANSI.sub("", ln)]
     assert lit and _sgr(GREEN) in lit[0], "the selected route's label keeps its hue"
@@ -845,21 +862,30 @@ def test_a_fan_with_nothing_emphasised_fades_nothing() -> None:
         PathLayer(hops=("aa",), color=WHITE, priority=2),
         PathLayer(hops=("bb",), color=GREY, priority=1),
     ]
-    body = "\n".join(render_path_graph(
-        layers, 60, glyph_of=_glyph,
-        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
-        label_rgb_of=lambda _node: GREEN,
-    ))
+    body = "\n".join(
+        render_path_graph(
+            layers,
+            60,
+            glyph_of=_glyph,
+            label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node,
+            label_rgb_of=lambda _node: GREEN,
+        )
+    )
     assert _sgr(OFF_ROUTE) not in body
     assert body.count(_sgr(GREEN)) >= 2  # both relays' labels keep the hue they were given
 
 
 def test_a_lone_path_is_never_faded() -> None:
     """One path has nothing to be read against, emphasised or not."""
-    body = "\n".join(render_path_graph(
-        [PathLayer(hops=("aa",), color=WHITE, priority=1, emphasis=1)], 60,
-        glyph_of=_glyph, label_of=lambda node: node[:2], label_rgb_of=lambda _node: GREEN,
-    ))
+    body = "\n".join(
+        render_path_graph(
+            [PathLayer(hops=("aa",), color=WHITE, priority=1, emphasis=1)],
+            60,
+            glyph_of=_glyph,
+            label_of=lambda node: node[:2],
+            label_rgb_of=lambda _node: GREEN,
+        )
+    )
     assert _sgr(OFF_ROUTE) not in body
 
 
@@ -873,10 +899,14 @@ def test_the_highlight_lights_a_relay_reached_by_a_short_hash() -> None:
         PathLayer(hops=("3d63c6429436",), color=GREY, priority=2),
         PathLayer(hops=("3d",), color=WHITE, priority=1, emphasis=1),
     ]
-    body = "\n".join(render_path_graph(
-        layers, 60, glyph_of=_glyph,
-        label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node[:2],
-        label_rgb_of=lambda _node: GREEN,
-    ))
+    body = "\n".join(
+        render_path_graph(
+            layers,
+            60,
+            glyph_of=_glyph,
+            label_of=lambda node: "you" if node in (SRC_NODE, DST_NODE) else node[:2],
+            label_rgb_of=lambda _node: GREEN,
+        )
+    )
     assert _sgr(OFF_ROUTE) not in body, "the one relay drawn is on the selected route"
     assert _sgr(GREEN) in body

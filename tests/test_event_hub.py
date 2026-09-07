@@ -162,9 +162,7 @@ async def test_wait_for_honors_predicate_and_times_out() -> None:
     hub = EventHub(_StubContext(device))
     await hub.start()
 
-    event = await hub.wait_for(
-        EventKind.OBSERVATION, predicate=lambda _e: False, timeout=0.2
-    )
+    event = await hub.wait_for(EventKind.OBSERVATION, predicate=lambda _e: False, timeout=0.2)
     assert event is None
 
     await hub.stop()

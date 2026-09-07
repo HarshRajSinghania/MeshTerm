@@ -36,7 +36,10 @@ def _service(tmp_path: Path) -> WatchtowerService:
 
 def _obs(node=NODE, name="Hub", snr=None, age_s=0, kind="advert") -> Observation:
     return Observation(
-        node=node, name=name, kind=kind, snr=snr,
+        node=node,
+        name=name,
+        kind=kind,
+        snr=snr,
         observed_at=utcnow() - timedelta(seconds=age_s),
     )
 
@@ -220,8 +223,7 @@ def test_watched_row_type_glyph_and_hued_name(tmp_path: Path) -> None:
     assert any(s.style == glyph_style and s.start == 0 for s in row.spans)
     name_at = row.plain.index("Roof")
     assert any(
-        s.style == name_style("Roof", "a1" * 6) and s.start <= name_at < s.end
-        for s in row.spans
+        s.style == name_style("Roof", "a1" * 6) and s.start <= name_at < s.end for s in row.spans
     )
 
     # A legacy entry (no stored type) falls back to the contact table's resolver.
@@ -242,17 +244,13 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
 
     def key_of(label):
         return "d4" * 6 if label == "Roof" else None
+
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
     row = _alert_lanes(alert, key_of)
     at = row.plain.index("Roof")
-    assert any(
-        s.style == name_style("Roof", "d4" * 6) and s.start <= at < s.end
-        for s in row.spans
-    )
+    assert any(s.style == name_style("Roof", "d4" * 6) and s.start <= at < s.end for s in row.spans)
 
-    acked = Alert(
-        ident=2, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True
-    )
+    acked = Alert(ident=2, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True)
     acked_row = _alert_lanes(acked, key_of)
     at = acked_row.plain.index("Roof")
     assert any(s.style == "muted" and s.start <= at < s.end for s in acked_row.spans)
@@ -266,8 +264,10 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
 
     def key_of(label):
         return None
+
     def type_of(label):
         return 2 if label == "Roof" else None  # Roof advertises as a repeater
+
     glyph, glyph_style = _NODE_GLYPHS[2]
 
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
@@ -281,8 +281,7 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     assert f"{_DEFAULT_GLYPH[0]} Ghost" in _alert_lanes(ghost, key_of).plain
 
     # An acked alert mutes the glyph with the rest of its history.
-    acked = Alert(ident=3, when=utcnow(), kind="silence", label="Roof",
-                  message="quiet", acked=True)
+    acked = Alert(ident=3, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True)
     acked_row = _alert_lanes(acked, key_of, type_of)
     gi = acked_row.plain.index(glyph)
     assert any(s.style == "muted" and s.start <= gi < s.end for s in acked_row.spans)
@@ -299,14 +298,18 @@ def test_alert_rows_pin_their_lanes_and_scroll_only_the_message() -> None:
     from meshterm.ui.tui import Choice
     from meshterm.ui.watchtower_screen import _alert_lanes, _menu_items
 
-    alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof",
-                  message="nothing heard for 6 h " + "and counting " * 6)
+    alert = Alert(
+        ident=1,
+        when=utcnow(),
+        kind="silence",
+        label="Roof",
+        message="nothing heard for 6 h " + "and counting " * 6,
+    )
     items = _menu_items([alert], {}, False)
-    row = next(it for it in items
-               if isinstance(it, Choice) and it.value == ("ack", alert.ident))
+    row = next(it for it in items if isinstance(it, Choice) and it.value == ("ack", alert.ident))
 
     lanes = _alert_lanes(alert, lambda label: None)
     assert row.hscroll_from == lanes.cell_len
     assert row.label.plain.startswith(lanes.plain)
     assert lanes.plain.endswith(" — ")  # the lead-in stays with the head it introduces
-    assert row.label.plain[row.hscroll_from:] == alert.message  # …and the run is the message
+    assert row.label.plain[row.hscroll_from :] == alert.message  # …and the run is the message

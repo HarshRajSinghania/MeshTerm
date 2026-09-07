@@ -137,9 +137,7 @@ class AppContext:
     #: progress rather than a surprise unplug. Cleared by the reconnect dialog that
     #: consumes it (see :func:`meshterm.ui.menu._handle_disconnect`).
     reboot_in_progress: bool = field(default=False, init=False, repr=False)
-    _resume_intent: tuple[bool, bool, bool] | None = field(
-        default=None, init=False, repr=False
-    )
+    _resume_intent: tuple[bool, bool, bool] | None = field(default=None, init=False, repr=False)
     _events: EventHub | None = field(default=None, init=False, repr=False)
     _monitor: MonitorService | None = field(default=None, init=False, repr=False)
     _chat: ChatService | None = field(default=None, init=False, repr=False)
@@ -159,9 +157,7 @@ class AppContext:
         stores built without a context still have to read them.
         """
         if self.preferences is None:
-            self.preferences = Preferences.load(
-                self.settings.config_dir / "preferences.yaml"
-            )
+            self.preferences = Preferences.load(self.settings.config_dir / "preferences.yaml")
         install_preferences(self.preferences)
         if self.advert_store is None:
             self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")
@@ -439,9 +435,9 @@ class AppContext:
         self._active_transport = getattr(device, "transport", "serial")
         self._active_port = getattr(device, "_port", None)
         self._active_address = getattr(device, "_address", None)
-        self._active_endpoint = getattr(device, "endpoint", None) if (
-            self._active_transport == "tcp"
-        ) else None
+        self._active_endpoint = (
+            getattr(device, "endpoint", None) if (self._active_transport == "tcp") else None
+        )
 
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
@@ -555,9 +551,7 @@ class AppContext:
         # user's typo, so surface the parse error as a clean, actionable message rather than
         # silently falling through to another transport.
         explicit_endpoint = self.tcp_override or (
-            self.profile.tcp_endpoint
-            if self.profile is not None and self.profile.is_tcp
-            else None
+            self.profile.tcp_endpoint if self.profile is not None and self.profile.is_tcp else None
         )
         if explicit_endpoint:
             try:
@@ -566,9 +560,12 @@ class AppContext:
                 raise DeviceSelectionError(str(exc)) from exc
         # A remembered TCP default only applies when nothing else was selected explicitly, and
         # a corrupt stored value must never crash startup — fall through to the other transports.
-        explicit_other = bool(self.port_override) or bool(self.ble_override) or (
-            self.profile is not None
-            and (bool(self.profile.port) or bool(self.profile.address))
+        explicit_other = (
+            bool(self.port_override)
+            or bool(self.ble_override)
+            or (
+                self.profile is not None and (bool(self.profile.port) or bool(self.profile.address))
+            )
         )
         if explicit_other:
             return None, None

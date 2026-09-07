@@ -94,9 +94,7 @@ class MonitorTool(Tool):
             snr = f" [muted]{obs.snr:+.1f} dB[/muted]" if obs.snr is not None else ""
             rssi = f" [muted]{obs.rssi:.0f} dBm[/muted]" if obs.rssi is not None else ""
             loc = " [ok]●[/ok]" if obs.lat is not None else ""
-            ctx.console.print(
-                f"[muted]{stamp}[/muted] [accent]{who}[/accent]{snr}{rssi}{loc}"
-            )
+            ctx.console.print(f"[muted]{stamp}[/muted] [accent]{who}[/accent]{snr}{rssi}{loc}")
 
         unsubscribe = ctx.events.subscribe(on_observation, EventKind.OBSERVATION)
         try:
@@ -168,12 +166,8 @@ def _heard_table(heard: list[HeardNode]) -> Table:
         median_cell = (
             Text(f"{median:+.1f}", style=snr_style(median)) if median is not None else Text("—")
         )
-        best_cell = (
-            Text(f"{best:+.1f}", style=snr_style(best)) if best is not None else Text("—")
-        )
+        best_cell = Text(f"{best:+.1f}", style=snr_style(best)) if best is not None else Text("—")
         rssi_cell = f"{node.last_rssi:.0f}" if node.last_rssi is not None else "—"
         loc_cell = Text("●", style="ok") if node.has_location else Text("·", style="muted")
-        table.add_row(
-            str(label), str(node.count), median_cell, best_cell, rssi_cell, loc_cell
-        )
+        table.add_row(str(label), str(node.count), median_cell, best_cell, rssi_cell, loc_cell)
     return table

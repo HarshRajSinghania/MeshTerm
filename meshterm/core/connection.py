@@ -103,6 +103,7 @@ def charging_from_battery_level_status(data: bytes) -> bool | None:
         return False
     return None
 
+
 #: Per-``get_msg`` timeout in the message pump, so a missing device reply can't wedge the
 #: drain loop (seconds).
 _MESSAGE_GET_TIMEOUT_S = 5.0
@@ -191,9 +192,7 @@ class ContactNotOnDeviceError(DeviceCommandError):
         Args:
             contact: The recipient the companion has no entry for.
         """
-        super().__init__(
-            f"{contact.name} isn't in this device's contacts — add it back to send."
-        )
+        super().__init__(f"{contact.name} isn't in this device's contacts — add it back to send.")
         self.contact = contact
 
 
@@ -1240,9 +1239,7 @@ class MeshCoreDevice(Device):
         """
         from meshcore import BLEConnection
 
-        connection = BLEConnection(
-            address=self._address, device=self._ble_device, pin=self._pin
-        )
+        connection = BLEConnection(address=self._address, device=self._ble_device, pin=self._pin)
         mc = mesh_core(
             connection,
             default_timeout=self._connect_timeout,
@@ -1415,9 +1412,7 @@ class MeshCoreDevice(Device):
                 int(DevicePairingResultStatus.PAIRED),
                 int(DevicePairingResultStatus.ALREADY_PAIRED),
             )
-            _log.debug(
-                "BLE ProvidePin pairing for %s: status=%d ok=%s", self._address, status, ok
-            )
+            _log.debug("BLE ProvidePin pairing for %s: status=%d ok=%s", self._address, status, ok)
             return ok
         except Exception as exc:  # noqa: BLE001 - best-effort; caller falls through on False
             _log.debug("BLE ProvidePin pairing attempt failed for %s: %s", self._address, exc)
@@ -1719,9 +1714,7 @@ class MeshCoreDevice(Device):
             return {}
         return dict(getattr(result, "payload", {}) or {})
 
-    async def _contacts_payload(
-        self, mc, *, retries: int = 3, delay: float = 0.5
-    ) -> dict:  # noqa: ANN001
+    async def _contacts_payload(self, mc, *, retries: int = 3, delay: float = 0.5) -> dict:  # noqa: ANN001
         """Fetch the raw contacts map, retrying the transient "no event" blip.
 
         The companion intermittently fails to emit the contacts event in time and
@@ -2028,8 +2021,7 @@ class MeshCoreDevice(Device):
         sent = await mc.commands.send_cmd(pub, cmd)
         if sent is not None and getattr(sent, "is_error", lambda: False)():
             raise DeviceCommandError(
-                f"couldn't send admin command {cmd!r} to {node.name}: "
-                f"{reject_reason(sent)}"
+                f"couldn't send admin command {cmd!r} to {node.name}: {reject_reason(sent)}"
             )
         reply = await mc.wait_for_event(EventType.CONTACT_MSG_RECV, timeout=timeout)
         if reply is None:
@@ -2148,13 +2140,9 @@ class MeshCoreDevice(Device):
                 landed = loop.time()
                 reply.set_result(event)
 
-        subscription = mc.subscribe(
-            EventType.TRACE_DATA, on_trace_reply, {"tag": tag}
-        )
+        subscription = mc.subscribe(EventType.TRACE_DATA, on_trace_reply, {"tag": tag})
         try:
-            sent = await mc.commands.send_trace(
-                auth_code=0, tag=tag, flags=flags, path=path_bytes
-            )
+            sent = await mc.commands.send_trace(auth_code=0, tag=tag, flags=flags, path=path_bytes)
             if getattr(sent, "is_error", None) is not None and sent.is_error():
                 # Uncorrelated acknowledgements make this ambiguous — the error may
                 # belong to another command entirely — so it is evidence, not a verdict:
@@ -2195,9 +2183,7 @@ class MeshCoreDevice(Device):
             raw=payload,
         )
 
-    async def _trace_path_to_contact(
-        self, mc, target: str
-    ) -> tuple[bytes, int] | None:  # noqa: ANN001
+    async def _trace_path_to_contact(self, mc, target: str) -> tuple[bytes, int] | None:  # noqa: ANN001
         """Resolve a target contact into a trace ``(path_bytes, flags)``.
 
         A trace reply only comes back when the *destination's own hash* is the final
@@ -2258,9 +2244,7 @@ class MeshCoreDevice(Device):
             if 1 <= out_path_len <= 254 and out_path:
                 # Learned multi-hop route: walk each repeater, collapsed to trace width.
                 route = bytes.fromhex(out_path)[: out_path_len * size]
-                repeaters = [
-                    route[i * size : i * size + trace_size] for i in range(out_path_len)
-                ]
+                repeaters = [route[i * size : i * size + trace_size] for i in range(out_path_len)]
             dest = bytes.fromhex(pub)[:trace_size]
             # The outbound leg always finishes at the destination's own hash so it
             # recognizes the trace and replies; the return leg mirrors the same
@@ -2442,9 +2426,7 @@ class MeshCoreDevice(Device):
             # :class:`ContactNotOnDeviceError` for how a listed contact can be missing here.
             if error_code(result) == _ERR_NOT_FOUND:
                 raise ContactNotOnDeviceError(contact)
-            raise DeviceCommandError(
-                f"couldn't send to {contact.name}: {reject_reason(result)}"
-            )
+            raise DeviceCommandError(f"couldn't send to {contact.name}: {reject_reason(result)}")
         # The companion acknowledges the send immediately with an ``expected_ack`` code and
         # a suggested wait; the recipient's delivery ACK arrives later carrying that code.
         payload = getattr(result, "payload", {}) or {}
@@ -2579,9 +2561,7 @@ class MeshCoreDevice(Device):
         payload = getattr(event, "payload", {}) or {}
         got = payload.get("channel_idx")
         if got is not None and int(got) != index:
-            raise DeviceCommandError(
-                f"channel read for slot {index} returned slot {got}"
-            )
+            raise DeviceCommandError(f"channel read for slot {index} returned slot {got}")
         if not payload.get("channel_name"):
             return None
         return payload
@@ -2613,9 +2593,7 @@ class MeshCoreDevice(Device):
     async def set_default_flood_scope(self, scope: str) -> None:  # noqa: D102
         # The library treats "", "0", "None" and "*" as "clear the scope"; normalize to
         # None for the empty case so only a real name gets the ``#`` treatment.
-        self._ok(
-            await self._require().commands.set_default_flood_scope(scope.strip() or None)
-        )
+        self._ok(await self._require().commands.set_default_flood_scope(scope.strip() or None))
 
     async def set_manual_add_contacts(self, enabled: bool) -> None:  # noqa: D102
         self._ok(await self._require().commands.set_manual_add_contacts(enabled))
@@ -2708,15 +2686,40 @@ class MockDevice(Device):
         # direct neighbours, the leaf nodes sit one hop behind one of them — so the trace
         # path composer and its topology suggestions are fully exercisable without radio.
         self._contacts = [
-            Contact(name="Yagi-Repeater", public_key=_mock_pub("a1b2c3d4"), key_prefix="a1b2c3d4",
-                    node_type=NODE_TYPE_REPEATER, lat=45.5019, lon=-73.5674, route_hops=()),
-            Contact(name="Local-Repeater", public_key=_mock_pub("b2c3d4e5"), key_prefix="b2c3d4e5",
-                    node_type=NODE_TYPE_REPEATER, lat=45.4768, lon=-73.5990, route_hops=()),
-            Contact(name="Observer-Bot", public_key=_mock_pub("c3d4e5f6"), key_prefix="c3d4e5f6",
-                    node_type=NODE_TYPE_CHAT, lat=45.4880, lon=-73.5810,
-                    route_hops=("b2c3d4e5",)),
-            Contact(name="Alice", public_key=_mock_pub("d4e5f6a7"), key_prefix="d4e5f6a7",
-                    node_type=NODE_TYPE_CHAT, route_hops=("a1b2c3d4",)),
+            Contact(
+                name="Yagi-Repeater",
+                public_key=_mock_pub("a1b2c3d4"),
+                key_prefix="a1b2c3d4",
+                node_type=NODE_TYPE_REPEATER,
+                lat=45.5019,
+                lon=-73.5674,
+                route_hops=(),
+            ),
+            Contact(
+                name="Local-Repeater",
+                public_key=_mock_pub("b2c3d4e5"),
+                key_prefix="b2c3d4e5",
+                node_type=NODE_TYPE_REPEATER,
+                lat=45.4768,
+                lon=-73.5990,
+                route_hops=(),
+            ),
+            Contact(
+                name="Observer-Bot",
+                public_key=_mock_pub("c3d4e5f6"),
+                key_prefix="c3d4e5f6",
+                node_type=NODE_TYPE_CHAT,
+                lat=45.4880,
+                lon=-73.5810,
+                route_hops=("b2c3d4e5",),
+            ),
+            Contact(
+                name="Alice",
+                public_key=_mock_pub("d4e5f6a7"),
+                key_prefix="d4e5f6a7",
+                node_type=NODE_TYPE_CHAT,
+                route_hops=("a1b2c3d4",),
+            ),
         ]
         # Remote-admin simulation: which nodes we're "logged in" to, and each tuned
         # node's transmit power keyed by full public key. ``_default_remote_tx`` is the
@@ -2808,7 +2811,9 @@ class MockDevice(Device):
         # renders identically to a real board without pretending to be one. ``ble_pin``
         # rides here rather than in SELF_INFO because that is where real firmware puts it.
         return {
-            "model": "MeshCore Simulator", "ver": "mock", "fw_build": "mock",
+            "model": "MeshCore Simulator",
+            "ver": "mock",
+            "fw_build": "mock",
             "ble_pin": self._device_pin,
         }
 
@@ -2870,11 +2875,21 @@ class MockDevice(Device):
 
     #: The simulated repeater CLI's configuration defaults (see send_remote_command).
     _REMOTE_CFG_DEFAULTS = {
-        "freq": "910.525", "bw": "62.5", "sf": "7", "cr": "5",
-        "lat": "0", "lon": "0",
-        "repeat": "on", "txdelay": "0", "direct.txdelay": "0", "rxdelay": "0",
-        "af": "1", "allow.read.only": "off",
-        "advert.interval": "240", "flood.advert.interval": "12", "flood.max": "64",
+        "freq": "910.525",
+        "bw": "62.5",
+        "sf": "7",
+        "cr": "5",
+        "lat": "0",
+        "lon": "0",
+        "repeat": "on",
+        "txdelay": "0",
+        "direct.txdelay": "0",
+        "rxdelay": "0",
+        "af": "1",
+        "allow.read.only": "off",
+        "advert.interval": "240",
+        "flood.advert.interval": "12",
+        "flood.max": "64",
     }
 
     async def send_remote_command(  # noqa: D102 - inherited docstring
@@ -2885,9 +2900,7 @@ class MockDevice(Device):
         key = self._mock_key(node)
         if key not in self._admin_sessions:
             return None  # firmware ignores strangers — reads as a timeout, like hardware
-        cfg = self._remote_cfg.setdefault(
-            key, {"name": node.name, **self._REMOTE_CFG_DEFAULTS}
-        )
+        cfg = self._remote_cfg.setdefault(key, {"name": node.name, **self._REMOTE_CFG_DEFAULTS})
         parts = command.strip().split()
         verb = parts[0].lower() if parts else ""
         if verb == "ver":
@@ -2930,9 +2943,7 @@ class MockDevice(Device):
     async def set_remote_tx_power(self, node: Contact, value: int) -> None:  # noqa: D102
         key = self._mock_key(node)
         if key not in self._admin_sessions:
-            raise DeviceCommandError(
-                f"not logged in to {node.name!r}; call admin_login first."
-            )
+            raise DeviceCommandError(f"not logged in to {node.name!r}; call admin_login first.")
         self._remote_tx[key] = value
 
     async def fetch_neighbours(self, node: Contact) -> list[NeighbourInfo]:  # noqa: D102
@@ -3073,9 +3084,7 @@ class MockDevice(Device):
         self._info["multi_acks"] = value
 
     async def set_telemetry_modes(self, base: int, loc: int, env: int) -> None:  # noqa: D102
-        self._info.update(
-            telemetry_mode_base=base, telemetry_mode_loc=loc, telemetry_mode_env=env
-        )
+        self._info.update(telemetry_mode_base=base, telemetry_mode_loc=loc, telemetry_mode_env=env)
 
     async def set_path_hash_mode(self, mode: int) -> None:  # noqa: D102
         self._path_hash_mode = mode
@@ -3503,9 +3512,7 @@ def message_from_event(event) -> Message | None:  # noqa: ANN001
     is_channel = payload.get("type") == "CHAN" or "channel_idx" in payload
     ts = payload.get("sender_timestamp")
     sender_ts = (
-        datetime.fromtimestamp(ts, tz=timezone.utc)
-        if isinstance(ts, (int, float)) and ts
-        else None
+        datetime.fromtimestamp(ts, tz=timezone.utc) if isinstance(ts, (int, float)) and ts else None
     )
     return Message(
         text=str(text),
@@ -3696,9 +3703,7 @@ def make_device(
             )
         return MeshCoreDevice(transport="tcp", host=host, tcp_port=tcp_port)
     if not port:
-        raise ValueError(
-            "No serial port configured. Pass --port, set a profile, or use --mock."
-        )
+        raise ValueError("No serial port configured. Pass --port, set a profile, or use --mock.")
     return MeshCoreDevice(port=port, baudrate=baudrate)
 
 
@@ -3769,9 +3774,7 @@ async def probe_device(
         )
     else:
         timeout = _PROBE_TIMEOUT_SERIAL_S
-        probe = MeshCoreDevice(
-            port=device.port, baudrate=baudrate, connect_timeout=timeout
-        )
+        probe = MeshCoreDevice(port=device.port, baudrate=baudrate, connect_timeout=timeout)
     return await _probe(probe, timeout)
 
 
@@ -3796,9 +3799,7 @@ async def probe_meshcore(
     )
 
 
-async def _probe(
-    device: MeshCoreDevice, timeout: float
-) -> tuple[MeshCoreDevice, dict] | None:
+async def _probe(device: MeshCoreDevice, timeout: float) -> tuple[MeshCoreDevice, dict] | None:
     """Connect ``device`` and read its identity, returning it live or closing it on failure.
 
     Args:

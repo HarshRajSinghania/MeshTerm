@@ -47,19 +47,27 @@ def _loop_shape() -> list[WalkVertex]:
     ]
 
 
-
-
 def _resolve(hop: str) -> str:
     return {HUB_ID: "Hilltop-Repeater", FAR_ID: "Far"}.get(hop, hop)
 
 
 def _record(**kw) -> DiscoveredPath:
     defaults = dict(
-        id=1, category="grand_tour", width_bytes=1, spec="3d,f2",
-        route=(HUB_ID, FAR_ID), score=2.0,
+        id=1,
+        category="grand_tour",
+        width_bytes=1,
+        spec="3d,f2",
+        route=(HUB_ID, FAR_ID),
+        score=2.0,
         stats={
-            "hop_count": 2, "distinct_nodes": 2, "repeats": False, "min_snr": 6.0,
-            "km_travelled": 3.2, "km_complete": True, "far_km": 1.5, "rtt_ms": 250.0,
+            "hop_count": 2,
+            "distinct_nodes": 2,
+            "repeats": False,
+            "min_snr": 6.0,
+            "km_travelled": 3.2,
+            "km_complete": True,
+            "far_km": 1.5,
+            "rtt_ms": 250.0,
         },
         app_version="0.1.0",
         discovered_at=datetime(2026, 7, 12, 14, 30, tzinfo=timezone.utc),
@@ -70,18 +78,23 @@ def _record(**kw) -> DiscoveredPath:
 
 def _dialog(record: DiscoveredPath, rank: int = 1, **kw) -> RecordDialog:
     return RecordDialog(
-        record, CATEGORY_BY_ID[record.category], rank,
-        resolve=_resolve, device_label="Homestead", device_hash=None, **kw,
+        record,
+        CATEGORY_BY_ID[record.category],
+        rank,
+        resolve=_resolve,
+        device_label="Homestead",
+        device_hash=None,
+        **kw,
     )
 
 
 def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     """Score in the category's unit, the resolved route bracketed by us, and actions."""
     body = _plain(_dialog(_record()).render_body(60))
-    assert "2 nodes" in body            # the score, in the discipline's own unit
-    assert "Hilltop-Repeater" in body   # a resolved relay on the route
-    assert "Homestead" in body          # us, bracketing the walked route
-    assert "Trace this path" in body    # the renamed action (was "Walk again")
+    assert "2 nodes" in body  # the score, in the discipline's own unit
+    assert "Hilltop-Repeater" in body  # a resolved relay on the route
+    assert "Homestead" in body  # us, bracketing the walked route
+    assert "Trace this path" in body  # the renamed action (was "Walk again")
     assert "Walk again" not in body
     assert "Delete record" in body
     assert "Back" not in body  # no exit row: Esc closes the story
@@ -166,9 +179,9 @@ def test_record_dialog_title_names_the_discipline_and_rank() -> None:
 def test_record_dialog_marks_incomplete_distance_as_a_lower_bound() -> None:
     """A Longest-distance walk with an unpositioned hop reads ``≥``, never exact."""
     record = _record(
-        category="long_haul", score=8.4,
-        stats={"km_travelled": 8.4, "km_complete": False,
-               "hop_count": 3, "distinct_nodes": 3},
+        category="long_haul",
+        score=8.4,
+        stats={"km_travelled": 8.4, "km_complete": False, "hop_count": 3, "distinct_nodes": 3},
     )
     body = _plain(_dialog(record).render_body(60))
     assert "≥ 8.4 km" in body
@@ -200,9 +213,16 @@ def test_record_dialog_names_the_far_point() -> None:
 def test_record_dialog_names_the_link_the_longest_leg_spanned() -> None:
     """The leg lane carries its distance and the two nodes it crossed between."""
     record = _record(
-        category="long_leg", score=12.4,
-        stats={"hop_count": 2, "distinct_nodes": 2, "km_travelled": 21.0,
-               "km_complete": True, "leg_km": 12.4, "leg_link": [HUB_ID, FAR_ID]},
+        category="long_leg",
+        score=12.4,
+        stats={
+            "hop_count": 2,
+            "distinct_nodes": 2,
+            "km_travelled": 21.0,
+            "km_complete": True,
+            "leg_km": 12.4,
+            "leg_link": [HUB_ID, FAR_ID],
+        },
     )
     body = _plain(_dialog(record).render_body(60))
     assert re.search(r"longest leg\s+12\.4 km\s+Hilltop-Repeater → Far", body)
@@ -211,12 +231,13 @@ def test_record_dialog_names_the_link_the_longest_leg_spanned() -> None:
 def test_record_dialog_stars_our_own_end_of_the_longest_leg() -> None:
     """A leg that leaves home takes the app-wide ★ at our end, never our name."""
     record = _record(
-        category="long_leg", score=12.4,
-        stats={"hop_count": 1, "distinct_nodes": 1, "leg_km": 12.4,
-               "leg_link": [None, HUB_ID]},
+        category="long_leg",
+        score=12.4,
+        stats={"hop_count": 1, "distinct_nodes": 1, "leg_km": 12.4, "leg_link": [None, HUB_ID]},
     )
     lane = next(
-        line for line in _plain(_dialog(record).render_body(60)).splitlines()
+        line
+        for line in _plain(_dialog(record).render_body(60)).splitlines()
         if "longest leg" in line
     )
     assert "★ → Hilltop-Repeater" in lane and "Homestead" not in lane
@@ -335,8 +356,13 @@ async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
     ctx = tui_ctx
     session = ctx.ui.session
     ctx.repo.record_discovery(
-        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
-        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+        "grand_tour",
+        1,
+        "3d,f2",
+        (HUB_ID, FAR_ID),
+        score=2.0,
+        stats={"hop_count": 2, "distinct_nodes": 2},
+        app_version="0.1.0",
     )
 
     task = asyncio.ensure_future(open_records(ctx))
@@ -373,8 +399,13 @@ async def test_delete_a_disciplines_records_is_a_popup_over_the_browser(tui_ctx)
     ctx = tui_ctx
     session = ctx.ui.session
     ctx.repo.record_discovery(
-        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
-        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+        "grand_tour",
+        1,
+        "3d,f2",
+        (HUB_ID, FAR_ID),
+        score=2.0,
+        stats={"hop_count": 2, "distinct_nodes": 2},
+        app_version="0.1.0",
     )
 
     task = asyncio.ensure_future(open_records(ctx))
@@ -412,8 +443,13 @@ async def test_a_board_row_spends_its_cells_on_the_walk(tui_ctx) -> None:
     ctx = tui_ctx
     session = ctx.ui.session
     ctx.repo.record_discovery(
-        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID, HUB_ID),
-        score=2.0, stats={"hop_count": 3, "distinct_nodes": 2}, app_version="0.1.0",
+        "grand_tour",
+        1,
+        "3d,f2",
+        (HUB_ID, FAR_ID, HUB_ID),
+        score=2.0,
+        stats={"hop_count": 3, "distinct_nodes": 2},
+        app_version="0.1.0",
     )
 
     task = asyncio.ensure_future(open_records(ctx))
@@ -421,7 +457,8 @@ async def test_a_board_row_spends_its_cells_on_the_walk(tui_ctx) -> None:
         browser = await _step_until(lambda: _trophy_case(session))
         assert browser is not None
         label = next(
-            choice.label for choice in browser._choices()
+            choice.label
+            for choice in browser._choices()
             if isinstance(choice.value, tuple) and choice.value[0] == "open"
         )
         row = label.plain
@@ -457,8 +494,12 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
     session = ctx.ui.session
     for i in range(6):  # one full board, so its records outlast a short viewport
         ctx.repo.record_discovery(
-            "grand_tour", 1, f"3d,{i:02x}", (HUB_ID, FAR_ID),
-            score=float(i + 1), stats={"hop_count": 2, "distinct_nodes": 2},
+            "grand_tour",
+            1,
+            f"3d,{i:02x}",
+            (HUB_ID, FAR_ID),
+            score=float(i + 1),
+            stats={"hop_count": 2, "distinct_nodes": 2},
             app_version="0.1.0",
         )
 
@@ -469,8 +510,9 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
         # Exactly the six disciplines are landmarks, each block led by its own heading and
         # carrying the description written under it — nothing else is a candidate.
         browser.render_body(72)
-        blocks = [[_plain([line]).strip() for line in rows]
-                  for _idx, rows in browser._sticky_headers]
+        blocks = [
+            [_plain([line]).strip() for line in rows] for _idx, rows in browser._sticky_headers
+        ]
         assert [rows[0] for rows in blocks] == [f"── {c.icon} {c.title} ──" for c in CATEGORIES]
         assert all(len(rows) >= 2 for rows in blocks)  # each carries its description too
         # Highlighting deep in the one populated board scrolls its heading off the top of a
@@ -502,17 +544,20 @@ async def test_trace_this_path_nests_above_the_browser_and_comes_back_to_it(
     ctx = tui_ctx
     session = ctx.ui.session
     ctx.repo.record_discovery(
-        "grand_tour", 1, "3d,f2", (HUB_ID, FAR_ID),
-        score=2.0, stats={"hop_count": 2, "distinct_nodes": 2}, app_version="0.1.0",
+        "grand_tour",
+        1,
+        "3d,f2",
+        (HUB_ID, FAR_ID),
+        score=2.0,
+        stats={"hop_count": 2, "distinct_nodes": 2},
+        app_version="0.1.0",
     )
     walked: list[str] = []
 
     async def fake_trace_path(ctx_, spec=""):  # noqa: ANN001
         walked.append(spec)
         # The browser is still on the stack underneath while the trace runs.
-        assert any(
-            isinstance(s, SelectScreen) and s.title == "Trophy case" for s in session._stack
-        )
+        assert any(isinstance(s, SelectScreen) and s.title == "Trophy case" for s in session._stack)
         return 0
 
     monkeypatch.setattr("meshterm.ui.trace_screen.open_trace_path", fake_trace_path)
@@ -551,11 +596,15 @@ async def test_browser_cuts_every_row_the_way_it_cuts_the_highlighted_one(tui_ct
     lane, exactly as the highlighted row is at shift zero.
     """
     ctx = tui_ctx
-    long_route = tuple(f"{byte:02x}c24f54551e" for byte in range(0x20, 0x2c))
+    long_route = tuple(f"{byte:02x}c24f54551e" for byte in range(0x20, 0x2C))
     for rank, route in enumerate((long_route, long_route[::-1]), start=1):
         ctx.repo.record_discovery(
-            "grand_tour", 1, f"{route[0][:2]},f2", route,
-            score=float(20 - rank), stats={"hop_count": len(route), "distinct_nodes": len(route)},
+            "grand_tour",
+            1,
+            f"{route[0][:2]},f2",
+            route,
+            score=float(20 - rank),
+            stats={"hop_count": len(route), "distinct_nodes": len(route)},
             app_version="0.1.0",
         )
 

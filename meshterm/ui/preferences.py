@@ -89,7 +89,8 @@ async def edit_preferences(ctx: AppContext) -> dict[str, Any] | None:
     # whole visit means the typed filter survives editing a preference, not just the cursor.
     title, items = _menu_items(prefs, pending)
     menu = SelectScreen(
-        title, items,
+        title,
+        items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:
@@ -127,9 +128,7 @@ def _resettable(prefs: Preferences, pending: dict[str, Any]) -> list[str]:
     saved, and one staged back to its own default already isn't.
     """
     return [
-        spec.key
-        for spec in _all_specs()
-        if _effective(prefs, spec.key, pending) != spec.default
+        spec.key for spec in _all_specs() if _effective(prefs, spec.key, pending) != spec.default
     ]
 
 
@@ -176,13 +175,20 @@ def _menu_items(prefs: Preferences, pending: dict[str, Any]) -> tuple[str, list]
     """
     sections: list[tuple[str, list[tuple[str, Text, str, Any]]]] = []
     for group, specs in by_group():
-        sections.append((
-            group,
-            [
-                (spec.label, _preference_value(prefs, spec, pending), spec.description, spec.key)
-                for spec in specs
-            ],
-        ))
+        sections.append(
+            (
+                group,
+                [
+                    (
+                        spec.label,
+                        _preference_value(prefs, spec, pending),
+                        spec.description,
+                        spec.key,
+                    )
+                    for spec in specs
+                ],
+            )
+        )
 
     # The reset row is drawn only while a reset would do something, for the reason the
     # Apply/Back pair is drawn only while something is staged (see menus.exit_rows): an
@@ -190,17 +196,21 @@ def _menu_items(prefs: Preferences, pending: dict[str, Any]) -> tuple[str, list]
     resettable = _resettable(prefs, pending)
     if resettable:
         count = len(resettable)
-        sections.append((
-            "Defaults",
-            [(
-                "Reset to defaults…",
-                Text(),
-                f"Return {count} changed values to default"
-                if count > 1
-                else "Return the one changed value to default",
-                _RESET,
-            )],
-        ))
+        sections.append(
+            (
+                "Defaults",
+                [
+                    (
+                        "Reset to defaults…",
+                        Text(),
+                        f"Return {count} changed values to default"
+                        if count > 1
+                        else "Return the one changed value to default",
+                        _RESET,
+                    )
+                ],
+            )
+        )
 
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
@@ -218,11 +228,13 @@ def _menu_items(prefs: Preferences, pending: dict[str, Any]) -> tuple[str, list]
     for group, rows in sections:
         items.append(section_heading(group))
         for label, value, help_text, key in rows:
-            items.append(Choice(
-                title=lane_row(label, value, help_text, label_w, value_w),
-                value=key,
-                hscroll_from=description_at,
-            ))
+            items.append(
+                Choice(
+                    title=lane_row(label, value, help_text, label_w, value_w),
+                    value=key,
+                    hscroll_from=description_at,
+                )
+            )
 
     # Nothing at all while the page is clean — Esc leaves. With changes staged the pair
     # appears below one blank line: Apply is the save action, and Back spells out what
@@ -290,12 +302,16 @@ def preferences_table(prefs: Preferences, width: int = _DESCRIBE_FROM) -> Table:
             value = format_value(spec, prefs.get(spec.key))
             # An overridden value is the only thing on the row worth a colour: it is what
             # this install disagrees with the code about.
-            table.add_row(*row([
-                f"  {spec.key}",
-                f"[warn]{value}[/warn]" if prefs.is_overridden(spec.key) else value,
-                format_value(spec, spec.default),
-                spec.description,
-            ]))
+            table.add_row(
+                *row(
+                    [
+                        f"  {spec.key}",
+                        f"[warn]{value}[/warn]" if prefs.is_overridden(spec.key) else value,
+                        format_value(spec, spec.default),
+                        spec.description,
+                    ]
+                )
+            )
     return table
 
 
@@ -362,9 +378,7 @@ async def _prompt_value(ctx: AppContext, spec: PrefSpec, current: Any) -> Any:
     return None if raw is None else parse_value(spec, raw)
 
 
-async def _stage_reset(
-    ctx: AppContext, prefs: Preferences, pending: dict[str, Any]
-) -> None:
+async def _stage_reset(ctx: AppContext, prefs: Preferences, pending: dict[str, Any]) -> None:
     """Confirm, then stage every changed preference back to its built-in default.
 
     Amber rather than red: nothing is written yet and Esc still discards it, but one press
@@ -374,13 +388,16 @@ async def _stage_reset(
     if not keys:  # pragma: no cover - the row is only drawn when there is something to reset
         return
     plural = "" if len(keys) == 1 else "s"
-    if await ctx.ui.dialog(
-        f"Stage {len(keys)} preference{plural} back to their built-in defaults?",
-        [("Cancel", False), ("Reset", True)],
-        title="Reset to defaults",
-        default=1,
-        danger=True,
-    ) is not True:
+    if (
+        await ctx.ui.dialog(
+            f"Stage {len(keys)} preference{plural} back to their built-in defaults?",
+            [("Cancel", False), ("Reset", True)],
+            title="Reset to defaults",
+            default=1,
+            danger=True,
+        )
+        is not True
+    ):
         return
     for key in keys:
         default = get_spec(key).default

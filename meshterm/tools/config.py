@@ -73,9 +73,7 @@ class ConfigTool(Tool):
         changes, artifacts = await apply_ops(ctx, device, snapshot, ops)
 
         plural = "" if changes == 1 else "s"
-        message = (
-            f"[ok]✓[/ok] applied [brand]{changes}[/brand] change{plural}" if changes else None
-        )
+        message = f"[ok]✓[/ok] applied [brand]{changes}[/brand] change{plural}" if changes else None
         return ToolResult(summary={"changes": changes}, message=message, artifacts=artifacts)
 
     # -- CLI --------------------------------------------------------------------
@@ -88,9 +86,7 @@ class ConfigTool(Tool):
         """
         from ..cli import run_tool_command
 
-        config_app = typer.Typer(
-            help=self.help, no_args_is_help=False, rich_markup_mode="rich"
-        )
+        config_app = typer.Typer(help=self.help, no_args_is_help=False, rich_markup_mode="rich")
 
         @config_app.callback(invoke_without_command=True)
         def _root(ctx: typer.Context) -> None:
@@ -232,9 +228,7 @@ async def apply_ops(
             await _show(ctx, device, snapshot)
         elif kind == "get":
             spec = get_spec(op[1])
-            ctx.ui.note(
-                f"[muted]{spec.key}[/muted] = {format_value(spec, spec.getter(snapshot))}"
-            )
+            ctx.ui.note(f"[muted]{spec.key}[/muted] = {format_value(spec, spec.getter(snapshot))}")
         elif kind == "set":
             changes += await _apply_setting(ctx, device, op[1], op[2], snapshot)
         elif kind == "set_custom":

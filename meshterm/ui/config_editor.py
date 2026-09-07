@@ -122,9 +122,7 @@ async def cached_snapshot(ctx: AppContext, device: Device) -> dict:
         path_hash_mode = await ctx.devstate.path_hash_mode()
     except Exception:  # noqa: BLE001 - fall back to the raw reads below
         pass
-    return await build_snapshot(
-        device, self_info=self_info, path_hash_mode=path_hash_mode
-    )
+    return await build_snapshot(device, self_info=self_info, path_hash_mode=path_hash_mode)
 
 
 async def edit_config(ctx: AppContext) -> list[tuple] | None:
@@ -349,9 +347,7 @@ def _fold_label(label: str, describe: bool) -> str:
         return f"{_INDENT}{label}"
     return (
         "\n".join(
-            textwrap.wrap(
-                label, _SETTING_CAP, initial_indent=_INDENT, subsequent_indent=_HANG
-            )
+            textwrap.wrap(label, _SETTING_CAP, initial_indent=_INDENT, subsequent_indent=_HANG)
         )
         or _INDENT
     )
@@ -537,51 +533,65 @@ def _menu_items(
                 # Latitude/longitude collapse into one Location row (inserted in
                 # adv_lat's slot so it sits where the coordinates used to).
                 if spec.key == "adv_lat":
-                    rows.append((
-                        "Location",
-                        _location_value(snapshot, pending),
-                        "Advertised position; pick it on the map",
-                        _LOCATION,
-                    ))
+                    rows.append(
+                        (
+                            "Location",
+                            _location_value(snapshot, pending),
+                            "Advertised position; pick it on the map",
+                            _LOCATION,
+                        )
+                    )
                 continue
-            rows.append((
-                spec.label,
-                _setting_value(spec, snapshot, pending, reveal_pin),
-                spec.help,
-                spec.key,
-            ))
+            rows.append(
+                (
+                    spec.label,
+                    _setting_value(spec, snapshot, pending, reveal_pin),
+                    spec.help,
+                    spec.key,
+                )
+            )
         if category == "Radio":
-            rows.append((
-                "Radio presets…", Text(),
-                "Stage MeshCore's settings for a region", _PRESETS,
-            ))
+            rows.append(
+                (
+                    "Radio presets…",
+                    Text(),
+                    "Stage MeshCore's settings for a region",
+                    _PRESETS,
+                )
+            )
         elif category == "Experimental":
-            rows.append((
-                "Custom variables…", Text(),
-                "Set a raw firmware variable by name", _CUSTOM,
-            ))
+            rows.append(
+                (
+                    "Custom variables…",
+                    Text(),
+                    "Set a raw firmware variable by name",
+                    _CUSTOM,
+                )
+            )
         sections.append((category, rows))
 
     # App-side rows: the background-advert cadences MeshTerm itself runs (see the
     # advert scheduler). They stage and apply like device settings, so they sit in the
     # same lanes under their own heading.
-    sections.append((
-        "Background adverts",
-        [
-            (
-                "Direct advert",
-                _cadence_value(policy, False, pending),
-                "Scheduled zero-hop announce; any manual send resets it",
-                _ADVERT_DIRECT,
-            ),
-            (
-                "Flood advert",
-                _cadence_value(policy, True, pending),
-                "Scheduled mesh-wide announce via repeaters",
-                _ADVERT_FLOOD,
-            ),
-        ],
-    ))
+    sections.append(
+        (
+            "Background adverts",
+            [
+                (
+                    "Direct advert",
+                    _cadence_value(policy, False, pending),
+                    "Scheduled zero-hop announce; any manual send resets it",
+                    _ADVERT_DIRECT,
+                ),
+                (
+                    "Flood advert",
+                    _cadence_value(policy, True, pending),
+                    "Scheduled mesh-wide announce via repeaters",
+                    _ADVERT_FLOOD,
+                ),
+            ],
+        )
+    )
 
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
@@ -591,9 +601,7 @@ def _menu_items(
     # for the full words. It is pinned for the whole list — the lanes mean the same in every
     # category — so a scrolled row keeps both its column header and its section heading
     # overhead (see Screen.sticky_rows).
-    items: list = [
-        Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)
-    ]
+    items: list = [Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)]
     for category, rows in sections:
         items.append(section_heading(category))
         for label, value, help_text, key in rows:
@@ -654,9 +662,7 @@ def _range_hint(spec: SettingSpec, snapshot: dict) -> str:
     return ""
 
 
-async def _prompt_value(
-    ctx: AppContext, spec: SettingSpec, current: Any, snapshot: dict
-) -> Any:
+async def _prompt_value(ctx: AppContext, spec: SettingSpec, current: Any, snapshot: dict) -> Any:
     """Prompt for a typed value for ``spec`` (in the fitting dialog), ``None`` on cancel."""
     if spec.value_type == "bool":
         # A straight two-state choice reads best as a button pair; the current state is
@@ -725,8 +731,7 @@ async def _stage_advert_cadence(
     hours_choices = FLOOD_CADENCE_HOURS if flood else DIRECT_CADENCE_HOURS
     items: list = [
         Choice(
-            title=cadence_label(hours).capitalize()
-            + ("  (current)" if hours == current else ""),
+            title=cadence_label(hours).capitalize() + ("  (current)" if hours == current else ""),
             value=hours,
         )
         for hours in (*hours_choices, OFF)
@@ -749,9 +754,7 @@ async def _stage_advert_cadence(
         pending[key] = selected
 
 
-async def _stage_location(
-    ctx: AppContext, snapshot: dict, pending: dict[str, Any]
-) -> None:
+async def _stage_location(ctx: AppContext, snapshot: dict, pending: dict[str, Any]) -> None:
     """Set the advertised location: on the map, typed as a pair, or cleared.
 
     Staged like any other setting — the coordinates only reach the device on Apply.
@@ -898,9 +901,7 @@ async def _ask_custom_name(
             "Custom variable", sorted(custom), prompt=prompt, default=previous or ""
         )
     else:
-        typed = await ctx.ui.text(
-            "Custom variable", prompt=prompt, default=previous or ""
-        )
+        typed = await ctx.ui.text("Custom variable", prompt=prompt, default=previous or "")
     return typed.strip() if typed and typed.strip() else None
 
 
@@ -1181,13 +1182,10 @@ async def _sync_clock(ctx: AppContext, device: Device, snapshot: dict) -> None:
         drift = device_time - int(time.time())
         stamp = _clock_text(device_time)
         prompt = (
-            f"The device clock reads {stamp} — "
-            f"{_drift_text(drift)}. Set it from this computer?"
+            f"The device clock reads {stamp} — {_drift_text(drift)}. Set it from this computer?"
         )
     else:
-        prompt = (
-            "The device did not report its clock. Set it from this computer anyway?"
-        )
+        prompt = "The device did not report its clock. Set it from this computer anyway?"
     choice = await ctx.ui.dialog(
         prompt,
         [("Cancel", None), ("Sync", "sync")],
@@ -1230,9 +1228,7 @@ async def _restore_now(ctx: AppContext, device: Device, snapshot: dict) -> bool:
     Returns:
         ``True`` if the device was changed (so the caller refreshes its snapshot).
     """
-    raw = await ctx.ui.path(
-        "Restore config", prompt="Read settings from this TOML backup file:"
-    )
+    raw = await ctx.ui.path("Restore config", prompt="Read settings from this TOML backup file:")
     if not raw:
         return False
     path = Path(raw)

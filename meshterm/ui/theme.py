@@ -164,13 +164,13 @@ MESH_THEME = Theme(
         # The regular platform interpolates a continuous gradient over the same anchors
         # rather than stepping (see ui.widgets._recency_style), so these are its ladder
         # spelled out — every style name resolves on both platforms either way.
-        "heat.now": "#ffffff",      # under 5 minutes
+        "heat.now": "#ffffff",  # under 5 minutes
         "heat.minutes": "#facc15",  # 5 minutes
-        "heat.hours": "#f87171",    # 1 hour
-        "heat.days": "#b45309",     # 1 day
-        "heat.weeks": "#dc2626",    # 1 week
-        "heat.months": "#94a3b8",   # 1 month
-        "heat.never": "#64748b",    # 1 year, and never heard
+        "heat.hours": "#f87171",  # 1 hour
+        "heat.days": "#b45309",  # 1 day
+        "heat.weeks": "#dc2626",  # 1 week
+        "heat.months": "#94a3b8",  # 1 month
+        "heat.never": "#64748b",  # 1 year, and never heard
         # The PicoCalc F-key lane's chip fills (see ui.tui.fkeys): gray for the plain
         # F1-F5 bank, green while the Shift watcher reports F6-F10. White text on both —
         # defined here too so the style names resolve on every platform, even though
@@ -267,9 +267,7 @@ def vtrgb_lines() -> str:
     """
     channels = []
     for shift in (16, 8, 0):
-        values = [
-            (int(hex_.lstrip("#"), 16) >> shift) & 0xFF for _, _, hex_ in _VT_SLOTS_CUSTOM
-        ]
+        values = [(int(hex_.lstrip("#"), 16) >> shift) & 0xFF for _, _, hex_ in _VT_SLOTS_CUSTOM]
         channels.append(",".join(str(v) for v in values))
     return "\n".join(channels) + "\n"
 
@@ -897,9 +895,7 @@ def _fold_to_font(text: str) -> str:
         return folded
     if all(ord(ch) in _FOLD_ALLOWED for ch in folded):
         return folded
-    return "".join(
-        ch if ord(ch) in _FOLD_ALLOWED else "?" * max(0, cell_len(ch)) for ch in folded
-    )
+    return "".join(ch if ord(ch) in _FOLD_ALLOWED else "?" * max(0, cell_len(ch)) for ch in folded)
 
 
 def fold_text(text: str) -> str:

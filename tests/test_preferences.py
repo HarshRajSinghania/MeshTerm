@@ -328,7 +328,8 @@ def test_a_description_scrolls_under_a_pinned_setting_and_value() -> None:
     for _ in range(4):
         screen.handle("right")
     scrolled = next(
-        line for line in _plain(screen.render_body(72)).splitlines()
+        line
+        for line in _plain(screen.render_body(72)).splitlines()
         if line.lstrip().startswith("❯")
     )
     # The setting and its value are the row's identity and have not moved; only the
@@ -438,11 +439,14 @@ def _install(ctx: AppContext, script: list[tuple[str, Any]]) -> _ScriptedUi:
 
 async def test_the_page_stages_a_typed_value_and_apply_returns_it(ctx: AppContext) -> None:
     """Editing a row stages it; the Apply row hands the map to the tool to write."""
-    _install(ctx, [
-        ("select", "history_days"),
-        ("text", "30"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "history_days"),
+            ("text", "30"),
+            ("select", "__apply__"),
+        ],
+    )
     assert await edit_preferences(ctx) == {"history_days": 30}
     # Nothing reached disk: the page stages, the tool saves.
     assert not (ctx.settings.config_dir / "preferences.yaml").exists()
@@ -450,47 +454,59 @@ async def test_the_page_stages_a_typed_value_and_apply_returns_it(ctx: AppContex
 
 async def test_the_page_unstages_a_value_set_back_to_where_it_started(ctx: AppContext) -> None:
     """Typing the value already in force clears the row instead of staging a no-op."""
-    _install(ctx, [
-        ("select", "history_days"),
-        ("text", "30"),
-        ("select", "history_days"),
-        ("text", "365"),  # back to what is in force
-        ("select", None),  # nothing staged — Esc leaves with no discard dialog
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "history_days"),
+            ("text", "30"),
+            ("select", "history_days"),
+            ("text", "365"),  # back to what is in force
+            ("select", None),  # nothing staged — Esc leaves with no discard dialog
+        ],
+    )
     assert await edit_preferences(ctx) is None
 
 
 async def test_leaving_with_unsaved_changes_is_gated(ctx: AppContext) -> None:
     """Esc with something staged asks first; "keep editing" returns to the same page."""
-    _install(ctx, [
-        ("select", "history_days"),
-        ("text", "30"),
-        ("select", None),  # Esc
-        ("dialog", "keep"),  # ... and think better of it
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "history_days"),
+            ("text", "30"),
+            ("select", None),  # Esc
+            ("dialog", "keep"),  # ... and think better of it
+            ("select", "__apply__"),
+        ],
+    )
     assert await edit_preferences(ctx) == {"history_days": 30}
 
 
 async def test_discarding_at_the_gate_drops_the_changes(ctx: AppContext) -> None:
     """Confirming the discard leaves with nothing, staged values and all."""
-    _install(ctx, [
-        ("select", "history_days"),
-        ("text", "30"),
-        ("select", None),  # Esc
-        ("dialog", "discard"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "history_days"),
+            ("text", "30"),
+            ("select", None),  # Esc
+            ("dialog", "discard"),
+        ],
+    )
     assert await edit_preferences(ctx) is None
 
 
 async def test_the_back_row_runs_the_same_gate_as_esc(ctx: AppContext) -> None:
     """``✗ Back — discard staged changes`` is Esc's twin, confirm and all."""
-    _install(ctx, [
-        ("select", "history_days"),
-        ("text", "30"),
-        ("select", "__cancel__"),
-        ("dialog", "discard"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "history_days"),
+            ("text", "30"),
+            ("select", "__cancel__"),
+            ("dialog", "discard"),
+        ],
+    )
     assert await edit_preferences(ctx) is None
 
 
@@ -498,11 +514,14 @@ async def test_reset_stages_the_defaults_rather_than_writing_them(ctx: AppContex
     """Reset is a staged change like any other: confirmed, reviewable, and discardable."""
     ctx.preferences.set("history_days", 30)
     ctx.preferences.set("trace_cooldown_s", 2.5)
-    _install(ctx, [
-        ("select", "__reset__"),
-        ("dialog", True),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__reset__"),
+            ("dialog", True),
+            ("select", "__apply__"),
+        ],
+    )
     assert await edit_preferences(ctx) == {"history_days": 365, "trace_cooldown_s": 5.0}
     # Still only staged — the values in force are untouched until the tool applies them.
     assert ctx.preferences.history_days == 30
@@ -511,11 +530,14 @@ async def test_reset_stages_the_defaults_rather_than_writing_them(ctx: AppContex
 async def test_cancelling_the_reset_confirm_stages_nothing(ctx: AppContext) -> None:
     """Backing out of the confirm leaves the page exactly as it was."""
     ctx.preferences.set("history_days", 30)
-    _install(ctx, [
-        ("select", "__reset__"),
-        ("dialog", False),
-        ("select", None),  # nothing staged, so Esc leaves without a discard dialog
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__reset__"),
+            ("dialog", False),
+            ("select", None),  # nothing staged, so Esc leaves without a discard dialog
+        ],
+    )
     assert await edit_preferences(ctx) is None
 
 

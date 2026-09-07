@@ -423,9 +423,7 @@ class BasemapSource:
         self._resolve()
         if self._template is None:
             return None
-        url = (
-            self._template.replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
-        )
+        url = self._template.replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
         resp = self._http_get(url)
         return resp.body if resp.answered else None
 

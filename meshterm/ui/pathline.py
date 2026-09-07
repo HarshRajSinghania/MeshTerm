@@ -476,7 +476,7 @@ class PathLine:
         # The heads worth trying, most-rescued first: a tail-side elision spares the
         # origin while it fits and gives it up only when it must; a head-side one is
         # eating the head on purpose, so it never spares it at all.
-        for head in ((0,) if elide == ELIDE_HEAD else (1, 0)):
+        for head in (0,) if elide == ELIDE_HEAD else (1, 0):
             for tail in range(count - 1 - head, 0, -1):
                 kept = self._hops[:head] + [mark] + self._hops[-tail:]
                 candidate = self._render(kept)
@@ -537,8 +537,10 @@ class PathLine:
             step = 0 if i == 0 else WRAP_OFFSET
             line = Text() if i == 0 else Text(" " * (indent + step))
             body = self._render(
-                group, force_plain=plain,
-                carry_in=bool(i), carry_on=i < len(groups) - 1,
+                group,
+                force_plain=plain,
+                carry_in=bool(i),
+                carry_on=i < len(groups) - 1,
             )
             # A lone hop too wide for the column is truncated — leaving room for the
             # cue it still has to carry, so even that line stays inside the width. A
@@ -588,9 +590,7 @@ class PathLine:
 
     # --- where the breaks fall --------------------------------------------------------
 
-    def _measure(
-        self, hops: list[PathHop], plain: bool
-    ) -> tuple[list[int], int, int, int, int]:
+    def _measure(self, hops: list[PathHop], plain: bool) -> tuple[list[int], int, int, int, int]:
         """Each hop's own width, plus what joining, opening and closing a line costs.
 
         Fitting hops to a column is arithmetic once every hop has been measured once —
@@ -614,8 +614,7 @@ class PathLine:
             plain_cells = [self._plain_hop(hop).cell_len for hop in hops]
             return plain_cells, cell_len(self._separator), 0, 0, 0
         widths = [
-            cell_len(hop.label) if hop.gap
-            else self._chip(hop, self._chip_fill(hop)).cell_len
+            cell_len(hop.label) if hop.gap else self._chip(hop, self._chip_fill(hop)).cell_len
             for hop in hops
         ]
         sep = cell_len(POWERLINE_SEP)
@@ -1064,13 +1063,15 @@ def path_line(
             continue
         named = resolve(hop)
         if named and named != hop:
-            built.append(PathHop(
-                named,
-                key=hop,
-                you=bool(self_name and named == self_name),
-                annotation=_shorten(hop, hash_bytes) if show_hash else None,
-                dim=dim,
-            ))
+            built.append(
+                PathHop(
+                    named,
+                    key=hop,
+                    you=bool(self_name and named == self_name),
+                    annotation=_shorten(hop, hash_bytes) if show_hash else None,
+                    dim=dim,
+                )
+            )
             continue
         compact = _shorten(hop, hash_bytes)
         if dim:  # a faded unnamed hop shows its compact hash, exactly as path_text does

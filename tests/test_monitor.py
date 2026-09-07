@@ -110,7 +110,12 @@ def test_heard_node_aggregation() -> None:
     obs = [
         Observation(node="a1", name="Yagi", snr=4.0, rssi=-100.0, observed_at=now),
         Observation(
-            node="a1", name="Yagi", snr=8.0, rssi=-90.0, lat=45.5, lon=-73.5,
+            node="a1",
+            name="Yagi",
+            snr=8.0,
+            rssi=-90.0,
+            lat=45.5,
+            lon=-73.5,
             observed_at=now + timedelta(seconds=5),
         ),
         Observation(

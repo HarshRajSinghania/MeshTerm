@@ -222,9 +222,7 @@ class ChatService:
         if self.active:
             return
         await self._ctx.events.start()
-        run_id = self._ctx.repo.start_run(
-            "chat", {"mode": "background"}, self._ctx.profile_name
-        )
+        run_id = self._ctx.repo.start_run("chat", {"mode": "background"}, self._ctx.profile_name)
         self._queue = asyncio.Queue()
         self._worker = asyncio.ensure_future(self._process_inbound(run_id))
 
@@ -279,9 +277,7 @@ class ChatService:
             self._worker = None
         self._queue = None
         if self._run_id is not None:
-            self._ctx.repo.finish_run(
-                self._run_id, "ok", {"messages": self._session_count}
-            )
+            self._ctx.repo.finish_run(self._run_id, "ok", {"messages": self._session_count})
             self._run_id = None
 
     async def aclose(self) -> None:
@@ -305,9 +301,7 @@ class ChatService:
             message = await self._queue.get()
             try:
                 channel_id = (
-                    await self.channel_id_for(message.channel)
-                    if message.is_channel
-                    else None
+                    await self.channel_id_for(message.channel) if message.is_channel else None
                 )
                 notify = await self._notifies(message, channel_id)
                 self._store_inbound(run_id, message, channel_id, notify=notify)
@@ -518,9 +512,7 @@ class ChatService:
             self._ctx.repo.update_chat_ack(message.row_id, message.acked)
         return message
 
-    async def send_channel(
-        self, index: int, text: str, *, label: str | None = None
-    ) -> ChatMessage:
+    async def send_channel(self, index: int, text: str, *, label: str | None = None) -> ChatMessage:
         """Broadcast a message on a channel and record it in history.
 
         Args:

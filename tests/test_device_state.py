@@ -231,8 +231,9 @@ def test_a_history_read_failure_leaves_the_contacts_untouched() -> None:
     """The merge is best-effort: a broken history read never blocks a contacts fetch."""
     dev = FakeDevice()
     device_says = datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc)
-    dev.contact_rows = [Contact(name="Solo", public_key="ee" * 32, key_prefix="ee" * 6,
-                                last_seen=device_says)]
+    dev.contact_rows = [
+        Contact(name="Solo", public_key="ee" * 32, key_prefix="ee" * 6, last_seen=device_says)
+    ]
     ds = _devstate(dev)
 
     def boom() -> dict:
@@ -361,8 +362,13 @@ def test_prewarm_reads_the_cheap_facts_before_the_slot_probes() -> None:
     dev = FakeDevice()
     ds = _devstate(dev)
     order: list[str] = []
-    for name in ("get_self_info", "get_path_hash_mode", "get_contacts", "get_channel",
-                 "channel_capacity"):
+    for name in (
+        "get_self_info",
+        "get_path_hash_mode",
+        "get_contacts",
+        "get_channel",
+        "channel_capacity",
+    ):
         inner = getattr(dev, name)
 
         async def traced(*a, _name=name, _inner=inner, **k):  # noqa: ANN001, ANN202
@@ -378,8 +384,11 @@ def test_prewarm_reads_the_cheap_facts_before_the_slot_probes() -> None:
 
     asyncio.run(run())
     assert order == [
-        "get_self_info", "get_path_hash_mode", "get_contacts",
-        "get_channel", "channel_capacity",
+        "get_self_info",
+        "get_path_hash_mode",
+        "get_contacts",
+        "get_channel",
+        "channel_capacity",
     ]
 
 

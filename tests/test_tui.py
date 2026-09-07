@@ -101,8 +101,8 @@ def test_select_default_and_arrows_walk_the_choices() -> None:
     assert _run(screen, "enter") == 2  # default is beta
     screen = _menu()
     screen.handle("down")  # beta -> gamma
-    screen.handle("up")    # gamma -> beta
-    screen.handle("up")    # beta -> alpha
+    screen.handle("up")  # gamma -> beta
+    screen.handle("up")  # beta -> alpha
     assert _run(screen, "enter") == 1
 
 
@@ -364,7 +364,9 @@ def test_select_pins_a_block_row_only_once_it_has_scrolled_off() -> None:
     assert plain(1) == ["── Longest haul ──"]  # its description is still on screen
     assert plain(2) == ["── Longest haul ──", "description line 0"]
     assert plain(4) == [
-        "── Longest haul ──", "description line 0", "description line 1",
+        "── Longest haul ──",
+        "description line 0",
+        "description line 1",
     ]
     # A block never eats more than half the viewport — the rows go from the end, so the
     # heading is the last thing a short terminal gives up.
@@ -501,9 +503,9 @@ def test_screen_sticky_block_picks_the_governing_recorded_block() -> None:
     screen = Screen()
     screen.note_metrics(total=40, viewport=12)
     screen._sticky_headers = [(0, ["A"]), (5, ["B", "b"]), (12, ["C"])]
-    assert screen.sticky_block(0) == []    # block A is itself the top row
+    assert screen.sticky_block(0) == []  # block A is itself the top row
     assert screen.sticky_block(3) == ["A"]  # scrolled past A, before B → A governs
-    assert screen.sticky_block(5) == []    # block B's heading is now the top row
+    assert screen.sticky_block(5) == []  # block B's heading is now the top row
     assert screen.sticky_block(6) == ["B"]  # its second row is still on screen
     assert screen.sticky_block(7) == ["B", "b"]  # both gone → both pin
     assert screen.sticky_block(20) == ["C"]  # below every block → the last one pins
@@ -653,19 +655,19 @@ def test_reorder_cursor_runs_into_the_action_rows_and_clamps() -> None:
     screen = ReorderScreen("order", ["a", "b"])
     screen.handle("up")  # already atop: no last row to fall onto
     assert screen._index == 0
-    screen.handle("down")   # onto the last list row, there being no action rows
+    screen.handle("down")  # onto the last list row, there being no action rows
     assert screen._index == 1
-    screen.handle("down")   # and stop there
+    screen.handle("down")  # and stop there
     assert screen._index == 1
 
     screen.handle("enter")  # grab row 1…
-    screen.handle("up")     # …and carry it up: dirty, so Apply and Back join the space
+    screen.handle("up")  # …and carry it up: dirty, so Apply and Back join the space
     screen.handle("enter")  # drop it — the cursor rode it to the first list row
-    screen.handle("down")   # onto the second list row
-    screen.handle("down")   # off the list, onto Apply
-    screen.handle("down")   # …then the discard-Back row below it
+    screen.handle("down")  # onto the second list row
+    screen.handle("down")  # off the list, onto Apply
+    screen.handle("down")  # …then the discard-Back row below it
     assert screen._index == 3
-    screen.handle("down")   # the bottom of the space: it stays
+    screen.handle("down")  # the bottom of the space: it stays
     assert screen._index == 3
 
 
@@ -747,7 +749,7 @@ def test_grow_only_dialog_box_holds_its_tallest_size() -> None:
     small = _box_height(screen)
     screen.n = 16
     grown = _box_height(screen)
-    assert grown > small       # a taller body enlarges the box
+    assert grown > small  # a taller body enlarges the box
     screen.n = 2
     assert _box_height(screen) == grown  # a shorter body after keeps the larger box
 
@@ -765,7 +767,7 @@ def test_grow_only_dialog_box_holds_its_widest_size() -> None:
     narrow = _box_width(screen)
     screen.dialog_width = 60
     wide = _box_width(screen)
-    assert wide > narrow           # a wider body enlarges the box
+    assert wide > narrow  # a wider body enlarges the box
     screen.dialog_width = 30
     assert _box_width(screen) == wide  # a narrower one after keeps the wider box
     # An ordinary dialog keeps sizing to each width as it comes.
@@ -1224,9 +1226,7 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(
-            self, title, items, *, default=None, banner=None, footnote=None
-        ):
+        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
             captured["items"] = items
             captured["banner"] = banner
             captured["footnote"] = footnote
@@ -1340,9 +1340,7 @@ def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
 
     store = DeviceStore(tmp_path / "devices.json")
     profiles = {
-        "bridge": DeviceProfile(
-            name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000
-        )
+        "bridge": DeviceProfile(name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000)
     }
 
     captured: dict = {}
@@ -1438,9 +1436,7 @@ def test_device_picker_profile_yields_to_remembered_endpoint(tmp_path) -> None:
     # Confirmed before, so it carries the real node name learned at connect time.
     store.remember(tcp_device("127.0.0.1", 5000), node_name="uConsole")
     profiles = {
-        "bridge": DeviceProfile(
-            name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000
-        )
+        "bridge": DeviceProfile(name="bridge", transport="tcp", host="127.0.0.1", tcp_port=5000)
     }
 
     captured: dict = {}
@@ -1475,8 +1471,17 @@ def test_device_picker_adds_network_device(tmp_path) -> None:
             # Choose the "add a network device" action row.
             return next(it.value for it in items if isinstance(it, Choice) and it.value is _ADD_TCP)
 
-        async def prompt_text_startup(self, title, *, prompt="", default="", validate=None,
-                                      help_text="", banner=None, footnote=None):
+        async def prompt_text_startup(
+            self,
+            title,
+            *,
+            prompt="",
+            default="",
+            validate=None,
+            help_text="",
+            banner=None,
+            footnote=None,
+        ):
             assert validate("192.168.1.50:5000") is True  # the validator accepts a good endpoint
             return "192.168.1.50:5000"
 
@@ -1513,22 +1518,36 @@ def test_device_picker_removes_network_device_on_delete(tmp_path) -> None:
             self._passes = 0
 
         async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
-            names = [it.label.plain for it in items
-                     if isinstance(it, Choice) and hasattr(it.label, "plain")]
+            names = [
+                it.label.plain
+                for it in items
+                if isinstance(it, Choice) and hasattr(it.label, "plain")
+            ]
             seen_rows.append(names)
             self._passes += 1
             if self._passes == 1:
                 # First pass: the network row is present and marked deletable — press Delete.
-                row = next(it for it in items if isinstance(it, Choice)
-                           and getattr(it.value, "is_tcp", False))
+                row = next(
+                    it
+                    for it in items
+                    if isinstance(it, Choice) and getattr(it.value, "is_tcp", False)
+                )
                 assert row.deletable
                 return DeleteRequest(row.value)
             # Second pass (after the removal): leave the picker.
             return _QUIT
 
-        async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
-                                  banner=None, footnote=None, backdrop_items=None,
-                                  backdrop_default=None):
+        async def confirm_startup(
+            self,
+            prompt,
+            *,
+            title="",
+            confirm_label="Remove",
+            banner=None,
+            footnote=None,
+            backdrop_items=None,
+            backdrop_default=None,
+        ):
             confirmed_prompts.append(prompt)
             # The confirm floats over the picker: it's handed the rows to redraw behind it,
             # with the row being removed pre-highlighted.
@@ -1567,14 +1586,25 @@ def test_device_picker_keeps_network_device_when_removal_cancelled(tmp_path) -> 
         async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
             self._passes += 1
             if self._passes == 1:
-                row = next(it for it in items if isinstance(it, Choice)
-                           and getattr(it.value, "is_tcp", False))
+                row = next(
+                    it
+                    for it in items
+                    if isinstance(it, Choice) and getattr(it.value, "is_tcp", False)
+                )
                 return DeleteRequest(row.value)
             return _QUIT
 
-        async def confirm_startup(self, prompt, *, title="", confirm_label="Remove",
-                                  banner=None, footnote=None, backdrop_items=None,
-                                  backdrop_default=None):
+        async def confirm_startup(
+            self,
+            prompt,
+            *,
+            title="",
+            confirm_label="Remove",
+            banner=None,
+            footnote=None,
+            backdrop_items=None,
+            backdrop_default=None,
+        ):
             return False  # the user backs out (Cancel / Esc)
 
     async def _never(_device, _pin=None):
@@ -2345,9 +2375,7 @@ def test_floating_text_prompt_is_a_popup_over_a_blank_base() -> None:
     session = TuiSession()
 
     async def main() -> None:
-        task = asyncio.ensure_future(
-            session.text("Password", password=True, floating=True)
-        )
+        task = asyncio.ensure_future(session.text("Password", password=True, floating=True))
         for _ in range(5):
             await asyncio.sleep(0)
             if session._has_float():
@@ -2601,8 +2629,7 @@ def test_select_scrolls_for_a_row_that_pins_a_head_without_being_told() -> None:
     from meshterm.ui.tui.select import Choice, SelectScreen
 
     lanes = "Send advert  "
-    row = Choice(lanes + "Announce this node " + "and then some " * 6, 1,
-                 hscroll_from=len(lanes))
+    row = Choice(lanes + "Announce this node " + "and then some " * 6, 1, hscroll_from=len(lanes))
     screen = SelectScreen("menu", [row])  # no hscroll= anywhere
     screen.handle("right")
     drawn = _row_plains(screen, 40)[0]
@@ -2619,8 +2646,9 @@ def test_menu_rows_pin_their_label_lane_so_only_the_description_slides() -> None
     """The shared label+description builder hands each row its own head block."""
     from meshterm.ui.menus import menu_rows
 
-    rows = menu_rows([("Sync clock…", "Set the device clock", 1),
-                      ("Reboot device…", "Restart the companion", 2)])
+    rows = menu_rows(
+        [("Sync clock…", "Set the device clock", 1), ("Reboot device…", "Restart the companion", 2)]
+    )
     lane = rows[0].hscroll_from
     assert lane and all(row.hscroll_from == lane for row in rows)
     # The head block ends exactly where the descriptions start, on every row.
@@ -2658,9 +2686,7 @@ def test_select_hscroll_marks_both_edges_the_run_continues_past() -> None:
     from meshterm.ui.pathline import _ELLIPSIS
     from meshterm.ui.tui.select import Choice, SelectScreen
 
-    screen = SelectScreen(
-        "long", [Choice("z" * 200, 1)], hscroll=True
-    )
+    screen = SelectScreen("long", [Choice("z" * 200, 1)], hscroll=True)
     screen.handle("right")
     row = _row_plains(screen, 40)[0]
     # Plain prose has no chip fill to shear, so both marks fall back to the ellipsis.
@@ -2721,9 +2747,7 @@ def test_select_hscroll_leaves_the_detail_line_unshifted() -> None:
     from meshterm.ui.tui.select import Choice, SelectScreen
 
     long_title = "row-one-" + "x" * 60 + "-tail"
-    screen = SelectScreen(
-        "pick", [Choice(long_title, 1, detail="weakest -6.0 dB")], hscroll=True
-    )
+    screen = SelectScreen("pick", [Choice(long_title, 1, detail="weakest -6.0 dB")], hscroll=True)
     screen.handle("right")
     lines = _row_plains(screen, 40)
     assert "weakest -6.0 dB" in lines[1]
@@ -2784,8 +2808,9 @@ def test_the_busy_overlay_is_still_prompt_toolkits_to_place() -> None:
 def test_the_rows_a_dialog_does_not_reach_come_back_unchanged() -> None:
     """What makes compositing worth doing: the diff still skips the untouched rows."""
     session = _framed_session()
-    session.push(ScrollScreen(Text("\n".join(f"line {i}" for i in range(40))),
-                              title="Nodes", floating=False))
+    session.push(
+        ScrollScreen(Text("\n".join(f"line {i}" for i in range(40))), title="Nodes", floating=False)
+    )
     first = session._plain_frame().split("\n")
     session.push(ButtonDialog("Sure?", [("Cancel", 0), ("Yes", 1)]))
     second = session._plain_frame().split("\n")
@@ -2894,8 +2919,11 @@ def _button_dialog_hints() -> list[tuple[str, int, int | None, str]]:
             if name not in ("button_dialog", "ButtonDialog"):
                 continue
             hint = next(
-                (k.value.value for k in node.keywords
-                 if k.arg == "footer_hint" and isinstance(k.value, ast.Constant)),
+                (
+                    k.value.value
+                    for k in node.keywords
+                    if k.arg == "footer_hint" and isinstance(k.value, ast.Constant)
+                ),
                 None,
             )
             if hint is None:

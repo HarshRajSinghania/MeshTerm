@@ -203,9 +203,7 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
     assert [c.name for c in candidates] == ["Hub-North", "Hub-South"]
 
     glyph, glyph_style = _NODE_GLYPHS[2]
-    titles = {
-        str(row.value): row.title for row in rows if getattr(row, "value", None) is not None
-    }
+    titles = {str(row.value): row.title for row in rows if getattr(row, "value", None) is not None}
     hues = set()
     for contact in contacts:
         title = titles[contact.name]
@@ -236,9 +234,11 @@ async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
     task = asyncio.ensure_future(open_repeater_admin(ctx))
     try:
         picker = await _step_until(
-            lambda: session.top
-            if isinstance(session.top, SelectScreen) and session.top.title == pick_title
-            else None
+            lambda: (
+                session.top
+                if isinstance(session.top, SelectScreen) and session.top.title == pick_title
+                else None
+            )
         )
         assert picker is not None, "the node picker never opened"
 

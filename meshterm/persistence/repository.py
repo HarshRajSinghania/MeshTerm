@@ -319,9 +319,7 @@ class Repository:
 
     # -- runs -------------------------------------------------------------------
 
-    def start_run(
-        self, tool: str, args: dict[str, Any], profile: str | None = None
-    ) -> int:
+    def start_run(self, tool: str, args: dict[str, Any], profile: str | None = None) -> int:
         """Record the start of a tool execution.
 
         Args:
@@ -454,8 +452,7 @@ class Repository:
             return None
 
         hop_rows = self._conn.execute(
-            "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? "
-            "ORDER BY hop_index",
+            "SELECT hop_index, node, snr FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
             (row["id"],),
         ).fetchall()
         hops = [Hop(index=h["hop_index"], node=h["node"], snr=h["snr"]) for h in hop_rows]
@@ -613,9 +610,7 @@ class Repository:
                 when = datetime.fromisoformat(row["created_at"])
             except (TypeError, ValueError):
                 continue  # a malformed stray contributes no evidence
-            paths.append(
-                TracedPath(when=when, hops=[(h["node"], h["snr"]) for h in hop_rows])
-            )
+            paths.append(TracedPath(when=when, hops=[(h["node"], h["snr"]) for h in hop_rows]))
         return paths
 
     def packet_paths(self, *, limit: int = 5000) -> list[PacketPath]:
@@ -645,9 +640,7 @@ class Repository:
             except (TypeError, ValueError):
                 continue  # a malformed stray contributes no evidence
             hops = [h for h in (row["path"] or "").split(",") if h]
-            paths.append(
-                PacketPath(when=when, origin=row["node"], snr=row["snr"], hops=hops)
-            )
+            paths.append(PacketPath(when=when, origin=row["node"], snr=row["snr"], hops=hops))
         return paths
 
     def record_neighbours(
@@ -829,6 +822,7 @@ class Repository:
             The stored row's id when the walk placed (a fresh row or an improved
             re-walk), or ``None`` when it didn't make the board.
         """
+
         def beats(challenger: float, standing: float) -> bool:
             return challenger < standing if ascending else challenger > standing
 
@@ -910,8 +904,9 @@ class Repository:
             clauses.append("width_bytes = ?")
             params.append(width_bytes)
         rows = self._conn.execute(
-            "SELECT * FROM discovered_paths WHERE " + " AND ".join(clauses) +
-            " ORDER BY category, id DESC",
+            "SELECT * FROM discovered_paths WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY category, id DESC",
             params,
         ).fetchall()
         out: list[DiscoveredPath] = []
@@ -945,9 +940,7 @@ class Repository:
 
     def delete_discovery(self, discovery_id: int) -> bool:
         """Delete one trophy-case record by id; ``True`` when a row actually went."""
-        cursor = self._conn.execute(
-            "DELETE FROM discovered_paths WHERE id = ?", (discovery_id,)
-        )
+        cursor = self._conn.execute("DELETE FROM discovered_paths WHERE id = ?", (discovery_id,))
         self._conn.commit()
         return cursor.rowcount > 0
 
@@ -1074,9 +1067,7 @@ class Repository:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM observations").fetchone()
         return int(row["n"]) if row else 0
 
-    def recent_observations(
-        self, *, since: datetime, limit: int = 4000
-    ) -> list[Observation]:
+    def recent_observations(self, *, since: datetime, limit: int = 4000) -> list[Observation]:
         """Return raw stored observations in a recent window, oldest first.
 
         The dashboard's seed: everything overheard in the window — adverts, telemetry,
@@ -1637,7 +1628,19 @@ class Repository:
                 # [count, snrs, last_iso, last_rssi, name, name_iso, type, type_iso,
                 #  key, key_iso, lat, lon, loc_iso]
                 stats[row["node"]] = s = [
-                    0, [], "", None, None, "", None, "", None, "", None, None, ""
+                    0,
+                    [],
+                    "",
+                    None,
+                    None,
+                    "",
+                    None,
+                    "",
+                    None,
+                    "",
+                    None,
+                    None,
+                    "",
                 ]
             s[0] += 1
             if snr is not None:
@@ -1819,9 +1822,7 @@ class Repository:
 
     # -- chat messages ----------------------------------------------------------
 
-    def record_chat_message(
-        self, msg: ChatMessage, *, run_id: int | None = None
-    ) -> int:
+    def record_chat_message(self, msg: ChatMessage, *, run_id: int | None = None) -> int:
         """Persist one chat message (sent or received).
 
         Args:
@@ -1862,9 +1863,7 @@ class Repository:
             message_id: The ``messages`` row to update.
             acked: The new delivery state — ``True`` acknowledged, ``False`` not.
         """
-        self._conn.execute(
-            "UPDATE messages SET acked = ? WHERE id = ?", (int(acked), message_id)
-        )
+        self._conn.execute("UPDATE messages SET acked = ? WHERE id = ?", (int(acked), message_id))
         self._conn.commit()
 
     def delete_chat_history(self, peer: str | None) -> int:
@@ -2107,9 +2106,7 @@ class Repository:
         when no view has been saved yet, or a stored value can't be parsed (treated as
         absent rather than an error, so a corrupt row just refits to the nodes).
         """
-        row = self._conn.execute(
-            "SELECT value FROM app_state WHERE key = 'map_view'"
-        ).fetchone()
+        row = self._conn.execute("SELECT value FROM app_state WHERE key = 'map_view'").fetchone()
         if row is None:
             return None
         try:

@@ -80,8 +80,7 @@ class RepeaterAdminTool(Tool):
         ctx.admin_store.record(node, str(password), outcome)
         if outcome is LoginResult.REFUSED:
             raise DeviceCommandError(
-                f"admin login to {name!r} failed (wrong password?). "
-                "The saved password was cleared."
+                f"admin login to {name!r} failed (wrong password?). The saved password was cleared."
             )
         if not outcome:
             raise DeviceCommandError(
@@ -96,9 +95,7 @@ class RepeaterAdminTool(Tool):
             ctx.ui.note("[warn]no reply — the command may still have landed[/warn]")
         else:
             ctx.ui.note(reply)
-        return ToolResult(
-            summary={"node": name, "command": command, "replied": reply is not None}
-        )
+        return ToolResult(summary={"node": name, "command": command, "replied": reply is not None})
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``repeater-admin`` subcommand.

@@ -135,9 +135,7 @@ def main_callback(
         settings.db_path = db_path
 
     console = make_console()
-    configure_logging(
-        console, settings.config_dir, level=logging.INFO, quiet=quiet or json_output
-    )
+    configure_logging(console, settings.config_dir, level=logging.INFO, quiet=quiet or json_output)
 
     app_ctx = AppContext(
         console=console,
@@ -212,9 +210,7 @@ def run_tool_command(tool: Tool, params: dict) -> None:
     assert _state is not None  # set by the callback before any subcommand runs
     try:
         asyncio.run(_drive(_execute_and_render(tool, params, _state), _state))
-    except (
-        DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError
-    ) as exc:
+    except (DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError) as exc:
         # Expected user-facing error (ambiguous/absent device, a bad config or preference
         # value, or a transient command failure): show the message, not a traceback.
         _state.console.print(f"[err]✗[/err] {exc}")

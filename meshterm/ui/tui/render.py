@@ -166,9 +166,7 @@ def _whiten_identities(renderable: RenderableType) -> RenderableType:
     spans = renderable.spans
     if not any(is_identity_style(str(span.style)) for span in spans):
         return renderable
-    routes = [
-        (span.start, span.end) for span in spans if str(span.style) == PATH_INK
-    ]
+    routes = [(span.start, span.end) for span in spans if str(span.style) == PATH_INK]
     out = renderable.copy()
     out.spans = [
         Span(span.start, span.end, "cursor")

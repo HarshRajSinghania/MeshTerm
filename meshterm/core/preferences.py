@@ -445,9 +445,7 @@ class Preferences:
     *Apply*, which — with the CLI — is the only path that reaches :meth:`save`.
     """
 
-    def __init__(
-        self, path: Path | None = None, values: Mapping[str, Any] | None = None
-    ) -> None:
+    def __init__(self, path: Path | None = None, values: Mapping[str, Any] | None = None) -> None:
         """Build a preferences view over an optional file and an optional set of overrides.
 
         Args:

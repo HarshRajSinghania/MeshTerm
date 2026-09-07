@@ -141,6 +141,7 @@ _SPARK_MIN_CELLS = 24
 #: many packets-per-minute, so a single stray reads as a small nub, not a full column.
 _HEADER_ACTIVITY_FLOOR = 3.0
 
+
 def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     """Build the persistent one-line header: who's connected, unread mail, mesh pulse.
 
@@ -203,9 +204,7 @@ def _header(ctx: AppContext, cache: dict, width: int) -> Text:
     if room > 0:
         # Buckets seeded from a previous session's stored history draw grey; only
         # traffic this session actually heard pulses green.
-        styles = [
-            "ok" if live else "muted" for live in ctx.monitor.activity_session_flags()
-        ]
+        styles = ["ok" if live else "muted" for live in ctx.monitor.activity_session_flags()]
         # Scale to a steady ceiling over the monitor's *full* six-hour history — deeper
         # than the row draws — not the drawn window's bare maximum: an outlier-robust,
         # floored peak (see activity_peak), so the pulse doesn't lurch as a busy minute
@@ -351,7 +350,8 @@ def _device_label(ctx: AppContext, cache: dict) -> tuple[str, str]:
     from .device_picker import _hardware_name
 
     record = (
-        ctx.device_store.load_all().get(sel.stable_id) if sel is not None
+        ctx.device_store.load_all().get(sel.stable_id)
+        if sel is not None
         else ctx.device_store.load()  # remembered reconnect: nothing discovered this session
     )
     name = (record.node_name if record is not None else "") or ctx.profile_name or ""
@@ -799,6 +799,7 @@ def _warm_basemap(ctx: AppContext) -> None:
     Node-detail location preview opens from the already-resolved source instead of stalling
     on the round-trip.
     """
+
     async def _warm() -> None:
         try:
             await asyncio.to_thread(lambda: ctx.basemap_source.max_zoom)
@@ -809,9 +810,7 @@ def _warm_basemap(ctx: AppContext) -> None:
 
 
 @asynccontextmanager
-async def _busy_over_link(
-    ctx: AppContext, *, title: str = ""
-) -> AsyncIterator[None]:
+async def _busy_over_link(ctx: AppContext, *, title: str = "") -> AsyncIterator[None]:
     """Float the skeleton-card overlay for the wrapped block, on any real device link.
 
     Bluetooth is the worst offender, but serial navigation has a perceptible lag too, so the
@@ -907,9 +906,7 @@ async def _session_loop(ctx: AppContext, session: TuiSession) -> None:
     while True:
         worker = asyncio.ensure_future(_menu_loop(ctx, session))
         watcher = asyncio.ensure_future(_wait_for_disconnect(ctx))
-        done, _ = await asyncio.wait(
-            {worker, watcher}, return_when=asyncio.FIRST_COMPLETED
-        )
+        done, _ = await asyncio.wait({worker, watcher}, return_when=asyncio.FIRST_COMPLETED)
         if worker in done:
             await _cancel_and_wait(watcher)
             worker.result()  # user quit (or re-raise a menu-loop error)

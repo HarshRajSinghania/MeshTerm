@@ -338,9 +338,7 @@ def _node_sections(
         ]
     start = since or observations[0].observed_at
     stamps = [o.observed_at for o in observations]
-    snr_pairs = [
-        (o.observed_at, float(o.snr)) for o in observations if o.snr is not None
-    ]
+    snr_pairs = [(o.observed_at, float(o.snr)) for o in observations if o.snr is not None]
 
     # Volume, SNR, and the rhythm share one y-axis gutter width (like the mesh page's
     # charts) so their left edges line up. A provisional width finds the peaks that size
@@ -357,9 +355,7 @@ def _node_sections(
     chars, buckets = _layout(1)
     volume = bucketize(stamps, start, now, buckets)
     lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
-    base_w = max(
-        axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo)
-    )
+    base_w = max(axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo))
     slots, slice_minutes, label_w = _fit_rhythm(
         lambda minutes: _rhythm_slots(stamps, minutes), width, base_w
     )
@@ -371,7 +367,10 @@ def _node_sections(
     out.extend(
         axis_chart(
             timeline_rows(volume, rows=_CHART_ROWS),
-            max(volume), chars, _time_axis(start, now), label_w=label_w,
+            max(volume),
+            chars,
+            _time_axis(start, now),
+            label_w=label_w,
         )
     )
 
@@ -383,7 +382,12 @@ def _node_sections(
         out.append(_heading("SNR", "median dB per slice · grey line = 0"))
         out.extend(
             axis_chart(
-                rows, hi, chars, _time_axis(start, now), label_w=label_w, floor=lo,
+                rows,
+                hi,
+                chars,
+                _time_axis(start, now),
+                label_w=label_w,
+                floor=lo,
             )
         )
 
@@ -393,8 +397,11 @@ def _node_sections(
     )
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
-            _quarter_axis, label_w=label_w,
+            timeline_rows(slots, rows=_CHART_ROWS),
+            max(slots),
+            len(slots) // 2,
+            _quarter_axis,
+            label_w=label_w,
         )
     )
 
@@ -416,7 +423,8 @@ def _node_sections(
     if rssis:
         out.append(
             Text.assemble(
-                ("rssi     ", "muted"), (f"{median(rssis):.0f} dBm median", ""),
+                ("rssi     ", "muted"),
+                (f"{median(rssis):.0f} dBm median", ""),
                 (f"  ·  weakest {min(rssis):.0f} · strongest {max(rssis):.0f}", "muted"),
             )
         )
@@ -431,9 +439,7 @@ def _node_sections(
 # --- the own-node page -------------------------------------------------------------------
 
 
-def _self_sections(
-    ctx: AppContext, window: timedelta | None, width: int
-) -> list[RenderableType]:
+def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> list[RenderableType]:
     """Build the own-node page: transmission volume, reach SNR band, rhythm, and the ledger.
 
     Our own node is the one subject the reception history can't describe — we never
@@ -472,9 +478,7 @@ def _self_sections(
     chars, buckets = _layout(1)
     volume = bucketize(stamps, start, now, buckets)
     lo, hi = chart_span(bucket_medians(snr_pairs, start, now, buckets)) if snr_pairs else (0.0, 0.0)
-    base_w = max(
-        axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo)
-    )
+    base_w = max(axis_label_w(max(volume), _CHART_ROWS), axis_label_w(hi, _SNR_ROWS, lo=lo))
     slots, slice_minutes, label_w = _fit_rhythm(
         lambda minutes: _rhythm_slots(stamps, minutes), width, base_w
     )
@@ -486,7 +490,10 @@ def _self_sections(
     out.extend(
         axis_chart(
             timeline_rows(volume, rows=_CHART_ROWS),
-            max(volume), chars, _time_axis(start, now), label_w=label_w,
+            max(volume),
+            chars,
+            _time_axis(start, now),
+            label_w=label_w,
         )
     )
 
@@ -498,7 +505,12 @@ def _self_sections(
         out.append(_heading("Reach", "trace bottleneck dB per slice · grey line = 0"))
         out.extend(
             axis_chart(
-                rows, hi, chars, _time_axis(start, now), label_w=label_w, floor=lo,
+                rows,
+                hi,
+                chars,
+                _time_axis(start, now),
+                label_w=label_w,
+                floor=lo,
             )
         )
 
@@ -508,8 +520,11 @@ def _self_sections(
     )
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
-            _quarter_axis, label_w=label_w,
+            timeline_rows(slots, rows=_CHART_ROWS),
+            max(slots),
+            len(slots) // 2,
+            _quarter_axis,
+            label_w=label_w,
         )
     )
 
@@ -546,7 +561,8 @@ def _self_sections(
     if ledger.tx_samples:
         out.append(
             Text.assemble(
-                ("tx       ", "muted"), (f"{ledger.tx_samples} power samples", ""),
+                ("tx       ", "muted"),
+                (f"{ledger.tx_samples} power samples", ""),
                 ("  ·  reach vs. transmit power", "muted"),
             )
         )
@@ -572,9 +588,7 @@ def _self_sent_line(ledger) -> Text | None:  # noqa: ANN001 - SelfActivity, kept
     line.append(" · ".join(parts))
     if ledger.dm_ackable:
         pct = round(100 * ledger.dm_acked / ledger.dm_ackable)
-        line.append(
-            f"  ·  {ledger.dm_acked}/{ledger.dm_ackable} acked ({pct}%)", style="muted"
-        )
+        line.append(f"  ·  {ledger.dm_acked}/{ledger.dm_ackable} acked ({pct}%)", style="muted")
     if ledger.dm_peers:
         line.append(f"  ·  {ledger.dm_peers} peers", style="muted")
     return line
@@ -612,9 +626,7 @@ def _day_spans(days: int, chars: int) -> list[tuple[int, int]]:
     if not notch:
         lit = dots
     edges = [i * lit // n for i in range(n + 1)]
-    return [
-        (edges[i] + (i if notch else 0), edges[i + 1] - edges[i]) for i in range(n)
-    ]
+    return [(edges[i] + (i if notch else 0), edges[i + 1] - edges[i]) for i in range(n)]
 
 
 def _day_centers(days: int, chars: int) -> list[int]:
@@ -631,10 +643,7 @@ def _day_centers(days: int, chars: int) -> list[int]:
     Returns:
         One centre cell (``0 .. chars - 1``) per day, oldest first.
     """
-    return [
-        min(chars - 1, (start + width // 2) // 2)
-        for start, width in _day_spans(days, chars)
-    ]
+    return [min(chars - 1, (start + width // 2) // 2) for start, width in _day_spans(days, chars)]
 
 
 def _even_picks(n: int, k: int) -> list[int]:
@@ -985,14 +994,16 @@ def _mesh_sections(
     packets = [d[1] for d in shown]
     ticks = _hour_ticks(shown, chars) if hourly else _day_ticks(shown, chars)
     pkt_title, node_title = (
-        ("Packets per hour", "Nodes per hour") if hourly
-        else ("Packets per day", "Nodes per day")
+        ("Packets per hour", "Nodes per hour") if hourly else ("Packets per day", "Nodes per day")
     )
     out.append(_heading(pkt_title, "local hours" if hourly else "local days"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
-            max(packets), chars, label_w=label_w, ticks=ticks,
+            max(packets),
+            chars,
+            label_w=label_w,
+            ticks=ticks,
         )
     )
 
@@ -1002,7 +1013,10 @@ def _mesh_sections(
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
-            max(nodes), chars, label_w=label_w, ticks=ticks,
+            max(nodes),
+            chars,
+            label_w=label_w,
+            ticks=ticks,
         )
     )
 
@@ -1013,8 +1027,11 @@ def _mesh_sections(
     out.append(_heading("Rhythm", f"packets by local time of day · {_slice_note(slice_minutes)}"))
     out.extend(
         axis_chart(
-            timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
-            _quarter_axis, label_w=label_w,
+            timeline_rows(slots, rows=_CHART_ROWS),
+            max(slots),
+            len(slots) // 2,
+            _quarter_axis,
+            label_w=label_w,
         )
     )
 
@@ -1055,10 +1072,7 @@ def _mesh_sections(
         key_w = max(_PICK_HASH_W, width - name_w - _ARRIVAL_TAIL)
         out.append(
             Text(
-                "  "
-                + "NAME".ljust(name_w + 2)
-                + "KEY".ljust(key_w + 2)
-                + "FIRST HEARD",
+                "  " + "NAME".ljust(name_w + 2) + "KEY".ljust(key_w + 2) + "FIRST HEARD",
                 style="muted",
             )
         )
@@ -1070,9 +1084,7 @@ def _mesh_sections(
                 style=name_style(name, key) if name else "muted",
             )
             line.append("  ")
-            line.append_text(
-                highlighted_hash(key, prefix_bytes, width=key_w, known=bool(name))
-            )
+            line.append_text(highlighted_hash(key, prefix_bytes, width=key_w, known=bool(name)))
             line.append("  ")
             line.append(_when_label(first))
             line.append(f"  ({format_ago(secs)})", style=_recency_style(secs))
@@ -1093,7 +1105,8 @@ def _mesh_sections(
     )
     out.append(
         Text.assemble(
-            ("busiest  ", "muted"), (busiest[0], "brand"),
+            ("busiest  ", "muted"),
+            (busiest[0], "brand"),
             (f"  {busiest[1]} packets", "muted"),
         )
     )
@@ -1318,11 +1331,7 @@ async def open_timemachine(ctx: AppContext) -> None:
             return
         # Stored names first, the contact resolver filling the blanks (the app-wide
         # rule: a node we *can* name never shows as unknown).
-        listed = [
-            (node, _known_name(resolve, node.node, node.name))
-            for node in heard
-            if node.node
-        ]
+        listed = [(node, _known_name(resolve, node.node, node.name)) for node in heard if node.node]
         picker = TimeMachinePickerScreen(
             listed=listed,
             prefix_bytes=prefix_bytes,
@@ -1391,9 +1400,7 @@ async def open_timemachine_node(ctx: AppContext, node_id: str, label: str) -> No
         raise RuntimeError("the time machine is only available in the menu")
     session = ctx.ui.session
     build = (  # noqa: E731 - a tiny binding closure reads better than a def here
-        lambda window, width, _id=node_id, _lb=label: _node_sections(
-            ctx, _id, _lb, window, width
-        )
+        lambda window, width, _id=node_id, _lb=label: _node_sections(ctx, _id, _lb, window, width)
     )
     await session.run_screen(TimeMachineScreen(session=session, label=label, build=build))
 

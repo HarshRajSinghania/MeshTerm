@@ -429,9 +429,7 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
     return _cell_len
 
 
-def _make_pt_cache(
-    narrow: frozenset[str], wide: frozenset[str], *, flags: bool = True
-) -> object:
+def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str], *, flags: bool = True) -> object:
     """Build a prompt_toolkit char-width cache that measures every ``narrow`` glyph as one.
 
     prompt_toolkit is the authority that *places the panel's right border*: it lays the

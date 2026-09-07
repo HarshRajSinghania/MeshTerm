@@ -439,8 +439,12 @@ def test_resolve_uses_remembered_ble_device() -> None:
 
     dev = _ble()
     remembered = RememberedDevice(
-        stable_id=dev.stable_id, port="", label=dev.label, last_connected="",
-        transport="ble", address=dev.address,
+        stable_id=dev.stable_id,
+        port="",
+        label=dev.label,
+        last_connected="",
+        transport="ble",
+        address=dev.address,
     )
     res = resolve_device([dev], remembered)
     assert res.transport == "ble" and res.target == dev.address and res.source == "remembered"

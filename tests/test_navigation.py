@@ -88,9 +88,7 @@ async def test_a_visit_keeps_the_screens_cursor_and_filter_across_a_sub_screen()
     """
     with create_pipe_input() as inp:
         session = _session(inp)
-        screen = SelectScreen(
-            "hub", [Choice("alpha", 1), Choice("beta", 2), Choice("gamma", 3)]
-        )
+        screen = SelectScreen("hub", [Choice("alpha", 1), Choice("beta", 2), Choice("gamma", 3)])
 
         async def main() -> None:
             async with session.stay(screen) as visit:
@@ -221,7 +219,9 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
 
     contacts = [
         Contact(
-            name="Hilltop-Repeater", public_key="3d" + "0" * 62, key_prefix="3d",
+            name="Hilltop-Repeater",
+            public_key="3d" + "0" * 62,
+            key_prefix="3d",
             node_type=NODE_TYPE_REPEATER,
         ),
         Contact(name="Lakeside", public_key="a1" + "0" * 62, key_prefix="a1"),
@@ -336,9 +336,7 @@ def test_update_rows_resorts_the_lanes_and_keeps_the_highlight_on_its_contact() 
         "Trace target — pick a target",
         rows=rows,
         prefix_bytes=1,
-        sort=ContactsSort.from_name(
-            "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
-        ),
+        sort=ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING),
         lanes=TRACE_LANES,
     )
     screen.handle("text", "bet")  # find-as-you-type down to the never-traced node
@@ -406,7 +404,10 @@ async def test_the_path_composer_peels_its_typed_entry_first() -> None:
         device_label="Homestead",
         device_hash=self_id,
         topology=build_topology(
-            self_id=self_id, contacts=[], trace_paths=[], packet_paths=[],
+            self_id=self_id,
+            contacts=[],
+            trace_paths=[],
+            packet_paths=[],
             neighbour_links=[],
         ),
         width_bytes=1,

@@ -140,8 +140,15 @@ _RSSI_LANE = _LANE_GAP + _READING_W + len(" dBm")
 #: room for, every lane fits a 72-column screen, so the label (the row's most informative
 #: field now that it names the real class) is only ever dropped when it truly can't fit.
 _FEED_LABEL_MIN_WIDTH = (
-    2 + _TIME_LANE + _ICON_LANE + _FEED_CLASS_WIDTH + _LANE_GAP
-    + _FEED_SUBJECT_WIDTH + _LANE_GAP + _SNR_LANE + _RSSI_LANE
+    2
+    + _TIME_LANE
+    + _ICON_LANE
+    + _FEED_CLASS_WIDTH
+    + _LANE_GAP
+    + _FEED_SUBJECT_WIDTH
+    + _LANE_GAP
+    + _SNR_LANE
+    + _RSSI_LANE
 )
 
 #: Cells one ←/→ press shifts the highlighted row by — the app-wide select list's own
@@ -152,9 +159,19 @@ _HSCROLL_STEP = 8
 #: Moves that abandon the highlighted row's horizontal scroll: each row scrolls on its
 #: own, exactly as an ``hscroll`` select list's rows do — landing on a new packet always
 #: starts it at its own beginning.
-_HSHIFT_RESET = frozenset({
-    "up", "down", "pageup", "pagedown", "space", "home", "ctrl_home", "end", "ctrl_end",
-})
+_HSHIFT_RESET = frozenset(
+    {
+        "up",
+        "down",
+        "pageup",
+        "pagedown",
+        "space",
+        "home",
+        "ctrl_home",
+        "end",
+        "ctrl_end",
+    }
+)
 
 #: The cursor over a normally selected row — the app-wide select-list pointer, pointing
 #: *into* the list at the one row it marks.
@@ -295,14 +312,19 @@ class LiveFeedScreen(Screen):
         elif event.kind == EventKind.MESSAGE and event.message is not None:
             msg = event.message
             entry = PacketEntry(
-                when=utcnow(), kind="message", node=msg.sender, snr=msg.snr,
+                when=utcnow(),
+                kind="message",
+                node=msg.sender,
+                snr=msg.snr,
                 where=f"ch {msg.channel}" if msg.is_channel else "direct",
                 channel=msg.channel if msg.is_channel else None,
-                text=msg.text, raw=msg.raw,
+                text=msg.text,
+                raw=msg.raw,
             )
         elif event.kind == EventKind.ACK and event.ack is not None:
             entry = PacketEntry(
-                when=utcnow(), kind="ack",
+                when=utcnow(),
+                kind="ack",
                 where=event.ack.code or "delivery confirmed",
             )
         if entry is None:
@@ -440,14 +462,19 @@ class LiveFeedScreen(Screen):
                     return
 
         viewer = PacketViewer(
-            list(self._feed), self._selected,
-            resolve=self._resolve, prefix_bytes=self._prefix_bytes,
-            self_name=self._self_name, on_navigate=follow,
+            list(self._feed),
+            self._selected,
+            resolve=self._resolve,
+            prefix_bytes=self._prefix_bytes,
+            self_name=self._self_name,
+            on_navigate=follow,
             # The viewer carries this screen's own second stop, so a reader who walks up
             # to the stream inside the dialog re-pins the feed under it and is still
             # following when the dialog closes.
             on_pin=lambda: self._select_stop(0),
-            channels=self._channels, type_of=self._type_of, key_of=self._key_of,
+            channels=self._channels,
+            type_of=self._type_of,
+            key_of=self._key_of,
             # The live feed itself (newest first), so the viewer keeps up with packets
             # that arrive while it is open instead of freezing at this snapshot.
             source=lambda: list(self._feed),
@@ -529,9 +556,7 @@ class LiveFeedScreen(Screen):
             out.append(render_to_ansi(ListWindow.marker(below, "below"), width))
         return out
 
-    def _feed_row(
-        self, entry: PacketEntry, selected: bool, show_label: bool, width: int
-    ) -> Text:
+    def _feed_row(self, entry: PacketEntry, selected: bool, show_label: bool, width: int) -> Text:
         """Lay one feed row out in fixed lanes: time, class, subject, reception, detail.
 
         The class lane says what the packet *is*, straight from
@@ -587,13 +612,13 @@ class LiveFeedScreen(Screen):
         body.append_text(subject)
         body.append(" " * _LANE_GAP)
         body.append(
-            f"{entry.snr:+{_READING_W}.1f} dB" if entry.snr is not None
-            else " " * _SNR_LANE,
+            f"{entry.snr:+{_READING_W}.1f} dB" if entry.snr is not None else " " * _SNR_LANE,
             style=snr_style(entry.snr) if entry.snr is not None else "muted",
         )
         body.append(
             f"{'':{_LANE_GAP}}{entry.rssi:{_READING_W}.0f} dBm"
-            if entry.rssi is not None else " " * _RSSI_LANE,
+            if entry.rssi is not None
+            else " " * _RSSI_LANE,
             style="muted",
         )
         note = self._feed_note(entry)
@@ -695,8 +720,10 @@ class LiveFeedScreen(Screen):
         wearing one prefix in the same column would be worse than saying nothing.
         """
         named = identify_channel(
-            raw.get("chan_hash") or "", raw.get("cipher_mac") or "",
-            raw.get("crypted") or "", self._channels,
+            raw.get("chan_hash") or "",
+            raw.get("cipher_mac") or "",
+            raw.get("crypted") or "",
+            self._channels,
         )
         if named is not None:
             return Text(named[0], style="brand")

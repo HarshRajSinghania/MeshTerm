@@ -92,8 +92,12 @@ def test_path_text_greys_an_unnamed_hop_whole() -> None:
 def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
     """An unnamed hop stands in its own hash at the mode width, muted, plus its byte."""
     text = path_text(
-        ["e839f2ab"], _resolve, prefix_bytes=3,
-        show_hash=True, hash_bytes=1, hash_as_name=True,
+        ["e839f2ab"],
+        _resolve,
+        prefix_bytes=3,
+        show_hash=True,
+        hash_bytes=1,
+        hash_as_name=True,
     )
     assert text.plain == "e839f2 (e8)"  # mode width identity, then the addressed byte
     styles = {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
@@ -106,8 +110,12 @@ def test_path_text_hash_as_name_shows_grey_identity_hash() -> None:
 def test_path_text_hash_as_name_drops_the_byte_when_it_is_the_whole_hash() -> None:
     """When the mode width is one byte, the identity already is the byte — no ``(e8)``."""
     text = path_text(
-        ["e839f2ab"], _resolve, prefix_bytes=1,
-        show_hash=True, hash_bytes=1, hash_as_name=True,
+        ["e839f2ab"],
+        _resolve,
+        prefix_bytes=1,
+        show_hash=True,
+        hash_bytes=1,
+        hash_as_name=True,
     )
     assert text.plain == "e8"
 
@@ -115,8 +123,12 @@ def test_path_text_hash_as_name_drops_the_byte_when_it_is_the_whole_hash() -> No
 def test_path_text_trace_flavour_annotates_hashes_and_brackets_us() -> None:
     """show_hash appends the addressed hash to names; None hops are our device."""
     text = path_text(
-        [None, "aa", "77bb", None], _resolve, self_name="Homestead",
-        show_hash=True, hash_bytes=1, device_hash="c0ffee",
+        [None, "aa", "77bb", None],
+        _resolve,
+        self_name="Homestead",
+        show_hash=True,
+        hash_bytes=1,
+        device_hash="c0ffee",
     )
     assert text.plain == "Homestead (c0) → Alice (aa) → 77 → Homestead (c0)"
 
@@ -124,8 +136,11 @@ def test_path_text_trace_flavour_annotates_hashes_and_brackets_us() -> None:
 def test_path_text_dims_the_tail_from_dim_from() -> None:
     """The mirrored return leg (and the arrows into it) render faint."""
     text = path_text(
-        [None, "aa", "3d", "aa", None], _resolve, self_name="us",
-        show_hash=True, dim_from=3,
+        [None, "aa", "3d", "aa", None],
+        _resolve,
+        self_name="us",
+        show_hash=True,
+        dim_from=3,
     )
     styles = [(text.plain[s.start : s.end], str(s.style)) for s in text.spans]
     assert ("us", "you") in styles  # the departure keeps the white you
@@ -147,8 +162,8 @@ def test_make_name_key_resolver_contacts_win_over_stored_names() -> None:
     key_of = make_name_key_resolver(contacts, stored)
     assert key_of("Alice") == "d4" + "0" * 62  # the contact's key, not the stored id
     assert key_of("alice") == "d4" + "0" * 62  # casefolded
-    assert key_of("Bob") == "60aabbccdd11"     # a stored-name stranger still lands
-    assert key_of("Zed") is None               # nobody carries the name
+    assert key_of("Bob") == "60aabbccdd11"  # a stored-name stranger still lands
+    assert key_of("Zed") is None  # nobody carries the name
 
 
 def test_name_style_without_a_key_is_the_unknown_grey() -> None:
@@ -173,7 +188,9 @@ def test_route_graph_source_label_takes_its_resolved_keys_hue() -> None:
     from meshterm.ui.widgets import name_rgb, route_graph_style
 
     _, _, rgb_known = route_graph_style(
-        resolve=lambda h: h, self_name="us", source="Alice",
+        resolve=lambda h: h,
+        self_name="us",
+        source="Alice",
         key_of=lambda name: "d4" + "0" * 62 if name == "Alice" else None,
     )
     from meshterm.ui.pathgraph import SRC_NODE
@@ -181,7 +198,9 @@ def test_route_graph_source_label_takes_its_resolved_keys_hue() -> None:
     assert rgb_known(SRC_NODE) == name_rgb("Alice", "d4" + "0" * 62)
 
     _, _, rgb_unknown = route_graph_style(
-        resolve=lambda h: h, self_name="us", source="Alice",
+        resolve=lambda h: h,
+        self_name="us",
+        source="Alice",
     )
     assert rgb_unknown(SRC_NODE) == (148, 163, 184)  # unresolvable origin stays muted
 
@@ -192,7 +211,7 @@ def test_revisit_note_names_the_repeats_and_refuses_to_guess_why() -> None:
     assert note is not None
     assert note.plain == "⚠ Alice repeats — a loop, or two nodes sharing one hash"
     styles = {note.plain[s.start : s.end]: str(s.style) for s in note.spans}
-    assert styles.get("⚠ ") == "warn"          # the app's warn mark, themed
+    assert styles.get("⚠ ") == "warn"  # the app's warn mark, themed
     assert styles.get("Alice") not in (None, "warn")  # the name keeps its own node hue
 
 

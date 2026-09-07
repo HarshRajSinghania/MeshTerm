@@ -57,13 +57,13 @@ BLE_PRESENCE_TIMEOUT_S = 8.0
 # USB vendor IDs frequently seen on MeshCore/Meshtastic companion hardware and the
 # USB-UART bridges they ship with. Used only to name, flag, and sort likely devices.
 KNOWN_LORA_VIDS: dict[int, str] = {
-    0x303A: "Espressif",        # ESP32-S3 / native USB (e.g. XIAO ESP32-S3)
-    0x10C4: "Silicon Labs",     # CP210x UART bridge
-    0x1A86: "QinHeng",          # CH340 / CH9102 UART bridge
-    0x0403: "FTDI",             # FT232 UART bridge
-    0x239A: "Adafruit",         # nRF52840 boards
-    0x2886: "Seeed Studio",     # XIAO / Wio boards
-    0x1915: "Nordic",           # nRF52 native USB
+    0x303A: "Espressif",  # ESP32-S3 / native USB (e.g. XIAO ESP32-S3)
+    0x10C4: "Silicon Labs",  # CP210x UART bridge
+    0x1A86: "QinHeng",  # CH340 / CH9102 UART bridge
+    0x0403: "FTDI",  # FT232 UART bridge
+    0x239A: "Adafruit",  # nRF52840 boards
+    0x2886: "Seeed Studio",  # XIAO / Wio boards
+    0x1915: "Nordic",  # nRF52 native USB
 }
 
 # Native-USB VIDs of LoRa companion dev boards — the chip *is* the board, so seeing one is
@@ -414,9 +414,7 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
     return devices
 
 
-async def find_ble_device(
-    address: str, timeout: float = BLE_PRESENCE_TIMEOUT_S
-) -> object | None:
+async def find_ble_device(address: str, timeout: float = BLE_PRESENCE_TIMEOUT_S) -> object | None:
     """Watch for one known companion's advertisement, returning its live ``BLEDevice``.
 
     The Bluetooth counterpart to :func:`~meshterm.core.connection.serial_port_present`, and it

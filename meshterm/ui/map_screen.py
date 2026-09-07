@@ -77,6 +77,7 @@ def _loop_running() -> bool:
         return False
     return True
 
+
 #: How many screens' worth of decoded tiles to keep resident, as a multiple of what the
 #: current view needs. A decoded tile costs ~0.9 MB on the PicoCalc (62 bytes a point,
 #: measured) against a device that has ~100 MB in total, so a map panned far enough would
@@ -174,7 +175,10 @@ class MapScreen(Screen):
             FPair("Region", "home"),
             FPair("You", "locate", "You +", "locate_zoom", enabled=me, opp_enabled=me),
             FPair(
-                "Frame", "frame", "Clear", "clear_find",
+                "Frame",
+                "frame",
+                "Clear",
+                "clear_find",
                 enabled=bool(self._filter) and bool(self._matches()),
                 opp_enabled=bool(self._filter),
             ),
@@ -615,12 +619,18 @@ class MapScreen(Screen):
         """
         # Ground metres per braille dot at the view centre, for a rough sense of scale.
         m_per_dot = (
-            2 * math.pi * EARTH_RADIUS_KM * 1000
+            2
+            * math.pi
+            * EARTH_RADIUS_KM
+            * 1000
             * math.cos(math.radians(vp.center_lat))
             / (256 * (2**vp.zoom))
         )
-        scale = f"{m_per_dot * vp.dot_w:.0f} m across" if m_per_dot * vp.dot_w < 1000 else \
-            f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
+        scale = (
+            f"{m_per_dot * vp.dot_w:.0f} m across"
+            if m_per_dot * vp.dot_w < 1000
+            else f"{m_per_dot * vp.dot_w / 1000:.1f} km across"
+        )
         if self._pending:
             scale = f"{len(self._pending)} tiles…"
         elif self._drawing is not None or self._wanted is not None:
@@ -932,8 +942,8 @@ class MapScreen(Screen):
             # physically held, and it stays False wherever it isn't watching — desktop
             # terminals report shift_up/... themselves, on the branch below.
             self._pan(vp, action, fine=modifier_watch.shift_down())
-        elif action.startswith("shift_") and action[len("shift_"):] in _PAN_DIRS:
-            self._pan(vp, action[len("shift_"):], fine=True)
+        elif action.startswith("shift_") and action[len("shift_") :] in _PAN_DIRS:
+            self._pan(vp, action[len("shift_") :], fine=True)
         elif action == "pageup":
             if modifier_watch.shift_down():
                 # The PicoCalc console's keymap translates Shift+↑ into PgUp (measured
@@ -1089,8 +1099,13 @@ class LocationPickScreen(MapScreen):
         """
         from .tui.fkeys import FPair
 
-        return [FPair("Start", "home"), None, None, FPair("Zoom -", "pagedown"),
-                FPair("Zoom +", "pageup")]
+        return [
+            FPair("Start", "home"),
+            None,
+            None,
+            FPair("Zoom -", "pagedown"),
+            FPair("Zoom +", "pageup"),
+        ]
 
     def __init__(
         self,
@@ -1184,9 +1199,7 @@ class LocationPickScreen(MapScreen):
             vp = self._viewport
             if self._initial is not None:
                 lat, lon = self._initial
-                self._viewport = Viewport(
-                    clamp_lat(lat), lon, self._pick_zoom, vp.dot_w, vp.dot_h
-                )
+                self._viewport = Viewport(clamp_lat(lat), lon, self._pick_zoom, vp.dot_w, vp.dot_h)
             elif not self._markers:
                 self._viewport = Viewport(20.0, 0.0, 2, vp.dot_w, vp.dot_h)
             else:
@@ -1230,9 +1243,7 @@ async def pick_location(
         markers = []
     source = basemap_source(ctx)
     max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
-    screen = LocationPickScreen(
-        session, markers, source, max_zoom, initial=initial
-    )
+    screen = LocationPickScreen(session, markers, source, max_zoom, initial=initial)
     try:
         result = await session.run_screen(screen)
     finally:
@@ -1307,9 +1318,7 @@ async def open_map(
             source,
             max_zoom,
             saved_view=ctx.repo.get_map_view(),
-            on_view_change=lambda vp: ctx.repo.set_map_view(
-                vp.center_lat, vp.center_lon, vp.zoom
-            ),
+            on_view_change=lambda vp: ctx.repo.set_map_view(vp.center_lat, vp.center_lon, vp.zoom),
             view_fraction=fraction,
         )
     try:

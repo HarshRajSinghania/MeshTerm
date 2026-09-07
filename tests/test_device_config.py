@@ -119,7 +119,11 @@ def _contacts_names(counts, sort: str, prefix_bytes: int = 3):
         Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6"),
     ]
     group = contacts_table(
-        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts,
+        "Homestead",
+        "aabbcc" + "00" * 29,
+        contacts,
+        prefix_bytes,
+        counts,
         ContactsSort.from_name(sort),
     )
     table = group.renderables[0]  # (table, blank line, legend)
@@ -399,8 +403,9 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
 
     old = utcnow() - timedelta(days=400)
     victims = [
-        Contact(name=f"Old{i}", public_key=f"{i:02x}" * 32, key_prefix=f"{i:02x}" * 6,
-                last_seen=old)
+        Contact(
+            name=f"Old{i}", public_key=f"{i:02x}" * 32, key_prefix=f"{i:02x}" * 6, last_seen=old
+        )
         for i in range(3)
     ]
     removed_from_device: list[str] = []
@@ -417,8 +422,7 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
             # Long silent, never messaged, heard a handful of times — the shape of exactly
             # what the sweep exists to clear out.
             return {
-                node: ContactSignals(node=node, heard_age_days=400.0, packets=2,
-                                     known_days=420.0)
+                node: ContactSignals(node=node, heard_age_days=400.0, packets=2, known_days=420.0)
                 for node in nodes
             }
 
@@ -466,9 +470,7 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     ladder.handle("enter")
 
     # The preview lists exactly who would go, and commits on its Apply row (the default).
-    preview = await _step_until_screen(
-        session, lambda s: "to archive" in getattr(s, "title", "")
-    )
+    preview = await _step_until_screen(session, lambda s: "to archive" in getattr(s, "title", ""))
     body = _screen_text(preview)
     assert "PCTL" in body  # the standing lane is a percentile, never a raw score
     assert all(v.name in body for v in victims)
@@ -539,9 +541,7 @@ async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> 
     # the reader's place in a list ordered by it.
     rows = [c for c in screen._choices() if isinstance(c.value, ScoredContact)]
     assert len(rows) == 3 and all(c.deletable and c.hscroll_from > 0 for c in rows)
-    assert not any(
-        c.deletable for c in screen._choices() if not isinstance(c.value, ScoredContact)
-    )
+    assert not any(c.deletable for c in screen._choices() if not isinstance(c.value, ScoredContact))
 
     # The cursor opens on Apply (the committing row is the default), so walk to the top of
     # the contacts and down to "Keeper", then spare it. The screen stays up — this is an
@@ -600,7 +600,6 @@ async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
     assert victims == []
 
 
-
 async def test_deleting_one_contact_drops_it_from_the_device_and_the_store() -> None:
     """The single-contact delete: a red confirm, then both halves of the union forgotten.
 
@@ -637,9 +636,7 @@ async def test_deleting_one_contact_drops_it_from_the_device_and_the_store() -> 
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(
-            forget=lambda dev, key: forgotten.append((dev, key))
-        ),
+        contact_store=SimpleNamespace(forget=lambda dev, key: forgotten.append((dev, key))),
         devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
         device=lambda: _device(_Device()),
     )
@@ -690,8 +687,10 @@ async def test_cancelling_the_remove_confirm_touches_nothing() -> None:
         device=lambda: _device(_Device()),
     )
 
-    assert await _remove_contact(ctx, Contact(name="Hub", public_key="3d" * 32), "cc" * 32,
-                                 "Hub") is False
+    assert (
+        await _remove_contact(ctx, Contact(name="Hub", public_key="3d" * 32), "cc" * 32, "Hub")
+        is False
+    )
     assert touched == []
 
 
@@ -781,9 +780,7 @@ async def test_a_contact_the_device_never_held_is_still_removed_here() -> None:
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(
-            forget=lambda dev, key: forgotten.append((dev, key))
-        ),
+        contact_store=SimpleNamespace(forget=lambda dev, key: forgotten.append((dev, key))),
         devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
         device=lambda: _device(_Device()),
     )
@@ -1093,8 +1090,10 @@ async def test_current_preset_identifies_the_mock_radio() -> None:
 
 def test_current_preset_none_for_unmatched_radio() -> None:
     """A hand-tuned radio matches no preset, and a missing field never crashes it."""
-    assert current_preset({"radio_freq": 868.0, "radio_bw": 250.0, "radio_sf": 11,
-                           "radio_cr": 5}) is None
+    assert (
+        current_preset({"radio_freq": 868.0, "radio_bw": 250.0, "radio_sf": 11, "radio_cr": 5})
+        is None
+    )
     assert current_preset({}) is None
 
 
@@ -1168,9 +1167,7 @@ async def test_plan_restore_emits_only_differences(tmp_path: Path) -> None:
     """The restore planner returns ops only for values that differ from the device."""
     source = await _connected_mock()
     await source.set_name("Foo")
-    path = backup_config(
-        tmp_path / "cfg.toml", await build_snapshot(source), {"exp": "1"}, []
-    )
+    path = backup_config(tmp_path / "cfg.toml", await build_snapshot(source), {"exp": "1"}, [])
     backup = read_backup(path)
 
     target = await _connected_mock()  # fresh device: name still "MockCompanion"

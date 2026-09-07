@@ -59,6 +59,7 @@ def split_channel_sender(text: str) -> tuple[str | None, str]:
         return None, text
     return name, body
 
+
 #: A channel shared secret is exactly 16 bytes (128-bit), per the MeshCore protocol.
 CHANNEL_SECRET_BYTES = 16
 

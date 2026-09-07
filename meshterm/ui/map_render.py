@@ -163,8 +163,15 @@ _BUILDING_MIN_ZOOM = 15
 #: whole tiles, so widening this set costs a re-decode, never a re-download.
 DRAWN_LAYERS: frozenset[str] = frozenset(
     _FILL_LAYERS
-    + ("building", "waterway", "transportation", "boundary", "transportation_name",
-       "place", "water_name")
+    + (
+        "building",
+        "waterway",
+        "transportation",
+        "boundary",
+        "transportation_name",
+        "place",
+        "water_name",
+    )
 )
 
 #: Marks "this feature class has not been styled yet" in :func:`_draw_tile`'s per-tile style
@@ -322,7 +329,7 @@ def _paste_ghost(canvas: MapCanvas, viewport: Viewport, ghost: Ghost) -> None:
     steps = viewport.zoom - src.zoom
     if abs(steps) > _GHOST_MAX_STEPS:
         return
-    scale = 2.0 ** -steps
+    scale = 2.0**-steps
     magnify = 1 << steps if steps > 0 else 1  # a view zoomed *out* keeps whole glyphs
     ox, oy = viewport.origin_world
     sx, sy = src.origin_world
@@ -406,9 +413,7 @@ def render_ground(
     Returns:
         The ANSI lines, and the ground they leave behind.
     """
-    canvas = _compose(
-        viewport, tiles, markers, max_labels=max_labels, find=find, coarse=coarse
-    )
+    canvas = _compose(viewport, tiles, markers, max_labels=max_labels, find=find, coarse=coarse)
     return canvas.to_ansi_lines(), Ghost(canvas.raster(), viewport)
 
 
@@ -571,8 +576,8 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             style = road_styles.get(cls)
             if style is None:
                 name = str(cls or "")
-                named = _RAIL if name in ("rail", "transit") else _ROAD_STYLE.get(
-                    name, _ROAD_DEFAULT
+                named = (
+                    _RAIL if name in ("rail", "transit") else _ROAD_STYLE.get(name, _ROAD_DEFAULT)
                 )
                 style = road_styles[cls] = (mark_rgb(named[0]), named[1])
             rgb, prio = style
@@ -611,8 +616,15 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
         for feat in tname.features:
             if feat.name and feat.rings:
                 _add_line_label(
-                    frame, feat.rings, tname.extent, z, x, y, feat.name,
-                    (color, bold, rank), min_zoom=_STREET_LABEL_MIN_ZOOM,
+                    frame,
+                    feat.rings,
+                    tname.extent,
+                    z,
+                    x,
+                    y,
+                    feat.name,
+                    (color, bold, rank),
+                    min_zoom=_STREET_LABEL_MIN_ZOOM,
                 )
 
     # Place labels.
@@ -627,9 +639,7 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
             color, bold, rank, min_zoom = style
             lx, ly = feat.rings[0][0]
             dx, dy = frame.viewport.feature_to_dot(x, y, z, place.extent, lx, ly)
-            frame.labels.append(
-                _Label(rank, dx, dy, feat.name, mark_rgb(color), bold, min_zoom)
-            )
+            frame.labels.append(_Label(rank, dx, dy, feat.name, mark_rgb(color), bold, min_zoom))
 
     # Water-body names.
     water_name = by_name.get("water_name")
@@ -718,7 +728,13 @@ def _add_line_label(
     color, bold, rank = style
     frame.labels.append(
         _Label(
-            rank, pieces[0][1], pieces[0][2], text, mark_rgb(color), bold, min_zoom,
+            rank,
+            pieces[0][1],
+            pieces[0][2],
+            text,
+            mark_rgb(color),
+            bold,
+            min_zoom,
             alts=tuple((px, py) for _, px, py in pieces[1:4]),
         )
     )

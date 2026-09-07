@@ -68,9 +68,7 @@ class ChannelsTool(Tool):
 
     # -- CLI --------------------------------------------------------------------
 
-    async def _run_cli(
-        self, ctx: AppContext, action: str, params: dict[str, Any]
-    ) -> ToolResult:
+    async def _run_cli(self, ctx: AppContext, action: str, params: dict[str, Any]) -> ToolResult:
         """Dispatch a scripted CLI action."""
         if action == "add":
             return await self._cli_add(ctx, params)
@@ -119,9 +117,7 @@ class ChannelsTool(Tool):
             await write_channel(ctx, device, idx, name, None)
             secret = derive_secret(name)
         else:
-            secret = (
-                normalize_secret(params["secret"]) if params.get("secret") else random_secret()
-            )
+            secret = normalize_secret(params["secret"]) if params.get("secret") else random_secret()
             await write_channel(ctx, device, idx, name, secret)
         ctx.ui.note(f"[ok]✓[/ok] channel [brand]{name}[/brand] set on slot {idx}")
         self._print_share(ctx, name, secret)
@@ -202,9 +198,7 @@ class ChannelsTool(Tool):
         """
         from ..cli import run_tool_command
 
-        channels_app = typer.Typer(
-            help=self.help, no_args_is_help=True, rich_markup_mode="rich"
-        )
+        channels_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode="rich")
 
         @channels_app.command("list", help="List the configured channel slots")
         def _list_cmd() -> None:

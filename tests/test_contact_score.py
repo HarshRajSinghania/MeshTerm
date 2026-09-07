@@ -32,9 +32,7 @@ _BASE = dict(heard_age_days=30.0, packets=10, known_days=200.0)
 def _contact(name: str, *, lat=None, lon=None) -> Contact:  # noqa: ANN001
     """A contact with a distinct key (so its hue and its node id differ from its neighbours')."""
     byte = f"{(sum(map(ord, name)) % 256):02x}"
-    return Contact(
-        name=name, public_key=byte * 32, key_prefix=byte * 6, lat=lat, lon=lon
-    )
+    return Contact(name=name, public_key=byte * 32, key_prefix=byte * 6, lat=lat, lon=lon)
 
 
 def _rank(*specs) -> list:  # noqa: ANN001
@@ -152,10 +150,7 @@ def test_protections_outrank_the_arithmetic() -> None:
     MeshTerm's own ignorance.
     """
     assert protection_for(ContactSignals(node="a" * 12, **_BASE, watched=True)) == PROTECT_WATCHED
-    assert (
-        protection_for(ContactSignals(node="a" * 12, **_BASE, dm_outbound=1))
-        == PROTECT_MESSAGED
-    )
+    assert protection_for(ContactSignals(node="a" * 12, **_BASE, dm_outbound=1)) == PROTECT_MESSAGED
     assert protection_for(ContactSignals(node="a" * 12, **_BASE, has_admin=True)) == PROTECT_ADMIN
     # No arrival time at all: the contact predates this history (or was added by hand), so
     # every evidence term is empty for a reason that says nothing about the node.
@@ -264,8 +259,7 @@ def test_no_single_signal_overrules_two_strong_ones() -> None:
     ranked = _by_name(
         _rank(
             ("Present", {"packets": 100, "heard_age_days": 0.1, "dm_total": 0}),
-            ("Inbox", {"packets": 2, "heard_age_days": 60.0, "dm_total": 30,
-                       "dm_age_days": 20.0}),
+            ("Inbox", {"packets": 2, "heard_age_days": 60.0, "dm_total": 30, "dm_age_days": 20.0}),
         )
     )
     assert ranked["Present"].score > ranked["Inbox"].score
@@ -325,10 +319,17 @@ def test_a_stronger_contact_never_scores_below_a_weaker_one_on_every_axis() -> N
     """Sanity: dominance is preserved — better everywhere means ranked above."""
     ranked = _by_name(
         _rank(
-            ("Better", {"packets": 50, "heard_age_days": 1.0, "dm_total": 5,
-                        "dm_age_days": 1.0, "hops": 1.0}),
-            ("Worse", {"packets": 2, "heard_age_days": 300.0, "dm_total": 0,
-                       "hops": 4.0}),
+            (
+                "Better",
+                {
+                    "packets": 50,
+                    "heard_age_days": 1.0,
+                    "dm_total": 5,
+                    "dm_age_days": 1.0,
+                    "hops": 1.0,
+                },
+            ),
+            ("Worse", {"packets": 2, "heard_age_days": 300.0, "dm_total": 0, "hops": 4.0}),
         )
     )
     assert ranked["Better"].score > ranked["Worse"].score

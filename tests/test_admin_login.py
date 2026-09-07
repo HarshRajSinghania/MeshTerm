@@ -162,9 +162,7 @@ class _FakeCommands:
                 return self._answer
             return None  # a refusal is nothing it was ever waiting for
         if self._late is not None:
-            asyncio.get_running_loop().call_later(
-                self._late_delay, self._mc.dispatch, self._late
-            )
+            asyncio.get_running_loop().call_later(self._late_delay, self._mc.dispatch, self._late)
         return None
 
 
@@ -366,9 +364,7 @@ def test_the_reply_budget_is_sized_to_the_route_the_login_has_to_walk() -> None:
 
     trace_runner.trace_timeout = spy
     try:
-        two_hops = Contact(
-            name="Hub-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2")
-        )
+        two_hops = Contact(name="Hub-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2"))
         asyncio.run(_device(_FakeMeshCore()).admin_login(two_hops, "hunter2"))
         asyncio.run(_device(_FakeMeshCore()).admin_login(_NODE, "hunter2"))
     finally:
@@ -603,7 +599,8 @@ def test_every_login_caller_goes_through_the_one_credential_policy() -> None:
 
     root = Path(meshterm.__file__).parent
     callers = [
-        path for path in root.rglob("*.py")
+        path
+        for path in root.rglob("*.py")
         if calls_admin_login(ast.parse(path.read_text(encoding="utf-8")))
     ]
 

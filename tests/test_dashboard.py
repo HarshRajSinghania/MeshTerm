@@ -42,11 +42,14 @@ def _screen(window=None, histogram=None, kinds=None) -> DashboardScreen:
 
 def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> Observation:
     return Observation(
-        node=node, name=node, kind=kind, snr=snr, rssi=rssi,
-        observed_at=utcnow() - timedelta(seconds=age_s), **extra,
+        node=node,
+        name=node,
+        kind=kind,
+        snr=snr,
+        rssi=rssi,
+        observed_at=utcnow() - timedelta(seconds=age_s),
+        **extra,
     )
-
-
 
 
 def _stripped(lines: list[str]) -> list[str]:
@@ -181,8 +184,11 @@ def test_dashboard_radio_rows_render_device_stats() -> None:
     """The Device-info dynamic numbers (noise floor, airtime, battery) fold in."""
     screen = _screen(window=[_obs()])
     screen.stats = {
-        "noise_floor": -104, "last_rssi": -95, "last_snr": 5.5,
-        "tx_air_secs": 12, "rx_air_secs": 340,
+        "noise_floor": -104,
+        "last_rssi": -95,
+        "last_snr": 5.5,
+        "tx_air_secs": 12,
+        "rx_air_secs": 340,
     }
     screen.battery = {"level": 4010}
     body = _plain(screen.render_body(100))
@@ -196,12 +202,8 @@ def test_repository_kind_counts_bucket_packets_by_payload_class(tmp_path: Path) 
     repo = Repository(tmp_path / "kinds.db")
     run = repo.start_run("monitor", {}, None)
     repo.record_observation(run, _obs(node="a", kind="advert"))
-    repo.record_observation(
-        run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"})
-    )
-    repo.record_observation(
-        run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"})
-    )
+    repo.record_observation(run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"}))
+    repo.record_observation(run, _obs(node="", kind="packet", raw={"payload_typename": "GRP_TXT"}))
     repo.record_observation(run, _obs(node="", kind="packet"))  # class-less frame
 
     counts = repo.kind_counts()
@@ -220,9 +222,7 @@ def test_monitor_tallies_live_packets_by_payload_class(tmp_path: Path) -> None:
     monitor._activity_stamp = 0
     monitor._kind_counts = {}
     monitor._count_packet(
-        MeshEvent.observation_event(
-            _obs(node="", kind="packet", raw={"payload_typename": "TRACE"})
-        )
+        MeshEvent.observation_event(_obs(node="", kind="packet", raw={"payload_typename": "TRACE"}))
     )
     monitor._count_packet(MeshEvent.observation_event(_obs(kind="advert")))
     assert monitor._kind_counts == {"packet:TRACE": 1, "advert": 1}
@@ -278,8 +278,10 @@ def test_recent_observations_rehydrate_channel_text_for_decryption(tmp_path: Pat
 
     # The stored frame decrypts straight out of history — the whole point of persisting it.
     viewer = PacketViewer(
-        [PacketEntry.from_observation(stored)], 0,
-        resolve=lambda h: "", channels=[(name, secret)],
+        [PacketEntry.from_observation(stored)],
+        0,
+        resolve=lambda h: "",
+        channels=[(name, secret)],
     )
     body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in viewer.render_body(80))
     assert "#general" in body and "hi from history" in body
@@ -316,7 +318,9 @@ def test_rhythm_activity_buckets_by_minute_of_day(tmp_path: Path) -> None:
 
     def at(hh: int, mm: int) -> Observation:
         return Observation(
-            node="n", name="n", kind="advert",
+            node="n",
+            name="n",
+            kind="advert",
             observed_at=datetime(2026, 7, 8, hh, mm).astimezone(),
         )
 
@@ -324,8 +328,8 @@ def test_rhythm_activity_buckets_by_minute_of_day(tmp_path: Path) -> None:
         repo.record_observation(run, at(hh, mm))
     slots = repo.rhythm_activity()
     assert len(slots) == 1440
-    assert slots[0] == 1         # 00:00 → slot 0
-    assert slots[44] == 1        # 00:44 → slot 44
+    assert slots[0] == 1  # 00:00 → slot 0
+    assert slots[44] == 1  # 00:44 → slot 44
     assert slots[17 * 60 + 55] == 2  # both 17:55 stamps share one minute slot
     assert sum(slots) == 4
     repo.close()

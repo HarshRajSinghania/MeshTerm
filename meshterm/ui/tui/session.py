@@ -250,10 +250,12 @@ def _reclaim_last_column() -> bool:
         return preferred == "yes"
     return get_platform().width_reclaim
 
+
 #: How many stacked dialog layers the layout can float over the background at once. A fixed
 #: pool of centered-box floats (see :meth:`TuiSession._build_app`), sized well past the deepest
 #: real nesting — a tool's list, an item's detail popup, and a confirm over that is only three.
 _MAX_DIALOG_LAYERS = 8
+
 
 def _changed_rows(before: str, after: str) -> list[int] | None:
     """Which lines of a full-screen frame differ, or ``None`` when they can't be compared.
@@ -798,7 +800,9 @@ class TuiSession:
         :class:`~meshterm.ui.tui.select.DeleteRequest` the caller unwraps.
         """
         kwargs: dict[str, Any] = dict(
-            prompt=prompt, default=default, filterable=filterable,
+            prompt=prompt,
+            default=default,
+            filterable=filterable,
             delete_hint=delete_hint,
         )
         if footer_hint is not None:
@@ -828,9 +832,7 @@ class TuiSession:
         :attr:`~meshterm.ui.tui.select.SelectScreen.footer_hint`).
         """
         delete_hint = (
-            "Del remove"
-            if any(isinstance(it, Choice) and it.deletable for it in items)
-            else ""
+            "Del remove" if any(isinstance(it, Choice) and it.deletable for it in items) else ""
         )
         screen = SelectScreen(
             title,
@@ -1179,18 +1181,14 @@ class TuiSession:
             if backdrop is not None:
                 self.pop(backdrop)
 
-    async def typed_confirm(
-        self, warning: str, word: str, *, title: str = "Are you sure?"
-    ) -> bool:
+    async def typed_confirm(self, warning: str, word: str, *, title: str = "Are you sure?") -> bool:
         """Gate a destructive action behind typing ``word``; return whether it was typed.
 
         Shows the error-themed :class:`~meshterm.ui.tui.prompt.TypedConfirmDialog` and
         collapses its result to a plain bool: ``True`` only when the user typed the word,
         ``False`` when they backed out with Esc.
         """
-        result = await self._run_dialog_screen(
-            TypedConfirmDialog(warning, word, title=title)
-        )
+        result = await self._run_dialog_screen(TypedConfirmDialog(warning, word, title=title))
         return result is True
 
     async def autocomplete(
@@ -1204,9 +1202,7 @@ class TuiSession:
     ) -> str | None:
         """Show a free-text prompt with suggestions; return text or ``None`` if cancelled."""
         result = await self._run_dialog_screen(
-            AutocompleteScreen(
-                title, choices, prompt=prompt, default=default, validate=validate
-            )
+            AutocompleteScreen(title, choices, prompt=prompt, default=default, validate=validate)
         )
         return None if result is CANCEL else result
 
@@ -1398,9 +1394,7 @@ class TuiSession:
             Float(
                 ConditionalContainer(
                     Window(
-                        ClusterTextControl(
-                            lambda i=i: self._render_float_layer(i)
-                        ),
+                        ClusterTextControl(lambda i=i: self._render_float_layer(i)),
                         always_hide_cursor=True,
                     ),
                     filter=Condition(lambda i=i: len(self._float_layers()) > i),
@@ -1422,9 +1416,7 @@ class TuiSession:
             floats=[
                 *dialog_floats,
                 Float(
-                    ConditionalContainer(
-                        overlay_window, filter=Condition(self._overlay_visible)
-                    )
+                    ConditionalContainer(overlay_window, filter=Condition(self._overlay_visible))
                 ),
             ],
         )
@@ -1532,7 +1524,7 @@ class TuiSession:
         """
         if not self._stack:
             return []
-        return self._stack[self._base_index() + 1:]
+        return self._stack[self._base_index() + 1 :]
 
     def _has_float(self) -> bool:
         """Whether any dialog floats over the background this frame."""

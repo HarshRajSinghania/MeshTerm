@@ -77,6 +77,7 @@ def axis_chrome(label_w: int) -> int:
     """
     return label_w + 3 + (label_w + 1 if _MIRROR_LABELS else 0)
 
+
 #: Braille dot bit for each dot row counted from the *bottom* of a cell (row 0 is
 #: the cell's lowest dot), left and right columns. The Unicode braille block
 #: numbers its rows top-down (dots 1,2,3,7 left / 4,5,6,8 right); these tables
@@ -745,9 +746,7 @@ def _assemble(
                 if column_styles is not None and i + 1 < len(column_styles):
                     cell_style = column_styles[i + 1] if right else column_styles[i]
                 elif callable(style):
-                    present = [
-                        v for v in values[i : i + 2] if v is not None and v is not GAP
-                    ]
+                    present = [v for v in values[i : i + 2] if v is not None and v is not GAP]
                     cell_style = style(present) if present else baseline_style
                 else:
                     cell_style = style

@@ -126,9 +126,7 @@ async def probe_paths(
             ),
             persist=persist_trace,
         )
-        outcome = ProbeOutcome(
-            candidate=candidate, stats=TraceStats.from_traces(target, results)
-        )
+        outcome = ProbeOutcome(candidate=candidate, stats=TraceStats.from_traces(target, results))
         outcomes.append(outcome)
         if persist_candidate is not None:
             persist_candidate(outcome)

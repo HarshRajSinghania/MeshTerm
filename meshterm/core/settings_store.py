@@ -86,9 +86,7 @@ class SettingsStore:
                 continue
             # Keep only plain scalar values; a container or null is a malformed entry.
             values = {
-                str(key): value
-                for key, value in entries.items()
-                if isinstance(value, _SCALARS)
+                str(key): value for key, value in entries.items() if isinstance(value, _SCALARS)
             }
             if values:
                 devices[_norm(str(pubkey))] = values
@@ -211,9 +209,7 @@ def _ordered_specs() -> list:
     return DEVICE_SETTINGS
 
 
-async def restore(
-    store: SettingsStore, device: Device, snapshot: dict, keys: list[str]
-) -> int:
+async def restore(store: SettingsStore, device: Device, snapshot: dict, keys: list[str]) -> int:
     """Write remembered values for ``keys`` back onto the device, updating ``snapshot`` in place.
 
     Applies each setting through its registry spec — the same path the editor uses — so coupled

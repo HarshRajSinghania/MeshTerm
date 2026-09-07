@@ -117,7 +117,6 @@ def test_ble_auth_error_walks_the_exception_chain() -> None:
         assert connection._is_ble_auth_error(exc)
 
 
-
 #: Stand-in Bluetooth addresses. Never a real companion's: a test that names one turns a
 #: personal device into repository content, and any hardware coupling here would be a lie —
 #: nothing in this file touches a radio.
@@ -206,9 +205,7 @@ async def test_create_ble_translates_auth_error_to_pin_guidance(monkeypatch) -> 
     assert fake.built[0].disconnect_calls == 1  # the doomed link was released, not stranded
 
     # PIN supplied but rejected -> say it was wrong, not that none was given.
-    fake_pin = _fake_ble_stack(
-        monkeypatch, BleakGATTProtocolError("Insufficient Authentication")
-    )
+    fake_pin = _fake_ble_stack(monkeypatch, BleakGATTProtocolError("Insufficient Authentication"))
     dev_pin = connection.MeshCoreDevice(transport="ble", address=_BONDED_ADDR, pin=_A_PIN)
     await _disable_windows_pairing(dev_pin)
     with pytest.raises(connection.DeviceAuthenticationError) as excinfo_pin:
@@ -278,9 +275,7 @@ async def test_create_ble_retries_a_transient_link_failure(monkeypatch) -> None:
         monkeypatch, ConnectionError("Failed to connect to device"), "handshake-ok"
     )
     monkeypatch.setattr(connection, "_BLE_CONNECT_RETRY_DELAY_S", 0.0)
-    dev = connection.MeshCoreDevice(
-        transport="ble", address=_OPEN_ADDR, ble_device=scanned_device
-    )
+    dev = connection.MeshCoreDevice(transport="ble", address=_OPEN_ADDR, ble_device=scanned_device)
     await _disable_windows_pairing(dev)
     assert await dev._create_ble(fake) is fake.built[1]
     assert len(fake.built) == 2  # failed once, retried once
@@ -330,8 +325,6 @@ async def test_pair_ble_windows_noops_without_pin() -> None:
     assert await dev._pair_ble_windows(force=False) is False
 
 
-
-
 def test_ble_address_int_parses_macs_and_rejects_others() -> None:
     """A colon/dash MAC becomes a 48-bit int; a non-MAC (e.g. a macOS UUID) yields None."""
     parse = connection.MeshCoreDevice._ble_address_int
@@ -356,9 +349,7 @@ async def test_can_unpair_only_for_bonded_ble(monkeypatch: pytest.MonkeyPatch) -
     async def _is_paired(address: str) -> bool:
         return address == _BONDED_ADDR
 
-    monkeypatch.setattr(
-        connection.MeshCoreDevice, "is_ble_paired", staticmethod(_is_paired)
-    )
+    monkeypatch.setattr(connection.MeshCoreDevice, "is_ble_paired", staticmethod(_is_paired))
     # Serial: never offered, whatever the address.
     serial_ctx = SimpleNamespace(active_transport="serial", active_address=None)
     assert await menu._can_unpair(serial_ctx) is False
@@ -600,9 +591,7 @@ def test_serial_port_present_reflects_os_enumeration(monkeypatch) -> None:
     pytest.importorskip("serial")
     from serial.tools import list_ports
 
-    monkeypatch.setattr(
-        list_ports, "comports", lambda: [SimpleNamespace(device="COM11")]
-    )
+    monkeypatch.setattr(list_ports, "comports", lambda: [SimpleNamespace(device="COM11")])
     assert connection.serial_port_present("COM11")
     assert not connection.serial_port_present("COM99")
 
@@ -641,9 +630,7 @@ def test_serial_port_present_platform_uart_by_path(monkeypatch) -> None:
     assert not connection.serial_port_present("/dev/ttyUSB9")  # node gone -> absent (unplug)
 
 
-async def test_wait_for_disconnect_fires_when_port_vanishes(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_wait_for_disconnect_fires_when_port_vanishes(tmp_path: Path, monkeypatch) -> None:
     """The liveness watcher resolves once the connected device's port leaves enumeration."""
     ctx = _make_ctx(tmp_path)
     # Pose as a live real-hardware session on COM_TEST (the mock can't be unplugged).
@@ -693,9 +680,7 @@ class _FakeBleDevice:
         return self.is_connected
 
 
-async def test_wait_for_disconnect_fires_when_ble_link_drops(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_wait_for_disconnect_fires_when_ble_link_drops(tmp_path: Path, monkeypatch) -> None:
     """The same watcher fires for BLE once the peripheral's connection flag flips false."""
     ctx = _make_ctx(tmp_path)
     ctx.mock = False
@@ -758,18 +743,14 @@ async def test_handle_disconnect_auto_reconnects_when_port_returns(
 
     session = _FakeSession()
     try:
-        quit_chosen = await asyncio.wait_for(
-            menu._handle_disconnect(ctx, session), timeout=2.0
-        )
+        quit_chosen = await asyncio.wait_for(menu._handle_disconnect(ctx, session), timeout=2.0)
         assert quit_chosen is False  # reconnected, not quit
         assert session.stack == []  # the popup was cleaned up
     finally:
         ctx.repo.close()
 
 
-async def test_handle_disconnect_quits_when_user_presses_quit(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_handle_disconnect_quits_when_user_presses_quit(tmp_path: Path, monkeypatch) -> None:
     """Pressing Enter (the Abort button) leaves, even while the device is still gone."""
     ctx = _make_ctx(tmp_path)
     ctx.mock = False
@@ -1023,9 +1004,7 @@ async def test_ble_reconnect_waits_for_the_advertisement_and_hands_over_the_fres
 
     session = _FakeSession()
     try:
-        quit_chosen = await asyncio.wait_for(
-            menu._handle_disconnect(ctx, session), timeout=2.0
-        )
+        quit_chosen = await asyncio.wait_for(menu._handle_disconnect(ctx, session), timeout=2.0)
         assert quit_chosen is False  # reconnected, not quit
         # It waited for the device to be heard rather than blind-retrying the connect...
         assert scans == [ctx._active_address, ctx._active_address]
@@ -1111,7 +1090,6 @@ async def test_release_link_is_idempotent_and_holds_the_resume_intent(tmp_path: 
         assert ctx.events.active and ctx.monitor.active  # the held intent survived both
     finally:
         await ctx.aclose()
-
 
 
 class _AbandonedBleakClient:

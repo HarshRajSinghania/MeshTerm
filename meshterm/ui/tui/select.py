@@ -34,8 +34,7 @@ def _wants_width(fn: Callable) -> bool:
     except (TypeError, ValueError):  # a builtin without an introspectable signature
         return False
     return any(
-        p.default is p.empty
-        and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
         for p in parameters
     )
 
@@ -224,10 +223,20 @@ _UNBOUNDED = 10_000
 #: The navigation actions that move the highlight to another row, so an ``hscroll`` list
 #: drops the current row's horizontal shift (each row scrolls on its own — see
 #: :meth:`SelectScreen.handle`). The filter edits reset it in their own branches.
-_HSHIFT_RESET_ACTIONS = frozenset({
-    "up", "down", "pageup", "pagedown", "home", "ctrl_home", "end", "ctrl_end",
-    "ctrl_pageup", "ctrl_pagedown",
-})
+_HSHIFT_RESET_ACTIONS = frozenset(
+    {
+        "up",
+        "down",
+        "pageup",
+        "pagedown",
+        "home",
+        "ctrl_home",
+        "end",
+        "ctrl_end",
+        "ctrl_pageup",
+        "ctrl_pagedown",
+    }
+)
 
 
 class SelectScreen(Screen):
@@ -276,8 +285,7 @@ class SelectScreen(Screen):
         if self._delete_hint:
             choices = self._choices(rows)
             current = choices[max(0, min(self._index, len(choices) - 1))] if choices else None
-            lane[2] = FPair("Delete", "delete",
-                            enabled=current is not None and current.deletable)
+            lane[2] = FPair("Delete", "delete", enabled=current is not None and current.deletable)
         return lane
 
     def __init__(
@@ -332,9 +340,7 @@ class SelectScreen(Screen):
         # it will be shown in. That is what makes every label+description list
         # (:func:`~meshterm.ui.menus.menu_rows`, the main menu) scroll its description
         # wherever it is opened, ``ctx.ui.select`` included.
-        self._hscroll = hscroll or any(
-            getattr(item, "hscroll_from", 0) > 0 for item in items
-        )
+        self._hscroll = hscroll or any(getattr(item, "hscroll_from", 0) > 0 for item in items)
         self._hscroll_hint = hscroll_hint
         self._hshift = 0
         self._last_width = 0  # the last render width, for the footer's overflow probe
@@ -388,9 +394,7 @@ class SelectScreen(Screen):
         was = current.value if current is not None else None
         position = self._index
         self._items = items
-        self._hscroll = self._hscroll or any(
-            getattr(item, "hscroll_from", 0) > 0 for item in items
-        )
+        self._hscroll = self._hscroll or any(getattr(item, "hscroll_from", 0) > 0 for item in items)
         if title is not None:
             self.title = title
         if prompt is not None:
@@ -531,11 +535,14 @@ class SelectScreen(Screen):
         current = self._current_choice()
         if current is None:
             return False
-        return self._max_hshift(
-            cell_len(_plain(current.label)),
-            current.hscroll_from,
-            max(1, self._last_width - 2),
-        ) > 0
+        return (
+            self._max_hshift(
+                cell_len(_plain(current.label)),
+                current.hscroll_from,
+                max(1, self._last_width - 2),
+            )
+            > 0
+        )
 
     @property
     def sizing_footer_hint(self) -> str:
@@ -565,8 +572,11 @@ class SelectScreen(Screen):
         measured at its fullest too (see :data:`_UNBOUNDED`): the box asks for room for the
         whole header, and the header only abbreviates once the *terminal* caps the box.
         """
-        footer = _splice_hint(self._footer_base, self._delete_hint) if self._delete_hint \
+        footer = (
+            _splice_hint(self._footer_base, self._delete_hint)
+            if self._delete_hint
             else self._footer_base
+        )
         widths = [cell_len(self.title), cell_len(footer), cell_len(self._prompt)]
         for item in self._items:
             label = item.text(_UNBOUNDED)  # both row kinds measure at their fullest form
@@ -601,9 +611,9 @@ class SelectScreen(Screen):
         if self._hscroll and self._hshift:
             sel_len = cell_len(_plain(selected.label)) if selected is not None else 0
             anchor = selected.hscroll_from if selected is not None else 0
-            self._hshift = max(0, min(
-                self._hshift, self._max_hshift(sel_len, anchor, max(1, width - 2))
-            ))
+            self._hshift = max(
+                0, min(self._hshift, self._max_hshift(sel_len, anchor, max(1, width - 2)))
+            )
 
         # One entry per body line: a finished string, or a callable that draws it when the
         # frame asks. Positions are exact either way, which is all the layout below reads.
@@ -704,9 +714,7 @@ class SelectScreen(Screen):
             if self._hscroll and self._hshift and is_sel:
                 # Only the highlighted row slides, and only its label — the 2-cell pointer
                 # stays pinned. Every other row (and separator) renders unshifted.
-                label_text = self._scroll_window(
-                    label_text, item.hscroll_from, max(1, width - 2)
-                )
+                label_text = self._scroll_window(label_text, item.hscroll_from, max(1, width - 2))
             text.append_text(label_text)
             text.style = style
             text.no_wrap = True
@@ -955,8 +963,9 @@ class ReorderScreen(Screen):
                 pointer, style = "❯ ", "cursor"
             else:
                 pointer, style = "  ", ""
-            text = Text(pointer + self._labels[orig], style=style, no_wrap=True,
-                        overflow="ellipsis")
+            text = Text(
+                pointer + self._labels[orig], style=style, no_wrap=True, overflow="ellipsis"
+            )
             text.truncate(width)
             lines.append(render_to_ansi(text, width))
         actions = self._actions()
@@ -991,7 +1000,9 @@ class ReorderScreen(Screen):
         if action == "up":
             if self._grabbed and self._index > 0:
                 self._order[self._index - 1], self._order[self._index] = (
-                    self._order[self._index], self._order[self._index - 1])
+                    self._order[self._index],
+                    self._order[self._index - 1],
+                )
                 self._index -= 1
             elif not self._grabbed and total:
                 # Clamps like every other row cursor, and like the grabbed one just above:
@@ -1001,7 +1012,9 @@ class ReorderScreen(Screen):
         elif action == "down":
             if self._grabbed and self._index < n - 1:
                 self._order[self._index + 1], self._order[self._index] = (
-                    self._order[self._index], self._order[self._index + 1])
+                    self._order[self._index],
+                    self._order[self._index + 1],
+                )
                 self._index += 1
             elif not self._grabbed and total:
                 self._index = min(total - 1, self._index + 1)

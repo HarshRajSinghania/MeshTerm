@@ -231,6 +231,7 @@ def test_join_zwj_clusters_merges_only_joined_runs() -> None:
     prompt_toolkit's ANSI text arrives one codepoint per fragment, so a sequence is a run:
     a base, an optional selector, then *joiner + component + optional selector* groups.
     """
+
     def line(text: str) -> list:
         return [("", char) for char in text]
 

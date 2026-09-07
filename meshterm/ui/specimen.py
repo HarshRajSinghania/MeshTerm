@@ -44,8 +44,13 @@ def _ages_row() -> Text:
     """The heat scale over its own anchors — one age just inside each of the seven steps."""
     row = Text()
     anchors = (
-        ("now", 0), ("20m", 1200), ("3h", 10800), ("2d", 172800),
-        ("2w", 1209600), ("3mo", 7776000), ("never", None),
+        ("now", 0),
+        ("20m", 1200),
+        ("3h", 10800),
+        ("2d", 172800),
+        ("2w", 1209600),
+        ("3mo", 7776000),
+        ("never", None),
     )
     for label, secs in anchors:
         if row.plain:
@@ -78,8 +83,11 @@ def specimen_lines() -> list[RenderableType]:
     nodes = Text("nodes   ")
     nodes.append("★ ", style="you")
     for mark, style in (
-        ("● ", "type.node"), ("▲ ", "type.repeater"), ("■ ", "type.room"),
-        ("◉ ", "type.sensor"), ("○", "muted"),
+        ("● ", "type.node"),
+        ("▲ ", "type.repeater"),
+        ("■ ", "type.room"),
+        ("◉ ", "type.sensor"),
+        ("○", "muted"),
     ):
         nodes.append(mark, style=style)
     lines.append(nodes)

@@ -185,9 +185,7 @@ def channel_arrivals(
         crypted = raw.get("crypted")
         if not (chan_hash and cipher_mac and crypted):
             continue
-        decrypted = decrypt_channel_text(
-            chan_hash, cipher_mac, crypted, [(channel_name, secret)]
-        )
+        decrypted = decrypt_channel_text(chan_hash, cipher_mac, crypted, [(channel_name, secret)])
         if decrypted is None or not _texts_match(decrypted.text, message.text):
             continue
         arrivals.append(
@@ -208,9 +206,7 @@ def _endpoint_hash(key: str | None) -> str:
     return text[:_HASH_CHARS] if len(text) >= _HASH_CHARS else ""
 
 
-def direct_window(
-    repo: Repository, message: ChatMessage
-) -> tuple[datetime, datetime]:
+def direct_window(repo: Repository, message: ChatMessage) -> tuple[datetime, datetime]:
     """The span of log to search for one direct message's frames.
 
     :data:`_DIRECT_WINDOW` either side, then clamped by the conversation's own messages —
@@ -243,9 +239,7 @@ def direct_window(
     """
     at = message.created_at
     start, end = at - _DIRECT_WINDOW, at + _DIRECT_WINDOW
-    previous, following = repo.direct_message_bounds(
-        message.peer, at, outbound=message.outbound
-    )
+    previous, following = repo.direct_message_bounds(message.peer, at, outbound=message.outbound)
     if message.outbound:
         # Our clock, so nothing of this send predates it; the whole window goes forward,
         # up to the next send.
@@ -268,9 +262,7 @@ def _addressed(raw: dict) -> tuple[str, str]:
     )
 
 
-def _pick_group(
-    groups: dict[str, list[Arrival]], message: ChatMessage
-) -> list[Arrival]:
+def _pick_group(groups: dict[str, list[Arrival]], message: ChatMessage) -> list[Arrival]:
     """The MAC group that is this message, out of the ones in the window.
 
     Each group is one message's frames — same MAC, so the same encrypted body. Which of
@@ -340,7 +332,9 @@ def direct_arrivals(
         if (want_src and src != want_src) or (want_dest and dest != want_dest):
             continue
         arrival = Arrival(
-            when=frame.observed_at, hops=_frame_hops(frame), snr=frame.snr,
+            when=frame.observed_at,
+            hops=_frame_hops(frame),
+            snr=frame.snr,
             routed=_frame_routed(raw),
         )
         mac = str(raw.get("cipher_mac") or "").lower()
@@ -382,8 +376,10 @@ def collapse(arrivals: Sequence[Arrival]) -> list[Arrival]:
         if seen is None:
             folded[key] = replace(arrival, copies=1)
             continue
-        best = seen.snr if arrival.snr is None else (
-            arrival.snr if seen.snr is None else max(seen.snr, arrival.snr)
+        best = (
+            seen.snr
+            if arrival.snr is None
+            else (arrival.snr if seen.snr is None else max(seen.snr, arrival.snr))
         )
         folded[key] = replace(seen, snr=best, copies=seen.copies + 1)
     return list(folded.values())

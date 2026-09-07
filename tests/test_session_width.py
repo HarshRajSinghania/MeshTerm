@@ -30,7 +30,7 @@ def test_width_extended_output_reports_one_more_column() -> None:
     out = _WidthExtendedOutput(inner)
     assert out.get_size() == Size(rows=24, columns=81)  # the reclaimed column
     assert out.write("x") == "wrote:x"  # forwarded method
-    assert out.encoding == "utf-8"      # forwarded attribute
+    assert out.encoding == "utf-8"  # forwarded attribute
 
 
 def test_session_leaves_a_supplied_output_untouched() -> None:

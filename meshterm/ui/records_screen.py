@@ -302,12 +302,16 @@ class RecordDialog(Screen):
             source=self._device_label,
             type_of=self._type_of,
         )
-        return _drawn_rows(render_path_graph(
-            [PathLayer(hops=tuple(hops), color=_WALK_EDGE, priority=3)],
-            width,
-            glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
-            min_rows=_GRAPH_ROWS,
-        ))
+        return _drawn_rows(
+            render_path_graph(
+                [PathLayer(hops=tuple(hops), color=_WALK_EDGE, priority=3)],
+                width,
+                glyph_of=glyph_of,
+                label_of=label_of,
+                label_rgb_of=label_rgb_of,
+                min_rows=_GRAPH_ROWS,
+            )
+        )
 
     def _stat_lanes(self) -> list[Text]:
         """Every stat the walk was measured by, as label/value lanes (score → round trip).
@@ -336,8 +340,7 @@ class RecordDialog(Screen):
         hops = stats.get("hop_count", len(record.route))
         distinct = stats.get("distinct_nodes", len(set(record.route)))
         walk = Text(f"{hops} hop{'s' if hops != 1 else ''}")
-        walk.append(f" · {distinct} distinct node{'s' if distinct != 1 else ''}",
-                    style="muted")
+        walk.append(f" · {distinct} distinct node{'s' if distinct != 1 else ''}", style="muted")
         if stats.get("repeats"):
             walk.append(" · revisits", style="muted")
         lanes.append(self._lane("walk", walk))
@@ -362,23 +365,23 @@ class RecordDialog(Screen):
                 # below names them — our own end on the app-wide ★, since a leg that
                 # starts or ends at home is the commonest kind there is.
                 value.append("  ")
-                value.append_text(path_line(
-                    list(link),
-                    self._resolve,
-                    self_name=self._device_label,
-                    bare_self=True,
-                    dim_self=False,
-                    show_hash=False,
-                ).text())
+                value.append_text(
+                    path_line(
+                        list(link),
+                        self._resolve,
+                        self_name=self._device_label,
+                        bare_self=True,
+                        dim_self=False,
+                        show_hash=False,
+                    ).text()
+                )
             lanes.append(self._lane("longest leg", value))
         area = stats.get("area_km2")
         if area is not None:
             lanes.append(self._lane("area", Text(f"{area:.1f} km²")))
         snr = stats.get("min_snr")
         if snr is not None:
-            lanes.append(self._lane(
-                "weakest", Text(f"{snr:+.1f} dB", style=snr_style(snr))
-            ))
+            lanes.append(self._lane("weakest", Text(f"{snr:+.1f} dB", style=snr_style(snr))))
         rtt = stats.get("rtt_ms")
         if rtt is not None:
             lanes.append(self._lane("round trip", Text(f"{rtt:.0f} ms")))
@@ -434,10 +437,7 @@ class RecordDialog(Screen):
         origin_y = pad + (avail_h - span_y * scale) / 2
         min_x, max_y = min(xs), max(ys)
         # Flip y so north points up: the northernmost point lands at the top dot row.
-        ring = [
-            (origin_x + (v.x - min_x) * scale, origin_y + (max_y - v.y) * scale)
-            for v in verts
-        ]
+        ring = [(origin_x + (v.x - min_x) * scale, origin_y + (max_y - v.y) * scale) for v in verts]
         closed = ring + ring[:1]
         # One flat tone for the enclosed side and its loop: even-odd shades only the odd
         # (enclosed) region — a self-crossing walk's crossing stays unshaded — and nothing
@@ -473,9 +473,9 @@ class RecordDialog(Screen):
             selected = i == self._index
             row = Text("❯ " if selected else "  ", style="cursor" if selected else "")
             if key == "trace":
-                row.append_text(marked_label(
-                    "👣", "Trace this path — reopen in Trace path", "accent"
-                ))
+                row.append_text(
+                    marked_label("👣", "Trace this path — reopen in Trace path", "accent")
+                )
             else:
                 row.append_text(marked_label("🗑", "Delete record…", "err"))
             if selected:
@@ -520,9 +520,7 @@ class RecordDialog(Screen):
             bare_self=True,
             dim_self=False,
         )
-        lines.extend(
-            render_to_ansi(line, width, no_wrap=True) for line in route.wrapped(width)
-        )
+        lines.extend(render_to_ansi(line, width, no_wrap=True) for line in route.wrapped(width))
         spec = Text(record.spec, style="brand")
         spec.append(f"  ({record.width_bytes}-byte hops)", style="muted")
         lines.extend(render_hanging(self._label("spec"), spec, width, indent=_LABEL_W))
@@ -592,9 +590,11 @@ async def open_records(ctx: AppContext) -> dict:
         ident = (contact.public_key or contact.key_prefix or "").lower().removeprefix("0x")
         if not ident:
             continue
-        pos = (contact.lat, contact.lon) if (
-            contact.has_location and (contact.lat or contact.lon)
-        ) else None
+        pos = (
+            (contact.lat, contact.lon)
+            if (contact.has_location and (contact.lat or contact.lon))
+            else None
+        )
         node_entries.append((ident, pos, contact.node_type))
 
     # Memoized: the boards ask for the same route nodes over and over (every hop of
@@ -778,13 +778,15 @@ async def open_records(ctx: AppContext) -> dict:
         rows: list = []
         for category in CATEGORIES:
             count = len(ctx.repo.discoveries(category.id))
-            rows.append(Choice(
-                title=Text.assemble(
-                    (f"{category.icon} {category.title}  ", ""),
-                    (f"{count} record{'s' if count != 1 else ''}, all widths", "muted"),
-                ),
-                value=category.id,
-            ))
+            rows.append(
+                Choice(
+                    title=Text.assemble(
+                        (f"{category.icon} {category.title}  ", ""),
+                        (f"{count} record{'s' if count != 1 else ''}, all widths", "muted"),
+                    ),
+                    value=category.id,
+                )
+            )
         picked = await session.run_screen(
             SelectScreen(
                 "Delete a discipline's records",
@@ -820,29 +822,39 @@ async def open_records(ctx: AppContext) -> dict:
             score_w = max((cell_len(scored(category, r)) for r in board), default=0)
             for rank, record in enumerate(board, start=1):
                 lanes = browser_lanes(
-                    rank, category, record, show_width=show_width, score_w=score_w,
+                    rank,
+                    category,
+                    record,
+                    show_width=show_width,
+                    score_w=score_w,
                 )
-                items.append(Choice(
-                    # A finished line, not a width-aware callable: the row fits itself to
-                    # nothing, so the list cuts every row — highlighted or not — the one way
-                    # (see browser_row). Records are frozen, so it is composed once per open
-                    # rather than per repaint.
-                    title=browser_row(lanes, record),
-                    value=("open", category, rank, record),
-                    # ←→ slide the walk alone; the lanes in front of it hold (browser_row).
-                    hscroll_from=lanes.cell_len,
-                ))
+                items.append(
+                    Choice(
+                        # A finished line, not a width-aware callable: the row fits itself to
+                        # nothing, so the list cuts every row — highlighted or not — the one way
+                        # (see browser_row). Records are frozen, so it is composed once per open
+                        # rather than per repaint.
+                        title=browser_row(lanes, record),
+                        value=("open", category, rank, record),
+                        # ←→ slide the walk alone; the lanes in front of it hold (browser_row).
+                        hscroll_from=lanes.cell_len,
+                    )
+                )
         total = len(ctx.repo.discoveries())
         if total:
             items.append(Separator(" "))
-            items.append(Choice(
-                title=marked_label("🗑", "Delete a discipline's records…", "err"),
-                value=("del_cat", None, 0, None),
-            ))
-            items.append(Choice(
-                title=marked_label("🗑", "Delete all records…", "err"),
-                value=("del_all", None, 0, None),
-            ))
+            items.append(
+                Choice(
+                    title=marked_label("🗑", "Delete a discipline's records…", "err"),
+                    value=("del_cat", None, 0, None),
+                )
+            )
+            items.append(
+                Choice(
+                    title=marked_label("🗑", "Delete all records…", "err"),
+                    value=("del_all", None, 0, None),
+                )
+            )
         browser = SelectScreen(
             "Trophy case",
             items,
@@ -873,13 +885,21 @@ async def open_records(ctx: AppContext) -> dict:
                 else:
                     _verb, category, rank, record = picked
                     far_label, far_id, shape = walk_drawing(record)
-                    action = await session.run_screen(RecordDialog(
-                        record, category, rank,
-                        resolve=resolve, device_label=device_label, device_hash=device_hash,
-                        far_label=far_label, far_id=far_id, shape=shape,
-                        reliability=walk_reliability(far_id, far_label),
-                        type_of=lambda node_id: node_geo(node_id)[1],
-                    ))
+                    action = await session.run_screen(
+                        RecordDialog(
+                            record,
+                            category,
+                            rank,
+                            resolve=resolve,
+                            device_label=device_label,
+                            device_hash=device_hash,
+                            far_label=far_label,
+                            far_id=far_id,
+                            shape=shape,
+                            reliability=walk_reliability(far_id, far_label),
+                            type_of=lambda node_id: node_geo(node_id)[1],
+                        )
+                    )
                     if action == "trace":
                         # Walking a record's path opens the Trace screen *above* the trophy
                         # case, like any other sub-view: Esc from the trace is one pop back

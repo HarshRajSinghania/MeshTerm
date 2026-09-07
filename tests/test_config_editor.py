@@ -46,8 +46,6 @@ from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-
-
 class _Fut:
     """A minimal future stand-in so screens can resolve without an event loop."""
 
@@ -94,9 +92,7 @@ _SNAPSHOT = {
 
 def _table_lines(width: int, **kwargs: Any) -> list[str]:
     """The config table's rendered lines at ``width`` columns."""
-    console = Console(
-        width=width, file=io.StringIO(), theme=active_theme(), legacy_windows=False
-    )
+    console = Console(width=width, file=io.StringIO(), theme=active_theme(), legacy_windows=False)
     with console.capture() as capture:
         console.print(config_table(_SNAPSHOT, {}, **kwargs))
     return _plain(capture.get()).rstrip("\n").split("\n")
@@ -204,9 +200,7 @@ def test_the_mask_shows_the_field_not_the_pins_length() -> None:
     and would read as a stray dot besides.
     """
     short = {**_SNAPSHOT, "ble_pin": 0}
-    console = Console(
-        width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
-    )
+    console = Console(width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False)
     with console.capture() as capture:
         console.print(config_table(short, {}))
     assert MASK_MARK * 6 in _pin_row(capture.get())
@@ -218,9 +212,7 @@ def test_a_device_with_no_pin_has_nothing_to_conceal() -> None:
     An absence is not a secret, and masking it would claim there is something behind it.
     """
     snapshot = {k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"}
-    console = Console(
-        width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
-    )
+    console = Console(width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False)
     with console.capture() as capture:
         console.print(config_table(snapshot, {}))
     assert "?" in _pin_row(_plain(capture.get()).split("\n"))
@@ -507,9 +499,7 @@ class _StubSource:
 def _picker(markers=None, initial=None):
     from meshterm.ui.map_screen import LocationPickScreen
 
-    screen = LocationPickScreen(
-        _StubSession(), markers or [], _StubSource(), 14, initial=initial
-    )
+    screen = LocationPickScreen(_StubSession(), markers or [], _StubSource(), 14, initial=initial)
     screen.future = _Fut()
     return screen
 
@@ -732,11 +722,14 @@ def _install(ctx: AppContext, script: list[tuple[str, Any]]) -> _ScriptedUi:
 
 async def test_editor_stages_a_setting_and_returns_ops_on_apply(ctx: AppContext) -> None:
     """Editing a value stages it; Apply returns the set operations for the tool to run."""
-    _install(ctx, [
-        ("select", "name"),
-        ("text", "NewName"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "name"),
+            ("text", "NewName"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("set", "name", "NewName")]
 
@@ -745,60 +738,75 @@ async def test_editor_restaging_the_current_value_clears_the_stage(ctx: AppConte
     """Typing the device's existing value back un-stages the row (nothing to apply)."""
     device = await ctx.device()
     current = (await device.get_self_info())["name"]
-    _install(ctx, [
-        ("select", "name"),
-        ("text", "Changed"),
-        ("select", "name"),
-        ("text", str(current)),  # back to what the device already has
-        ("select", None),  # nothing staged now — Esc closes without a discard dialog
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "name"),
+            ("text", "Changed"),
+            ("select", "name"),
+            ("text", str(current)),  # back to what the device already has
+            ("select", None),  # nothing staged now — Esc closes without a discard dialog
+        ],
+    )
     assert await edit_config(ctx) is None
 
 
 async def test_editor_stages_background_advert_cadence(ctx: AppContext) -> None:
     """Picking a cadence stages it under its sentinel; Apply maps it to its own op."""
-    _install(ctx, [
-        ("select", "__advert_flood__"),
-        ("select", 48),  # every 48 h
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__advert_flood__"),
+            ("select", 48),  # every 48 h
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("advert_cadence", True, 48)]
 
 
 async def test_editor_repicking_the_cadence_in_force_clears_the_stage(ctx: AppContext) -> None:
     """Choosing the cadence already in force un-stages the row (nothing to apply)."""
-    _install(ctx, [
-        ("select", "__advert_direct__"),
-        ("select", 4),
-        ("select", "__advert_direct__"),
-        ("select", 1),  # back to the default in force
-        ("select", None),  # nothing staged now — Esc closes without a discard dialog
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__advert_direct__"),
+            ("select", 4),
+            ("select", "__advert_direct__"),
+            ("select", 1),  # back to the default in force
+            ("select", None),  # nothing staged now — Esc closes without a discard dialog
+        ],
+    )
     assert await edit_config(ctx) is None
 
 
 async def test_editor_asks_before_discarding_staged_changes(ctx: AppContext) -> None:
     """Cancelling with staged changes confirms; Keep editing returns to the menu."""
-    _install(ctx, [
-        ("select", "name"),
-        ("text", "NewName"),
-        ("select", "__cancel__"),
-        ("dialog", "keep"),  # changed my mind — keep editing
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "name"),
+            ("text", "NewName"),
+            ("select", "__cancel__"),
+            ("dialog", "keep"),  # changed my mind — keep editing
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("set", "name", "NewName")]
 
 
 async def test_editor_discards_staged_changes_when_confirmed(ctx: AppContext) -> None:
     """Cancelling with staged changes and confirming the discard applies nothing."""
-    _install(ctx, [
-        ("select", "name"),
-        ("text", "NewName"),
-        ("select", None),  # Esc from the main menu
-        ("dialog", "discard"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "name"),
+            ("text", "NewName"),
+            ("select", None),  # Esc from the main menu
+            ("dialog", "discard"),
+        ],
+    )
     assert await edit_config(ctx) is None
 
 
@@ -829,12 +837,15 @@ async def test_editor_menu_pins_the_column_header_over_the_category(ctx: AppCont
 
 async def test_editor_location_typed_coordinates_stage_both_axes(ctx: AppContext) -> None:
     """Typing a coordinate pair stages latitude and longitude together."""
-    _install(ctx, [
-        ("select", "__location__"),
-        ("dialog", "type"),
-        ("text", "45.5, -73.6"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__location__"),
+            ("dialog", "type"),
+            ("text", "45.5, -73.6"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ("set", "adv_lat", 45.5) in ops
     assert ("set", "adv_lon", -73.6) in ops
@@ -844,16 +855,20 @@ async def test_editor_location_map_pick_stages_rounded_coordinates(
     ctx: AppContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Picking on the map stages the chosen point, rounded to advert precision."""
+
     async def _fake_pick(_ctx: AppContext, *, initial=None):
         assert initial is None  # the mock device has no fix (0, 0)
         return (45.51234567, -73.65432109)
 
     monkeypatch.setattr("meshterm.ui.map_screen.pick_location", _fake_pick)
-    _install(ctx, [
-        ("select", "__location__"),
-        ("dialog", "map"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__location__"),
+            ("dialog", "map"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ("set", "adv_lat", 45.512346) in ops
     assert ("set", "adv_lon", -73.654321) in ops
@@ -863,11 +878,14 @@ async def test_editor_location_clear_stages_the_no_fix_pair(ctx: AppContext) -> 
     """Clear stages 0, 0 — MeshCore's "no fix" value — for both axes."""
     device = await ctx.device()
     await device.set_coords(45.5, -73.6)  # give the device a position to clear
-    _install(ctx, [
-        ("select", "__location__"),
-        ("dialog", "clear"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__location__"),
+            ("dialog", "clear"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ("set", "adv_lat", 0.0) in ops
     assert ("set", "adv_lon", 0.0) in ops
@@ -923,20 +941,26 @@ async def test_actions_factory_reset_gates_on_typed_confirmation(ctx: AppContext
     await device.set_custom_var("mode", "test")
 
     # Declined: the device is untouched.
-    _install(ctx, [
-        ("select", "__reset__"),
-        ("typed_confirm", False),
-        ("select", None),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__reset__"),
+            ("typed_confirm", False),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert await device.get_custom_vars() == {"mode": "test"}
 
     # Confirmed: the reset runs and the device comes back empty.
-    _install(ctx, [
-        ("select", "__reset__"),
-        ("typed_confirm", True),
-        ("select", None),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__reset__"),
+            ("typed_confirm", True),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert await device.get_custom_vars() == {}
 
@@ -945,24 +969,30 @@ async def test_actions_import_key_gates_on_typed_confirmation(ctx: AppContext) -
     """Importing an identity key requires the typed IMPORT confirmation."""
     device = await ctx.device()
     new_key = "ab" * 32
-    _install(ctx, [
-        ("select", "__identity_key__"),
-        ("select", "import"),
-        ("text", new_key),
-        ("typed_confirm", True),
-        ("select", None),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__identity_key__"),
+            ("select", "import"),
+            ("text", new_key),
+            ("typed_confirm", True),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert await device.export_private_key() == new_key
 
 
 async def test_actions_reboot_on_simulator_stays_on_the_screen(ctx: AppContext) -> None:
     """The simulator has no link to drop, so a confirmed reboot just notes and returns."""
-    ui = _install(ctx, [
-        ("select", "__reboot__"),
-        ("dialog", "reboot"),
-        ("select", None),
-    ])
+    ui = _install(
+        ctx,
+        [
+            ("select", "__reboot__"),
+            ("dialog", "reboot"),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert ctx.reboot_in_progress is False
     assert any("rebooting" in n for n in ui.notes)
@@ -974,11 +1004,14 @@ async def test_actions_sync_clock_corrects_the_device_time(ctx: AppContext) -> N
 
     device = await ctx.device()
     assert (await device.get_time()) < int(time.time())  # the mock boots with drift
-    ui = _install(ctx, [
-        ("select", "__sync_clock__"),
-        ("dialog", "sync"),
-        ("select", None),
-    ])
+    ui = _install(
+        ctx,
+        [
+            ("select", "__sync_clock__"),
+            ("dialog", "sync"),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert abs((await device.get_time()) - int(time.time())) <= 2
     assert any("clock set to" in n for n in ui.notes)
@@ -988,11 +1021,14 @@ async def test_actions_sync_clock_cancel_leaves_the_clock_alone(ctx: AppContext)
     """Backing out of the sync dialog changes nothing."""
     device = await ctx.device()
     before = await device.get_time()
-    _install(ctx, [
-        ("select", "__sync_clock__"),
-        ("dialog", None),
-        ("select", None),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__sync_clock__"),
+            ("dialog", None),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert abs((await device.get_time()) - before) <= 2  # still ticking on the old drift
 
@@ -1002,11 +1038,14 @@ async def test_editor_stages_flood_scope(ctx: AppContext) -> None:
     from meshterm.core.device_config import build_snapshot
     from meshterm.tools.config import apply_ops
 
-    _install(ctx, [
-        ("select", "flood_scope"),
-        ("text", "alpha"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "flood_scope"),
+            ("text", "alpha"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("set", "flood_scope", "alpha")]
 
@@ -1018,11 +1057,14 @@ async def test_editor_stages_flood_scope(ctx: AppContext) -> None:
 async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path) -> None:
     """Backup runs at once: the TOML lands on disk before the screen closes."""
     target = tmp_path / "out" / "backup.toml"
-    ui = _install(ctx, [
-        ("select", "__backup__"),
-        ("path", str(target)),
-        ("select", None),
-    ])
+    ui = _install(
+        ctx,
+        [
+            ("select", "__backup__"),
+            ("path", str(target)),
+            ("select", None),
+        ],
+    )
     await device_actions(ctx)
     assert target.exists()
     assert any("wrote" in n for n in ui.notes)
@@ -1030,11 +1072,14 @@ async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path
 
 async def test_editor_bool_prompt_uses_the_button_dialog(ctx: AppContext) -> None:
     """A boolean setting is toggled through the On/Off dialog and staged."""
-    _install(ctx, [
-        ("select", "manual_add_contacts"),
-        ("dialog", True),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "manual_add_contacts"),
+            ("dialog", True),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("set", "manual_add_contacts", True)]
 
@@ -1043,11 +1088,14 @@ async def test_editor_custom_var_suggests_known_names(ctx: AppContext) -> None:
     """With existing custom vars the name prompt offers them as suggestions."""
     device = await ctx.device()
     await device.set_custom_var("existing", "1")
-    _install(ctx, [
-        ("select", "__custom__"),
-        ("autocomplete", "existing"),
-        ("text", "2"),
-        ("select", "__apply__"),
-    ])
+    _install(
+        ctx,
+        [
+            ("select", "__custom__"),
+            ("autocomplete", "existing"),
+            ("text", "2"),
+            ("select", "__apply__"),
+        ],
+    )
     ops = await edit_config(ctx)
     assert ops == [("set_custom", "existing", "2")]

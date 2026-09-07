@@ -74,9 +74,7 @@ def trace_target_snr(trace: TraceResult, target_hash: str) -> float | None:
     return None
 
 
-def build_level(
-    tx: int, target: str, target_hash: str, traces: list[TraceResult]
-) -> TxLevelResult:
+def build_level(tx: int, target: str, target_hash: str, traces: list[TraceResult]) -> TxLevelResult:
     """Aggregate the traces measured at one TX level into a :class:`TxLevelResult`.
 
     Args:

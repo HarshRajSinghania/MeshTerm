@@ -54,9 +54,7 @@ def _traced(*hops, age_hours: float = 0.0) -> TracedPath:
 
 def test_trace_walk_yields_bidirectional_links_at_canonical_ids() -> None:
     """A boomerang trace folds out+return readings onto the same undirected links."""
-    topo = _topo(
-        trace_paths=[_traced(("3d", 12.5), ("f2", -5.5), ("3d", -6.5), (None, 11.75))]
-    )
+    topo = _topo(trace_paths=[_traced(("3d", 12.5), ("f2", -5.5), ("3d", -6.5), (None, 11.75))])
     # us↔Hub crossed twice (first hop out, last hop home), Hub↔Far twice as well.
     near = topo.link(topo.self_id, "3d63c6429436")
     far = topo.link("3d63c6429436", "f2c24f54551e")
@@ -80,7 +78,7 @@ def test_coalesce_folds_a_short_hop_into_its_only_wide_match() -> None:
     """A bare hop beside the same node's wide id collapses to one node, its evidence pooled."""
     twin = Contact(name="Twin", public_key="27e4" + "0" * 60)  # makes a bare "27" ambiguous
     walks = [
-        _traced(("27", 5.0), ("f2", -3.0), ("27", -3.5), (None, 5.0)),      # us→27→Far
+        _traced(("27", 5.0), ("f2", -3.0), ("27", -3.5), (None, 5.0)),  # us→27→Far
         _traced(("27d4", 7.0), ("f2", -4.0), ("27d4", -4.5), (None, 7.0)),  # us→27d4→Far
     ]
     topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, LEAF, twin])
@@ -166,8 +164,11 @@ def test_coalesce_ignores_neighbours_both_candidates_share() -> None:
 def test_contact_routes_and_packet_paths_feed_the_graph() -> None:
     """Firmware-learned routes and RX-logged packet paths both count as evidence."""
     routed = Contact(
-        name="Far", public_key=FAR.public_key, key_prefix=FAR.key_prefix,
-        route_hops=("3d63c6429436",), last_seen=utcnow(),
+        name="Far",
+        public_key=FAR.public_key,
+        key_prefix=FAR.key_prefix,
+        route_hops=("3d63c6429436",),
+        last_seen=utcnow(),
     )
     packet = PacketPath(when=utcnow(), origin="27d4396a2967", snr=8.0, hops=["3d63c6429436"])
     topo = _topo(packet_paths=[packet], contacts=[REPEATER, routed, LEAF])
@@ -214,9 +215,7 @@ def test_next_hops_sorts_by_link_strength_and_excludes_used_nodes() -> None:
 
 def test_scenarios_rank_observed_route_and_pin_device_route_first() -> None:
     """The device route leads, then observed evidence, then the unobserved direct shot."""
-    walks = [
-        _traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)) for _ in range(4)
-    ]
+    walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)) for _ in range(4)]
     topo = _topo(trace_paths=walks)
     scenarios = topo.scenarios("f2c24f54551e", device_route=("3d63c6429436",))
     assert scenarios[0].source == "device"
@@ -231,9 +230,7 @@ def test_scenarios_rank_observed_route_and_pin_device_route_first() -> None:
 
 def test_suggested_returns_the_strongest_observed_route_only() -> None:
     """suggested() is the data's answer: the best observed multi-hop route to the target."""
-    walks = [
-        _traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)) for _ in range(4)
-    ]
+    walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0)) for _ in range(4)]
     topo = _topo(trace_paths=walks)
     best = topo.suggested("f2c24f54551e")
     assert best is not None
@@ -253,15 +250,11 @@ def test_suggested_is_none_without_an_observed_repeater_route() -> None:
 def test_scenarios_return_disjoint_alternatives_cheapest_first() -> None:
     """Two independent routes to a target both surface, ranked by evidence strength."""
     # Two repeaters, each a separate one-hop route to Far. Hub's link is stronger.
-    walks = [
-        _traced(("3d", 12.0), ("f2", -3.0), ("3d", -3.0), (None, 12.0)) for _ in range(3)
-    ] + [
+    walks = [_traced(("3d", 12.0), ("f2", -3.0), ("3d", -3.0), (None, 12.0)) for _ in range(3)] + [
         _traced(("27", 4.0), ("f2", -8.0), ("27", -8.0), (None, 4.0)) for _ in range(3)
     ]
     topo = _topo(trace_paths=walks)
-    observed = [
-        s for s in topo.scenarios("f2c24f54551e") if s.source == "observed" and s.hops
-    ]
+    observed = [s for s in topo.scenarios("f2c24f54551e") if s.source == "observed" and s.hops]
     assert [s.hops for s in observed[:2]] == [("3d63c6429436",), ("27d4396a2967",)]
     assert observed[0].score > observed[1].score  # the stronger route ranks first
 
@@ -307,9 +300,7 @@ def test_scenario_spec_ends_at_target_and_collapses_width() -> None:
     """Specs walk out to the target then mirror the hops back, at a uniform width."""
     walks = [_traced(("3d", 12.0), ("f2", -5.0), ("3d", -5.5), (None, 12.0))]
     topo = _topo(trace_paths=walks)
-    scenario = next(
-        s for s in topo.scenarios("f2c24f54551e") if s.hops == ("3d63c6429436",)
-    )
+    scenario = next(s for s in topo.scenarios("f2c24f54551e") if s.hops == ("3d63c6429436",))
     assert scenario.spec("f2c24f54551e", 2) == "3d63,f2c2,3d63"
     assert collapse_width("3d", "f2c24f54551e", ceiling=2) == 1  # narrowest hash rules
 
@@ -410,15 +401,19 @@ async def test_probe_paths_ranks_reliability_first() -> None:
         async def run_trace(self, target, *, path=None, timeout=10.0):  # noqa: ANN001
             if path == "good":
                 return TraceResult(
-                    target=target, success=True,
-                    hops=[Hop(index=0, node="3d", snr=2.0)], round_trip_ms=300.0,
+                    target=target,
+                    success=True,
+                    hops=[Hop(index=0, node="3d", snr=2.0)],
+                    round_trip_ms=300.0,
                 )
             return TraceResult(target=target, success=False)
 
     outcomes = await probe_paths(
-        _Device(), "Far",
+        _Device(),
+        "Far",
         [ProbeCandidate(label="flaky", spec="bad"), ProbeCandidate(label="solid", spec="good")],
-        samples=2, cooldown_s=0.0,
+        samples=2,
+        cooldown_s=0.0,
     )
     assert [o.candidate.label for o in outcomes] == ["solid", "flaky"]
     assert outcomes[0].stats.success_rate == 1.0
@@ -438,12 +433,15 @@ async def test_probe_paths_defaults_to_one_trace_per_candidate() -> None:
         async def run_trace(self, target, *, path=None, timeout=10.0):  # noqa: ANN001
             transmitted.append(path)
             return TraceResult(
-                target=target, success=True,
-                hops=[Hop(index=0, node="3d", snr=2.0)], round_trip_ms=300.0,
+                target=target,
+                success=True,
+                hops=[Hop(index=0, node="3d", snr=2.0)],
+                round_trip_ms=300.0,
             )
 
     outcomes = await probe_paths(
-        _Device(), "Far",
+        _Device(),
+        "Far",
         [ProbeCandidate(label="a", spec="3d"), ProbeCandidate(label="b", spec="f2")],
         cooldown_s=0.0,
     )
@@ -502,9 +500,7 @@ def test_composer_windows_rows_under_the_pinned_route_preview() -> None:
     """A short dialog windows the rows; the route preview and cursor stay visible."""
     import re
 
-    walks = [
-        _traced((f"{i + 16:02x}", 3.0), (None, 3.0)) for i in range(10)
-    ]
+    walks = [_traced((f"{i + 16:02x}", 3.0), (None, 3.0)) for i in range(10)]
     screen = _composer(_topo(trace_paths=walks, contacts=[FAR]))
     screen.note_viewport(9)  # a short dialog budget: preview + heading + a few rows
     body = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(screen.render_body(90)))
@@ -528,9 +524,7 @@ def test_composer_typed_hex_adds_a_custom_hop_and_backspace_removes() -> None:
 
 def test_composer_cursor_inserts_and_deletes_mid_path() -> None:
     """←/→ walk the insertion cursor; adds splice in at it and ⌫ removes to its left."""
-    screen = _composer(
-        _topo(), hops=["27d4396a2967", "f2c24f54551e"], target=False
-    )
+    screen = _composer(_topo(), hops=["27d4396a2967", "f2c24f54551e"], target=False)
     assert screen.cursor == 2  # opens on the last arrow: inserting is appending
     screen.handle("right")
     assert screen.cursor == 2  # clamped at the end…
@@ -607,10 +601,10 @@ def test_composer_dialog_only_ever_grows() -> None:
     # ratchet_viewport / ratchet_width are the grow-only contract: rise, never drop.
     assert screen.ratchet_viewport(6) == 6
     assert screen.ratchet_viewport(14) == 14  # a longer suggestion list enlarges the box
-    assert screen.ratchet_viewport(4) == 14   # a shorter one after keeps the taller box
+    assert screen.ratchet_viewport(4) == 14  # a shorter one after keeps the taller box
     assert screen.ratchet_width(40) == 40
-    assert screen.ratchet_width(64) == 64     # a longer route preview widens the box
-    assert screen.ratchet_width(40) == 64     # narrower content after keeps the wider box
+    assert screen.ratchet_width(64) == 64  # a longer route preview widens the box
+    assert screen.ratchet_width(40) == 64  # narrower content after keeps the wider box
 
 
 def test_composer_target_mode_warning_covers_the_mirrored_return() -> None:
@@ -628,9 +622,7 @@ async def test_composer_fetch_row_resolves_a_fetch_request() -> None:
     """Standing on a fetchable repeater, Enter on the fetch row hands off to the owner."""
     import asyncio
 
-    screen = _composer(
-        _topo(), hops=["3d63c6429436"], fetch_nodes=frozenset({"3d63c6429436"})
-    )
+    screen = _composer(_topo(), hops=["3d63c6429436"], fetch_nodes=frozenset({"3d63c6429436"}))
     screen.future = asyncio.get_running_loop().create_future()
     body = _rows_plain(screen)
     assert "Fetch neighbours from" in body and "Hub" in body
@@ -716,7 +708,8 @@ def test_composer_path_mode_opens_star_to_star_without_auto(monkeypatch) -> None
     # Our name and hash go unsaid; the slot says where the first hop would land.
     assert preview.plain == f"{SELF_GLYPH} → {CURSOR_GLYPH} → {SELF_GLYPH}"
     stars = [
-        str(span.style) for span in preview.spans
+        str(span.style)
+        for span in preview.spans
         if preview.plain[span.start : span.end] == SELF_GLYPH
     ]
     assert stars == ["faint", "faint"]  # read-only, like every auto-managed chip
@@ -732,8 +725,7 @@ def test_composer_names_an_ambiguous_hop_through_the_owning_screens_resolver() -
     screen's resolver is the fallback, so both surfaces say the same thing.
     """
     twin = Contact(name="Twin", public_key="3d99" + "0" * 60)  # makes a bare "3d" ambiguous
-    topo = _topo(trace_paths=[_traced(("3d", 12.0), (None, 12.0))],
-                 contacts=[REPEATER, twin])
+    topo = _topo(trace_paths=[_traced(("3d", 12.0), (None, 12.0))], contacts=[REPEATER, twin])
     assert topo.display_name("3d") is None  # two contacts match: the graph won't pick
 
     import re
@@ -757,14 +749,16 @@ def test_composer_merges_a_stub_and_its_full_id_into_one_suggestion() -> None:
     """
     twin = Contact(name="Twin", public_key="3d99" + "0" * 60, key_prefix="3d9900000000")
     walks = [
-        _traced(("3d", 6.0), (None, 6.0)),            # the ambiguous stub
+        _traced(("3d", 6.0), (None, 6.0)),  # the ambiguous stub
         _traced(("3d63c6429436", 8.0), (None, 8.0)),  # the very same node, full id
         _traced(("3d9900000000", 4.0), (None, 4.0)),  # a different node behind 3d
     ]
     topo = _topo(trace_paths=walks, contacts=[REPEATER, twin])
     assert topo.display_name("3d") is None  # ambiguous: the graph won't fold it itself
     assert {s.node for s in topo.next_hops(topo.self_id)} == {
-        "3d", "3d63c6429436", "3d9900000000",
+        "3d",
+        "3d63c6429436",
+        "3d9900000000",
     }
 
     screen = _composer(topo, target=False, resolve=make_node_resolver([REPEATER, twin]))
@@ -783,13 +777,13 @@ def test_composer_steps_off_a_merged_node_with_all_its_evidence() -> None:
     twin = Contact(name="Twin", public_key="3d99" + "0" * 60, key_prefix="3d9900000000")
     walks = [
         _traced(("3d", 6.0), ("f2", -5.0), ("3d", -5.5), (None, 6.0)),  # Far, via the stub
-        _traced(("3d63c6429436", 8.0), (None, 8.0)),                    # the full id
-        _traced(("3d9900000000", 4.0), (None, 4.0)),                    # the other 3d node
+        _traced(("3d63c6429436", 8.0), (None, 8.0)),  # the full id
+        _traced(("3d9900000000", 4.0), (None, 4.0)),  # the other 3d node
     ]
     topo = _topo(trace_paths=walks, contacts=[REPEATER, FAR, twin])
-    screen = _composer(topo, target=False, hops=["3d63c6429436"], resolve=make_node_resolver(
-        [REPEATER, FAR, twin]
-    ))
+    screen = _composer(
+        topo, target=False, hops=["3d63c6429436"], resolve=make_node_resolver([REPEATER, FAR, twin])
+    )
     # Far was only ever heard through the stub, and is still offered from the full id.
     assert [s.node for s in screen._suggestions()] == ["f2c24f54551e"]
 
@@ -841,9 +835,19 @@ def test_extensions_matches_a_naive_scan_over_awkward_shapes() -> None:
     from meshterm.services.topology import MeshTopology
 
     nodes = {
-        "6", "65", "6532", "6532eb", "6532eb00aa11",
-        "6533", "653300ff", "66", "6600",
-        "a1", "a1b2", "a1b3", "b0",
+        "6",
+        "65",
+        "6532",
+        "6532eb",
+        "6532eb00aa11",
+        "6533",
+        "653300ff",
+        "66",
+        "6600",
+        "a1",
+        "a1b2",
+        "a1b3",
+        "b0",
         "ffffffffffff",
     }
     ordered = sorted(nodes)
@@ -907,9 +911,12 @@ def test_prefix_settle_is_repeatable_whatever_order_the_nodes_arrived_in() -> No
     from meshterm.services.topology import MeshTopology
 
     walks = [
-        ["local", "a1", "b2c3"], ["local", "a1b2", "b2c3d4"],
-        ["local", "a1b2c3d4e5f6"], ["local", "b2c3d4e5f601"],
-        ["local", "a1b2c3", "c4"], ["local", "c4d5e6f70011"],
+        ["local", "a1", "b2c3"],
+        ["local", "a1b2", "b2c3d4"],
+        ["local", "a1b2c3d4e5f6"],
+        ["local", "b2c3d4e5f601"],
+        ["local", "a1b2c3", "c4"],
+        ["local", "c4d5e6f70011"],
         ["local", "b2", "a1b2c3d4e5f6"],
     ]
 
@@ -938,18 +945,20 @@ def test_a_merge_leaves_the_neighbour_table_exactly_as_a_fresh_one() -> None:
     topo = MeshTopology(self_id="local", contacts=[])
     now = utcnow()
     for walk in (
-        ["local", "a1", "b2c3d4e5f601"], ["local", "a1b2c3d4e5f6"],
-        ["a1", "c4d5e6f70011"], ["a1b2", "a1b2c3d4e5f6"],
-        ["b2c3d4e5f601", "c4d5e6f70011"], ["local", "d7"], ["d7e8f9001122", "local"],
+        ["local", "a1", "b2c3d4e5f601"],
+        ["local", "a1b2c3d4e5f6"],
+        ["a1", "c4d5e6f70011"],
+        ["a1b2", "a1b2c3d4e5f6"],
+        ["b2c3d4e5f601", "c4d5e6f70011"],
+        ["local", "d7"],
+        ["d7e8f9001122", "local"],
     ):
         topo.add_walk(list(walk), when=now, source="trace")
 
     adjacency = topo._adjacency()
     merges = 0
     while True:
-        shorts = sorted(
-            (n for n in adjacency if len(n) < 12), key=lambda n: (len(n), n)
-        )
+        shorts = sorted((n for n in adjacency if len(n) < 12), key=lambda n: (len(n), n))
         ordered = sorted(adjacency)
         merge = topo._next_prefix_merge(shorts, ordered) or topo._next_corroborated_merge(
             shorts, ordered, adjacency

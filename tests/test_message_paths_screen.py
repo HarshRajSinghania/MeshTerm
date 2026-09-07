@@ -21,13 +21,15 @@ def _resolve(hop: str) -> str:
     return {"3d63": "Hilltop-Repeater", "a1b2": "Waymarker"}.get(hop, hop)
 
 
-
-
 def _screen(arrivals: list[Arrival], **kwargs) -> MessagePathsScreen:
     message = ChatMessage(text="on my way", is_channel=True, created_at=utcnow())
     defaults = dict(
-        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
-        summary="heard twice", source="Alice",
+        matched=True,
+        resolve=_resolve,
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard twice",
+        source="Alice",
     )
     defaults.update(kwargs)
     screen = MessagePathsScreen(message, arrivals, **defaults)
@@ -73,10 +75,12 @@ def test_paths_screen_warns_once_for_a_path_that_revisits_a_hop() -> None:
     repeated anywhere in the fan and says so a single time under the legend.
     """
     now = utcnow()
-    screen = _screen([
-        Arrival(when=now, hops=("3d63", "a1b2", "77aa", "3d63"), snr=4.0),
-        Arrival(when=now + timedelta(seconds=2), hops=("a1b2",), snr=-2.0),
-    ])
+    screen = _screen(
+        [
+            Arrival(when=now, hops=("3d63", "a1b2", "77aa", "3d63"), snr=4.0),
+            Arrival(when=now + timedelta(seconds=2), hops=("a1b2",), snr=-2.0),
+        ]
+    )
     body = _plain(screen.render_body(76))
     assert body.count("⚠") == 1
     assert "Hilltop-Repeater repeats — a loop, or two nodes sharing one hash" in body
@@ -260,12 +264,14 @@ def test_paths_screen_cuts_unselected_rows_the_same_way(monkeypatch) -> None:  #
     monkeypatch.setattr(pathline, "powerline_enabled", lambda: True)
     now = utcnow()
     long = tuple(f"{i:02x}{i:02x}" for i in range(12))
-    screen = _screen([
-        Arrival(when=now, hops=long, snr=1.0),
-        Arrival(when=now + timedelta(seconds=2), hops=long[::-1], snr=2.0),
-    ])
+    screen = _screen(
+        [
+            Arrival(when=now, hops=long, snr=1.0),
+            Arrival(when=now + timedelta(seconds=2), hops=long[::-1], snr=2.0),
+        ]
+    )
     lines = _plain(screen.render_body(40)).split("\n")
-    rows = lines[next(i for i, ln in enumerate(lines) if ln.startswith("❯")):]
+    rows = lines[next(i for i, ln in enumerate(lines) if ln.startswith("❯")) :]
     assert rows[0].rstrip().endswith(CRACK_TAIL)  # the selected row
     unselected = rows[2]  # row 1 is the selected row's hanging reception facts
     assert unselected.rstrip().endswith(CRACK_TAIL) and "…" not in unselected
@@ -306,9 +312,15 @@ def test_an_outgoing_message_ends_on_its_recipient_not_on_us() -> None:
     now = utcnow()
     sent = ChatMessage(text="on my way", outbound=True, peer="d4e5", created_at=now)
     screen = MessagePathsScreen(
-        sent, [Arrival(when=now, hops=("3d63",), snr=4.0)],
-        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
-        summary="heard once", source="Homestead", destination="Bob",
+        sent,
+        [Arrival(when=now, hops=("3d63",), snr=4.0)],
+        matched=True,
+        resolve=_resolve,
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard once",
+        source="Homestead",
+        destination="Bob",
     )
     body = _plain(screen.render_body(72))
     assert "Hilltop-Repeater" in body
@@ -323,9 +335,14 @@ def test_a_received_message_still_ends_on_us() -> None:
     now = utcnow()
     got = ChatMessage(text="on my way", outbound=False, peer="d4e5", created_at=now)
     screen = MessagePathsScreen(
-        got, [Arrival(when=now, hops=("3d63",), snr=4.0)],
-        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
-        summary="heard once", source="Alice",
+        got,
+        [Arrival(when=now, hops=("3d63",), snr=4.0)],
+        matched=True,
+        resolve=_resolve,
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard once",
+        source="Alice",
     )
     body = _plain(screen.render_body(72))
     assert "Alice" in body and "Homestead" in body
@@ -342,9 +359,14 @@ def test_a_routed_frame_with_no_path_draws_no_graph_and_says_why() -> None:
     now = utcnow()
     got = ChatMessage(text="on my way", outbound=False, peer="d4e5", created_at=now)
     screen = MessagePathsScreen(
-        got, [Arrival(when=now, hops=(), snr=4.0, routed=True)],
-        matched=True, resolve=_resolve, prefix_bytes=1, self_name="Homestead",
-        summary="heard once", source="Alice",
+        got,
+        [Arrival(when=now, hops=(), snr=4.0, routed=True)],
+        matched=True,
+        resolve=_resolve,
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard once",
+        source="Alice",
     )
     body = _plain(screen.render_body(72))
     assert "route not carried" in body

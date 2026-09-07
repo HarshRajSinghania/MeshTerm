@@ -73,11 +73,23 @@ _CHART_ROWS = 3
 #: classes expanding in the old lone-``packet`` slot — chat-ish frames before
 #: protocol-ish ones — with the class-less ``packet`` closing the raw block.
 _TRAFFIC_ORDER = (
-    "advert", "telemetry",
-    "packet:GRP_TXT", "packet:GRP_DATA", "packet:TEXT_MSG", "packet:REQ",
-    "packet:RESPONSE", "packet:ANON_REQ", "packet:PATH", "packet:TRACE",
-    "packet:ADVERT", "packet:ACK", "packet:MULTIPART", "packet:CONTROL", "packet",
-    "message", "ack",
+    "advert",
+    "telemetry",
+    "packet:GRP_TXT",
+    "packet:GRP_DATA",
+    "packet:TEXT_MSG",
+    "packet:REQ",
+    "packet:RESPONSE",
+    "packet:ANON_REQ",
+    "packet:PATH",
+    "packet:TRACE",
+    "packet:ADVERT",
+    "packet:ACK",
+    "packet:MULTIPART",
+    "packet:CONTROL",
+    "packet",
+    "message",
+    "ack",
 )
 
 #: Raw payload glosses that would read identically to a decoded family's row, retold
@@ -101,6 +113,7 @@ def _traffic_chrome(bucket: str) -> tuple[str, str, str]:
         return glyph(emoji), label, KIND_STYLES["packet"]
     emoji = KIND_ICONS.get(bucket, DEFAULT_ICON)
     return glyph(emoji), bucket, KIND_STYLES.get(bucket, "brand")
+
 
 #: How many character cells a traffic lane's meter spans (48 half-step levels).
 _TRAFFIC_METER_CELLS = 24
@@ -316,8 +329,7 @@ class DashboardScreen(Screen):
         peak = max(shown)
 
         heading = Text("Activity", style="accent")
-        heading.append("  ·  every packet heard · one minute per dot column",
-                       style="muted")
+        heading.append("  ·  every packet heard · one minute per dot column", style="muted")
         # Buckets seeded from a previous session's stored history draw grey; only
         # what this session heard itself pulses green.
         flags = (tuple(self._activity_flags()) + (True,) * minutes)[:minutes]
@@ -358,8 +370,12 @@ class DashboardScreen(Screen):
         soaks up the rest and folds inside itself.
         """
         grid = Table(
-            box=None, show_header=False, show_edge=False, pad_edge=False,
-            padding=(0, 0), expand=False,
+            box=None,
+            show_header=False,
+            show_edge=False,
+            pad_edge=False,
+            padding=(0, 0),
+            expand=False,
         )
         grid.add_column(width=_GRID_LABEL_W, no_wrap=True)
         grid.add_column(overflow="fold")
@@ -474,8 +490,7 @@ class DashboardScreen(Screen):
             rows.append(("snr", line))
         if rssis:
             line = Text(f"{median(rssis):.0f} dBm median")
-            line.append(f"  weakest {min(rssis):.0f} · strongest {max(rssis):.0f}",
-                        style="muted")
+            line.append(f"  weakest {min(rssis):.0f} · strongest {max(rssis):.0f}", style="muted")
             rows.append(("rssi", line))
 
         stats = self.stats

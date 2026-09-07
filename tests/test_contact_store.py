@@ -219,8 +219,12 @@ async def test_devstate_merge_keeps_a_repeater_a_repeater(ctx) -> None:
     """A remembered repeater rebuilds with its type, so the DM filter still excludes it."""
     device = await ctx.device()
     device._contacts = [
-        Contact(name="Big-Repeater", public_key="ab" * 32, key_prefix="ab" * 6,
-                node_type=NODE_TYPE_REPEATER),
+        Contact(
+            name="Big-Repeater",
+            public_key="ab" * 32,
+            key_prefix="ab" * 6,
+            node_type=NODE_TYPE_REPEATER,
+        ),
     ]
     await ctx.devstate.contacts(force=True)  # remember it
     device._contacts = []  # forget it

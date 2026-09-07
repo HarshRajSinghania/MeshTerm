@@ -216,9 +216,7 @@ class TxOptimizeTool(Tool):
             target_hash=target_hash,
         )
 
-    async def _login(
-        self, ctx: AppContext, admin_node: Contact, params: dict[str, Any]
-    ) -> None:
+    async def _login(self, ctx: AppContext, admin_node: Contact, params: dict[str, Any]) -> None:
         """Authenticate against the admin node, remembering a working password.
 
         Args:
@@ -288,7 +286,9 @@ class TxOptimizeTool(Tool):
 
             def on_level(done: int, total: int, level) -> None:  # noqa: ANN001
                 progress.update(
-                    task, total=total, completed=done,
+                    task,
+                    total=total,
+                    completed=done,
                     description=f"TX {level.tx_power:>2}  "
                     f"SNR {_fmt_snr(level.target_snr)}  {level.success_rate:.0%}",
                 )
@@ -331,8 +331,7 @@ class TxOptimizeTool(Tool):
             applied_note = f"  [ok](set on {admin_node.name})[/ok]" if result.applied else ""
             message = (
                 f"[ok]✓[/ok] optimal TX for [brand]{admin_node.name}[/brand] → "
-                f"[brand]{result.target}[/brand] is [brand]{result.best_tx}[/brand]"
-                + applied_note
+                f"[brand]{result.target}[/brand] is [brand]{result.best_tx}[/brand]" + applied_note
             )
 
         return ToolResult(
@@ -392,7 +391,9 @@ class TxOptimizeTool(Tool):
         @app.command(name=self.name, help=self.help)
         def _tx_optimize(
             path: str = typer.Option(
-                ..., "--path", "-p",
+                ...,
+                "--path",
+                "-p",
                 help="Forced path ending at the target (e.g. 'Repeater,Target' or '3d,f2')",
             ),
             samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level"),
@@ -405,7 +406,9 @@ class TxOptimizeTool(Tool):
             apply: bool = typer.Option(True, "--apply/--no-apply", help="Set the winner"),
         ) -> None:
             tool_params: dict[str, Any] = {
-                "path": path, "samples": samples, "step": step,
+                "path": path,
+                "samples": samples,
+                "step": step,
                 "apply": apply,
             }
             if tx_min is not None:

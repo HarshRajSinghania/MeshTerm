@@ -63,10 +63,16 @@ def test_both_coordinates_survive_being_applied_together() -> None:
     device = _RecordingDevice(adv_lat=0.0, adv_lon=0.0)
     snapshot = dict(device.state)
 
-    asyncio.run(_apply_all(device, snapshot, [
-        ("adv_lat", "45.535445"),
-        ("adv_lon", "-73.708724"),
-    ]))
+    asyncio.run(
+        _apply_all(
+            device,
+            snapshot,
+            [
+                ("adv_lat", "45.535445"),
+                ("adv_lon", "-73.708724"),
+            ],
+        )
+    )
 
     assert device.state["adv_lat"] == pytest.approx(45.535445)
     assert device.state["adv_lon"] == pytest.approx(-73.708724)
@@ -82,8 +88,9 @@ def test_the_order_the_coordinates_are_applied_in_does_not_matter() -> None:
     ):
         device = _RecordingDevice(adv_lat=0.0, adv_lon=0.0)
         asyncio.run(_apply_all(device, dict(device.state), changes))
-        assert (device.state["adv_lat"], device.state["adv_lon"]) == \
-            pytest.approx((45.5, -73.7)), changes
+        assert (device.state["adv_lat"], device.state["adv_lon"]) == pytest.approx((45.5, -73.7)), (
+            changes
+        )
 
 
 def test_two_radio_fields_applied_together_both_stick() -> None:
@@ -91,10 +98,16 @@ def test_two_radio_fields_applied_together_both_stick() -> None:
     device = _RecordingDevice(radio_freq=869.618, radio_bw=62.5, radio_sf=8, radio_cr=5)
     snapshot = dict(device.state)
 
-    asyncio.run(_apply_all(device, snapshot, [
-        ("radio_freq", "910.525"),
-        ("radio_sf", "7"),
-    ]))
+    asyncio.run(
+        _apply_all(
+            device,
+            snapshot,
+            [
+                ("radio_freq", "910.525"),
+                ("radio_sf", "7"),
+            ],
+        )
+    )
 
     assert device.state["radio_freq"] == pytest.approx(910.525)
     assert device.state["radio_sf"] == 7
@@ -106,10 +119,18 @@ def test_all_four_radio_fields_at_once() -> None:
     """A full radio change is the worst case: three chances for a sibling to go stale."""
     device = _RecordingDevice(radio_freq=869.618, radio_bw=250.0, radio_sf=8, radio_cr=8)
 
-    asyncio.run(_apply_all(device, dict(device.state), [
-        ("radio_freq", "910.525"), ("radio_bw", "62.5"),
-        ("radio_sf", "7"), ("radio_cr", "5"),
-    ]))
+    asyncio.run(
+        _apply_all(
+            device,
+            dict(device.state),
+            [
+                ("radio_freq", "910.525"),
+                ("radio_bw", "62.5"),
+                ("radio_sf", "7"),
+                ("radio_cr", "5"),
+            ],
+        )
+    )
 
     assert device.radio_calls[-1] == pytest.approx((910.525, 62.5, 7, 5))
 
@@ -118,9 +139,16 @@ def test_both_tuning_fields_applied_together_both_stick() -> None:
     """rx_delay and airtime_factor share a command on the same terms."""
     device = _RecordingDevice(rx_delay=0.0, airtime_factor=0.0)
 
-    asyncio.run(_apply_all(device, dict(device.state), [
-        ("rx_delay", "1.5"), ("airtime_factor", "2.0"),
-    ]))
+    asyncio.run(
+        _apply_all(
+            device,
+            dict(device.state),
+            [
+                ("rx_delay", "1.5"),
+                ("airtime_factor", "2.0"),
+            ],
+        )
+    )
 
     assert device.tuning_calls[-1] == pytest.approx((1.5, 2.0))
 
@@ -188,7 +216,7 @@ def test_the_device_pin_row_reads_the_firmware_s_own_name() -> None:
 
     assert spec.getter({"ble_pin": 701307}) == 701307
     assert spec.getter({"device_pin": 424242}) == 424242  # canonical key still honoured
-    assert spec.getter({}) is None                        # genuinely unknown stays unknown
+    assert spec.getter({}) is None  # genuinely unknown stays unknown
 
 
 def test_a_snapshot_read_failure_still_yields_the_rest() -> None:
@@ -206,9 +234,14 @@ def test_a_snapshot_read_failure_still_yields_the_rest() -> None:
 def test_every_coupled_setting_is_covered_here() -> None:
     """A new setting sharing a coupled command must be added to these tests, not forgotten."""
     coupled = {
-        "adv_lat", "adv_lon",
-        "radio_freq", "radio_bw", "radio_sf", "radio_cr",
-        "rx_delay", "airtime_factor",
+        "adv_lat",
+        "adv_lon",
+        "radio_freq",
+        "radio_bw",
+        "radio_sf",
+        "radio_cr",
+        "rx_delay",
+        "airtime_factor",
     }
     known = {spec.key for spec in DEVICE_SETTINGS}
     assert coupled <= known, coupled - known

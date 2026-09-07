@@ -203,7 +203,7 @@ _MAX_BALANCE_ROUTES = 16
 
 #: The glyph used for the flow arrow embedded in the trunk just before us,
 #: so the whole flow reads better as a directed run node → us (not a map you wander).
-#_ARROW_GLYPH = "▶"
+# _ARROW_GLYPH = "▶"
 _ARROW_GLYPH = ""
 
 #: How far a layer's emphasis outranks its layout priority when edges compete for a cell.
@@ -322,7 +322,9 @@ def _coalesce_prefixes(layers: Sequence[PathLayer]) -> list[PathLayer]:
     return [
         PathLayer(
             tuple(resolved(hop) for hop in layer.hops),
-            layer.color, layer.priority, layer.emphasis,
+            layer.color,
+            layer.priority,
+            layer.emphasis,
         )
         for layer in layers
     ]
@@ -341,8 +343,10 @@ def _prefix_merge(nodes: set[str]) -> tuple[str, str] | None:
         exts = [
             other
             for other in nodes
-            if other != short and len(other) > len(short)
-            and _is_hex(other) and other.startswith(short)
+            if other != short
+            and len(other) > len(short)
+            and _is_hex(other)
+            and other.startswith(short)
         ]
         if not exts:
             continue
@@ -435,9 +439,7 @@ def _draw_rank(layer: PathLayer) -> int:
     return layer.priority + layer.emphasis * _EMPHASIS_BOOST
 
 
-def _highlighted(
-    drawn: Sequence[PathLayer], seqs: Sequence[tuple[str, ...]]
-) -> set[str] | None:
+def _highlighted(drawn: Sequence[PathLayer], seqs: Sequence[tuple[str, ...]]) -> set[str] | None:
     """The nodes on the one emphasised path, or ``None`` when no single path is singled out.
 
     A highlight is a *comparison*, so it takes at least two paths and exactly one winner: a
@@ -465,6 +467,7 @@ def _dim_off_route(
     for a colour that would be thrown away. The glyph itself is untouched — a repeater is
     still ``▲`` off-route, it is only the ink that recedes.
     """
+
     def glyph(node: str) -> tuple[str, str]:
         mark, colour = glyph_of(node)
         return mark, (colour if node in lit else _OFF_ROUTE_HEX)
@@ -577,9 +580,7 @@ def render_path_graph(
     # Seat every node on a signed lane, sizing the whole fan against the row budget before
     # committing to a shape: detour routes nest outside their sibling while the rows allow it,
     # and fold onto the sibling's lane only as the last resort. See :func:`_layout_lanes`.
-    signed = _layout_lanes(
-        drawn, seqs, ordered_nodes, owner, best, col_of, max_rows, lane_pitch
-    )
+    signed = _layout_lanes(drawn, seqs, ordered_nodes, owner, best, col_of, max_rows, lane_pitch)
 
     # A pair walked in *both* directions draws as the one honest vertical (the edge pass
     # below) — and is likewise never bent around anything.
@@ -678,9 +679,7 @@ def render_path_graph(
     # two edges share and sits on top.
     for key, (rank, color) in sorted(edge_style.items(), key=lambda kv: kv[1][0]):
         u, v = tuple(key)
-        canvas.draw_line(
-            _route(u, v, pos, key in bidir, via_pts.get(key, ())), color, rank
-        )
+        canvas.draw_line(_route(u, v, pos, key in bidir, via_pts.get(key, ())), color, rank)
 
     # -- An arrow embedded in the trunk just before us, so the whole flow reads as a directed
     # run node → us (not a map you wander). A single glyph in the spine's own colour: it reserves
@@ -744,9 +743,7 @@ def _route(
     return pts
 
 
-def _sbend(
-    x0: float, y0: float, x1: float, y1: float
-) -> list[tuple[float, float]]:
+def _sbend(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     """Sample a cubic-bezier S-curve from ``(x0, y0)`` to ``(x1, y1)``, level at both ends.
 
     Both control points sit level with their own endpoint (:data:`_BEND_K` of the span in from
@@ -796,15 +793,11 @@ def _balanced_x(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[s
     rep_edges = {(rep[u], rep[v]) for u, v in edges if rep[u] != rep[v]}
     up = _longest_paths(reps, rep_edges)
     down = _longest_paths(reps, {(v, u) for u, v in rep_edges})
-    frac = {
-        r: (up[r] / (up[r] + down[r])) if (up[r] + down[r]) else 0.0 for r in reps
-    }
+    frac = {r: (up[r] / (up[r] + down[r])) if (up[r] + down[r]) else 0.0 for r in reps}
     return {node: frac[rep[node]] for node in ordered_nodes}
 
 
-def _merge_bidir_pairs(
-    ordered_nodes: list[str], edges: set[tuple[str, str]]
-) -> dict[str, str]:
+def _merge_bidir_pairs(ordered_nodes: list[str], edges: set[tuple[str, str]]) -> dict[str, str]:
     """Map each node to a representative, uniting any two joined by a both-ways edge.
 
     Two nodes walked in both directions form a 2-cycle; uniting them — transitively, so a
@@ -891,9 +884,7 @@ def _detour_nests(
     lane itself (:func:`_fold_detour`). Returns ``{detour_index: sibling_index}``, weakest
     detours first in iteration order; ``owner`` is not modified.
     """
-    relays = [
-        frozenset(n for n in seq if n not in (SRC_NODE, DST_NODE)) for seq in seqs
-    ]
+    relays = [frozenset(n for n in seq if n not in (SRC_NODE, DST_NODE)) for seq in seqs]
     nests: dict[int, int] = {}
     # Weakest first, so a marginal detour pairs with its stronger sibling, never the reverse.
     for i in sorted(range(len(drawn)), key=lambda j: drawn[j].priority):
@@ -929,9 +920,7 @@ def _fold_detour(
     place.
     """
     own_i = {n for n in seqs[i] if owner[n] == i}
-    q_cols = {
-        col_of(n) for n, o in owner.items() if o == q and n not in (SRC_NODE, DST_NODE)
-    }
+    q_cols = {col_of(n) for n, o in owner.items() if o == q and n not in (SRC_NODE, DST_NODE)}
     new_cols = {col_of(n) for n in own_i}
     if len(new_cols) == len(own_i) and q_cols.isdisjoint(new_cols):
         for n in own_i:
@@ -1120,9 +1109,7 @@ def _assign_lanes(
         return {bearing[0]: 0}
 
     # Each bearing path's jog partners: the owning lanes of the hops it borrows from others.
-    shared_owners = {
-        i: [owner[node] for node in seqs[i] if owner[node] != i] for i in bearing
-    }
+    shared_owners = {i: [owner[node] for node in seqs[i] if owner[node] != i] for i in bearing}
 
     def jog(lane: dict[int, int]) -> int:
         return sum(abs(lane[i] - lane[o]) for i in bearing for o in shared_owners[i])
@@ -1223,9 +1210,7 @@ def _compress_lanes(
         {owner[node] for node in off_spine},
         key=lambda r: (lane_of_path[r] - best_lane, r),
     )
-    cols_of_route = {
-        r: {col_of(node) for node in off_spine if owner[node] == r} for r in routes
-    }
+    cols_of_route = {r: {col_of(node) for node in off_spine if owner[node] == r} for r in routes}
     # A nested detour's own relays sit a lane outside its sibling's (the floor), on the same
     # flank (the tie); a detour whose sibling is the spine is just an ordinary flank route.
     floor = {r: 1 for r in routes}
@@ -1389,9 +1374,7 @@ def _place_labels(
             for sy in rows_out
         ):
             continue
-        if any(
-            canvas.place_label(anchor_x, sy, label, rgb, bold=True) for sy in rows_out
-        ):
+        if any(canvas.place_label(anchor_x, sy, label, rgb, bold=True) for sy in rows_out):
             continue
         # Both rows blocked: sit the label beside the marker (clear of the drawn lines if it
         # can, else over them) rather than drop it.

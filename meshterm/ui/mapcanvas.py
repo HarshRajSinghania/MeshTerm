@@ -63,6 +63,7 @@ def single_cell(text: str) -> str:
         out.append(ch)
     return "".join(out).strip()
 
+
 #: Dot bit for each (col, row) within a cell — the Unicode braille standard layout.
 _DOT_BITS = (
     (0x01, 0x02, 0x04, 0x40),  # left column, rows 0..3
@@ -150,9 +151,7 @@ class MapCanvas:
         self.dot_w = self.cell_w * 2
         self.dot_h = self.cell_h * 4
         self._bits = [[0] * self.cell_w for _ in range(self.cell_h)]
-        self._color: list[list[RGB | None]] = [
-            [None] * self.cell_w for _ in range(self.cell_h)
-        ]
+        self._color: list[list[RGB | None]] = [[None] * self.cell_w for _ in range(self.cell_h)]
         self._prio = [[-1] * self.cell_w for _ in range(self.cell_h)]
         # Overlay: (cx, cy) -> (char, rgb, bold). Occupied tracks cells claimed by labels /
         # markers so later labels can avoid them; label_cells is the labels alone, so the
@@ -174,9 +173,7 @@ class MapCanvas:
             self._prio[cy][cx] = priority
             self._color[cy][cx] = color
 
-    def draw_line(
-        self, points: list[tuple[float, float]], color: RGB, priority: int
-    ) -> None:
+    def draw_line(self, points: list[tuple[float, float]], color: RGB, priority: int) -> None:
         """Rasterize a polyline through ``points`` (dot coordinates) as braille dots."""
         for (x0, y0), (x1, y1) in pairwise(points):
             self._segment(x0, y0, x1, y1, color, priority)
@@ -335,7 +332,9 @@ class MapCanvas:
                     dim = faded.get(rgb)
                     if dim is None:
                         dim = faded[rgb] = (
-                            round(rgb[0] * fade), round(rgb[1] * fade), round(rgb[2] * fade)
+                            round(rgb[0] * fade),
+                            round(rgb[1] * fade),
+                            round(rgb[2] * fade),
                         )
                     rgb = dim
                 color[cx] = rgb
@@ -464,11 +463,7 @@ class MapCanvas:
             margin = range(start_cx - 1, start_cx + len(text) + 1)
             if any((mx, cy) in self._occupied for mx in margin):
                 return False
-            if any(
-                (mx, my) in self._label_cells
-                for my in (cy - 1, cy + 1)
-                for mx in margin
-            ):
+            if any((mx, my) in self._label_cells for my in (cy - 1, cy + 1) for mx in margin):
                 return False
         placed = False
         for offset, ch in enumerate(text):

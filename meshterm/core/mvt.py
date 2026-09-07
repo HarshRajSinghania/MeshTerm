@@ -354,8 +354,7 @@ def dumps_layers(layers: list[Layer], *, stamp: str = "") -> bytes:
         The encoded bytes.
     """
     payload = [
-        (layer.name, layer.extent,
-         [(f.geom_type, f.rings, f.tags) for f in layer.features])
+        (layer.name, layer.extent, [(f.geom_type, f.rings, f.tags) for f in layer.features])
         for layer in layers
     ]
     return marshal.dumps((_WIRE_VERSION, marshal.version, stamp, payload))

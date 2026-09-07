@@ -204,7 +204,10 @@ def test_the_connection_is_built_from_this_device_s_own_endpoint() -> None:
     _FakeMeshCore.reset("ok")
     sentinel = object()
     dev = MeshCoreDevice(
-        transport="ble", address=_ADDR, pin="000000", ble_device=sentinel,
+        transport="ble",
+        address=_ADDR,
+        pin="000000",
+        ble_device=sentinel,
         connect_timeout=7.5,
     )
 

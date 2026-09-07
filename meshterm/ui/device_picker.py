@@ -116,9 +116,7 @@ def _hardware_name(device: DiscoveredDevice) -> str:
     return name
 
 
-def _display_name(
-    device: DiscoveredDevice, registry: dict[str, RememberedDevice]
-) -> str:
+def _display_name(device: DiscoveredDevice, registry: dict[str, RememberedDevice]) -> str:
     """The name to show for ``device``: its remembered mesh node name, else the hardware name.
 
     Any device we've confirmed before — not just the single most-recent one — is shown by the
@@ -137,9 +135,7 @@ def _where(device: DiscoveredDevice) -> str:
     return device.target
 
 
-def _hardware_label(
-    device: DiscoveredDevice, registry: dict[str, RememberedDevice]
-) -> str:
+def _hardware_label(device: DiscoveredDevice, registry: dict[str, RememberedDevice]) -> str:
     """The HARDWARE column text: the remembered firmware model, else the USB vendor.
 
     A confirmed device shows what it actually is ("Seeed Tracker T1000-E", learned from the
@@ -225,9 +221,7 @@ async def _smoke_test(
             notice = Text()
             notice.append(str(exc), style="warn")
             notice.append("\nChoose another device.")
-            await ui.notify_startup(
-                notice, title="Can't connect yet", banner=load_logo()
-            )
+            await ui.notify_startup(notice, title="Can't connect yet", banner=load_logo())
             return None
 
         if info is None:
@@ -332,9 +326,7 @@ async def prompt_device(
             # Delete was pressed on a removable (network) row: confirm, forget, and re-draw
             # the list — the row's disappearance is the visible feedback. The list is passed
             # through so the confirm floats over it (the row it removes stays highlighted).
-            await _remove_network_device(
-                ui, store, registry, chosen.value, backdrop_items=items
-            )
+            await _remove_network_device(ui, store, registry, chosen.value, backdrop_items=items)
             continue
 
         name = _display_name(chosen, registry)
@@ -348,9 +340,7 @@ async def prompt_device(
 
         # Confirmed: remember it forever. We return straight away, so there's no need to
         # fold it back into the local registry for a re-render.
-        store.remember(
-            chosen, node_name=_node_name_from(info), hardware_model=_model_from(info)
-        )
+        store.remember(chosen, node_name=_node_name_from(info), hardware_model=_model_from(info))
         return chosen
 
 
@@ -483,6 +473,7 @@ async def _add_network_device(
     Returns:
         The confirmed TCP :class:`DiscoveredDevice`, or ``None`` to return to the device list.
     """
+
     def _validate(text: str) -> object:
         try:
             parse_tcp_endpoint(text)
@@ -505,9 +496,7 @@ async def _add_network_device(
     info = await _smoke_test(ui, device, name, _where_phrase(device), verify)
     if info is None:
         return None  # not a reachable companion — the smoke test already explained why
-    store.remember(
-        device, node_name=_node_name_from(info), hardware_model=_model_from(info)
-    )
+    store.remember(device, node_name=_node_name_from(info), hardware_model=_model_from(info))
     return device
 
 
@@ -597,9 +586,7 @@ def _build_items(
     has_serial = any(not d.is_ble and not d.is_tcp for d in devices)
     has_address = any(d.is_ble or d.is_tcp for d in devices)
     port_label = (
-        "PORT / ADDRESS" if has_serial and has_address
-        else "ADDRESS" if has_address
-        else "PORT"
+        "PORT / ADDRESS" if has_serial and has_address else "ADDRESS" if has_address else "PORT"
     )
     port_w = max(cell_len(_where(d)) for d in devices)
     port_w = max(port_w, len(port_label))
@@ -615,9 +602,12 @@ def _build_items(
     header = Separator(
         "    "
         + _pad("DEVICE", name_w)
-        + "  " + _pad(port_label, port_w)
-        + "  " + _pad("TYPE", type_w)
-        + "  " + "HARDWARE",
+        + "  "
+        + _pad(port_label, port_w)
+        + "  "
+        + _pad("TYPE", type_w)
+        + "  "
+        + "HARDWARE",
         heading=True,
     )
 
@@ -629,8 +619,9 @@ def _build_items(
         row.append("★" if is_remembered else " ", style="warn" if is_remembered else "")
         row.append(" ")
         # A confirmed companion wears its name in white so it stands out from mere detections.
-        row.append(_pad(_display_name(device, registry), name_w),
-                   style="device.known" if is_known else "")
+        row.append(
+            _pad(_display_name(device, registry), name_w), style="device.known" if is_known else ""
+        )
         row.append("  ")
         row.append(_pad(_where(device), port_w), style="muted")
         row.append("  ")

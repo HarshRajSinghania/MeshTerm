@@ -118,9 +118,7 @@ class PreferencesTool(Tool):
         """
         from ..cli import run_tool_command
 
-        prefs_app = typer.Typer(
-            help=self.help, no_args_is_help=False, rich_markup_mode="rich"
-        )
+        prefs_app = typer.Typer(help=self.help, no_args_is_help=False, rich_markup_mode="rich")
 
         @prefs_app.callback(invoke_without_command=True)
         def _root(ctx: typer.Context) -> None:

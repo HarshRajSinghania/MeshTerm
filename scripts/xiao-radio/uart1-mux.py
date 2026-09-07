@@ -16,6 +16,7 @@ Run as root, every boot (installed as the ``uart1-radio-mux`` systemd service by
 ``lyra-setup.sh``). Idempotent. After it runs, the XIAO radio is reachable at
 ``/dev/ttyS1`` @ 115200 8N1.
 """
+
 import mmap
 import os
 import struct

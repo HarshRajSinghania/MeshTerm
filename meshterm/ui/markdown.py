@@ -333,9 +333,7 @@ def _list(node: SyntaxTreeNode, *, depth: int) -> RenderableType:
     ]
     width = max(cell_len(marker) for marker in markers) + 1 if markers else 0
     loose = any(
-        child.type == "paragraph" and not child.hidden
-        for item in items
-        for child in item.children
+        child.type == "paragraph" and not child.hidden for item in items for child in item.children
     )
 
     rows: list[RenderableType] = []
@@ -371,13 +369,13 @@ def _table(node: SyntaxTreeNode) -> Table:
     body = next((child for child in node.children if child.type == "tbody"), None)
     header_cells = head.children[0].children if head and head.children else []
     for cell in header_cells:
-        table.add_column(_inline(cell.children[0]) if cell.children else Text(),
-                         justify=_justify(cell))
+        table.add_column(
+            _inline(cell.children[0]) if cell.children else Text(), justify=_justify(cell)
+        )
     for row in body.children if body else []:
-        table.add_row(*(
-            _inline(cell.children[0]) if cell.children else Text()
-            for cell in row.children
-        ))
+        table.add_row(
+            *(_inline(cell.children[0]) if cell.children else Text() for cell in row.children)
+        )
     return table
 
 
@@ -411,9 +409,7 @@ def _inline(node: SyntaxTreeNode, *, style: str = "", heading: bool = False) -> 
     return text
 
 
-def _append(
-    text: Text, nodes: Sequence[SyntaxTreeNode], *, style: str, heading: bool
-) -> None:
+def _append(text: Text, nodes: Sequence[SyntaxTreeNode], *, style: str, heading: bool) -> None:
     """Append each inline node to ``text``, in the style its mark calls for."""
     for node in nodes:
         kind = node.type
@@ -422,8 +418,7 @@ def _append(
         elif kind == "strong":
             _append(text, node.children, style="md.strong", heading=heading)
         elif kind == "em":
-            _append(text, node.children, style="muted" if heading else "md.em",
-                    heading=heading)
+            _append(text, node.children, style="muted" if heading else "md.em", heading=heading)
         elif kind == "s":
             _append(text, node.children, style="md.strike", heading=heading)
         elif kind == "code_inline":
@@ -455,9 +450,7 @@ def _append_text(text: Text, content: str, *, style: str, heading: bool) -> None
         text.append(content, style=style or None)
 
 
-def _append_link(
-    text: Text, node: SyntaxTreeNode, *, style: str, heading: bool
-) -> None:
+def _append_link(text: Text, node: SyntaxTreeNode, *, style: str, heading: bool) -> None:
     """Append a link: its text, then its target unless the text already says it.
 
     Nothing here is clickable — one of the two platforms is a framebuffer console — so a
@@ -483,7 +476,7 @@ def _display_url(href: str) -> str:
         return ""
     for noise in _URL_NOISE:
         if href.lower().startswith(noise):
-            href = href[len(noise):]
+            href = href[len(noise) :]
             break
     if href.lower().startswith("www."):
         href = href[4:]

@@ -101,9 +101,7 @@ class ArchivedScreen(ContactListScreen):
             rows=rows,
             prefix_bytes=prefix_bytes,
             sort=sort,
-            prompt=(
-                "Off the device, kept here with their history. Open one to restore it."
-            ),
+            prompt=("Off the device, kept here with their history. Open one to restore it."),
             footer_hint=_HINT,
             lanes=ARCHIVED_LANES,
         )
@@ -135,9 +133,7 @@ async def open_archived(ctx: AppContext, self_key: str, prefix_bytes: int) -> bo
     session = ctx.ui.session
     store = ctx.contact_store
     dev_pub = (self_key or "").lower().removeprefix("0x")
-    sort = ContactsSort.from_name(
-        "archived", ARCHIVED_SORT_COLUMNS, ARCHIVED_SORT_OPENS_ASCENDING
-    )
+    sort = ContactsSort.from_name("archived", ARCHIVED_SORT_COLUMNS, ARCHIVED_SORT_OPENS_ASCENDING)
     changed = False
     while True:
         rows = archived_rows(store.archived(dev_pub) if store and dev_pub else [])

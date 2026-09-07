@@ -172,9 +172,7 @@ async def _login(ctx: AppContext, device: Device, node: Contact) -> bool:
     return True
 
 
-async def _admin_session(
-    ctx: AppContext, device: Device, node: Contact
-) -> dict[str, Any]:
+async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict[str, Any]:
     """Run the editor loop for one logged-in node.
 
     One screen for the whole session, its rows refreshed in place after every action: they
@@ -192,7 +190,8 @@ async def _admin_session(
     cache = ctx.remote_store.settings(node)
     title, items = _menu_items(node, cache, pending)
     menu = SelectScreen(
-        title, items,
+        title,
+        items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:
@@ -213,14 +212,20 @@ async def _admin_session(
                 await _command_line(ctx, device, node)
             elif choice == _ADVERT:
                 await _simple_action(
-                    ctx, device, node, "advert",
+                    ctx,
+                    device,
+                    node,
+                    "advert",
                     title="Send advert",
                     prompt=f"Ask {node.name} to announce itself (flood) now?",
                     commit="Send",
                 )
             elif choice == _CLOCK:
                 await _simple_action(
-                    ctx, device, node, "clock sync",
+                    ctx,
+                    device,
+                    node,
+                    "clock sync",
                     title="Sync clock",
                     prompt=f"Set {node.name}'s clock from this companion's time?",
                     commit="Sync",
@@ -229,7 +234,10 @@ async def _admin_session(
                 await _change_password(ctx, device, node)
             elif choice == _REBOOT:
                 await _simple_action(
-                    ctx, device, node, "reboot",
+                    ctx,
+                    device,
+                    node,
+                    "reboot",
                     title="Reboot node",
                     prompt=f"Reboot {node.name} now? It drops off the mesh while booting.",
                     commit="Reboot",
@@ -247,9 +255,7 @@ async def _admin_session(
 # --- the menu ------------------------------------------------------------------------
 
 
-def _menu_items(
-    node: Contact, cache: dict, pending: dict[str, str]
-) -> tuple[str, list]:
+def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[str, list]:
     """Build the editor menu's title and rows for the cache + staged state.
 
     The same lane layout as the local device-configuration editor — setting, value
@@ -269,9 +275,7 @@ def _menu_items(
     # The same pinned, self-fitting header the local editor heads its lanes with: it stays
     # on screen under the category headings for the whole list, and abbreviates instead of
     # wrapping when a long cached value leaves the last label no room (menus.lane_header).
-    items: list = [
-        Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)
-    ]
+    items: list = [Separator(lambda w: lane_header(label_w, value_w, w), pinned=True)]
     for category, rows in sections:
         items.append(section_heading(category))
         for label, value, help_text, key in rows:
@@ -320,9 +324,7 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
 # --- staging and applying ---------------------------------------------------------
 
 
-async def _stage_setting(
-    ctx: AppContext, key: str, cache: dict, pending: dict[str, str]
-) -> None:
+async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[str, str]) -> None:
     """Prompt for one setting's new value and stage it (nothing is sent yet)."""
     from ..core.remote_config import get_setting, validate_value
 
@@ -368,9 +370,7 @@ async def _stage_setting(
         pending[key] = value
 
 
-async def _apply(
-    ctx: AppContext, device: Device, node: Contact, pending: dict[str, str]
-) -> int:
+async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[str, str]) -> int:
     """Send every staged ``set`` command, paced, under an abortable progress dialog.
 
     Each confirmed value folds straight into the per-node cache; a rejected or
@@ -408,19 +408,20 @@ async def _apply(
                 applied += 1
                 outcomes.append(Text.assemble(("✓ ", "ok"), f"{spec.label} = {value}"))
             elif reply is None:
-                outcomes.append(Text.assemble(
-                    ("? ", "warn"), f"{spec.label} — no reply (still staged)"
-                ))
+                outcomes.append(
+                    Text.assemble(("? ", "warn"), f"{spec.label} — no reply (still staged)")
+                )
             else:
-                outcomes.append(Text.assemble(
-                    ("✗ ", "err"), f"{spec.label} — {reply.strip()} (still staged)"
-                ))
+                outcomes.append(
+                    Text.assemble(("✗ ", "err"), f"{spec.label} — {reply.strip()} (still staged)")
+                )
             if i < total:
                 await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Applying — {node.name}", work)
     ctx.repo.finish_run(
-        run_id, "error" if aborted else "ok",
+        run_id,
+        "error" if aborted else "ok",
         {"applied": applied, "staged_left": len(pending)},
     )
     summary = Text.assemble(
@@ -464,9 +465,7 @@ async def _read_all(ctx: AppContext, device: Device, node: Contact) -> None:
                 await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Reading — {node.name}", work)
-    ctx.repo.finish_run(
-        run_id, "error" if aborted else "ok", {"read": read, "asked": len(specs)}
-    )
+    ctx.repo.finish_run(run_id, "error" if aborted else "ok", {"read": read, "asked": len(specs)})
 
 
 async def _run_under_dialog(ctx: AppContext, title: str, work) -> bool:
@@ -567,9 +566,7 @@ async def _change_password(ctx: AppContext, device: Device, node: Contact) -> No
     if confirmed != "go":
         return
     async with ctx.ui.busy_overlay():
-        reply = await device.send_remote_command(
-            node, f"password {new}", timeout=_REPLY_TIMEOUT_S
-        )
+        reply = await device.send_remote_command(node, f"password {new}", timeout=_REPLY_TIMEOUT_S)
     if reply is not None and not reply_is_error(reply):
         ctx.admin_store.remember(node, new)  # the working password just changed
         body = Text("✓ password changed and remembered", style="ok")
@@ -605,9 +602,7 @@ async def _command_line(ctx: AppContext, device: Device, node: Contact) -> None:
 
     async def roundtrip(command: str) -> None:
         try:
-            reply = await device.send_remote_command(
-                node, command, timeout=_REPLY_TIMEOUT_S
-            )
+            reply = await device.send_remote_command(node, command, timeout=_REPLY_TIMEOUT_S)
         except asyncio.CancelledError:
             screen.failed("cancelled", error=False)
             raise

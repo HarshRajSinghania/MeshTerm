@@ -34,11 +34,7 @@ def test_both_themes_define_exactly_the_same_style_names() -> None:
 
 def _our_styles(theme_obj):
     """The style entries we declared (Rich merges its own DEFAULT_STYLES into a Theme)."""
-    return {
-        name: style
-        for name, style in theme_obj.styles.items()
-        if name not in DEFAULT_STYLES
-    }
+    return {name: style for name, style in theme_obj.styles.items() if name not in DEFAULT_STYLES}
 
 
 def test_theme16_uses_only_the_sixteen_slots() -> None:
@@ -78,8 +74,10 @@ def test_theme16_dim_slot_styles_all_answer_the_bold_question() -> None:
     silent = [
         name
         for name, style in _our_styles(MESH_THEME_16).items()
-        if style.color is not None and style.color.number is not None
-        and style.color.number <= 7 and style.bold is None
+        if style.color is not None
+        and style.color.number is not None
+        and style.color.number <= 7
+        and style.bold is None
     ]
     assert not silent, (
         f"dim-slot styles that would inherit a row's bold and change colour: {silent}"
@@ -99,8 +97,12 @@ def test_unknown_node_grey_survives_a_selected_row() -> None:
 
     set_platform(PICOCALC)
     console = Console(
-        theme=MESH_THEME_16, width=20, file=StringIO(),
-        force_terminal=True, color_system="standard", highlight=False,
+        theme=MESH_THEME_16,
+        width=20,
+        file=StringIO(),
+        force_terminal=True,
+        color_system="standard",
+        highlight=False,
     )
     for base in (None, "cursor"):  # unselected row, then the bold cursor row
         row = Text("  ")
@@ -272,7 +274,10 @@ def test_route_graph_resolves_a_named_marker_colour_to_rgb() -> None:
     for platform in (REGULAR, PICOCALC):
         set_platform(platform)
         _glyph_of, _label_of, label_rgb_of = route_graph_style(
-            resolve=lambda hop: None, self_name="Me", source="Alice", type_of=lambda hop: 2,
+            resolve=lambda hop: None,
+            self_name="Me",
+            source="Alice",
+            type_of=lambda hop: 2,
         )
         assert label_rgb_of("3d63") == theme.mark_rgb("type.repeater"), platform.name
 
@@ -382,8 +387,12 @@ def test_specimen_renders_clean_on_picocalc() -> None:
 
     set_platform(PICOCALC)
     console = Console(
-        theme=MESH_THEME_16, width=53, file=StringIO(),
-        force_terminal=True, color_system="standard", highlight=False,
+        theme=MESH_THEME_16,
+        width=53,
+        file=StringIO(),
+        force_terminal=True,
+        color_system="standard",
+        highlight=False,
     )
     with console.capture() as capture:
         for line in specimen_lines():
@@ -504,9 +513,11 @@ def test_mark_constants_reexport_from_their_old_hosts() -> None:
     from meshterm.ui.pathgraph import DST_NODE, SRC_NODE, GlyphOf, LabelOf, LabelRgbOf
 
     assert (_SELF, _REPEATER, _NODE, _UNKNOWN) == (
-        SELF_MARK, REPEATER_MARK, NODE_MARK, UNKNOWN_MARK,
+        SELF_MARK,
+        REPEATER_MARK,
+        NODE_MARK,
+        UNKNOWN_MARK,
     )
     assert parse_hex("#facc15") == (0xFA, 0xCC, 0x15)
     assert RGB is not None and SRC_NODE and DST_NODE
     assert GlyphOf is not None and LabelOf is not None and LabelRgbOf is not None
-

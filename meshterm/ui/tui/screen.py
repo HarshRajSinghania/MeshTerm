@@ -325,9 +325,7 @@ class Screen:
 
     def scroll_lines(self, delta: int) -> None:
         """Scroll by ``delta`` lines, clamped to the last-recorded content bounds."""
-        self.scroll = _clamp_scroll(
-            self.scroll + delta, self._scroll_total, self._scroll_viewport
-        )
+        self.scroll = _clamp_scroll(self.scroll + delta, self._scroll_total, self._scroll_viewport)
 
     def scroll_pages(self, pages: int) -> None:
         """Scroll by ``pages`` screenfuls (negative scrolls up)."""
@@ -501,9 +499,7 @@ class ListWindow:
         self.page = count
         return top, count
 
-    def fit_blocks(
-        self, heights: list[int], win: int, index: int | None = None
-    ) -> tuple[int, int]:
+    def fit_blocks(self, heights: list[int], win: int, index: int | None = None) -> tuple[int, int]:
         """Settle the window over variable-height rows: ``(top, count)`` blocks to draw.
 
         The hanging-wrap sibling of :meth:`fit`, for a list whose rows are *blocks* of

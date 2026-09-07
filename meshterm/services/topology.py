@@ -357,9 +357,7 @@ class MeshTopology:
         cached = self._name_memo.get(node, _MISS)
         if cached is not _MISS:
             return cached
-        result = next(
-            (name for _key, canonical, name in self._known if canonical == node), None
-        )
+        result = next((name for _key, canonical, name in self._known if canonical == node), None)
         self._name_memo[node] = result
         return result
 
@@ -402,9 +400,7 @@ class MeshTopology:
             snr = snrs[i] if snrs and i < len(snrs) else None
             if snr is not None:
                 link.snrs.append(snr)
-            if when is not None and (
-                link.last_seen is None or when > link.last_seen
-            ):
+            if when is not None and (link.last_seen is None or when > link.last_seen):
                 link.last_seen = when
 
     def coalesce_prefixes(self) -> None:
@@ -478,9 +474,8 @@ class MeshTopology:
             if not shorts:
                 return
             ordered = sorted(adjacency)
-            merge = (
-                self._next_prefix_merge(shorts, ordered)
-                or self._next_corroborated_merge(shorts, ordered, adjacency)
+            merge = self._next_prefix_merge(shorts, ordered) or self._next_corroborated_merge(
+                shorts, ordered, adjacency
             )
             if merge is None:
                 return
@@ -490,9 +485,7 @@ class MeshTopology:
         """Every node id that currently appears as a link endpoint."""
         return set(chain.from_iterable(self._links))
 
-    def _next_prefix_merge(
-        self, shorts: list[str], ordered: list[str]
-    ) -> tuple[str, str] | None:
+    def _next_prefix_merge(self, shorts: list[str], ordered: list[str]) -> tuple[str, str] | None:
         """The next ``(short, long)`` pair to fold, or ``None`` when none remains.
 
         A short id (under a full 6-byte canonical width) folds when the graph's longer
@@ -574,7 +567,8 @@ class MeshTopology:
         for short in shorts:
             exts = self._extensions(short, ordered)
             candidates = [
-                ext for ext in exts
+                ext
+                for ext in exts
                 if not any(other != ext and other.startswith(ext) for other in exts)
             ]
             if len(candidates) < 2:  # settled (or ignored) by the certain pass
@@ -659,9 +653,12 @@ class MeshTopology:
             existing = self._links.get(new_key)
             if existing is None:
                 self._links[new_key] = Link(
-                    a=new_key[0], b=new_key[1],
-                    samples=link.samples, snrs=list(link.snrs),
-                    last_seen=link.last_seen, sources=set(link.sources),
+                    a=new_key[0],
+                    b=new_key[1],
+                    samples=link.samples,
+                    snrs=list(link.snrs),
+                    last_seen=link.last_seen,
+                    sources=set(link.sources),
                 )
             else:
                 existing.samples += link.samples
@@ -756,8 +753,12 @@ class MeshTopology:
             score, weakest, samples = self._score_route(hops, target)
             out.append(
                 PathScenario(
-                    label=label, hops=hops, source=source, score=score,
-                    weakest_snr=weakest, samples=samples,
+                    label=label,
+                    hops=hops,
+                    source=source,
+                    score=score,
+                    weakest_snr=weakest,
+                    samples=samples,
                 )
             )
 
@@ -805,9 +806,7 @@ class MeshTopology:
 
     # --- internals -----------------------------------------------------------------
 
-    def _score_route(
-        self, hops: tuple[str, ...], target: str
-    ) -> tuple[float, float | None, int]:
+    def _score_route(self, hops: tuple[str, ...], target: str) -> tuple[float, float | None, int]:
         """Score one outbound route by its weakest observed link.
 
         A chain is only as reliable as its weakest link, so the route's score is the
@@ -1019,9 +1018,7 @@ def build_topology(
             continue
         contact_id = topo.canonical(contact.public_key or contact.key_prefix)
         route = [topo.canonical(h) for h in contact.route_hops]
-        topo.add_walk(
-            [us, *route, contact_id], when=contact.last_seen, source="route"
-        )
+        topo.add_walk([us, *route, contact_id], when=contact.last_seen, source="route")
 
     for packet in packet_paths:
         nodes = []

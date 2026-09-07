@@ -125,7 +125,9 @@ class ChatScreen(Screen):
         lane[4] = FPair("Page ↑", "pageup", "Oldest", "ctrl_home", enabled=live, opp_enabled=live)
         retry = ("Retry", "retry") if not self._is_channel else ("", "")
         lane[2] = FPair(
-            "Paths", "paths", *retry,
+            "Paths",
+            "paths",
+            *retry,
             enabled=self._selected is not None and self._paths is not None,
             opp_enabled=self._retry_target() is not None,
         )
@@ -171,7 +173,8 @@ class ChatScreen(Screen):
         # even when the resolver can't place the display name.
         contact = conversation.contact
         self._peer_key = (
-            "" if conversation.is_channel or contact is None
+            ""
+            if conversation.is_channel or contact is None
             else (contact.public_key or contact.key_prefix or "")
         )
         self._messages = list(messages)
@@ -549,13 +552,9 @@ class ChatScreen(Screen):
                 f"↩ Enter to reply to {who} with an @mention · End to cancel",
                 style="accent",
             )
-        return Text(
-            "Enter to see the paths this message took · End to cancel", style="accent"
-        )
+        return Text("Enter to see the paths this message took · End to cancel", style="accent")
 
-    def _sender_style(
-        self, sender: str, *, is_self: bool = False, mention: bool = False
-    ) -> str:
+    def _sender_style(self, sender: str, *, is_self: bool = False, mention: bool = False) -> str:
         """Pick a stable color for a sender name — keyed on the sender's node key.
 
         Our own messages are white — keyed on ``is_self`` (the message being outbound), not
@@ -703,8 +702,7 @@ class ChatScreen(Screen):
             try:
                 confirmed = await self._session.button_dialog(
                     Text(
-                        f"Paste {count} character{'s' if count != 1 else ''} "
-                        "into your message?",
+                        f"Paste {count} character{'s' if count != 1 else ''} into your message?",
                         style="warn",
                     ),
                     [("Cancel", False), ("Paste", True)],
@@ -1009,9 +1007,7 @@ async def open_chat(ctx: AppContext, conversation: Conversation) -> int:
                 conversation.channel_idx, text, label=conversation.label
             )
         assert conversation.contact is not None
-        return await _with_restore(
-            ctx, lambda: ctx.chat.send_direct(conversation.contact, text)
-        )
+        return await _with_restore(ctx, lambda: ctx.chat.send_direct(conversation.contact, text))
 
     resend: Callable[[ChatMessage], Awaitable[ChatMessage]] | None = None
     if not conversation.is_channel:
@@ -1225,7 +1221,8 @@ async def _make_paths_presenter(
                 f"heard {len(arrivals)} time{'s' if len(arrivals) != 1 else ''}"
                 f" · {distinct_paths(arrivals)} distinct "
                 f"path{'s' if distinct_paths(arrivals) != 1 else ''}"
-                if arrivals else "no copies in the packet log"
+                if arrivals
+                else "no copies in the packet log"
             )
         elif conversation.is_channel:
             await session.scroll(
@@ -1255,7 +1252,8 @@ async def _make_paths_presenter(
                 summary = (
                     f"heard {heard} time{'s' if heard != 1 else ''}"
                     f" · {len(arrivals)} distinct path{'s' if len(arrivals) != 1 else ''}"
-                    if arrivals else "no copies in the packet log"
+                    if arrivals
+                    else "no copies in the packet log"
                 )
             else:
                 summary = (
@@ -1281,10 +1279,17 @@ async def _make_paths_presenter(
             source = conversation.label
         await session.run_screen(
             MessagePathsScreen(
-                message, arrivals, matched=matched, resolve=resolve,
-                prefix_bytes=prefix_bytes, self_name=self_name, summary=summary,
-                source=source or None, destination=destination or None,
-                type_of=type_of, key_of=key_of,
+                message,
+                arrivals,
+                matched=matched,
+                resolve=resolve,
+                prefix_bytes=prefix_bytes,
+                self_name=self_name,
+                summary=summary,
+                source=source or None,
+                destination=destination or None,
+                type_of=type_of,
+                key_of=key_of,
             )
         )
 

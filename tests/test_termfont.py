@@ -83,12 +83,12 @@ def test_read_jsonc_survives_comments_and_trailing_commas(tmp_path: Path) -> Non
     """Both WT and VS Code write JSON-with-comments; the reader shrugs it off."""
     path = tmp_path / "settings.json"
     path.write_text(
-        '{\n'
-        '  // the font\n'
+        "{\n"
+        "  // the font\n"
         '  "editor.fontFamily": "Hack NFM", /* inline */\n'
         '  "url": "https://example.org//not-a-comment",\n'
         '  "list": [1, 2,],\n'
-        '}\n',
+        "}\n",
         encoding="utf-8",
     )
     data = _read_jsonc(path)
@@ -112,32 +112,40 @@ def _wt_env(tmp_path: Path, settings: dict, guid: str = "{abc-123}") -> dict:
 
 def test_windows_terminal_face_resolves_profile_then_defaults(tmp_path: Path) -> None:
     """The session profile's ``font.face`` wins; ``profiles.defaults`` backs it up."""
-    env = _wt_env(tmp_path, {
-        "profiles": {
-            "defaults": {"font": {"face": "Cascadia Code PL"}},
-            "list": [{"guid": "{ABC-123}", "font": {"face": "Hack Nerd Font Mono"}}],
+    env = _wt_env(
+        tmp_path,
+        {
+            "profiles": {
+                "defaults": {"font": {"face": "Cascadia Code PL"}},
+                "list": [{"guid": "{ABC-123}", "font": {"face": "Hack Nerd Font Mono"}}],
+            },
         },
-    })
+    )
     assert _windows_terminal_face(env) == "Hack Nerd Font Mono"  # guid case-folded
-    env2 = _wt_env(tmp_path, {
-        "profiles": {
-            "defaults": {"font": {"face": "Cascadia Code PL"}},
-            "list": [{"guid": "{other}"}],
+    env2 = _wt_env(
+        tmp_path,
+        {
+            "profiles": {
+                "defaults": {"font": {"face": "Cascadia Code PL"}},
+                "list": [{"guid": "{other}"}],
+            },
         },
-    })
+    )
     assert _windows_terminal_face(env2) == "Cascadia Code PL"
 
 
 def test_windows_terminal_face_reads_legacy_and_defaults_to_cascadia(tmp_path: Path) -> None:
     """The old flat ``fontFace`` key still counts; nothing set means the built-in."""
-    env = _wt_env(tmp_path, {
-        "profiles": {"list": [{"guid": "{abc-123}", "fontFace": "MesloLGS NF"}]},
-    })
+    env = _wt_env(
+        tmp_path,
+        {
+            "profiles": {"list": [{"guid": "{abc-123}", "fontFace": "MesloLGS NF"}]},
+        },
+    )
     assert _windows_terminal_face(env) == "MesloLGS NF"
     env2 = _wt_env(tmp_path, {"profiles": {"list": [{"guid": "{abc-123}"}]}})
     assert _windows_terminal_face(env2) == "Cascadia Mono"
-    assert _windows_terminal_face({"LOCALAPPDATA": str(tmp_path / "nowhere")}) \
-        == "Cascadia Mono"
+    assert _windows_terminal_face({"LOCALAPPDATA": str(tmp_path / "nowhere")}) == "Cascadia Mono"
 
 
 def test_vscode_face_precedence_terminal_over_editor_workspace_over_user(
@@ -179,9 +187,7 @@ def test_detect_terminal_font_ladder(tmp_path: Path) -> None:
     """
     wt = detect_terminal_font(_wt_env(tmp_path, {"profiles": {"list": []}}))
     assert wt is not None and wt.source == "windows-terminal"
-    code = detect_terminal_font(
-        {"TERM_PROGRAM": "vscode", "APPDATA": str(tmp_path)}, cwd=tmp_path
-    )
+    code = detect_terminal_font({"TERM_PROGRAM": "vscode", "APPDATA": str(tmp_path)}, cwd=tmp_path)
     assert code is not None and code.source == "vscode"
     con = detect_terminal_font({}, conhost_probe=lambda: "Consolas")
     assert con is not None and (con.face, con.source) == ("Consolas", "conhost")
@@ -199,10 +205,12 @@ def test_powerline_support_env_override_always_wins() -> None:
 
 def test_powerline_support_matched_font_sets_the_level(tmp_path: Path) -> None:
     """A recommended face read from the terminal's own config decides coverage."""
-    env = _wt_env(tmp_path, {
-        "profiles": {"list": [{"guid": "{abc-123}",
-                               "font": {"face": "Hack Nerd Font Mono"}}]},
-    })
+    env = _wt_env(
+        tmp_path,
+        {
+            "profiles": {"list": [{"guid": "{abc-123}", "font": {"face": "Hack Nerd Font Mono"}}]},
+        },
+    )
     verdict = _powerline_support(env)
     assert verdict.level == FULL
     assert verdict.source == "font:windows-terminal"

@@ -233,9 +233,7 @@ def _menu_items(ctx: AppContext, entries: list[QueuedMessage]) -> list:
     if not waiting:
         items.append(Separator("  empty — queued messages wait here for their moment"))
     for message in waiting:
-        items.append(
-            Choice(lambda m=message: _waiting_row(ctx, m), ("msg", message.ident))
-        )
+        items.append(Choice(lambda m=message: _waiting_row(ctx, m), ("msg", message.ident)))
     items.append(Separator(" "))  # space the action off the outbox rows above it
     items.append(Choice(f"{glyph('📨')} Queue a message…", _QUEUE))
 
@@ -254,7 +252,7 @@ def _waiting_row(ctx: AppContext, message: QueuedMessage) -> Text:
     row = Text()
     row.append("⏳ ", style="warn")
     row.append(message.node_name)
-    row.append(f'  “{_shorten(message.text)}”', style="muted")
+    row.append(f"  “{_shorten(message.text)}”", style="muted")
     row.append("  ·  ", style="muted")
     now = utcnow()
     if message.not_before is not None and now < message.not_before:
@@ -283,7 +281,7 @@ def _done_row(message: QueuedMessage) -> Text:
     else:
         row.append("✗ ", style="err")
     row.append(message.node_name, style="muted")
-    row.append(f'  “{_shorten(message.text)}”', style="muted")
+    row.append(f"  “{_shorten(message.text)}”", style="muted")
     when = message.finished or message.created
     verb = "delivered" if message.status == DELIVERED else "gave up"
     row.append(
@@ -473,7 +471,9 @@ async def _pick_schedule(ctx: AppContext, name: str):
             Choice("At a time… (HH:MM, next occurrence)", "custom"),
         ]
         picked = await session.select(
-            f"When should {name} get it?", items, filterable=False,
+            f"When should {name} get it?",
+            items,
+            filterable=False,
             footer_hint="↑↓ move · Enter select · Esc cancel",
         )
         if picked is None:
@@ -519,7 +519,8 @@ async def _entry_actions(ctx: AppContext, ident: int) -> None:
     ]
     picked = await session.select(
         f"{message.node_name} — “{_shorten(message.text, 28)}”",
-        items, filterable=False,
+        items,
+        filterable=False,
         footer_hint="↑↓ move · Enter select · Esc back",
     )
     if picked == "cancel":
@@ -529,24 +530,21 @@ async def _entry_actions(ctx: AppContext, ident: int) -> None:
             async with ctx.ui.busy_overlay(f"sending to {message.node_name}…"):
                 outcome = await ctx.courier.attempt_now(ident)
         except Exception as exc:  # noqa: BLE001 - surface the failure, keep the queue
-            await session.message_dialog(
-                Text(f"send failed: {exc}", style="err"), title="Courier"
-            )
+            await session.message_dialog(Text(f"send failed: {exc}", style="err"), title="Courier")
             return
         notes = {
             "delivered": Text("✓ delivered — acknowledged by the contact", style="ok"),
             "no ack": Text(
                 "sent, but no acknowledgement — it stays queued and the courier "
-                "will retry with backoff", style="warn",
+                "will retry with backoff",
+                style="warn",
             ),
             "gave up": Text("no acknowledgement — the retry budget is spent", style="err"),
             "unknown contact": Text(
-                "the device's contact list doesn't know this contact yet; "
-                "it stays queued", style="warn",
+                "the device's contact list doesn't know this contact yet; it stays queued",
+                style="warn",
             ),
             "busy": Text("another delivery is in flight — try again in a moment", style="muted"),
             "gone": Text("this entry is no longer queued", style="muted"),
         }
-        await session.message_dialog(
-            notes.get(outcome, Text(outcome)), title="Courier"
-        )
+        await session.message_dialog(notes.get(outcome, Text(outcome)), title="Courier")

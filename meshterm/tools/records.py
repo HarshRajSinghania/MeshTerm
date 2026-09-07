@@ -112,8 +112,9 @@ class TrophyCaseTool(Tool):
                 total += 1
             ctx.ui.show(table)
         if total == 0:
-            ctx.ui.show(Text("no records yet — every trace that comes home is scored here",
-                             style="muted"))
+            ctx.ui.show(
+                Text("no records yet — every trace that comes home is scored here", style="muted")
+            )
         return ToolResult(
             summary={"records": total},
             message=f"{total} record{'s' if total != 1 else ''} stored",

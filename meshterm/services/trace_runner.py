@@ -146,11 +146,7 @@ def make_key_resolver(contacts: list[Contact] | None) -> NodeResolver:
         A callable taking a stored key prefix and returning the full public key of the
         contact whose key begins with it, or the prefix unchanged when none matches.
     """
-    keys = [
-        pub
-        for c in contacts or []
-        if (pub := (c.public_key or "").lower().removeprefix("0x"))
-    ]
+    keys = [pub for c in contacts or [] if (pub := (c.public_key or "").lower().removeprefix("0x"))]
 
     memo: dict[str, str] = {}  # per label, as in make_node_resolver
 
@@ -268,9 +264,7 @@ def parse_trace_path(spec: str, contacts: list[Contact] | None = None) -> str:
     for text, is_name in tokens:
         hop = text[:width] if is_name else text
         if len(hop) != width or any(ch not in _HEX_DIGITS for ch in hop):
-            raise ValueError(
-                f"{text!r} is not a known contact or a {width // 2}-byte hex prefix"
-            )
+            raise ValueError(f"{text!r} is not a known contact or a {width // 2}-byte hex prefix")
         hops.append(hop)
     return ",".join(hops)
 

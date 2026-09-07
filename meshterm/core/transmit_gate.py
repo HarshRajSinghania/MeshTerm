@@ -79,9 +79,7 @@ class TransmitGate:
         preferences = current_preferences()
         wait = _left(self._last_sent, preferences.trace_cooldown_s)
         if flood_advert:
-            wait = max(
-                wait, _left(self._last_flood_advert, preferences.flood_advert_cooldown_s)
-            )
+            wait = max(wait, _left(self._last_flood_advert, preferences.flood_advert_cooldown_s))
         return wait
 
     def reset(self) -> None:

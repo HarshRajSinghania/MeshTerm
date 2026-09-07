@@ -44,8 +44,9 @@ def _make_trace(
 def test_record_and_hydrate_preserves_all_fields(repo: Repository) -> None:
     """Every TraceResult field survives a write→read cycle."""
     ts = datetime(2026, 6, 1, 8, 30, 0, tzinfo=timezone.utc)
-    trace = _make_trace("Alice", ("relay", 3.5), ("Alice", -2.0), (None, 1.0),
-                        rtt=88.5, tx=7, ts=ts)
+    trace = _make_trace(
+        "Alice", ("relay", 3.5), ("Alice", -2.0), (None, 1.0), rtt=88.5, tx=7, ts=ts
+    )
     run = repo.start_run("trace", {})
     repo.record_trace(run, trace)
 

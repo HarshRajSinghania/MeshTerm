@@ -149,9 +149,7 @@ class MonitorService:
         stamp = self._activity_stamp
         cached_bucket, cached_stamp, histogram = self._histogram_cache
         if bucket != cached_bucket or stamp != cached_stamp:
-            histogram = tuple(
-                self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS)
-            )
+            histogram = tuple(self._activity.get(bucket - i, 0) for i in range(ACTIVITY_BUCKETS))
             self._histogram_cache = (bucket, stamp, histogram)
         return histogram
 

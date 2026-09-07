@@ -140,8 +140,10 @@ class DeviceState:
                 a second identical round-trip.
         """
         async with self._contacts_lock:
-            if not force and self._contacts is not None and (
-                time.monotonic() - self._contacts_at <= _CONTACTS_TTL_S
+            if (
+                not force
+                and self._contacts is not None
+                and (time.monotonic() - self._contacts_at <= _CONTACTS_TTL_S)
             ):
                 return self._contacts
             device = await self._ctx.device()

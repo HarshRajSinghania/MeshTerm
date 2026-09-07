@@ -140,9 +140,7 @@ class TraceTool(Tool):
             target = await self._prompt_target(ctx)
             if target is None:
                 return ToolResult(summary={})
-            return ToolResult(
-                summary={"sessions": 1, "traces": await open_trace(ctx, target)}
-            )
+            return ToolResult(summary={"sessions": 1, "traces": await open_trace(ctx, target)})
 
         picker, contacts = built
         sessions = 0
@@ -215,9 +213,7 @@ class TraceTool(Tool):
             "Trace target — pick a target",
             rows=self._picker_rows(ctx, contacts),
             prefix_bytes=await _routing_prefix_bytes(ctx),
-            sort=ContactsSort.from_name(
-                "traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING
-            ),
+            sort=ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING),
             footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
             lanes=TRACE_LANES,
         )
@@ -428,9 +424,7 @@ async def _trace_once_cli(
         ctx.ui.note("[muted]path: auto (device-routed)[/muted]")
 
     with ctx.ui.progress("trace") as progress:
-        task = progress.add_task(
-            "walking the path" if is_walk else f"tracing {target}", total=1
-        )
+        task = progress.add_task("walking the path" if is_walk else f"tracing {target}", total=1)
         result = await device.run_trace(target, path=path)
         ctx.repo.record_trace(run_id, result)
         progress.advance(task)

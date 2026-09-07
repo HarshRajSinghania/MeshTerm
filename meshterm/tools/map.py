@@ -44,6 +44,7 @@ def _fraction(ctx: AppContext, params: dict[str, Any]) -> float:
     fraction = params.get("fraction")
     return ctx.preferences.map_view_fraction if fraction is None else float(fraction)
 
+
 if TYPE_CHECKING:
     from ..ui.map_render import MapMarker
 
@@ -97,7 +98,9 @@ class MapTool(Tool):
                 "nodes": len(markers) - repeaters - (1 if self_located else 0),
                 "self_located": self_located,
             },
-            message=None if interactive else (
+            message=None
+            if interactive
+            else (
                 f"[ok]✓[/ok] mapped [brand]{len(markers)}[/brand] located nodes "
                 f"([accent]{repeaters}[/accent] repeaters)"
             ),
@@ -184,7 +187,9 @@ class MapTool(Tool):
             if fraction is not None and not 0.0 < fraction <= 1.0:
                 raise typer.BadParameter("--fraction must be greater than 0 and at most 1")
             params: dict[str, Any] = {
-                "static": True, "basemap": basemap, "fraction": fraction,
+                "static": True,
+                "basemap": basemap,
+                "fraction": fraction,
             }
             if width is not None:
                 params["width"] = width

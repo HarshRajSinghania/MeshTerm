@@ -100,9 +100,7 @@ class CourierService:
 
         self._unsubscribe = self._ctx.events.subscribe(on_event, EventKind.OBSERVATION)
         self._task = asyncio.ensure_future(self._run())
-        self._ctx.log.info(
-            "courier started (%d queued)", self._ctx.courier_store.pending_count()
-        )
+        self._ctx.log.info("courier started (%d queued)", self._ctx.courier_store.pending_count())
 
     async def stop(self) -> None:
         """Stop the loop and the subscription. Idempotent."""
@@ -216,32 +214,32 @@ class CourierService:
             if contact is None:
                 # Not addressable (yet): the device doesn't know the contact. Leave the
                 # entry waiting — no budget spent on a send that can't happen.
-                self._ctx.log.debug(
-                    "courier: no contact for %r; leaving queued", message.node_name
-                )
+                self._ctx.log.debug("courier: no contact for %r; leaving queued", message.node_name)
                 return "unknown contact"
             store.note_attempt(message.ident)
             chat = await self._ctx.chat.send_direct(contact, message.text)
             if chat.acked:
                 store.mark_delivered(message.ident)
                 self._ctx.watch_store.add_alert(
-                    "courier", message.node_name,
-                    f"delivered “{_preview(message.text)}” "
-                    f"(attempt {message.attempts})",
+                    "courier",
+                    message.node_name,
+                    f"delivered “{_preview(message.text)}” (attempt {message.attempts})",
                 )
                 self._ctx.log.info("courier: delivered to %s", message.node_name)
                 return "delivered"
             if message.attempts >= MAX_ATTEMPTS:
                 store.mark_gave_up(message.ident)
                 self._ctx.watch_store.add_alert(
-                    "courier", message.node_name,
-                    f"gave up on “{_preview(message.text)}” "
-                    f"after {message.attempts} attempts",
+                    "courier",
+                    message.node_name,
+                    f"gave up on “{_preview(message.text)}” after {message.attempts} attempts",
                 )
                 return "gave up"
             self._ctx.log.debug(
                 "courier: no ack from %s (attempt %d/%d)",
-                message.node_name, message.attempts, MAX_ATTEMPTS,
+                message.node_name,
+                message.attempts,
+                MAX_ATTEMPTS,
             )
             return "no ack"
         finally:

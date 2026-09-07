@@ -166,7 +166,8 @@ class WatchtowerService:
             if entry is None and store.new_node_alerts:
                 label = obs.name or node
                 store.add_alert(
-                    "new-node", label,
+                    "new-node",
+                    label,
                     "first appearance — never heard on this mesh before",
                     when=obs.observed_at,
                 )
@@ -178,7 +179,8 @@ class WatchtowerService:
         if was_silent:
             store.clear_silent(node)
             store.add_alert(
-                "recovered", entry.name,
+                "recovered",
+                entry.name,
                 "back on the air — heard again after a silence alarm",
                 when=obs.observed_at,
             )
@@ -203,7 +205,8 @@ class WatchtowerService:
             return
         self._snr_fired[node] = now
         self._ctx.watch_store.add_alert(
-            "snr", label,
+            "snr",
+            label,
             f"reception sagging — median {prior:+.1f} dB → {recent:+.1f} dB",
             when=now,
         )
@@ -226,7 +229,9 @@ class WatchtowerService:
             if quiet_s >= hours * 3600:
                 store.mark_silent(key, now)
                 store.add_alert(
-                    "silence", entry.name,
-                    f"nothing heard for {hours} h", when=now,
+                    "silence",
+                    entry.name,
+                    f"nothing heard for {hours} h",
+                    when=now,
                 )
         store.flush()

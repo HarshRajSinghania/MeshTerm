@@ -244,9 +244,18 @@ _MORE_MARK = "…"
 
 #: Cursor moves that abandon a route's in-progress horizontal scroll — each row scrolls on
 #: its own, so leaving it resets the shift rather than carrying it to whatever row is next.
-_HSHIFT_RESET_ACTIONS = frozenset({
-    "up", "down", "pageup", "pagedown", "home", "ctrl_home", "end", "ctrl_end",
-})
+_HSHIFT_RESET_ACTIONS = frozenset(
+    {
+        "up",
+        "down",
+        "pageup",
+        "pagedown",
+        "home",
+        "ctrl_home",
+        "end",
+        "ctrl_end",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -453,7 +462,7 @@ class NodeDetailScreen(Screen):
         #: starts in the same column. Zero on a platform that draws no icon lane at all.
         self._icon_lane = menus.icon_lane(
             action.glyph
-            for action in (*self._info_actions, *( [trace_action] if trace_action else [] ))
+            for action in (*self._info_actions, *([trace_action] if trace_action else []))
         )
         self._tab_index = 0
         self._row_index = 0
@@ -864,9 +873,7 @@ class NodeDetailScreen(Screen):
             lane.append(_MORE_MARK, style="muted")
         return render_to_ansi(lane, width, no_wrap=True)
 
-    def _routes_stage(
-        self, width: int, budget: int, route_blocks: list[list[str]]
-    ) -> list[str]:
+    def _routes_stage(self, width: int, budget: int, route_blocks: list[list[str]]) -> list[str]:
         """The route-graph fan, sized to fit — or the muted note when there is no evidence.
 
         ``budget`` is what the viewport leaves for the stage *and* the route list together;
@@ -1057,9 +1064,7 @@ def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
     return _COMPASS[round(deg / 45) % 8]
 
 
-def _range_text(
-    lat: float, lon: float, self_lat: float | None, self_lon: float | None
-) -> Text:
+def _range_text(lat: float, lon: float, self_lat: float | None, self_lon: float | None) -> Text:
     """A location value: the coordinates, plus range + bearing from us when we're placed."""
     text = Text(f"{lat:.4f}, {lon:.4f}", style="")
     if self_lat is not None and self_lon is not None:
@@ -1235,14 +1240,10 @@ async def open_node_detail(
     device_route: tuple[str, ...] | None = None
     if not you and contact is not None and contact.route_hops is not None:
         device_route = tuple(topo.canonical(h) or h for h in contact.route_hops)
-    canonical_target = (
-        (topo.canonical(target_hash) or target_hash[:12]) if target_hash else None
-    )
+    canonical_target = (topo.canonical(target_hash) or target_hash[:12]) if target_hash else None
     suggested = topo.suggested(canonical_target) if canonical_target else None
     scenarios = (
-        topo.scenarios(canonical_target, device_route=device_route)
-        if canonical_target
-        else []
+        topo.scenarios(canonical_target, device_route=device_route) if canonical_target else []
     )
 
     # -- the info block (identity + how-heard + where; the routes fold into the Routes tab).
@@ -1261,9 +1262,7 @@ async def open_node_detail(
         secs = _age_seconds(heard_at or (hn.last_seen if hn else None))
         heard_val = Text(format_ago(secs), style=_recency_style(secs))
         if first_heard is not None:
-            heard_val.append(
-                f"  ·  first {first_heard.astimezone():%b %d %Y}", style="muted"
-            )
+            heard_val.append(f"  ·  first {first_heard.astimezone():%b %d %Y}", style="muted")
         info_rows.append(("heard", heard_val))
         # A node never overheard reads a faint em-dash, as the contact list draws it.
         packets = Text(str(hn.count)) if hn else Text("—", style="faint")
@@ -1289,8 +1288,13 @@ async def open_node_detail(
         except Exception:  # noqa: BLE001 - offline: markers on a blank grid
             max_zoom = 14
         minimap = MiniMap(
-            session, source, max_zoom,
-            center_lat=lat, center_lon=lon, zoom=min(13, max_zoom), markers=markers,
+            session,
+            source,
+            max_zoom,
+            center_lat=lat,
+            center_lon=lon,
+            zoom=min(13, max_zoom),
+            markers=markers,
         )
         map_caption = Text(f"{label} · centred here", style="faint")
 
@@ -1298,7 +1302,13 @@ async def open_node_detail(
     routes_view: _RoutesView | None = None
     if not you:
         routes_view = _routes_view(
-            topo, scenarios, suggested, device_route, canonical_target, target_hash, width_bytes,
+            topo,
+            scenarios,
+            suggested,
+            device_route,
+            canonical_target,
+            target_hash,
+            width_bytes,
             resolve=resolve,
             type_of=make_node_type_resolver(contacts),
             key_of=make_name_key_resolver(contacts, stored_names),
@@ -1336,7 +1346,9 @@ async def open_node_detail(
     # all — there would be nothing to address the write by.
     archived = manage and _is_archived(ctx, contact, self_key)
     manageable = (
-        manage and not you and contact is not None
+        manage
+        and not you
+        and contact is not None
         and bool(contact.public_key or contact.key_prefix)
     )
     if manageable:
@@ -1403,9 +1415,7 @@ async def open_node_detail(
                         markers,
                         focus=(lat, lon),
                         find=(
-                            label
-                            if any(needle in m.label.casefold() for m in markers)
-                            else None
+                            label if any(needle in m.label.casefold() for m in markers) else None
                         ),
                     )
             elif action == "share":
@@ -1445,9 +1455,7 @@ async def open_node_detail(
     return contact_removed
 
 
-def _is_archived(
-    ctx: AppContext, contact: Contact | None, self_key: str
-) -> bool:
+def _is_archived(ctx: AppContext, contact: Contact | None, self_key: str) -> bool:
     """Whether this contact was swept off the device and is being kept by MeshTerm.
 
     Read straight from the contact store rather than passed in, so the page answers for
@@ -1462,9 +1470,7 @@ def _is_archived(
     return any(c.public_key == key for c in store.archived(dev_pub))
 
 
-async def _archive_contact(
-    ctx: AppContext, contact: Contact, self_key: str, label: str
-) -> bool:
+async def _archive_contact(ctx: AppContext, contact: Contact, self_key: str, label: str) -> bool:
     """Confirm and archive one contact off the device; ``True`` once it is gone from the radio.
 
     The single-contact counterpart to the bulk sweep (see
@@ -1528,9 +1534,7 @@ async def _archive_contact(
     return True
 
 
-async def _restore_archived(
-    ctx: AppContext, contact: Contact, self_key: str, label: str
-) -> bool:
+async def _restore_archived(ctx: AppContext, contact: Contact, self_key: str, label: str) -> bool:
     """Write an archived contact back onto the device; ``True`` once it is live again.
 
     The inverse of the Contacts sweep, one contact at a time (see
@@ -1575,9 +1579,7 @@ async def _restore_archived(
     return True
 
 
-async def _remove_contact(
-    ctx: AppContext, contact: Contact, self_key: str, label: str
-) -> bool:
+async def _remove_contact(ctx: AppContext, contact: Contact, self_key: str, label: str) -> bool:
     """Confirm and drop one contact from the device; ``True`` once it is gone.
 
     The single-contact counterpart to the Contacts list's bulk sweep (see
@@ -1742,12 +1744,15 @@ def _route_line(
             return PathHop(named, key=hop)
         return PathHop(_hop_hash(hop, hop, hash_bytes))  # unknown: its hash, keyless grey
 
-    path = PathLine([
-        PathHop(node_label, key=name_key) if node_known and name_key
-        else PathHop(_hop_hash(name_key, node_label, hash_bytes)),
-        *(hop_of(hop) for hop in reversed(hops_out)),
-        PathHop(SELF_GLYPH, you=True),
-    ]).text()
+    path = PathLine(
+        [
+            PathHop(node_label, key=name_key)
+            if node_known and name_key
+            else PathHop(_hop_hash(name_key, node_label, hash_bytes)),
+            *(hop_of(hop) for hop in reversed(hops_out)),
+            PathHop(SELF_GLYPH, you=True),
+        ]
+    ).text()
 
     atoms: list[Text] = [hops_atom(len(hops_out))]
     if weakest is not None:
@@ -1881,8 +1886,10 @@ def _routes_view(
         return _RoutesView(note="no route observed yet — trace to discover one")
 
     best_hops = (
-        suggested.hops if suggested is not None
-        else device_route if device_route is not None
+        suggested.hops
+        if suggested is not None
+        else device_route
+        if device_route is not None
         else None
     )
     # A node we only ever hear directly (no relays, no learned route) still earns a line —
@@ -1915,9 +1922,16 @@ def _routes_view(
     for hops_out, tag, weakest, samples in entries:
         spec = render_forced_spec(hops_out, target_hash, width_bytes) if target_hash else ""
         path, context = _route_line(
-            node_label, name_key, hops_out, tag, weakest, samples,
-            resolve=resolve, node_known=node_known,
-            self_name=self_name, hash_bytes=hash_bytes,
+            node_label,
+            name_key,
+            hops_out,
+            tag,
+            weakest,
+            samples,
+            resolve=resolve,
+            node_known=node_known,
+            self_name=self_name,
+            hash_bytes=hash_bytes,
         )
         routes.append(_Route(draw=tuple(reversed(hops_out)), spec=spec, path=path, context=context))
 
@@ -2038,6 +2052,7 @@ def _with_target_glyph(glyph_of: GlyphOf, target_glyph: tuple[str, str]) -> Glyp
     than ``route_graph_style``'s generic origin dot. Every other node passes through
     untouched (our own star on the right endpoint keeps the style's ``you`` mark).
     """
+
     def wrapped(node: str) -> tuple[str, str]:
         return target_glyph if node == SRC_NODE else glyph_of(node)
 

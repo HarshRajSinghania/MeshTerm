@@ -478,6 +478,8 @@ _BADGE_WIDTH = 5
 _COUNT_WIDTH = 5
 #: Width of the right-aligned last-message-age lane (fits ``never``-length ages).
 _AGE_WIDTH = 5
+
+
 @lru_cache(maxsize=32)
 def _activity_sparkline(histogram: tuple[int, ...], peak: float) -> Text:
     """The channel's braille activity sparkline over the trailing two hours, now at the right.
@@ -532,9 +534,7 @@ def _slot_row(
     return lambda: _slot_text(ctx, slot, stats, name_w)
 
 
-def _slot_text(
-    ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: int
-) -> Text:
+def _slot_text(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: int) -> Text:
     """Build one channel's list row as fixed-width, colour-coded lanes.
 
     Alignment carries the readability — glyph, name, unread badge, total messages,
@@ -574,9 +574,7 @@ def _slot_text(
     text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
     text.append("  ")
     # The shared peak across all channels, so every row's sparkline uses one scale.
-    text.append_text(
-        _activity_sparkline(st.histogram if st is not None else (), stats.peak())
-    )
+    text.append_text(_activity_sparkline(st.histogram if st is not None else (), stats.peak()))
     return text
 
 
@@ -734,9 +732,7 @@ async def _channel_detail(
     session = getattr(ctx.ui, "session", None)
     if session is None:
         while True:
-            result = await _menu_round(
-                ctx, title, _detail_items(ctx, slot), handle=handle
-            )
+            result = await _menu_round(ctx, title, _detail_items(ctx, slot), handle=handle)
             if result is not None:
                 return result
 
@@ -751,9 +747,7 @@ async def _channel_detail(
             result = await handle(None if choice is CANCEL else choice)
             if result is not None:
                 return result
-            menu.replace_items(
-                _detail_items(ctx, slot), prompt=_detail_summary(ctx, slot, stats)
-            )
+            menu.replace_items(_detail_items(ctx, slot), prompt=_detail_summary(ctx, slot, stats))
 
 
 # --- create / join flows -----------------------------------------------------
@@ -826,9 +820,7 @@ async def _join_with_key(
         return 0
     answers = await run_steps(
         [
-            lambda vals: ctx.ui.text(
-                "Channel name:", default=vals[0] or "", validate=_nonblank
-            ),
+            lambda vals: ctx.ui.text("Channel name:", default=vals[0] or "", validate=_nonblank),
             lambda vals: ctx.ui.text(
                 "Channel key (32 hex characters / 16 bytes):",
                 default=vals[1] or "",
@@ -852,9 +844,7 @@ async def _import_link(
     idx = await _pick_free_slot(ctx, slots, capacity)
     if idx is None:
         return 0
-    url = await ctx.ui.text(
-        "Paste a meshcore:// channel link:", validate=_valid_link
-    )
+    url = await ctx.ui.text("Paste a meshcore:// channel link:", validate=_valid_link)
     if not url:
         return 0
     parsed = parse_share_url(url)
@@ -930,9 +920,7 @@ async def _clear(ctx: AppContext, device: Device, slot: ChannelSlot) -> bool:
 # --- reordering --------------------------------------------------------------
 
 
-async def _write_slot(
-    ctx: AppContext, device: Device, idx: int, slot: ChannelSlot
-) -> None:
+async def _write_slot(ctx: AppContext, device: Device, idx: int, slot: ChannelSlot) -> None:
     """Write ``slot``'s contents into slot ``idx`` (name-derived channels re-derive their key)."""
     secret = None if slot.is_name_derived else slot.secret
     await write_channel(ctx, device, idx, slot.name, secret)
@@ -960,9 +948,7 @@ async def _apply_order(
     return changes
 
 
-async def _reorder_channels(
-    ctx: AppContext, device: Device, slots: list[ChannelSlot]
-) -> int:
+async def _reorder_channels(ctx: AppContext, device: Device, slots: list[ChannelSlot]) -> int:
     """Let the user drag channels into a new order with the arrows; return writes made."""
     if len(slots) < 2:  # pragma: no cover - the menu only offers reorder with 2+ channels
         return 0
@@ -1030,9 +1016,7 @@ async def _open_chat(ctx: AppContext, slot: ChannelSlot) -> None:
     await open_chat(ctx, slot.conversation)
 
 
-async def _pick_free_slot(
-    ctx: AppContext, slots: list[ChannelSlot], capacity: int
-) -> int | None:
+async def _pick_free_slot(ctx: AppContext, slots: list[ChannelSlot], capacity: int) -> int | None:
     """Return the next free slot, warning (and returning ``None``) if all are full."""
     idx = _next_free_slot(slots, capacity)
     if idx is None:

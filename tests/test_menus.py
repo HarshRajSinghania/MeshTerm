@@ -55,8 +55,10 @@ def test_menu_rows_align_descriptions_in_display_cells() -> None:
     )
     from rich.cells import cell_len
 
-    starts = {cell_len(r.title.plain[: r.title.plain.index(d)]) for r, d in
-              zip(rows, ["Restart it", "Second"], strict=True)}
+    starts = {
+        cell_len(r.title.plain[: r.title.plain.index(d)])
+        for r, d in zip(rows, ["Restart it", "Second"], strict=True)
+    }
     assert len(starts) == 1  # one shared description column
 
 
@@ -219,15 +221,24 @@ def test_marked_label_lines_up_a_mixed_list_when_told_its_lane() -> None:
         marked_label(_NARROW, "Purge contacts…", "err", lane=lane),
         marked_label(_WIDE, "View archived contacts", "", lane=lane),
     ]
-    starts = {cell_len(row.plain[: row.plain.index(word)])
-              for row, word in zip(rows, ("Purge", "View"), strict=True)}
+    starts = {
+        cell_len(row.plain[: row.plain.index(word)])
+        for row, word in zip(rows, ("Purge", "View"), strict=True)
+    }
     assert starts == {lane + 1}
 
     # Without the lane each mark measures itself, which is right for a list whose rows all
     # lead with the same icon — and is exactly what misaligns a mixed one.
     solo = [marked_label(_NARROW, "A", "err"), marked_label(_WIDE, "B", "")]
-    assert len({cell_len(row.plain[: row.plain.index(letter)])
-                for row, letter in zip(solo, ("A", "B"), strict=True)}) == 2
+    assert (
+        len(
+            {
+                cell_len(row.plain[: row.plain.index(letter)])
+                for row, letter in zip(solo, ("A", "B"), strict=True)
+            }
+        )
+        == 2
+    )
 
 
 def test_the_main_menu_starts_every_title_in_the_same_cell() -> None:

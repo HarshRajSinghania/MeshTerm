@@ -27,9 +27,7 @@ def test_tcp_profile_inferred_and_loaded(tmp_path: Path) -> None:
     """A profile with a ``host`` loads as a TCP profile and exposes its host:port endpoint."""
     config = tmp_path / "config.toml"
     config.write_text(
-        "[profiles.wifi]\n"
-        'host = "192.168.1.50"\n'
-        "tcp_port = 6000\n",
+        '[profiles.wifi]\nhost = "192.168.1.50"\ntcp_port = 6000\n',
         encoding="utf-8",
     )
     profile = Settings.load(config).profiles["wifi"]
@@ -41,8 +39,6 @@ def test_tcp_profile_inferred_and_loaded(tmp_path: Path) -> None:
 def test_tcp_profile_defaults_port(tmp_path: Path) -> None:
     """A TCP profile naming only a host takes the default port in its endpoint."""
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[profiles.wifi]\nhost = "meshcore.local"\n', encoding="utf-8"
-    )
+    config.write_text('[profiles.wifi]\nhost = "meshcore.local"\n', encoding="utf-8")
     profile = Settings.load(config).profiles["wifi"]
     assert profile.is_tcp and profile.tcp_endpoint == "meshcore.local:5000"

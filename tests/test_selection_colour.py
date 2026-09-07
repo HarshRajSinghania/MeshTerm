@@ -204,7 +204,10 @@ def test_the_message_paths_dialog_colours_its_picked_route_like_its_graph(platfo
         arrivals,
         matched=True,
         resolve=lambda hop: {"3d63": "Hilltop-Repeater", "a1b2": "Waymarker"}.get(hop, hop),
-        prefix_bytes=1, self_name="Homestead", summary="heard twice", source="Alice",
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard twice",
+        source="Alice",
     )
     picked = next(line for line in screen.render_body(72) if "❯" in line)
 
@@ -275,8 +278,20 @@ def test_every_hue_a_key_can_mint_is_recognised_as_one(platform) -> None:  # noq
 
 
 @pytest.mark.parametrize(
-    "style", ["you", "cursor", "muted", "node.unknown", "brand", "heat.now", "err",
-              "bold #ffffff", "#94a3b8", "", "none"],
+    "style",
+    [
+        "you",
+        "cursor",
+        "muted",
+        "node.unknown",
+        "brand",
+        "heat.now",
+        "err",
+        "bold #ffffff",
+        "#94a3b8",
+        "",
+        "none",
+    ],
 )
 def test_nothing_but_a_key_derived_hue_counts_as_an_identity(style: str) -> None:
     """Everything else on a row means something the highlight has no claim on."""

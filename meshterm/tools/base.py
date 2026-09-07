@@ -133,7 +133,10 @@ class Tool(ABC):
         try:
             result = await self.run(ctx, {**params, "_run_id": run_id})
         except (
-            DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError
+            DeviceSelectionError,
+            DeviceConfigError,
+            DeviceCommandError,
+            PreferenceError,
         ) as exc:
             # Expected user-facing condition (no/ambiguous device, a bad config or
             # preference value, or a transient command failure): record it but don't dump

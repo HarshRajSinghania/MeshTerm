@@ -77,7 +77,7 @@ async def test_present_floats_a_short_note_as_a_dialog() -> None:
     ui.note("[ok]✓[/ok] zero-hop advertisement sent")
     await ui.present(title="Advert")
     assert session.scrolls == []
-    (message, title), = session.dialogs
+    ((message, title),) = session.dialogs
     assert message.plain == "✓ zero-hop advertisement sent"
     assert title == "Advert"
 

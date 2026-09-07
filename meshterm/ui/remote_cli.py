@@ -185,16 +185,14 @@ class RemoteCliScreen(Screen):
         prefix = self._editor.text.lstrip()
         if not prefix:
             return None
-        return next((c for c in self._completions if c.startswith(prefix) and c != prefix),
-                    None)
+        return next((c for c in self._completions if c.startswith(prefix) and c != prefix), None)
 
     # --- rendering ---------------------------------------------------------------------
 
     def render_body(self, width: int) -> list[str]:
         """Render the intro, the transcript, and the prompt with its ghost completion."""
         intro = Text(
-            f"Talking to {self._node_label} over the mesh — every command is one "
-            "transmission.",
+            f"Talking to {self._node_label} over the mesh — every command is one transmission.",
             style="muted",
         )
         lines = render_lines(Group(intro, Text(), *self._log), width)
@@ -217,5 +215,5 @@ class RemoteCliScreen(Screen):
         line.append_text(self._editor.render())
         completion = self._completion()
         if completion is not None:
-            line.append(completion[len(self._editor.text.lstrip()):], style="faint")
+            line.append(completion[len(self._editor.text.lstrip()) :], style="faint")
         return line

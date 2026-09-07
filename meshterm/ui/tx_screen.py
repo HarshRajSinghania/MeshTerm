@@ -207,11 +207,7 @@ class TxSweepScreen(Screen):
 
     def _can_apply(self) -> bool:
         """Whether Apply should be offered (finished, got a winner, not yet set)."""
-        return (
-            self._result is not None
-            and self._result.best_snr is not None
-            and not self._applied
-        )
+        return self._result is not None and self._result.best_snr is not None and not self._applied
 
     def estimated_traces(self) -> int:
         """The worst-case transmission count one Sweep commit can run.
@@ -404,8 +400,11 @@ class TxSweepScreen(Screen):
             text.append(f"Range — TX {self.tx_min}–{self.tx_max}")
         elif key == "step":
             _icon(text, "⚙", "accent")
-            text.append(f"Step — every {_nth(self.step)} level, then refine"
-                        if self.step > 1 else "Step — every level (no refine needed)")
+            text.append(
+                f"Step — every {_nth(self.step)} level, then refine"
+                if self.step > 1
+                else "Step — every level (no refine needed)"
+            )
         elif key == "samples":
             _icon(text, "#", "accent")
             text.append(
@@ -532,7 +531,9 @@ class TxSweepScreen(Screen):
                 (" at any level — check the route, then sweep again.", ""),
             )
         outcome = Text.assemble(
-            ("best     ", "muted"), (f"TX {result.best_tx}", "brand"), ("  ·  ", "muted"),
+            ("best     ", "muted"),
+            (f"TX {result.best_tx}", "brand"),
+            ("  ·  ", "muted"),
         )
         outcome.append(f"{result.best_snr:+.1f} dB", style=snr_style(result.best_snr))
         outcome.append(f" at {self._target_label}  ·  ", style="muted")
@@ -650,9 +651,7 @@ async def open_tx_optimize(
 
     def spec() -> str:
         """The one-way wire spec of the next sweep: composed hops, tuned node, target."""
-        return render_custom_spec(
-            (*screen.route_hops, admin_hash, target_hex), width_bytes
-        )
+        return render_custom_spec((*screen.route_hops, admin_hash, target_hex), width_bytes)
 
     # --- parameter flows (floated over the screen) ---------------------------------
 
@@ -722,8 +721,10 @@ async def open_tx_optimize(
                 "Sweep range",
                 prompt=f"Low–high, within {REMOTE_TX_MIN}–{REMOTE_TX_MAX}:",
                 default=f"{screen.tx_min}-{screen.tx_max}",
-                validate=lambda t: parse_tx_range(t) is not None
-                or "Enter two numbers, low then high (e.g. 14-24).",
+                validate=lambda t: (
+                    parse_tx_range(t) is not None
+                    or "Enter two numbers, low then high (e.g. 14-24)."
+                ),
             )
             if not typed:
                 return
@@ -838,7 +839,8 @@ async def open_tx_optimize(
             return
         was = f" (currently {result.original_tx})" if result.original_tx is not None else ""
         prompt = Text.assemble(
-            ("Set TX ", ""), (str(result.best_tx), "brand"),
+            ("Set TX ", ""),
+            (str(result.best_tx), "brand"),
             (f" on {admin_node.name}?{was}", ""),
         )
         # Platform-dialog convention: the safe way out left, the committing action right
@@ -887,8 +889,11 @@ async def open_tx_optimize(
             run_id = ctx.repo.start_run(
                 "tx-optimize",
                 {
-                    "path": path, "samples": screen.samples, "step": screen.step,
-                    "tx_min": screen.tx_min, "tx_max": screen.tx_max,
+                    "path": path,
+                    "samples": screen.samples,
+                    "step": screen.step,
+                    "tx_min": screen.tx_min,
+                    "tx_max": screen.tx_max,
                 },
                 ctx.profile_name,
             )

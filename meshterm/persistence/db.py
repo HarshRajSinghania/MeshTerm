@@ -262,9 +262,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # slot-independent channel identity. Existing rows are backfilled lazily at runtime
         # (see Repository.backfill_channel_ids) once the device's channels can be read.
         conn.execute("ALTER TABLE messages ADD COLUMN channel_id TEXT")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id)")
 
     observation_cols = {row["name"] for row in conn.execute("PRAGMA table_info(observations)")}
     if "node_type" not in observation_cols:

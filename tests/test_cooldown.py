@@ -223,9 +223,7 @@ async def test_cancelling_the_countdown_abandons_the_action() -> None:
     """Backing out of the wait is backing out of what was waiting."""
     transmit_gate.mark(flood_advert=True)
     session = _Session(answer=CANCEL)
-    assert await wait_for_cooldown(
-        _Ctx(session), action="Flood advert", flood_advert=True
-    ) is False
+    assert await wait_for_cooldown(_Ctx(session), action="Flood advert", flood_advert=True) is False
 
 
 async def test_the_threshold_is_where_it_says_it_is() -> None:

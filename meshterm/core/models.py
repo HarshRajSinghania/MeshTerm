@@ -294,9 +294,7 @@ class Ack:
     raw: dict | None = None
 
 
-def conversation_key(
-    is_channel: bool, channel_id: str | None, peer: str | None
-) -> str:
+def conversation_key(is_channel: bool, channel_id: str | None, peer: str | None) -> str:
     """Return a stable key identifying a chat conversation.
 
     A conversation is either a channel or a direct exchange with one contact; this key
@@ -482,9 +480,7 @@ class HeardNode:
         return self.node_type == NODE_TYPE_REPEATER
 
     @classmethod
-    def from_observations(
-        cls, node: str | None, observations: list[Observation]
-    ) -> HeardNode:
+    def from_observations(cls, node: str | None, observations: list[Observation]) -> HeardNode:
         """Aggregate one node's observations into reception statistics.
 
         Args:

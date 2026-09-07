@@ -190,7 +190,12 @@ async def open_contacts(
     def build() -> ContactsScreen:
         """The screen over the current contacts, with the live archived tally on its tail."""
         return ContactsScreen(
-            self_name, self_key, contacts, prefix_bytes, counts, sort,
+            self_name,
+            self_key,
+            contacts,
+            prefix_bytes,
+            counts,
+            sort,
             archived=_archived_count(ctx, self_key),
         )
 

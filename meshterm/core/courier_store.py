@@ -137,8 +137,12 @@ class CourierStore:
         """
         messages = self._load()
         message = QueuedMessage(
-            ident=self._next_id, node_key=node_key, node_name=node_name,
-            text=text, created=utcnow(), not_before=not_before,
+            ident=self._next_id,
+            node_key=node_key,
+            node_name=node_name,
+            text=text,
+            created=utcnow(),
+            not_before=not_before,
         )
         self._next_id += 1
         messages.append(message)

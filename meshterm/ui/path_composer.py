@@ -225,9 +225,7 @@ class PathComposerScreen(Screen):
         #: The insertion cursor: which joining arrow of the editable leg it sits on.
         #: Arrow k stands between display node k (us at 0, else hop k) and its
         #: successor — an insert lands at hops index k, ⌫ removes hop k-1.
-        self._cursor = (
-            len(self._hops) if cursor is None else max(0, min(cursor, len(self._hops)))
-        )
+        self._cursor = len(self._hops) if cursor is None else max(0, min(cursor, len(self._hops)))
         self._fetch_nodes = fetch_nodes
         self._entry = ""
         self._index = 0
@@ -320,14 +318,13 @@ class PathComposerScreen(Screen):
         whichever half happened to rank first.
         """
         node = one.node if len(one.node) >= len(other.node) else other.node
-        stamps = [
-            link.last_seen for link in (one.link, other.link) if link.last_seen is not None
-        ]
+        stamps = [link.last_seen for link in (one.link, other.link) if link.last_seen is not None]
         ends = sorted((self._anchor(), node))
         return HopSuggestion(
             node=node,
             link=Link(
-                a=ends[0], b=ends[1],
+                a=ends[0],
+                b=ends[1],
                 samples=one.link.samples + other.link.samples,
                 snrs=[*one.link.snrs, *other.link.snrs],
                 last_seen=max(stamps) if stamps else None,
@@ -368,8 +365,7 @@ class PathComposerScreen(Screen):
                 if any(self._same_node(suggestion.node, other) for other in exclude):
                     continue
                 at = next(
-                    (i for i, m in enumerate(merged)
-                     if self._same_node(m.node, suggestion.node)),
+                    (i for i, m in enumerate(merged) if self._same_node(m.node, suggestion.node)),
                     None,
                 )
                 if at is None:
@@ -417,9 +413,7 @@ class PathComposerScreen(Screen):
         render_custom_spec`) — empty until it has at least one hop.
         """
         if self._mirrored:
-            return render_forced_spec(
-                tuple(self._hops), self._target_hash, self._width_bytes
-            )
+            return render_forced_spec(tuple(self._hops), self._target_hash, self._width_bytes)
         return render_custom_spec(tuple(self._hops), self._width_bytes)
 
     def _walk_nodes(self) -> list[str]:
@@ -490,9 +484,12 @@ class PathComposerScreen(Screen):
                 rather than the normal route colours.
         """
         return path_text(
-            [self._path_entry(node)], self._resolve_entry,
-            prefix_bytes=self._width_bytes, self_name=self._device_label,
-            show_hash=True, hash_bytes=self._width_bytes,
+            [self._path_entry(node)],
+            self._resolve_entry,
+            prefix_bytes=self._width_bytes,
+            self_name=self._device_label,
+            show_hash=True,
+            hash_bytes=self._width_bytes,
             device_hash=self._device_hash or None,
             dim_from=0 if dim else None,
         )
@@ -532,8 +529,10 @@ class PathComposerScreen(Screen):
             entries.extend(self._path_entry(hop) for hop in reversed(self._hops))
         entries.append(None)
         return path_line(
-            entries, self._resolve_entry,
-            prefix_bytes=self._width_bytes, self_name=self._device_label,
+            entries,
+            self._resolve_entry,
+            prefix_bytes=self._width_bytes,
+            self_name=self._device_label,
             hash_bytes=self._width_bytes,
             device_hash=self._device_hash or None,
             dim_from=(2 if self._mirrored else 1) + len(self._hops),

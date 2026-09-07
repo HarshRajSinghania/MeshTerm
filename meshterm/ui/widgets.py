@@ -92,6 +92,7 @@ def channel_glyph(name: str, secret: bytes | None) -> str:
         return glyph("🌐")
     return glyph("🔒")
 
+
 def _identity(label: str | None) -> str | None:
     """Default node resolver: leave labels untouched."""
     return label
@@ -120,8 +121,7 @@ def banner(
     else:
         target = "[muted]no device[/muted]"
     body = Text.from_markup(
-        f"[brand]MeshTerm[/brand] [muted]v{__version__}[/muted]\n"
-        f"[muted]device:[/muted] {target}"
+        f"[brand]MeshTerm[/brand] [muted]v{__version__}[/muted]\n[muted]device:[/muted] {target}"
     )
     return Panel(body, border_style="accent", expand=False, title="[accent]Mesh[/accent]")
 
@@ -172,13 +172,15 @@ def _link_text(
     Returns:
         A :class:`Text` like ``us (a1) → Alice (3d)`` with the arrow muted.
     """
-    ends = [
-        None if not node or node == device_label else node
-        for node in (origin, destination)
-    ]
+    ends = [None if not node or node == device_label else node for node in (origin, destination)]
     return path_text(
-        ends, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
-        show_hash=True, hash_bytes=hash_bytes, device_hash=device_hash,
+        ends,
+        resolve,
+        prefix_bytes=hash_bytes or 8,
+        self_name=device_label,
+        show_hash=True,
+        hash_bytes=hash_bytes,
+        device_hash=device_hash,
     )
 
 
@@ -226,8 +228,12 @@ def traces_table(
         link = next(
             (
                 _link_text(
-                    edges[idx].origin, edges[idx].destination, device_label, resolve,
-                    hash_bytes, device_hash,
+                    edges[idx].origin,
+                    edges[idx].destination,
+                    device_label,
+                    resolve,
+                    hash_bytes,
+                    device_hash,
                 )
                 for edges in edges_by_trace
                 if idx in edges
@@ -326,9 +332,15 @@ def path_text(
             text.append(" → ", style="faint" if dim else "muted")
         text.append_text(
             _path_node(
-                hop, resolve, prefix_bytes=prefix_bytes, self_name=self_name,
-                show_hash=show_hash, hash_bytes=hash_bytes, device_hash=device_hash,
-                dim=dim, hash_as_name=hash_as_name,
+                hop,
+                resolve,
+                prefix_bytes=prefix_bytes,
+                self_name=self_name,
+                show_hash=show_hash,
+                hash_bytes=hash_bytes,
+                device_hash=device_hash,
+                dim=dim,
+                hash_as_name=hash_as_name,
             )
         )
     return text
@@ -377,9 +389,7 @@ def revisit_note(
     for i, hop in enumerate(repeats):
         if i:
             note.append(", ", style="muted")
-        note.append_text(
-            path_text([hop], resolve, prefix_bytes=prefix_bytes, self_name=self_name)
-        )
+        note.append_text(path_text([hop], resolve, prefix_bytes=prefix_bytes, self_name=self_name))
     note.append(" repeats — a loop, or two nodes sharing one hash", style="muted")
     return note
 
@@ -709,8 +719,13 @@ def _route_path(
     nodes = [edges[0].origin] + [edge.destination for edge in edges]
     hops = [None if not node or node == device_label else node for node in nodes]
     return path_line(
-        hops, resolve, prefix_bytes=hash_bytes or 8, self_name=device_label,
-        show_hash=show_hash, hash_bytes=hash_bytes, device_hash=device_hash,
+        hops,
+        resolve,
+        prefix_bytes=hash_bytes or 8,
+        self_name=device_label,
+        show_hash=show_hash,
+        hash_bytes=hash_bytes,
+        device_hash=device_hash,
         bare_self=bare_self,
     )
 
@@ -767,9 +782,7 @@ def _hop_medians_table(
     for agg in hop_snrs:
         table.add_row(
             str(agg.index),
-            _link_text(
-                agg.origin, agg.destination, device_label, resolve, hash_bytes, device_hash
-            ),
+            _link_text(agg.origin, agg.destination, device_label, resolve, hash_bytes, device_hash),
             Text(f"{agg.median_snr:+.1f} dB", style=snr_style(agg.median_snr)),
         )
     return table
@@ -804,11 +817,15 @@ def stats_panel(
     snr_text = Text(f"{snr:+.1f} dB", style=snr_style(snr)) if snr is not None else Text("n/a")
     rtt = f"{stats.median_rtt_ms:.0f} ms" if stats.median_rtt_ms is not None else "n/a"
     summary = Text.assemble(
-        ("target        ", "muted"), (f"{stats.target}\n", ""),
-        ("success rate  ", "muted"), (f"{stats.success_rate:.0%} "
-                                      f"({stats.successes}/{stats.samples})\n", ""),
-        ("median min SNR ", "muted"), snr_text, ("\n", ""),
-        ("median RTT    ", "muted"), (rtt, ""),
+        ("target        ", "muted"),
+        (f"{stats.target}\n", ""),
+        ("success rate  ", "muted"),
+        (f"{stats.success_rate:.0%} ({stats.successes}/{stats.samples})\n", ""),
+        ("median min SNR ", "muted"),
+        snr_text,
+        ("\n", ""),
+        ("median RTT    ", "muted"),
+        (rtt, ""),
     )
     sections: list[Text | Table] = []
     if route is not None:
@@ -862,19 +879,20 @@ def self_marker() -> tuple[str, RGB]:
     """Our own node's map marker — the yellow ``★`` — as a ``(glyph, rgb)`` pair."""
     return SELF_MARK[0], parse_hex(SELF_MARK[1])
 
+
 # A heat-map gradient for a node's heard age, hottest (most recently heard) to coldest: white
 # → yellow → orange → red → grey. Each stop pairs an age anchor (log10 of seconds since heard)
 # with an RGB colour; :func:`_recency_style` interpolates continuously between them, so the
 # colour glides with recency rather than snapping between a handful of discrete shades.
 _HEAT_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
-    (math.log10(300), (255, 255, 255)),           # ≤5m — white (fresh)
-    (math.log10(3600), (250, 204, 21)),           # ~1h  — yellow
-    (math.log10(21600), (251, 146, 60)),          # ~6h  — orange
-    (math.log10(86400), (248, 113, 113)),         # ~1d  — red
-    (math.log10(604800), (148, 163, 184)),        # ~1w  — grey
-    (math.log10(2592000), (100, 116, 139)),       # ~30d+ — cold slate
+    (math.log10(300), (255, 255, 255)),  # ≤5m — white (fresh)
+    (math.log10(3600), (250, 204, 21)),  # ~1h  — yellow
+    (math.log10(21600), (251, 146, 60)),  # ~6h  — orange
+    (math.log10(86400), (248, 113, 113)),  # ~1d  — red
+    (math.log10(604800), (148, 163, 184)),  # ~1w  — grey
+    (math.log10(2592000), (100, 116, 139)),  # ~30d+ — cold slate
 )
-_RECENCY_NEVER = "#64748b"       # never heard — the coldest slate
+_RECENCY_NEVER = "#64748b"  # never heard — the coldest slate
 
 
 def _age_seconds(when: datetime | None) -> float | None:
@@ -948,13 +966,13 @@ def _recency_gradient(secs: float | None) -> str:
 #: ("under five minutes", "over a week"). Past a year nothing is worth distinguishing from
 #: never heard, so the two share the coldest step.
 _HEAT_STEPS: tuple[tuple[float, str], ...] = (
-    (300, "heat.now"),           # under 5 minutes — white
-    (3600, "heat.minutes"),      # 5 minutes       — yellow
-    (86400, "heat.hours"),       # 1 hour          — light red
-    (604800, "heat.days"),       # 1 day           — brown
-    (2592000, "heat.weeks"),     # 1 week          — red
-    (31536000, "heat.months"),   # 1 month         — light grey
-)                                # 1 year / never  — dark grey (heat.never)
+    (300, "heat.now"),  # under 5 minutes — white
+    (3600, "heat.minutes"),  # 5 minutes       — yellow
+    (86400, "heat.hours"),  # 1 hour          — light red
+    (604800, "heat.days"),  # 1 day           — brown
+    (2592000, "heat.weeks"),  # 1 week          — red
+    (31536000, "heat.months"),  # 1 month         — light grey
+)  # 1 year / never  — dark grey (heat.never)
 
 
 def _recency_quantized(secs: float | None) -> str:
@@ -1064,9 +1082,11 @@ def _ordered_contacts(
                 return float("inf")
             return max(0.0, (now - c.last_seen).total_seconds())
     elif sort.column == "packets":
+
         def metric(c: Contact) -> float:
             return _contact_pkts(c, counts) or 0
     else:
+
         def metric(c: Contact) -> object:
             return c.name.casefold()
 
@@ -1317,9 +1337,7 @@ def tx_opt_table(result: TxOptResult) -> Table:
         rate_cell = Text(f"{rate:.0%}", style=rate_style)
         tx_cell = f"{marker}{lv.tx_power}"
         row_style = "ok" if is_best else None
-        table.add_row(
-            tx_cell, snr_cell, rate_cell, f"{lv.successes}/{lv.samples}", style=row_style
-        )
+        table.add_row(tx_cell, snr_cell, rate_cell, f"{lv.successes}/{lv.samples}", style=row_style)
     return table
 
 
@@ -1340,14 +1358,22 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
         else "[muted]not applied[/muted]"
     )
     body = Text.assemble(
-        ("tuning node   ", "muted"), (f"{result.admin_node}\n", "brand"),
-        ("target        ", "muted"), (f"{result.target}\n", "brand"),
-        ("optimal TX    ", "muted"), (f"{result.best_tx}", "brand"), ("\n", ""),
-        ("target SNR    ", "muted"), snr_text, ("\n", ""),
-        ("reliability   ", "muted"), (f"{result.best_success_rate:.0%}\n", ""),
+        ("tuning node   ", "muted"),
+        (f"{result.admin_node}\n", "brand"),
+        ("target        ", "muted"),
+        (f"{result.target}\n", "brand"),
+        ("optimal TX    ", "muted"),
+        (f"{result.best_tx}", "brand"),
+        ("\n", ""),
+        ("target SNR    ", "muted"),
+        snr_text,
+        ("\n", ""),
+        ("reliability   ", "muted"),
+        (f"{result.best_success_rate:.0%}\n", ""),
         ("previous TX   ", "muted"),
         (f"{result.original_tx if result.original_tx is not None else '?'}\n", ""),
-        ("status        ", "muted"), Text.from_markup(applied),
+        ("status        ", "muted"),
+        Text.from_markup(applied),
     )
     return Panel(
         body, title="[accent]TX optimization[/accent]", border_style="accent", expand=False

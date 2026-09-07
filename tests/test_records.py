@@ -22,8 +22,8 @@ from meshterm.services.records import (
 SELF_POS = (45.500, -73.600)
 HUB_ID, FAR_ID, LEAF_ID = "3d63c6429436", "f2c24f54551e", "27d4396a2967"
 POSITIONS = {
-    HUB_ID: (45.510, -73.600),   # ~1.11 km north of us
-    FAR_ID: (45.510, -73.585),   # north-east of us
+    HUB_ID: (45.510, -73.600),  # ~1.11 km north of us
+    FAR_ID: (45.510, -73.585),  # north-east of us
     LEAF_ID: (45.490, -73.600),  # ~1.11 km south of us
 }
 
@@ -43,8 +43,11 @@ def _result(*snrs: float, rtt: float = 250.0, nodes=None) -> TraceResult:  # noq
 def test_walk_stats_measure_distance_reach_and_area() -> None:
     """The circuit us→Hub→Far→us is positioned end to end: exact km, far, and area."""
     stats = compute_walk_stats(
-        (HUB_ID, FAR_ID), _result(8.0, 6.0, 7.0).hops, rtt_ms=250.0,
-        positions=POSITIONS, self_pos=SELF_POS,
+        (HUB_ID, FAR_ID),
+        _result(8.0, 6.0, 7.0).hops,
+        rtt_ms=250.0,
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     assert stats.km_complete
     assert stats.km_travelled > 2.0  # up ~1.1 km, across, and back home
@@ -58,8 +61,11 @@ def test_walk_stats_unpositioned_segments_score_a_lower_bound() -> None:
     """A hop with no position contributes 0 km and clears the complete flag."""
     positions = {HUB_ID: POSITIONS[HUB_ID]}  # Far is off the map
     stats = compute_walk_stats(
-        (HUB_ID, FAR_ID), _result(8.0, 6.0, 7.0).hops, rtt_ms=None,
-        positions=positions, self_pos=SELF_POS,
+        (HUB_ID, FAR_ID),
+        _result(8.0, 6.0, 7.0).hops,
+        rtt_ms=None,
+        positions=positions,
+        self_pos=SELF_POS,
     )
     assert not stats.km_complete
     assert 1.0 < stats.km_travelled < 1.3  # only the positioned us→Hub leg counts
@@ -72,8 +78,11 @@ def test_longest_leg_measures_one_link_and_names_its_ends() -> None:
     beats both of the legs touching us — a link between two hops, neither of them ours.
     """
     stats = compute_walk_stats(
-        (HUB_ID, LEAF_ID), _result(8.0, 6.0, 7.0).hops, rtt_ms=None,
-        positions=POSITIONS, self_pos=SELF_POS,
+        (HUB_ID, LEAF_ID),
+        _result(8.0, 6.0, 7.0).hops,
+        rtt_ms=None,
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     assert stats.leg_km is not None and 2.0 < stats.leg_km < 2.5
     assert stats.leg_link == (HUB_ID, LEAF_ID)
@@ -85,8 +94,11 @@ def test_longest_leg_measures_one_link_and_names_its_ends() -> None:
 def test_longest_leg_names_our_own_end_as_none() -> None:
     """A leg that leaves or comes home marks our end ``None`` — the ★ the UI draws."""
     stats = compute_walk_stats(
-        (HUB_ID,), _result(8.0, 7.0).hops, rtt_ms=None,
-        positions=POSITIONS, self_pos=SELF_POS,
+        (HUB_ID,),
+        _result(8.0, 7.0).hops,
+        rtt_ms=None,
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     assert stats.leg_link == (None, HUB_ID)  # us → Hub, the outbound half
 
@@ -94,8 +106,11 @@ def test_longest_leg_names_our_own_end_as_none() -> None:
 def test_longest_leg_needs_two_positioned_ends() -> None:
     """No segment with both ends placed scores nothing rather than a bogus zero."""
     stats = compute_walk_stats(
-        (HUB_ID,), _result(8.0, 7.0).hops, rtt_ms=None,
-        positions=POSITIONS, self_pos=None,
+        (HUB_ID,),
+        _result(8.0, 7.0).hops,
+        rtt_ms=None,
+        positions=POSITIONS,
+        self_pos=None,
     )
     assert stats.leg_km is None and stats.leg_link is None
     assert "long_leg" not in walk_scores(stats)
@@ -104,13 +119,16 @@ def test_longest_leg_needs_two_positioned_ends() -> None:
 def test_cross_category_scores_score_every_game_at_once() -> None:
     """One walk competes everywhere it can — the every-board-at-once rule."""
     stats = compute_walk_stats(
-        (HUB_ID, FAR_ID, HUB_ID), _result(8.0, -11.0, 7.0, 9.0).hops, rtt_ms=100.0,
-        positions=POSITIONS, self_pos=SELF_POS,
+        (HUB_ID, FAR_ID, HUB_ID),
+        _result(8.0, -11.0, 7.0, 9.0).hops,
+        rtt_ms=100.0,
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     scores = walk_scores(stats)
-    assert scores["grand_tour"] == 2.0          # two distinct nodes, revisit allowed
-    assert "clean_trail" not in scores          # Hub repeats: disqualified, not zeroed
-    assert scores["thin_thread"] == -11.0       # the weakest surviving link
+    assert scores["grand_tour"] == 2.0  # two distinct nodes, revisit allowed
+    assert "clean_trail" not in scores  # Hub repeats: disqualified, not zeroed
+    assert scores["thin_thread"] == -11.0  # the weakest surviving link
     assert scores["long_haul"] > 3.0
     assert scores["far_point"] > 1.0
     assert scores["long_leg"] > 0.5
@@ -123,7 +141,12 @@ def test_category_titles_are_plain_and_ids_are_stable() -> None:
     assert CATEGORY_BY_ID["long_haul"].title == "Longest distance"
     # Every id still resolves — the persisted keys never changed under the rename.
     assert set(CATEGORY_BY_ID) == {
-        "long_haul", "far_point", "long_leg", "grand_tour", "clean_trail", "thin_thread",
+        "long_haul",
+        "far_point",
+        "long_leg",
+        "grand_tour",
+        "clean_trail",
+        "thin_thread",
         "big_loop",
     }
 
@@ -152,8 +175,10 @@ def test_walk_scores_disqualify_a_non_trail_from_every_board() -> None:
     """Riding a link twice the same way pumps km and hops for free — every board says no."""
     stats = compute_walk_stats(
         (HUB_ID, FAR_ID, HUB_ID, FAR_ID),  # Hub→Far ridden twice
-        _result(8.0, 6.0, 7.0, 5.0, 9.0).hops, rtt_ms=100.0,
-        positions=POSITIONS, self_pos=SELF_POS,
+        _result(8.0, 6.0, 7.0, 5.0, 9.0).hops,
+        rtt_ms=100.0,
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     assert stats.km_travelled > 0  # it would have scored…
     assert walk_scores(stats) == {}  # …but the arbiter disqualifies it outright
@@ -167,13 +192,15 @@ def test_walk_from_trace_derives_spec_route_and_stats() -> None:
     result = _result(8.0, 6.0, 7.0, nodes=["3d", "f2"])  # two relays, then us
     canon = {"3d": HUB_ID, "f2": FAR_ID}
     derived = walk_from_trace(
-        result, canonical=lambda h: canon.get(h),
-        positions=POSITIONS, self_pos=SELF_POS,
+        result,
+        canonical=lambda h: canon.get(h),
+        positions=POSITIONS,
+        self_pos=SELF_POS,
     )
     assert derived is not None
     spec, route, stats = derived
-    assert spec == "3d,f2"                 # the reply hops, joined — re-walkable verbatim
-    assert route == (HUB_ID, FAR_ID)       # canonicalized for stable display + geometry
+    assert spec == "3d,f2"  # the reply hops, joined — re-walkable verbatim
+    assert route == (HUB_ID, FAR_ID)  # canonicalized for stable display + geometry
     assert stats.km_complete and stats.far_km is not None
 
 
@@ -195,20 +222,38 @@ def test_leaderboard_keeps_five_dedupes_and_prunes_the_worst(tmp_path) -> None: 
     try:
         for i in range(6):
             repo.record_discovery(
-                "grand_tour", 1, f"a{i},b{i}", (f"a{i}", f"b{i}"),
-                score=float(i), stats={}, app_version="0.1.0",
+                "grand_tour",
+                1,
+                f"a{i},b{i}",
+                (f"a{i}", f"b{i}"),
+                score=float(i),
+                stats={},
+                app_version="0.1.0",
             )
         rows = repo.discoveries("grand_tour", width_bytes=1)
         assert len(rows) == 5
         assert min(r.score for r in rows) == 1.0  # the 0-score walk fell off
         # Re-walking a stored spec only ever *improves* its row.
-        assert repo.record_discovery(
-            "grand_tour", 1, "a5,b5", ("a5", "b5"),
-            score=2.0, stats={}, app_version="0.1.0",
-        ) is None
+        assert (
+            repo.record_discovery(
+                "grand_tour",
+                1,
+                "a5,b5",
+                ("a5", "b5"),
+                score=2.0,
+                stats={},
+                app_version="0.1.0",
+            )
+            is None
+        )
         improved = repo.record_discovery(
-            "grand_tour", 1, "a5,b5", ("a5", "b5"),
-            score=9.0, stats={"hop_count": 2}, app_version="0.1.1",
+            "grand_tour",
+            1,
+            "a5,b5",
+            ("a5", "b5"),
+            score=9.0,
+            stats={"hop_count": 2},
+            app_version="0.1.1",
         )
         assert improved is not None
         rows = repo.discoveries("grand_tour", width_bytes=1)
@@ -225,12 +270,24 @@ def test_leaderboard_ascends_for_thin_thread(tmp_path) -> None:  # noqa: ANN001
     try:
         for i, snr in enumerate((-2.0, -8.0, -5.0, -11.0, -3.0)):
             repo.record_discovery(
-                "thin_thread", 1, f"c{i}", (f"c{i}",),
-                score=snr, stats={}, app_version="0.1.0", ascending=True,
+                "thin_thread",
+                1,
+                f"c{i}",
+                (f"c{i}",),
+                score=snr,
+                stats={},
+                app_version="0.1.0",
+                ascending=True,
             )
         strong = repo.record_discovery(
-            "thin_thread", 1, "c9", ("c9",),
-            score=7.0, stats={}, app_version="0.1.0", ascending=True,
+            "thin_thread",
+            1,
+            "c9",
+            ("c9",),
+            score=7.0,
+            stats={},
+            app_version="0.1.0",
+            ascending=True,
         )
         assert strong is None  # +7 dB is a great link and a terrible record
         rows = repo.discoveries("thin_thread", width_bytes=1)
@@ -246,8 +303,13 @@ def test_record_deletion_by_row_category_and_wholesale(tmp_path) -> None:  # noq
         for category in ("grand_tour", "long_haul"):
             for width in (1, 2):
                 repo.record_discovery(
-                    category, width, f"{category[:2]},{width}", ("x",),
-                    score=1.0, stats={}, app_version="0.1.0",
+                    category,
+                    width,
+                    f"{category[:2]},{width}",
+                    ("x",),
+                    score=1.0,
+                    stats={},
+                    app_version="0.1.0",
                 )
         first = repo.discoveries("grand_tour", width_bytes=1)[0]
         assert repo.delete_discovery(first.id)

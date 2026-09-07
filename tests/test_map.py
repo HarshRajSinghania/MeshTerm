@@ -63,8 +63,7 @@ def test_decode_tile_resolves_names_and_geometry() -> None:
 
     # A road is a line with at least two points; water is a polygon.
     assert any(
-        f.geom_type == GEOM_LINE and len(f.rings[0]) >= 2
-        for f in layers["transportation"].features
+        f.geom_type == GEOM_LINE and len(f.rings[0]) >= 2 for f in layers["transportation"].features
     )
     assert any(f.geom_type == GEOM_POLYGON for f in layers["water"].features)
 
@@ -169,13 +168,21 @@ def test_offscreen_buildings_do_not_change_the_frame() -> None:
 
     vp = Viewport(45.4995, -73.5690, _BUILDING_MIN_ZOOM, 53 * 2, 26 * 4)
     cx, cy = _tile_local_of_view_centre(vp, 14, 4843, 5861)
-    here = [(cx - 40, cy - 40), (cx + 40, cy - 40), (cx + 40, cy + 40),
-            (cx - 40, cy + 40), (cx - 40, cy - 40)]
+    here = [
+        (cx - 40, cy - 40),
+        (cx + 40, cy - 40),
+        (cx + 40, cy + 40),
+        (cx - 40, cy + 40),
+        (cx - 40, cy - 40),
+    ]
     far = [(10, 10), (90, 10), (90, 90), (10, 90), (10, 10)]
 
     def frame(rings):
-        layer = Layer(name="building", extent=4096,
-                      features=[Feature(geom_type=GEOM_POLYGON, rings=rings, tags={})])
+        layer = Layer(
+            name="building",
+            extent=4096,
+            features=[Feature(geom_type=GEOM_POLYGON, rings=rings, tags={})],
+        )
         return render_map(vp, {(14, 4843, 5861): [layer]}, [])
 
     assert _plain(frame([here])).strip(), "the in-view footprint should draw something"
@@ -224,8 +231,11 @@ def test_viewport_fit_fraction_ignores_outliers() -> None:
     """Framing half the nodes zooms to the dense core, letting far outliers fall off-canvas."""
     # A tight downtown cluster of five nodes (~50 m across) plus one distant outlier.
     core = [
-        (45.5000, -73.5600), (45.5003, -73.5602), (45.4998, -73.5598),
-        (45.5001, -73.5599), (45.4999, -73.5601),
+        (45.5000, -73.5600),
+        (45.5003, -73.5602),
+        (45.4998, -73.5598),
+        (45.5001, -73.5599),
+        (45.4999, -73.5601),
     ]
     outlier = (46.80, -71.20)
     pts = core + [outlier]
@@ -249,7 +259,9 @@ def test_viewport_fit_fraction_keeps_small_sets_whole() -> None:
     half = Viewport.fit(pts, 200, 120, max_zoom=14, fraction=0.5)
     full = Viewport.fit(pts, 200, 120, max_zoom=14)
     assert (half.center_lat, half.center_lon, half.zoom) == (
-        full.center_lat, full.center_lon, full.zoom
+        full.center_lat,
+        full.center_lon,
+        full.zoom,
     )
 
 
@@ -327,9 +339,7 @@ def _dot_colors(lines: list[str]) -> set[tuple[int, int, int]]:
     """Every truecolour a braille run was drawn in (the ground's colours, not the text's)."""
     return {
         (int(r), int(g), int(b))
-        for r, g, b in re.findall(
-            r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?[⠀-⣿]", "".join(lines)
-        )
+        for r, g, b in re.findall(r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?[⠀-⣿]", "".join(lines))
     }
 
 
@@ -522,8 +532,11 @@ def test_street_name_is_drawn_only_once() -> None:
 
     layers = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
     vp = Viewport(45.5019, -73.5674, 16, 53 * 2, 22 * 4)
-    out = _plain(render_map(vp, {(14, 4843, 5861): layers},
-                            [MapMarker("Hub", 45.5040, -73.5700, is_repeater=True)]))
+    out = _plain(
+        render_map(
+            vp, {(14, 4843, 5861): layers}, [MapMarker("Hub", 45.5040, -73.5700, is_repeater=True)]
+        )
+    )
 
     # René-Lévesque arrives as several segments and used to be drawn twice on one screen.
     assert out.count("René-Lévesque") <= 1, "a street was named more than once"
@@ -539,8 +552,9 @@ def test_line_label_anchors_on_the_visible_stretch() -> None:
     _, cy = _tile_local_of_view_centre(vp, 14, 4843, 5861)
     # A line spanning the whole tile at the view's latitude: its own midpoint is far away,
     # but it crosses the canvas, so the clip must find it.
-    _add_line_label(frame, [[(0, cy), (4096, cy)]], 4096, 14, 4843, 5861, "Rue Long",
-                    ("#9aa0aa", False, 7))
+    _add_line_label(
+        frame, [[(0, cy), (4096, cy)]], 4096, 14, 4843, 5861, "Rue Long", ("#9aa0aa", False, 7)
+    )
 
     assert len(frame.labels) == 1
     label = frame.labels[0]
@@ -555,8 +569,9 @@ def test_line_label_off_screen_is_not_queued() -> None:
     vp = Viewport(45.5019, -73.5674, 16, 120, 80)
     frame = _Frame(canvas=MapCanvas(60, 20), viewport=vp)
     # A short line in the far corner of the tile, well outside a zoom-16 window.
-    _add_line_label(frame, [[(0, 0), (8, 8)]], 4096, 14, 4843, 5861, "Nowhere",
-                    ("#9aa0aa", False, 7))
+    _add_line_label(
+        frame, [[(0, 0), (8, 8)]], 4096, 14, 4843, 5861, "Nowhere", ("#9aa0aa", False, 7)
+    )
 
     assert frame.labels == []
 
@@ -598,9 +613,7 @@ def test_render_map_drops_crowded_labels_favouring_repeaters() -> None:
 
 def _glyph_color(lines: list[str], glyph: str) -> tuple[int, int, int]:
     """Extract the truecolour ``(r, g, b)`` the given glyph was rendered with."""
-    m = re.search(
-        r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?" + re.escape(glyph), "".join(lines)
-    )
+    m = re.search(r"38;2;(\d+);(\d+);(\d+)m(?:\x1b\[1m)?" + re.escape(glyph), "".join(lines))
     assert m, f"glyph {glyph!r} not found with a colour"
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
@@ -707,9 +720,7 @@ def test_the_ghost_ground_dims_while_its_replacement_is_drawn() -> None:
 
     assert 0 < _GHOST_FADE < 1  # the desktop default; the 16-slot console binds it to 1.0
     drawn, moved = _ghosted(dlon=0.004)
-    faded = {
-        tuple(round(c * _GHOST_FADE) for c in rgb) for rgb in _dot_colors(drawn)
-    }
+    faded = {tuple(round(c * _GHOST_FADE) for c in rgb) for rgb in _dot_colors(drawn)}
     ghost = _dot_colors(moved)
     assert ghost and ghost <= faded, "the reused ground is not the ground we drew"
     assert not ghost & _dot_colors(drawn), "it came through at full strength"
@@ -880,7 +891,8 @@ def test_basemap_source_holds_a_failed_resolve_for_its_cooldown(tmp_path: Path) 
     src = _offline_source(tmp_path / "cache")
     calls: list[str] = []
     src._http_get = lambda url: (  # type: ignore[method-assign]
-        calls.append(url), basemap_mod._Response(False, b"")
+        calls.append(url),
+        basemap_mod._Response(False, b""),
     )[1]
     for _ in range(5):
         assert src.available is False
@@ -978,6 +990,7 @@ def test_decoded_layers_survive_a_round_trip() -> None:
     restored = loads_layers(dumps_layers(original, stamp="x"), stamp="x")
 
     assert restored is not None
+
     def shape(layers):
         return [(layer.name, layer.extent) for layer in layers]
 
@@ -1177,8 +1190,13 @@ async def test_map_tool_static_render_plots_contacts(ctx) -> None:
     run_id = ctx.repo.start_run("monitor", {})
     ctx.repo.record_observation(
         run_id,
-        Observation(node="a1b2c3d4", name="Yagi-Repeater", node_type=NODE_TYPE_REPEATER,
-                    snr=6.0, observed_at=utcnow()),
+        Observation(
+            node="a1b2c3d4",
+            name="Yagi-Repeater",
+            node_type=NODE_TYPE_REPEATER,
+            snr=6.0,
+            observed_at=utcnow(),
+        ),
     )
     result = await MapTool().run(ctx, {"static": True, "basemap": False})
     assert result.summary["located"] == 3
@@ -1211,12 +1229,28 @@ async def test_gather_markers_drops_out_of_range_fix(ctx) -> None:
     from meshterm.tools.map import gather_markers
 
     run_id = ctx.repo.start_run("monitor", {})
-    ctx.repo.record_observation(run_id, Observation(
-        node="beefbeefbeef", name="BadFix", node_type=NODE_TYPE_REPEATER,
-        lat=-97.0, lon=-1041.97, observed_at=utcnow()))
-    ctx.repo.record_observation(run_id, Observation(
-        node="cafecafecafe", name="GoodFix", node_type=NODE_TYPE_REPEATER,
-        lat=45.5, lon=-73.6, observed_at=utcnow()))
+    ctx.repo.record_observation(
+        run_id,
+        Observation(
+            node="beefbeefbeef",
+            name="BadFix",
+            node_type=NODE_TYPE_REPEATER,
+            lat=-97.0,
+            lon=-1041.97,
+            observed_at=utcnow(),
+        ),
+    )
+    ctx.repo.record_observation(
+        run_id,
+        Observation(
+            node="cafecafecafe",
+            name="GoodFix",
+            node_type=NODE_TYPE_REPEATER,
+            lat=45.5,
+            lon=-73.6,
+            observed_at=utcnow(),
+        ),
+    )
     labels = {m.label for m in await gather_markers(ctx)}
     assert "GoodFix" in labels
     assert "BadFix" not in labels
@@ -1236,6 +1270,7 @@ def test_repository_round_trips_map_view(ctx) -> None:
 
 async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     """With no located contacts and no located history the tool returns cleanly."""
+
     async def _no_contacts(_ctx):
         return []
 
@@ -1478,7 +1513,11 @@ def test_map_fkey_lane_names_its_three_destinations_and_the_zoom() -> None:
     # and "end" is bound to nothing at all, so no jump rides the zoom rocker's Shift bank.
     # The zoom pair rises to the right, like every right-hand directional pair.
     assert [pair.label if pair else None for pair in lane] == [
-        "Region", "You", "Frame", "Zoom -", "Zoom +",
+        "Region",
+        "You",
+        "Frame",
+        "Zoom -",
+        "Zoom +",
     ]
     assert action_for(lane, 1) == "home" and action_for(lane, 5) == "pageup"
     assert action_for(lane, 2) == "locate" and action_for(lane, 3) == "frame"
@@ -1570,9 +1609,7 @@ def test_map_shifted_vertical_arrows_survive_the_console_keymap(monkeypatch) -> 
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
-    screen = MapScreen(
-        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14
-    )
+    screen = MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
     screen.render_body(80)
     zoom = screen._viewport.zoom
     lat = screen._viewport.center_lat
@@ -1697,11 +1734,12 @@ def test_map_screen_restores_and_persists_view() -> None:
     saved: list[tuple[float, float, int]] = []
     markers = [MapMarker("A", 45.50, -73.60), MapMarker("B", 45.40, -73.50)]
     screen = MapScreen(
-        _StubSession(80, 24), markers, _StubSource(), 14,
+        _StubSession(80, 24),
+        markers,
+        _StubSource(),
+        14,
         saved_view=(46.80, -71.20, 12),
-        on_view_change=lambda vp: saved.append(
-            (vp.center_lat, vp.center_lon, vp.zoom)
-        ),
+        on_view_change=lambda vp: saved.append((vp.center_lat, vp.center_lon, vp.zoom)),
     )
 
     screen.render_body(80)
@@ -1823,8 +1861,9 @@ def test_map_observation_round_trips_node_type(ctx) -> None:
     run_id = ctx.repo.start_run("monitor", {})
     ctx.repo.record_observation(
         run_id,
-        Observation(node="a1", name="Yagi", node_type=NODE_TYPE_REPEATER, snr=6.0,
-                    lat=45.5, lon=-73.5),
+        Observation(
+            node="a1", name="Yagi", node_type=NODE_TYPE_REPEATER, snr=6.0, lat=45.5, lon=-73.5
+        ),
     )
     node = next(n for n in ctx.repo.heard_nodes() if n.node == "a1")
     assert node.is_repeater and node.node_type == NODE_TYPE_REPEATER
@@ -1847,9 +1886,9 @@ def test_render_map_labels_take_the_name_hue_ours_white() -> None:
     ]
     lines = render_map(vp, {}, markers)
     assert _glyph_color(lines, "★") == parse_hex(_SELF[1])  # the glyph keeps its yellow
-    assert _glyph_color(lines, "US") == (255, 255, 255)     # ...the label goes you-white
+    assert _glyph_color(lines, "US") == (255, 255, 255)  # ...the label goes you-white
     assert _glyph_color(lines, "KEYED") == name_rgb("KEYED", "d4" * 32)
-    assert _glyph_color(lines, "BARE") == (148, 163, 184)   # no key, the muted grey
+    assert _glyph_color(lines, "BARE") == (148, 163, 184)  # no key, the muted grey
 
 
 def test_render_map_find_matches_still_label_white() -> None:
@@ -1870,9 +1909,7 @@ def _map_over(source) -> MapScreen:  # noqa: ANN001
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
-    return MapScreen(
-        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], source, 14
-    )
+    return MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], source, 14)
 
 
 class _SilentSource(_StubSource):
@@ -1982,7 +2019,10 @@ def _settled_map(source, zoom: int = 13):
     from meshterm.ui.map_screen import MapScreen
 
     screen = MapScreen(
-        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], source, 14,
+        _StubSession(80, 24),
+        [MapMarker("A", 45.5, -73.6)],
+        source,
+        14,
         saved_view=(45.5, -73.6, zoom),
     )
     return screen
@@ -1998,8 +2038,12 @@ async def _quiet(screen, source) -> list:
         screen.render_body(80)
         screen._settled_at = 0.0  # the settle wait has its own test; don't sleep it out
         await asyncio.sleep(0.005)
-        if (not screen._pending and not screen._speculating and screen._drawing is None
-                and screen._next_speculation(screen._viewport) is None):
+        if (
+            not screen._pending
+            and not screen._speculating
+            and screen._drawing is None
+            and screen._next_speculation(screen._viewport) is None
+        ):
             break
     visible = set(screen._viewport.tiles(14))
     return [t for t in source.asked if t not in visible]
@@ -2098,9 +2142,9 @@ def test_map_forgets_its_heading_when_the_reader_reframes() -> None:
     vp = screen._viewport
     for direction, (dx, dy) in _PAN_DIRS.items():
         stepped = set(vp.panned(dx * _PAN_STEP, dy * _PAN_STEP).tiles(14))
-        assert stepped - set(vp.tiles(14)) <= set(plan) or not (
-            stepped - set(vp.tiles(14))
-        ), f"{direction} was not hedged once the heading was gone"
+        assert stepped - set(vp.tiles(14)) <= set(plan) or not (stepped - set(vp.tiles(14))), (
+            f"{direction} was not hedged once the heading was gone"
+        )
 
 
 def test_map_does_not_guess_in_the_paint_that_queues_a_raster() -> None:
@@ -2196,8 +2240,9 @@ def test_map_draws_a_coarse_frame_before_the_finished_one(monkeypatch) -> None: 
 
     passes: list = []
     monkeypatch.setattr(
-        ms, "render_ground",
-        lambda vp, tiles, m, **k: (passes.append(k.get("coarse", False)) or (["x"], None)),
+        ms,
+        "render_ground",
+        lambda vp, tiles, m, **k: passes.append(k.get("coarse", False)) or (["x"], None),
     )
     screen = _map_over(_StubSource())
 
@@ -2254,9 +2299,9 @@ def test_map_skips_the_coarse_pass_over_a_picture_already_drawn(monkeypatch) -> 
     screen = _map_over(_StubSource())
     coarse_asked: list = []
     monkeypatch.setattr(
-        ms, "render_ground",
-        lambda vp, tiles, m, **k: (coarse_asked.append(k.get("coarse", False))
-                                   or (["x"], None)),
+        ms,
+        "render_ground",
+        lambda vp, tiles, m, **k: coarse_asked.append(k.get("coarse", False)) or (["x"], None),
     )
 
     async def drive() -> None:
@@ -2288,9 +2333,9 @@ def test_the_rough_pass_is_a_switch_the_map_reads(monkeypatch) -> None:  # noqa:
         """The passes a view with nothing drawn under it asks for."""
         asked: list = []
         monkeypatch.setattr(
-            ms, "render_ground",
-            lambda vp, tiles, m, **k: (asked.append(k.get("coarse", False))
-                                       or (["x"], None)),
+            ms,
+            "render_ground",
+            lambda vp, tiles, m, **k: asked.append(k.get("coarse", False)) or (["x"], None),
         )
         screen = _map_over(_StubSource())
 
@@ -2322,9 +2367,9 @@ def test_map_keeps_its_detail_while_a_find_is_typed(monkeypatch) -> None:  # noq
     screen = _map_over(_StubSource())
     coarse_asked: list = []
     monkeypatch.setattr(
-        ms, "render_ground",
-        lambda vp, tiles, m, **k: (coarse_asked.append(k.get("coarse", False))
-                                   or (["x"], None)),
+        ms,
+        "render_ground",
+        lambda vp, tiles, m, **k: coarse_asked.append(k.get("coarse", False)) or (["x"], None),
     )
 
     async def drive() -> None:
@@ -2354,9 +2399,7 @@ def _async_map(monkeypatch, drawn: list):
     monkeypatch.setattr(
         ms.asyncio, "ensure_future", lambda coro: (coro.close(), started.append(coro))[0]
     )
-    screen = ms.MapScreen(
-        _StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14
-    )
+    screen = ms.MapScreen(_StubSession(80, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
     drawn.append(started)
     return screen
 
@@ -2368,7 +2411,8 @@ def test_map_paints_without_waiting_for_the_ground(monkeypatch) -> None:  # noqa
     calls: list[tuple] = []
     real = ms.render_map
     monkeypatch.setattr(
-        ms, "render_map",
+        ms,
+        "render_map",
         lambda vp, tiles, m, **k: calls.append(tiles) or real(vp, tiles, m, **k),
     )
     started: list = []
@@ -2449,7 +2493,11 @@ async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:
     screen.render_body(80)
 
     await screen._draw_ground(
-        screen._ground_key(screen._viewport), screen._viewport, {}, screen._markers, "",
+        screen._ground_key(screen._viewport),
+        screen._viewport,
+        {},
+        screen._markers,
+        "",
         False,
     )
     assert screen._ghost is not None, "the finished raster left no ground behind"
@@ -2458,7 +2506,8 @@ async def test_map_pans_on_the_ground_its_last_raster_left(monkeypatch) -> None:
     handed: list = []
     real = ms.render_map
     monkeypatch.setattr(
-        ms, "render_map",
+        ms,
+        "render_map",
         lambda vp, tiles, m, **k: handed.append(k.get("ghost")) or real(vp, tiles, m, **k),
     )
     screen.handle("right")
@@ -2500,8 +2549,11 @@ def test_each_road_class_keeps_its_own_colour_through_the_per_tile_style_memo() 
     canvas = MapCanvas(vp.dot_w // 2, vp.dot_h // 4)
     frame = _Frame(canvas=canvas, viewport=vp)
     _draw_tile(
-        frame, [Layer(name="transportation", extent=4096, features=features)],
-        14, 4843, 5861,
+        frame,
+        [Layer(name="transportation", extent=4096, features=features)],
+        14,
+        4843,
+        5861,
     )
 
     painted = {colour for row in canvas._color for colour in row if colour}
@@ -2525,9 +2577,7 @@ def _run_map_cli(monkeypatch, *args: str):
     from meshterm import cli
 
     captured: dict = {}
-    monkeypatch.setattr(
-        cli, "run_tool_command", lambda tool, params: captured.update(params)
-    )
+    monkeypatch.setattr(cli, "run_tool_command", lambda tool, params: captured.update(params))
     app = typer.Typer()
     MapTool().register_cli(app)
     result = CliRunner().invoke(app, list(args))

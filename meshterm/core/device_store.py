@@ -234,9 +234,7 @@ class DeviceStore:
             return False
         del registry[stable_id]
         if last == stable_id:
-            last = max(
-                registry, key=lambda k: registry[k].last_connected, default=None
-            )
+            last = max(registry, key=lambda k: registry[k].last_connected, default=None)
         self._write(registry, last)
         return True
 

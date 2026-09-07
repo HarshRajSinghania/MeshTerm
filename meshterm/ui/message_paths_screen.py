@@ -246,8 +246,7 @@ class MessagePathsScreen(Screen):
         quoted = self._message.text.replace("\n", " ")
         if len(quoted) > 64:
             quoted = quoted[:63] + "…"
-        stamp = Text(self._message.created_at.astimezone().strftime("%b %d %H:%M"),
-                     style="muted")
+        stamp = Text(self._message.created_at.astimezone().strftime("%b %d %H:%M"), style="muted")
         stamp.append("  ·  ", style="muted")
         stamp.append(self._summary, style="muted" if self._matched else "warn")
 
@@ -353,8 +352,10 @@ class MessagePathsScreen(Screen):
         like, and it reads on the same rails as every other row.
         """
         relays = path_line(
-            arrival.hops, self._resolve,
-            prefix_bytes=self._prefix_bytes, self_name=self._self_name,
+            arrival.hops,
+            self._resolve,
+            prefix_bytes=self._prefix_bytes,
+            self_name=self._self_name,
             hash_as_name=True,
         ).hops
         return PathLine([self._origin_hop(), *relays, self._far_hop()]).text()
@@ -514,12 +515,20 @@ class MessagePathsScreen(Screen):
             for i, path in enumerate(paths)
         ]
         glyph_of, label_of, label_rgb_of = route_graph_style(
-            resolve=self._resolve, self_name=self._self_name, source=self._source,
-            destination=self._destination, type_of=self._type_of, key_of=self._key_of,
+            resolve=self._resolve,
+            self_name=self._self_name,
+            source=self._source,
+            destination=self._destination,
+            type_of=self._type_of,
+            key_of=self._key_of,
         )
         return render_path_graph(
-            layers, width, max_rows=max_rows,
-            glyph_of=glyph_of, label_of=label_of, label_rgb_of=label_rgb_of,
+            layers,
+            width,
+            max_rows=max_rows,
+            glyph_of=glyph_of,
+            label_of=label_of,
+            label_rgb_of=label_rgb_of,
             allow_duplicate_nodes=True,
         )
 

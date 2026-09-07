@@ -62,7 +62,6 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
     return screen
 
 
-
 # --- rendering ----------------------------------------------------------------------------
 
 
@@ -114,7 +113,8 @@ def test_walk_link_row_shrinks_the_key_before_the_name() -> None:
     )
     screen.note_viewport(24)
     row = next(
-        line for line in _plain(screen.render_body(68)).split("\n")
+        line
+        for line in _plain(screen.render_body(68)).split("\n")
         if "Repeater-Downtown-01" in line and "❯" in line  # the list row, not a canvas label
     )
     assert "Repeater-Downtown-01" in row  # the name shows whole, not clipped
@@ -136,8 +136,9 @@ def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     topo = MeshTopology(US, contacts=long_names)
     when = utcnow()
     for c, snr in zip(long_names, (8.0, 1.0), strict=True):
-        topo.add_walk([topo.self_id, topo.canonical(c.public_key)], snrs=[snr], when=when,
-                      source="trace")
+        topo.add_walk(
+            [topo.self_id, topo.canonical(c.public_key)], snrs=[snr], when=when, source="trace"
+        )
     screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,
@@ -167,7 +168,7 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     bob = Contact(name="Bob", public_key="c4" * 32)
     topo = MeshTopology(US, contacts=[hub, alice, bob])
     y = topo.canonical(hub.public_key)
-    topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")   # approach: green
+    topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")  # approach: green
     # amber, then red
     topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")
     topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")
@@ -194,9 +195,9 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     def scaled(rgb: tuple[int, int, int], f: float) -> tuple[int, int, int]:
         return tuple(max(0, min(255, round(c * f))) for c in rgb)
 
-    assert code(_snr_rgb(0.0)) in canvas           # Alice's edge, full-strength amber
-    assert code(scaled(_snr_rgb(-15.0), 0.5)) in canvas   # Bob's edge stays faded…
-    assert code(_snr_rgb(-15.0)) not in canvas     # …and never reaches full strength
+    assert code(_snr_rgb(0.0)) in canvas  # Alice's edge, full-strength amber
+    assert code(scaled(_snr_rgb(-15.0), 0.5)) in canvas  # Bob's edge stays faded…
+    assert code(_snr_rgb(-15.0)) not in canvas  # …and never reaches full strength
 
 
 def test_walk_empty_graph_renders_guidance() -> None:
@@ -417,8 +418,9 @@ def test_walk_echoes_the_find_query_above_the_matches_it_narrows() -> None:
         # Clearing the find takes the row back with it.
         for _ in "al":
             device.handle("backspace")
-        assert not any(line.strip().startswith("/") for line in
-                       (_plain(ln) for ln in device.render_body(53)))
+        assert not any(
+            line.strip().startswith("/") for line in (_plain(ln) for ln in device.render_body(53))
+        )
     finally:
         set_platform(REGULAR)
 
@@ -432,7 +434,11 @@ def test_walk_fkey_lane_gives_you_its_own_slot_over_the_pagers_ends() -> None:
     lane = screen.fkey_lane
 
     assert [pair.label if pair else None for pair in lane] == [
-        None, None, "You", "Page ↓", "Page ↑",
+        None,
+        None,
+        "You",
+        "Page ↓",
+        "Page ↑",
     ]
     assert action_for(lane, 3) == "locate"
     assert lane[2].opp_label == ""  # nothing is the opposite of going home
@@ -506,9 +512,7 @@ def _hub_topo(spokes: int) -> MeshTopology:
 
 def test_walk_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
     """Beyond the area's capacity, weaker neighbours fold into a single ``…`` node."""
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us")
     screen.note_viewport(20)
     body = _plain(screen.render_body(80))
     assert "weaker" in body  # the collapsed marker is labelled "+n weaker"
@@ -520,9 +524,7 @@ def test_walk_collapses_the_weak_links_into_one_ellipsis_marker() -> None:
 
 def test_walk_fan_stays_sparse_and_collapses_the_rest() -> None:
     """The fan is kept deliberately sparse: even a modest hub sheds its weakest links."""
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(8), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(8), contacts={}, self_label="us")
     screen.note_viewport(20)
     canvas_part = _plain(screen.render_body(80)).split("Links")[0]
     assert "…" in canvas_part and "weaker" in canvas_part  # not all eight are drawn
@@ -543,9 +545,7 @@ def test_walk_labels_non_selected_nodes_to_the_right_of_their_icon() -> None:
 
 def test_walk_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> None:
     """Highlighting a weak (collapsed) row surfaces its name at the ``…`` marker."""
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us")
     screen.note_viewport(20)
     screen.render_body(80)
     screen._index = len(screen._rows()) - 1  # the weakest row, surely collapsed
@@ -558,9 +558,7 @@ def test_walk_selecting_a_collapsed_row_lights_the_ellipsis_with_its_name() -> N
 
 def test_walk_body_fits_the_viewport_and_windows_the_list() -> None:
     """The screen never outgrows the frame; only the link list scrolls, marked."""
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us")
     screen.note_viewport(22)
     lines = screen.render_body(80)
     assert len(lines) <= 22  # canvas + chrome + list window == the viewport
@@ -571,9 +569,7 @@ def test_walk_body_fits_the_viewport_and_windows_the_list() -> None:
 
 def test_walk_pgdn_pages_the_highlight_by_the_list_window() -> None:
     """PgUp/PgDn stride by the list window, and the window follows the highlight."""
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(16), contacts={}, self_label="us")
     screen.note_viewport(22)
     screen.render_body(80)
     stride = screen._list.page
@@ -659,9 +655,12 @@ def _chain(length: int) -> MeshTopology:
 def _walked_chain(length: int, *, width: int = 46):
     """A screen walked to the end of a `length`-hop chain, rendered at `width`."""
     topo = _chain(length)
-    contacts = {topo.canonical(f"{i:02x}" * 32): Contact(
-        name=f"Repeater-{i:02d}", public_key=f"{i:02x}" * 32
-    ) for i in range(1, length + 1)}
+    contacts = {
+        topo.canonical(f"{i:02x}" * 32): Contact(
+            name=f"Repeater-{i:02d}", public_key=f"{i:02x}" * 32
+        )
+        for i in range(1, length + 1)
+    }
     screen = WalkScreen(
         session=_FakeSession(), topo=topo, contacts=contacts, self_label="Homestead"
     )
@@ -670,9 +669,7 @@ def _walked_chain(length: int, *, width: int = 46):
         screen.render_body(width)
         rows = screen._rows()
         # Always step *onward*, never back through the node we came from.
-        screen._index = next(
-            i for i, node in enumerate(rows) if node not in screen._trail
-        )
+        screen._index = next(i for i, node in enumerate(rows) if node not in screen._trail)
         screen.handle("enter")
     screen.render_body(width)
     return screen, width
@@ -752,7 +749,8 @@ def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
     topo.add_walk([hub, bob_id], snrs=[1.0], when=when, source="packet")
 
     screen = WalkScreen(
-        session=_FakeSession(), topo=topo,
+        session=_FakeSession(),
+        topo=topo,
         contacts={hub: Hub, alice: ALICE, bob_id: bob},
         self_label="Homestead",
     )
@@ -767,7 +765,7 @@ def test_walk_find_narrows_the_canvas_fan_but_not_the_walk() -> None:
     for ch in "ali":
         screen.handle("text", ch)
     canvas = _plain(screen._canvas_lines(80, 12, None))
-    assert "Alice" in canvas          # the way onward the query is about
+    assert "Alice" in canvas  # the way onward the query is about
     assert "Bob-Tower" not in canvas  # and the one it isn't
     # The focus is not a candidate: it is the walk so far, and holds through any query.
     assert "Hilltop-Repeater" in canvas
@@ -792,8 +790,9 @@ def test_walk_marks_wear_their_node_type_colour_not_the_key_hue() -> None:
     # The legend is a sample of those very marks, so it keys colour as well as shape.
     legend = screen._legend()
     hues = {
-        legend.plain[span.start:span.end]: str(span.style)
-        for span in legend.spans if span.end - span.start == 1
+        legend.plain[span.start : span.end]: str(span.style)
+        for span in legend.spans
+        if span.end - span.start == 1
     }
     assert hues[REPEATER_MARK[0]] == "type.repeater"
     assert hues[NODE_MARK[0]] == "type.node"
@@ -838,7 +837,7 @@ def test_walk_collapsed_marker_stands_in_for_the_selected_weak_link() -> None:
     screen.render_body(80)
     rows = screen._rows()
     capacity = screen._fan_capacity(14)
-    hidden = rows[capacity - 1:]
+    hidden = rows[capacity - 1 :]
     assert len(hidden) > 1
 
     # Unselected, the marker is the anonymous ellipsis and counts what it swallowed.
@@ -871,8 +870,7 @@ def _code(rgb: tuple[int, int, int]) -> str:
 def _long_name_screen(names: list[str]) -> WalkScreen:
     """Us at the centre of a fan of `names`, strongest first."""
     contacts = [
-        Contact(name=n, public_key=f"{i + 0x20:02x}" * 32, node_type=2)
-        for i, n in enumerate(names)
+        Contact(name=n, public_key=f"{i + 0x20:02x}" * 32, node_type=2) for i, n in enumerate(names)
     ]
     topo = MeshTopology(US, contacts=contacts)
     when = utcnow()
@@ -881,7 +879,8 @@ def _long_name_screen(names: list[str]) -> WalkScreen:
         for _ in range(len(contacts) - i):
             topo.add_walk([topo.self_id, node], snrs=[8.0 - i], when=when, source="trace")
     screen = WalkScreen(
-        session=_FakeSession(), topo=topo,
+        session=_FakeSession(),
+        topo=topo,
         contacts={topo.canonical(c.public_key): c for c in contacts},
         self_label="Homestead",
     )
@@ -902,9 +901,7 @@ def test_walk_only_the_long_named_marker_gives_up_reach_for_its_name() -> None:
     short = _long_name_screen(["Ann", "Bob", "Carol"])
     baseline = short._place_neighbours(80, 11, short._fan_nodes(), False)
     assert placed[nodes[0]][0] < baseline[short._fan_nodes()[0]][0]
-    assert [placed[n][0] for n in nodes[1:]] == [
-        baseline[n][0] for n in short._fan_nodes()[1:]
-    ]
+    assert [placed[n][0] for n in nodes[1:]] == [baseline[n][0] for n in short._fan_nodes()[1:]]
 
 
 def test_walk_fan_keeps_its_reach_when_a_name_would_swallow_the_canvas() -> None:
@@ -927,7 +924,7 @@ def test_walk_collapsed_slot_is_laid_out_for_its_resting_label_not_the_selection
     )
     screen.render_body(80)
     rows = screen._rows()
-    hidden = rows[screen._fan_capacity(11) - 1:]
+    hidden = rows[screen._fan_capacity(11) - 1 :]
     assert len(hidden) > 1
 
     at_rest = screen._canvas_lines(80, 11, rows[0])
@@ -987,9 +984,7 @@ def test_walk_link_cursor_clamps_at_both_ends() -> None:
     ↑ on the first row and ↓ past the last stay where they are, rather than hauling
     the window end to end.
     """
-    screen = WalkScreen(
-        session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us"
-    )
+    screen = WalkScreen(session=_FakeSession(), topo=_hub_topo(14), contacts={}, self_label="us")
     screen.note_viewport(20)
     screen.render_body(80)
     last = len(screen._rows()) - 1

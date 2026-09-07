@@ -51,8 +51,9 @@ def test_borderless_frame_swaps_the_panel_for_a_title_bar() -> None:
     assert plain[2].startswith("row 0")
 
 
-def _bar_text(title: str, hint: str, cols: int = 53, *, above: bool = False,
-              below: bool = True) -> Text:
+def _bar_text(
+    title: str, hint: str, cols: int = 53, *, above: bool = False, below: bool = True
+) -> Text:
     """The borderless title bar for a screen with ``title`` and ``hint``, as styled Text."""
     screen = ScrollScreen(Text("x"), title=title, floating=False)
     screen._footer_hint = hint
@@ -67,8 +68,11 @@ def _bar(title: str, hint: str, cols: int = 53, *, below: bool = True) -> str:
 def _arrow_styles(bar: Text) -> tuple[str, str]:
     """The styles the bar painted on its two clip arrows, ``(up, down)``."""
     return tuple(
-        next(str(span.style) for span in bar.spans
-             if span.start <= index < span.end and span.end - span.start == 1)
+        next(
+            str(span.style)
+            for span in bar.spans
+            if span.start <= index < span.end and span.end - span.start == 1
+        )
         for index in (0, 1)
     )
 
@@ -99,18 +103,27 @@ def test_the_clip_arrows_are_always_drawn_and_say_it_in_colour() -> None:
     """
     hint = "↑↓ move · Esc back"
     assert _arrow_styles(_bar_text("Contacts", hint, above=True, below=True)) == (
-        "accent", "accent")
+        "accent",
+        "accent",
+    )
     assert _arrow_styles(_bar_text("Contacts", hint, above=False, below=True)) == (
-        "muted", "accent")
+        "muted",
+        "accent",
+    )
     assert _arrow_styles(_bar_text("Contacts", hint, above=True, below=False)) == (
-        "accent", "muted")
+        "accent",
+        "muted",
+    )
     # A body that fits whole keeps the pair, both dim — nothing appears or disappears.
     assert _arrow_styles(_bar_text("Contacts", hint, above=False, below=False)) == (
-        "muted", "muted")
+        "muted",
+        "muted",
+    )
 
     widths = {
         _bar_text("Contacts", hint, above=a, below=b).plain
-        for a in (False, True) for b in (False, True)
+        for a in (False, True)
+        for b in (False, True)
     }
     assert len(widths) == 1, "the bar's text must not shift as the body scrolls"
 
@@ -285,10 +298,16 @@ def test_select_lane_promotes_the_section_jumps_only_where_there_are_sections() 
     assert flat.fkey_lane[0] is None and flat.fkey_lane[1] is None
     assert action_for(flat.fkey_lane, 1) is None
 
-    grouped = SelectScreen("Grouped", [
-        Separator("── Near ──"), Choice("alpha", 1), Choice("beta", 2),
-        Separator("── Far ──"), Choice("gamma", 3),
-    ])
+    grouped = SelectScreen(
+        "Grouped",
+        [
+            Separator("── Near ──"),
+            Choice("alpha", 1),
+            Choice("beta", 2),
+            Separator("── Far ──"),
+            Choice("gamma", 3),
+        ],
+    )
     lane = grouped.fkey_lane
     assert [pair.label for pair in lane[:2]] == ["Sect ↑", "Sect ↓"]
     # A pair rises toward its outer key: on this left-edge pair, up takes F1.

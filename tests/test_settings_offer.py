@@ -93,7 +93,8 @@ def _run(ctx, monkeypatch, *, choice=None):  # noqa: ANN001, ANN202
 
 
 def test_offer_restores_a_position_the_device_lost_without_asking(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Device reports the null island, store remembers a fix → silent restore, no prompt."""
     store = SettingsStore(tmp_path / "settings.json")
@@ -113,7 +114,8 @@ def test_offer_restores_a_position_the_device_lost_without_asking(
 
 
 def test_offer_still_asks_when_the_device_reports_a_real_conflicting_fix(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """A device with an actual different position is a true conflict: prompt, don't write."""
     store = SettingsStore(tmp_path / "settings.json")
@@ -129,7 +131,8 @@ def test_offer_still_asks_when_the_device_reports_a_real_conflicting_fix(
 
 
 def test_offer_splits_a_mixed_drift_between_silent_position_and_prompted_rest(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Position restores silently while the other drifted settings still reach the prompt."""
     store = SettingsStore(tmp_path / "settings.json")

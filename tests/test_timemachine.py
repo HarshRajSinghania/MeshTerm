@@ -49,21 +49,24 @@ def _seeded_repo(tmp_path: Path) -> Repository:
         repo.record_observation(
             run,
             Observation(
-                node=NODE, name="Hub", kind="advert",
-                snr=8.0 if hours_ago > 24 else -2.0, rssi=-95.0,
+                node=NODE,
+                name="Hub",
+                kind="advert",
+                snr=8.0 if hours_ago > 24 else -2.0,
+                rssi=-95.0,
                 observed_at=now - timedelta(hours=hours_ago),
             ),
         )
     repo.record_observation(
         run,
-        Observation(node="f7" * 6, name="Newcomer",
-                    observed_at=now - timedelta(hours=3)),
+        Observation(node="f7" * 6, name="Newcomer", observed_at=now - timedelta(hours=3)),
     )
     # A packet row: counted in daily totals, excluded from per-node reception.
     repo.record_observation(
         run,
-        Observation(node=NODE, kind="packet", snr=1.0, path="",
-                    observed_at=now - timedelta(hours=1)),
+        Observation(
+            node=NODE, kind="packet", snr=1.0, path="", observed_at=now - timedelta(hours=1)
+        ),
     )
     return repo
 
@@ -122,9 +125,7 @@ def test_hourly_activity_groups_by_local_hour(tmp_path: Path) -> None:
         repo.record_observation(
             run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=minutes))
         )
-    repo.record_observation(
-        run, Observation(node="aa" * 6, observed_at=base.replace(hour=17))
-    )
+    repo.record_observation(run, Observation(node="aa" * 6, observed_at=base.replace(hour=17)))
     # Each UTC instant is rotated into the machine's zone before bucketing; derive the
     # expected local hours the same way so the test holds in any zone.
     early, late = base.astimezone().hour, base.replace(hour=17).astimezone().hour
@@ -164,7 +165,7 @@ def test_hourly_series_groups_by_clock_hour(tmp_path: Path) -> None:
     three_h_key = three_h.astimezone().strftime("%Y-%m-%dT%H")
     base_key = base.astimezone().strftime("%Y-%m-%dT%H")
     assert by_hour[three_h_key] == (4, 2)  # 3 adverts + a packet row; 2 nodes
-    assert by_hour[base_key] == (1, 1)     # just this hour's lone advert
+    assert by_hour[base_key] == (1, 1)  # just this hour's lone advert
     assert series == sorted(series)  # oldest first
     repo.close()
 
@@ -224,7 +225,11 @@ def test_fill_days_shows_gap_days_as_zero_bars() -> None:
     now = datetime(2026, 7, 6, 12).astimezone()
     filled = _fill_days(active, datetime(2026, 7, 1).astimezone(), now)
     assert [iso for iso, _p, _n in filled] == [
-        "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
     ]
     counts = {iso: packets for iso, packets, _n in filled}
     assert counts["2026-07-03"] == 0 and counts["2026-07-04"] == 0  # the gap, now visible
@@ -240,7 +245,7 @@ def test_fill_days_never_invents_days_before_recording_began() -> None:
     active = [("2026-07-10", 10, 1)]
     now = datetime(2026, 7, 12, 12).astimezone()
     filled = _fill_days(active, datetime(2026, 6, 12).astimezone(), now)  # a 30 d floor
-    assert filled[0][0] == "2026-07-10"   # not the 2026-06-12 floor
+    assert filled[0][0] == "2026-07-10"  # not the 2026-06-12 floor
     assert filled[-1][0] == "2026-07-12"  # …but still runs through today
 
 
@@ -254,7 +259,7 @@ def test_fill_hours_shows_gap_hours_as_zero_bars() -> None:
     # .astimezone() reads them as local), keeping the test zone-independent.
     active = [("2026-07-12T08", 30, 3), ("2026-07-12T11", 20, 2)]
     since = datetime(2026, 7, 12, 6, 30).astimezone()  # floors to 06:00…
-    now = datetime(2026, 7, 12, 12, 15).astimezone()   # …but the first hour recorded wins
+    now = datetime(2026, 7, 12, 12, 15).astimezone()  # …but the first hour recorded wins
     filled = _fill_hours(active, since, now)
     assert [iso for iso, _p, _n in filled] == [f"2026-07-12T{h:02d}" for h in range(8, 13)]
     counts = {iso: pkts for iso, pkts, _n in filled}
@@ -281,7 +286,7 @@ def test_day_ticks_shorten_dates_and_align_to_bars() -> None:
     ticks = _day_ticks(days, chars)
     assert [cell for cell, _ in ticks] == _day_centers(len(days), chars)  # under the bars
     labels = [label for _, label in ticks]
-    assert labels[0] == "Jul 1"          # month printed once, on the first tick
+    assert labels[0] == "Jul 1"  # month printed once, on the first tick
     assert labels[1:] == ["2", "3", "4", "5", "6", "7"]  # bare day numbers after it
 
 
@@ -460,7 +465,7 @@ def test_time_axis_shortens_to_dates_on_wide_windows_and_times_on_narrow() -> No
     narrow = _time_axis(start, start + timedelta(hours=12))
     assert wide(1.0) == "now" and narrow(1.0) == "now"
     assert any(ch.isalpha() for ch in wide(0.0))  # a month name, e.g. "Jul 1"
-    assert ":" in narrow(0.0)                      # a clock time, e.g. "08:00"
+    assert ":" in narrow(0.0)  # a clock time, e.g. "08:00"
 
 
 def test_node_page_empty_window_offers_widening(tmp_path: Path) -> None:
@@ -506,27 +511,19 @@ def test_mesh_page_arrivals_key_lane_flexes_with_width(tmp_path: Path) -> None:
     def resolve_key(node):
         return full_key if node == "f7" * 6 else node
 
-    wide = _plain(
-        _mesh_sections(ctx, None, 100, 1, lambda n: n, resolve_key), width=100
-    )
-    arrivals_row = next(
-        ln for ln in wide.split("\n") if "Newcomer" in ln
-    )
+    wide = _plain(_mesh_sections(ctx, None, 100, 1, lambda n: n, resolve_key), width=100)
+    arrivals_row = next(ln for ln in wide.split("\n") if "Newcomer" in ln)
     shown = re.search(r"(f7)+…?", arrivals_row).group(0)
-    assert len(shown.rstrip("…")) > 12          # more than the stored 12 hex
-    assert len(shown.rstrip("…")) % 2 == 0      # truncated on a byte boundary
-    assert "…" in shown                          # a 64-hex key can't fit whole
+    assert len(shown.rstrip("…")) > 12  # more than the stored 12 hex
+    assert len(shown.rstrip("…")) % 2 == 0  # truncated on a byte boundary
+    assert "…" in shown  # a 64-hex key can't fit whole
 
-    narrow = _plain(
-        _mesh_sections(ctx, None, 60, 1, lambda n: n, resolve_key), width=60
-    )
+    narrow = _plain(_mesh_sections(ctx, None, 60, 1, lambda n: n, resolve_key), width=60)
     narrow_row = next(ln for ln in narrow.split("\n") if "Newcomer" in ln)
     narrow_shown = re.search(r"(f7)+…?", narrow_row).group(0)
     assert len(narrow_shown) < len(shown)  # the lane tracks the terminal width
 
-    tight = _plain(
-        _mesh_sections(ctx, None, 40, 1, lambda n: n, resolve_key), width=40
-    )
+    tight = _plain(_mesh_sections(ctx, None, 40, 1, lambda n: n, resolve_key), width=40)
     tight_row = next(ln for ln in tight.split("\n") if "Newcomer" in ln)
     tight_shown = re.search(r"(f7)+…?", tight_row).group(0)
     assert len(tight_shown) <= _PICK_HASH_W  # floored at the old fixed lane
@@ -547,7 +544,8 @@ def test_mesh_page_day_chart_axis_matches_the_bar_width(tmp_path: Path) -> None:
     lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
     heading_idx = next(i for i, line in enumerate(lines) if "Packets per day" in line)
     border_idx = next(
-        i for i, line in enumerate(lines[heading_idx:], heading_idx)
+        i
+        for i, line in enumerate(lines[heading_idx:], heading_idx)
         if re.fullmatch(r"\s*└[─┬]+┘", line)
     )
     border_interior = len(re.search(r"└([─┬]+)┘", lines[border_idx]).group(1))
@@ -563,16 +561,14 @@ def test_mesh_page_day_axis_ticks_sit_under_dated_columns(tmp_path: Path) -> Non
     ctx = SimpleNamespace(repo=repo)
     lines = _plain(_mesh_sections(ctx, None, 90), width=90).split("\n")
     heading_idx = next(i for i, line in enumerate(lines) if "Packets per day" in line)
-    border = next(
-        line for line in lines[heading_idx:] if re.fullmatch(r"\s*└[─┬]+┘", line)
-    )
+    border = next(line for line in lines[heading_idx:] if re.fullmatch(r"\s*└[─┬]+┘", line))
     caption = lines[lines.index(border) + 1]
     tick_cols = [i for i, ch in enumerate(border) if ch == "┬"]
     assert tick_cols, "the day axis should carry tick marks"
     # The seeded history ends today, so the newest bar's tick reads 'today'.
     assert "today" in caption
     # Every tick has a non-blank label somewhere near it (labels centre on their tick).
-    assert any(not caption[max(0, c - 3):c + 4].isspace() for c in tick_cols)
+    assert any(not caption[max(0, c - 3) : c + 4].isspace() for c in tick_cols)
     repo.close()
 
 
@@ -618,33 +614,39 @@ def test_picker_row_lanes_align_under_the_header() -> None:
     from meshterm.ui.widgets import ContactsSort
 
     node = HeardNode(
-        node="3d" * 6, name=None, count=42, median_snr=None, best_snr=None,
-        last_rssi=None, last_seen=utcnow(),
+        node="3d" * 6,
+        name=None,
+        count=42,
+        median_snr=None,
+        best_snr=None,
+        last_rssi=None,
+        last_seen=utcnow(),
     )
     row = _lane(
         ContactRow(
-            value=node.node, name=node.name, key=node.node or "",
-            last_seen=node.last_seen, count=node.count,
+            value=node.node,
+            name=node.name,
+            key=node.node or "",
+            last_seen=node.last_seen,
+            count=node.count,
         ),
-        10, 2, 16,
+        10,
+        2,
+        16,
     )
     plain = row.plain
     assert "unknown" in plain and "3d" * 6 in plain and "42" in plain
     # A just-heard node's HEARD age reads hot (white); the nameless placeholder is muted.
     assert any(span.style == "#ffffff" for span in row.spans)
     unknown_at = plain.index("unknown")
-    assert any(
-        span.style == "muted" and span.start <= unknown_at < span.end
-        for span in row.spans
-    )
+    assert any(span.style == "muted" and span.start <= unknown_at < span.end for span in row.spans)
     # A nameless node is unidentified, so its key lane greys whole — the prefix never
     # lights (colour marks an identified node, exactly as in the path graph).
     from meshterm.ui.theme import node_style
 
     hash_at = plain.index("3d" * 6)
     assert any(
-        span.style == "node.unknown"
-        and span.start == hash_at and span.end == hash_at + 12
+        span.style == "node.unknown" and span.start == hash_at and span.end == hash_at + 12
         for span in row.spans
     )
     assert not any(span.style == node_style("3d" * 6) for span in row.spans)
@@ -679,7 +681,7 @@ def test_picker_header_highlights_only_the_active_sort_column() -> None:
     from meshterm.ui.widgets import ContactsSort
 
     header = _header(12, ContactsSort.from_name("packets"))
-    lit = [header.plain[s.start:s.end] for s in header.spans if s.style == _SORT_ACTIVE]
+    lit = [header.plain[s.start : s.end] for s in header.spans if s.style == _SORT_ACTIVE]
     # Exactly the active PKTS lane (label + triangle) carries the highlight.
     assert any("PKTS" in seg and "▼" in seg for seg in lit)
     assert not any(any(other in seg for other in ("NAME", "HEARD", "KEY")) for seg in lit)
@@ -726,7 +728,9 @@ def test_a_list_draws_exactly_the_lanes_it_declares() -> None:
     assert "HEARD" not in arch and "PKTS" not in arch
 
     row = ContactRow(
-        value="x", name="Poly", key="3d" * 6,
+        value="x",
+        name="Poly",
+        key="3d" * 6,
         last_seen=utcnow() - timedelta(minutes=90),
         last_traced=utcnow() - timedelta(minutes=2),
         archived_at=utcnow() - timedelta(days=3),
@@ -803,8 +807,13 @@ def _heard_nodes() -> list:
 
     def node(node_id: str, name: str, count: int, mins: int) -> HeardNode:
         return HeardNode(
-            node=node_id, name=name, count=count, median_snr=None, best_snr=None,
-            last_rssi=None, last_seen=now - timedelta(minutes=mins),
+            node=node_id,
+            name=name,
+            count=count,
+            median_snr=None,
+            best_snr=None,
+            last_rssi=None,
+            last_seen=now - timedelta(minutes=mins),
         )
 
     # Carla is freshest, Alice busiest, Bob oldest — so every column disagrees on order.
@@ -870,9 +879,7 @@ def test_picker_glyph_reflects_resolved_node_type() -> None:
 
     screen = _picker(listed, type_of=lambda node: NODE_TYPE_REPEATER if node == repeater else None)
     glyphs = {
-        c.value[0]: c.label.plain[0]
-        for c in screen._choices()
-        if c.value not in (MESH, SELF)
+        c.value[0]: c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF)
     }
     # The resolved repeater takes ▲; a node the resolver can't place keeps the plain-node ●.
     assert glyphs[repeater] == _NODE_GLYPHS[NODE_TYPE_REPEATER][0]
@@ -888,13 +895,17 @@ def test_picker_stored_node_type_wins_over_the_resolver() -> None:
     from meshterm.ui.widgets import _NODE_GLYPHS
 
     sensor = HeardNode(
-        node="ab" * 6, name="Probe", count=3, median_snr=None, best_snr=None,
-        last_rssi=None, last_seen=utcnow() - timedelta(minutes=1), node_type=NODE_TYPE_SENSOR,
+        node="ab" * 6,
+        name="Probe",
+        count=3,
+        median_snr=None,
+        best_snr=None,
+        last_rssi=None,
+        last_seen=utcnow() - timedelta(minutes=1),
+        node_type=NODE_TYPE_SENSOR,
     )
     screen = _picker([(sensor, "Probe")], type_of=lambda _node: NODE_TYPE_REPEATER)
-    glyph = next(
-        c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF)
-    )
+    glyph = next(c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF))
     assert glyph == _NODE_GLYPHS[NODE_TYPE_SENSOR][0]
 
 
@@ -976,9 +987,7 @@ def test_picocalc_window_ring_stops_at_30_days() -> None:
     from meshterm.platforms import PICOCALC, set_platform
 
     set_platform(PICOCALC)
-    screen = TimeMachineScreen(
-        session=_FakeSession(), label="Hub", build=lambda window, width: []
-    )
+    screen = TimeMachineScreen(session=_FakeSession(), label="Hub", build=lambda window, width: [])
     assert "7 d" in screen.title  # opens on 7 d, as everywhere
     screen.handle("text", "w")
     assert "30 d" in screen.title
@@ -1009,32 +1018,42 @@ def _activity_repo(tmp_path: Path) -> Repository:
 
     def trace(target: str, ok: bool, snrs: list, mins: int) -> TraceResult:
         return TraceResult(
-            target=target, success=ok,
+            target=target,
+            success=ok,
             hops=[Hop(index=i, node=None, snr=s) for i, s in enumerate(snrs)],
-            round_trip_ms=120.0 if ok else None, tx_power=20,
-            path_hash_bytes=1, timestamp=now - timedelta(minutes=mins),
+            round_trip_ms=120.0 if ok else None,
+            tx_power=20,
+            path_hash_bytes=1,
+            timestamp=now - timedelta(minutes=mins),
         )
 
-    repo.record_trace(trun, trace("Hub-A", True, [5.0, 8.0], 40))       # min 5.0, 2 hops
-    repo.record_trace(trun, trace("Hub-A", True, [2.0], 30))            # min 2.0, 1 hop
+    repo.record_trace(trun, trace("Hub-A", True, [5.0, 8.0], 40))  # min 5.0, 2 hops
+    repo.record_trace(trun, trace("Hub-A", True, [2.0], 30))  # min 2.0, 1 hop
     repo.record_trace(trun, trace("Hub-B", True, [-3.0, 1.0, 4.0], 20))  # min -3.0, 3 hops
-    repo.record_trace(trun, trace("Hub-B", False, [], 15))             # timed out, no SNR
-    repo.record_trace(trun, trace(PATH_TRACE_TARGET, True, [6.0], 10))   # path walk: no target
+    repo.record_trace(trun, trace("Hub-B", False, [], 15))  # timed out, no SNR
+    repo.record_trace(trun, trace(PATH_TRACE_TARGET, True, [6.0], 10))  # path walk: no target
 
     crun = repo.start_run("chat", {}, None)
 
     def msg(outbound, is_channel, peer, acked, mins, channel_id=None):
         return ChatMessage(
-            text="hi", outbound=outbound, is_channel=is_channel, channel_id=channel_id,
-            channel_idx=0 if is_channel else None, peer=peer, peer_name=peer,
-            snr=None, acked=acked, created_at=now - timedelta(minutes=mins),
+            text="hi",
+            outbound=outbound,
+            is_channel=is_channel,
+            channel_id=channel_id,
+            channel_idx=0 if is_channel else None,
+            peer=peer,
+            peer_name=peer,
+            snr=None,
+            acked=acked,
+            created_at=now - timedelta(minutes=mins),
         )
 
     repo.record_chat_message(msg(True, True, None, None, 35, channel_id="public"), run_id=crun)
     repo.record_chat_message(msg(True, True, None, None, 25, channel_id="public"), run_id=crun)
-    repo.record_chat_message(msg(True, False, "aa" * 6, True, 22))    # dm sent, acked
-    repo.record_chat_message(msg(True, False, "bb" * 6, False, 18))   # dm sent, not acked
-    repo.record_chat_message(msg(True, False, "aa" * 6, None, 12))    # dm sent, ack pending
+    repo.record_chat_message(msg(True, False, "aa" * 6, True, 22))  # dm sent, acked
+    repo.record_chat_message(msg(True, False, "bb" * 6, False, 18))  # dm sent, not acked
+    repo.record_chat_message(msg(True, False, "aa" * 6, None, 12))  # dm sent, ack pending
     repo.record_chat_message(msg(False, False, "aa" * 6, None, 8), run_id=crun)  # inbound: excluded
 
     repo._conn.execute(
@@ -1110,7 +1129,9 @@ def test_self_row_leads_the_node_list_as_a_lane() -> None:
 
     named = _lane(
         ContactRow(value=SELF, name="Homestead", key="3d" * 32, you=True),
-        name_w=30, prefix_bytes=1, hash_w=30,
+        name_w=30,
+        prefix_bytes=1,
+        hash_w=30,
     ).plain
     assert named.startswith("★")
     assert "Homestead" in named and "(you)" in named
@@ -1119,7 +1140,9 @@ def test_self_row_leads_the_node_list_as_a_lane() -> None:
     # No reachable device: a bare "you" name and a "?" hash, no "(you)" tag.
     anon = _lane(
         ContactRow(value=SELF, name=None, key="", you=True),
-        name_w=30, prefix_bytes=0, hash_w=30,
+        name_w=30,
+        prefix_bytes=0,
+        hash_w=30,
     ).plain
     assert "you" in anon and "(you)" not in anon
     assert anon.rstrip().endswith("?")
@@ -1152,8 +1175,13 @@ def test_picker_hash_lane_shows_a_heard_nodes_full_key_when_a_contact_holds_it()
     stored = "3d63c6429436"  # the 12-hex prefix the observations keep
     full = stored + "ab" * 26  # the whole public key a contact holds
     node = HeardNode(
-        node=stored, name="Rep", count=7, median_snr=None, best_snr=None,
-        last_rssi=None, last_seen=utcnow(),
+        node=stored,
+        name="Rep",
+        count=7,
+        median_snr=None,
+        best_snr=None,
+        last_rssi=None,
+        last_seen=utcnow(),
     )
     screen = _picker([(node, "Rep")], resolve_key=lambda n: full if n == stored else n, width=100)
     # The heard row (after the mesh, header, and self rows) shows well past the stored prefix.
@@ -1170,8 +1198,14 @@ def test_picker_hash_lane_shows_a_captured_full_key_without_a_device() -> None:
     stored = "3d63c6429436"
     full = stored + "cd" * 26
     node = HeardNode(
-        node=stored, name="Rep", count=7, median_snr=None, best_snr=None,
-        last_rssi=None, last_seen=utcnow(), public_key=full,
+        node=stored,
+        name="Rep",
+        count=7,
+        median_snr=None,
+        best_snr=None,
+        last_rssi=None,
+        last_seen=utcnow(),
+        public_key=full,
     )
     # No resolve_key passed: the stored public_key alone drives the hash lane.
     screen = _picker([(node, "Rep")], width=100)

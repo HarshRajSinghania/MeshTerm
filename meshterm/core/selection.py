@@ -57,16 +57,12 @@ class Resolution:
         return self.port
 
 
-def _find_by_target(
-    devices: list[DiscoveredDevice], target: str
-) -> DiscoveredDevice | None:
+def _find_by_target(devices: list[DiscoveredDevice], target: str) -> DiscoveredDevice | None:
     """Return the discovered device whose port or BLE address equals ``target``."""
     return next((d for d in devices if d.target == target or d.port == target), None)
 
 
-def _resolve_tcp(
-    endpoint: str, devices: list[DiscoveredDevice], source: str
-) -> Resolution:
+def _resolve_tcp(endpoint: str, devices: list[DiscoveredDevice], source: str) -> Resolution:
     """Build a TCP :class:`Resolution` from a ``host[:port]`` string.
 
     The endpoint is normalized (a bare host gains the default port) so the resulting target
@@ -93,9 +89,7 @@ def _format_device_list(devices: list[DiscoveredDevice]) -> str:
     for d in devices:
         flag = " [likely LoRa]" if d.is_likely_lora else ""
         kind = "TCP" if d.is_tcp else "BLE" if d.is_ble else "serial"
-        lines.append(
-            f"  • {d.target} ({kind}) — {d.product or d.description or 'device'}{flag}"
-        )
+        lines.append(f"  • {d.target} ({kind}) — {d.product or d.description or 'device'}{flag}")
     return "\n".join(lines)
 
 

@@ -270,9 +270,7 @@ class Ui:
         """
         raise NotImplementedError
 
-    async def typed_confirm(
-        self, warning: str, word: str, *, title: str = "Are you sure?"
-    ) -> bool:
+    async def typed_confirm(self, warning: str, word: str, *, title: str = "Are you sure?") -> bool:
         """Gate a destructive action behind typing ``word``; return whether it was typed."""
         raise NotImplementedError
 
@@ -390,9 +388,7 @@ class PlainUi(Ui):
         return make_progress(self.console)
 
     @asynccontextmanager
-    async def busy_overlay(
-        self, message: str = "", *, title: str = ""
-    ) -> AsyncIterator[None]:
+    async def busy_overlay(self, message: str = "", *, title: str = "") -> AsyncIterator[None]:
         """Do nothing: the scripted CLI has no full-screen surface to float a skeleton over."""
         yield
 
@@ -555,9 +551,7 @@ class PlainUi(Ui):
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
 
-    async def typed_confirm(
-        self, warning: str, word: str, *, title: str = "Are you sure?"
-    ) -> bool:
+    async def typed_confirm(self, warning: str, word: str, *, title: str = "Are you sure?") -> bool:
         """Unsupported in scripted CLI mode (destructive CLI commands gate on ``--yes``)."""
         raise self._no_prompt()
 
@@ -657,8 +651,12 @@ class TuiUi(Ui):
     ) -> Any:
         """Delegate to the session's select screen."""
         return await self.session.select(
-            title, items, prompt=prompt, default=default,
-            filterable=filterable, delete_hint=delete_hint,
+            title,
+            items,
+            prompt=prompt,
+            default=default,
+            filterable=filterable,
+            delete_hint=delete_hint,
         )
 
     async def select_startup(
@@ -706,9 +704,7 @@ class TuiUi(Ui):
         footnote: str | None = None,
     ) -> None:
         """Delegate to the session's chromeless startup message splash."""
-        await self.session.notify_startup(
-            renderable, title=title, banner=banner, footnote=footnote
-        )
+        await self.session.notify_startup(renderable, title=title, banner=banner, footnote=footnote)
 
     async def busy_startup(
         self,
@@ -819,9 +815,7 @@ class TuiUi(Ui):
             border_style=tier or "accent",
         )
 
-    async def typed_confirm(
-        self, warning: str, word: str, *, title: str = "Are you sure?"
-    ) -> bool:
+    async def typed_confirm(self, warning: str, word: str, *, title: str = "Are you sure?") -> bool:
         """Delegate to the session's typed-confirmation dialog."""
         return await self.session.typed_confirm(warning, word, title=title)
 

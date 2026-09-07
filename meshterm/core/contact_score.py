@@ -531,9 +531,7 @@ def rank_contacts(
     for contact in contacts:
         node = _node_id(contact)
         found = signals.get(node) or ContactSignals(node=node)
-        gathered.append(
-            replace(found, distance_km=_self_distance(contact, self_lat, self_lon))
-        )
+        gathered.append(replace(found, distance_km=_self_distance(contact, self_lat, self_lon)))
 
     # The distance term calibrates against this mesh's own spread, so it needs the whole
     # population before any single contact can be scored on it.

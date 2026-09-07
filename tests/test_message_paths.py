@@ -64,11 +64,17 @@ def test_channel_arrivals_match_by_decrypted_content(tmp_path: Path) -> None:
         repo, run, when=now - timedelta(seconds=5), path="3d63", raw=_grp_txt_raw(SECRET, wire)
     )
     _record_frame(
-        repo, run, when=now - timedelta(seconds=3), path="3d63,a1b2",
+        repo,
+        run,
+        when=now - timedelta(seconds=3),
+        path="3d63,a1b2",
         raw=_grp_txt_raw(SECRET, wire),
     )
     _record_frame(
-        repo, run, when=now - timedelta(seconds=1), path="",
+        repo,
+        run,
+        when=now - timedelta(seconds=1),
+        path="",
         raw=_grp_txt_raw(SECRET, "Alice: other"),
     )
 
@@ -84,7 +90,10 @@ def test_channel_arrivals_tolerate_the_sender_prefix_on_the_wire(tmp_path: Path)
     repo, run = _repo(tmp_path)
     now = utcnow()
     _record_frame(
-        repo, run, when=now + timedelta(seconds=2), path="3d63",
+        repo,
+        run,
+        when=now + timedelta(seconds=2),
+        path="3d63",
         raw=_grp_txt_raw(SECRET, "Homestead: on my way"),
     )
     message = ChatMessage(text="on my way", outbound=True, is_channel=True, created_at=now)
@@ -99,7 +108,10 @@ def test_channel_arrivals_carry_the_resend_counter(tmp_path: Path) -> None:
     now = utcnow()
     _record_frame(repo, run, when=now, path="", raw=_grp_txt_raw(SECRET, "Alice: hi", attempt=0))
     _record_frame(
-        repo, run, when=now + timedelta(seconds=9), path="",
+        repo,
+        run,
+        when=now + timedelta(seconds=9),
+        path="",
         raw=_grp_txt_raw(SECRET, "Alice: hi", attempt=1),
     )
     message = ChatMessage(text="Alice: hi", is_channel=True, created_at=now)
@@ -114,7 +126,10 @@ def test_channel_arrivals_ignore_frames_outside_the_window(tmp_path: Path) -> No
     repo, run = _repo(tmp_path)
     now = utcnow()
     _record_frame(
-        repo, run, when=now - timedelta(hours=2), path="3d63",
+        repo,
+        run,
+        when=now - timedelta(hours=2),
+        path="3d63",
         raw=_grp_txt_raw(SECRET, "Alice: hi"),
     )
     message = ChatMessage(text="Alice: hi", is_channel=True, created_at=now)
@@ -146,23 +161,28 @@ def test_direct_frames_without_a_mac_fall_back_to_address_and_time(tmp_path: Pat
     repo, run = _repo(tmp_path)
     now = utcnow()
     _record_frame(
-        repo, run, when=now + timedelta(seconds=3), path="3d63",
+        repo,
+        run,
+        when=now + timedelta(seconds=3),
+        path="3d63",
         raw=_direct_raw(dest="d4", src="a1"),
     )
     _record_frame(  # a channel frame in the window is not direct-message evidence
-        repo, run, when=now + timedelta(seconds=4), path="",
+        repo,
+        run,
+        when=now + timedelta(seconds=4),
+        path="",
         raw=_grp_txt_raw(SECRET, "Alice: hi"),
     )
     _record_frame(  # a direct frame far outside the window doesn't correlate
-        repo, run, when=now + timedelta(minutes=10), path="",
+        repo,
+        run,
+        when=now + timedelta(minutes=10),
+        path="",
         raw=_direct_raw(dest="d4", src="a1"),
     )
-    message = ChatMessage(
-        text="see you at 8", outbound=True, peer="d4e5", created_at=now
-    )
-    arrivals, exact = direct_arrivals(
-        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5"
-    )
+    message = ChatMessage(text="see you at 8", outbound=True, peer="d4e5", created_at=now)
+    arrivals, exact = direct_arrivals(repo, message, self_key="a1" + "0" * 62, peer_key="d4e5")
     assert [a.hops for a in arrivals] == [("3d63",)]
     assert exact is False
     repo.close()
@@ -179,17 +199,25 @@ def test_direct_frames_keep_only_the_direction_the_message_travelled(tmp_path: P
     """
     repo, run = _repo(tmp_path)
     now = utcnow()
-    ours = dict(dest="d4", src="a1", mac="beef")     # us -> peer
-    theirs = dict(dest="a1", src="d4", mac="f00d")   # peer -> us
-    _record_frame(repo, run, when=now + timedelta(seconds=1), path="3d63",
-                  raw=_direct_raw(**ours))
-    _record_frame(repo, run, when=now + timedelta(seconds=2), path="c0",
-                  raw=_direct_raw(**theirs))
+    ours = dict(dest="d4", src="a1", mac="beef")  # us -> peer
+    theirs = dict(dest="a1", src="d4", mac="f00d")  # peer -> us
+    _record_frame(repo, run, when=now + timedelta(seconds=1), path="3d63", raw=_direct_raw(**ours))
+    _record_frame(repo, run, when=now + timedelta(seconds=2), path="c0", raw=_direct_raw(**theirs))
     # Someone else's traffic, overheard in the same window.
-    _record_frame(repo, run, when=now + timedelta(seconds=3), path="3d63",
-                  raw=_direct_raw(dest="7f", src="c0", mac="dead"))
-    _record_frame(repo, run, when=now + timedelta(seconds=4), path="",
-                  raw=_direct_raw(dest="a1", src="7f", mac="cafe"))
+    _record_frame(
+        repo,
+        run,
+        when=now + timedelta(seconds=3),
+        path="3d63",
+        raw=_direct_raw(dest="7f", src="c0", mac="dead"),
+    )
+    _record_frame(
+        repo,
+        run,
+        when=now + timedelta(seconds=4),
+        path="",
+        raw=_direct_raw(dest="a1", src="7f", mac="cafe"),
+    )
 
     sent = ChatMessage(text="see you at 8", outbound=True, peer="d4e5f6a7", created_at=now)
     got = ChatMessage(text="ok", outbound=False, peer="d4e5f6a7", created_at=now)
@@ -211,17 +239,29 @@ def test_a_shared_mac_separates_one_message_from_the_next(tmp_path: Path) -> Non
     now = utcnow()
     # First send, retried twice and heard off two repeaters.
     for offset, path in ((1, "3d63"), (1, "27d4"), (6, "3d63"), (6, "27d4")):
-        _record_frame(repo, run, when=now + timedelta(seconds=offset), path=path,
-                      raw=_direct_raw(dest="d4", src="a1", mac="beef"))
+        _record_frame(
+            repo,
+            run,
+            when=now + timedelta(seconds=offset),
+            path=path,
+            raw=_direct_raw(dest="d4", src="a1", mac="beef"),
+        )
     # Second send, twelve seconds later, same pair and same paths.
     for offset, path in ((13, "3d63"), (13, "27d4")):
-        _record_frame(repo, run, when=now + timedelta(seconds=offset), path=path,
-                      raw=_direct_raw(dest="d4", src="a1", mac="f00d"))
+        _record_frame(
+            repo,
+            run,
+            when=now + timedelta(seconds=offset),
+            path=path,
+            raw=_direct_raw(dest="d4", src="a1", mac="f00d"),
+        )
 
     keys = dict(self_key="a1" + "0" * 62, peer_key="d4e5f6a7")
     first = ChatMessage(text="one", outbound=True, peer="d4e5f6a7", created_at=now)
     second = ChatMessage(
-        text="two", outbound=True, peer="d4e5f6a7",
+        text="two",
+        outbound=True,
+        peer="d4e5f6a7",
         created_at=now + timedelta(seconds=12),
     )
     got, exact = direct_arrivals(repo, first, **keys)
@@ -273,7 +313,6 @@ def test_the_window_clamps_to_the_messages_going_the_same_way(tmp_path: Path) ->
     repo.close()
 
 
-
 def test_collapse_folds_a_repeated_path_into_one_counted_row(tmp_path: Path) -> None:
     """One row per path, carrying its copy count, first sighting and best SNR."""
     from meshterm.services.message_paths import Arrival
@@ -291,7 +330,6 @@ def test_collapse_folds_a_repeated_path_into_one_counted_row(tmp_path: Path) -> 
     assert folded[0].snr == 13.5, "the best reading is what the path can do"
 
 
-
 def test_a_routed_frames_path_is_where_it_was_going_not_where_it_has_been(
     tmp_path: Path,
 ) -> None:
@@ -306,17 +344,21 @@ def test_a_routed_frames_path_is_where_it_was_going_not_where_it_has_been(
     repo, run = _repo(tmp_path)
     now = utcnow()
     _record_frame(  # flooded, one relay: it really did come to us that way
-        repo, run, when=now + timedelta(seconds=1), path="3d63",
+        repo,
+        run,
+        when=now + timedelta(seconds=1),
+        path="3d63",
         raw=_direct_raw(dest="a1", src="d4", mac="beef", route="FLOOD"),
     )
     _record_frame(  # direct-routed, route consumed: says nothing about how it got here
-        repo, run, when=now + timedelta(seconds=2), path="",
+        repo,
+        run,
+        when=now + timedelta(seconds=2),
+        path="",
         raw=_direct_raw(dest="a1", src="d4", mac="beef", route="DIRECT"),
     )
     message = ChatMessage(text="hi", outbound=False, peer="d4e5f6a7", created_at=now)
-    arrivals, _exact = direct_arrivals(
-        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7"
-    )
+    arrivals, _exact = direct_arrivals(repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7")
     flooded, routed = arrivals
     assert flooded.routed is False and flooded.route_known is True
     assert routed.routed is True and routed.route_known is False, (
@@ -330,13 +372,14 @@ def test_history_without_a_route_type_is_unknown_rather_than_assumed(tmp_path: P
     repo, run = _repo(tmp_path)
     now = utcnow()
     _record_frame(
-        repo, run, when=now + timedelta(seconds=1), path="",
+        repo,
+        run,
+        when=now + timedelta(seconds=1),
+        path="",
         raw=_direct_raw(dest="a1", src="d4", mac="beef"),
     )
     message = ChatMessage(text="hi", outbound=False, peer="d4e5f6a7", created_at=now)
-    arrivals, _exact = direct_arrivals(
-        repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7"
-    )
+    arrivals, _exact = direct_arrivals(repo, message, self_key="a1" + "0" * 62, peer_key="d4e5f6a7")
     assert arrivals[0].routed is None
     assert arrivals[0].route_known is True, "unknown falls back to the old reading"
     repo.close()
@@ -347,9 +390,11 @@ def test_collapse_keeps_a_routed_path_apart_from_the_same_hops_flooded(tmp_path:
     from meshterm.services.message_paths import Arrival
 
     base = utcnow()
-    folded = collapse([
-        Arrival(when=base, hops=("3d63",), snr=1.0, routed=False),
-        Arrival(when=base + timedelta(seconds=1), hops=("3d63",), snr=2.0, routed=True),
-    ])
+    folded = collapse(
+        [
+            Arrival(when=base, hops=("3d63",), snr=1.0, routed=False),
+            Arrival(when=base + timedelta(seconds=1), hops=("3d63",), snr=2.0, routed=True),
+        ]
+    )
     assert len(folded) == 2, "a route travelled is not a route intended"
     assert [a.routed for a in folded] == [False, True]

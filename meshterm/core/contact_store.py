@@ -324,9 +324,10 @@ class ContactStore:
         """Persist the whole device map atomically (a crash mid-write keeps the old file)."""
         data = {
             "devices": {
-                pubkey: [_contact_to_json(c) for c in sorted(
-                    contacts.values(), key=lambda c: (c.name.lower(), c.public_key)
-                )]
+                pubkey: [
+                    _contact_to_json(c)
+                    for c in sorted(contacts.values(), key=lambda c: (c.name.lower(), c.public_key))
+                ]
                 for pubkey, contacts in sorted(self._state.items())
                 if contacts
             }
@@ -372,9 +373,7 @@ def _contact_from_json(entry: object) -> RememberedContact | None:
     )
 
 
-def merge_contacts(
-    store: ContactStore, device_pubkey: str, live: list[Contact]
-) -> list[Contact]:
+def merge_contacts(store: ContactStore, device_pubkey: str, live: list[Contact]) -> list[Contact]:
     """Union a device's live contacts with any remembered ones it isn't currently reporting.
 
     Live contacts pass through unchanged and first; a remembered contact whose key the device

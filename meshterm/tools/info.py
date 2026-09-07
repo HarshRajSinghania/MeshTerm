@@ -68,9 +68,7 @@ class InfoTool(Tool):
             from ..ui.device_info_screen import DeviceInfoScreen
 
             await session.run_screen(
-                DeviceInfoScreen(
-                    session, page, title=self.title, conceals=has_pin(snapshot)
-                )
+                DeviceInfoScreen(session, page, title=self.title, conceals=has_pin(snapshot))
             )
 
         return ToolResult(summary={"name": snapshot.get("name")})
@@ -123,9 +121,7 @@ async def _status_panel(device: Device, snapshot: dict) -> Panel:
     if level:
         rows.append(("battery", Text(f"{int(level) / 1000:.2f} V")))
     if battery.get("total_kb"):
-        rows.append(
-            ("storage", Text(f"{battery.get('used_kb', 0)} / {battery['total_kb']} kB"))
-        )
+        rows.append(("storage", Text(f"{battery.get('used_kb', 0)} / {battery['total_kb']} kB")))
 
     clock = await _try(device.get_time)
     if clock:

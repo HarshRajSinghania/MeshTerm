@@ -250,9 +250,7 @@ def _fast_renderer(frames: list[str]) -> tuple[FastRenderer, _CapturingOutput]:
 
     out = _CapturingOutput()
     pending = list(frames)
-    renderer = FastRenderer(
-        Style([]), out, full_screen=True, frame_source=lambda: pending.pop(0)
-    )
+    renderer = FastRenderer(Style([]), out, full_screen=True, frame_source=lambda: pending.pop(0))
     return renderer, out
 
 
@@ -359,8 +357,7 @@ def test_a_dialog_is_composited_onto_the_frame_rather_than_handed_to_prompt_tool
     from meshterm.ui.tui.frame import composite_float
 
     base = [f"{i:02d}" + "." * 51 for i in range(26)]
-    box = "\n".join(["+" + "-" * 18 + "+"] + ["|" + " " * 18 + "|"] * 4
-                    + ["+" + "-" * 18 + "+"])
+    box = "\n".join(["+" + "-" * 18 + "+"] + ["|" + " " * 18 + "|"] * 4 + ["+" + "-" * 18 + "+"])
     out = composite_float(base, box, 53, 26)
 
     assert len(out) == 26

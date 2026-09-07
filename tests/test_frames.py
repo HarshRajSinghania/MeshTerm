@@ -40,9 +40,10 @@ def test_addressed_classes_name_both_ends_and_their_mac() -> None:
     body = bytes.fromhex("3da1") + b"\xab\xcd" + b"\x00" * 16
     for typename in ("TEXT_MSG", "REQ", "RESPONSE", "PATH"):
         assert frame_addressing(_frame(typename, body)) == {
-            "dest_hash": "3d", "src_hash": "a1", "cipher_mac": "abcd",
+            "dest_hash": "3d",
+            "src_hash": "a1",
+            "cipher_mac": "abcd",
         }
-
 
 
 def test_anonymous_request_carries_its_senders_whole_key() -> None:
@@ -78,7 +79,9 @@ def test_channel_datagram_is_broken_out_like_a_channel_text() -> None:
     """``GRP_DATA`` shares the channel envelope the library only decodes for ``GRP_TXT``."""
     decoded = frame_addressing(_frame("GRP_DATA", b"\xa3\xab\xcd" + bytes(range(16))))
     assert decoded == {
-        "chan_hash": "a3", "cipher_mac": "abcd", "crypted": bytes(range(16)).hex(),
+        "chan_hash": "a3",
+        "cipher_mac": "abcd",
+        "crypted": bytes(range(16)).hex(),
     }
 
 
@@ -96,14 +99,18 @@ def test_classes_that_address_nothing_stay_silent() -> None:
     for typename in ("ADVERT", "MULTIPART", "CONTROL", "UNK"):
         assert frame_addressing(_frame(typename, bytes(64))) == {}
     assert frame_addressing({"payload_typename": "TEXT_MSG"}) == {}  # no body at all
-    assert frame_addressing({"pkt_payload": bytes(20)}) == {}        # no class at all
+    assert frame_addressing({"pkt_payload": bytes(20)}) == {}  # no class at all
 
 
 def test_rx_log_events_carry_their_addressing_into_the_observation() -> None:
     """The decode happens once, at the edge, so every reader downstream sees the same keys."""
     event = _Event(
-        payload_typename="TEXT_MSG", pkt_payload=bytes.fromhex("3da1abcd") + bytes(16),
-        path_len=1, path_hash_size=1, path="3d", snr=6.5,
+        payload_typename="TEXT_MSG",
+        pkt_payload=bytes.fromhex("3da1abcd") + bytes(16),
+        path_len=1,
+        path_hash_size=1,
+        path="3d",
+        snr=6.5,
     )
     obs = packet_observation_from_event(event)
     assert obs is not None and obs.raw is not None
@@ -130,7 +137,9 @@ def test_stored_frames_remember_what_they_addressed(tmp_path: Path) -> None:
         repo.record_observation(
             run,
             Observation(
-                node=None, kind="packet", path="3d",
+                node=None,
+                kind="packet",
+                path="3d",
                 raw={"payload_typename": typename, **decoded},
             ),
         )
@@ -178,8 +187,14 @@ def test_a_traces_readings_reach_the_observation_and_its_hops_do_not() -> None:
     whichever nodes happened to share the leading digits of an SNR reading.
     """
     obs = packet_observation_from_event(
-        _Event(payload_typename="TRACE", pkt_payload=bytes.fromhex("5f3c2a10") + bytes(5),
-               path_len=3, path_hash_size=1, path="35eeef", snr=13.75)
+        _Event(
+            payload_typename="TRACE",
+            pkt_payload=bytes.fromhex("5f3c2a10") + bytes(5),
+            path_len=3,
+            path_hash_size=1,
+            path="35eeef",
+            snr=13.75,
+        )
     )
     assert obs is not None and obs.raw is not None
     assert obs.path == ""
@@ -196,8 +211,15 @@ def test_a_frame_heard_straight_off_its_sender_is_kept() -> None:
     """
     for typename in ("TRACE", "TEXT_MSG", "ACK", "REQ", "GRP_TXT"):
         obs = packet_observation_from_event(
-            _Event(payload_typename=typename, pkt_payload=bytes(24),
-                   path_len=0, path_hash_size=1, path="", snr=9.25, rssi=-61)
+            _Event(
+                payload_typename=typename,
+                pkt_payload=bytes(24),
+                path_len=0,
+                path_hash_size=1,
+                path="",
+                snr=9.25,
+                rssi=-61,
+            )
         )
         assert obs is not None, typename
         assert obs.path == "" and obs.snr == 9.25
@@ -206,9 +228,12 @@ def test_a_frame_heard_straight_off_its_sender_is_kept() -> None:
 
 def test_a_frame_with_no_class_at_all_is_still_dropped() -> None:
     """The library's sentinel for a frame too short to parse teaches nothing about anything."""
-    assert packet_observation_from_event(
-        _Event(payload_typename="UNK", pkt_payload=b"", path_len=0, path="")
-    ) is None
+    assert (
+        packet_observation_from_event(
+            _Event(payload_typename="UNK", pkt_payload=b"", path_len=0, path="")
+        )
+        is None
+    )
     assert packet_observation_from_event(_Event(snr=6.0)) is None
 
 
@@ -224,9 +249,14 @@ def test_a_traces_readings_survive_being_stored(tmp_path: Path) -> None:
     repo.record_observation(
         run,
         Observation(
-            node=None, kind="packet", path="",
-            raw={"payload_typename": "TRACE", "trace_tag": "102a3c5f",
-                 "trace_snrs": [13.25, -4.5, -4.25]},
+            node=None,
+            kind="packet",
+            path="",
+            raw={
+                "payload_typename": "TRACE",
+                "trace_tag": "102a3c5f",
+                "trace_snrs": [13.25, -4.5, -4.25],
+            },
         ),
     )
     (stored,) = repo.recent_observations(since=utcnow() - timedelta(hours=2))
@@ -242,8 +272,12 @@ def test_only_a_trace_stores_readings(tmp_path: Path) -> None:
     run = repo.start_run("monitor", {}, None)
     repo.record_observation(
         run,
-        Observation(node=None, kind="packet", path="3d",
-                    raw={"payload_typename": "TEXT_MSG", "trace_snrs": [1.0]}),
+        Observation(
+            node=None,
+            kind="packet",
+            path="3d",
+            raw={"payload_typename": "TEXT_MSG", "trace_snrs": [1.0]},
+        ),
     )
     (stored,) = repo.recent_observations(since=utcnow() - timedelta(hours=2))
     assert "trace_snrs" not in (stored.raw or {})

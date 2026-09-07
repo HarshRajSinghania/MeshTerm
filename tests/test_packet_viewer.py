@@ -22,8 +22,6 @@ def _stripped(lines: list[str]) -> list[str]:
     return [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
 
 
-
-
 def _grp_txt_entry(raw_extra: dict) -> PacketEntry:
     raw = {"payload_typename": "GRP_TXT", "route_typename": "FLOOD", **raw_extra}
     return PacketEntry(when=utcnow(), kind="packet", path="a1b2c3d4e5f6", raw=raw)
@@ -152,7 +150,10 @@ def test_packet_viewer_follows_the_stream_off_the_top_of_a_live_list() -> None:
     feed = [old]
     pinned_by_viewer = []
     viewer = PacketViewer(
-        list(feed), 0, resolve=lambda h: "", source=lambda: list(feed),
+        list(feed),
+        0,
+        resolve=lambda h: "",
+        source=lambda: list(feed),
         on_pin=lambda: pinned_by_viewer.append(True),
     )
     assert not viewer._pinned, "opening a packet named that packet, not the stream"
@@ -223,15 +224,22 @@ def test_packet_viewer_grows_its_dialog_only() -> None:
     # ratchet_viewport is the grow-only contract: it rises to a taller body and never drops.
     assert viewer.ratchet_viewport(6) == 6
     assert viewer.ratchet_viewport(14) == 14  # a taller packet enlarges the box
-    assert viewer.ratchet_viewport(4) == 14   # a shorter one after keeps the larger box
+    assert viewer.ratchet_viewport(4) == 14  # a shorter one after keeps the larger box
 
 
 def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> None:
     """Fields already shown as class/route/via/channel rows don't also dump generically."""
-    entry = _grp_txt_entry({
-        "chan_hash": "ab", "cipher_mac": "0000", "crypted": "00" * 16,
-        "path_len": 1, "path_hash_size": 1, "header": 5, "novel_field": "surprise",
-    })
+    entry = _grp_txt_entry(
+        {
+            "chan_hash": "ab",
+            "cipher_mac": "0000",
+            "crypted": "00" * 16,
+            "path_len": 1,
+            "path_hash_size": 1,
+            "header": 5,
+            "novel_field": "surprise",
+        }
+    )
     body = _plain(_viewer(entry).render_body(80))
     assert "path_len" not in body
     assert "header" not in body
@@ -240,10 +248,14 @@ def test_packet_viewer_raw_dump_skips_fields_folded_into_flavoured_rows() -> Non
 
 def test_packet_viewer_shows_full_raw_field_labels() -> None:
     """A long raw-field name is shown whole — the label lane widens rather than clipping it."""
-    entry = _grp_txt_entry({
-        "chan_hash": "ab", "cipher_mac": "0000", "crypted": "00" * 16,
-        "battery_millivolts": 4102,
-    })
+    entry = _grp_txt_entry(
+        {
+            "chan_hash": "ab",
+            "cipher_mac": "0000",
+            "crypted": "00" * 16,
+            "battery_millivolts": 4102,
+        }
+    )
     body = _plain(_viewer(entry).render_body(80))
     assert "battery_millivolts" in body  # the 18-char key is not clipped to 8
 
@@ -252,10 +264,10 @@ def test_packet_viewer_draws_a_relayed_packets_route_graph() -> None:
     """A packet that crossed relays gets THE route graph — braille edges, caption, legend."""
     entry = PacketEntry(when=utcnow(), kind="packet", path="3d63,a1b2")
     body = _plain(_viewer(entry).render_body(80))
-    assert "origin → you" in body                     # the graph caption
-    assert "★ you" in body and "▲ repeater" in body   # the node-type legend
-    assert any("⠀" <= ch <= "⣿" for ch in body)       # braille edges are drawn
-    assert "3d" in body and "a1" in body              # each relay labelled by its hash byte
+    assert "origin → you" in body  # the graph caption
+    assert "★ you" in body and "▲ repeater" in body  # the node-type legend
+    assert any("⠀" <= ch <= "⣿" for ch in body)  # braille edges are drawn
+    assert "3d" in body and "a1" in body  # each relay labelled by its hash byte
 
 
 def test_packet_viewer_draws_a_revisited_hop_twice_and_warns() -> None:
@@ -268,13 +280,11 @@ def test_packet_viewer_draws_a_revisited_hop_twice_and_warns() -> None:
     """
     names = {"c1": "C14903", "8e": "MileEnd", "da": "Relais", "ee": "ParcEx"}
     entry = PacketEntry(when=utcnow(), kind="packet", path="7f,c1,8e,da,ee,c1,27")
-    body = _plain(
-        PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(80)
-    )
+    body = _plain(PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(80))
     assert "⚠" in body and "repeats" in body
     assert "a loop, or two nodes sharing one hash" in body
     assert body.count("C14903") == 3  # twice in the via row, once named in the warning
-    assert body.count("c1") == 2      # and both visits carry a marker label in the graph
+    assert body.count("c1") == 2  # and both visits carry a marker label in the graph
 
 
 def test_packet_viewer_stays_quiet_when_every_hop_is_distinct() -> None:
@@ -297,9 +307,7 @@ def test_packet_viewer_via_wraps_at_hop_boundaries_under_its_own_lane() -> None:
     """A long ``via`` chain folds between hops, hanging under the value lane — never mid-name."""
     names = {f"{i:02d}aa": f"Relay-Number-{i:02d}" for i in range(8)}
     entry = PacketEntry(when=utcnow(), kind="packet", path=",".join(names))
-    lines = _stripped(
-        PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(72)
-    )
+    lines = _stripped(PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(72))
     via_at = next(i for i, line in enumerate(lines) if line.startswith("via"))
     end = next(i for i, line in enumerate(lines) if "reception describes" in line)
     folded = lines[via_at:end]
@@ -325,9 +333,7 @@ def test_packet_viewer_from_row_leads_with_the_node_type_mark() -> None:
 
     bare = PacketEntry(when=utcnow(), kind="packet", node="3d63", name="Hub")
     assert "○ Hub" in from_row(_viewer(bare))  # nothing can type it: the unknown ring
-    typed = PacketViewer(
-        [bare], 0, resolve=lambda h: "", type_of=lambda h: NODE_TYPE_REPEATER
-    )
+    typed = PacketViewer([bare], 0, resolve=lambda h: "", type_of=lambda h: NODE_TYPE_REPEATER)
     assert "▲ Hub" in from_row(typed)  # …until the contacts can
 
     mine = PacketEntry(when=utcnow(), kind="advert", node="3d63", name="Waymarker")
@@ -355,15 +361,22 @@ def test_packet_viewer_lays_out_what_a_frame_addressed() -> None:
     say who a relayed direct message was for even though the class carries no origin node.
     """
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="3d63",
+        when=utcnow(),
+        kind="packet",
+        path="3d63",
         raw={
-            "payload_typename": "TEXT_MSG", "route_typename": "FLOOD",
-            "dest_hash": "c0", "src_hash": "a1",
+            "payload_typename": "TEXT_MSG",
+            "route_typename": "FLOOD",
+            "dest_hash": "c0",
+            "src_hash": "a1",
         },
     )
     viewer = PacketViewer(
-        [entry], 0, resolve=lambda h: {"c0": "Waymarker", "a1": "Alice"}.get(h, ""),
-        prefix_bytes=1, self_name="Waymarker",
+        [entry],
+        0,
+        resolve=lambda h: {"c0": "Waymarker", "a1": "Alice"}.get(h, ""),
+        prefix_bytes=1,
+        self_name="Waymarker",
     )
     lines = _stripped(viewer.render_body(80))
     to_row = next(ln for ln in lines if ln.startswith("to"))
@@ -377,13 +390,17 @@ def test_packet_viewer_lays_out_what_a_frame_addressed() -> None:
 def test_packet_viewer_names_a_tokened_frame_by_its_token() -> None:
     """An ack points at the message it answers; a trace at its own tag."""
     ack = PacketEntry(
-        when=utcnow(), kind="packet", path="3d63",
+        when=utcnow(),
+        kind="packet",
+        path="3d63",
         raw={"payload_typename": "ACK", "ack_crc": "9b71e004"},
     )
     assert "9b71e004" in _plain(_viewer(ack).render_body(80))
 
     trace = PacketEntry(
-        when=utcnow(), kind="packet", path="3d63",
+        when=utcnow(),
+        kind="packet",
+        path="3d63",
         raw={"payload_typename": "TRACE", "trace_tag": "5f3c2a10"},
     )
     body = _plain(_viewer(trace).render_body(80))
@@ -397,10 +414,14 @@ def test_packet_viewer_names_a_channel_datagram_by_its_confirmed_channel() -> No
     mac = HMAC.new(secret, digestmod=SHA256)
     mac.update(crypted)
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="3d63",
+        when=utcnow(),
+        kind="packet",
+        path="3d63",
         raw={
-            "payload_typename": "GRP_DATA", "chan_hash": channel_hash(secret),
-            "cipher_mac": mac.digest()[:2].hex(), "crypted": crypted.hex(),
+            "payload_typename": "GRP_DATA",
+            "chan_hash": channel_hash(secret),
+            "cipher_mac": mac.digest()[:2].hex(),
+            "crypted": crypted.hex(),
         },
     )
     body = _plain(_viewer(entry, channels=[("Public", secret)]).render_body(80))
@@ -441,9 +462,15 @@ def test_packet_viewer_shows_a_traces_per_hop_links() -> None:
     a repeater means the return legs read weaker than the outbound one.
     """
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="",
-        raw={"payload_typename": "TRACE", "route_typename": "DIRECT",
-             "trace_tag": "52a37882", "trace_snrs": [13.25, -5.0, -4.25]},
+        when=utcnow(),
+        kind="packet",
+        path="",
+        raw={
+            "payload_typename": "TRACE",
+            "route_typename": "DIRECT",
+            "trace_tag": "52a37882",
+            "trace_snrs": [13.25, -5.0, -4.25],
+        },
     )
     body = _plain(_viewer(entry).render_body(80))
     assert "🎯 TRACE" in body
@@ -456,7 +483,9 @@ def test_packet_viewer_shows_a_traces_per_hop_links() -> None:
 def test_packet_viewer_omits_links_for_a_trace_nobody_relayed() -> None:
     """No hop has measured it yet, so there is no link row to draw — not an empty one."""
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="",
+        when=utcnow(),
+        kind="packet",
+        path="",
         raw={"payload_typename": "TRACE", "trace_tag": "52a37882", "trace_snrs": []},
     )
     assert "links" not in _plain(_viewer(entry).render_body(80))
@@ -469,9 +498,11 @@ def test_packet_viewer_says_whose_signal_the_reading_is() -> None:
     the origin's would be wrong. One that crossed nothing was heard straight off its
     sender, so the reading is exactly that link — the strongest evidence there is.
     """
+
     def note(path: str) -> str:
-        entry = PacketEntry(when=utcnow(), kind="packet", path=path, snr=9.0,
-                            raw={"payload_typename": "TRACE"})
+        entry = PacketEntry(
+            when=utcnow(), kind="packet", path=path, snr=9.0, raw={"payload_typename": "TRACE"}
+        )
         return _plain(_viewer(entry).render_body(80))
 
     assert "last relay, not the origin" in note("a1b2c3,d4e5f6")
@@ -486,7 +517,10 @@ def test_packet_viewer_does_not_call_a_walked_trace_direct() -> None:
     under a links row listing three legs would contradict the card's own evidence.
     """
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="", snr=13.75,
+        when=utcnow(),
+        kind="packet",
+        path="",
+        snr=13.75,
         raw={"payload_typename": "TRACE", "trace_snrs": [13.25, -5.0, -4.25]},
     )
     body = _plain(_viewer(entry).render_body(80))
@@ -497,11 +531,12 @@ def test_packet_viewer_does_not_call_a_walked_trace_direct() -> None:
 
 def test_packet_viewer_still_calls_an_unwalked_frame_direct() -> None:
     """Nothing forwarded it and nothing measured it — that really is a direct shot."""
-    for raw in ({"payload_typename": "TRACE", "trace_snrs": []},
-                {"payload_typename": "TEXT_MSG"}):
-        body = _plain(_viewer(
-            PacketEntry(when=utcnow(), kind="packet", path="", snr=9.0, raw=raw)
-        ).render_body(80))
+    for raw in ({"payload_typename": "TRACE", "trace_snrs": []}, {"payload_typename": "TEXT_MSG"}):
+        body = _plain(
+            _viewer(
+                PacketEntry(when=utcnow(), kind="packet", path="", snr=9.0, raw=raw)
+            ).render_body(80)
+        )
         assert "direct — no relays" in body, raw
         assert "the sender itself" in body, raw
 
@@ -509,7 +544,10 @@ def test_packet_viewer_still_calls_an_unwalked_frame_direct() -> None:
 def test_packet_viewer_counts_one_walked_hop_in_the_singular() -> None:
     """One leg is "1 hop walked", not "1 hops walked"."""
     entry = PacketEntry(
-        when=utcnow(), kind="packet", path="", snr=13.75,
+        when=utcnow(),
+        kind="packet",
+        path="",
+        snr=13.75,
         raw={"payload_typename": "TRACE", "trace_snrs": [13.25]},
     )
     assert "1 hop walked" in _plain(_viewer(entry).render_body(80))

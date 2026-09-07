@@ -181,12 +181,11 @@ def test_decrypt_channel_text_rejects_a_fingerprint_collision() -> None:
     chash, mac, crypted = _grp_txt_frame(name, secret, "hello mesh")
     # Brute-force a same-fingerprint, wrong-key decoy (a 1-byte hash, so cheap to find).
     decoy = next(
-        s for s in (random_secret() for _ in range(10_000))
+        s
+        for s in (random_secret() for _ in range(10_000))
         if channel_hash(s) == chash and s != secret
     )
-    result = decrypt_channel_text(
-        chash, mac, crypted, [("decoy", decoy), (name, secret)]
-    )
+    result = decrypt_channel_text(chash, mac, crypted, [("decoy", decoy), (name, secret)])
     assert result is not None and result.text == "hello mesh"  # falls through to the real key
 
 
@@ -240,8 +239,10 @@ def test_channel_slot_classifies_public_and_private() -> None:
 
 def test_next_free_slot_finds_gaps_and_full() -> None:
     """The next free slot skips used indices and is None when every slot is taken."""
-    slots = [ChannelSlot(idx=0, name="a", secret=b"\x00" * 16),
-             ChannelSlot(idx=2, name="c", secret=b"\x00" * 16)]
+    slots = [
+        ChannelSlot(idx=0, name="a", secret=b"\x00" * 16),
+        ChannelSlot(idx=2, name="c", secret=b"\x00" * 16),
+    ]
     assert _next_free_slot(slots, capacity=8) == 1
     full = [ChannelSlot(idx=i, name=str(i), secret=b"\x00" * 16) for i in range(8)]
     assert _next_free_slot(full, capacity=8) is None
@@ -378,14 +379,26 @@ class _ScriptedUi:
         return self._selects.pop(0) if self._selects else "__back__"
 
     async def text(  # noqa: ANN001, ANN201
-        self, title: str, *, default: str = "", validate=None,
-        help_text: str = "", password: bool = False,
+        self,
+        title: str,
+        *,
+        default: str = "",
+        validate=None,
+        help_text: str = "",
+        password: bool = False,
     ):
         return self._texts.pop(0)
 
     async def dialog(  # noqa: ANN001, ANN201
-        self, prompt, buttons, *, title: str = "", default: int = 0, keys=None,
-        danger: bool = False, destructive: bool = False,
+        self,
+        prompt,
+        buttons,
+        *,
+        title: str = "",
+        default: int = 0,
+        keys=None,
+        danger: bool = False,
+        destructive: bool = False,
     ):
         return self._dialogs.pop(0)
 
@@ -656,9 +669,7 @@ async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> N
 
     assert _detail_summary(ctx, slot, _LiveStats(ctx)) == "Slot 3 · no messages recorded yet"
 
-    ctx.repo.record_chat_message(
-        ChatMessage(text="hi", is_channel=True, channel_id=slot.identity)
-    )
+    ctx.repo.record_chat_message(ChatMessage(text="hi", is_channel=True, channel_id=slot.identity))
     ctx.chat._unread[slot.conversation.key] = 1
     summary = _detail_summary(ctx, slot, _LiveStats(ctx))
     # A fresh age reads as bare "now" (the app-wide format_ago grammar — never "now ago").
@@ -722,9 +733,7 @@ async def test_unmuted_channel_still_bumps_unread(ctx: AppContext) -> None:
 
     await ctx.chat.start()
     try:
-        ctx.events.publish(
-            MeshEvent.message_event(Message(text="hey", channel=0, is_channel=True))
-        )
+        ctx.events.publish(MeshEvent.message_event(Message(text="hey", channel=0, is_channel=True)))
         await ctx.chat._queue.join()
         assert ctx.chat.unread(slot.conversation.key) == 1
     finally:
@@ -831,9 +840,7 @@ async def test_cli_join_and_import_round_trip(ctx: AppContext) -> None:
     """A channel joined by key can be shared and re-imported to the same secret."""
     tool = ChannelsTool()
     secret = bytes(range(16))
-    await tool.run(
-        ctx, {"cli_action": "join", "index": 3, "name": "Squad", "secret": secret.hex()}
-    )
+    await tool.run(ctx, {"cli_action": "join", "index": 3, "name": "Squad", "secret": secret.hex()})
     slot = next(s for s in await read_channel_slots(await ctx.device()) if s.idx == 3)
     assert slot.name == "Squad" and slot.secret == secret
 

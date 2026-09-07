@@ -202,9 +202,7 @@ def _snr_rgb(snr: float | None) -> RGB:
         return _SNR_STOPS[0][1]
     if snr >= _SNR_STOPS[-1][0]:
         return _SNR_STOPS[-1][1]
-    (x0, c0), (x1, c1) = next(
-        (lo, hi) for lo, hi in pairwise(_SNR_STOPS) if lo[0] <= snr <= hi[0]
-    )
+    (x0, c0), (x1, c1) = next((lo, hi) for lo, hi in pairwise(_SNR_STOPS) if lo[0] <= snr <= hi[0])
     f = (snr - x0) / (x1 - x0)
     return tuple(round(a + (b - a) * f) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
 
@@ -742,8 +740,7 @@ class WalkScreen(Screen):
         short = self._short_hash(node)
         if short:
             line.append(" (", style="muted")
-            line.append_text(highlighted_hash(short, self._prefix_bytes,
-                                              known=self._known(node)))
+            line.append_text(highlighted_hash(short, self._prefix_bytes, known=self._known(node)))
             line.append(")", style="muted")
         if node == self._topo.self_id:
             line.append("  ·  this device", style="muted")
@@ -772,9 +769,7 @@ class WalkScreen(Screen):
 
     # -- the canvas --
 
-    def _canvas_lines(
-        self, width: int, canvas_h: int, selected: str | None
-    ) -> list[str]:
+    def _canvas_lines(self, width: int, canvas_h: int, selected: str | None) -> list[str]:
         """Draw the focus neighbourhood: focus at the far west, the strongest fan east.
 
         The focus icon sits at the far west with its name to its right; the fan spreads
@@ -808,7 +803,7 @@ class WalkScreen(Screen):
         if len(fan) > capacity:
             # The … marker takes a slot of its own, so it has to earn it: it stands in for
             # the last slot's worth *plus* whatever didn't fit, never for a single node.
-            shown, hidden = fan[: capacity - 1], fan[capacity - 1:]
+            shown, hidden = fan[: capacity - 1], fan[capacity - 1 :]
         else:
             shown, hidden = fan, []
         slots = len(shown) + (1 if hidden else 0)
@@ -913,7 +908,8 @@ class WalkScreen(Screen):
         """
         back = self._came_from
         return [
-            other for other, _link in self._links_of(self._focus)
+            other
+            for other, _link in self._links_of(self._focus)
             if other != back and self._is_match(other)
         ]
 
@@ -1066,9 +1062,7 @@ class WalkScreen(Screen):
             return label
         return "…" if room == 1 else label[: room - 1] + "…"
 
-    def _place_label(
-        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
-    ) -> None:
+    def _place_label(self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB) -> None:
         """Place one marker label, retrying a row below then above on collision.
 
         It goes to the right of the marker where that fits, else to the left.
@@ -1086,9 +1080,7 @@ class WalkScreen(Screen):
             if canvas.marker_label(x, y + dy, label, rgb):
                 return
 
-    def _label_right(
-        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
-    ) -> None:
+    def _label_right(self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB) -> None:
         """Place a node's label to the *right* of its marker, dodging by row.
 
         Every node but the selected one (which keeps the two-sided
@@ -1110,9 +1102,7 @@ class WalkScreen(Screen):
                 return
         canvas._place_run(start, cy, label, rgb, bold=True)
 
-    def _label_left(
-        self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB
-    ) -> None:
+    def _label_left(self, canvas: MapCanvas, x: int, y: int, label: str, rgb: RGB) -> None:
         """Place a short annotation to the *left* of a marker, on the marker's own row.
 
         The one thing drawn on that side (the collapsed marker's rank — see
@@ -1204,8 +1194,12 @@ class WalkScreen(Screen):
             def render(i: int) -> Text:
                 other = rows[i]
                 return self._link_row(
-                    other, by_other[other], i == self._index,
-                    onward.get(other, 0), name_w, key_w,
+                    other,
+                    by_other[other],
+                    i == self._index,
+                    onward.get(other, 0),
+                    name_w,
+                    key_w,
                 )
 
         top, count = self._list.fit(len(rows), win, self._index)
@@ -1256,9 +1250,7 @@ class WalkScreen(Screen):
         for other, _link in pairs:
             # A link off the neighbour "continues onward" unless its far end is here:
             # one endpoint is the neighbour itself, so only the far endpoint can be us.
-            counts[other] = sum(
-                1 for far, _l in self._links_of(other) if far != focus
-            )
+            counts[other] = sum(1 for far, _l in self._links_of(other) if far != focus)
         self._onward_memo[focus] = counts
         return counts
 
@@ -1274,8 +1266,9 @@ class WalkScreen(Screen):
         name_style_ = self._list_name_style(other)
         row.append(fit_cells(self._label(other), name_w), style=name_style_)
         row.append(" ")
-        row.append_text(highlighted_hash(other, self._prefix_bytes, width=key_w,
-                                         known=self._known(other)))
+        row.append_text(
+            highlighted_hash(other, self._prefix_bytes, width=key_w, known=self._known(other))
+        )
         row.append("  ")
         snr = link.median_snr
         if snr is not None:
@@ -1310,8 +1303,9 @@ class WalkScreen(Screen):
         row.append(" ")
         row.append(fit_cells(self._label(node), name_w), style=self._list_name_style(node))
         row.append(" ")
-        row.append_text(highlighted_hash(node, self._prefix_bytes, width=key_w,
-                                         known=self._known(node)))
+        row.append_text(
+            highlighted_hash(node, self._prefix_bytes, width=key_w, known=self._known(node))
+        )
         row.append("  ")
         if node == self._topo.self_id:
             row.append("this device", style="muted")

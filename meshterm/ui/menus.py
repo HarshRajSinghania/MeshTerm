@@ -370,9 +370,7 @@ def changes_phrase(count: int) -> str:
     return f"{count} staged change{'' if count == 1 else 's'}"
 
 
-async def confirm_discard(
-    ctx: AppContext, staged: int, *, verb: str = "applying"
-) -> bool:
+async def confirm_discard(ctx: AppContext, staged: int, *, verb: str = "applying") -> bool:
     """Ask before dropping staged changes on the way out; ``True`` means discard.
 
     The shared unsaved-changes dialog: the safe way out (keep editing) sits left, the

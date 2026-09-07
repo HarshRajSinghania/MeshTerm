@@ -84,7 +84,7 @@ def _texts(source: str) -> list[Text]:
 def _spans(source: str) -> list[tuple[str, str]]:
     """Every styled run in the page's block texts, as ``(text, style)`` pairs."""
     return [
-        (text.plain[span.start:span.end], str(span.style))
+        (text.plain[span.start : span.end], str(span.style))
         for text in _texts(source)
         for span in text.spans
     ]

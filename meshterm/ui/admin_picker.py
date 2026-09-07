@@ -22,9 +22,7 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 
-def admin_picker_rows(
-    ctx: AppContext, contacts: list[Contact]
-) -> tuple[list, list[Contact]]:
+def admin_picker_rows(ctx: AppContext, contacts: list[Contact]) -> tuple[list, list[Contact]]:
     """Build the admin-node picker's grouped rows and the contacts they map to.
 
     Shared so the pick and any later redraw are guaranteed identical: :func:`pick_admin_node`
@@ -69,7 +67,8 @@ def admin_picker_rows(
 
     remembered = [c for c in candidates if ctx.admin_store.get(c) is not None]
     infrastructure = [
-        c for c in candidates
+        c
+        for c in candidates
         if c not in remembered and c.node_type in (NODE_TYPE_REPEATER, NODE_TYPE_ROOM)
     ]
     others = [c for c in candidates if c not in remembered and c not in infrastructure]

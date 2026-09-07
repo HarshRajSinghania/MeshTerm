@@ -211,9 +211,7 @@ async def test_attempt_now_forces_a_send(tmp_path: Path) -> None:
     """The screen's Send now works regardless of freshness or schedule."""
     service = _service(tmp_path, [True])
     ctx = service._ctx
-    entry = ctx.courier_store.queue(
-        NODE, "Hub", "hello", not_before=utcnow() + timedelta(hours=8)
-    )
+    entry = ctx.courier_store.queue(NODE, "Hub", "hello", not_before=utcnow() + timedelta(hours=8))
     assert await service.attempt_now(entry.ident) == "delivered"
     assert await service.attempt_now(entry.ident) == "gone"  # already settled
 
@@ -480,9 +478,7 @@ def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
     from meshterm.ui.widgets import ContactsSort
 
     fresh = Contact(name="Fresh", public_key="aa" * 32, last_seen=utcnow())
-    stale = Contact(
-        name="Stale", public_key="bb" * 32, last_seen=utcnow() - timedelta(days=2)
-    )
+    stale = Contact(name="Stale", public_key="bb" * 32, last_seen=utcnow() - timedelta(days=2))
     counts = {"aa" * 6: 7}
     screen = CourierRecipientScreen(
         contacts=[stale, fresh],
@@ -492,9 +488,7 @@ def test_recipient_picker_rides_the_shared_node_list(tmp_path: Path) -> None:
     )
     import re
 
-    body = "\n".join(
-        re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(80)
-    )
+    body = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in screen.render_body(80))
     assert "NAME" in body and "HEARD" in body and "PKTS" in body and "KEY" in body
     assert body.index("Fresh") < body.index("Stale")  # heard opens freshest-first
     assert "    7" in body  # Fresh's overheard tally fills the PKTS lane
@@ -516,9 +510,7 @@ def test_recipient_picker_sort_keys_walk_the_ring(tmp_path: Path) -> None:
     a = Contact(name="Alpha", public_key="aa" * 32, last_seen=utcnow())
     z = Contact(name="Zulu", public_key="bb" * 32)
     sort = ContactsSort.from_name("heard", SORT_COLUMNS, SORT_OPENS_ASCENDING)
-    screen = CourierRecipientScreen(
-        contacts=[z, a], prefix_bytes=0, counts={}, sort=sort
-    )
+    screen = CourierRecipientScreen(contacts=[z, a], prefix_bytes=0, counts={}, sort=sort)
     screen.handle("ctrl_left")  # heard -> name (opens ascending)
     assert sort.column == "name" and sort.ascending
     values = [c.value for c in screen._choices()]

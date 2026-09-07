@@ -133,7 +133,10 @@ _YOU_TAG = "  (you)"
 #: walk the same four columns on every contact list.
 SORT_COLUMNS: tuple[str, ...] = ("name", "heard", "packets", "hash")
 SORT_OPENS_ASCENDING: dict[str, bool] = {
-    "name": True, "heard": True, "packets": False, "hash": True,
+    "name": True,
+    "heard": True,
+    "packets": False,
+    "hash": True,
 }
 
 #: The Trace-target picker's wider sort ring. It adds a ``traced`` column — how long ago the
@@ -147,7 +150,11 @@ SORT_OPENS_ASCENDING: dict[str, bool] = {
 #: :data:`SORT_COLUMNS`.
 TRACE_SORT_COLUMNS: tuple[str, ...] = ("name", "traced", "heard", "packets", "hash")
 TRACE_SORT_OPENS_ASCENDING: dict[str, bool] = {
-    "name": True, "traced": True, "heard": True, "packets": False, "hash": True,
+    "name": True,
+    "traced": True,
+    "heard": True,
+    "packets": False,
+    "hash": True,
 }
 
 #: The Archived list's ring — ``NAME · ARCHIVED · KEY``, matching :data:`ARCHIVED_LANES`.
@@ -156,7 +163,9 @@ TRACE_SORT_OPENS_ASCENDING: dict[str, bool] = {
 #: answer should be at the top of it.
 ARCHIVED_SORT_COLUMNS: tuple[str, ...] = ("name", "archived", "hash")
 ARCHIVED_SORT_OPENS_ASCENDING: dict[str, bool] = {
-    "name": True, "archived": True, "hash": True,
+    "name": True,
+    "archived": True,
+    "hash": True,
 }
 
 #: What the active sort column and its triangle are lit in, matching the static Contacts
@@ -276,7 +285,10 @@ def _lane_cell(row: ContactRow, lane: ContactLane) -> Text:
 
 
 def _you_lane(
-    row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int,
+    row: ContactRow,
+    name_w: int,
+    prefix_bytes: int,
+    hash_w: int,
     lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
 ) -> Text:
     """Our own node's lane — laid out exactly like :func:`_lane`'s regular rows.
@@ -314,7 +326,10 @@ def _you_lane(
 
 
 def _lane(
-    row: ContactRow, name_w: int, prefix_bytes: int, hash_w: int,
+    row: ContactRow,
+    name_w: int,
+    prefix_bytes: int,
+    hash_w: int,
     lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
 ) -> Text:
     """One contact as fixed, colour-coded lanes under :func:`_header`'s columns.
@@ -363,7 +378,8 @@ def _lane(
 
 
 def _ordered(
-    rows: list[ContactRow], sort: ContactsSort,
+    rows: list[ContactRow],
+    sort: ContactsSort,
     lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
 ) -> list[ContactRow]:
     """Order the sortable rows by the active sort (own-node rows are pinned elsewhere).
@@ -524,16 +540,18 @@ class ContactListScreen(SelectScreen):
         items: list = list(self._lead)
         # The lane names lead the contacts as their landmark, so they pin overhead while the
         # list scrolls — a row deep in the sort can still be read off its columns.
-        items.append(
-            Separator(_header(self._name_w, self._sort, self._lanes), heading=True)
-        )
+        items.append(Separator(_header(self._name_w, self._sort, self._lanes), heading=True))
         pinned = [row for row in self._contact_rows if row.you]
         rest = [row for row in self._contact_rows if not row.you]
         for row in (*pinned, *_ordered(rest, self._sort, self._lanes)):
             items.append(
                 Choice(
                     _lane(
-                        row, self._name_w, self._prefix_bytes, self._hash_w, self._lanes,
+                        row,
+                        self._name_w,
+                        self._prefix_bytes,
+                        self._hash_w,
+                        self._lanes,
                     ),
                     row.value,
                 )

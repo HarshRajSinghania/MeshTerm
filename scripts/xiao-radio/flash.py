@@ -12,6 +12,7 @@ Usage:
     python flash.py                       # flash ./meshcore-xiao-radio.uf2
     python flash.py path/to/firmware.uf2  # flash a specific file
 """
+
 import glob
 import os
 import sys

@@ -331,7 +331,10 @@ def resolve(flag: str | None = None) -> Resolution:
         return Resolution(flag, env, model, "--platform flag", _lookup(flag, source="--platform"))
     if env:
         return Resolution(
-            flag, env, model, "MESHTERM_PLATFORM env var",
+            flag,
+            env,
+            model,
+            "MESHTERM_PLATFORM env var",
             _lookup(env, source="MESHTERM_PLATFORM"),
         )
     if model == _LYRA_MODEL:

@@ -215,48 +215,72 @@ def _score_big_loop(stats: WalkStats) -> float | None:
 #: descriptions are display-only and kept plain and descriptive.
 CATEGORIES: tuple[Category, ...] = (
     Category(
-        id="long_haul", title="Longest distance", icon="🛣", unit="km",
+        id="long_haul",
+        title="Longest distance",
+        icon="🛣",
+        unit="km",
         description="travel the greatest distance and come home",
-        score=_score_long_haul, needs_positions=True,
+        score=_score_long_haul,
+        needs_positions=True,
     ),
     Category(
-        id="far_point", title="Farthest node", icon="🎯", unit="km",
+        id="far_point",
+        title="Farthest node",
+        icon="🎯",
+        unit="km",
         description="reach the node furthest from here",
-        score=_score_far_point, needs_positions=True,
+        score=_score_far_point,
+        needs_positions=True,
     ),
     Category(
-        id="long_leg", title="Longest leg", icon="🏹", unit="km",
+        id="long_leg",
+        title="Longest leg",
+        icon="🏹",
+        unit="km",
         description="cross the greatest distance in a single hop",
-        score=_score_long_leg, needs_positions=True,
+        score=_score_long_leg,
+        needs_positions=True,
     ),
     Category(
-        id="grand_tour", title="Most nodes", icon="🧳", unit="nodes",
+        id="grand_tour",
+        title="Most nodes",
+        icon="🧳",
+        unit="nodes",
         description="visit the most nodes, passing through some twice is fine",
         score=_score_grand_tour,
     ),
     Category(
-        id="clean_trail", title="No revisits", icon="👣", unit="nodes",
+        id="clean_trail",
+        title="No revisits",
+        icon="👣",
+        unit="nodes",
         description="visit the most nodes without passing through any twice",
         score=_score_clean_trail,
     ),
     Category(
-        id="thin_thread", title="Weakest link", icon="🕸", unit="dB",
+        id="thin_thread",
+        title="Weakest link",
+        icon="🕸",
+        unit="dB",
         description="come home over the weakest link that still carries",
-        score=_score_thin_thread, ascending=True,
+        score=_score_thin_thread,
+        ascending=True,
     ),
     Category(
-        id="big_loop", title="Biggest loop", icon="🔆", unit="km²",
+        id="big_loop",
+        title="Biggest loop",
+        icon="🔆",
+        unit="km²",
         description="enclose the largest area inside the walk",
-        score=_score_big_loop, needs_positions=True,
+        score=_score_big_loop,
+        needs_positions=True,
     ),
 )
 
 CATEGORY_BY_ID: dict[str, Category] = {c.id: c for c in CATEGORIES}
 
 
-def _local_xy(
-    origin: tuple[float, float], point: tuple[float, float]
-) -> tuple[float, float]:
+def _local_xy(origin: tuple[float, float], point: tuple[float, float]) -> tuple[float, float]:
     """Project a lat/lon onto a local plane around ``origin``, in km.
 
     An equirectangular approximation — exact enough for mesh-sized areas (a few tens
@@ -408,7 +432,10 @@ def walk_from_trace(
         return None
     route = tuple(canonical(h) or h for h in hashes)
     stats = compute_walk_stats(
-        route, result.hops, rtt_ms=result.round_trip_ms,
-        positions=positions, self_pos=self_pos,
+        route,
+        result.hops,
+        rtt_ms=result.round_trip_ms,
+        positions=positions,
+        self_pos=self_pos,
     )
     return ",".join(hashes), route, stats

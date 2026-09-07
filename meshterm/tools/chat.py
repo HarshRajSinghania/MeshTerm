@@ -131,9 +131,7 @@ class ChatTool(Tool):
                 if isinstance(choice, DeleteRequest):
                     await self._delete_history(ctx, choice.value)
                 elif choice is CANCEL or choice is None:  # Esc — out to the menu
-                    return ToolResult(
-                        summary={"conversations": opened, "messages": shown}
-                    )
+                    return ToolResult(summary={"conversations": opened, "messages": shown})
                 else:
                     shown = await open_chat(ctx, choice)
                     opened += 1
@@ -194,10 +192,7 @@ class ChatTool(Tool):
         if companions:
             # List contacts by recency — those with messages first, newest exchange at
             # the top — then the never-contacted ones alphabetically (see _recency_key).
-            direct = [
-                Conversation(label=c.name, is_channel=False, contact=c)
-                for c in companions
-            ]
+            direct = [Conversation(label=c.name, is_channel=False, contact=c) for c in companions]
             direct.sort(key=lambda conv: _recency_key(conv, lasts))
             for conversation in direct:
                 items.append(
@@ -237,9 +232,7 @@ class ChatTool(Tool):
 
     # -- CLI --------------------------------------------------------------------
 
-    async def _run_cli(
-        self, ctx: AppContext, action: str, params: dict[str, Any]
-    ) -> ToolResult:
+    async def _run_cli(self, ctx: AppContext, action: str, params: dict[str, Any]) -> ToolResult:
         """Dispatch a scripted CLI action.
 
         Args:
@@ -706,9 +699,7 @@ def _title(
     label_style = ""
     if not conversation.is_channel and conversation.contact is not None:
         contact = conversation.contact
-        label_style = name_style(
-            conversation.label, contact.public_key or contact.key_prefix
-        )
+        label_style = name_style(conversation.label, contact.public_key or contact.key_prefix)
     text.append(fit_cells(conversation.label, _LABEL_WIDTH), style=label_style or None)
     text.append("  ")
     # Unread badge lane (_BADGE_WIDTH cells): a red ● with the count in warn, or blank filler so

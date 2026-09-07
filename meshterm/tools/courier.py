@@ -213,10 +213,7 @@ class CourierTool(Tool):
         ctx.courier_store.clear_done()
         cleared = before - len(ctx.courier_store.entries())
         if cleared:
-            ctx.ui.note(
-                f"[ok]cleared {cleared} finished "
-                f"entr{'y' if cleared == 1 else 'ies'}[/ok]"
-            )
+            ctx.ui.note(f"[ok]cleared {cleared} finished entr{'y' if cleared == 1 else 'ies'}[/ok]")
         else:
             ctx.ui.note("[muted]no finished entries to clear[/muted]")
         return ToolResult(summary={"cleared": cleared})
@@ -229,9 +226,7 @@ class CourierTool(Tool):
         """
         from ..cli import run_tool_command
 
-        courier_app = typer.Typer(
-            help=self.help, no_args_is_help=True, rich_markup_mode="rich"
-        )
+        courier_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode="rich")
 
         @courier_app.command(
             "queue", help="Queue a message for delivery when the contact is next heard"
@@ -244,7 +239,9 @@ class CourierTool(Tool):
             ),
         ) -> None:
             tool_params: dict[str, Any] = {
-                "cli_action": "queue", "contact": contact, "text": " ".join(text)
+                "cli_action": "queue",
+                "contact": contact,
+                "text": " ".join(text),
             }
             if at is not None:
                 tool_params["at"] = at

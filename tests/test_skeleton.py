@@ -70,10 +70,7 @@ def test_parse_trace_path_mixes_names_and_hex() -> None:
 def test_parse_trace_path_preserves_three_byte_width() -> None:
     """A 3-byte (6 hex) width is kept, and names truncate to that width."""
     contacts = [Contact(name="Alice", key_prefix="d4e5f6a7b8c9")]
-    assert (
-        trace_runner.parse_trace_path("3d5f7a,Alice,f2a1b3", contacts)
-        == "3d5f7a,d4e5f6,f2a1b3"
-    )
+    assert trace_runner.parse_trace_path("3d5f7a,Alice,f2a1b3", contacts) == "3d5f7a,d4e5f6,f2a1b3"
 
 
 def test_parse_trace_path_rejects_mixed_widths() -> None:
@@ -102,9 +99,9 @@ def test_last_traced_by_name_folds_hex_to_contacts_and_keeps_latest() -> None:
         return datetime(2026, 7, day, tzinfo=timezone.utc)
 
     traced = {
-        "d4e5f6": when(1),   # Alice by an early key-prefix trace
-        "Alice": when(9),    # …and by name, more recently — the latest must win
-        "cafe": when(5),     # a hex-looking *name*, matched as a name
+        "d4e5f6": when(1),  # Alice by an early key-prefix trace
+        "Alice": when(9),  # …and by name, more recently — the latest must win
+        "cafe": when(5),  # a hex-looking *name*, matched as a name
         "beefbeef": when(3),  # a prefix that names no contact — dropped
     }
     assert _last_traced_by_name(contacts, traced) == {"Alice": when(9), "cafe": when(5)}
@@ -116,16 +113,19 @@ def test_node_type_resolver_matches_hop_hash_to_contact_type() -> None:
 
     type_of = trace_runner.make_node_type_resolver(
         [
-            Contact(name="Repeater", public_key="3d63c6" + "00" * 26,
-                    key_prefix="3d63c6429436", node_type=NODE_TYPE_REPEATER),
-            Contact(name="Typeless", public_key="a1b2c3" + "00" * 26,
-                    key_prefix="a1b2c3d4"),
+            Contact(
+                name="Repeater",
+                public_key="3d63c6" + "00" * 26,
+                key_prefix="3d63c6429436",
+                node_type=NODE_TYPE_REPEATER,
+            ),
+            Contact(name="Typeless", public_key="a1b2c3" + "00" * 26, key_prefix="a1b2c3d4"),
         ]
     )
-    assert type_of("3d63") == NODE_TYPE_REPEATER   # a short hash prefixes the full key
-    assert type_of("a1b2") is None                 # known contact, but no advertised type
-    assert type_of("ffff") is None                 # unknown node
-    assert type_of(None) is None                   # our own device, passed through
+    assert type_of("3d63") == NODE_TYPE_REPEATER  # a short hash prefixes the full key
+    assert type_of("a1b2") is None  # known contact, but no advertised type
+    assert type_of("ffff") is None  # unknown node
+    assert type_of(None) is None  # our own device, passed through
 
 
 def test_key_resolver_expands_a_stored_prefix_to_the_full_key() -> None:
@@ -137,10 +137,10 @@ def test_key_resolver_expands_a_stored_prefix_to_the_full_key() -> None:
             Contact(name="Keyless", public_key="", key_prefix="a1b2c3d4"),
         ]
     )
-    assert resolve("3d63c6429436") == full   # the stored prefix begins the contact's key
-    assert resolve("3d63") == full           # any shorter slice of it, too
+    assert resolve("3d63c6429436") == full  # the stored prefix begins the contact's key
+    assert resolve("3d63") == full  # any shorter slice of it, too
     assert resolve("ffffffffffff") == "ffffffffffff"  # no contact: the prefix stands
-    assert resolve("a1b2c3d4") == "a1b2c3d4"          # contact has no full key to expand to
+    assert resolve("a1b2c3d4") == "a1b2c3d4"  # contact has no full key to expand to
     assert resolve(None) is None
 
 
@@ -211,9 +211,7 @@ def test_route_text_annotates_our_device_with_hash() -> None:
         hops=[Hop(0, "3d63", 12.0), Hop(1, None, 12.0)],
         path_hash_bytes=2,  # command used 2-byte hashes
     )
-    plain = _route_text(
-        result, "Me", device_hash="a1b2c3" + "00" * 29
-    ).plain.replace("\xa0", " ")
+    plain = _route_text(result, "Me", device_hash="a1b2c3" + "00" * 29).plain.replace("\xa0", " ")
     assert plain.count("Me (a1b2)") == 2  # our device at both ends, carrying our hash
     assert "a1b2c3" not in plain  # truncated to the command's 2-byte width
 
@@ -558,8 +556,13 @@ async def test_tx_optimizer_finds_simulator_peak(tmp_path: Path) -> None:
     device, admin, target, path = await _setup_link(optimal_remote_tx=20)
 
     result = await tx_optimizer.optimize_tx_power(
-        device, target.name, admin, path,
-        samples_per_level=8, coarse_step=3, cooldown_s=0,
+        device,
+        target.name,
+        admin,
+        path,
+        samples_per_level=8,
+        coarse_step=3,
+        cooldown_s=0,
     )
     assert abs(result.best_tx - 20) <= 3  # near the true remote peak
     assert result.best_success_rate == 1.0  # reliability-first: the winner never drops
@@ -576,9 +579,16 @@ async def test_tx_optimizer_no_apply_restores_original(tmp_path: Path) -> None:
     await device.set_remote_tx_power(admin, 15)  # a known starting power
 
     result = await tx_optimizer.optimize_tx_power(
-        device, target.name, admin, path,
-        samples_per_level=4, coarse_step=4, refine=False, verify=False,
-        apply=False, cooldown_s=0,
+        device,
+        target.name,
+        admin,
+        path,
+        samples_per_level=4,
+        coarse_step=4,
+        refine=False,
+        verify=False,
+        apply=False,
+        cooldown_s=0,
     )
     assert result.original_tx == 15
     assert not result.applied
@@ -593,17 +603,31 @@ async def test_tx_optimizer_reports_phases_in_order() -> None:
     phases: list[str] = []
 
     await tx_optimizer.optimize_tx_power(
-        device, target.name, admin, path,
-        samples_per_level=2, coarse_step=6, apply=False, cooldown_s=0,
+        device,
+        target.name,
+        admin,
+        path,
+        samples_per_level=2,
+        coarse_step=6,
+        apply=False,
+        cooldown_s=0,
         on_phase=phases.append,
     )
     assert phases == list(tx_optimizer.PHASES)
 
     phases.clear()
     await tx_optimizer.optimize_tx_power(
-        device, target.name, admin, path,
-        samples_per_level=2, coarse_step=6, refine=False, verify=False,
-        apply=False, cooldown_s=0, on_phase=phases.append,
+        device,
+        target.name,
+        admin,
+        path,
+        samples_per_level=2,
+        coarse_step=6,
+        refine=False,
+        verify=False,
+        apply=False,
+        cooldown_s=0,
+        on_phase=phases.append,
     )
     assert phases == ["coarse"]  # disabled stages are never announced
 
@@ -615,9 +639,18 @@ def test_select_best_prefers_reliability_then_lowest_power() -> None:
 
     def level(tx: int, snr: float, successes: int, samples: int = 5) -> TxLevelResult:
         return TxLevelResult(
-            tx_power=tx, samples=samples, successes=successes, target_snr=snr,
-            score=snr, stats=TraceStats(target="t", samples=samples, successes=successes,
-                                        median_min_snr=snr, median_rtt_ms=None),
+            tx_power=tx,
+            samples=samples,
+            successes=successes,
+            target_snr=snr,
+            score=snr,
+            stats=TraceStats(
+                target="t",
+                samples=samples,
+                successes=successes,
+                median_min_snr=snr,
+                median_rtt_ms=None,
+            ),
         )
 
     # A flaky level with a great SNR must not beat a perfectly reliable one.
@@ -648,7 +681,8 @@ def test_trace_target_snr_matches_target_hop_not_position() -> None:
     # Round trip 3f -> f2 -> 3f -> us: the f2 hop (index 1) is what we want, not the
     # later 3f hop or the hash-less return hop.
     trace = TraceResult(
-        target="f2", success=True,
+        target="f2",
+        success=True,
         hops=[Hop(0, "3f", 4.0), Hop(1, "f2", 7.5), Hop(2, "3f", 3.0), Hop(3, None, 4.0)],
     )
     assert trace_target_snr(trace, "f2") == 7.5
@@ -738,7 +772,7 @@ async def test_three_byte_route_appends_destination_hash() -> None:
     path_bytes, flags = resolved
     # Two repeater hops collapsed to 2 bytes, the target's own 2-byte hash, then
     # the same two repeaters mirrored back to us.
-    assert path_bytes == bytes.fromhex("1122" "4455" "aabb" "4455" "1122")
+    assert path_bytes == bytes.fromhex("11224455aabb44551122")
     assert flags == trace_runner.path_hash_flags(2)  # 2-byte width
 
 

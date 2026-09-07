@@ -60,9 +60,7 @@ class DevicesTool(Tool):
         known = ctx.device_store.load_all()
         remembered = ctx.device_store.load()
         active = ctx.selected_device
-        active_target = ctx.ble_override or ctx.port_override or (
-            active.target if active else None
-        )
+        active_target = ctx.ble_override or ctx.port_override or (active.target if active else None)
 
         if ctx.json_output:
             import json

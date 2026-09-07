@@ -678,9 +678,7 @@ class CountdownDialog(_KeylessDialog):
         draw theirs: a chip is a chip wherever it appears, and one shoved against the left
         border read as an afterthought beside its siblings' centered rows.
         """
-        parts: list[Text] = [
-            _center(Text(self._clock_text(self._remaining), style="warn"), width)
-        ]
+        parts: list[Text] = [_center(Text(self._clock_text(self._remaining), style="warn"), width)]
         if self._reason:
             parts.append(_center(Text(self._reason, style="muted"), width))
         parts.append(Text(""))

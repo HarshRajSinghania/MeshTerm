@@ -313,8 +313,8 @@ def test_axis_chart_floor_frames_a_signed_chart_and_widens_the_gutter() -> None:
     """A signed floor draws negative marks and sizes the gutter for the widest one."""
     rows = timeline_rows([5, -5], rows=3, span=(-5, 5))
     out = axis_chart(rows, 5, 1, lambda f: "x", floor=-5)
-    assert out[0].plain.startswith(" 4 ┤")   # gutter widened to two cells by the floor
-    assert out[2].plain.startswith("-4 ┤")   # a negative mark near the floor
+    assert out[0].plain.startswith(" 4 ┤")  # gutter widened to two cells by the floor
+    assert out[2].plain.startswith("-4 ┤")  # a negative mark near the floor
 
 
 def test_axis_chart_honours_a_shared_label_width() -> None:
@@ -335,8 +335,8 @@ def test_axis_chart_ticks_notch_the_border_and_centre_labels() -> None:
     """Explicit column ticks draw a ``┬`` on the border with the label centred beneath."""
     rows = timeline_rows([9] * 8, rows=1)
     out = axis_chart(rows, 9, 4, ticks=[(0, "A"), (3, "D")])
-    assert out[1].plain == "  └┬──┬┘"   # ticks at chart cells 0 and 3
-    assert out[2].plain == "   A  D"     # labels centred under their ticks
+    assert out[1].plain == "  └┬──┬┘"  # ticks at chart cells 0 and 3
+    assert out[2].plain == "   A  D"  # labels centred under their ticks
 
 
 def test_axis_chart_continuous_axis_notches_ticks_under_its_labels() -> None:
@@ -344,9 +344,9 @@ def test_axis_chart_continuous_axis_notches_ticks_under_its_labels() -> None:
     rows = timeline_rows([9] * 8, rows=1)
     out = axis_chart(rows, 9, 20, lambda f: "now" if f >= 1.0 else str(round(f * 100)))
     border, caption = out[1].plain, out[2].plain
-    assert "┬" in border                      # the continuous axis is ticked, not a plain rule
+    assert "┬" in border  # the continuous axis is ticked, not a plain rule
     assert border.startswith("  └") and border.endswith("┘")
-    assert border[-2] == "┬"                  # the rightmost tick sits at the 'now' edge
+    assert border[-2] == "┬"  # the rightmost tick sits at the 'now' edge
     assert "now" in caption and "0" in caption
 
 
@@ -355,6 +355,6 @@ def test_axis_chart_ticks_thin_a_label_that_would_collide() -> None:
     rows = timeline_rows([9] * 16, rows=1)
     out = axis_chart(rows, 9, 8, ticks=[(0, "aaaa"), (2, "aaaa"), (7, "b")])
     border, caption = out[1].plain, out[2].plain
-    assert caption.count("aaaa") == 1   # the crowded twin was skipped
+    assert caption.count("aaaa") == 1  # the crowded twin was skipped
     assert "b" in caption
-    assert border.count("┬") == 2       # …and its tick with it (only two survive)
+    assert border.count("┬") == 2  # …and its tick with it (only two survive)

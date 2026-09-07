@@ -43,7 +43,7 @@ from meshterm.ui.widgets import path_text
 
 def _styles(text) -> dict[str, str]:  # noqa: ANN001
     """Map each styled slice of a Text to its style string, for spot checks."""
-    return {text.plain[s.start:s.end]: str(s.style) for s in text.spans}
+    return {text.plain[s.start : s.end]: str(s.style) for s in text.spans}
 
 
 def _char_styles(text) -> list[tuple[str, str]]:  # noqa: ANN001
@@ -97,17 +97,17 @@ def test_plain_mode_annotation_dim_and_custom_separator() -> None:
     assert styles[" (3d)"] == "muted"  # the annotation note, space included
     assert styles["home"] == "faint"
     assert styles[" → "] == "faint"  # the arrow into a dim hop fades with it
-    trail = PathLine(
-        [PathHop("a"), PathHop("b")], mode="plain", separator=" › "
-    ).text()
+    trail = PathLine([PathHop("a"), PathHop("b")], mode="plain", separator=" › ").text()
     assert trail.plain == "a › b"
 
 
 def test_empty_path_reads_as_the_callers_word() -> None:
     """A hopless line is the muted empty note, in every shape."""
     assert PathLine([], mode="plain").text().plain == "direct"
-    assert PathLine([], mode="powerline", empty="direct — no relays").text().plain \
+    assert (
+        PathLine([], mode="powerline", empty="direct — no relays").text().plain
         == "direct — no relays"
+    )
     assert PathLine([], mode="plain").wrapped(40)[0].plain == "direct"
 
 
@@ -119,13 +119,10 @@ def test_chips_are_joined_by_one_interlocked_chevron() -> None:
     nothing follows it to lay the point on.
     """
     alice_fill = node_style("aa").split()[-1]
-    line = PathLine(
-        [PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline"
-    )
+    line = PathLine([PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline")
     text = line.text()
     assert text.plain == f" Alice {POWERLINE_SEP} you {POWERLINE_SEP}"
-    seam_styles = [str(s.style) for s in text.spans
-                   if text.plain[s.start:s.end] == POWERLINE_SEP]
+    seam_styles = [str(s.style) for s in text.spans if text.plain[s.start : s.end] == POWERLINE_SEP]
     assert seam_styles == [f"{alice_fill} on {_YOU_BG}", _YOU_BG]
 
 
@@ -285,9 +282,7 @@ def test_the_elision_sits_between_chips_rather_than_being_one() -> None:
     where a filled ``⋯`` chip with its pads and two seams cost seven, which is four more
     hops of route on a line that is short of room by definition.
     """
-    line = PathLine(
-        [PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(5)], mode="powerline"
-    )
+    line = PathLine([PathHop(f"NODE{i:02d}", key=f"{i:02x}aa") for i in range(5)], mode="powerline")
     fitted = line.ellipsized(30)
     assert fitted.cell_len <= 30
     at = fitted.plain.index("⋯")
@@ -440,8 +435,12 @@ def test_path_line_factory_matches_path_text_character_for_character() -> None:
     names = {"aa11bb": "Alice", "3d63ab": "Hub"}
     hops = [None, "aa11bb", "77ccddee", "3d63ab", None]
     kwargs = dict(
-        prefix_bytes=2, self_name="Me", show_hash=True, hash_bytes=3,
-        device_hash="A1B2C3D4", dim_from=3,
+        prefix_bytes=2,
+        self_name="Me",
+        show_hash=True,
+        hash_bytes=3,
+        device_hash="A1B2C3D4",
+        dim_from=3,
     )
     old = path_text(hops, lambda h: names.get(h, h), **kwargs)
     new = path_line(hops, lambda h: names.get(h, h), mode="plain", **kwargs).text()
@@ -506,8 +505,10 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     page shows through and not a trace of the line above bleeds down. The point always
     faces the way the path flows.
     """
-    hops = [PathHop(label, key=key) for label, key in
-            (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))]
+    hops = [
+        PathHop(label, key=key)
+        for label, key in (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))
+    ]
     lines = PathLine(hops, mode="powerline").wrapped(20, indent=2)
     assert len(lines) == 2
     assert lines[0].plain.startswith(" AAAA")  # the square edge: this is the start
@@ -515,9 +516,7 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     assert lines[1].plain[:step].isspace() and lines[1].plain[step] == POWERLINE_SEP
     # …past the line's own PATH_INK stamp, which covers the whole body from the same cell
     # (it marks the run as a path line for the cursor fold and draws nothing).
-    carried = next(
-        s for s in lines[1].spans if s.start == step and str(s.style) != PATH_INK
-    )
+    carried = next(s for s in lines[1].spans if s.start == step and str(s.style) != PATH_INK)
     assert str(carried.style) == f"{_style_hex(node_style('3d'))} reverse"
     assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
     assert all(line.cell_len <= 20 for line in lines)
@@ -530,8 +529,10 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     terminal squares the opening and points the close, never drawing tofu. Interior
     breaks stay angled either way — a rounded end would read as the path stopping.
     """
-    hops = [PathHop(label, key=key) for label, key in
-            (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))]
+    hops = [
+        PathHop(label, key=key)
+        for label, key in (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))
+    ]
     line = PathLine(hops, mode="powerline")
 
     monkeypatch.setattr(pathline, "powerline_full", lambda: False)
@@ -585,8 +586,15 @@ def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
     same dark slate rather than the loud you white.
     """
     hops = [None, *(f"{i:02x}aa" for i in range(6)), None]
-    line = path_line(hops, prefix_bytes=2, self_name="Me", show_hash=True,
-                     device_hash="a1b2", bare_self=True, mode="plain")
+    line = path_line(
+        hops,
+        prefix_bytes=2,
+        self_name="Me",
+        show_hash=True,
+        device_hash="a1b2",
+        bare_self=True,
+        mode="plain",
+    )
     text = line.text()
     body = " → ".join(f"{i:02x}aa" for i in range(6))
     assert text.plain == f"{SELF_GLYPH} → {body} → {SELF_GLYPH}"
@@ -594,18 +602,19 @@ def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
     stars = [s for s in text.spans if text.plain[s.start : s.end] == SELF_GLYPH]
     assert [str(s.style) for s in stars] == ["faint", "faint"]
     chips = PathLine(line.hops, mode="powerline").text()
-    star_fills = [str(s.style) for s in chips.spans
-                  if chips.plain[s.start : s.end] == SELF_GLYPH]
+    star_fills = [str(s.style) for s in chips.spans if chips.plain[s.start : s.end] == SELF_GLYPH]
     assert all("#ffffff" not in fill for fill in star_fills)  # never the you white
 
-    wrapped = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                        mode="powerline").wrapped(28, indent=2)
+    wrapped = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, mode="powerline"
+    ).wrapped(28, indent=2)
     assert len(wrapped) > 1
     assert all(text.plain[2 + WRAP_OFFSET] == POWERLINE_SEP for text in wrapped[1:])
     assert all(text.cell_len <= 28 for text in wrapped)
 
-    lines = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                      mode="powerline").wrapped(28, indent=2)
+    lines = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, mode="powerline"
+    ).wrapped(28, indent=2)
     assert len(lines) > 1
     assert all(line.plain[2 + WRAP_OFFSET] == POWERLINE_SEP for line in lines[1:])
     assert all(line.cell_len <= 28 for line in lines)
@@ -620,21 +629,29 @@ def test_bare_self_keeps_us_in_the_you_white_where_nothing_is_composed() -> None
     star still fades it, so a mirrored return leg keeps its grey either way.
     """
     hops = [None, *(f"{i:02x}aa" for i in range(4)), None]
-    text = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                     dim_self=False, mode="plain").text()
+    text = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, dim_self=False, mode="plain"
+    ).text()
     stars = [s for s in text.spans if text.plain[s.start : s.end] == SELF_GLYPH]
     assert [str(s.style) for s in stars] == ["you", "you"]
     # In chips the same identity is the map's yellow star on the neutral dark grey — the
     # marker itself rather than a hue, since our end is a fixture and not a node to tell apart.
-    chips = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                      dim_self=False, mode="powerline").text()
-    fills = [str(s.style) for s in chips.spans
-             if chips.plain[s.start : s.end] == SELF_GLYPH]
+    chips = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, dim_self=False, mode="powerline"
+    ).text()
+    fills = [str(s.style) for s in chips.spans if chips.plain[s.start : s.end] == SELF_GLYPH]
     assert fills == [f"bold {_SELF_INK} on {_YOU_BG}"] * 2
 
     # The explicit fade still rules: a star inside a dimmed return leg stays grey.
-    faded = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                      dim_self=False, dim_from=3, mode="plain").text()
+    faded = path_line(
+        hops,
+        prefix_bytes=2,
+        self_name="Me",
+        bare_self=True,
+        dim_self=False,
+        dim_from=3,
+        mode="plain",
+    ).text()
     tail = [s for s in faded.spans if faded.plain[s.start : s.end] == SELF_GLYPH]
     assert [str(s.style) for s in tail] == ["you", "faint"]
 
@@ -648,8 +665,9 @@ def test_action_mark_rides_outside_the_width_budget() -> None:
     mark lands in the leftovers.
     """
     hops = [None, "3d63", "f2a1", None]
-    line = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                     dim_self=False, mode="plain").text()
+    line = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, dim_self=False, mode="plain"
+    ).text()
     exact = line.cell_len
 
     # A lane the route fills exactly: the route survives whole, and the mark is what goes.
@@ -676,8 +694,9 @@ def test_action_mark_rides_outside_the_width_budget() -> None:
 def test_action_mark_leaves_a_chip_path_closed_rather_than_cracked() -> None:
     """In chips, the whole point: a route that fits keeps its closing cap, not a crack."""
     hops = [None, "3d63", "f2a1", None]
-    line = path_line(hops, prefix_bytes=2, self_name="Me", bare_self=True,
-                     dim_self=False, mode="powerline").text()
+    line = path_line(
+        hops, prefix_bytes=2, self_name="Me", bare_self=True, dim_self=False, mode="powerline"
+    ).text()
     fitted = cut_to(line, line.cell_len, action=True)
     assert CRACK_TAIL not in fitted.plain
     assert fitted.plain == line.plain

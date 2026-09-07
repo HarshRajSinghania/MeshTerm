@@ -80,7 +80,6 @@ def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceRe
     )
 
 
-
 # --- snr_bar -------------------------------------------------------------------
 
 
@@ -219,8 +218,16 @@ def test_previous_walk_rejects_unusable_history() -> None:
 
 
 def _trace_screen(
-    trace=None, compose_path=None, explore=None, pick_width=None, pick_samples=None,
-    previous=None, mode="target", samples=1, auto_spec=None, auto_source="",
+    trace=None,
+    compose_path=None,
+    explore=None,
+    pick_width=None,
+    pick_samples=None,
+    previous=None,
+    mode="target",
+    samples=1,
+    auto_spec=None,
+    auto_source="",
     open_trophy_case=None,
 ) -> tuple[TraceScreen, _FakeSession]:
     session = _FakeSession()
@@ -405,8 +412,10 @@ async def test_compose_seeds_from_the_visible_route_not_the_empty_spec() -> None
         return None  # observe the seed only; leave the (auto) plan untouched
 
     screen, _ = _trace_screen(
-        mode="path", compose_path=compose,
-        auto_spec=lambda: "3d,f2", auto_source="last walk",
+        mode="path",
+        compose_path=compose,
+        auto_spec=lambda: "3d,f2",
+        auto_source="last walk",
     )
     screen._index = screen._actions.index("compose")
     screen.handle("enter")
@@ -468,8 +477,13 @@ async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
     screen, _ = _trace_screen(pick_width=width_flow)
     body = _plain(screen.render_body(100))
     # The menu order the actions read in: build first, tune, then transmit.
-    labels = ["Compose path", "Explore paths", "Path width — 2 bytes per hop",
-              "Sample count — 1 trace", "Trace — one transmission"]
+    labels = [
+        "Compose path",
+        "Explore paths",
+        "Path width — 2 bytes per hop",
+        "Sample count — 1 trace",
+        "Trace — one transmission",
+    ]
     positions = [body.index(label) for label in labels]
     assert positions == sorted(positions)
     screen.handle("up")  # Trace → Sample count
@@ -505,8 +519,7 @@ async def test_trace_screen_hotkeys_are_retired() -> None:
         opened.append(current)
         return None
 
-    screen, _ = _trace_screen(compose_path=flow, explore=flow, pick_width=flow,
-                              pick_samples=flow)
+    screen, _ = _trace_screen(compose_path=flow, explore=flow, pick_width=flow, pick_samples=flow)
     for key in ("p", "x", "w", "s"):
         screen.handle("text", key)
     await asyncio.sleep(0)
@@ -648,9 +661,7 @@ async def test_record_dialog_trophy_case_opens_over_the_trace_it_was_earned_on()
     async def open_trophy_case() -> None:
         opened.append("trophy case")
 
-    screen, session = _trace_screen(
-        trace=trace, samples=2, open_trophy_case=open_trophy_case
-    )
+    screen, session = _trace_screen(trace=trace, samples=2, open_trophy_case=open_trophy_case)
     session.dialog_answer = OPEN_TROPHY_CASE
     screen.future = asyncio.get_running_loop().create_future()
     screen.start_trace()
@@ -691,9 +702,7 @@ def test_planned_route_dims_only_the_mirrored_return_leg() -> None:
     screen, _ = _trace_screen()
 
     def faint_cells(text) -> int:  # noqa: ANN001
-        return sum(
-            span.end - span.start for span in text.spans if "faint" in str(span.style)
-        )
+        return sum(span.end - span.start for span in text.spans if "faint" in str(span.style))
 
     screen._path_spec = "3d,f2,3d"  # symmetric boomerang: the mirror is dimmed
     symmetric = screen._planned_route().text()
@@ -866,9 +875,7 @@ async def test_reverse_flips_a_path_walk_and_restarts_the_run() -> None:
 
 def test_reverse_adopts_and_flips_the_visible_auto_walk() -> None:
     """With only the auto walk showing, Reverse pins its mirror as the path to walk."""
-    screen, _ = _trace_screen(
-        mode="path", auto_spec=lambda: "3d,f2", auto_source="last walk"
-    )
+    screen, _ = _trace_screen(mode="path", auto_spec=lambda: "3d,f2", auto_source="last walk")
     assert screen._path_spec == ""  # nothing composed yet; the plan is auto
     screen._index = screen._actions.index("reverse")
     screen.handle("enter")
@@ -1076,7 +1083,8 @@ def test_sweep_screen_stars_the_running_best() -> None:
     # The route lane wears ★ for our own ends, so the star that marks the winner is the
     # one in the levels table — a row that also carries the level's reading.
     starred = next(
-        line for line in _plain(screen.render_body(100)).splitlines()
+        line
+        for line in _plain(screen.render_body(100)).splitlines()
         if "★" in line and "dB" in line
     )
     assert "18" in starred
@@ -1192,8 +1200,11 @@ _FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c
 
 def _scenario_topo() -> object:
     return build_topology(
-        self_id=_US + "0" * 52, contacts=[_HUB, _FAR],
-        trace_paths=[], packet_paths=[], neighbour_links=[],
+        self_id=_US + "0" * 52,
+        contacts=[_HUB, _FAR],
+        trace_paths=[],
+        packet_paths=[],
+        neighbour_links=[],
     )
 
 
@@ -1205,11 +1216,12 @@ def test_scenario_path_leads_and_ends_with_us_and_the_target() -> None:
     """
     topo = _scenario_topo()
     scenario = PathScenario(
-        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
+        label="observed path",
+        hops=("3d63c6429436",),
+        source="observed",
+        score=1.0,
     )
-    text = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
-    )
+    text = _scenario_path(scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1)
     assert text.plain == "★ → Hub → Far"
 
 
@@ -1217,9 +1229,7 @@ def test_scenario_path_direct_scenario_still_names_both_endpoints() -> None:
     """A direct (no-repeaters) scenario's pathline is just our star and the target."""
     topo = _scenario_topo()
     scenario = PathScenario(label="direct", hops=(), source="direct", score=0.0)
-    text = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
-    )
+    text = _scenario_path(scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1)
     assert text.plain == "★ → Far"
 
 
@@ -1234,13 +1244,18 @@ def test_scenario_path_cuts_a_long_candidate_rather_than_eliding_its_middle() ->
     """
     topo = _scenario_topo()
     scenario = PathScenario(
-        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
+        label="observed path",
+        hops=("3d63c6429436",),
+        source="observed",
+        score=1.0,
     )
-    full = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1
-    )
+    full = _scenario_path(scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1)
     narrow = _scenario_path(
-        scenario, topo, "f2c24f54551e", device_label="Hub-Me", width_bytes=1,
+        scenario,
+        topo,
+        "f2c24f54551e",
+        device_label="Hub-Me",
+        width_bytes=1,
         width=full.cell_len - 3,
     )
     assert narrow.cell_len <= full.cell_len - 3
@@ -1251,8 +1266,12 @@ def test_scenario_path_cuts_a_long_candidate_rather_than_eliding_its_middle() ->
 def test_scenario_detail_leads_with_the_hop_count() -> None:
     """The stats line under a candidate opens with how long the route is."""
     scenario = PathScenario(
-        label="observed path", hops=("3d63c6429436", "f2c24f54551e"), source="observed",
-        score=1.0, weakest_snr=-4.0, samples=2,
+        label="observed path",
+        hops=("3d63c6429436", "f2c24f54551e"),
+        source="observed",
+        score=1.0,
+        weakest_snr=-4.0,
+        samples=2,
     )
     assert _scenario_detail(scenario).plain.startswith("2 hops  ·  ")
     # The direct shot's provenance tag *was* this same word, so the atom absorbs it rather
@@ -1264,8 +1283,12 @@ def test_scenario_detail_leads_with_the_hop_count() -> None:
 def test_scenario_detail_carries_provenance_snr_and_samples() -> None:
     """The device/direct provenance tag, weakest SNR, and sample count all show, in order."""
     scenario = PathScenario(
-        label="device route", hops=("3d63c6429436",), source="device", score=2.0,
-        weakest_snr=-6.0, samples=3,
+        label="device route",
+        hops=("3d63c6429436",),
+        source="device",
+        score=2.0,
+        weakest_snr=-6.0,
+        samples=3,
     )
     detail = _scenario_detail(scenario)
     assert "device route" in detail.plain
@@ -1276,8 +1299,12 @@ def test_scenario_detail_carries_provenance_snr_and_samples() -> None:
 def test_scenario_detail_observed_carries_no_provenance_tag() -> None:
     """An observed candidate's detail line skips the tag — the route itself is the point."""
     scenario = PathScenario(
-        label="observed path", hops=("3d63c6429436",), source="observed", score=1.0,
-        weakest_snr=-4.0, samples=2,
+        label="observed path",
+        hops=("3d63c6429436",),
+        source="observed",
+        score=1.0,
+        weakest_snr=-4.0,
+        samples=2,
     )
     detail = _scenario_detail(scenario)
     assert "observed" not in detail.plain

@@ -316,9 +316,7 @@ def victims_for(
         # cannot keep four and a half and the safe direction on a keep is more. Python's
         # ``round`` is banker's rounding, which quietly made the 90% and 75% rungs identical
         # on a five-contact table by sending 4.5 and 3.75 to the same 4.
-        return sweep_candidates(
-            ranked, keep=math.ceil(len(sweepable) * int(value) / 100)
-        )
+        return sweep_candidates(ranked, keep=math.ceil(len(sweepable) * int(value) / 100))
     matched = []
     for scored in sweepable:
         age = _age_seconds(scored)
@@ -382,9 +380,7 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     return [
         Separator(_preview_header, pinned=True),
         *(
-            Choice(
-                title=_victim_row(v), value=v, deletable=True, hscroll_from=_PCTL_W
-            )
+            Choice(title=_victim_row(v), value=v, deletable=True, hscroll_from=_PCTL_W)
             for v in victims
         ),
         # The same shape ``exit_rows`` draws, in this flow's own words: Apply has no key of
@@ -490,9 +486,7 @@ def _count_desc(n: int) -> str:
     return f"{n} contact{'' if n == 1 else 's'}"
 
 
-async def _sweep(
-    ctx: AppContext, self_key: str, victims: list[ScoredContact]
-) -> int:
+async def _sweep(ctx: AppContext, self_key: str, victims: list[ScoredContact]) -> int:
     """Confirm, then remove each victim from the device and archive it here. Returns the count.
 
     The confirm is **amber and takes no typing**, unlike the red typed gate a bulk deletion

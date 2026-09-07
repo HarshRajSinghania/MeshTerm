@@ -142,10 +142,22 @@ def _dashboard(cols: int, rows: int) -> Screen:
         session=_GallerySession(cols, rows),
         resolve=lambda h: {"a1b2c3d4": "Alice", "3d63c642": "Hilltop-Repeater"}.get(h, ""),
         window=[
-            Observation(node="a1b2c3d4", name="a1b2c3d4", kind="advert", snr=5.0, rssi=-90.0,
-                        observed_at=utcnow()),
-            Observation(node="3d63c642", name="3d63c642", kind="packet", snr=-2.0, rssi=-104.0,
-                        observed_at=utcnow()),
+            Observation(
+                node="a1b2c3d4",
+                name="a1b2c3d4",
+                kind="advert",
+                snr=5.0,
+                rssi=-90.0,
+                observed_at=utcnow(),
+            ),
+            Observation(
+                node="3d63c642",
+                name="3d63c642",
+                kind="packet",
+                snr=-2.0,
+                rssi=-104.0,
+                observed_at=utcnow(),
+            ),
         ],
         activity=lambda: (2.0,) * ACTIVITY_BUCKETS,
         activity_flags=lambda: (True,) * ACTIVITY_BUCKETS,
@@ -161,9 +173,7 @@ def _contacts(cols: int, rows: int) -> Screen:
     ]
     # A non-zero archived tally, so the tail draws both maintenance rows — its populated
     # state, and the widest the tail ever gets.
-    return ContactsScreen(
-        "Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort, archived=12
-    )
+    return ContactsScreen("Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort, archived=12)
 
 
 def _purge_ranked():  # noqa: ANN201
@@ -178,20 +188,29 @@ def _purge_ranked():  # noqa: ANN201
     from meshterm.core.contact_score import ContactSignals, rank_contacts
 
     specs = [
-        ("Alice", "aa" * 32, dict(heard_age_days=0.2, packets=140, dm_total=18,
-                                  dm_age_days=2.0, known_days=300.0, hops=0.0)),
-        ("A Rather Long Repeater Name For Width", _HUB_KEY,
-         dict(heard_age_days=95.0, packets=3, known_days=200.0, hops=2.0)),
-        ("hop-9", "9a" * 32, dict(heard_age_days=400.0, packets=1, known_days=420.0,
-                                  hops=4.0)),
-        ("Lakeside", "3d" * 32, dict(heard_age_days=30.0, packets=22, known_days=250.0,
-                                     hops=1.0)),
+        (
+            "Alice",
+            "aa" * 32,
+            dict(
+                heard_age_days=0.2,
+                packets=140,
+                dm_total=18,
+                dm_age_days=2.0,
+                known_days=300.0,
+                hops=0.0,
+            ),
+        ),
+        (
+            "A Rather Long Repeater Name For Width",
+            _HUB_KEY,
+            dict(heard_age_days=95.0, packets=3, known_days=200.0, hops=2.0),
+        ),
+        ("hop-9", "9a" * 32, dict(heard_age_days=400.0, packets=1, known_days=420.0, hops=4.0)),
+        ("Lakeside", "3d" * 32, dict(heard_age_days=30.0, packets=22, known_days=250.0, hops=1.0)),
         ("sensor-2", "7c" * 32, dict(heard_age_days=210.0, packets=2, known_days=260.0)),
     ]
     contacts = [Contact(name=n, public_key=k, key_prefix=k[:12]) for n, k, _ in specs]
-    signals = {
-        k[:12]: ContactSignals(node=k[:12], **sig) for _, k, sig in specs
-    }
+    signals = {k[:12]: ContactSignals(node=k[:12], **sig) for _, k, sig in specs}
     return rank_contacts(contacts, signals)
 
 
@@ -228,17 +247,17 @@ def _archived(cols: int, rows: int) -> Screen:
     remembered = [
         RememberedContact(public_key="9a" * 32, name="hop-9", archived_at=now - 3 * 86400),
         RememberedContact(
-            public_key=_HUB_KEY, name="A Rather Long Repeater Name For Width",
-            node_type=2, archived_at=now - 40 * 86400,
+            public_key=_HUB_KEY,
+            name="A Rather Long Repeater Name For Width",
+            node_type=2,
+            archived_at=now - 40 * 86400,
         ),
         RememberedContact(public_key="7c" * 32, name="sensor-2", archived_at=None),
     ]
     return ArchivedScreen(
         archived_rows(remembered),
         1,
-        ContactsSort.from_name(
-            "archived", ARCHIVED_SORT_COLUMNS, ARCHIVED_SORT_OPENS_ASCENDING
-        ),
+        ContactsSort.from_name("archived", ARCHIVED_SORT_COLUMNS, ARCHIVED_SORT_OPENS_ASCENDING),
     )
 
 
@@ -301,7 +320,8 @@ def _map(cols: int, rows: int) -> Screen:
 
 def _chat(cols: int, rows: int) -> Screen:
     conv = Conversation(
-        label="Alice", is_channel=False,
+        label="Alice",
+        is_channel=False,
         contact=Contact(name="Alice", public_key="d4" + "0" * 62, key_prefix="d4e5f6a7"),
     )
     messages = [
@@ -311,7 +331,11 @@ def _chat(cols: int, rows: int) -> Screen:
         ),
     ]
     return ChatScreen(
-        conv, messages, send=None, names={"d4e5f6a7": "Alice"}, session=_GallerySession(cols, rows),
+        conv,
+        messages,
+        send=None,
+        names={"d4e5f6a7": "Alice"},
+        session=_GallerySession(cols, rows),
     )
 
 
@@ -320,8 +344,14 @@ def _livefeed(cols: int, rows: int) -> Screen:
         session=_GallerySession(cols, rows),
         resolve=lambda h: {"a1b2c3d4": "Alice"}.get(h, ""),
         seed=[
-            Observation(node="a1b2c3d4", name="a1b2c3d4", kind="advert", snr=5.0, rssi=-90.0,
-                        observed_at=utcnow()),
+            Observation(
+                node="a1b2c3d4",
+                name="a1b2c3d4",
+                kind="advert",
+                snr=5.0,
+                rssi=-90.0,
+                observed_at=utcnow(),
+            ),
         ],
     )
 
@@ -340,7 +370,10 @@ def _walk_topo() -> tuple[MeshTopology, dict[str, Contact]]:
 def _walk(cols: int, rows: int) -> Screen:
     topo, contacts = _walk_topo()
     return WalkScreen(
-        session=_GallerySession(cols, rows), topo=topo, contacts=contacts, self_label="Homestead",
+        session=_GallerySession(cols, rows),
+        topo=topo,
+        contacts=contacts,
+        self_label="Homestead",
     )
 
 
@@ -349,20 +382,29 @@ def _timemachine(cols: int, rows: int) -> Screen:
         return [Text("Hilltop-Repeater  5m ago  advert"), Text("Alice  12m ago  packet")]
 
     return TimeMachineScreen(
-        session=_GallerySession(cols, rows), label="Hilltop-Repeater", build=build,
+        session=_GallerySession(cols, rows),
+        label="Hilltop-Repeater",
+        build=build,
     )
 
 
 def _message_paths(cols: int, rows: int) -> Screen:
-    message = ChatMessage(text="on my way, should be there soon", is_channel=True,
-                           created_at=utcnow())
+    message = ChatMessage(
+        text="on my way, should be there soon", is_channel=True, created_at=utcnow()
+    )
     arrivals = [
         Arrival(when=utcnow(), hops=("3d63c6",), snr=4.0),
         Arrival(when=utcnow(), hops=("a1b2c3", "77aabb"), snr=-2.0),
     ]
     return MessagePathsScreen(
-        message, arrivals, matched=True, resolve=lambda h: h, prefix_bytes=1,
-        self_name="Homestead", summary="heard twice", source="Alice",
+        message,
+        arrivals,
+        matched=True,
+        resolve=lambda h: h,
+        prefix_bytes=1,
+        self_name="Homestead",
+        summary="heard twice",
+        source="Alice",
     )
 
 
@@ -370,7 +412,8 @@ def _remote_cli(cols: int, rows: int) -> Screen:
     return RemoteCliScreen(
         node_label="Hilltop-Repeater",
         history=["get name", "get name -> Hilltop-Repeater"],
-        send=lambda c: None, session=_GallerySession(cols, rows),
+        send=lambda c: None,
+        session=_GallerySession(cols, rows),
     )
 
 
@@ -378,12 +421,18 @@ def _path_composer(cols: int, rows: int) -> Screen:
     hub = Contact(name="Hilltop-Repeater", public_key=_HUB_KEY, key_prefix="3d63c6429436")
     far = Contact(name="Alice", public_key=_FAR_KEY, key_prefix="f2c24f54551e")
     topo = build_topology(
-        self_id="aaaaaaaaaaaa" + "0" * 52, contacts=[hub, far],
-        trace_paths=[], packet_paths=[], neighbour_links=[],
+        self_id="aaaaaaaaaaaa" + "0" * 52,
+        contacts=[hub, far],
+        trace_paths=[],
+        packet_paths=[],
+        neighbour_links=[],
     )
     return PathComposerScreen(
-        device_label="Homestead", device_hash="aaaaaaaaaaaa" + "0" * 52, topology=topo,
-        width_bytes=1, hops=["3d63c6429436", "f2c24f54551e"],
+        device_label="Homestead",
+        device_hash="aaaaaaaaaaaa" + "0" * 52,
+        topology=topo,
+        width_bytes=1,
+        hops=["3d63c6429436", "f2c24f54551e"],
     )
 
 
@@ -426,11 +475,21 @@ def _courier_outbox(cols: int, rows: int) -> Screen:
 
 def _record(**over) -> DiscoveredPath:
     defaults = dict(
-        id=1, category="grand_tour", width_bytes=1, spec="3d63c6429436,f2c24f54551e",
-        route=("3d63c6429436", "f2c24f54551e"), score=2.0,
+        id=1,
+        category="grand_tour",
+        width_bytes=1,
+        spec="3d63c6429436,f2c24f54551e",
+        route=("3d63c6429436", "f2c24f54551e"),
+        score=2.0,
         stats={
-            "hop_count": 2, "distinct_nodes": 2, "repeats": False, "min_snr": 6.0,
-            "km_travelled": 3.2, "km_complete": True, "far_km": 1.5, "rtt_ms": 250.0,
+            "hop_count": 2,
+            "distinct_nodes": 2,
+            "repeats": False,
+            "min_snr": 6.0,
+            "km_travelled": 3.2,
+            "km_complete": True,
+            "far_km": 1.5,
+            "rtt_ms": 250.0,
         },
         app_version="0.1.0",
         discovered_at=datetime(2026, 7, 12, 14, 30, tzinfo=timezone.utc),
@@ -442,19 +501,27 @@ def _record(**over) -> DiscoveredPath:
 def _record_dialog(cols: int, rows: int) -> Screen:
     record = _record()
     return RecordDialog(
-        record, CATEGORY_BY_ID[record.category], 1,
+        record,
+        CATEGORY_BY_ID[record.category],
+        1,
         resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater", "f2c24f54551e": "Alice"}.get(h, h),
-        device_label="Homestead", device_hash=None,
+        device_label="Homestead",
+        device_hash=None,
     )
 
 
 def _packet_viewer(cols: int, rows: int) -> Screen:
     entry = PacketEntry(
-        when=utcnow(), kind="packet", node="3d63c6429436", path="3d63c6429436f2c24f54551e",
+        when=utcnow(),
+        kind="packet",
+        node="3d63c6429436",
+        path="3d63c6429436f2c24f54551e",
         raw={"payload_typename": "GRP_TXT", "route_typename": "FLOOD"},
     )
     return PacketViewer(
-        [entry], 0, resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater"}.get(h, h),
+        [entry],
+        0,
+        resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater"}.get(h, h),
     )
 
 
@@ -466,33 +533,64 @@ def _trace(cols: int, rows: int) -> Screen:
         pass  # never invoked — the screen is seeded directly via _on_trace below
 
     screen = TraceScreen(
-        "Alice", mode="target", device_label="Homestead", device_hash="aa" * 32,
-        resolve=lambda label: label, session=_GallerySession(cols, rows),
-        trace=_trace_call, compose_path=_noop_flow, explore=_noop_flow,
-        pick_width=_noop_flow, pick_samples=_noop_flow,
-        width_bytes=lambda: 2, sample_count=lambda: 1, pace_s=0.0,
-        previous=None, auto_spec=lambda: "", auto_source="",
+        "Alice",
+        mode="target",
+        device_label="Homestead",
+        device_hash="aa" * 32,
+        resolve=lambda label: label,
+        session=_GallerySession(cols, rows),
+        trace=_trace_call,
+        compose_path=_noop_flow,
+        explore=_noop_flow,
+        pick_width=_noop_flow,
+        pick_samples=_noop_flow,
+        width_bytes=lambda: 2,
+        sample_count=lambda: 1,
+        pace_s=0.0,
+        previous=None,
+        auto_spec=lambda: "",
+        auto_source="",
     )
-    screen._on_trace(TraceResult(
-        target="Alice", success=True,
-        hops=[Hop(0, "3d63c6", 5.0), Hop(1, None, 2.0)],
-        round_trip_ms=210.0, path_hash_bytes=2,
-    ))
+    screen._on_trace(
+        TraceResult(
+            target="Alice",
+            success=True,
+            hops=[Hop(0, "3d63c6", 5.0), Hop(1, None, 2.0)],
+            round_trip_ms=210.0,
+            path_hash_bytes=2,
+        )
+    )
     return screen
 
 
 def _tx_sweep(cols: int, rows: int) -> Screen:
     screen = TxSweepScreen(
-        admin_label="Hilltop-Repeater", target_label="Alice", device_label="Homestead",
-        device_hash="00" * 32, resolve=lambda h: h, session=_GallerySession(cols, rows),
-        tx_min=12, tx_max=28, step=3, samples=3,
-        run_sweep=lambda: None, apply_winner=lambda: None,
+        admin_label="Hilltop-Repeater",
+        target_label="Alice",
+        device_label="Homestead",
+        device_hash="00" * 32,
+        resolve=lambda h: h,
+        session=_GallerySession(cols, rows),
+        tx_min=12,
+        tx_max=28,
+        step=3,
+        samples=3,
+        run_sweep=lambda: None,
+        apply_winner=lambda: None,
     )
     screen.on_phase("coarse")
-    screen.on_level(1, 6, TxLevelResult(
-        tx_power=19, samples=3, successes=3, target_snr=8.8, score=8.8,
-        stats=TraceStats.from_traces("Alice", []),
-    ))
+    screen.on_level(
+        1,
+        6,
+        TxLevelResult(
+            tx_power=19,
+            samples=3,
+            successes=3,
+            target_snr=8.8,
+            score=8.8,
+            stats=TraceStats.from_traces("Alice", []),
+        ),
+    )
     return screen
 
 
@@ -543,9 +641,7 @@ def _config_editor(cols: int, rows: int) -> Screen:
     """The Device config editor: every setting staged from one grouped list."""
     return _ConfigMenu(
         _GallerySession(cols, rows),
-        lambda reveal: _menu_items(
-            _DEVICE_SNAPSHOT, {"tx_power": 14}, 1, AdvertPolicy(), reveal
-        ),
+        lambda reveal: _menu_items(_DEVICE_SNAPSHOT, {"tx_power": 14}, 1, AdvertPolicy(), reveal),
         conceals=has_pin(_DEVICE_SNAPSHOT),
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
@@ -564,7 +660,8 @@ def _preferences(cols: int, rows: int) -> Screen:
     prefs.set("trace_cooldown_s", 2.5)
     title, items = _preference_items(prefs, {"history_days": 90})
     return SelectScreen(
-        title, items,
+        title,
+        items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
 
@@ -576,9 +673,7 @@ def _cooldown_countdown(cols: int, rows: int) -> Screen:
     its box is sized from its own content, so a longer reason line would overflow the
     PicoCalc's 53 columns with nothing else to catch it.
     """
-    return CountdownDialog(
-        "Flood advert", 47.0, reason="a flood advert reaches the whole mesh"
-    )
+    return CountdownDialog("Flood advert", 47.0, reason="a flood advert reaches the whole mesh")
 
 
 def _about_meshterm(cols: int, rows: int) -> Screen:
@@ -662,22 +757,26 @@ def _cases():
             case_id = f"{entry.name}-{platform.name}-{cols}x{rows}"
             marks = []
             if platform.name == "picocalc" and entry.name in _KNOWN_WIDE:
-                marks.append(pytest.mark.xfail(
-                    reason=(
-                        f"{entry.name} overflows picocalc's {PICOCALC.readable_cols} cols "
-                        "today -- see _KNOWN_WIDE, the width-reduction worklist"
-                    ),
-                    strict=False,
-                ))
+                marks.append(
+                    pytest.mark.xfail(
+                        reason=(
+                            f"{entry.name} overflows picocalc's {PICOCALC.readable_cols} cols "
+                            "today -- see _KNOWN_WIDE, the width-reduction worklist"
+                        ),
+                        strict=False,
+                    )
+                )
             if platform is REGULAR and entry.name in _PREEXISTING_REGULAR_OVERFLOW:
-                marks.append(pytest.mark.xfail(
-                    reason=(
-                        f"{entry.name} already overflows the existing 72-col standard, "
-                        "pre-dating the platform seam -- not retrofitted here, see "
-                        "_PREEXISTING_REGULAR_OVERFLOW"
-                    ),
-                    strict=False,
-                ))
+                marks.append(
+                    pytest.mark.xfail(
+                        reason=(
+                            f"{entry.name} already overflows the existing 72-col standard, "
+                            "pre-dating the platform seam -- not retrofitted here, see "
+                            "_PREEXISTING_REGULAR_OVERFLOW"
+                        ),
+                        strict=False,
+                    )
+                )
             yield pytest.param(entry, platform, cols, rows, id=case_id, marks=marks)
 
 
@@ -690,7 +789,10 @@ def _assert_fits(lines: list[str], cols: int, where: str) -> None:
 
 @pytest.mark.parametrize("entry,platform,cols,rows", list(_cases()))
 def test_gallery_screen_fits_its_platform(
-    entry: _Entry, platform: Platform, cols: int, rows: int,
+    entry: _Entry,
+    platform: Platform,
+    cols: int,
+    rows: int,
 ) -> None:
     """Every gallery specimen renders within its platform's width, raw and framed alike."""
     set_platform(platform)
@@ -744,10 +846,7 @@ def test_gallery_screen_fits_its_platform(
                 assert "[38;5;" not in line and "[48;5;" not in line, (
                     f"{entry.name} {where} line {i} emits 256-colour SGR: {line!r}"
                 )
-                strays = {
-                    ch for ch in line
-                    if ord(ch) >= 0x20 and ord(ch) not in FONT_CODEPOINTS
-                }
+                strays = {ch for ch in line if ord(ch) >= 0x20 and ord(ch) not in FONT_CODEPOINTS}
                 assert not strays, (
                     f"{entry.name} {where} line {i} has characters outside the console "
                     f"font: {sorted(strays)!r} in {line!r}"

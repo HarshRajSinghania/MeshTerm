@@ -555,9 +555,7 @@ def _dialog_hint(screen: Screen) -> str:
     return fkeys.strip_lane_atoms(screen.footer_hint, screen.fkey_lane)
 
 
-def _dialog_subtitle(
-    hint: str, more_above: bool, more_below: bool, border: str
-) -> str | None:
+def _dialog_subtitle(hint: str, more_above: bool, more_below: bool, border: str) -> str | None:
     """A floating box's bottom-border legend: the clip arrows, the hint, or both.
 
     With no hint to carry (the desktop — see :func:`_dialog_hint`) the arrows keep the
@@ -592,8 +590,14 @@ def compose_dialog(screen: Screen, cols: int, rows: int) -> str:
     # it moves with the lane below as well as with the screen's hint (see _dialog_hint).
     hint = _dialog_hint(screen)
     key = (
-        max_w, vpad, screen.title, hint, border,
-        more_above, more_below, *visible,
+        max_w,
+        vpad,
+        screen.title,
+        hint,
+        border,
+        more_above,
+        more_below,
+        *visible,
     )
     cached = _DIALOG_CACHE.get(key)
     if cached is not None:
