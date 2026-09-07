@@ -14,13 +14,13 @@ from meshterm.core.models import ChatMessage, utcnow
 from meshterm.services.message_paths import Arrival
 from meshterm.ui.message_paths_screen import MessagePathsScreen
 from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _resolve(hop: str) -> str:
     return {"3d63": "Hilltop-Repeater", "a1b2": "Waymarker"}.get(hop, hop)
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _screen(arrivals: list[Arrival], **kwargs) -> MessagePathsScreen:

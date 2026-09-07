@@ -41,11 +41,11 @@ from meshterm.ui.marks import MASK_MARK
 from meshterm.ui.theme import active_theme
 from meshterm.ui.tui.prompt import TypedConfirmDialog
 from meshterm.ui.tui.screen import CANCEL
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _Fut:

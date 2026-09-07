@@ -15,13 +15,13 @@ from meshterm.core.channels import channel_hash, derive_secret
 from meshterm.core.models import utcnow
 from meshterm.platforms import set_platform
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _stripped(lines: list[str]) -> list[str]:
     return [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _grp_txt_entry(raw_extra: dict) -> PacketEntry:

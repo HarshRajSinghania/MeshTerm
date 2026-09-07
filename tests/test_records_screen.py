@@ -30,6 +30,7 @@ from meshterm.ui.tui.screen import CANCEL
 from meshterm.ui.tui.select import SelectScreen
 from meshterm.ui.tui.session import TuiSession
 from meshterm.ui.widgets import node_marker, self_marker
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 HUB_ID, FAR_ID = "3d63c6429436", "f2c24f54551e"
 
@@ -46,7 +47,6 @@ def _loop_shape() -> list[WalkVertex]:
     ]
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _resolve(hop: str) -> str:

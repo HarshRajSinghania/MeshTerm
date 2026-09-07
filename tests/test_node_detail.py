@@ -39,6 +39,7 @@ from meshterm.ui.pathgraph import DST_NODE, SRC_NODE
 from meshterm.ui.pathline import CRACK_HEAD, CRACK_TAIL, SELF_GLYPH, PathHop, PathLine
 from meshterm.ui.tui.screen import CANCEL, ListWindow
 from meshterm.ui.widgets import highlighted_hash, route_graph_style, tab_strip
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 US = "aaaaaaaaaaaa"
 HUB = Contact(name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63c6429436",
@@ -46,7 +47,6 @@ HUB = Contact(name="Hub", public_key="3d63c6429436" + "0" * 52, key_prefix="3d63
 FAR = Contact(name="Far", public_key="f2c24f54551e" + "0" * 52, key_prefix="f2c24f54551e")
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _FakeSession:

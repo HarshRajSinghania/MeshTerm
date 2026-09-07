@@ -16,6 +16,7 @@ from meshterm.core.models import Observation, utcnow
 from meshterm.persistence.repository import Repository
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
 from meshterm.ui.dashboard_screen import DashboardScreen
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _FakeSession:
@@ -46,7 +47,6 @@ def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> O
     )
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _stripped(lines: list[str]) -> list[str]:

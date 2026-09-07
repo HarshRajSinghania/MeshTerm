@@ -20,6 +20,7 @@ from meshterm.ui.pathline import (
 )
 from meshterm.ui.tui.render import render_to_ansi
 from meshterm.ui.walk_screen import _HSCROLL_STEP, WalkScreen
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 US = "aa" * 6
 Hub = Contact(name="Hilltop-Repeater", public_key="3d" * 32, node_type=2)
@@ -61,7 +62,6 @@ def _screen(topo: MeshTopology, cell_h: int = 24) -> WalkScreen:
     return screen
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 # --- rendering ----------------------------------------------------------------------------
 

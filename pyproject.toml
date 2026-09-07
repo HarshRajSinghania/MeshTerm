@@ -43,6 +43,8 @@ packages = ["meshterm"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Helper scripts for the Claude skills; they are not part of the package.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "D"]
@@ -50,6 +52,11 @@ ignore = ["D203", "D213"]  # pick one blank-line-before-class / multi-line-summa
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares CLI parameters by calling these in the default; the objects they
+# return are inert sentinels the command never mutates, which is what B008 guards.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

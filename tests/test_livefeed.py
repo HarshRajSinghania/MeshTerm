@@ -14,6 +14,7 @@ from rich.cells import cell_len
 from meshterm.core.events import MeshEvent
 from meshterm.core.models import Ack, Message, Observation, utcnow
 from meshterm.ui.livefeed_screen import _ICON_LANE, LiveFeedScreen
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 class _FakeSession:
@@ -71,7 +72,6 @@ def _obs(node="a1b2", kind="advert", snr=5.0, rssi=-90.0, age_s=0, **extra) -> O
     )
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 
 def _stripped(lines: list[str]) -> list[str]:

@@ -34,6 +34,7 @@ from meshterm.ui.trace_screen import (
     snr_bar,
 )
 from meshterm.ui.tx_screen import TxSweepScreen
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 # The slim meter's fill glyphs (the SNR bar draws through the shared braille meter).
 _BAR_FULL, _BAR_HALF = _METER_SLIM
@@ -79,7 +80,6 @@ def _trace(*snrs: float, success: bool = True, target: str = "Alice") -> TraceRe
     )
 
 
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 # --- snr_bar -------------------------------------------------------------------
 

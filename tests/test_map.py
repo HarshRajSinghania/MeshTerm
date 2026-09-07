@@ -31,12 +31,12 @@ from meshterm.tools.map import MapTool
 from meshterm.ui.map_screen import _PAN_DIRS, _PAN_STEP
 from meshterm.ui.map_screen import _TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
+from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 if TYPE_CHECKING:
     from meshterm.ui.map_screen import MapScreen
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tile_14_4843_5861.mvt"
-from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
 # -- MVT decoding -------------------------------------------------------------
 

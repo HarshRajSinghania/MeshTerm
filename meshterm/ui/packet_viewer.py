@@ -53,9 +53,6 @@ from ..core.models import NODE_TYPE_LABELS, Observation, utcnow
 from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
 from .menus import SEP_COMPACT, SEP_ROOMY
-
-#: Composed packet cards the viewer memoizes (a few pages either side of the view).
-_BODY_CACHE_MAX = 8
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import PathLine, path_line
 from .theme import glyph, name_style, snr_style
@@ -74,6 +71,9 @@ from .widgets import (
     revisit_note,
     route_graph_style,
 )
+
+#: Composed packet cards the viewer memoizes (a few pages either side of the view).
+_BODY_CACHE_MAX = 8
 
 #: Friendly gloss for a raw packet's parsed payload class (mirrors the meshcore
 #: library's own ``PAYLOAD_TYPENAMES``), shown on a ``packet`` entry's "class" row.
