@@ -109,9 +109,10 @@ def check_drive_is_ours(drive, force=False):
     if "6." in softdev:
         problems.append(f"{softdev} expects the app at 0x26000; this build is linked for S140 v7")
     if problems and not force:
+        listed = "\n  - ".join(problems)
         sys.exit(
-            "ERROR: refusing to flash {} --\n  - {}\n"
-            "Unplug the other board, or re-run with --force if you are sure.".format(drive, "\n  - ".join(problems))
+            f"ERROR: refusing to flash {drive} --\n  - {listed}\n"
+            "Unplug the other board, or re-run with --force if you are sure."
         )
     return True
 

@@ -193,7 +193,8 @@ def test_decrypt_channel_text_rejects_a_fingerprint_collision() -> None:
 def test_decrypt_channel_text_rejects_malformed_hex() -> None:
     """Garbage hex fields fail closed instead of raising."""
     assert decrypt_channel_text("zz", "zzzz", "zzzzzzzzzzzzzzzz", [("x", random_secret())]) is None
-    assert decrypt_channel_text("00", "0000", "00" * 15, [("x", random_secret())]) is None  # not block-aligned
+    # a 15-byte body is not block-aligned
+    assert decrypt_channel_text("00", "0000", "00" * 15, [("x", random_secret())]) is None
 
 
 # -- QR rendering -------------------------------------------------------------
@@ -374,10 +375,16 @@ class _ScriptedUi:
     async def select(self, title: str, items: list, *, default=None):  # noqa: ANN001, ANN201
         return self._selects.pop(0) if self._selects else "__back__"
 
-    async def text(self, title: str, *, default: str = "", validate=None, help_text: str = "", password: bool = False):  # noqa: ANN001, ANN201
+    async def text(  # noqa: ANN001, ANN201
+        self, title: str, *, default: str = "", validate=None,
+        help_text: str = "", password: bool = False,
+    ):
         return self._texts.pop(0)
 
-    async def dialog(self, prompt, buttons, *, title: str = "", default: int = 0, keys=None, danger: bool = False, destructive: bool = False):  # noqa: ANN001, ANN201
+    async def dialog(  # noqa: ANN001, ANN201
+        self, prompt, buttons, *, title: str = "", default: int = 0, keys=None,
+        danger: bool = False, destructive: bool = False,
+    ):
         return self._dialogs.pop(0)
 
 

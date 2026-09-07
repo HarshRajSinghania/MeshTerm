@@ -365,8 +365,9 @@ class NodeDetailScreen(Screen):
     :meth:`selected_spec`); Esc resolves :data:`CANCEL` to leave.
 
     Two axes of navigation, matching the app's spatial feel: ``Tab``/``Shift+Tab`` switches
-    which view fills the stage, and ``↑↓`` moves the cursor *within* the active tab — through its route list (on the Routes tab, the selection drives the
-    graph highlight and Enter arms a trace on the picked route) and action rows. The page
+    which view fills the stage, and ``↑↓`` moves the cursor *within* the active tab — through
+    its route list (on the Routes tab, the selection drives the graph highlight and Enter arms
+    a trace on the picked route) and action rows. The page
     itself never scrolls: the identity header, tab strip, and stage are pinned, the stage
     is sized to the viewport, and the route list windows itself into the leftover rows —
     ``PgUp/PgDn`` page the cursor through it, ``Home/End`` jump it to the ends.

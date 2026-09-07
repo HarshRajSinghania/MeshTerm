@@ -625,7 +625,9 @@ class TraceResult:
         origin = device_label
         for hop in self.hops:
             destination = hop.node or device_label
-            edges.append(HopEdge(index=hop.index, origin=origin, destination=destination, snr=hop.snr))
+            edges.append(
+                HopEdge(index=hop.index, origin=origin, destination=destination, snr=hop.snr)
+            )
             origin = destination
         return edges
 

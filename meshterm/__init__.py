@@ -18,5 +18,9 @@ def copyright_notice() -> str:
     never drift apart.
     """
     year = datetime.now().year
-    span = str(COPYRIGHT_START_YEAR) if year <= COPYRIGHT_START_YEAR else f"{COPYRIGHT_START_YEAR}-{year}"
+    span = (
+        str(COPYRIGHT_START_YEAR)
+        if year <= COPYRIGHT_START_YEAR
+        else f"{COPYRIGHT_START_YEAR}-{year}"
+    )
     return f"Copyright © {span} {__author__}"

@@ -233,7 +233,9 @@ class CourierTool(Tool):
             help=self.help, no_args_is_help=True, rich_markup_mode="rich"
         )
 
-        @courier_app.command("queue", help="Queue a message for delivery when the contact is next heard")
+        @courier_app.command(
+            "queue", help="Queue a message for delivery when the contact is next heard"
+        )
         def _queue_cmd(
             contact: str = typer.Argument(..., help="The recipient contact's name"),
             text: list[str] = typer.Argument(..., help="The message to queue"),

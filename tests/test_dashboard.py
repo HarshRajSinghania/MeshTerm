@@ -296,7 +296,8 @@ def test_recent_observations_rehydrate_the_packet_payload_class(tmp_path: Path) 
     )
     repo.record_observation(run, _obs(node="a1b2", kind="advert"))  # a plain advert nearby
 
-    window = {o.node or "": o for o in repo.recent_observations(since=utcnow() - timedelta(hours=2))}
+    recent = repo.recent_observations(since=utcnow() - timedelta(hours=2))
+    window = {o.node or "": o for o in recent}
     assert window[""].raw is not None and window[""].raw["payload_typename"] == "TRACE"
     assert window["a1b2"].raw is None  # an advert keeps no packet raw, as before
     repo.close()

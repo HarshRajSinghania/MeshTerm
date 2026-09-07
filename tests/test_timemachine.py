@@ -143,12 +143,21 @@ def test_hourly_series_groups_by_clock_hour(tmp_path: Path) -> None:
     base = now.replace(minute=0, second=0, microsecond=0)  # top of the current UTC hour
     three_h = base - timedelta(hours=3)  # top of a busy hour, three back
     for node in ("aa" * 6, "bb" * 6):
-        repo.record_observation(run, Observation(node=node, observed_at=three_h + timedelta(minutes=5)))
-    repo.record_observation(run, Observation(node="aa" * 6, observed_at=three_h + timedelta(minutes=20)))
+        repo.record_observation(
+            run, Observation(node=node, observed_at=three_h + timedelta(minutes=5))
+        )
     repo.record_observation(
-        run, Observation(node="cc" * 6, kind="packet", path="", observed_at=three_h + timedelta(minutes=40))
+        run, Observation(node="aa" * 6, observed_at=three_h + timedelta(minutes=20))
     )
-    repo.record_observation(run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=1)))
+    repo.record_observation(
+        run,
+        Observation(
+            node="cc" * 6, kind="packet", path="", observed_at=three_h + timedelta(minutes=40)
+        ),
+    )
+    repo.record_observation(
+        run, Observation(node="aa" * 6, observed_at=base + timedelta(minutes=1))
+    )
     series = repo.hourly_series(now - timedelta(days=1))
     by_hour = {iso: (pkts, nodes) for iso, pkts, nodes in series}
     # Keys are local wall-clock hours, so form the expected keys via the same rotation.

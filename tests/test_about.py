@@ -4,8 +4,9 @@ The pages carry no state and no controls, so what is worth pinning is what they 
 and how they are framed: the live package facts they must never drift from, the
 indent block their prose hangs in, the derived footer that only names the pager when
 there is something to page, the landmarks their sections leave for the sticky heading
-and the section jump, and the section they hang under in the main menu. How markdown itself is drawn is ``test_markdown``'s subject; width discipline on
-both platforms is the gallery's (``test_gallery``).
+and the section jump, and the section they hang under in the main menu. How markdown
+itself is drawn is ``test_markdown``'s subject; width discipline on both platforms is
+the gallery's (``test_gallery``).
 """
 
 from __future__ import annotations

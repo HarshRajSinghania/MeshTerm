@@ -59,7 +59,8 @@ class ChannelsTool(Tool):
 
         changes = await manage_channels(ctx)
         message = (
-            f"[ok]✓[/ok] applied [brand]{changes}[/brand] channel change{'' if changes == 1 else 's'}"
+            f"[ok]✓[/ok] applied [brand]{changes}[/brand] "
+            f"channel change{'' if changes == 1 else 's'}"
             if changes
             else None
         )

@@ -313,8 +313,9 @@ def test_a_shared_relay_draws_a_single_marker() -> None:
 
 
 def _marker_rows(lines, glyph):  # noqa: ANN001, ANN202
-    """The distinct canvas row indices a marker glyph is drawn on (endpoints ``★``, relays ``●``)."""
-    return sorted({i for i, ln in enumerate(_ANSI.sub("", "\n".join(lines)).splitlines()) if glyph in ln})
+    """The distinct canvas rows a marker glyph is drawn on (endpoints ``★``, relays ``●``)."""
+    plain = _ANSI.sub("", "\n".join(lines)).splitlines()
+    return sorted({i for i, ln in enumerate(plain) if glyph in ln})
 
 
 def test_even_lane_count_centres_the_endpoints() -> None:

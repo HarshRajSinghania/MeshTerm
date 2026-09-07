@@ -213,7 +213,8 @@ class Link:
         if snr is not None:
             span = _SNR_CEIL_DB - _SNR_FLOOR_DB
             frac = (snr - _SNR_FLOOR_DB) / span
-            quality = min(_QUALITY_MAX, max(_QUALITY_MIN, _QUALITY_MIN + frac * (_QUALITY_MAX - _QUALITY_MIN)))
+            reach = _QUALITY_MIN + frac * (_QUALITY_MAX - _QUALITY_MIN)
+            quality = min(_QUALITY_MAX, max(_QUALITY_MIN, reach))
         return evidence * recency * quality
 
 
@@ -718,7 +719,9 @@ class MeshTopology:
         out.sort(key=lambda s: (-s.strength, s.node))
         return out
 
-    def scenarios(self, target: str, *, device_route: tuple[str, ...] | None = None) -> list[PathScenario]:
+    def scenarios(
+        self, target: str, *, device_route: tuple[str, ...] | None = None
+    ) -> list[PathScenario]:
         """Rank the candidate outbound routes for reaching ``target``.
 
         Three families, deduplicated in this priority order:

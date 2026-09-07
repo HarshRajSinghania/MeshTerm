@@ -1030,8 +1030,9 @@ async def _auto_reconnect(ctx: AppContext, dialog: ReconnectDialog) -> None:
 
     The dead link is released up front (:meth:`~meshterm.context.AppContext.release_link`) so
     the peripheral is free to advertise while we wait for it. Each transport then waits for its
-    own evidence that the device is reachable before touching the radio, so an attempt is only ever made against something that is actually there. Serial
-    waits for the OS to re-enumerate the port the connection was opened on. Bluetooth listens
+    own evidence that the device is reachable before touching the radio, so an attempt is only
+    ever made against something that is actually there. Serial waits for the OS to re-enumerate
+    the port the connection was opened on. Bluetooth listens
     for the companion's advertisement (:func:`~meshterm.core.discovery.find_ble_device`), which
     is the same question asked of the only registry BLE has, and hands the resulting live
     handle to :meth:`~meshterm.context.AppContext.reconnect` — a power-cycled peripheral is a

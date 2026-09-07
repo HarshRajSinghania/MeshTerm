@@ -24,8 +24,9 @@ drawn*, so every surface the survey found can eventually route through it:
   (:func:`cut_mark`), and that crack is what says the segment continues; only chips
   crack, an arrow line still ellipsizes. A row that also carries the app-wide
   opens-further-prompts ``…`` hangs it *outside* the budget
-  (:func:`with_action_mark`) — chrome may not cost the route cells. ``auto`` (the default) picks powerline exactly
-  when the terminal can draw it (:func:`~meshterm.ui.termfont.powerline_enabled` —
+  (:func:`with_action_mark`) — chrome may not cost the route cells. ``auto`` (the default)
+  picks powerline exactly when the terminal can draw it
+  (:func:`~meshterm.ui.termfont.powerline_enabled` —
   a recommended font, a glyph-capable renderer, or the user's override) and falls
   back to arrows everywhere else, so no terminal ever sees tofu.
 * **Three overflow answers**, matching the three patterns the surfaces already use:
@@ -606,7 +607,8 @@ class PathLine:
             nothing where the font has none).
         """
         if plain:
-            return [self._plain_hop(hop).cell_len for hop in hops],                 cell_len(self._separator), 0, 0, 0
+            plain_cells = [self._plain_hop(hop).cell_len for hop in hops]
+            return plain_cells, cell_len(self._separator), 0, 0, 0
         widths = [
             cell_len(hop.label) if hop.gap
             else self._chip(hop, self._chip_fill(hop)).cell_len
@@ -916,9 +918,9 @@ class PathLine:
         The insertion slot outranks everything — it is the one chip that isn't a node,
         and it wears the ``cursor`` white so it reads as chrome among identities rather
         than as a hop with an unlucky hue (white sits outside the node spectrum, and the
-        chip ink is already picked to stay readable on it). The fade comes next, outranking identity including
-        our own: a dimmed hop is one nobody composed (an automatic landing back home, a
-        mirrored return leg), and our end must recede with the rest of that automatic
+        chip ink is already picked to stay readable on it). The fade comes next, outranking
+        identity including our own: a dimmed hop is one nobody composed (an automatic landing
+        back home, a mirrored return leg), and our end must recede with the rest of that automatic
         half rather than keep its yellow among the greys. Plain mode says the same thing
         by fading the name.
         """

@@ -388,7 +388,9 @@ def _node_sections(
         )
 
     out.append(Text())
-    out.append(_heading("Rhythm", f"receptions by local time of day · {_slice_note(slice_minutes)}"))
+    out.append(
+        _heading("Rhythm", f"receptions by local time of day · {_slice_note(slice_minutes)}")
+    )
     out.extend(
         axis_chart(
             timeline_rows(slots, rows=_CHART_ROWS), max(slots), len(slots) // 2,
@@ -1152,7 +1154,7 @@ async def _routing_prefix_bytes(ctx: AppContext) -> int:
 async def _contact_resolvers(
     ctx: AppContext,
 ) -> tuple[NodeResolver, Callable[[str | None], int | None], NodeResolver]:
-    """A ``(name, type, key)`` resolver trio over the device's contacts, best-effort like the prefix read.
+    """A ``(name, type, key)`` resolver trio over the contacts, best-effort like the prefix read.
 
     All three fill the picker's (and arrivals') blanks from what the companion knows but the
     stored observations never carried: the name resolver names a node the device holds as a

@@ -112,7 +112,8 @@ def test_decode_tile_filter_skips_the_layers_the_map_never_draws() -> None:
     """The layers left undecoded are the ones that made a tile expensive."""
     from meshterm.ui.map_render import DRAWN_LAYERS
 
-    narrow = {layer.name: layer for layer in decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)}
+    drawn = decode_tile(_FIXTURE.read_bytes(), layers=DRAWN_LAYERS)
+    narrow = {layer.name: layer for layer in drawn}
     for skipped in ("housenumber", "poi", "mountain_peak"):
         assert skipped in narrow, f"{skipped} should still be named"
         assert not narrow[skipped].features, f"{skipped} should not have been decoded"
@@ -905,7 +906,10 @@ def test_decoded_layers_survive_a_round_trip() -> None:
     restored = loads_layers(dumps_layers(original, stamp="x"), stamp="x")
 
     assert restored is not None
-    assert [(layer.name, layer.extent) for layer in restored] == [(layer.name, layer.extent) for layer in original]
+    def shape(layers):
+        return [(layer.name, layer.extent) for layer in layers]
+
+    assert shape(restored) == shape(original)
     for before, after in zip(original, restored, strict=True):
         assert after.features == before.features
 
@@ -2282,7 +2286,10 @@ def test_map_paints_without_waiting_for_the_ground(monkeypatch) -> None:  # noqa
 
     calls: list[tuple] = []
     real = ms.render_map
-    monkeypatch.setattr(ms, "render_map", lambda vp, tiles, m, **k: calls.append(tiles) or real(vp, tiles, m, **k))
+    monkeypatch.setattr(
+        ms, "render_map",
+        lambda vp, tiles, m, **k: calls.append(tiles) or real(vp, tiles, m, **k),
+    )
     started: list = []
     screen = _async_map(monkeypatch, started)
 

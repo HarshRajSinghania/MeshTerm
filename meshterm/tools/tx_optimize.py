@@ -272,7 +272,9 @@ class TxOptimizeTool(Tool):
         if int(params.get("samples", 3)) > MAX_SAMPLES:
             ctx.ui.note(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
 
-        ctx.ui.note(f"[muted]logging in to[/muted] [brand]{admin_node.name}[/brand] [muted]…[/muted]")
+        ctx.ui.note(
+            f"[muted]logging in to[/muted] [brand]{admin_node.name}[/brand] [muted]…[/muted]"
+        )
         await self._login(ctx, admin_node, params)
 
         ctx.ui.note(

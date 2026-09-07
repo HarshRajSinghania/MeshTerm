@@ -33,7 +33,8 @@ class FakeDevice:
         self.contacts_calls += 1
         if self.contact_rows is not None:
             return list(self.contact_rows)
-        return [Contact(name=f"contact-{self.contacts_calls}")]  # fresh identity per fetch, to spot refreshes
+        # a fresh identity per fetch, so a re-read is visible
+        return [Contact(name=f"contact-{self.contacts_calls}")]
 
     async def get_self_info(self) -> dict:
         self.self_info_calls += 1

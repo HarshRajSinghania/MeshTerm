@@ -29,8 +29,9 @@ only its immediate neighbourhood:
 * the **link list** beneath names every way onward as a selectable row, strongest
   observed link first — so the cursor's home, row 0, is always the strongest link out of
   here: type glyph, name, hash, SNR with a quality bar, the evidence behind the link
-  (samples, sources, age), and how many links continue onward from that node. The highlighted row's marker and label light white on the canvas. The
-  list scrolls *within* the screen — the canvas, legend, and heading hold still, and
+  (samples, sources, age), and how many links continue onward from that node. The highlighted
+  row's marker and label light white on the canvas. The list scrolls *within* the screen — the
+  canvas, legend, and heading hold still, and
   faint ``↑/↓ n more`` markers bracket the window — with ↑↓ moving one row and
   PgUp/PgDn a windowful.
 

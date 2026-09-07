@@ -60,9 +60,17 @@ def test_channel_arrivals_match_by_decrypted_content(tmp_path: Path) -> None:
     repo, run = _repo(tmp_path)
     now = utcnow()
     wire = "Alice: hi mesh"
-    _record_frame(repo, run, when=now - timedelta(seconds=5), path="3d63", raw=_grp_txt_raw(SECRET, wire))
-    _record_frame(repo, run, when=now - timedelta(seconds=3), path="3d63,a1b2", raw=_grp_txt_raw(SECRET, wire))
-    _record_frame(repo, run, when=now - timedelta(seconds=1), path="", raw=_grp_txt_raw(SECRET, "Alice: other"))
+    _record_frame(
+        repo, run, when=now - timedelta(seconds=5), path="3d63", raw=_grp_txt_raw(SECRET, wire)
+    )
+    _record_frame(
+        repo, run, when=now - timedelta(seconds=3), path="3d63,a1b2",
+        raw=_grp_txt_raw(SECRET, wire),
+    )
+    _record_frame(
+        repo, run, when=now - timedelta(seconds=1), path="",
+        raw=_grp_txt_raw(SECRET, "Alice: other"),
+    )
 
     message = ChatMessage(text=wire, is_channel=True, created_at=now)
     arrivals = channel_arrivals(repo, message, channel_name="#general", secret=SECRET)

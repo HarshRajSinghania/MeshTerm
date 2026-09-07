@@ -181,7 +181,8 @@ def _state_intensity(row: str) -> str:
                 bright = False
             elif part == "1":
                 bright = True
-        if any(_DIM_FG.fullmatch(p) for p in parts) and not any(p in _SAYS_INTENSITY for p in parts):
+        dim = any(_DIM_FG.fullmatch(p) for p in parts)
+        if dim and not any(p in _SAYS_INTENSITY for p in parts):
             out.append("\x1b[" + ";".join(["1" if bright else "22"] + parts) + "m")
         else:
             out.append(found.group())

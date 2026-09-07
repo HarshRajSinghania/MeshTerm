@@ -247,7 +247,7 @@ def test_route_line_hash_width_follows_our_path_hash_mode() -> None:
 
 
 def test_route_line_marks_the_best_route_and_its_context() -> None:
-    """The winner wears ★ best and trails its bottleneck SNR and sample count, on the context line."""
+    """The winner wears ★ best and trails its bottleneck SNR and sample count on the context row."""
     _path, context = _route_line(
         "Far", FAR.public_key, ("3d63c6429436",), "best", 6.5, 4,
         resolve=make_node_resolver([HUB]), node_known=True,
@@ -301,7 +301,7 @@ def _view(topo, suggested, device_route, target, node_label, contacts, name_key=
 
 
 def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
-    """With route evidence the view carries selectable routes; without any, a muted note stands in."""
+    """With route evidence the view carries selectable routes; without, a muted note stands in."""
     topo = _topo_with_route()
     view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
                  "f2c24f54551e", "Far", [HUB, FAR])
@@ -322,7 +322,7 @@ def test_routes_view_draws_evidence_and_notes_its_absence() -> None:
 
 
 def test_routes_view_puts_the_contact_on_the_left_and_us_on_the_right() -> None:
-    """The graph reads node → us (the inbound direction): the contact on the left, our star right."""
+    """The graph reads node → us (the inbound direction): the contact left, our star right."""
     topo = _topo_with_route()
     view = _view(topo, topo.suggested("f2c24f54551e"), ("3d63c6429436",),
                  "f2c24f54551e", "Far", [HUB, FAR])
@@ -422,7 +422,7 @@ def test_good_alternatives_keeps_observed_routes_and_drops_outliers() -> None:
 
 
 def test_route_freshness_drops_a_route_with_a_long_quiet_hop() -> None:
-    """A route counts as stale — and is dropped — once its stalest hop goes quiet past the horizon."""
+    """A route counts as stale — and is dropped — once its stalest hop falls past the horizon."""
     from datetime import timedelta
 
     from meshterm.persistence.repository import TracedPath
@@ -687,8 +687,14 @@ def test_node_detail_routes_stage_spends_the_caption_and_top_air_on_the_fan() ->
         screen.handle("tab")  # onto Routes
         screen.note_viewport(viewport)
         lines = screen.render_body(49)
-        strip_idx = next(i for i, ln in enumerate(lines) if "Routes" in _plain([ln]) and "│" in _plain([ln]))
-        rule_idx = next(i for i, ln in enumerate(lines) if set(_plain([ln])) == {"─"} and i > strip_idx)
+        def is_strip(ln):
+            return "Routes" in _plain([ln]) and "│" in _plain([ln])
+
+        strip_idx = next(i for i, ln in enumerate(lines) if is_strip(ln))
+        rule_idx = next(
+            i for i, ln in enumerate(lines)
+            if set(_plain([ln])) == {"─"} and i > strip_idx
+        )
         return [_plain([ln]) for ln in lines[strip_idx + 2 : rule_idx]]  # past the strip's own rule
 
     set_platform(PICOCALC)
@@ -976,7 +982,10 @@ def test_route_labels_light_through_a_coalesced_hop() -> None:
 
     routes = _RoutesView(
         routes=[
-            _Route(draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0", path=Text("wide"), context=Text("")),
+            _Route(
+                draw=("bf61f2fb1d9e", "3d63c6429436"), spec="s0",
+                path=Text("wide"), context=Text(""),
+            ),
             _Route(draw=("bf61f2fb1d9e", "3d"), spec="s1", path=Text("short"), context=Text("")),
         ],
         glyph_of=lambda n: ("●", "#ffffff"),
@@ -996,7 +1005,10 @@ def test_node_detail_route_list_windows_inside_the_page() -> None:
     """
     routes = _RoutesView(
         routes=[
-            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
+            _Route(
+                draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}",
+                path=Text(f"route {i}"), context=Text(""),
+            )
             for i in range(12)
         ],
         glyph_of=lambda n: ("●", "#ffffff"),
@@ -1026,7 +1038,10 @@ def test_node_detail_route_cursor_clamps_at_both_ends() -> None:
     """
     routes = _RoutesView(
         routes=[
-            _Route(draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}", path=Text(f"route {i}"), context=Text(""))
+            _Route(
+                draw=(f"{i:x}{i:x}" * 6,), spec=f"s{i}",
+                path=Text(f"route {i}"), context=Text(""),
+            )
             for i in range(12)
         ],
         glyph_of=lambda n: ("●", "#ffffff"),

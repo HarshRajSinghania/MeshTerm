@@ -1347,7 +1347,9 @@ def tx_opt_summary(result: TxOptResult) -> Panel:
         (f"{result.original_tx if result.original_tx is not None else '?'}\n", ""),
         ("status        ", "muted"), Text.from_markup(applied),
     )
-    return Panel(body, title="[accent]TX optimization[/accent]", border_style="accent", expand=False)
+    return Panel(
+        body, title="[accent]TX optimization[/accent]", border_style="accent", expand=False
+    )
 
 
 # -- battery gauge --------------------------------------------------------------------------

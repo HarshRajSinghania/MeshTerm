@@ -302,7 +302,9 @@ def _chat(cols: int, rows: int) -> Screen:
     )
     messages = [
         ChatMessage(text="on my way, should be there soon", outbound=False, peer="d4e5f6a7"),
-        ChatMessage(text="sounds good, see you shortly", outbound=True, peer="d4e5f6a7", acked=True),
+        ChatMessage(
+            text="sounds good, see you shortly", outbound=True, peer="d4e5f6a7", acked=True
+        ),
     ]
     return ChatScreen(
         conv, messages, send=None, names={"d4e5f6a7": "Alice"}, session=_GallerySession(cols, rows),

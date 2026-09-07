@@ -557,7 +557,9 @@ def _draw_tile(frame: _Frame, layers: list[Layer], z: int, x: int, y: int) -> No
                 if len(ring) >= 2:
                     vp.draw_line(project(ring, waterway.extent), rgb, prio)
             if feat.name and not frame.coarse:
-                _add_line_label(frame, feat.rings, waterway.extent, z, x, y, feat.name, _WATER_LABEL)
+                _add_line_label(
+                    frame, feat.rings, waterway.extent, z, x, y, feat.name, _WATER_LABEL
+                )
 
     # Roads / rail.
     transportation = by_name.get("transportation")

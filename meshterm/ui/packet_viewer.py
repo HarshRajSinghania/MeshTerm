@@ -874,7 +874,10 @@ class PacketViewer(Screen):
         readings = (entry.raw or {}).get("trace_snrs") if isinstance(entry.raw, dict) else None
         if readings:
             hops = len(readings)
-            return f"{hops} hop{'' if hops == 1 else 's'} walked — a trace logs each leg, not its relays"
+            return (
+                f"{hops} hop{'' if hops == 1 else 's'} walked "
+                "— a trace logs each leg, not its relays"
+            )
         return "direct — no relays"
 
     def _packet_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:

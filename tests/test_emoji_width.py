@@ -130,7 +130,8 @@ def test_bare_text_default_emoji_are_left_exactly_as_measured() -> None:
     for bare in (_ROAD, _WEB):
         assert cell_len(bare) == 1 and cache[bare] == 1
     # A heading built around one costs its own cells and no more, so the row frames flush.
-    assert cell_len(f"── {_ROAD} Longest distance ──") == len("── ") + 1 + len(" Longest distance ──")
+    caption = cell_len(f"── {_ROAD} Longest distance ──")
+    assert caption == len("── ") + 1 + len(" Longest distance ──")
 
 
 def test_flags_measure_two_cells_in_both_authorities() -> None:

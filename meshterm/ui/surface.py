@@ -201,7 +201,7 @@ class Ui:
         banner: Any = None,
         footnote: str | None = None,
     ) -> str | None:
-        """Ask for a Bluetooth companion's pairing PIN on the startup splash; ``None`` if cancelled."""
+        """Ask for a Bluetooth companion's pairing PIN on the splash; ``None`` if cancelled."""
         raise NotImplementedError
 
     async def prompt_text_startup(

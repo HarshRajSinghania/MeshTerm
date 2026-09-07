@@ -168,8 +168,9 @@ def test_walk_selected_link_lights_the_route_that_reaches_it() -> None:
     topo = MeshTopology(US, contacts=[hub, alice, bob])
     y = topo.canonical(hub.public_key)
     topo.add_walk([topo.self_id, y], snrs=[10.0], when=stale, source="trace")   # approach: green
-    topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")   # amber
-    topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")   # red
+    # amber, then red
+    topo.add_walk([y, topo.canonical(alice.public_key)], snrs=[0.0], when=stale, source="trace")
+    topo.add_walk([y, topo.canonical(bob.public_key)], snrs=[-15.0], when=stale, source="trace")
     screen = WalkScreen(
         session=_FakeSession(),
         topo=topo,

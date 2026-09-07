@@ -87,7 +87,10 @@ def test_battery_cell_colours_by_band_while_the_dots_carry_the_detail() -> None:
     assert _glyph_style(battery_cell(7)) == "batt.low"
     # The band holds across a band's worth of rungs, so only the fill moves inside it.
     # (Below 6.25% the alarm takes the cell over, which the next test covers.)
-    turns = [p for p in range(8, 101) if _glyph_style(battery_cell(p)) != _glyph_style(battery_cell(p - 1))]
+    turns = [
+        p for p in range(8, 101)
+        if _glyph_style(battery_cell(p)) != _glyph_style(battery_cell(p - 1))
+    ]
     assert turns == [25, 50]
     assert len({battery_cell(p).plain[0] for p in range(25, 50)}) == 2  # two rungs per band
 
@@ -115,9 +118,12 @@ def test_battery_cell_charging_sweeps_bottom_to_full_holding_the_percent() -> No
 
 def test_battery_cell_charging_keeps_the_bands_colour_while_the_fill_sweeps() -> None:
     """The sweep is an animation, not a reading: colour still answers for the real charge."""
-    assert {_glyph_style(battery_cell(20, charging=True, frame=f)) for f in range(5)} == {"batt.low"}
-    assert {_glyph_style(battery_cell(40, charging=True, frame=f)) for f in range(5)} == {"batt.mid"}
-    assert {_glyph_style(battery_cell(90, charging=True, frame=f)) for f in range(5)} == {"batt.full"}
+    charging = {_glyph_style(battery_cell(20, charging=True, frame=f)) for f in range(5)}
+    assert charging == {"batt.low"}
+    charging = {_glyph_style(battery_cell(40, charging=True, frame=f)) for f in range(5)}
+    assert charging == {"batt.mid"}
+    charging = {_glyph_style(battery_cell(90, charging=True, frame=f)) for f in range(5)}
+    assert charging == {"batt.full"}
 
 
 def test_battery_cell_charging_never_alarms_however_empty_the_pack_is() -> None:

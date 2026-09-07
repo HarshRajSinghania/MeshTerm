@@ -327,8 +327,9 @@ def trace_timeout(hop_count: int) -> float:
     :data:`TRACE_TIMEOUT_CEILING_S`.
 
     ``hop_count`` is the number of hops in the *transmitted* path, which already includes
-    the mirrored return leg (see :meth:`~meshterm.core.connection.MeshCoreDevice._trace_path_to_contact`),
-    so it maps one-to-one onto relay transmissions and must not be doubled here.
+    the mirrored return leg (see
+    :meth:`~meshterm.core.connection.MeshCoreDevice._trace_path_to_contact`), so it maps
+    one-to-one onto relay transmissions and must not be doubled here.
 
     Args:
         hop_count: Hops in the walked path (return leg included). ``0`` (or less) means the

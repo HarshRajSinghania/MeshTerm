@@ -155,9 +155,9 @@ _GRAPH_PAD_DOTS = 6
 #: the more so the shallower the curve's end tangent. Spanning the whole gap removes the corner,
 #: so the stroke stays an even, thin arc end to end; the nodes still seat level because the curve's
 #: end tangents are kept horizontal (see :data:`_BEND_K`), giving each marker a flat point to sit on
-#: without a platform run. (In a very tight column a full-lane shift is unavoidably steep right up to
-#: the node, so its marker sits on a gentle slope rather than dead level — the honest cost of keeping
-#: the stroke thin there.)
+#: without a platform run. (In a very tight column a full-lane shift is unavoidably steep right
+#: up to the node, so its marker sits on a gentle slope rather than dead level — the honest cost
+#: of keeping the stroke thin there.)
 _CURVE_SPAN = 1.0
 
 #: The shortest horizontal run a lane change is given even for a one-lane hop, so a tight
@@ -712,9 +712,9 @@ def _route(
     the eased level→curve→level of the shift. The shift spans the whole column gap
     (:data:`_CURVE_SPAN`) rather than a centred stretch flanked by flat platforms: a platform would
     meet the climbing curve at a corner, and that corner draws a heavy braille *knee*, so the curve
-    runs continuously node to node instead and the marker seats on the curve's own level end tangent.
-    The endpoints, sitting at the centre of the lane band, make the origin's diverging peels and
-    us's converging merges fall out of this one rule — no endpoint special case.
+    runs continuously node to node instead and the marker seats on the curve's own level end
+    tangent. The endpoints, sitting at the centre of the lane band, make the origin's diverging
+    peels and us's converging merges fall out of this one rule — no endpoint special case.
 
     ``vias`` are an edge's bypass waypoints (:func:`_bypass_vias`), threaded between the two
     markers in x order: the run applies the same level-or-shift grammar anchor to anchor —

@@ -300,7 +300,11 @@ def _telemetry_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable
     """Build an apply that updates one telemetry mode, preserving the others."""
 
     async def apply(device: Device, value: Any, snapshot: dict) -> None:
-        base = value if field_name == "telemetry_mode_base" else snapshot.get("telemetry_mode_base", 0)
+        base = (
+            value
+            if field_name == "telemetry_mode_base"
+            else snapshot.get("telemetry_mode_base", 0)
+        )
         loc = value if field_name == "telemetry_mode_loc" else snapshot.get("telemetry_mode_loc", 0)
         env = value if field_name == "telemetry_mode_env" else snapshot.get("telemetry_mode_env", 0)
         await device.set_telemetry_modes(int(base or 0), int(loc or 0), int(env or 0))

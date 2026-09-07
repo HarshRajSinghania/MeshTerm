@@ -484,7 +484,9 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
     """The preview starts at the same column whether the label is short or (clipped) long."""
     ctx = _RowCtx(repo)
     short = Conversation(label="A", is_channel=True, channel_idx=0, channel_id="c0")
-    long = Conversation(label="A much longer channel name here", is_channel=True, channel_idx=1, channel_id="c1")
+    long = Conversation(
+        label="A much longer channel name here", is_channel=True, channel_idx=1, channel_id="c1"
+    )
     m0 = ChatMessage(text="X: hello", is_channel=True, channel_id="c0")
     m1 = ChatMessage(text="Y: hello", is_channel=True, channel_id="c1")
     l0 = _title(ctx, short, {"chan:c0": m0}, _NO_KEYS).plain
@@ -493,7 +495,7 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
 
 
 def test_title_leads_with_openness_glyph(repo: Repository) -> None:
-    """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 fixed-key public, 🔒 private."""
+    """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 public, 🔒 private."""
     ctx = _RowCtx(repo)
     def head(conv):
         return _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
@@ -1140,7 +1142,9 @@ def test_channel_transcript_groups_by_sender() -> None:
         ChatMessage(text="Alice: hi", is_channel=True, channel_idx=0, created_at=at(0)),
         ChatMessage(text="Alice: again", is_channel=True, channel_idx=0, created_at=at(6)),
         ChatMessage(text="Bob: yo", is_channel=True, channel_idx=0, created_at=at(8)),
-        ChatMessage(text="hello all", outbound=True, is_channel=True, channel_idx=0, created_at=at(9)),
+        ChatMessage(
+            text="hello all", outbound=True, is_channel=True, channel_idx=0, created_at=at(9)
+        ),
     ]
     screen = ChatScreen(conv, messages, send=None, names={}, session=_StubSession())
     rendered = _strip_ansi("\n".join(screen._render_grouped(80)))

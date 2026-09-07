@@ -645,7 +645,10 @@ class PathComposerScreen(Screen):
             entries.append((i, render_to_ansi(text, width)))
         if not any(kind == "hop" for kind, _ in rows):
             if any(kind == "fetch" for kind, _ in rows):
-                note = "(no observed links from here — fetch the repeater's neighbours, or type a hex hash)"
+                note = (
+                    "(no observed links from here — fetch the repeater's neighbours, "
+                    "or type a hex hash)"
+                )
             else:
                 note = "(no observed links from here — type a hex hash to force a hop)"
             # One entry per wrapped line: a multi-line string in a single entry would

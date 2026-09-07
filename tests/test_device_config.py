@@ -115,7 +115,8 @@ def _contacts_names(counts, sort: str, prefix_bytes: int = 3):
         Contact(name="Alice", public_key="3d63c6" + "00" * 29, key_prefix="3d63c6"),
     ]
     group = contacts_table(
-        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts, ContactsSort.from_name(sort)
+        "Homestead", "aabbcc" + "00" * 29, contacts, prefix_bytes, counts,
+        ContactsSort.from_name(sort),
     )
     table = group.renderables[0]  # (table, blank line, legend)
     names = [c.plain if hasattr(c, "plain") else str(c) for c in table.columns[1].cells]

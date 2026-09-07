@@ -285,7 +285,9 @@ class TraceTool(Tool):
         """
         from ..cli import run_tool_command
 
-        @app.command(name=self.name, help="Run a single path trace to a target and show per-hop SNR")
+        @app.command(
+            name=self.name, help="Run a single path trace to a target and show per-hop SNR"
+        )
         def _trace(
             target: str = typer.Option(..., "--target", "-t", help="Target node name/prefix"),
             path: str | None = typer.Option(

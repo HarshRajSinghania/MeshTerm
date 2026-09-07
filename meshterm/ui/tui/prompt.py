@@ -346,7 +346,8 @@ class TextScreen(_KeylessDialog):
             if self._byte_limit is not None:
                 over = self._used_bytes() - self._byte_limit
                 if over > 0:
-                    self._error = f"Too long by {over} byte{'s' if over != 1 else ''} — trim to send."
+                    plural = "s" if over != 1 else ""
+                    self._error = f"Too long by {over} byte{plural} — trim to send."
                     return
             if self._validate is not None:
                 result = self._validate(value)
