@@ -29,6 +29,7 @@ from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
 from rich.text import Text
 
+from ...core import win32dll
 from ...platforms import get_platform
 from ...services import modifier_watch
 from . import fastrender, fkeys, frame
@@ -168,9 +169,7 @@ def _right_ctrl_down() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        import ctypes
-
-        return bool(ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000)  # VK_RCONTROL
+        return bool(win32dll.user32().GetAsyncKeyState(0xA3) & 0x8000)  # VK_RCONTROL
     except Exception:  # noqa: BLE001 - a failed probe just leaves the plain action
         return False
 
@@ -191,8 +190,10 @@ def _read_clipboard() -> str:
         import ctypes
 
         CF_UNICODETEXT = 13
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
+        # Private handles; the argtypes below would otherwise be declared on objects
+        # every library in the process shares. See meshterm.core.win32dll.
+        user32 = win32dll.user32()
+        kernel32 = win32dll.kernel32()
         user32.GetClipboardData.restype = ctypes.c_void_p
         user32.GetClipboardData.argtypes = [ctypes.c_uint]
         kernel32.GlobalLock.restype = ctypes.c_void_p

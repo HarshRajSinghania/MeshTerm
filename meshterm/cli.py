@@ -17,6 +17,7 @@ import typer
 from rich.console import Console
 
 from .context import AppContext
+from .core import win32dll
 from .core.admin_store import AdminStore
 from .core.config import Settings
 from .core.connection import DeviceCommandError, is_connection_lost
@@ -375,7 +376,7 @@ def _owns_its_console() -> bool:
         import ctypes
 
         buffer = (ctypes.c_uint * 4)()
-        count = ctypes.windll.kernel32.GetConsoleProcessList(buffer, 4)  # type: ignore[attr-defined]
+        count = win32dll.kernel32().GetConsoleProcessList(buffer, 4)
     except Exception:  # pragma: no cover - no console at all, or a stubbed kernel32
         return False
     return count == 1

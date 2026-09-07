@@ -89,6 +89,8 @@ from collections.abc import Callable
 
 from prompt_toolkit.layout.controls import FormattedTextControl
 
+from ...core import win32dll
+
 #: The zero-width joiner: the tell that the codepoints it sits between are **one glyph**
 #: (``🤷‍♂️``, ``👨‍👩‍👧``), which a terminal draws in the width of the sequence's base.
 _ZWJ = "‍"
@@ -309,7 +311,10 @@ def _win_probe_width(probe: str) -> int | None:
             ("dwMaximumWindowSize", _COORD),
         ]
 
-    kernel32 = ctypes.windll.kernel32
+    # A private handle: declaring these signatures on `ctypes.windll.kernel32` would
+    # rewrite them for prompt_toolkit too, which calls the same function object with a
+    # struct class of its own. See meshterm.core.win32dll.
+    kernel32 = win32dll.kernel32()
     # Declare signatures explicitly. Without this ctypes assumes a 32-bit int
     # return, which truncates the 64-bit console HANDLE and makes every
     # subsequent call fail — silently reducing the probe to "no measurement".

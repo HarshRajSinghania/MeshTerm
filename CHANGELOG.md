@@ -17,6 +17,31 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-09-07
+
+### Fixed
+
+- **MeshTerm crashed on startup on Windows.** Building the screen raised
+  `ctypes.ArgumentError: expected LP__CSBI instance instead of pointer to
+  CONSOLE_SCREEN_BUFFER_INFO`, and on a double-clicked build the traceback and the window
+  it was printed in were destroyed together.
+
+  `ctypes.windll.kernel32` is a cache: every caller in a process gets the same object, and
+  each function on it is a shared attribute. The emoji-width probe declared
+  `GetConsoleScreenBufferInfo` as taking a pointer to *its* copy of the screen-buffer
+  struct — which rewrote the signature for prompt_toolkit, which then called that same
+  function with a pointer to *its* copy. Same layout, different class; ctypes refused.
+
+  Nothing in MeshTerm reaches for `ctypes.windll` any more. Five call sites now take
+  private handles from `core/win32dll.py`, so a signature declared for one purpose is
+  invisible to everything else in the process.
+
+### Changed
+
+- The log-detail preference offers the plain level names — Error, Warning, Info, Debug —
+  rather than descriptions of them. Someone being talked through a problem is told "set it
+  to debug", not "set it to everything".
+
 ## [0.2.3] — 2026-09-07
 
 ### Changed
@@ -154,7 +179,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.4
 [0.2.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.1

@@ -57,6 +57,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from ..core import win32dll
+
 #: Coverage levels a verdict (or a recommended font) can carry, strongest first.
 FULL = "full"
 CORE = "core"
@@ -460,7 +462,7 @@ def _conhost_face() -> str | None:
         import ctypes
         import ctypes.wintypes as wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = win32dll.kernel32()
         if not kernel32.GetConsoleWindow():
             return None
 

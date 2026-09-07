@@ -125,13 +125,14 @@ _WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 #: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
 #: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
 #: default — nothing else has to follow.
-#: What the log file keeps. Named rather than numeric, because those names are what every
-#: other tool calls these and the reader is often being talked through it by someone else.
+#: What the log file keeps. The plain level names, which are what every other tool calls
+#: these — someone being talked through a problem is being told "set it to debug", not
+#: "set it to everything".
 _LOG_LEVEL_CHOICES: dict[str, str] = {
-    "ERROR": "Errors only",
-    "WARNING": "Warnings and errors",
-    "INFO": "Also what the app is doing",
-    "DEBUG": "Everything, for chasing a bug",
+    "ERROR": "Error",
+    "WARNING": "Warning",
+    "INFO": "Info",
+    "DEBUG": "Debug",
 }
 
 
