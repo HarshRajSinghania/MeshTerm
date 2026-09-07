@@ -68,14 +68,14 @@ if anything goes wrong at startup the window closes before you can read why.
 **Windows** — open Windows Terminal or PowerShell, `cd` to your downloads, then:
 
 ```powershell
-.\meshterm-0.2.6-windows-x64.exe
+.\meshterm-0.2.7-windows-x64.exe
 ```
 
 **macOS and Linux** — open Terminal, `cd` to your downloads, then:
 
 ```bash
-chmod +x meshterm-0.2.6-*
-./meshterm-0.2.6-*
+chmod +x meshterm-0.2.7-*
+./meshterm-0.2.7-*
 ```
 
 ### A word about terminals, on Windows
@@ -91,20 +91,19 @@ doesn't borrow. It draws what its one font holds and empty boxes for everything 
 no font fixes the icons there: the only two fonts on a Windows machine with emoji in them
 are proportional, and a console won't take a proportional font.
 
-So when MeshTerm lands in that console it offers to move: **reopen in Windows Terminal**,
-one keypress, nothing installed and nothing changed. That's the whole app, exactly as the
-screenshots show it. Windows Terminal is already on every Windows 11 machine and is a free
-install on Windows 10.
+So when MeshTerm lands in that console it just **moves to Windows Terminal** — it says
+so, and opens there. Nothing is installed and nothing is changed; it's one window instead
+of another, and it's the whole app exactly as the screenshots show it. Windows Terminal is
+already on every Windows 11 machine and is a free install on Windows 10.
 
-Stay in the classic console and MeshTerm offers the next best thing instead — the charts
-and marks, without the icons. It ships
+Where there's no Windows Terminal to move to, MeshTerm offers the next best thing instead
+— the charts and marks, without the icons. It ships
 [Cascadia Mono PL](https://github.com/microsoft/cascadia-code), Microsoft's own console
 font and one of the very few monospace faces that carries braille at all, and will install
 it just for you: no administrator rights, nothing downloaded. If you already have Cascadia
 it simply switches to it.
 
-You can decline both and MeshTerm still runs. Preferences → Display → Console setup is
-where you change your mind.
+Preferences → Display → Console setup turns all of this off if you'd rather stay put.
 
 Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
 becomes just `meshterm` from anywhere.
@@ -114,7 +113,7 @@ becomes just `meshterm` from anywhere.
 > project.
 >
 > - **macOS**: *"cannot be opened because the developer cannot be verified"*. Clear it with
->   `xattr -d com.apple.quarantine meshterm-0.2.6-*` and run it again.
+>   `xattr -d com.apple.quarantine meshterm-0.2.7-*` and run it again.
 > - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
 >
 > Every release ships a `SHA256SUMS` file if you'd rather check the download first.
@@ -124,10 +123,10 @@ becomes just `meshterm` from anywhere.
 > MeshTerm uses that same folder. Set `MESHTERM_HOME` to try one in isolation:
 >
 > ```bash
-> MESHTERM_HOME=~/meshterm-test ./meshterm-0.2.6-*      # macOS, Linux
+> MESHTERM_HOME=~/meshterm-test ./meshterm-0.2.7-*      # macOS, Linux
 > ```
 > ```powershell
-> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.2.6-windows-x64.exe
+> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.2.7-windows-x64.exe
 > ```
 >
 > Same variable if you run two radios and want them kept apart.

@@ -131,7 +131,7 @@ _WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 #: What MeshTerm may offer when it lands in a console that cannot draw it. Only ever
 #: consulted on the classic Windows console, the one host with no font fallback of its own.
 _CONSOLE_SETUP_CHOICES: dict[str, str] = {
-    "ask": "Ask",
+    "auto": "Automatic",
     "off": "Leave it alone",
 }
 
@@ -305,13 +305,15 @@ PREFERENCES: tuple[PrefSpec, ...] = (
     PrefSpec(
         key="console_setup",
         label="Console setup",
-        help="Offer a better terminal or font when this console can't draw MeshTerm",
+        help="Move to a better terminal when this console can't draw MeshTerm",
         group="Display",
         value_type="enum",
-        # "ask", not "always": changing the font of a window someone else opened is not
-        # ours to do unasked. Declining twice writes "off" here, which is how the offer
-        # stops being made rather than being made every launch.
-        default="ask",
+        # Reopening in Windows Terminal is done, not asked: the classic console cannot
+        # draw a single icon whatever font it is given, so there is only one sensible
+        # answer and the reader has not seen the app yet to judge it. Installing a *font*
+        # still asks, because that writes to their machine. Declining that twice writes
+        # "off" here, which turns both off for good.
+        default="auto",
         choices=_CONSOLE_SETUP_CHOICES,
     ),
     # --- Diagnostics ---------------------------------------------------------------

@@ -17,6 +17,19 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-09-07
+
+### Changed
+
+- **MeshTerm moves to Windows Terminal rather than asking to.** It still says so, and
+  still tells you how to stop it, but it doesn't put the question. The classic console
+  can't draw a single icon whatever font it's given, so there was only one sensible
+  answer — and it was being asked of someone who hadn't seen the app yet and had nothing
+  to judge it by.
+
+  Installing a **font** still asks, because that writes a file to your machine. Moving
+  window doesn't. Preferences → Display → Console setup stops both.
+
 ## [0.2.6] — 2026-09-07
 
 ### Fixed

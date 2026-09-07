@@ -222,16 +222,21 @@ def main_callback(
 
 
 def _offer_a_console_that_can_draw_meshterm(console: Console, prefs: Preferences) -> bool:
-    """On the classic Windows console, offer the reader something better than it.
+    """On the classic Windows console, get the reader somewhere better than it.
 
-    Two offers, in the order of how much they buy. **Windows Terminal** first, because it
-    is the only one that gets the whole app: emoji icons included, which no font can put
-    on the classic console — the only Windows fonts carrying emoji are proportional, and
-    a console will not take one. Then, for a reader who stays, **a font** that can at
-    least draw the charts and the marks.
+    Two remedies, and they are not asked the same way.
+
+    **Windows Terminal** first, and simply done. It is the only thing that gets the whole
+    app — emoji icons included, which no font can put on that console, the only Windows
+    fonts carrying any being proportional and a console taking none of them. Moving there
+    installs nothing and changes nothing, so there is one sensible answer to a question
+    that would be put to someone who has not seen the app yet and cannot judge it.
+
+    **A font** second, only where the move was not possible, and that one *is* asked —
+    it writes a file onto someone's machine, which is theirs to agree to.
 
     Args:
-        console: The console to ask on.
+        console: The console to report and ask on.
         prefs: The preference set, read for a previous refusal and written on a new one.
 
     Returns:
@@ -241,24 +246,30 @@ def _offer_a_console_that_can_draw_meshterm(console: Console, prefs: Preferences
 
     if not classic_console() or prefs.get("console_setup") == "off":
         return False
-    if _offer_windows_terminal(console):
+    if _move_to_windows_terminal(console):
         return True
     _offer_a_font_this_console_can_draw(console, prefs)
     return False
 
 
-def _offer_windows_terminal(console: Console) -> bool:
-    """Offer to reopen the session in Windows Terminal, where the app looks like itself.
+def _move_to_windows_terminal(console: Console) -> bool:
+    """Reopen the session in Windows Terminal, where the app can draw all of itself.
 
-    Asked with yes as the default, which is not how the font offer is asked: this one
-    changes nothing on the machine — no install, no setting, one new window — and it is
-    the only answer that gets the reader the app as it was drawn.
+    Done rather than offered. The classic console cannot show a single icon whatever it is
+    given, so "reopen there?" is a question with one sensible answer, asked of someone who
+    has not seen the app yet and so cannot judge it — and asked at the worst moment, before
+    anything has been drawn. Moving costs nothing and changes nothing: no install, no
+    setting, one window instead of another.
+
+    It is announced rather than silent, and the announcement names the way to stop it,
+    because a program that opens a window you did not ask for should at least say so.
+    ``console_setup`` set to ``off`` keeps the session here for good.
 
     Args:
-        console: The console to ask on.
+        console: The console to report on.
 
     Returns:
-        Whether Windows Terminal was started and this session should stand down.
+        Whether Windows Terminal took over and this session should stand down.
     """
     from .core import winterminal
 
@@ -266,17 +277,12 @@ def _offer_windows_terminal(console: Console) -> bool:
         return False
 
     console.print()
-    console.print("[accent]•[/accent]  This is the classic Windows console, and it can only")
-    console.print("   draw part of MeshTerm — no icons, and no charts.")
+    console.print("[accent]•[/accent]  Opening in [accent]Windows Terminal[/accent] — this console")
+    console.print("   can't draw MeshTerm's icons or charts.")
+    console.print("[muted]   Preferences → Display → Console setup keeps it here instead.[/muted]")
     console.print()
-    console.print("   [accent]Windows Terminal[/accent] draws all of it, and you have it.")
-    console.print("   MeshTerm can reopen itself there now. Nothing is installed")
-    console.print("   and nothing is changed; it is just a better window.")
-    console.print()
-    if not _asks_yes(console, "   Reopen in Windows Terminal? [Y/n] ", default=True):
-        return False
+
     if winterminal.reopen():
-        console.print("[ok]✓[/ok]  Reopening in Windows Terminal.")
         get_logger().info("reopened the session in Windows Terminal")
         return True
     console.print("[warn]⚠[/warn]  Windows Terminal would not start. Staying here.")
