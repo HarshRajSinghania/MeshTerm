@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .atomicwrite import write_atomically
+
 
 class MuteStore:
     """Reads and writes the set of channels whose notifications are muted, memory-first.
@@ -92,7 +94,4 @@ class MuteStore:
     def _save(self) -> None:
         """Persist the whole muted set atomically (a crash mid-write keeps the old file)."""
         data = {"muted": sorted(self._state)}
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(data, indent=2))

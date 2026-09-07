@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .atomicwrite import write_atomically
 from .device_config import DeviceConfigError, format_value, get_spec, parse_value
 
 if TYPE_CHECKING:
@@ -147,10 +148,7 @@ class SettingsStore:
                 if values
             }
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(data, indent=2))
 
 
 @dataclass(frozen=True)

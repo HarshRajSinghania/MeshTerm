@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .admin_store import admin_key
+from .atomicwrite import write_atomically
 from .models import Contact, utcnow
 
 #: How many command-line entries are kept per node (newest last).
@@ -109,7 +110,4 @@ class RemoteStore:
 
     def _write(self, records: dict[str, dict]) -> None:
         """Persist ``records`` atomically (crash mid-write keeps the previous file)."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(records, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(records, indent=2))

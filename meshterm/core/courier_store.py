@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .atomicwrite import write_atomically
 from .models import utcnow
 
 #: Message states: waiting in the outbox, landed, or abandoned after the retry budget.
@@ -253,10 +254,7 @@ class CourierStore:
                 for m in self._load()
             ],
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(data, indent=2))
 
 
 def _as_int(value: object, default: int) -> int:

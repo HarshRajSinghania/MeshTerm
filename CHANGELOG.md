@@ -17,6 +17,25 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Added
+
+- One interactive MeshTerm per data directory. A second one is turned away with the way
+  out in the message, rather than quietly overwriting the first one's contacts and
+  settings. The lock is held by the operating system, so a crash releases it — a process
+  id in a file would leave a lock nobody could explain.
+- A readable answer when there is no Windows console. Git Bash, MSYS and Cygwin are not
+  Windows consoles, and prompt_toolkit's own error says so in the language of its
+  internals, arriving as a traceback that reads like a broken app rather than the
+  instruction it is.
+
+### Fixed
+
+- All ten stores write through one helper, and the file each writes to first is named
+  for the process writing it. They shared a fixed `.tmp` name, so two copies of MeshTerm
+  saving at the same moment took turns inside one scratch file and then each renamed
+  whatever was in it over the real one. The rename was always atomic; what was being
+  renamed was not.
+
 ## [0.2.2] — 2026-09-07
 
 ### Fixed

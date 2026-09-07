@@ -19,6 +19,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .atomicwrite import write_atomically
 from .discovery import (
     TRANSPORT_BLE,
     TRANSPORT_SERIAL,
@@ -259,7 +260,4 @@ class DeviceStore:
             },
             "last": last,
         }
-        # Atomic-ish replace so a crash mid-write can't truncate the existing registry.
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(payload, indent=2))

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .atomicwrite import write_atomically
 from .models import utcnow
 
 #: The direct (zero-hop) cadence choices offered in the editor, in hours.
@@ -190,10 +191,7 @@ class AdvertStore:
 
     def _write(self, records: dict[str, dict]) -> None:
         """Persist ``records`` atomically (crash mid-write keeps the previous file)."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(records, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(records, indent=2))
 
 
 def _as_hours(value: object, default: int) -> int:

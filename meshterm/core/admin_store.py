@@ -14,11 +14,10 @@ a multi-user secret store; treat the file accordingly.
 from __future__ import annotations
 
 import json
-import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from .atomicwrite import write_atomically
 from .models import Contact, LoginResult, utcnow
 
 
@@ -139,11 +138,4 @@ class AdminStore:
 
     def _write(self, records: dict[str, dict]) -> None:
         """Persist ``records`` atomically with owner-only permissions where supported."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(records, indent=2), encoding="utf-8")
-        try:  # best-effort: not all platforms/filesystems honor chmod
-            os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:  # pragma: no cover - platform-dependent
-            pass
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(records, indent=2), owner_only=True)

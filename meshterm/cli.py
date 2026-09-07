@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 import typer
+from rich.console import Console
 
 from .context import AppContext
 from .core.admin_store import AdminStore
@@ -20,6 +21,7 @@ from .core.config import Settings
 from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
 from .core.device_store import DeviceStore
+from .core.instancelock import InstanceBusy, hold_instance_lock
 from .core.preferences import PreferenceError
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging
@@ -166,7 +168,45 @@ def main_callback(
     if ctx.invoked_subcommand is None:
         from .ui.menu import run_menu
 
-        asyncio.run(_drive(run_menu(app_ctx), app_ctx))
+        # The interactive session is the one that holds the stores in memory and rewrites
+        # them whole, so it is the one that claims the directory. One-shot subcommands are
+        # brief and mostly read; blocking `meshterm contacts` because a menu is open in
+        # another window would be an obstacle rather than a guard.
+        try:
+            with hold_instance_lock(settings.config_dir):
+                asyncio.run(_drive(run_menu(app_ctx), app_ctx))
+        except InstanceBusy as exc:
+            console.print(f"[err]✗[/err] {exc}")
+            raise typer.Exit(code=1) from None
+        except Exception as exc:
+            if type(exc).__name__ != "NoConsoleScreenBufferError":
+                raise
+            # prompt_toolkit needs a real Win32 console and reports its absence in the
+            # language of its own internals. A traceback reads as "this app is broken"
+            # when the answer is "open a different terminal", so answer that instead.
+            _report_no_windows_console(console)
+            raise typer.Exit(code=1) from None
+
+
+def _report_no_windows_console(console: Console) -> None:
+    """Explain a console MeshTerm cannot draw in, and how to get one it can.
+
+    Reached when prompt_toolkit finds no Win32 console screen buffer: a Git Bash, MSYS or
+    Cygwin shell — which announce themselves as ``xterm`` and are not Windows consoles at
+    all — or a process whose output has been redirected away from one.
+    """
+    console.print("[err]✗[/err] MeshTerm needs a Windows console, and could not find one.")
+    console.print()
+    console.print("That usually means one of two things:")
+    console.print()
+    console.print("  • You are in Git Bash, MSYS or Cygwin. Those are not Windows consoles.")
+    console.print("    Open [accent]Windows Terminal[/accent] or [accent]PowerShell[/accent]")
+    console.print("    and run it from there.")
+    console.print("  • The output is piped or redirected somewhere. The full-screen menu")
+    console.print("    needs the terminal itself.")
+    console.print()
+    console.print("Every screen also has a subcommand, and those pipe fine —")
+    console.print("try [accent]meshterm --help[/accent].")
 
 
 @app.command(name="platform")

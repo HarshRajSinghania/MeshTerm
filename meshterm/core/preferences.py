@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .atomicwrite import write_atomically
 from .watch_store import DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
 
 #: Display groups, in the order the page and the file present them. The order is the
@@ -602,10 +603,7 @@ class Preferences:
         """
         if self._path is None:
             raise RuntimeError("these preferences have no file to save to")
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(self.as_yaml(), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, self.as_yaml())
 
 
 #: The set installed for this process. Starts as a defaults-only, file-less instance so

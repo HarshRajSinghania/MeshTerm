@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .atomicwrite import write_atomically
 from .channels import (
     CHANNEL_SECRET_BYTES,
     CHANNEL_SLOT_EMPTY_RUN,
@@ -156,10 +157,7 @@ class ChannelStore:
                 if channels
             }
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        write_atomically(self._path, json.dumps(data, indent=2))
 
 
 def _channel_from_json(entry: object) -> RememberedChannel | None:
